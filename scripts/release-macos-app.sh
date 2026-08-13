@@ -7,7 +7,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="${ROOT:-$ROOT_DIR}"
 ROOT="$(cd "$ROOT" && pwd)"
 # shellcheck source=scripts/source-provenance.sh
-source "$ROOT_DIR/scripts/source-provenance.sh"
+source "$ROOT/scripts/source-provenance.sh"
 SOURCE_COMMIT="$(peekaboo_require_source_commit "$ROOT")"
 MAC_RELEASE_MANIFEST="${MAC_RELEASE_MANIFEST:-$ROOT/.mac-release.env}"
 MAC_RELEASE_MANIFEST_LOADED=false

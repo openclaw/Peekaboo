@@ -36,6 +36,28 @@ peekaboo_require_source_commit() {
   printf '%s\n' "$commit"
 }
 
+peekaboo_debug_source_commit() {
+  local repository_root="${1:?repository root required}"
+  local require_provenance="${PEEKABOO_REQUIRE_SOURCE_PROVENANCE:-0}"
+  local commit
+  case "$require_provenance" in
+    0|false|no|off|'') ;;
+    1|true|yes|on)
+      peekaboo_require_source_commit "$repository_root"
+      return
+      ;;
+    *)
+      printf 'Invalid PEEKABOO_REQUIRE_SOURCE_PROVENANCE value: %s\n' "$require_provenance" >&2
+      return 1
+      ;;
+  esac
+  if commit="$(peekaboo_require_source_commit "$repository_root" 2>/dev/null)"; then
+    printf '%s\n' "$commit"
+  else
+    printf '%s\n' unknown
+  fi
+}
+
 peekaboo_verify_source_commit() {
   local repository_root="${1:?repository root required}"
   local expected_commit="${2:?expected source commit required}"
@@ -45,6 +67,16 @@ peekaboo_verify_source_commit() {
     printf 'Source commit changed during the build: expected %s, found %s\n' \
       "$expected_commit" "$current_commit" >&2
     return 1
+  fi
+}
+
+peekaboo_source_dirty_suffix() {
+  local repository_root="${1:?repository root required}"
+  local checkout_status
+  if ! checkout_status="$(git -C "$repository_root" status \
+    --porcelain=v1 --untracked-files=all --ignore-submodules=none 2>/dev/null)" || \
+     [[ -n "$checkout_status" ]]; then
+    printf '%s\n' -dirty
   fi
 }
 

@@ -786,6 +786,7 @@ git -C "${build_signing_source}" add scripts Apps
 git -C "${build_signing_source}" \
   -c user.name=Peekaboo -c user.email=peekaboo@example.invalid \
   commit -q -m fixture
+build_signing_commit="$(git -C "${build_signing_source}" rev-parse HEAD)"
 cat >"${build_signing_dir}/bin/xcodebuild" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -803,6 +804,9 @@ env \
   "${build_signing_source}/scripts/build-mac-debug.sh" >/dev/null
 grep -Fxq 'CODE_SIGN_STYLE=Manual' "${build_signing_dir}/developer-id-args" || \
   fail 'Developer ID build did not request manual signing'
+grep -Fxq "PEEKABOO_SOURCE_COMMIT=${build_signing_commit}" \
+  "${build_signing_dir}/developer-id-args" || \
+  fail 'Clean debug app build did not stamp its exact source commit'
 if grep -Fxq 'CODE_SIGN_STYLE=Automatic' "${build_signing_dir}/developer-id-args"; then
   fail 'Developer ID build still requested automatic signing'
 fi
@@ -817,6 +821,33 @@ env \
   "${build_signing_source}/scripts/build-mac-debug.sh" >/dev/null
 grep -Fxq 'CODE_SIGN_STYLE=Automatic' "${build_signing_dir}/development-args" || \
   fail 'Apple Development build did not retain automatic signing'
+
+touch "${build_signing_source}/untracked-build-input"
+env \
+  PATH="${build_signing_dir}/bin:/usr/bin:/bin" \
+  PEEKABOO_TEST_XCODEBUILD_ARGS="${build_signing_dir}/dirty-args" \
+  CONFIGURATION=Debug \
+  DERIVED_DATA_PATH="${build_signing_dir}/DerivedData" \
+  DEBUG_CODE_SIGN_IDENTITY='Apple Development' \
+  DEBUG_DEVELOPMENT_TEAM=TESTTEAM \
+  "${build_signing_source}/scripts/build-mac-debug.sh" >/dev/null
+grep -Fxq 'PEEKABOO_SOURCE_COMMIT=unknown' "${build_signing_dir}/dirty-args" || \
+  fail 'Dirty debug app build did not remain explicitly unstamped'
+
+rm -f "${build_signing_dir}/strict-dirty-args"
+if env \
+  PATH="${build_signing_dir}/bin:/usr/bin:/bin" \
+  PEEKABOO_TEST_XCODEBUILD_ARGS="${build_signing_dir}/strict-dirty-args" \
+  PEEKABOO_REQUIRE_SOURCE_PROVENANCE=1 \
+  CONFIGURATION=Debug \
+  DERIVED_DATA_PATH="${build_signing_dir}/DerivedData" \
+  DEBUG_CODE_SIGN_IDENTITY='Apple Development' \
+  DEBUG_DEVELOPMENT_TEAM=TESTTEAM \
+  "${build_signing_source}/scripts/build-mac-debug.sh" >/dev/null 2>&1; then
+  fail 'Strict dirty debug app build unexpectedly succeeded'
+fi
+[[ ! -e "${build_signing_dir}/strict-dirty-args" ]] || \
+  fail 'Strict dirty debug app build reached xcodebuild before refusing'
 
 # The public package default delegates to the contributor Debug path without injecting any
 # Foundation or organization-owned signing identity.

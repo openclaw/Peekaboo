@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=scripts/source-provenance.sh
 source "$PROJECT_ROOT/scripts/source-provenance.sh"
-if ! SOURCE_COMMIT="$(peekaboo_require_source_commit "$PROJECT_ROOT")"; then
+if ! SOURCE_COMMIT="$(peekaboo_debug_source_commit "$PROJECT_ROOT")"; then
     exit 1
 fi
 
@@ -104,7 +104,8 @@ xcodebuild \
 BUILD_EXIT_CODE=${PIPESTATUS[0]}
 
 if [ $BUILD_EXIT_CODE -eq 0 ]; then
-    if ! peekaboo_verify_source_commit "$PROJECT_ROOT" "$SOURCE_COMMIT"; then
+    if peekaboo_is_exact_source_commit "$SOURCE_COMMIT" && \
+       ! peekaboo_verify_source_commit "$PROJECT_ROOT" "$SOURCE_COMMIT"; then
         exit 1
     fi
     echo -e "${GREEN}✅ Build successful${NC}"

@@ -10,6 +10,8 @@ EXPECTED_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 
 PROVENANCE_TEST_REPOSITORY="$(mktemp -d /tmp/peekaboo-source-test.XXXXXX)"
 [[ "$(peekaboo_source_commit_from_repo "$PROVENANCE_TEST_REPOSITORY")" == unknown ]]
+[[ "$(peekaboo_debug_source_commit "$PROVENANCE_TEST_REPOSITORY")" == unknown ]]
+[[ "$(peekaboo_source_dirty_suffix "$PROVENANCE_TEST_REPOSITORY")" == -dirty ]]
 if peekaboo_require_source_commit "$PROVENANCE_TEST_REPOSITORY" >/dev/null 2>&1; then
   echo "stamped source resolution unexpectedly accepted a non-repository" >&2
   exit 1
@@ -20,12 +22,23 @@ git -C "$PROVENANCE_TEST_REPOSITORY" \
   commit -q --allow-empty -m initial
 TEST_COMMIT="$(git -C "$PROVENANCE_TEST_REPOSITORY" rev-parse HEAD)"
 [[ "$(peekaboo_require_source_commit "$PROVENANCE_TEST_REPOSITORY")" == "$TEST_COMMIT" ]]
+[[ "$(peekaboo_debug_source_commit "$PROVENANCE_TEST_REPOSITORY")" == "$TEST_COMMIT" ]]
+[[ -z "$(peekaboo_source_dirty_suffix "$PROVENANCE_TEST_REPOSITORY")" ]]
+[[ "$(PEEKABOO_REQUIRE_SOURCE_PROVENANCE=1 \
+  peekaboo_debug_source_commit "$PROVENANCE_TEST_REPOSITORY")" == "$TEST_COMMIT" ]]
 mv "$PROVENANCE_TEST_REPOSITORY/.git/index" "$PROVENANCE_TEST_REPOSITORY/.git/index.saved"
 mkdir "$PROVENANCE_TEST_REPOSITORY/.git/index"
 if peekaboo_require_source_commit "$PROVENANCE_TEST_REPOSITORY" >/dev/null 2>&1; then
   echo "stamped source resolution ignored a Git status failure" >&2
   exit 1
 fi
+[[ "$(peekaboo_debug_source_commit "$PROVENANCE_TEST_REPOSITORY")" == unknown ]]
+if PEEKABOO_REQUIRE_SOURCE_PROVENANCE=1 \
+  peekaboo_debug_source_commit "$PROVENANCE_TEST_REPOSITORY" >/dev/null 2>&1; then
+  echo "strict debug source resolution ignored a Git status failure" >&2
+  exit 1
+fi
+[[ "$(peekaboo_source_dirty_suffix "$PROVENANCE_TEST_REPOSITORY")" == -dirty ]]
 rmdir "$PROVENANCE_TEST_REPOSITORY/.git/index"
 mv "$PROVENANCE_TEST_REPOSITORY/.git/index.saved" "$PROVENANCE_TEST_REPOSITORY/.git/index"
 touch "$PROVENANCE_TEST_REPOSITORY/untracked-build-input"
@@ -33,6 +46,13 @@ if peekaboo_require_source_commit "$PROVENANCE_TEST_REPOSITORY" >/dev/null 2>&1;
   echo "stamped source resolution unexpectedly accepted a dirty repository" >&2
   exit 1
 fi
+[[ "$(peekaboo_debug_source_commit "$PROVENANCE_TEST_REPOSITORY")" == unknown ]]
+if PEEKABOO_REQUIRE_SOURCE_PROVENANCE=1 \
+  peekaboo_debug_source_commit "$PROVENANCE_TEST_REPOSITORY" >/dev/null 2>&1; then
+  echo "strict debug source resolution unexpectedly accepted a dirty repository" >&2
+  exit 1
+fi
+[[ "$(peekaboo_source_dirty_suffix "$PROVENANCE_TEST_REPOSITORY")" == -dirty ]]
 rm -rf "$PROVENANCE_TEST_REPOSITORY"
 
 for malformed in \
@@ -47,7 +67,6 @@ for malformed in \
 done
 
 for build_script in \
-  "$ROOT_DIR/scripts/build-swift-debug.sh" \
   "$ROOT_DIR/scripts/build-swift-arm.sh" \
   "$ROOT_DIR/scripts/build-swift-universal.sh"; do
   rg -Fq 'PeekabooSourceCommit' "$build_script"
@@ -59,12 +78,19 @@ for build_script in \
   fi
 done
 
+rg -Fq 'peekaboo_debug_source_commit' "$ROOT_DIR/scripts/build-swift-debug.sh"
+rg -Fq 'peekaboo_source_commit_from_repo' "$ROOT_DIR/scripts/build-swift-debug.sh"
+rg -Fq 'peekaboo_source_dirty_suffix' "$ROOT_DIR/scripts/build-swift-debug.sh"
+rg -Fq 'peekaboo_verify_source_commit' "$ROOT_DIR/scripts/build-swift-debug.sh"
+
 rg -Fq '<key>PeekabooSourceCommit</key>' "$ROOT_DIR/Apps/CLI/Sources/Resources/Info.plist"
 rg -Fq '<string>unknown</string>' "$ROOT_DIR/Apps/CLI/Sources/Resources/Info.plist"
 rg -Fq '<string>$(PEEKABOO_SOURCE_COMMIT)</string>' "$ROOT_DIR/Apps/Mac/Peekaboo/Info.plist"
 rg -Fq 'PEEKABOO_SOURCE_COMMIT = unknown;' "$ROOT_DIR/Apps/Mac/Peekaboo.xcodeproj/project.pbxproj"
 rg -Fq 'PEEKABOO_SOURCE_COMMIT="$SOURCE_COMMIT"' "$ROOT_DIR/scripts/build-mac-debug.sh"
+rg -Fq 'peekaboo_debug_source_commit' "$ROOT_DIR/scripts/build-mac-debug.sh"
 rg -Fq 'PEEKABOO_SOURCE_COMMIT="$SOURCE_COMMIT"' "$ROOT_DIR/scripts/release-macos-app.sh"
+rg -Fq 'source "$ROOT/scripts/source-provenance.sh"' "$ROOT_DIR/scripts/release-macos-app.sh"
 rg -Fq 'SOURCE_COMMIT="$(peekaboo_require_source_commit "$ROOT")"' \
   "$ROOT_DIR/scripts/release-macos-app.sh"
 rg -Fq 'App has no exact 40-hex source commit' "$ROOT_DIR/scripts/release-macos-app.sh"

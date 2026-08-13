@@ -118,11 +118,12 @@ VERSION=$(node -p "require('$PROJECT_ROOT/version.json').version" 2>/dev/null ||
 
 # Get git information. Keep the historical short value for human display while
 # certification consumes the separate immutable full source commit.
-SOURCE_COMMIT=$(peekaboo_require_source_commit "$PROJECT_ROOT")
-GIT_COMMIT_SHORT=$(peekaboo_short_source_commit "$SOURCE_COMMIT")
+SOURCE_COMMIT=$(peekaboo_debug_source_commit "$PROJECT_ROOT")
+HUMAN_SOURCE_COMMIT=$(peekaboo_source_commit_from_repo "$PROJECT_ROOT")
+GIT_COMMIT_SHORT=$(peekaboo_short_source_commit "$HUMAN_SOURCE_COMMIT")
 GIT_COMMIT_DATE=$(git show -s --format=%ci HEAD 2>/dev/null || echo "unknown")
 GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
-GIT_DIRTY=$(git diff --quiet && git diff --cached --quiet || echo "-dirty")
+GIT_DIRTY=$(peekaboo_source_dirty_suffix "$PROJECT_ROOT")
 BUILD_DATE=$(date -Iseconds)
 
 echo "🧾 Embedding version metadata in Info.plist..."
@@ -138,7 +139,9 @@ fi
     cd "$SWIFT_PROJECT_PATH"
     swift build 2>&1 | pipe_build_output
 )
-peekaboo_verify_source_commit "$PROJECT_ROOT" "$SOURCE_COMMIT"
+if peekaboo_is_exact_source_commit "$SOURCE_COMMIT"; then
+    peekaboo_verify_source_commit "$PROJECT_ROOT" "$SOURCE_COMMIT"
+fi
 
 echo "🔏 Code signing the debug binary..."
 PROJECT_NAME="peekaboo"
