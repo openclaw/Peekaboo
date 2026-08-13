@@ -10,12 +10,12 @@ enum CLIRuntimeEnvironment {
             TestChildProcess.canLocatePeekabooBinary()
     }
 
-    nonisolated static var runClipboardTests: Bool {
-        self.allowsClipboardTests(environment: ProcessInfo.processInfo.environment)
+    nonisolated static var runAmbientStateTests: Bool {
+        self.allowsAmbientStateTests(environment: ProcessInfo.processInfo.environment)
     }
 
-    nonisolated static func allowsClipboardTests(environment: [String: String]) -> Bool {
-        environment["PEEKABOO_INCLUDE_CLIPBOARD_TESTS"] == "true"
+    nonisolated static func allowsAmbientStateTests(environment: [String: String]) -> Bool {
+        environment["PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS"] == "true"
     }
 }
 
@@ -30,19 +30,24 @@ struct CLIRuntimeSmokeTests {
     }
 
     @Test
-    func `clipboard smoke tests require explicit opt in`() {
-        #expect(!CLIRuntimeEnvironment.allowsClipboardTests(environment: [:]))
-        #expect(!CLIRuntimeEnvironment.allowsClipboardTests(environment: [
-            "PEEKABOO_INCLUDE_CLIPBOARD_TESTS": "false",
+    func `ambient state tests require explicit opt in`() {
+        #expect(!CLIRuntimeEnvironment.allowsAmbientStateTests(environment: [:]))
+        #expect(!CLIRuntimeEnvironment.allowsAmbientStateTests(environment: [
+            "PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS": "false",
         ]))
-        #expect(!CLIRuntimeEnvironment.allowsClipboardTests(environment: [
-            "PEEKABOO_INCLUDE_CLIPBOARD_TESTS": "1",
+        #expect(!CLIRuntimeEnvironment.allowsAmbientStateTests(environment: [
+            "PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS": "1",
         ]))
-        #expect(!CLIRuntimeEnvironment.allowsClipboardTests(environment: [
-            "PEEKABOO_INCLUDE_CLIPBOARD_TESTS": "TRUE",
+        #expect(!CLIRuntimeEnvironment.allowsAmbientStateTests(environment: [
+            "PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS": "TRUE",
         ]))
-        #expect(CLIRuntimeEnvironment.allowsClipboardTests(environment: [
+        #expect(!CLIRuntimeEnvironment.allowsAmbientStateTests(environment: [
             "PEEKABOO_INCLUDE_CLIPBOARD_TESTS": "true",
+            "RUN_AUTOMATION_ACTIONS": "true",
+            "RUN_LOCAL_TESTS": "true",
+        ]))
+        #expect(CLIRuntimeEnvironment.allowsAmbientStateTests(environment: [
+            "PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS": "true",
         ]))
     }
 
@@ -360,7 +365,7 @@ struct CLIRuntimeSmokeTests {
         }
     }
 
-    @Test(.enabled(if: CLIRuntimeEnvironment.runClipboardTests))
+    @Test(.enabled(if: CLIRuntimeEnvironment.runAmbientStateTests))
     func `peekaboo clipboard get JSON includes exact text`() async throws {
         guard Self.ensureLocalRuntimeAvailable() else { return }
         let text = "Peekaboo exact clipboard text \(UUID().uuidString)"

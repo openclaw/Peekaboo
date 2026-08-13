@@ -10,20 +10,20 @@ const runtimeTests = readFileSync(
   "utf8",
 );
 
-test("safe suite forces live clipboard tests off", () => {
+test("safe suite forces ambient-state tests off", () => {
   assert.match(
     packageJSON.scripts["test:safe"],
-    /PEEKABOO_INCLUDE_CLIPBOARD_TESTS=false swift test/,
+    /PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS=false swift test/,
   );
 });
 
-test("live clipboard smoke test requires the exact explicit opt-in", () => {
+test("ambient-state tests require the exact shared opt-in", () => {
   assert.match(
     runtimeTests,
-    /environment\["PEEKABOO_INCLUDE_CLIPBOARD_TESTS"\] == "true"/,
+    /environment\["PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS"\] == "true"/,
   );
   assert.match(
     runtimeTests,
-    /@Test\(\.enabled\(if: CLIRuntimeEnvironment\.runClipboardTests\)\)/,
+    /@Test\(\.enabled\(if: CLIRuntimeEnvironment\.runAmbientStateTests\)\)/,
   );
 });
