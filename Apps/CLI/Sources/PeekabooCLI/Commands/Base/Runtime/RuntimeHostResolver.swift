@@ -319,7 +319,9 @@ enum RuntimeHostResolver {
             return await self.finalizeExactBuildScopedResolution(resolved, candidatePlan: candidatePlan)
         }
 
-        if let explicitSocket, !options.permitsExplicitSocketDiagnosticFallback {
+        if let explicitSocket,
+           !options.permitsExplicitSocketDiagnosticFallback,
+           self.requiredHostFailure(explicitSocket: explicitSocket, options: options) == nil {
             throw BridgeExplicitSocketUnavailableError(
                 socketPath: NSString(string: explicitSocket).standardizingPath
             )
