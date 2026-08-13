@@ -213,7 +213,9 @@ RuntimeOptionsConfigurable {
                 }
                 print("🎯 Mode: foreground")
                 print("📊 Total presses: \(completedPresses)")
-                print("⚠️  Effect: unverifiable; observe the target before continuing")
+                if actionOutcome == nil {
+                    print("⚠️  Effect: unverifiable; observe the target before continuing")
+                }
                 print("⏱️  Completed in \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s")
             }
 

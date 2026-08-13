@@ -72,6 +72,23 @@ struct ActionOutcomeCommandTests {
     }
 
     @Test
+    func `confirmed single press human output does not contradict its receipt`() async throws {
+        let context = Self.makeContext()
+        context.automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground)
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            ["press", "cmd+a", "--foreground", "--no-remote"],
+            services: context.services
+        )
+
+        #expect(result.exitStatus == 0)
+        #expect(result.stdout.contains("✅ Key press confirmed"))
+        #expect(!result.stdout.contains("Effect: unverifiable"))
+    }
+
+    @Test
     func `successful multi press keeps legacy effect and omits singular outcome`() async throws {
         let context = Self.makeContext()
         context.automation.actionOutcome = .dispatchedUnverified(
