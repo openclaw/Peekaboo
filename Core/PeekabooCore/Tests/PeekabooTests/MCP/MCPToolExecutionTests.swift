@@ -712,7 +712,7 @@ struct MCPToolExecutionTests {
     }
 }
 
-struct MCPElementActionToolExecutionTests {
+@Suite(.serialized) struct MCPElementActionToolExecutionTests {
     @Test
     func `element action tools refuse without an active snapshot before automation dispatch`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
@@ -766,7 +766,7 @@ struct MCPElementActionToolExecutionTests {
         let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
         #expect(preserved != nil)
         #expect(implicitLatest == nil)
-        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
@@ -790,7 +790,7 @@ struct MCPElementActionToolExecutionTests {
         let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
         #expect(preserved != nil)
         #expect(implicitLatest == nil)
-        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
@@ -820,7 +820,7 @@ struct MCPElementActionToolExecutionTests {
         let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
         #expect(preserved != nil)
         #expect(implicitLatest == nil)
-        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 }

@@ -132,10 +132,10 @@ struct MCPKeyboardBackgroundToolTests {
             return
         }
         #expect(hotkeyMeta["delivery_mode"] == .string("foreground"))
-        #expect(hotkeyMeta["effect"] == .string("unverifiable"))
-        #expect(hotkeyMeta["mutation_dispatched"] == .bool(true))
-        #expect(hotkeyMeta["retry_safe"] == .bool(false))
-        #expect(hotkeyMeta["requires_fresh_observation"] == .bool(true))
+        #expect(hotkeyMeta["effect"] == nil)
+        #expect(hotkeyMeta["mutation_dispatched"] == nil)
+        #expect(hotkeyMeta["retry_safe"] == nil)
+        #expect(hotkeyMeta["requires_fresh_observation"] == nil)
     }
 
     @Test
@@ -443,6 +443,7 @@ struct MCPKeyboardBackgroundToolTests {
         #expect(meta["mutation_dispatched"] == .bool(true))
         #expect(meta["retry_safe"] == .bool(false))
         #expect(meta["characters_typed"] == .null)
+        #expect(meta["delivery_mechanism"] == .string("process_targeted_events"))
         #expect(meta["invalidated_snapshot"] == .string(snapshotId))
         #expect(await Self.uiSnapshots.getSnapshot(id: snapshotId) != nil)
         #expect(await Self.uiSnapshots.getSnapshot(id: nil) == nil)
@@ -484,6 +485,8 @@ struct MCPKeyboardBackgroundToolTests {
         #expect(meta["mutation_dispatched"] == .bool(true))
         #expect(meta["retry_safe"] == .bool(false))
         #expect(meta["characters_typed"] == .null)
+        #expect(meta["delivery_mechanism"] == nil)
+        #expect(meta["dispatched_unit_count"] == .int(1))
         #expect(meta["invalidated_snapshot"] == .string(snapshotId))
     }
 

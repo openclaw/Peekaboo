@@ -2,6 +2,7 @@ import Foundation
 import MCP
 import os.log
 import PeekabooAutomation
+import PeekabooAutomationKit
 import PeekabooFoundation
 import TachikomaMCP
 
@@ -150,7 +151,21 @@ public struct ScrollTool: MCPTool {
             delay: request.delay,
             snapshotId: target.snapshotId,
             foreground: request.foreground)
-        try await automation.scroll(serviceRequest)
+        let actionResult: UIAutomationActionResult<Void>
+        do {
+            if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
+                actionResult = try await outcomeAutomation.scrollWithOutcome(serviceRequest)
+            } else {
+                actionResult = try await UIAutomationActionResult(
+                    payload: automation.scroll(serviceRequest),
+                    outcome: nil)
+            }
+        } catch let failure as DesktopActionFailure {
+            return try await MCPDesktopActionFailureHandler.response(
+                for: failure,
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: target.snapshotId)
+        }
 
         let invalidatedSnapshotId = await self.context.uiSnapshots.invalidateActiveSnapshot(id: target.snapshotId)
         let executionTime = Date().timeIntervalSince(startTime)
@@ -168,9 +183,10 @@ public struct ScrollTool: MCPTool {
         var baseMeta: [String: Value] = [:]
         if let invalidatedSnapshotId {
             baseMeta["invalidated_snapshot"] = .string(invalidatedSnapshotId)
-            baseMeta["requires_fresh_observation"] = .bool(true)
         }
-        let meta = baseMeta.isEmpty ? nil : Value.object(baseMeta)
+        let meta = try MCPToolResponseMetadataProjector.metadata(
+            merging: baseMeta,
+            outcome: actionResult.outcome)
         return ToolResponse.text(message, meta: ToolEventSummary.merge(summary: summary, into: meta))
     }
 

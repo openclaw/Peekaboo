@@ -3,6 +3,7 @@ import MCP
 import os.log
 import PeekabooAutomation
 import PeekabooAutomationKit
+import PeekabooFoundation
 import TachikomaMCP
 
 public struct SetValueTool: MCPTool {
@@ -46,27 +47,48 @@ public struct SetValueTool: MCPTool {
 
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
+        var effectiveSnapshotId: String?
         do {
             let request = try SetValueRequest(arguments: arguments)
             guard let automation = self.context.automation as? any ElementActionAutomationServiceProtocol else {
-                return ToolResponse.error("set_value is not supported by this automation host")
+                throw SetValueToolError(
+                    "set_value is not supported by this automation host",
+                    errorCode: "RUNTIME_INCOMPATIBLE",
+                    refusalReason: .runtimeIncompatible)
             }
 
             let startTime = Date()
-            let effectiveSnapshotId = try await self.effectiveSnapshotId(request.snapshotId)
-            let result = try await automation.setValue(
-                target: request.target,
-                value: request.value,
-                snapshotId: effectiveSnapshotId)
+            effectiveSnapshotId = try await self.effectiveSnapshotId(request.snapshotId)
+            let actionResult: UIAutomationActionResult<ElementActionResult> = if let outcomeAutomation =
+                automation as? any UIAutomationActionOutcomeProviding
+            {
+                try await outcomeAutomation.setValueWithOutcome(
+                    target: request.target,
+                    value: request.value,
+                    snapshotId: effectiveSnapshotId)
+            } else {
+                try await UIAutomationActionResult(
+                    payload: automation.setValue(
+                        target: request.target,
+                        value: request.value,
+                        snapshotId: effectiveSnapshotId),
+                    outcome: nil)
+            }
             let invalidatedSnapshotId = await self.context.uiSnapshots.invalidateActiveSnapshot(id: effectiveSnapshotId)
             let elapsed = Date().timeIntervalSince(startTime)
-            return self.buildResponse(
-                result: result,
+            return try self.buildResponse(
+                result: actionResult.payload,
                 value: request.value,
                 executionTime: elapsed,
-                invalidatedSnapshotId: invalidatedSnapshotId)
+                invalidatedSnapshotId: invalidatedSnapshotId,
+                outcome: actionResult.outcome)
         } catch let error as SetValueToolError {
-            return Self.preDispatchErrorResponse(error)
+            return try Self.preDispatchErrorResponse(error)
+        } catch let failure as DesktopActionFailure {
+            return try await MCPDesktopActionFailureHandler.response(
+                for: failure,
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: effectiveSnapshotId)
         } catch {
             self.logger.error("set_value failed: \(error.localizedDescription)")
             return ToolResponse.error("Failed to set value: \(error.localizedDescription)")
@@ -78,7 +100,8 @@ public struct SetValueTool: MCPTool {
             guard let snapshot = await self.context.uiSnapshots.getSnapshot(id: requestedSnapshotId) else {
                 throw SetValueToolError(
                     "Snapshot '\(requestedSnapshotId)' not found. Run 'see' or 'inspect_ui' again.",
-                    errorCode: "SNAPSHOT_NOT_FOUND")
+                    errorCode: "SNAPSHOT_NOT_FOUND",
+                    refusalReason: .targetUnavailable)
             }
             return snapshot.id
         }
@@ -86,27 +109,27 @@ public struct SetValueTool: MCPTool {
         guard let snapshot = await self.context.uiSnapshots.getSnapshot(id: nil) else {
             throw SetValueToolError(
                 "No active UI snapshot is available. Run 'see' or 'inspect_ui' before using set_value.",
-                errorCode: "SNAPSHOT_NOT_FOUND")
+                errorCode: "SNAPSHOT_NOT_FOUND",
+                refusalReason: .targetUnavailable)
         }
         return snapshot.id
     }
 
-    private static func preDispatchErrorResponse(_ error: SetValueToolError) -> ToolResponse {
-        ToolResponse.error(
+    private static func preDispatchErrorResponse(_ error: SetValueToolError) throws -> ToolResponse {
+        var meta = try MCPToolResponseMetadataProjector.fields(
+            for: DesktopActionOutcome.refused(reason: error.refusalReason).projection)
+        meta["error_code"] = .string(error.errorCode)
+        return ToolResponse.error(
             error.message,
-            meta: .object([
-                "effect": .string("refused"),
-                "error_code": .string(error.errorCode),
-                "mutation_dispatched": .bool(false),
-                "retry_safe": .bool(true),
-            ]))
+            meta: .object(meta))
     }
 
     private func buildResponse(
         result: ElementActionResult,
         value: UIElementValue,
         executionTime: TimeInterval,
-        invalidatedSnapshotId: String?) -> ToolResponse
+        invalidatedSnapshotId: String?,
+        outcome: DesktopActionOutcome?) throws -> ToolResponse
     {
         let message = "\(AgentDisplayTokens.Status.success) Set value on \(result.target) in " +
             "\(String(format: "%.2f", executionTime))s"
@@ -134,10 +157,11 @@ public struct SetValueTool: MCPTool {
         }
         if let invalidatedSnapshotId {
             meta["invalidated_snapshot"] = .string(invalidatedSnapshotId)
-            meta["requires_fresh_observation"] = .bool(true)
         }
 
-        return ToolResponse.text(message, meta: .object(meta))
+        return try ToolResponse.text(
+            message,
+            meta: MCPToolResponseMetadataProjector.metadata(merging: meta, outcome: outcome))
     }
 
     private static func valueToMCP(_ value: UIElementValue) -> Value {
@@ -193,9 +217,15 @@ private struct SetValueRequest {
 private struct SetValueToolError: Error {
     let message: String
     let errorCode: String
+    let refusalReason: DesktopActionOutcome.RefusalReason
 
-    init(_ message: String, errorCode: String = "VALIDATION_ERROR") {
+    init(
+        _ message: String,
+        errorCode: String = "VALIDATION_ERROR",
+        refusalReason: DesktopActionOutcome.RefusalReason = .invalidRequest)
+    {
         self.message = message
         self.errorCode = errorCode
+        self.refusalReason = refusalReason
     }
 }

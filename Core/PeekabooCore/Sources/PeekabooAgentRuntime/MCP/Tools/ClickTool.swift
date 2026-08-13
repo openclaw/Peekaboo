@@ -143,7 +143,7 @@ public struct ClickTool: MCPTool {
         do {
             request = try ClickRequest(arguments: arguments)
         } catch let error as ClickToolError {
-            return Self.preDispatchErrorResponse(error)
+            return try Self.preDispatchErrorResponse(error)
         }
 
         let startTime = Date()
@@ -156,7 +156,7 @@ public struct ClickTool: MCPTool {
                 request: request,
                 resolution: resolution)
             let effectiveTargetProcessIdentifier = effectiveTargetProcessIdentity?.processIdentifier
-            try await self.performClick(
+            let outcome = try await self.performClick(
                 resolution: resolution,
                 intent: request.intent,
                 deliveryMode: request.deliveryMode,
@@ -165,34 +165,32 @@ public struct ClickTool: MCPTool {
             let invalidatedSnapshotId = await self.context.uiSnapshots
                 .invalidateActiveSnapshot(id: resolution.snapshotIdToInvalidate)
             let executionTime = Date().timeIntervalSince(startTime)
-            return self.buildResponse(
+            return try self.buildResponse(
                 intent: request.intent,
                 resolution: resolution,
-                effectiveTargetProcessIdentifier: effectiveTargetProcessIdentifier,
-                executionTime: executionTime,
-                invalidatedSnapshotId: invalidatedSnapshotId)
+                execution: ClickResponseExecution(
+                    targetProcessIdentifier: effectiveTargetProcessIdentifier,
+                    executionTime: executionTime,
+                    invalidatedSnapshotId: invalidatedSnapshotId,
+                    outcome: outcome))
         } catch let error as ClickToolError {
-            return Self.preDispatchErrorResponse(error)
+            return try Self.preDispatchErrorResponse(error)
         } catch let failure as DesktopActionFailure {
-            let invalidatedSnapshotId = await self.context.uiSnapshots
-                .invalidateActiveSnapshot(id: snapshotIdToInvalidate)
-            return try MCPToolResponseMetadataProjector.errorResponse(
+            return try await MCPDesktopActionFailureHandler.response(
                 for: failure,
-                invalidatedSnapshotID: invalidatedSnapshotId)
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: snapshotIdToInvalidate)
         } catch let error as InputDeliveryIndeterminateError {
-            let invalidatedSnapshotId = await self.context.uiSnapshots
-                .invalidateActiveSnapshot(id: snapshotIdToInvalidate)
-            var meta: [String: Value] = [
-                "mutation_dispatched": .bool(true),
-                "retry_safe": .bool(false),
-                "requires_fresh_observation": .bool(true),
-            ]
-            if let invalidatedSnapshotId {
-                meta["invalidated_snapshot"] = .string(invalidatedSnapshotId)
-            }
-            return ToolResponse.error(
-                error.localizedDescription,
-                meta: .object(meta))
+            let delivery: DesktopActionOutcome.Delivery? = request.deliveryMode == .foreground
+                ? .init(mechanism: .globalEvents, mode: .foreground)
+                : nil
+            return try await MCPDesktopActionFailureHandler.response(
+                for: error.desktopActionFailure(delivery: delivery),
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: snapshotIdToInvalidate,
+                additionalFields: [
+                    "emitted_units": error.emittedUnitCount.map(Value.int) ?? .null,
+                ])
         } catch {
             self.logger.error("Click execution failed: \(error.localizedDescription)")
             return ToolResponse.error("Failed to perform click: \(error.localizedDescription)")
@@ -249,14 +247,15 @@ public struct ClickTool: MCPTool {
         resolution: ClickResolution,
         intent: ClickIntent,
         deliveryMode: ClickToolDeliveryMode,
-        targetProcessIdentity: ApplicationProcessIdentity?) async throws
+        targetProcessIdentity: ApplicationProcessIdentity?) async throws -> DesktopActionOutcome?
     {
         let target = resolution.automationTarget
         let snapshotId = resolution.snapshotId
         if deliveryMode == .background {
             guard let targetProcessIdentity else {
                 throw ClickToolError(
-                    "Background click requires a capture-owned snapshot with an exact target process.")
+                    "Background click requires a capture-owned snapshot with an exact target process.",
+                    refusalReason: .targetUnavailable)
             }
             let targetProcessIdentifier = targetProcessIdentity.processIdentifier
             if case .coordinates = target {
@@ -265,13 +264,17 @@ public struct ClickTool: MCPTool {
                     targetProcessIdentifier: targetProcessIdentifier)
             }
             guard let automation = self.context.automation as? any TargetedClickServiceProtocol else {
-                throw ClickToolError("This automation host does not support background click delivery.")
+                throw ClickToolError(
+                    "This automation host does not support background click delivery.",
+                    refusalReason: .runtimeIncompatible)
             }
             if let targetWindowID = resolution.targetWindowID {
                 guard let exactWindowAutomation = automation as? any ExactWindowTargetedClickServiceProtocol,
                       exactWindowAutomation.supportsExactWindowTargetedClicks
                 else {
-                    throw ClickToolError("This automation host does not support exact-window background clicks.")
+                    throw ClickToolError(
+                        "This automation host does not support exact-window background clicks.",
+                        refusalReason: .runtimeIncompatible)
                 }
                 guard let expectedWindowIdentity = resolution.expectedWindowIdentity,
                       let expectedWindowBounds = resolution.expectedWindowBounds,
@@ -279,7 +282,16 @@ public struct ClickTool: MCPTool {
                       expectedWindowIdentity.ownerProcessIdentifier == targetProcessIdentifier
                 else {
                     throw ClickToolError(
-                        "Exact-window snapshot has no capture-time process-generation receipt. Run see again.")
+                        "Exact-window snapshot has no capture-time process-generation receipt. Run see again.",
+                        refusalReason: .targetUnavailable)
+                }
+                if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
+                    return try await outcomeAutomation.clickWithOutcome(
+                        target: target,
+                        clickType: intent.automationType,
+                        snapshotId: snapshotId,
+                        expectedWindowIdentity: expectedWindowIdentity,
+                        expectedWindowBounds: expectedWindowBounds).outcome
                 }
                 try await exactWindowAutomation.click(
                     target: target,
@@ -290,7 +302,15 @@ public struct ClickTool: MCPTool {
             } else {
                 guard automation.supportsProcessGenerationPinnedClicks else {
                     throw ClickToolError(
-                        "This automation host does not support process-generation-pinned background clicks.")
+                        "This automation host does not support process-generation-pinned background clicks.",
+                        refusalReason: .runtimeIncompatible)
+                }
+                if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
+                    return try await outcomeAutomation.clickWithOutcome(
+                        target: target,
+                        clickType: intent.automationType,
+                        snapshotId: snapshotId,
+                        expectedProcessIdentity: targetProcessIdentity).outcome
                 }
                 try await automation.click(
                     target: target,
@@ -299,11 +319,18 @@ public struct ClickTool: MCPTool {
                     expectedProcessIdentity: targetProcessIdentity)
             }
         } else {
+            if let outcomeAutomation = self.context.automation as? any UIAutomationActionOutcomeProviding {
+                return try await outcomeAutomation.clickWithOutcome(
+                    target: target,
+                    clickType: intent.automationType,
+                    snapshotId: snapshotId).outcome
+            }
             try await self.context.automation.click(
                 target: target,
                 clickType: intent.automationType,
                 snapshotId: snapshotId)
         }
+        return nil
     }
 
     private func backgroundProcessIdentity(
@@ -328,24 +355,29 @@ public struct ClickTool: MCPTool {
             guard capturedIdentity.processIdentifier == selectedProcessIdentifier else {
                 throw ClickToolError(
                     "The click snapshot belongs to PID \(capturedIdentity.processIdentifier), not " +
-                        "PID \(selectedProcessIdentifier). Run see again before clicking.")
+                        "PID \(selectedProcessIdentifier). Run see again before clicking.",
+                    refusalReason: .targetUnavailable)
             }
             return capturedIdentity
         }
         if let snapshotId = resolution.snapshotId {
             guard let snapshot = await self.getSnapshot(id: snapshotId) else {
-                throw ClickToolError("The click snapshot is unavailable. Run see again before clicking.")
+                throw ClickToolError(
+                    "The click snapshot is unavailable. Run see again before clicking.",
+                    refusalReason: .targetUnavailable)
             }
             if let snapshotProcessIdentifier = snapshot.applicationProcessId,
                snapshotProcessIdentifier != selectedProcessIdentifier
             {
                 throw ClickToolError(
                     "The click snapshot belongs to PID \(snapshotProcessIdentifier), not " +
-                        "PID \(selectedProcessIdentifier). Run see again before clicking.")
+                        "PID \(selectedProcessIdentifier). Run see again before clicking.",
+                    refusalReason: .targetUnavailable)
             }
             guard let capturedIdentity = snapshot.applicationProcessIdentity else {
                 throw ClickToolError(
-                    "The click snapshot has no capture-time process-generation receipt. Run see again before clicking.")
+                    "The click snapshot has no capture-time process-generation receipt. Run see again before clicking.",
+                    refusalReason: .targetUnavailable)
             }
             return capturedIdentity
         }
@@ -355,7 +387,8 @@ public struct ClickTool: MCPTool {
               let currentIdentity = application.processIdentity
         else {
             throw ClickToolError(
-                "The runtime host could not pin PID \(selectedProcessIdentifier) to a process generation.")
+                "The runtime host could not pin PID \(selectedProcessIdentifier) to a process generation.",
+                refusalReason: .targetUnavailable)
         }
         return currentIdentity
     }
@@ -363,20 +396,16 @@ public struct ClickTool: MCPTool {
     private func buildResponse(
         intent: ClickIntent,
         resolution: ClickResolution,
-        effectiveTargetProcessIdentifier: pid_t?,
-        executionTime: TimeInterval,
-        invalidatedSnapshotId: String?) -> ToolResponse
+        execution: ClickResponseExecution) throws -> ToolResponse
     {
         var message = "\(AgentDisplayTokens.Status.success) \(intent.displayVerb)"
         if let element = resolution.elementDescription {
             message += " on \(element)"
         }
         message += " at (\(Int(resolution.location.x)), \(Int(resolution.location.y)))"
-        message += " in \(String(format: "%.2f", executionTime))s"
+        message += " in \(String(format: "%.2f", execution.executionTime))s"
 
-        let routedPointerEffectIsUnverifiable = effectiveTargetProcessIdentifier != nil &&
-            (intent.automationType == .right || intent.automationType == .double)
-        if routedPointerEffectIsUnverifiable {
+        if execution.outcome?.effect == .unverifiable {
             message += "; routed events were dispatched, but the application effect is unverifiable"
         }
 
@@ -385,18 +414,14 @@ public struct ClickTool: MCPTool {
                 "x": .double(Double(resolution.location.x)),
                 "y": .double(Double(resolution.location.y)),
             ]),
-            "execution_time": .double(executionTime),
+            "execution_time": .double(execution.executionTime),
             "clicked_element": resolution.elementDescription.map(Value.string) ?? .null,
-            "delivery_mode": .string(effectiveTargetProcessIdentifier == nil ? "foreground" : "background"),
-            "verified": routedPointerEffectIsUnverifiable ? .bool(false) : .null,
-            "effect": routedPointerEffectIsUnverifiable ? .string("unverifiable") : .null,
-            "mutation_dispatched": .bool(true),
+            "delivery_mode": .string(execution.targetProcessIdentifier == nil ? "foreground" : "background"),
         ]
-        if let invalidatedSnapshotId {
+        if let invalidatedSnapshotId = execution.invalidatedSnapshotId {
             metaDict["invalidated_snapshot"] = .string(invalidatedSnapshotId)
-            metaDict["requires_fresh_observation"] = .bool(true)
         }
-        if let processId = effectiveTargetProcessIdentifier.map({ Int32($0) }) {
+        if let processId = execution.targetProcessIdentifier.map({ Int32($0) }) {
             metaDict["target_pid"] = .double(Double(processId))
         }
         if let targetWindowID = resolution.targetWindowID {
@@ -419,7 +444,9 @@ public struct ClickTool: MCPTool {
                 x: Double(resolution.location.x),
                 y: Double(resolution.location.y)))
 
-        let metaValue = ToolEventSummary.merge(summary: summary, into: .object(metaDict))
+        let metaValue = try ToolEventSummary.merge(
+            summary: summary,
+            into: MCPToolResponseMetadataProjector.metadata(merging: metaDict, outcome: execution.outcome))
 
         return ToolResponse(
             content: [.text(text: message, annotations: nil, _meta: nil)],
@@ -442,7 +469,9 @@ public struct ClickTool: MCPTool {
         let referenceID = request.coordinateReference ?? request.snapshotId
         guard let referenceID else {
             guard request.deliveryMode == .foreground else {
-                throw ClickToolError(Self.backgroundCoordinateReferenceMessage)
+                throw ClickToolError(
+                    Self.backgroundCoordinateReferenceMessage,
+                    refusalReason: .targetUnavailable)
             }
             return ClickResolution(
                 location: point,
@@ -502,14 +531,16 @@ public struct ClickTool: MCPTool {
     {
         guard let snapshot = await self.getSnapshot(id: id) else {
             throw ClickToolError(
-                "Coordinate reference '\(id)' is stale or unavailable. Run see for the exact target window.")
+                "Coordinate reference '\(id)' is stale or unavailable. Run see for the exact target window.",
+                refusalReason: .targetUnavailable)
         }
         guard let coordinateContext = await snapshot.screenshotCoordinateContext,
               coordinateContext.referenceID == id
         else {
             throw ClickToolError(
                 "Snapshot '\(id)' has no matching capture-owned coordinate context. Run see and retry with its " +
-                    "reference_id.")
+                    "reference_id.",
+                refusalReason: .targetUnavailable)
         }
         guard requiresExactWindow else {
             return CapturedCoordinateSnapshot(
@@ -537,7 +568,8 @@ public struct ClickTool: MCPTool {
             let requirement = requiresExactWindow ? "exact PID/window generation and bounds" : "window capture data"
             throw ClickToolError(
                 "Snapshot '\(id)' is not a capture-owned coordinate reference with \(requirement). " +
-                    "Run see for the exact target window and retry with its reference_id.")
+                    "Run see for the exact target window and retry with its reference_id.",
+                refusalReason: .targetUnavailable)
         }
         return CapturedCoordinateSnapshot(
             snapshot: snapshot,
@@ -562,7 +594,8 @@ public struct ClickTool: MCPTool {
               })
         else {
             throw ClickToolError(
-                "Coordinate reference is stale because its captured window moved, disappeared, or changed owner.")
+                "Coordinate reference is stale because its captured window moved, disappeared, or changed owner.",
+                refusalReason: .targetUnavailable)
         }
     }
 
@@ -579,7 +612,9 @@ public struct ClickTool: MCPTool {
               expectedIdentity.ownerProcessIdentifier == targetProcessIdentifier,
               expectedBounds.contains(resolution.location)
         else {
-            throw ClickToolError(Self.backgroundCoordinateReferenceMessage)
+            throw ClickToolError(
+                Self.backgroundCoordinateReferenceMessage,
+                refusalReason: .targetUnavailable)
         }
 
         let matches = try await self.context.windows.listWindows(target: .windowId(targetWindowID))
@@ -591,17 +626,16 @@ public struct ClickTool: MCPTool {
         else {
             throw ClickToolError(
                 "Background coordinate reference '\(snapshotId)' is stale: its exact window moved, " +
-                    "disappeared, changed owner, or changed process generation. Run see again before clicking.")
+                    "disappeared, changed owner, or changed process generation. Run see again before clicking.",
+                refusalReason: .targetUnavailable)
         }
     }
 
-    private static func preDispatchErrorResponse(_ error: ClickToolError) -> ToolResponse {
-        ToolResponse.error(
+    private static func preDispatchErrorResponse(_ error: ClickToolError) throws -> ToolResponse {
+        let outcome = DesktopActionOutcome.refused(reason: error.refusalReason)
+        return try ToolResponse.error(
             error.message,
-            meta: .object([
-                "mutation_dispatched": .bool(false),
-                "retry_safe": .bool(true),
-            ]))
+            meta: .object(MCPToolResponseMetadataProjector.fields(for: outcome.projection)))
     }
 
     fileprivate static let backgroundCoordinateReferenceMessage =
@@ -610,7 +644,9 @@ public struct ClickTool: MCPTool {
 
     private func requireSnapshot(id: String?) async throws -> UISnapshot {
         guard let snapshot = await self.getSnapshot(id: id) else {
-            throw ClickToolError("No active snapshot. Run 'see' or 'inspect_ui' first to capture UI state.")
+            throw ClickToolError(
+                "No active snapshot. Run 'see' or 'inspect_ui' first to capture UI state.",
+                refusalReason: .targetUnavailable)
         }
         return snapshot
     }
@@ -618,7 +654,8 @@ public struct ClickTool: MCPTool {
     private func requireElement(id: String, snapshot: UISnapshot) async throws -> UIElement {
         guard let element = await snapshot.getElement(byId: id) else {
             throw ClickToolError(
-                "Element '\(id)' not found in current snapshot. Run 'see' or 'inspect_ui' to update UI state.")
+                "Element '\(id)' not found in current snapshot. Run 'see' or 'inspect_ui' to update UI state.",
+                refusalReason: .targetUnavailable)
         }
         guard !element.isOCRSemanticEvidence else {
             throw ClickToolError(OCRSemanticEvidencePolicy.interactionRefusalMessage)
@@ -636,7 +673,9 @@ public struct ClickTool: MCPTool {
         }
 
         guard !matches.isEmpty else {
-            throw ClickToolError("No elements found matching query: '\(query)'")
+            throw ClickToolError(
+                "No elements found matching query: '\(query)'",
+                refusalReason: .targetUnavailable)
         }
 
         guard let match = SnapshotElementQuerySelector.preferred(in: matches) else {
@@ -726,7 +765,9 @@ private struct ClickRequest {
            snapshotId == nil,
            coordinateReference == nil
         {
-            throw ClickToolError(ClickTool.backgroundCoordinateReferenceMessage)
+            throw ClickToolError(
+                ClickTool.backgroundCoordinateReferenceMessage,
+                refusalReason: .targetUnavailable)
         }
     }
 
@@ -801,6 +842,13 @@ private struct ClickResolution {
     }
 }
 
+private struct ClickResponseExecution {
+    let targetProcessIdentifier: pid_t?
+    let executionTime: TimeInterval
+    let invalidatedSnapshotId: String?
+    let outcome: DesktopActionOutcome?
+}
+
 private struct CapturedCoordinateSnapshot {
     let snapshot: UISnapshot
     let coordinateContext: CaptureCoordinateContext
@@ -829,8 +877,14 @@ private struct ClickIntent {
 
 private struct ClickToolError: Error {
     let message: String
-    init(_ message: String) {
+    let refusalReason: DesktopActionOutcome.RefusalReason
+
+    init(
+        _ message: String,
+        refusalReason: DesktopActionOutcome.RefusalReason = .invalidRequest)
+    {
         self.message = message
+        self.refusalReason = refusalReason
     }
 }
 

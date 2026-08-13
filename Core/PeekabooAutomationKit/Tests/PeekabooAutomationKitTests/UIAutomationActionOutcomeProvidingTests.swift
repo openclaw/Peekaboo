@@ -5,6 +5,7 @@ import enum AXorcist.SpecialKey
 import CoreGraphics
 import Foundation
 import PeekabooAutomationKitTestSupport
+import struct PeekabooFoundation.DesktopActionFailure
 import struct PeekabooFoundation.DesktopActionOutcome
 import enum PeekabooFoundation.ScrollDirection
 import enum PeekabooFoundation.TypeAction
@@ -36,6 +37,26 @@ struct UIAutomationActionOutcomeProvidingTests {
         let legacy = UIAutomationActionResult(payload: "legacy", outcome: nil)
         #expect(legacy.payload == "legacy")
         #expect(legacy.outcome == nil)
+    }
+
+    @Test
+    func `indeterminate delivery error owns canonical failure reconstruction`() {
+        let error = InputDeliveryIndeterminateError(
+            operation: .type,
+            emittedUnitCount: 2,
+            causeDescription: "destination changed")
+        let delivery = DesktopActionOutcome.Delivery(
+            mechanism: .processTargetedEvents,
+            mode: .background)
+
+        let failure: DesktopActionFailure = error.desktopActionFailure(delivery: delivery)
+
+        #expect(failure.outcome.state == .indeterminate)
+        #expect(failure.outcome.delivery == delivery)
+        #expect(failure.outcome.dispatchState.unitCount?.rawValue == 2)
+        #expect(failure.outcome.retrySafety == .unsafe)
+        #expect(failure.outcome.escalation == .observeBeforeRetry)
+        #expect(failure.message == error.localizedDescription)
     }
 
     @Test

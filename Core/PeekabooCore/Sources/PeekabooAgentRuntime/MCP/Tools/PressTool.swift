@@ -2,6 +2,7 @@ import Foundation
 import MCP
 import os.log
 import PeekabooAutomation
+import PeekabooAutomationKit
 import PeekabooFoundation
 import TachikomaMCP
 
@@ -82,6 +83,9 @@ public struct PressTool: MCPTool {
 
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
+        var targetFocusCompleted = false
+        var emittedHotkeyUnits: Int?
+        var hotkeyDeliveryKnown = false
         do {
             let chords = try Self.parseChords(arguments: arguments)
             let count = try arguments.validatedInt("count") ?? 1
@@ -105,17 +109,28 @@ public struct PressTool: MCPTool {
                 windowIndex: arguments.validatedInt("window_index"),
                 windowId: arguments.validatedInt("window_id"))
             guard foreground else {
-                return Self.foregroundConsentRefusal()
+                return try Self.foregroundConsentRefusal()
             }
             let resolvedWindowTitle = try await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
-            _ = try await target.focusIfRequested(windows: self.context.windows, onlyWhenTargeted: true)
+            targetFocusCompleted = try await target.focusIfRequested(
+                windows: self.context.windows,
+                onlyWhenTargeted: true) != nil
 
             let startTime = Date()
             var completed = 0
+            var singleOutcome: DesktopActionOutcome?
             do {
                 for repetition in 0..<count {
                     for (index, chord) in chords.enumerated() {
-                        try await self.context.automation.hotkey(keys: chord.serviceKeys, holdDuration: hold)
+                        if let outcomeAutomation = self.context.automation as? any UIAutomationActionOutcomeProviding {
+                            let result = try await outcomeAutomation.hotkeyWithOutcome(
+                                keys: chord.serviceKeys,
+                                holdDuration: hold)
+                            singleOutcome = completed == 0 ? result.outcome : nil
+                        } else {
+                            try await self.context.automation.hotkey(keys: chord.serviceKeys, holdDuration: hold)
+                            singleOutcome = nil
+                        }
                         completed += 1
                         let isLast = repetition == count - 1 && index == chords.count - 1
                         if delay > 0, !isLast {
@@ -123,26 +138,42 @@ public struct PressTool: MCPTool {
                         }
                     }
                 }
+            } catch let failure as DesktopActionFailure {
+                throw Self.aggregateSequenceFailure(
+                    failure,
+                    completedPresses: completed,
+                    setupFocusCompleted: targetFocusCompleted)
             } catch let error as InputDeliveryIndeterminateError {
-                let cumulativeCount = error.emittedUnitCount.map { completed + $0 }
+                hotkeyDeliveryKnown = true
+                let completedAndLeafUnits = completed + (error.emittedUnitCount ?? 0)
+                emittedHotkeyUnits = completedAndLeafUnits > 0 ? completedAndLeafUnits : nil
+                let cumulativeCount = emittedHotkeyUnits.map { $0 + (targetFocusCompleted ? 1 : 0) }
+                    ?? (targetFocusCompleted ? 1 : nil)
                 throw InputDeliveryIndeterminateError(
                     operation: .hotkey,
                     emittedUnitCount: cumulativeCount,
                     causeDescription: error.causeDescription)
             } catch {
-                guard completed > 0 else { throw error }
+                guard completed > 0 || targetFocusCompleted else { throw error }
+                hotkeyDeliveryKnown = completed > 0
+                emittedHotkeyUnits = completed > 0 ? completed : nil
                 throw InputDeliveryIndeterminateError(
                     operation: .hotkey,
-                    emittedUnitCount: completed,
+                    emittedUnitCount: completed + (targetFocusCompleted ? 1 : 0),
                     causeDescription: error.localizedDescription)
             }
 
             let display = chords.map(\.displayValue)
             let elapsed = Date().timeIntervalSince(startTime)
-            let message = "\(AgentDisplayTokens.Status.success) Dispatched \(display.joined(separator: " → ")) " +
-                "(\(completed) raw chord\(completed == 1 ? "" : "s")); effect is unverifiable. " +
-                "Observe before continuing. Completed in \(String(format: "%.2f", elapsed))s"
-            let meta: Value = .object([
+            // A sequence has no canonical aggregate contract. Publishing its last leaf receipt would erase
+            // earlier states, so preserve the shipped safety fields until Foundation owns batch composition.
+            let outcome = completed == 1 && !targetFocusCompleted ? singleOutcome : nil
+            let message = Self.responseMessage(
+                display: display,
+                completed: completed,
+                elapsed: elapsed,
+                outcome: outcome)
+            var baseMeta: [String: Value] = [
                 "keys": .array(display.map(Value.string)),
                 "count": .int(count),
                 "delay": .int(delay),
@@ -150,30 +181,40 @@ public struct PressTool: MCPTool {
                 "total_presses": .int(completed),
                 "delivery_mode": .string("foreground"),
                 "target_pid": .null,
-                "effect": .string("unverifiable"),
-                "mutation_dispatched": .bool(true),
-                "retry_safe": .bool(false),
-                "requires_fresh_observation": .bool(true),
                 "execution_time": .double(elapsed),
-            ])
+            ]
+            if completed > 1 || targetFocusCompleted {
+                baseMeta["effect"] = .string("unverifiable")
+                baseMeta["mutation_dispatched"] = .bool(true)
+                baseMeta["retry_safe"] = .bool(false)
+                baseMeta["requires_fresh_observation"] = .bool(true)
+            }
             let summary = ToolEventSummary(
                 targetApp: target.appIdentifier,
                 windowTitle: resolvedWindowTitle,
                 actionDescription: "Press",
                 waitDurationMs: Double(hold),
                 notes: display.joined(separator: " → "))
+            let meta = try MCPToolResponseMetadataProjector.metadata(merging: baseMeta, outcome: outcome)
             return ToolResponse.text(message, meta: ToolEventSummary.merge(summary: summary, into: meta))
         } catch let error as MCPInteractionTargetError {
             return ToolResponse.error(error.localizedDescription)
+        } catch let failure as DesktopActionFailure {
+            return try await MCPDesktopActionFailureHandler.response(
+                for: failure,
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: nil)
         } catch let error as InputDeliveryIndeterminateError {
-            return ToolResponse.error(
-                error.localizedDescription,
-                meta: .object([
-                    "mutation_dispatched": .bool(true),
-                    "retry_safe": .bool(false),
-                    "requires_fresh_observation": .bool(true),
-                    "emitted_units": error.emittedUnitCount.map(Value.int) ?? .null,
-                ]))
+            let delivery: DesktopActionOutcome.Delivery? = hotkeyDeliveryKnown
+                ? .init(mechanism: .globalEvents, mode: .foreground)
+                : nil
+            return try await MCPDesktopActionFailureHandler.response(
+                for: error.desktopActionFailure(delivery: delivery),
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: nil,
+                additionalFields: [
+                    "emitted_units": emittedHotkeyUnits.map(Value.int) ?? .null,
+                ])
         } catch {
             self.logger.error("Press execution failed: \(error.localizedDescription)")
             return ToolResponse.error(error.localizedDescription)
@@ -200,18 +241,84 @@ public struct PressTool: MCPTool {
         return try [KeyboardChord(parsing: (modifiers + [key]).joined(separator: "+"))]
     }
 
-    private static func foregroundConsentRefusal() -> ToolResponse {
+    private static func responseMessage(
+        display: [String],
+        completed: Int,
+        elapsed: TimeInterval,
+        outcome: DesktopActionOutcome?) -> String
+    {
+        let sequence = display.joined(separator: " → ")
+        let duration = String(format: "%.2f", elapsed)
+        guard completed == 1, let outcome else {
+            return "\(AgentDisplayTokens.Status.success) Dispatched \(sequence) " +
+                "(\(completed) raw chord\(completed == 1 ? "" : "s")); effect is unverifiable. " +
+                "Observe before continuing. Completed in \(duration)s"
+        }
+        return switch outcome.state {
+        case .confirmedChange:
+            "\(AgentDisplayTokens.Status.success) Completed \(sequence); effect confirmed in \(duration)s"
+        case .confirmedNoChange:
+            "\(AgentDisplayTokens.Status.success) Completed \(sequence); confirmed no change in \(duration)s"
+        case .partial:
+            "\(AgentDisplayTokens.Status.warning) Completed \(sequence) with a partial effect in \(duration)s"
+        case .dispatchedUnverified:
+            "\(AgentDisplayTokens.Status.warning) Dispatched \(sequence); effect is unverifiable. " +
+                "Observe before continuing. Completed in \(duration)s"
+        case .suspectedNoop:
+            "\(AgentDisplayTokens.Status.warning) Dispatched \(sequence), but no change was observed. " +
+                "Refresh the target before retrying. Completed in \(duration)s"
+        case .refused:
+            "\(AgentDisplayTokens.Status.failure) \(sequence) was refused before dispatch in \(duration)s"
+        case .indeterminate:
+            "\(AgentDisplayTokens.Status.warning) \(sequence) has an indeterminate outcome. " +
+                "Observe before continuing. Completed in \(duration)s"
+        }
+    }
+
+    static func aggregateSequenceFailure(
+        _ failure: DesktopActionFailure,
+        completedPresses: Int,
+        setupFocusCompleted: Bool) -> DesktopActionFailure
+    {
+        let completedUnits = completedPresses + (setupFocusCompleted ? 1 : 0)
+        guard completedUnits > 0 else { return failure }
+        let failedUnits = failure.outcome.dispatchState.unitCount?.rawValue
+            ?? (failure.outcome.dispatchState.mutationDispatched ? 1 : 0)
+        let unitCount = DesktopActionOutcome.DispatchUnitCount(completedUnits + failedUnits)
+        let delivery: DesktopActionOutcome.Delivery? = if completedPresses > 0 ||
+            failure.outcome.dispatchState.mutationDispatched
+        {
+            .init(mechanism: .globalEvents, mode: .foreground)
+        } else {
+            nil
+        }
+        if failure.outcome.state == .partial {
+            guard let delivery else { return failure }
+            return .partial(
+                route: failure.outcome.route,
+                delivery: delivery,
+                unitCount: unitCount,
+                message: failure.message,
+                hint: failure.hint,
+                causeDescription: failure.causeDescription)
+        }
+        return .indeterminate(
+            route: failure.outcome.route,
+            delivery: delivery,
+            evidence: .completionUnknown,
+            unitCount: unitCount,
+            message: "Press sequence stopped after \(completedUnits) completed setup/action unit(s).",
+            hint: "Observe the target before deciding whether to continue the sequence.",
+            causeDescription: failure.localizedDescription)
+    }
+
+    private static func foregroundConsentRefusal() throws -> ToolResponse {
         let outcome = RawPressPolicy.foregroundConsentRefusal
+        var meta = try MCPToolResponseMetadataProjector.fields(for: outcome.projection)
+        meta["code"] = .string(RawPressPolicy.errorCode.rawValue)
+        meta["hint"] = .string(RawPressPolicy.foregroundConsentRequiredHint)
         return ToolResponse.error(
             RawPressPolicy.foregroundConsentRequiredMessage,
-            meta: .object([
-                "code": .string(RawPressPolicy.errorCode.rawValue),
-                "effect": .string(outcome.effect.rawValue),
-                "mutation_dispatched": .bool(outcome.dispatchState.mutationDispatched),
-                "retry_safe": .bool(outcome.retrySafety == .safe),
-                "escalation": .string(outcome.escalation.rawValue),
-                "refusal_reason": .string(outcome.refusalReason?.rawValue ?? "foreground_consent_required"),
-                "hint": .string(RawPressPolicy.foregroundConsentRequiredHint),
-            ]))
+            meta: .object(meta))
     }
 }

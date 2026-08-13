@@ -95,7 +95,7 @@ extension MCPToolExecutionTests {
         let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
         #expect(preserved != nil)
         #expect(implicitLatest == nil)
-        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
@@ -142,7 +142,7 @@ extension MCPToolExecutionTests {
         let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
         #expect(preserved != nil)
         #expect(implicitLatest == nil)
-        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
@@ -198,6 +198,7 @@ extension MCPToolExecutionTests {
             Issue.record("Expected indeterminate click metadata")
             return
         }
+        #expect(meta["state"] == .string("indeterminate"))
         #expect(meta["mutation_dispatched"] == .bool(true))
         #expect(meta["retry_safe"] == .bool(false))
         #expect(meta["invalidated_snapshot"] == .string(snapshotId))
@@ -516,7 +517,7 @@ extension MCPToolExecutionTests {
     }
 
     @Test
-    func `Click tool reports routed background double click as unverifiable`() async throws {
+    func `Click tool does not invent a routed double click outcome for a legacy service`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
@@ -560,13 +561,13 @@ extension MCPToolExecutionTests {
             Issue.record("Expected routed click metadata")
             return
         }
-        #expect(meta["verified"] == .bool(false))
-        #expect(meta["effect"] == .string("unverifiable"))
+        #expect(meta["verified"] == nil)
+        #expect(meta["effect"] == nil)
         guard case let .text(text, annotations: _, _meta: _) = response.content.first else {
             Issue.record("Expected routed click text response")
             return
         }
-        #expect(text.contains("effect is unverifiable"))
+        #expect(!text.contains("effect is unverifiable"))
     }
 
     @Test
@@ -618,7 +619,7 @@ extension MCPToolExecutionTests {
         #expect(explicitHistory != nil)
         #expect(latestHistory != nil)
         #expect(implicitLatest == nil)
-        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
@@ -981,7 +982,7 @@ extension MCPToolExecutionTests {
         let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
         #expect(preserved != nil)
         #expect(implicitLatest == nil)
-        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
@@ -1011,7 +1012,7 @@ extension MCPToolExecutionTests {
         #expect(explicitHistory != nil)
         #expect(latestHistory != nil)
         #expect(implicitLatest == nil)
-        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
@@ -1036,7 +1037,7 @@ extension MCPToolExecutionTests {
         let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
         #expect(preserved != nil)
         #expect(implicitLatest == nil)
-        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
@@ -1066,7 +1067,7 @@ extension MCPToolExecutionTests {
         #expect(explicitHistory != nil)
         #expect(latestHistory != nil)
         #expect(implicitLatest == nil)
-        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 

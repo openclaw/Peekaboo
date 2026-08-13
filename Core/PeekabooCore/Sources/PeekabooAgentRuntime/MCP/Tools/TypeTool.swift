@@ -2,6 +2,7 @@ import Foundation
 import MCP
 import os.log
 import PeekabooAutomation
+import PeekabooAutomationKit
 import PeekabooFoundation
 import TachikomaMCP
 
@@ -74,21 +75,19 @@ public struct TypeTool: MCPTool {
             return ToolResponse.error(error.message)
         } catch let error as MCPInteractionTargetError {
             return ToolResponse.error(error.localizedDescription)
+        } catch let failure as DesktopActionFailure {
+            return try await MCPDesktopActionFailureHandler.response(
+                for: failure,
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: mutationTracker.snapshotId)
         } catch let error as InputDeliveryIndeterminateError {
-            let invalidatedSnapshotId = await self.context.uiSnapshots
-                .invalidateActiveSnapshot(id: mutationTracker.snapshotId)
-            var meta: [String: Value] = [
-                "mutation_dispatched": .bool(true),
-                "retry_safe": .bool(false),
-                "requires_fresh_observation": .bool(true),
-                "characters_typed": error.emittedUnitCount.map(Value.int) ?? .null,
-            ]
-            if let invalidatedSnapshotId {
-                meta["invalidated_snapshot"] = .string(invalidatedSnapshotId)
-            }
-            return ToolResponse.error(
-                error.localizedDescription,
-                meta: .object(meta))
+            return try await MCPDesktopActionFailureHandler.response(
+                for: error.desktopActionFailure(delivery: mutationTracker.delivery),
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: mutationTracker.snapshotId,
+                additionalFields: [
+                    "characters_typed": mutationTracker.charactersTyped.map(Value.int) ?? .null,
+                ])
         } catch {
             self.logger.error("Type execution failed: \(error)")
             return ToolResponse.error("Failed to type text: \(error.localizedDescription)")
@@ -166,46 +165,62 @@ public struct TypeTool: MCPTool {
         let effectiveSnapshotId = snapshotContext?.id
         mutationTracker.snapshotId = effectiveSnapshotId
 
-        let elementFocusClickCompleted: Bool
+        let focusResult: TypeFocusResult
         do {
-            elementFocusClickCompleted = try await self.focusIfNeeded(
+            focusResult = try await self.focusIfNeeded(
                 targetContext: targetContext,
                 request: request,
                 automation: automation,
                 targetProcessIdentity: targetProcessIdentity)
-        } catch let error as InputDeliveryIndeterminateError {
-            throw InputDeliveryIndeterminateError(
-                operation: .type,
-                causeDescription: error.causeDescription ?? error.localizedDescription)
-        }
-
-        let typeResult: TypeResult
-        do {
-            if elementFocusClickCompleted {
-                try await Task.sleep(nanoseconds: 100_000_000)
-            }
-            if let targetProcessIdentity {
-                typeResult = try await self.performBackgroundType(
-                    actions: actions,
-                    cadence: request.cadence,
-                    snapshotId: effectiveSnapshotId,
-                    expectedProcessIdentity: targetProcessIdentity,
-                    automation: automation)
-            } else {
-                typeResult = try await automation.typeActions(
-                    actions,
-                    cadence: request.cadence,
-                    snapshotId: effectiveSnapshotId)
-            }
+        } catch let failure as DesktopActionFailure {
+            throw failure
         } catch let error as InputDeliveryIndeterminateError {
             throw InputDeliveryIndeterminateError(
                 operation: .type,
                 emittedUnitCount: error.emittedUnitCount,
                 causeDescription: error.causeDescription ?? error.localizedDescription)
+        }
+
+        let typeActionResult: UIAutomationActionResult<TypeResult>
+        do {
+            if focusResult.completed {
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            if let targetProcessIdentity {
+                typeActionResult = try await self.performBackgroundType(
+                    request: BackgroundTypeRequest(
+                        actions: actions,
+                        cadence: request.cadence,
+                        snapshotId: effectiveSnapshotId,
+                        expectedProcessIdentity: targetProcessIdentity),
+                    automation: automation,
+                    mutationTracker: mutationTracker)
+            } else {
+                mutationTracker.delivery = .init(mechanism: .globalEvents, mode: .foreground)
+                if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
+                    typeActionResult = try await outcomeAutomation.typeActionsWithOutcome(
+                        actions,
+                        cadence: request.cadence,
+                        snapshotId: effectiveSnapshotId)
+                } else {
+                    typeActionResult = try await UIAutomationActionResult(
+                        payload: automation.typeActions(
+                            actions,
+                            cadence: request.cadence,
+                            snapshotId: effectiveSnapshotId),
+                        outcome: nil)
+                }
+            }
+        } catch let failure as DesktopActionFailure {
+            throw Self.aggregateTypingFailure(failure, after: focusResult)
+        } catch let error as InputDeliveryIndeterminateError {
+            mutationTracker.charactersTyped = error.emittedUnitCount
+            throw Self.aggregateIndeterminateTypingError(error, after: focusResult)
         } catch {
-            guard elementFocusClickCompleted else { throw error }
+            guard focusResult.completed else { throw error }
             throw InputDeliveryIndeterminateError(
                 operation: .type,
+                emittedUnitCount: focusResult.dispatchedUnitCount,
                 causeDescription: error.localizedDescription)
         }
 
@@ -214,10 +229,10 @@ public struct TypeTool: MCPTool {
         let message = self.buildSummary(
             request: request,
             executionTime: executionTime,
-            result: typeResult)
+            result: typeActionResult.payload)
         var baseMetaDict: [String: Value] = [
             "execution_time": .double(executionTime),
-            "characters_typed": .double(Double(typeResult.totalCharacters)),
+            "characters_typed": .double(Double(typeActionResult.payload.totalCharacters)),
             "delivery_mode": .string(targetProcessIdentifier == nil ? "foreground" : "background"),
         ]
         if let targetProcessIdentifier {
@@ -225,13 +240,26 @@ public struct TypeTool: MCPTool {
         }
         if let invalidatedSnapshotId {
             baseMetaDict["invalidated_snapshot"] = .string(invalidatedSnapshotId)
-            baseMetaDict["requires_fresh_observation"] = .bool(true)
         }
-        let baseMeta: Value = .object(baseMetaDict)
+        let responseOutcome: DesktopActionOutcome?
+        if focusResult.completed {
+            responseOutcome = nil
+            if focusResult.dispatchedUnitCount > 0 ||
+                typeActionResult.outcome?.dispatchState.mutationDispatched == true
+            {
+                baseMetaDict["requires_fresh_observation"] = .bool(true)
+            }
+        } else {
+            responseOutcome = typeActionResult.outcome
+        }
         let summary = self.buildEventSummary(
             request: request,
             targetContext: targetContext)
-        let mergedMeta = ToolEventSummary.merge(summary: summary, into: baseMeta)
+        let mergedMeta = try ToolEventSummary.merge(
+            summary: summary,
+            into: MCPToolResponseMetadataProjector.metadata(
+                merging: baseMetaDict,
+                outcome: responseOutcome))
 
         return ToolResponse(
             content: [.text(text: message, annotations: nil, _meta: nil)],
@@ -243,15 +271,16 @@ public struct TypeTool: MCPTool {
         targetContext: TargetElementContext?,
         request: TypeRequest,
         automation: any UIAutomationServiceProtocol,
-        targetProcessIdentity: ApplicationProcessIdentity?) async throws -> Bool
+        targetProcessIdentity: ApplicationProcessIdentity?) async throws -> TypeFocusResult
     {
         guard let context = targetContext else {
             if targetProcessIdentity == nil {
-                _ = try await request.target.focusIfRequested(
+                let focusedTarget = try await request.target.focusIfRequested(
                     windows: self.context.windows,
                     onlyWhenTargeted: true)
+                return focusedTarget == nil ? .none : .completed(outcome: nil)
             }
-            return false
+            return .none
         }
 
         let element = context.element
@@ -262,18 +291,90 @@ public struct TypeTool: MCPTool {
             else {
                 throw TypeToolValidationError("This automation host does not support background element focus.")
             }
-            try await automation.click(
+            if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
+                let result = try await outcomeAutomation.clickWithOutcome(
+                    target: .elementId(element.id),
+                    clickType: .single,
+                    snapshotId: context.snapshot.id,
+                    expectedProcessIdentity: targetProcessIdentity)
+                try Self.requireConfirmedFocus(result.outcome)
+                return .completed(outcome: result.outcome)
+            } else {
+                try await automation.click(
+                    target: .elementId(element.id),
+                    clickType: .single,
+                    snapshotId: context.snapshot.id,
+                    expectedProcessIdentity: targetProcessIdentity)
+                return .completed(outcome: nil)
+            }
+        } else if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
+            let result = try await outcomeAutomation.clickWithOutcome(
                 target: .elementId(element.id),
                 clickType: .single,
-                snapshotId: context.snapshot.id,
-                expectedProcessIdentity: targetProcessIdentity)
+                snapshotId: context.snapshot.id)
+            try Self.requireConfirmedFocus(result.outcome)
+            return .completed(outcome: result.outcome)
         } else {
             try await automation.click(
                 target: .elementId(element.id),
                 clickType: .single,
                 snapshotId: context.snapshot.id)
+            return .completed(outcome: nil)
         }
-        return true
+    }
+
+    private static func requireConfirmedFocus(_ outcome: DesktopActionOutcome?) throws {
+        guard let outcome, !outcome.isConfirmed else { return }
+        guard let failure = DesktopActionFailure(
+            outcome: outcome,
+            message: "The element focus action was not confirmed.",
+            hint: "Observe the target before deciding whether to retry typing.")
+        else { return }
+        throw failure
+    }
+
+    static func aggregateTypingFailure(
+        _ failure: DesktopActionFailure,
+        after focusResult: TypeFocusResult) -> DesktopActionFailure
+    {
+        let focusUnits = focusResult.dispatchedUnitCount
+        guard focusUnits > 0 else { return failure }
+        let leafUnits = failure.outcome.dispatchState.unitCount?.rawValue
+            ?? (failure.outcome.dispatchState.mutationDispatched ? 1 : 0)
+        let unitCount = DesktopActionOutcome.DispatchUnitCount(focusUnits + leafUnits)
+        if failure.outcome.state == .partial, let delivery = failure.outcome.delivery {
+            return .partial(
+                route: failure.outcome.route,
+                delivery: delivery,
+                unitCount: unitCount,
+                message: failure.message,
+                hint: failure.hint,
+                causeDescription: failure.causeDescription)
+        }
+        return .indeterminate(
+            route: failure.outcome.route,
+            delivery: nil,
+            evidence: .completionUnknown,
+            unitCount: unitCount,
+            message: "Typing failed after its element focus action completed.",
+            hint: "Observe the target before deciding whether to retry typing.",
+            causeDescription: failure.localizedDescription)
+    }
+
+    private static func aggregateIndeterminateTypingError(
+        _ error: InputDeliveryIndeterminateError,
+        after focusResult: TypeFocusResult) -> InputDeliveryIndeterminateError
+    {
+        let focusUnits = focusResult.dispatchedUnitCount
+        let emittedUnitCount = if focusUnits > 0 {
+            focusUnits + (error.emittedUnitCount ?? 0)
+        } else {
+            error.emittedUnitCount
+        }
+        return InputDeliveryIndeterminateError(
+            operation: .type,
+            emittedUnitCount: emittedUnitCount,
+            causeDescription: error.causeDescription ?? error.localizedDescription)
     }
 
     private func backgroundProcessIdentity(
@@ -313,11 +414,9 @@ public struct TypeTool: MCPTool {
 
     @MainActor
     private func performBackgroundType(
-        actions: [TypeAction],
-        cadence: TypingCadence,
-        snapshotId: String?,
-        expectedProcessIdentity: ApplicationProcessIdentity,
-        automation: any UIAutomationServiceProtocol) async throws -> TypeResult
+        request: BackgroundTypeRequest,
+        automation: any UIAutomationServiceProtocol,
+        mutationTracker: TypeMutationTracker) async throws -> UIAutomationActionResult<TypeResult>
     {
         guard let automation = automation as? any TargetedTypeServiceProtocol,
               automation.supportsTargetedTypeActions,
@@ -325,11 +424,21 @@ public struct TypeTool: MCPTool {
         else {
             throw TypeToolValidationError("This automation host does not support background typing.")
         }
-        return try await automation.typeActions(
-            actions,
-            cadence: cadence,
-            snapshotId: snapshotId,
-            expectedProcessIdentity: expectedProcessIdentity)
+        mutationTracker.delivery = .init(mechanism: .processTargetedEvents, mode: .background)
+        if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
+            return try await outcomeAutomation.typeActionsWithOutcome(
+                request.actions,
+                cadence: request.cadence,
+                snapshotId: request.snapshotId,
+                expectedProcessIdentity: request.expectedProcessIdentity)
+        }
+        return try await UIAutomationActionResult(
+            payload: automation.typeActions(
+                request.actions,
+                cadence: request.cadence,
+                snapshotId: request.snapshotId,
+                expectedProcessIdentity: request.expectedProcessIdentity),
+            outcome: nil)
     }
 
     private func snapshotProcessIdentity(_ snapshot: UISnapshot?) async throws -> ApplicationProcessIdentity? {
@@ -384,4 +493,31 @@ public struct TypeTool: MCPTool {
 @MainActor
 private final class TypeMutationTracker {
     var snapshotId: String?
+    var delivery: DesktopActionOutcome.Delivery?
+    var charactersTyped: Int?
+}
+
+struct TypeFocusResult {
+    let completed: Bool
+    let outcome: DesktopActionOutcome?
+
+    static let none = Self(completed: false, outcome: nil)
+
+    static func completed(outcome: DesktopActionOutcome?) -> Self {
+        Self(completed: true, outcome: outcome)
+    }
+
+    var dispatchedUnitCount: Int {
+        guard self.completed else { return 0 }
+        guard let outcome else { return 1 }
+        guard outcome.dispatchState.mutationDispatched else { return 0 }
+        return outcome.dispatchState.unitCount?.rawValue ?? 1
+    }
+}
+
+private struct BackgroundTypeRequest {
+    let actions: [TypeAction]
+    let cadence: TypingCadence
+    let snapshotId: String?
+    let expectedProcessIdentity: ApplicationProcessIdentity
 }

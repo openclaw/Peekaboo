@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooFoundation
 
 /// Reports that input dispatch began, but Peekaboo could not prove the final delivery destination.
 /// Retrying this operation could duplicate input or invoke the same command twice.
@@ -37,5 +38,18 @@ public struct InputDeliveryIndeterminateError: LocalizedError, Sendable {
         let cause = self.causeDescription.map { " Delivery detail: \($0)" } ?? ""
         return "\(self.operation.rawValue.capitalized) outcome is indeterminate: input may have been delivered; " +
             "do not retry blindly." + emittedUnits + cause + " Observe the target before taking another action."
+    }
+
+    /// Reconstructs the canonical failure where the indeterminate delivery evidence is owned.
+    public func desktopActionFailure(
+        delivery: DesktopActionOutcome.Delivery?,
+        route: DesktopActionOutcome.Route = .local) -> DesktopActionFailure
+    {
+        DesktopActionFailure.indeterminate(
+            route: route,
+            delivery: delivery,
+            evidence: .completionUnknown,
+            unitCount: self.emittedUnitCount.flatMap { DesktopActionOutcome.DispatchUnitCount($0) },
+            message: self.localizedDescription)
     }
 }
