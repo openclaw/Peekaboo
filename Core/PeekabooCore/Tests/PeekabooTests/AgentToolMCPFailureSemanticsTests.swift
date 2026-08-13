@@ -1,7 +1,7 @@
 import Foundation
 import MCP
-import PeekabooBridgeTestSupport
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Tachikoma
 import TachikomaMCP
 import Testing
@@ -12,7 +12,7 @@ import Testing
 struct AgentToolMCPFailureSemanticsTests {
     @Test
     func `Canonical outcomes drive custom tool trace classification without reconstruction`() throws {
-        for (index, outcome) in BridgeTestFixtures.canonicalActionOutcomes.enumerated() {
+        for (index, outcome) in DesktopActionOutcomeFixtures.canonicalOutcomes.enumerated() {
             let value = try Value(outcome.projection).toAnyAgentToolValue()
             let call = AgentToolCall(id: "outcome-\(index)", name: "custom_outcome", arguments: [:])
             let result = AgentToolResult.success(toolCallId: call.id, result: value)
@@ -629,7 +629,7 @@ struct AgentToolMCPFailureSemanticsTests {
 
     @Test
     func `Contradictory and oversized canonical metadata fail closed without leaking into trace`() throws {
-        let outcome = try #require(BridgeTestFixtures.canonicalActionOutcomes.first)
+        let outcome = try #require(DesktopActionOutcomeFixtures.canonicalOutcomes.first)
         var contradictory = try #require(try Value(outcome.projection).toAnyAgentToolValue().objectValue)
         contradictory["retry_safe"] = AnyAgentToolValue(bool: true)
         var oversizedFields = try #require(try Self.value(outcome.projection).objectValue)
