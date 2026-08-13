@@ -12,6 +12,77 @@ protocol ErrorHandlingCommand {
     var jsonOutput: Bool { get }
 }
 
+/// Canonical composition for a multi-call action whose prefix has already dispatched.
+///
+/// Individual commands own their user-facing wording, but they must not independently infer
+/// dispatch counts or downgrade an uncertain leaf into a contradictory retry-safe result.
+enum ActionSequenceFailureComposer {
+    struct IndeterminateContext {
+        let route: DesktopActionOutcome.Route
+        let delivery: DesktopActionOutcome.Delivery
+        let message: String
+        let hint: String
+        let causeDescription: String
+    }
+
+    static func combining(
+        completedUnitCount: Int,
+        leafFailure: DesktopActionFailure,
+        delivery: DesktopActionOutcome.Delivery,
+        message: String,
+        indeterminateHint: String
+    ) -> DesktopActionFailure {
+        let cumulativeCount: DesktopActionOutcome.DispatchUnitCount? = switch leafFailure.outcome.dispatchState {
+        case .none:
+            DesktopActionOutcome.DispatchUnitCount(completedUnitCount)
+        case let .dispatched(unitCount), let .mayHaveDispatched(unitCount):
+            unitCount.flatMap { DesktopActionOutcome.DispatchUnitCount(completedUnitCount + $0.rawValue) }
+        }
+
+        if leafFailure.outcome.state == .partial {
+            return .partial(
+                route: leafFailure.outcome.route,
+                delivery: delivery,
+                unitCount: cumulativeCount,
+                message: message,
+                hint: leafFailure.hint,
+                causeDescription: leafFailure.causeDescription
+            )
+        }
+
+        let evidence: DesktopActionOutcome.IndeterminateEvidence = switch leafFailure.outcome.evidence {
+        case .responseLost:
+            .responseLost
+        default:
+            .completionUnknown
+        }
+        return .indeterminate(
+            route: leafFailure.outcome.route,
+            delivery: delivery,
+            evidence: evidence,
+            unitCount: cumulativeCount,
+            message: message,
+            hint: indeterminateHint,
+            causeDescription: leafFailure.causeDescription
+        )
+    }
+
+    static func indeterminate(
+        knownDispatchedUnitCount: Int?,
+        context: IndeterminateContext
+    ) -> DesktopActionFailure {
+        .indeterminate(
+            route: context.route,
+            delivery: context.delivery,
+            evidence: .completionUnknown,
+            unitCount: knownDispatchedUnitCount.flatMap { DesktopActionOutcome.DispatchUnitCount($0) },
+            message: context.message,
+            hint: context.hint,
+            causeDescription: context.causeDescription
+        )
+    }
+}
+
 extension ErrorHandlingCommand {
     /// Handle errors with appropriate output format
     func handleError(_ error: any Error, customCode: ErrorCode? = nil) {
@@ -54,6 +125,7 @@ extension ErrorHandlingCommand {
                 )
             }
         } else {
+            let actionFailure = error as? DesktopActionFailure
             let errorMessage: String = if let peekabooError = error as? PeekabooError {
                 peekabooError.errorDescription ?? String(describing: error)
             } else if let captureError = error as? CaptureError {
@@ -65,7 +137,14 @@ extension ErrorHandlingCommand {
             } else {
                 error.localizedDescription
             }
-            let hint = (error as? any ResultEnvelopeError)?.envelopeHint.map { " Hint: \($0)" } ?? ""
+            if let actionFailure {
+                fputs(
+                    "\(ActionOutcomeHumanRenderer.statusLine(for: actionFailure.outcome, operation: "Action"))\n",
+                    stderr
+                )
+            }
+            let hint = (actionFailure?.hint ?? (error as? any ResultEnvelopeError)?.envelopeHint)
+                .map { " Hint: \($0)" } ?? ""
             fputs("Error: \(errorMessage)\(hint)\n", stderr)
         }
     }

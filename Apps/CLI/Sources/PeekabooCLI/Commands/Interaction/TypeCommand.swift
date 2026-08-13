@@ -79,7 +79,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             if targetPID == nil {
                 try await self.focusIfNeeded(snapshotId: observation.focusSnapshotId(for: self.target))
             }
-            let typeResult = try await self.executeTypeActions(
+            let actionResult = try await self.executeTypeActions(
                 actions: actions,
                 snapshotId: observation.snapshotId,
                 expectedProcessIdentity: targetIdentity
@@ -89,7 +89,13 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                 logger: self.logger,
                 reason: "type"
             )
-            self.renderResult(typeResult, actions: actions, startTime: startTime, targetProcessIdentifier: targetPID)
+            self.renderResult(
+                actionResult.payload,
+                outcome: actionResult.outcome,
+                actions: actions,
+                startTime: startTime,
+                targetProcessIdentifier: targetPID
+            )
         } catch {
             self.handleError(error)
             throw ExitCode.failure
@@ -166,7 +172,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         actions: [TypeAction],
         snapshotId: String?,
         expectedProcessIdentity: ApplicationProcessIdentity?
-    ) async throws -> TypeResult {
+    ) async throws -> UIAutomationActionResult<TypeResult> {
         let request = TypeActionsRequest(actions: actions, cadence: self.typingCadence, snapshotId: snapshotId)
         if let expectedProcessIdentity {
             return try await AutomationServiceBridge.typeActions(
@@ -192,6 +198,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
 
     private func renderResult(
         _ typeResult: TypeResult,
+        outcome: DesktopActionOutcome?,
         actions: [TypeAction],
         startTime: Date,
         targetProcessIdentifier: pid_t?
@@ -213,8 +220,12 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             targetPID: targetProcessIdentifier.map(Int.init)
         )
 
-        output(result) {
-            print("✅ Typing completed")
+        output(result, outcome: outcome) {
+            if let outcome {
+                print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Typing"))
+            } else {
+                print("✅ Typing completed")
+            }
             if let typed = self.resolvedText {
                 print("⌨️  Typed: \"\(typed)\"")
             }

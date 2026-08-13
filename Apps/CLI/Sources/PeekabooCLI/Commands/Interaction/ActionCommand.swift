@@ -46,9 +46,15 @@ struct ActionCommand: ConfirmedActionOutputFormattable, ErrorHandlingCommand, Ou
                     snapshotId: snapshotId
                 )
             },
-            render: { result, outputPayload, requestedAction in
-                self.output(outputPayload) {
-                    print("✅ Performed \(result.actionName ?? requestedAction) on \(result.target)")
+            render: { result, outcome, outputPayload, requestedAction in
+                self.output(outputPayload, outcome: outcome) {
+                    if let outcome {
+                        print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Action"))
+                        print("🎯 Target: \(result.target)")
+                        print("⚙️  Action: \(result.actionName ?? requestedAction)")
+                    } else {
+                        print("✅ Performed \(result.actionName ?? requestedAction) on \(result.target)")
+                    }
                 }
             },
             handleError: { self.handleError($0) }

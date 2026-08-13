@@ -45,9 +45,14 @@ RuntimeBackedCommand {
                     snapshotId: snapshotId
                 )
             },
-            render: { result, outputPayload, _ in
-                self.output(outputPayload) {
-                    print("✅ Set value on \(result.target)")
+            render: { result, outcome, outputPayload, _ in
+                self.output(outputPayload, outcome: outcome) {
+                    if let outcome {
+                        print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Set value"))
+                        print("🎯 Target: \(result.target)")
+                    } else {
+                        print("✅ Set value on \(result.target)")
+                    }
                     if let newValue = result.newValue {
                         print("📝 New value: \(newValue)")
                     }
@@ -152,8 +157,13 @@ enum ElementActionCommandExecutor {
             _ target: String,
             _ value: Prepared,
             _ snapshotId: String?
-        ) async throws -> ElementActionResult,
-        render: (_ result: ElementActionResult, _ output: ElementActionCommandResult, _ value: Prepared) -> Void,
+        ) async throws -> UIAutomationActionResult<ElementActionResult>,
+        render: (
+            _ result: ElementActionResult,
+            _ outcome: DesktopActionOutcome?,
+            _ output: ElementActionCommandResult,
+            _ value: Prepared
+        ) -> Void,
         handleError: (any Error) -> Void
     ) async throws {
         let runtime = context.runtime
@@ -200,7 +210,7 @@ enum ElementActionCommandExecutor {
                     services: services
                 )
             }
-            let result = try await operation(
+            let actionResult = try await operation(
                 services.automation,
                 prepared.target,
                 prepared.value,
@@ -213,13 +223,13 @@ enum ElementActionCommandExecutor {
             )
 
             let output = ElementActionCommandResult(
-                target: result.target,
-                actionName: result.actionName,
-                oldValue: result.oldValue,
-                newValue: result.newValue,
+                target: actionResult.payload.target,
+                actionName: actionResult.payload.actionName,
+                oldValue: actionResult.payload.oldValue,
+                newValue: actionResult.payload.newValue,
                 executionTime: Date().timeIntervalSince(startTime)
             )
-            render(result, output, prepared.value)
+            render(actionResult.payload, actionResult.outcome, output, prepared.value)
         } catch {
             handleError(error)
             throw ExitCode.failure

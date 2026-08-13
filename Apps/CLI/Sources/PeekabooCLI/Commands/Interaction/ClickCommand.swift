@@ -208,7 +208,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 }
             }
 
-            try await self.resolveAndDispatchClick(
+            let actionOutcome = try await self.resolveAndDispatchClick(
                 clickTarget,
                 snapshotId: activeSnapshotId,
                 resolvedElement: waitResult.element,
@@ -236,7 +236,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 clickTarget: clickTarget,
                 waitResult: waitResult,
                 snapshotId: activeSnapshotId,
-                resolutions: (coordinateResolution, explicitWindowResolution),
+                resolutions: (coordinateResolution, explicitWindowResolution, actionOutcome),
                 startTime: startTime
             )
 
@@ -250,11 +250,16 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         clickTarget: ClickTarget,
         waitResult: WaitForElementResult,
         snapshotId: String,
-        resolutions: (coordinate: InteractionCoordinateResolution?, window: InteractionWindowResolution?),
+        resolutions: (
+            coordinate: InteractionCoordinateResolution?,
+            window: InteractionWindowResolution?,
+            outcome: DesktopActionOutcome?
+        ),
         startTime: Date
     ) async throws {
         let coordinateResolution = resolutions.coordinate
         let explicitWindowResolution = resolutions.window
+        let actionOutcome = resolutions.outcome
         let appName = await resultApplicationName(
             snapshotId: snapshotId,
             coordinateResolution: coordinateResolution
@@ -279,10 +284,14 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             targetPoint: details.targetPointDiagnostics,
             deliveryMode: self.deliveryMode.rawValue
         )
-        self.output(result, effect: self.clickEffect(for: clickTarget)) {
-            print(self.clickEffect(for: clickTarget) == .confirmed
-                ? "✅ Click confirmed by Accessibility"
-                : "⚠️ Click dispatched; application effect is unverifiable")
+        self.output(result, effect: self.clickEffect(for: clickTarget), outcome: actionOutcome) {
+            if let actionOutcome {
+                print(ActionOutcomeHumanRenderer.statusLine(for: actionOutcome, operation: "Click"))
+            } else {
+                print(self.clickEffect(for: clickTarget) == .confirmed
+                    ? "✅ Click confirmed by Accessibility"
+                    : "⚠️ Click dispatched; application effect is unverifiable")
+            }
             self.printClickDetails(result)
         }
     }
@@ -655,7 +664,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         resolvedElement: DetectedElement?,
         coordinateResolution: InteractionCoordinateResolution?,
         explicitWindowResolution: InteractionWindowResolution?
-    ) async throws {
+    ) async throws -> DesktopActionOutcome? {
         let backgroundProcessIdentity: ApplicationProcessIdentity? = if self.usesBackgroundDelivery {
             try await self.resolveBackgroundClickProcessIdentity(
                 snapshotId: snapshotId.isEmpty ? nil : snapshotId,
@@ -682,7 +691,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             )
         }
         self.resolvedRuntime.beginInteractionMutation()
-        try await self.performClick(
+        return try await self.performClick(
             clickTarget,
             clickType: clickType,
             context: ClickDispatchContext(
@@ -699,7 +708,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         _ target: ClickTarget,
         clickType: ClickType,
         context: ClickDispatchContext
-    ) async throws {
+    ) async throws -> DesktopActionOutcome? {
         let effectiveSnapshotId: String? = if case .coordinates = target, !self.usesBackgroundDelivery {
             nil
         } else {
@@ -720,7 +729,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                         "capture a fresh snapshot before background input"
                 )
             }
-            try await AutomationServiceBridge.click(
+            let result = try await AutomationServiceBridge.click(
                 automation: self.services.automation,
                 target: target,
                 clickType: clickType,
@@ -730,6 +739,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 expectedWindowIdentity: expectedWindowIdentity,
                 expectedWindowBounds: exactWindowInfo?.bounds
             )
+            return result.outcome
         } else {
             // Foreground delivery is documented as "focus target and send a foreground mouse
             // click". Element/query targets are resolved to their adjusted screen point and
@@ -751,12 +761,13 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             } else {
                 effectiveSnapshotId
             }
-            try await AutomationServiceBridge.click(
+            let result = try await AutomationServiceBridge.click(
                 automation: self.services.automation,
                 target: foregroundTarget,
                 clickType: clickType,
                 snapshotId: foregroundSnapshotId
             )
+            return result.outcome
         }
     }
 

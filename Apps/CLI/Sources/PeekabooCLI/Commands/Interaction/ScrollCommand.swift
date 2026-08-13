@@ -90,7 +90,7 @@ struct ScrollCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputForma
                 snapshotId: observation.snapshotId,
                 foreground: self.focusOptions.foreground
             )
-            try await AutomationServiceBridge.scroll(
+            let actionResult = try await AutomationServiceBridge.scroll(
                 automation: self.services.automation,
                 request: scrollRequest
             )
@@ -139,8 +139,16 @@ struct ScrollCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputForma
                 targetPoint: scrollResolution.diagnostics,
                 executionTime: Date().timeIntervalSince(startTime)
             )
-            output(outputPayload, effect: self.focusOptions.foreground ? .unverifiable : .confirmed) {
-                print("✅ Scroll completed")
+            output(
+                outputPayload,
+                effect: self.focusOptions.foreground ? .unverifiable : .confirmed,
+                outcome: actionResult.outcome
+            ) {
+                if let outcome = actionResult.outcome {
+                    print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Scroll"))
+                } else {
+                    print("✅ Scroll completed")
+                }
                 print("🎯 Direction: \(self.direction)")
                 print("📊 Amount: \(self.amount) ticks")
                 if self.on != nil {

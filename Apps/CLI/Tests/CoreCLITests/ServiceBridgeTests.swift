@@ -11,7 +11,7 @@ struct ServiceBridgeTests {
 
     @Test func `automation click forwards calls`() async throws {
         let automation = MockAutomationService()
-        try await AutomationServiceBridge.click(
+        _ = try await AutomationServiceBridge.click(
             automation: automation,
             target: .coordinates(CGPoint(x: 10, y: 20)),
             clickType: .double,
@@ -49,7 +49,7 @@ struct ServiceBridgeTests {
     @Test func `automation targeted hotkey forwards calls`() async throws {
         let automation = MockTargetedAutomationService()
 
-        try await AutomationServiceBridge.hotkey(
+        _ = try await AutomationServiceBridge.hotkey(
             automation: automation,
             keys: "cmd,l",
             holdDuration: 75,
@@ -70,7 +70,7 @@ struct ServiceBridgeTests {
             "Remote bridge host supports background hotkeys, but current permissions are missing: Event Synthesizing"
 
         do {
-            try await AutomationServiceBridge.hotkey(
+            _ = try await AutomationServiceBridge.hotkey(
                 automation: automation,
                 keys: "cmd,l",
                 holdDuration: 75,
@@ -96,8 +96,8 @@ struct ServiceBridgeTests {
             expectedProcessIdentity: self.processIdentity
         )
 
-        #expect(result.totalCharacters == 2)
-        #expect(result.keyPresses == 2)
+        #expect(result.payload.totalCharacters == 2)
+        #expect(result.payload.keyPresses == 2)
         #expect(automation.targetedTypeActionsCalls.count == 1)
         #expect(automation.targetedTypeActionsCalls.first?.snapshotId == "snapshot-123")
         #expect(automation.targetedTypeActionsCalls.first?.targetProcessIdentifier == 12345)
@@ -129,7 +129,7 @@ struct ServiceBridgeTests {
     @Test func `automation targeted click forwards calls`() async throws {
         let automation = MockTargetedAutomationService()
 
-        try await AutomationServiceBridge.click(
+        _ = try await AutomationServiceBridge.click(
             automation: automation,
             target: .coordinates(CGPoint(x: 10, y: 20)),
             clickType: .single,
@@ -146,7 +146,7 @@ struct ServiceBridgeTests {
     @Test func `automation targeted click forwards exact window`() async throws {
         let automation = MockTargetedAutomationService()
 
-        try await AutomationServiceBridge.click(
+        _ = try await AutomationServiceBridge.click(
             automation: automation,
             target: .coordinates(CGPoint(x: 10, y: 20)),
             clickType: .single,
@@ -176,7 +176,7 @@ struct ServiceBridgeTests {
             "Remote bridge host supports background clicks, but current permissions are missing: Event Synthesizing"
 
         do {
-            try await AutomationServiceBridge.click(
+            _ = try await AutomationServiceBridge.click(
                 automation: automation,
                 target: .coordinates(CGPoint(x: 10, y: 20)),
                 clickType: .single,

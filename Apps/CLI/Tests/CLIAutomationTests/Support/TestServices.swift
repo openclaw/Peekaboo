@@ -110,7 +110,7 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
 }
 
 @MainActor
-final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceProtocol,
+class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceProtocol,
 ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol {
     struct ClickCall {
         let target: ClickTarget

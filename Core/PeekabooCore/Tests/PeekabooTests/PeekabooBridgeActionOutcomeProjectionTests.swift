@@ -312,6 +312,58 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
     }
 
     @Test
+    func `remote automation preserves canonical current failures before legacy mapping`() async throws {
+        let expected = try DesktopActionFailure.partial(
+            route: .bridge,
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            unitCount: DesktopActionOutcome.DispatchUnitCount(2),
+            message: "The target changed but cleanup failed",
+            hint: "Recover the remaining side effect.",
+            causeDescription: "cleanup receipt was unavailable")
+        let envelope = PeekabooBridgeErrorEnvelope(code: .internalError, actionFailure: expected)
+        let handshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            supportedOperations: [.click],
+            hostCapabilities: [PeekabooBridgeHostCapability.desktopActionOutcomeProjection])
+        let peer = try NegotiatedProjectionBridgePeer(responses: [
+            .handshake(handshake),
+            .projectedAction(.init(
+                response: .error(envelope),
+                outcome: expected.outcome.projection)),
+        ])
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        _ = try await client.handshake(client: Self.clientIdentity)
+        let remote = await MainActor.run { RemoteUIAutomationService(client: client) }
+
+        do {
+            _ = try await remote.clickWithOutcome(
+                target: .coordinates(.zero),
+                clickType: .single,
+                snapshotId: nil)
+            Issue.record("Expected canonical remote action failure")
+        } catch let actual as DesktopActionFailure {
+            #expect(actual == expected)
+        }
+        await peer.waitUntilFinished()
+    }
+
+    @Test
+    @MainActor
+    func `remote automation keeps legacy invalid request mapping`() {
+        let envelope = PeekabooBridgeErrorEnvelope(
+            code: .invalidRequest,
+            message: "Legacy host rejected the click")
+
+        let error = RemoteUIAutomationService.automationError(for: envelope, snapshotId: nil)
+
+        guard case let PeekabooError.invalidInput(message) = error else {
+            Issue.record("Expected the existing legacy invalid-input mapping")
+            return
+        }
+        #expect(message == "Legacy host rejected the click")
+    }
+
+    @Test
     func `projected response round trips every canonical action outcome`() throws {
         let outcomes = BridgeTestFixtures.canonicalActionOutcomes
         let expectations = Self.projectionExpectations

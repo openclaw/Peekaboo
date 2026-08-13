@@ -367,6 +367,10 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         for envelope: PeekabooBridgeErrorEnvelope,
         snapshotId: String?) -> any Error
     {
+        if let failure = envelope.desktopActionFailure {
+            return failure
+        }
+
         switch envelope.kind {
         case .elementNotFound:
             return PeekabooError.elementNotFound(envelope.context ?? envelope.message)

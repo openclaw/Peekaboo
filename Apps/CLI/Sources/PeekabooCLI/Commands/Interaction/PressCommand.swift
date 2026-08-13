@@ -97,35 +97,89 @@ RuntimeOptionsConfigurable {
 
             let parsedChords = try self.parsedChords()
             var completedPresses = 0
+            var actionOutcomes: [DesktopActionOutcome] = []
 
-            do {
-                for repetition in 0..<self.count {
-                    for (index, chord) in parsedChords.indexed() {
+            for repetition in 0..<self.count {
+                for (index, chord) in parsedChords.indexed() {
+                    do {
                         try Task.checkCancellation()
-                        try await AutomationServiceBridge.hotkey(
+                    } catch {
+                        guard completedPresses > 0 else { throw error }
+                        throw ActionSequenceFailureComposer.indeterminate(
+                            knownDispatchedUnitCount: completedPresses,
+                            context: self.indeterminateSequenceContext(
+                                completedPresses: completedPresses,
+                                actionOutcomes: actionOutcomes,
+                                causeDescription: error.localizedDescription
+                            )
+                        )
+                    }
+                    let actionResult: UIAutomationActionResult<Void>
+                    do {
+                        actionResult = try await AutomationServiceBridge.hotkey(
                             automation: self.services.automation,
                             keys: chord.serviceKeys,
                             holdDuration: self.hold.roundedMilliseconds
                         )
-                        completedPresses += 1
-                        try Task.checkCancellation()
+                    } catch let failure as DesktopActionFailure {
+                        guard completedPresses > 0 else { throw failure }
+                        throw ActionSequenceFailureComposer.combining(
+                            completedUnitCount: completedPresses,
+                            leafFailure: failure,
+                            delivery: Self.foregroundHotkeyDelivery,
+                            message: Self.sequenceFailureMessage(
+                                completedPresses: completedPresses,
+                                detail: failure.message
+                            ),
+                            indeterminateHint: Self.sequenceObservationHint
+                        )
+                    } catch let error as InputDeliveryIndeterminateError {
+                        guard completedPresses > 0 else { throw error }
+                        throw ActionSequenceFailureComposer.indeterminate(
+                            knownDispatchedUnitCount: error.emittedUnitCount.map { completedPresses + $0 },
+                            context: self.indeterminateSequenceContext(
+                                completedPresses: completedPresses,
+                                actionOutcomes: actionOutcomes,
+                                causeDescription: error.causeDescription ?? error.localizedDescription
+                            )
+                        )
+                    } catch {
+                        guard completedPresses > 0 else { throw error }
+                        throw ActionSequenceFailureComposer.indeterminate(
+                            knownDispatchedUnitCount: nil,
+                            context: self.indeterminateSequenceContext(
+                                completedPresses: completedPresses,
+                                actionOutcomes: actionOutcomes,
+                                causeDescription: error.localizedDescription
+                            )
+                        )
+                    }
+                    if let outcome = actionResult.outcome {
+                        actionOutcomes.append(outcome)
+                    }
+                    completedPresses += 1
 
+                    do {
                         let isLastKey = index == parsedChords.count - 1
                         let isLastRepetition = repetition == self.count - 1
-                        if self.delay.milliseconds > 0, !(isLastKey && isLastRepetition) {
+                        let isLastDispatch = isLastKey && isLastRepetition
+                        if !isLastDispatch {
+                            try Task.checkCancellation()
+                        }
+                        if self.delay.milliseconds > 0, !isLastDispatch {
                             try await Task.sleep(for: .seconds(self.delay.seconds))
                         }
+                    } catch {
+                        throw ActionSequenceFailureComposer.indeterminate(
+                            knownDispatchedUnitCount: completedPresses,
+                            context: self.indeterminateSequenceContext(
+                                completedPresses: completedPresses,
+                                actionOutcomes: actionOutcomes,
+                                causeDescription: error.localizedDescription
+                            )
+                        )
                     }
                 }
-            } catch let error as InputDeliveryIndeterminateError {
-                throw error
-            } catch {
-                guard completedPresses > 0 else { throw error }
-                throw InputDeliveryIndeterminateError(
-                    operation: .hotkey,
-                    emittedUnitCount: completedPresses,
-                    causeDescription: error.localizedDescription
-                )
             }
 
             await InteractionObservationInvalidator.invalidateAfterMutation(
@@ -144,8 +198,15 @@ RuntimeOptionsConfigurable {
                 executionTime: Date().timeIntervalSince(startTime)
             )
 
-            output(pressResult, effect: .unverifiable) {
-                print("✅ Key press dispatched")
+            // A leaf receipt describes one hotkey call, not a CLI sequence. Keep a successful
+            // multi-call sequence on the legacy effect-only contract until the leaf owns batching.
+            let actionOutcome = completedPresses == 1 && actionOutcomes.count == 1 ? actionOutcomes[0] : nil
+            output(pressResult, effect: .unverifiable, outcome: actionOutcome) {
+                if let actionOutcome {
+                    print(ActionOutcomeHumanRenderer.statusLine(for: actionOutcome, operation: "Key press"))
+                } else {
+                    print("✅ Key press dispatched")
+                }
                 print("🔑 Chords: \(parsedChords.map(\.displayValue).joined(separator: " → "))")
                 if self.count > 1 {
                     print("🔢 Repeated: \(self.count) times")
@@ -192,6 +253,40 @@ RuntimeOptionsConfigurable {
             }
         }
     }
+
+    private static func sequenceFailureMessage(completedPresses: Int, detail: String) -> String {
+        "Key sequence stopped after \(completedPresses) completed press" +
+            (completedPresses == 1 ? "" : "es") + ": \(detail)"
+    }
+
+    private static func indeterminateSequenceMessage(completedPresses: Int) -> String {
+        "Key sequence outcome is indeterminate after \(completedPresses) completed press" +
+            (completedPresses == 1 ? "" : "es")
+    }
+
+    private func sequenceRoute(actionOutcomes: [DesktopActionOutcome]) -> DesktopActionOutcome.Route {
+        actionOutcomes.last?.route ?? (self.services.automation is RemoteUIAutomationService ? .bridge : .local)
+    }
+
+    private func indeterminateSequenceContext(
+        completedPresses: Int,
+        actionOutcomes: [DesktopActionOutcome],
+        causeDescription: String
+    ) -> ActionSequenceFailureComposer.IndeterminateContext {
+        .init(
+            route: self.sequenceRoute(actionOutcomes: actionOutcomes),
+            delivery: Self.foregroundHotkeyDelivery,
+            message: Self.indeterminateSequenceMessage(completedPresses: completedPresses),
+            hint: Self.sequenceObservationHint,
+            causeDescription: causeDescription
+        )
+    }
+
+    private static let sequenceObservationHint = "Observe the target before retrying this key sequence."
+    private static let foregroundHotkeyDelivery = DesktopActionOutcome.Delivery(
+        mechanism: .globalEvents,
+        mode: .foreground
+    )
 }
 
 struct PressResult: Codable {

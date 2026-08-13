@@ -1,11 +1,95 @@
 import Foundation
 import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import Testing
 @testable import PeekabooCLI
 
 struct ResultEnvelopeTests {
     private struct Payload: Codable { let value: Int }
+
+    @Test func `success envelope round trips every canonical nested outcome`() throws {
+        for outcome in AutomationTestFixtures.canonicalActionOutcomes {
+            let envelope = makeSuccessEnvelope(
+                data: Payload(value: 1),
+                effect: .confirmed,
+                outcome: outcome
+            )
+            let data = try JSONEncoder().encode(envelope)
+            let decoded = try JSONDecoder().decode(ResultEnvelope<Payload>.self, from: data)
+
+            #expect(decoded.outcome == outcome.projection)
+            #expect(decoded.effect == outcome.effect)
+        }
+    }
+
+    @Test func `nested canonical outcome rejects contradictory derived fields`() throws {
+        let outcome = AutomationTestFixtures.canonicalActionOutcomes[0]
+        let encoded = try JSONEncoder().encode(makeSuccessEnvelope(data: Payload(value: 1), outcome: outcome))
+        var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        var projection = try #require(object["outcome"] as? [String: Any])
+        projection["retry_safe"] = true
+        object["outcome"] = projection
+        let tampered = try JSONSerialization.data(withJSONObject: object)
+
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(ResultEnvelope<Payload>.self, from: tampered)
+        }
+    }
+
+    @Test func `canonical failure drives nested and legacy result fields`() {
+        let failures = [
+            DesktopActionFailure.refused(
+                route: .bridge,
+                reason: .permissionDenied,
+                message: "Permission was denied"
+            ),
+            DesktopActionFailure.partial(
+                route: .bridge,
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                unitCount: DesktopActionOutcome.DispatchUnitCount(2),
+                message: "Cleanup failed"
+            ),
+            DesktopActionFailure.indeterminate(
+                route: .bridge,
+                evidence: .responseLost,
+                unitCount: DesktopActionOutcome.DispatchUnitCount(3),
+                message: "Response was lost"
+            ),
+        ]
+
+        for failure in failures {
+            let envelope = makeErrorEnvelope(
+                message: failure.message,
+                code: .INTERACTION_FAILED,
+                effect: .confirmed,
+                retrySafe: true,
+                mutationDispatched: false,
+                actionFailure: failure
+            )
+
+            #expect(envelope.outcome == failure.outcome.projection)
+            #expect(envelope.effect == failure.outcome.effect)
+            #expect(envelope.error?.retry_safe == (failure.outcome.retrySafety == .safe))
+            #expect(envelope.error?.mutation_dispatched == failure.outcome.dispatchState.mutationDispatched)
+        }
+    }
+
+    @Test func `canonical human statuses are state and escalation aware`() {
+        let expected = [
+            "✅ Click confirmed",
+            "✅ Click confirmed; no change was needed",
+            "⚠️ Click partially completed; recover the remaining side effect before another attempt",
+            "⚠️ Click dispatched but not verified; observe the target before retrying",
+            "⚠️ Click may have had no effect; refresh the target before retrying",
+            "⛔ Click refused before dispatch; grant the required permission before retrying",
+            "⚠️ Click outcome is indeterminate; observe the target before retrying",
+        ]
+
+        for (outcome, expectedLine) in zip(AutomationTestFixtures.canonicalActionOutcomes, expected) {
+            #expect(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Click") == expectedLine)
+        }
+    }
 
     @Test func `action envelope includes effect`() throws {
         let envelope = ResultEnvelope(success: true, effect: .unverifiable, data: Payload(value: 1))

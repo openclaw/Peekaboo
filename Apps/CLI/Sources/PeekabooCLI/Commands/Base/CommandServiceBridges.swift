@@ -31,9 +31,17 @@ enum AutomationServiceBridge {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?
-    ) async throws {
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
+            if let automation = automation as? any UIAutomationActionOutcomeProviding {
+                return try await automation.clickWithOutcome(
+                    target: target,
+                    clickType: clickType,
+                    snapshotId: snapshotId
+                )
+            }
             try await automation.click(target: target, clickType: clickType, snapshotId: snapshotId)
+            return UIAutomationActionResult(payload: (), outcome: nil)
         }.value
     }
 
@@ -46,7 +54,7 @@ enum AutomationServiceBridge {
         targetWindowID: Int? = nil,
         expectedWindowIdentity: WindowMutationIdentity? = nil,
         expectedWindowBounds: CGRect? = nil
-    ) async throws {
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
             guard let targetedClickService = automation as? any TargetedClickServiceProtocol else {
                 throw PeekabooError.serviceUnavailable(
@@ -76,6 +84,15 @@ enum AutomationServiceBridge {
                         reason: "Exact-window clicks require a matching process-generation identity and bounds"
                     )
                 }
+                if let automation = automation as? any UIAutomationActionOutcomeProviding {
+                    return try await automation.clickWithOutcome(
+                        target: target,
+                        clickType: clickType,
+                        snapshotId: snapshotId,
+                        expectedWindowIdentity: expectedWindowIdentity,
+                        expectedWindowBounds: expectedWindowBounds
+                    )
+                }
                 try await exactWindowService.click(
                     target: target,
                     clickType: clickType,
@@ -89,6 +106,14 @@ enum AutomationServiceBridge {
                         "Background clicks require process-generation-pinned delivery; update the runtime host"
                     )
                 }
+                if let automation = automation as? any UIAutomationActionOutcomeProviding {
+                    return try await automation.clickWithOutcome(
+                        target: target,
+                        clickType: clickType,
+                        snapshotId: snapshotId,
+                        expectedProcessIdentity: expectedProcessIdentity
+                    )
+                }
                 try await targetedClickService.click(
                     target: target,
                     clickType: clickType,
@@ -96,19 +121,28 @@ enum AutomationServiceBridge {
                     expectedProcessIdentity: expectedProcessIdentity
                 )
             }
+            return UIAutomationActionResult(payload: (), outcome: nil)
         }.value
     }
 
     static func typeActions(
         automation: any UIAutomationServiceProtocol,
         request: TypeActionsRequest
-    ) async throws -> TypeResult {
+    ) async throws -> UIAutomationActionResult<TypeResult> {
         try await Task { @MainActor in
-            try await automation.typeActions(
+            if let automation = automation as? any UIAutomationActionOutcomeProviding {
+                return try await automation.typeActionsWithOutcome(
+                    request.actions,
+                    cadence: request.cadence,
+                    snapshotId: request.snapshotId
+                )
+            }
+            let payload = try await automation.typeActions(
                 request.actions,
                 cadence: request.cadence,
                 snapshotId: request.snapshotId
             )
+            return UIAutomationActionResult(payload: payload, outcome: nil)
         }.value
     }
 
@@ -116,7 +150,7 @@ enum AutomationServiceBridge {
         automation: any UIAutomationServiceProtocol,
         request: TypeActionsRequest,
         expectedProcessIdentity: ApplicationProcessIdentity
-    ) async throws -> TypeResult {
+    ) async throws -> UIAutomationActionResult<TypeResult> {
         try await Task { @MainActor in
             guard let targetedTypeService = automation as? any TargetedTypeServiceProtocol else {
                 throw PeekabooError.serviceUnavailable(
@@ -130,21 +164,34 @@ enum AutomationServiceBridge {
                 throw self.targetedTypeUnavailableError(service: targetedTypeService)
             }
 
-            return try await targetedTypeService.typeActions(
+            if let automation = automation as? any UIAutomationActionOutcomeProviding {
+                return try await automation.typeActionsWithOutcome(
+                    request.actions,
+                    cadence: request.cadence,
+                    snapshotId: request.snapshotId,
+                    expectedProcessIdentity: expectedProcessIdentity
+                )
+            }
+            let payload = try await targetedTypeService.typeActions(
                 request.actions,
                 cadence: request.cadence,
                 snapshotId: request.snapshotId,
                 expectedProcessIdentity: expectedProcessIdentity
             )
+            return UIAutomationActionResult(payload: payload, outcome: nil)
         }.value
     }
 
     static func scroll(
         automation: any UIAutomationServiceProtocol,
         request: ScrollRequest
-    ) async throws {
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
+            if let automation = automation as? any UIAutomationActionOutcomeProviding {
+                return try await automation.scrollWithOutcome(request)
+            }
             try await automation.scroll(request)
+            return UIAutomationActionResult(payload: (), outcome: nil)
         }.value
     }
 
@@ -153,14 +200,22 @@ enum AutomationServiceBridge {
         target: String,
         value: UIElementValue,
         snapshotId: String?
-    ) async throws -> ElementActionResult {
+    ) async throws -> UIAutomationActionResult<ElementActionResult> {
         try await Task { @MainActor in
             guard let automation = automation as? any ElementActionAutomationServiceProtocol else {
                 throw PeekabooError.serviceUnavailable(
                     "This automation host does not support direct accessibility value setting"
                 )
             }
-            return try await automation.setValue(target: target, value: value, snapshotId: snapshotId)
+            if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
+                return try await outcomeAutomation.setValueWithOutcome(
+                    target: target,
+                    value: value,
+                    snapshotId: snapshotId
+                )
+            }
+            let payload = try await automation.setValue(target: target, value: value, snapshotId: snapshotId)
+            return UIAutomationActionResult(payload: payload, outcome: nil)
         }.value
     }
 
@@ -169,20 +224,40 @@ enum AutomationServiceBridge {
         target: String,
         actionName: String,
         snapshotId: String?
-    ) async throws -> ElementActionResult {
+    ) async throws -> UIAutomationActionResult<ElementActionResult> {
         try await Task { @MainActor in
             guard let automation = automation as? any ElementActionAutomationServiceProtocol else {
                 throw PeekabooError.serviceUnavailable(
                     "This automation host does not support direct accessibility action invocation"
                 )
             }
-            return try await automation.performAction(target: target, actionName: actionName, snapshotId: snapshotId)
+            if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
+                return try await outcomeAutomation.performActionWithOutcome(
+                    target: target,
+                    actionName: actionName,
+                    snapshotId: snapshotId
+                )
+            }
+            let payload = try await automation.performAction(
+                target: target,
+                actionName: actionName,
+                snapshotId: snapshotId
+            )
+            return UIAutomationActionResult(payload: payload, outcome: nil)
         }.value
     }
 
-    static func hotkey(automation: any UIAutomationServiceProtocol, keys: String, holdDuration: Int) async throws {
+    static func hotkey(
+        automation: any UIAutomationServiceProtocol,
+        keys: String,
+        holdDuration: Int
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
+            if let automation = automation as? any UIAutomationActionOutcomeProviding {
+                return try await automation.hotkeyWithOutcome(keys: keys, holdDuration: holdDuration)
+            }
             try await automation.hotkey(keys: keys, holdDuration: holdDuration)
+            return UIAutomationActionResult(payload: (), outcome: nil)
         }.value
     }
 
@@ -191,7 +266,7 @@ enum AutomationServiceBridge {
         keys: String,
         holdDuration: Int,
         targetProcessIdentifier: pid_t
-    ) async throws {
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
             try BackgroundHotkeyPolicy.validate(keys: keys)
 
@@ -205,11 +280,19 @@ enum AutomationServiceBridge {
                 throw self.targetedHotkeyUnavailableError(service: targetedHotkeyService)
             }
 
+            if let automation = automation as? any UIAutomationActionOutcomeProviding {
+                return try await automation.hotkeyWithOutcome(
+                    keys: keys,
+                    holdDuration: holdDuration,
+                    targetProcessIdentifier: targetProcessIdentifier
+                )
+            }
             try await targetedHotkeyService.hotkey(
                 keys: keys,
                 holdDuration: holdDuration,
                 targetProcessIdentifier: targetProcessIdentifier
             )
+            return UIAutomationActionResult(payload: (), outcome: nil)
         }.value
     }
 
@@ -218,7 +301,7 @@ enum AutomationServiceBridge {
         keys: String,
         holdDuration: Int,
         expectedProcessIdentity: ApplicationProcessIdentity
-    ) async throws {
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
             try BackgroundHotkeyPolicy.validate(keys: keys)
 
@@ -230,11 +313,19 @@ enum AutomationServiceBridge {
                 )
             }
 
+            if let automation = automation as? any UIAutomationActionOutcomeProviding {
+                return try await automation.hotkeyWithOutcome(
+                    keys: keys,
+                    holdDuration: holdDuration,
+                    expectedProcessIdentity: expectedProcessIdentity
+                )
+            }
             try await targetedHotkeyService.hotkey(
                 keys: keys,
                 holdDuration: holdDuration,
                 expectedProcessIdentity: expectedProcessIdentity
             )
+            return UIAutomationActionResult(payload: (), outcome: nil)
         }.value
     }
 

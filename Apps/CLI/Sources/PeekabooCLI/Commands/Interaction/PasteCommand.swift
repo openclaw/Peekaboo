@@ -236,14 +236,14 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         let dispatchErrorDescription: String?
         do {
             if let targetIdentity {
-                try await AutomationServiceBridge.hotkey(
+                _ = try await AutomationServiceBridge.hotkey(
                     automation: self.services.automation,
                     keys: "cmd,v",
                     holdDuration: 50,
                     expectedProcessIdentity: targetIdentity
                 )
             } else {
-                try await AutomationServiceBridge.hotkey(
+                _ = try await AutomationServiceBridge.hotkey(
                     automation: self.services.automation,
                     keys: "cmd,v",
                     holdDuration: 50
@@ -304,7 +304,7 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     ) async throws {
         let setResult = try Self.readResult(for: request)
         _ = try await self.withInteractionMutationInvalidation {
-            try await AutomationServiceBridge.typeActions(
+            _ = try await AutomationServiceBridge.typeActions(
                 automation: self.services.automation,
                 request: TypeActionsRequest(
                     actions: [.text(text)],
@@ -413,14 +413,14 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 let dispatchErrorDescription: String?
                 do {
                     if let targetIdentity {
-                        try await AutomationServiceBridge.hotkey(
+                        _ = try await AutomationServiceBridge.hotkey(
                             automation: self.services.automation,
                             keys: "cmd,v",
                             holdDuration: 50,
                             expectedProcessIdentity: targetIdentity
                         )
                     } else {
-                        try await AutomationServiceBridge.hotkey(
+                        _ = try await AutomationServiceBridge.hotkey(
                             automation: self.services.automation,
                             keys: "cmd,v",
                             holdDuration: 50

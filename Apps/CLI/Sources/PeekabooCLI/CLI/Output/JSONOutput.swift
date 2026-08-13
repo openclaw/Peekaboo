@@ -223,16 +223,35 @@ func outputSuccessCodable(
     data: some Codable,
     messages: [String]? = nil,
     effect: ActionEffect? = nil,
+    outcome: DesktopActionOutcome? = nil,
     logger: Logger
 ) {
-    let response = ResultEnvelope(
-        success: true,
-        effect: effect,
+    let response = makeSuccessEnvelope(
         data: data,
         messages: messages,
-        debug_logs: logger.getDebugLogs()
+        effect: effect,
+        outcome: outcome,
+        debugLogs: logger.getDebugLogs()
     )
     outputJSONCodable(response, logger: logger)
+}
+
+func makeSuccessEnvelope<Payload>(
+    data: Payload,
+    messages: [String]? = nil,
+    effect: ActionEffect? = nil,
+    outcome: DesktopActionOutcome? = nil,
+    debugLogs: [String] = []
+) -> ResultEnvelope<Payload> {
+    let projection = outcome?.projection
+    return ResultEnvelope(
+        success: true,
+        effect: projection?.effect ?? effect,
+        outcome: projection,
+        data: data,
+        messages: messages,
+        debug_logs: debugLogs
+    )
 }
 
 func outputJSONCodable(_ response: ResultEnvelope<some Encodable>, logger: Logger) {
