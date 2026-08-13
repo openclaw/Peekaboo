@@ -15,6 +15,24 @@ enum MCPInteractionTargetError: LocalizedError, Equatable {
     case targetProcessNotFound
     case targetProcessIdentityUnavailable
 
+    var refusalReason: DesktopActionOutcome.RefusalReason {
+        switch self {
+        case .targetProcessNotFound:
+            .targetUnavailable
+        case .targetProcessIdentityUnavailable:
+            .runtimeIncompatible
+        case .applicationAndProcessIdentifier,
+             .multipleWindowSelectors,
+             .windowSelectorRequiresApp,
+             .invalidWindowId,
+             .invalidWindowIndex,
+             .invalidProcessIdentifier,
+             .backgroundTargetRequired,
+             .backgroundWindowTargetUnsupported:
+            .invalidRequest
+        }
+    }
+
     var errorDescription: String? {
         switch self {
         case .applicationAndProcessIdentifier:

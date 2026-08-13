@@ -201,6 +201,8 @@ extension MCPToolExecutionTests {
         #expect(meta["state"] == .string("indeterminate"))
         #expect(meta["mutation_dispatched"] == .bool(true))
         #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["delivery_mechanism"] == nil)
+        #expect(meta["delivery_mode"] == nil)
         #expect(meta["invalidated_snapshot"] == .string(snapshotId))
         #expect(await UISnapshotManager.shared.getSnapshot(id: snapshotId) != nil)
         #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
@@ -571,7 +573,7 @@ extension MCPToolExecutionTests {
     }
 
     @Test
-    func `Click tool invalidates latest snapshot after coordinate click`() async throws {
+    func `snapshot independent coordinate click invalidates implicit latest`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
@@ -962,7 +964,7 @@ extension MCPToolExecutionTests {
     }
 
     @Test
-    func `Type tool invalidates latest snapshot after focused typing`() async throws {
+    func `snapshot independent foreground type invalidates implicit latest`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
@@ -1017,7 +1019,7 @@ extension MCPToolExecutionTests {
     }
 
     @Test
-    func `Scroll tool invalidates latest snapshot after pointer-position scroll`() async throws {
+    func `snapshot independent pointer scroll invalidates implicit latest`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(automation: automation)

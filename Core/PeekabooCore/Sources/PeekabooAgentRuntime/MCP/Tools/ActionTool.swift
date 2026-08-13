@@ -66,7 +66,13 @@ public struct ActionTool: MCPTool {
                         snapshotId: effectiveSnapshotId),
                     outcome: nil)
             }
-            let invalidatedSnapshotId = await self.context.uiSnapshots.invalidateActiveSnapshot(id: effectiveSnapshotId)
+            try MCPDesktopActionFailureHandler.requireConfirmed(
+                actionResult.outcome,
+                operation: "Action")
+            let invalidatedSnapshotId = await MCPDesktopActionSnapshotInvalidator.invalidate(
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: effectiveSnapshotId,
+                outcome: actionResult.outcome)
             return try self.buildResponse(
                 result: actionResult.payload,
                 requestedAction: request.actionName,
@@ -106,12 +112,10 @@ public struct ActionTool: MCPTool {
     }
 
     private static func preDispatchErrorResponse(_ error: ActionToolError) throws -> ToolResponse {
-        var meta = try MCPToolResponseMetadataProjector.fields(
-            for: DesktopActionOutcome.refused(reason: error.refusalReason).projection)
-        meta["error_code"] = .string(error.errorCode)
-        return ToolResponse.error(
-            error.message,
-            meta: .object(meta))
+        MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+            message: error.message,
+            reason: error.refusalReason,
+            additionalFields: ["error_code": .string(error.errorCode)])
     }
 
     private func buildResponse(

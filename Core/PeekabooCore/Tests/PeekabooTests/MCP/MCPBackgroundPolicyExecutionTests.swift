@@ -368,7 +368,8 @@ struct MCPBackgroundPolicyExecutionTests {
             Issue.record("Expected click metadata")
             return
         }
-        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["mutation_dispatched"] == nil)
+        #expect(meta["invalidated_snapshot"] == .string(snapshotId))
     }
 
     @Test

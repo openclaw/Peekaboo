@@ -31,8 +31,14 @@ struct TypeRequest {
 
 struct TypeToolValidationError: Error {
     let message: String
-    init(_ message: String) {
+    let refusalReason: DesktopActionOutcome.RefusalReason
+
+    init(
+        _ message: String,
+        refusalReason: DesktopActionOutcome.RefusalReason = .invalidRequest)
+    {
         self.message = message
+        self.refusalReason = refusalReason
     }
 }
 

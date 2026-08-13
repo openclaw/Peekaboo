@@ -97,6 +97,9 @@ enum MCPToolResponseMetadataProjector {
     {
         var fields = base
         if let outcome {
+            for key in Self.actionOutcomeKeys {
+                fields.removeValue(forKey: key)
+            }
             try fields.merge(self.fields(for: outcome.projection)) { _, canonical in canonical }
         }
         return fields.isEmpty ? nil : .object(fields)

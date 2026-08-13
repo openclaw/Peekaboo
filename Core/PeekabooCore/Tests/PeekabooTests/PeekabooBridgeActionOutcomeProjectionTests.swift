@@ -848,6 +848,46 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
     }
 }
 
+@MainActor
+enum StubAutomationOutcomeTestControl {
+    private static var typeOutcomes: [ObjectIdentifier: DesktopActionOutcome] = [:]
+    private static var hotkeyOutcomes: [ObjectIdentifier: [DesktopActionOutcome]] = [:]
+    private static var hotkeyCallCounts: [ObjectIdentifier: Int] = [:]
+
+    static func setTypeOutcome(_ outcome: DesktopActionOutcome?, for automation: StubAutomationService) {
+        self.typeOutcomes[ObjectIdentifier(automation)] = outcome
+    }
+
+    static func typeOutcome(for automation: StubAutomationService) -> DesktopActionOutcome? {
+        self.typeOutcomes[ObjectIdentifier(automation)]
+    }
+
+    static func setHotkeyOutcomes(_ outcomes: [DesktopActionOutcome]?, for automation: StubAutomationService) {
+        self.hotkeyOutcomes[ObjectIdentifier(automation)] = outcomes
+    }
+
+    static func nextHotkeyOutcome(for automation: StubAutomationService) -> DesktopActionOutcome? {
+        let identifier = ObjectIdentifier(automation)
+        guard var outcomes = self.hotkeyOutcomes[identifier], !outcomes.isEmpty else { return nil }
+        let outcome = outcomes.removeFirst()
+        self.hotkeyOutcomes[identifier] = outcomes
+        return outcome
+    }
+
+    static func resetHotkeyCalls(for automation: StubAutomationService) {
+        self.hotkeyCallCounts[ObjectIdentifier(automation)] = 0
+    }
+
+    static func recordHotkeyCall(for automation: StubAutomationService) {
+        let identifier = ObjectIdentifier(automation)
+        self.hotkeyCallCounts[identifier, default: 0] += 1
+    }
+
+    static func hotkeyCallCount(for automation: StubAutomationService) -> Int {
+        self.hotkeyCallCounts[ObjectIdentifier(automation), default: 0]
+    }
+}
+
 extension StubAutomationService: UIAutomationActionOutcomeProviding {
     func clickWithOutcome(
         target: ClickTarget,
@@ -923,7 +963,7 @@ extension StubAutomationService: UIAutomationActionOutcomeProviding {
         cadence: TypingCadence,
         snapshotId: String?) async throws -> UIAutomationActionResult<TypeResult>
     {
-        try await self.actionResult(self.typeActions(actions, cadence: cadence, snapshotId: snapshotId))
+        try await self.typeActionResult(self.typeActions(actions, cadence: cadence, snapshotId: snapshotId))
     }
 
     func typeActionsWithOutcome(
@@ -932,7 +972,7 @@ extension StubAutomationService: UIAutomationActionOutcomeProviding {
         snapshotId: String?,
         targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<TypeResult>
     {
-        try await self.actionResult(self.typeActions(
+        try await self.typeActionResult(self.typeActions(
             actions,
             cadence: cadence,
             snapshotId: snapshotId,
@@ -945,7 +985,7 @@ extension StubAutomationService: UIAutomationActionOutcomeProviding {
         snapshotId: String?,
         expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<TypeResult>
     {
-        try await self.actionResult(self.typeActions(
+        try await self.typeActionResult(self.typeActions(
             actions,
             cadence: cadence,
             snapshotId: snapshotId,
@@ -959,7 +999,7 @@ extension StubAutomationService: UIAutomationActionOutcomeProviding {
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<TypeResult>
     {
-        try await self.actionResult(self.typeActions(
+        try await self.typeActionResult(self.typeActions(
             actions,
             cadence: cadence,
             snapshotId: snapshotId,
@@ -973,7 +1013,7 @@ extension StubAutomationService: UIAutomationActionOutcomeProviding {
         snapshotId: String?,
         target: ExactWindowKeyboardTarget) async throws -> UIAutomationActionResult<TypeResult>
     {
-        try await self.actionResult(self.typeActions(
+        try await self.typeActionResult(self.typeActions(
             actions,
             cadence: cadence,
             snapshotId: snapshotId,
@@ -989,7 +1029,11 @@ extension StubAutomationService: UIAutomationActionOutcomeProviding {
         keys: String,
         holdDuration: Int) async throws -> UIAutomationActionResult<Void>
     {
+        StubAutomationOutcomeTestControl.recordHotkeyCall(for: self)
         try await self.hotkey(keys: keys, holdDuration: holdDuration)
+        if let outcome = StubAutomationOutcomeTestControl.nextHotkeyOutcome(for: self) {
+            return UIAutomationActionResult(payload: (), outcome: outcome)
+        }
         return self.actionResult(())
     }
 
@@ -1061,6 +1105,12 @@ extension StubAutomationService: UIAutomationActionOutcomeProviding {
 
     private func actionResult<Payload: Sendable>(_ payload: Payload) -> UIAutomationActionResult<Payload> {
         UIAutomationActionResult(payload: payload, outcome: self.actionOutcome)
+    }
+
+    private func typeActionResult<Payload: Sendable>(_ payload: Payload) -> UIAutomationActionResult<Payload> {
+        UIAutomationActionResult(
+            payload: payload,
+            outcome: StubAutomationOutcomeTestControl.typeOutcome(for: self) ?? self.actionOutcome)
     }
 }
 

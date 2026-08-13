@@ -72,9 +72,13 @@ public struct TypeTool: MCPTool {
             let request = try self.parseRequest(arguments: arguments)
             return try await self.performType(request: request, mutationTracker: mutationTracker)
         } catch let error as TypeToolValidationError {
-            return ToolResponse.error(error.message)
+            return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+                message: error.message,
+                reason: error.refusalReason)
         } catch let error as MCPInteractionTargetError {
-            return ToolResponse.error(error.localizedDescription)
+            return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+                message: error.localizedDescription,
+                reason: error.refusalReason)
         } catch let failure as DesktopActionFailure {
             return try await MCPDesktopActionFailureHandler.response(
                 for: failure,
@@ -215,42 +219,60 @@ public struct TypeTool: MCPTool {
             throw Self.aggregateTypingFailure(failure, after: focusResult)
         } catch let error as InputDeliveryIndeterminateError {
             mutationTracker.charactersTyped = error.emittedUnitCount
+            if focusResult.dispatchedUnitCount > 0 {
+                mutationTracker.delivery = nil
+            }
             throw Self.aggregateIndeterminateTypingError(error, after: focusResult)
         } catch {
-            guard focusResult.completed else { throw error }
+            guard focusResult.dispatchedUnitCount > 0 else { throw error }
+            mutationTracker.delivery = nil
             throw InputDeliveryIndeterminateError(
                 operation: .type,
                 emittedUnitCount: focusResult.dispatchedUnitCount,
                 causeDescription: error.localizedDescription)
         }
 
-        let invalidatedSnapshotId = await self.context.uiSnapshots.invalidateActiveSnapshot(id: effectiveSnapshotId)
+        if let outcome = typeActionResult.outcome,
+           let failure = DesktopActionFailure(
+               outcome: outcome,
+               message: "Typing did not return a confirmed outcome.",
+               hint: "Follow the canonical escalation metadata before deciding whether to retry.")
+        {
+            throw Self.aggregateTypingFailure(failure, after: focusResult)
+        }
+
+        let responseOutcome = Self.aggregateTypingSuccess(
+            typeActionResult.outcome,
+            after: focusResult)
+        let mutationDispatched = focusResult.dispatchedUnitCount > 0 ||
+            (typeActionResult.outcome?.dispatchState.mutationDispatched ?? true)
+        let invalidatedSnapshotId = await MCPDesktopActionSnapshotInvalidator.invalidate(
+            uiSnapshots: self.context.uiSnapshots,
+            snapshotID: effectiveSnapshotId,
+            mutationDispatched: mutationDispatched)
         let executionTime = Date().timeIntervalSince(startTime)
         let message = self.buildSummary(
             request: request,
             executionTime: executionTime,
             result: typeActionResult.payload)
+        let charactersTyped = typeActionResult.outcome?.dispatchState.mutationDispatched == false
+            ? 0
+            : typeActionResult.payload.totalCharacters
         var baseMetaDict: [String: Value] = [
             "execution_time": .double(executionTime),
-            "characters_typed": .double(Double(typeActionResult.payload.totalCharacters)),
-            "delivery_mode": .string(targetProcessIdentifier == nil ? "foreground" : "background"),
+            "characters_typed": .double(Double(charactersTyped)),
         ]
+        if !focusResult.completed {
+            baseMetaDict["delivery_mode"] = .string(targetProcessIdentifier == nil ? "foreground" : "background")
+        }
         if let targetProcessIdentifier {
             baseMetaDict["target_pid"] = .int(targetProcessIdentifier)
         }
         if let invalidatedSnapshotId {
             baseMetaDict["invalidated_snapshot"] = .string(invalidatedSnapshotId)
         }
-        let responseOutcome: DesktopActionOutcome?
-        if focusResult.completed {
-            responseOutcome = nil
-            if focusResult.dispatchedUnitCount > 0 ||
-                typeActionResult.outcome?.dispatchState.mutationDispatched == true
-            {
-                baseMetaDict["requires_fresh_observation"] = .bool(true)
-            }
-        } else {
-            responseOutcome = typeActionResult.outcome
+        if focusResult.completed, responseOutcome == nil, mutationDispatched {
+            baseMetaDict["requires_fresh_observation"] = .bool(true)
         }
         let summary = self.buildEventSummary(
             request: request,
@@ -289,7 +311,9 @@ public struct TypeTool: MCPTool {
                   automation.supportsTargetedClicks,
                   automation.supportsProcessGenerationPinnedClicks
             else {
-                throw TypeToolValidationError("This automation host does not support background element focus.")
+                throw TypeToolValidationError(
+                    "This automation host does not support background element focus.",
+                    refusalReason: .runtimeIncompatible)
             }
             if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
                 let result = try await outcomeAutomation.clickWithOutcome(
@@ -339,10 +363,22 @@ public struct TypeTool: MCPTool {
     {
         let focusUnits = focusResult.dispatchedUnitCount
         guard focusUnits > 0 else { return failure }
-        let leafUnits = failure.outcome.dispatchState.unitCount?.rawValue
-            ?? (failure.outcome.dispatchState.mutationDispatched ? 1 : 0)
-        let unitCount = DesktopActionOutcome.DispatchUnitCount(focusUnits + leafUnits)
-        if failure.outcome.state == .partial, let delivery = failure.outcome.delivery {
+        let leafUnits: Int? = if let count = failure.outcome.dispatchState.unitCount?.rawValue {
+            count
+        } else if failure.outcome.dispatchState.mutationDispatched {
+            nil
+        } else {
+            0
+        }
+        let unitCount = leafUnits.flatMap { DesktopActionOutcome.DispatchUnitCount(focusUnits + $0) }
+        let aggregateRoute = failure.outcome.dispatchState.mutationDispatched
+            ? failure.outcome.route
+            : focusResult.outcome?.route ?? failure.outcome.route
+        if failure.outcome.state == .partial,
+           let delivery = failure.outcome.delivery,
+           focusResult.outcome?.delivery == delivery,
+           focusResult.outcome?.route == failure.outcome.route
+        {
             return .partial(
                 route: failure.outcome.route,
                 delivery: delivery,
@@ -352,7 +388,7 @@ public struct TypeTool: MCPTool {
                 causeDescription: failure.causeDescription)
         }
         return .indeterminate(
-            route: failure.outcome.route,
+            route: aggregateRoute,
             delivery: nil,
             evidence: .completionUnknown,
             unitCount: unitCount,
@@ -361,13 +397,48 @@ public struct TypeTool: MCPTool {
             causeDescription: failure.localizedDescription)
     }
 
-    private static func aggregateIndeterminateTypingError(
+    static func aggregateTypingSuccess(
+        _ outcome: DesktopActionOutcome?,
+        after focusResult: TypeFocusResult) -> DesktopActionOutcome?
+    {
+        guard focusResult.completed else { return outcome }
+        let focusUnits = focusResult.dispatchedUnitCount
+        guard focusUnits > 0 else {
+            if let focusOutcome = focusResult.outcome,
+               let outcome,
+               !outcome.dispatchState.mutationDispatched,
+               focusOutcome.route != outcome.route
+            {
+                return nil
+            }
+            return outcome
+        }
+        guard let focusOutcome = focusResult.outcome,
+              let outcome,
+              focusOutcome.isConfirmed,
+              outcome.isConfirmed
+        else { return nil }
+        guard outcome.dispatchState.mutationDispatched else { return focusOutcome }
+        guard focusOutcome.route == outcome.route,
+              let delivery = focusOutcome.delivery,
+              outcome.delivery == delivery
+        else { return nil }
+
+        let leafUnits = outcome.dispatchState.unitCount?.rawValue
+            ?? (outcome.dispatchState.mutationDispatched ? 1 : 0)
+        return .confirmedChange(
+            route: outcome.route,
+            delivery: delivery,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(focusUnits + leafUnits))
+    }
+
+    static func aggregateIndeterminateTypingError(
         _ error: InputDeliveryIndeterminateError,
         after focusResult: TypeFocusResult) -> InputDeliveryIndeterminateError
     {
         let focusUnits = focusResult.dispatchedUnitCount
         let emittedUnitCount = if focusUnits > 0 {
-            focusUnits + (error.emittedUnitCount ?? 0)
+            error.emittedUnitCount.map { focusUnits + $0 }
         } else {
             error.emittedUnitCount
         }
@@ -391,11 +462,13 @@ public struct TypeTool: MCPTool {
                 guard let snapshotIdentity = try await self.snapshotProcessIdentity(snapshot) else {
                     throw TypeToolValidationError(
                         "The selected snapshot has no capture-time process-generation receipt. " +
-                            "Capture fresh UI state.")
+                            "Capture fresh UI state.",
+                        refusalReason: .targetUnavailable)
                 }
                 guard snapshotIdentity == identity else {
                     throw TypeToolValidationError(
-                        "The selected snapshot belongs to a different process generation. Capture fresh UI state.")
+                        "The selected snapshot belongs to a different process generation. Capture fresh UI state.",
+                        refusalReason: .targetUnavailable)
                 }
             }
             return identity
@@ -406,7 +479,8 @@ public struct TypeTool: MCPTool {
         if snapshot != nil || request.elementId != nil || request.snapshotId != nil {
             throw TypeToolValidationError(
                 "The selected snapshot does not identify a target process. Capture an app/window snapshot or set " +
-                    "foreground=true for intentional global input.")
+                    "foreground=true for intentional global input.",
+                refusalReason: .targetUnavailable)
         }
         throw TypeToolValidationError(
             "Typing requires on, snapshot, app, or pid targeting. Set foreground=true for intentional global input.")
@@ -422,7 +496,9 @@ public struct TypeTool: MCPTool {
               automation.supportsTargetedTypeActions,
               automation.supportsProcessGenerationPinnedTypeActions
         else {
-            throw TypeToolValidationError("This automation host does not support background typing.")
+            throw TypeToolValidationError(
+                "This automation host does not support background typing.",
+                refusalReason: .runtimeIncompatible)
         }
         mutationTracker.delivery = .init(mechanism: .processTargetedEvents, mode: .background)
         if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
@@ -448,25 +524,31 @@ public struct TypeTool: MCPTool {
         if let windowIdentity = snapshot.windowMutationIdentity,
            windowIdentity.ownerProcessIdentifier != processIdentifier
         {
-            throw TypeToolValidationError("The selected snapshot has inconsistent process metadata.")
+            throw TypeToolValidationError(
+                "The selected snapshot has inconsistent process metadata.",
+                refusalReason: .targetUnavailable)
         }
         if let identity = snapshot.applicationProcessIdentity {
             return identity
         }
         throw TypeToolValidationError(
-            "The selected snapshot has no capture-time process-generation receipt. Capture fresh UI state.")
+            "The selected snapshot has no capture-time process-generation receipt. Capture fresh UI state.",
+            refusalReason: .targetUnavailable)
     }
 
     @MainActor
     private func resolveTargetContext(for request: TypeRequest) async throws -> TargetElementContext? {
         guard let elementId = request.elementId else { return nil }
         guard let snapshot = await self.getSnapshot(id: request.snapshotId) else {
-            throw TypeToolValidationError("No active snapshot. Run 'see' or 'inspect_ui' first to capture UI state.")
+            throw TypeToolValidationError(
+                "No active snapshot. Run 'see' or 'inspect_ui' first to capture UI state.",
+                refusalReason: .targetUnavailable)
         }
 
         guard let element = await snapshot.getElement(byId: elementId) else {
             throw TypeToolValidationError(
-                "Element '\(elementId)' not found in current snapshot. Run 'see' or 'inspect_ui' to update UI state.")
+                "Element '\(elementId)' not found in current snapshot. Run 'see' or 'inspect_ui' to update UI state.",
+                refusalReason: .targetUnavailable)
         }
         guard !element.isOCRSemanticEvidence else {
             throw TypeToolValidationError(OCRSemanticEvidencePolicy.interactionRefusalMessage)
@@ -484,7 +566,9 @@ public struct TypeTool: MCPTool {
         }
         guard request.snapshotId != nil else { return nil }
         guard let snapshot = await self.getSnapshot(id: request.snapshotId) else {
-            throw TypeToolValidationError("Snapshot not found. Run 'see' or 'inspect_ui' to capture fresh UI state.")
+            throw TypeToolValidationError(
+                "Snapshot not found. Run 'see' or 'inspect_ui' to capture fresh UI state.",
+                refusalReason: .targetUnavailable)
         }
         return snapshot
     }

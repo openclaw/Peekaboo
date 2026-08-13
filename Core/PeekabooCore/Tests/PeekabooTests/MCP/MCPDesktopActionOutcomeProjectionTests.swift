@@ -52,6 +52,22 @@ struct MCPDesktopActionOutcomeProjectionTests {
     }
 
     @Test
+    func `canonical outcome removes stale inferred fields that its projection omits`() throws {
+        let metadata = try MCPToolResponseMetadataProjector.metadata(
+            merging: [
+                "delivery_mode": .string("foreground"),
+                "effect": .string("unverifiable"),
+                "custom": .string("preserved"),
+            ],
+            outcome: .refused(reason: .permissionDenied))
+        let fields = try #require(metadata?.objectValue)
+
+        #expect(fields["delivery_mode"] == nil)
+        #expect(fields["effect"] == .string("refused"))
+        #expect(fields["custom"] == .string("preserved"))
+    }
+
+    @Test
     func `partial failure stays dispatched without demanding fresh observation`() throws {
         let twoUnits = try #require(DesktopActionOutcome.DispatchUnitCount(rawValue: 2))
         let failure = DesktopActionFailure.partial(
@@ -123,9 +139,56 @@ struct MCPDesktopActionOutcomeProjectionTests {
             ]))
 
             try Self.expect(outcome: outcome, in: response)
+            #expect(response.isError == !outcome.isConfirmed)
             guard case let .object(meta) = response.meta else { continue }
-            #expect(meta["invalidated_snapshot"] == .string(snapshotID))
+            let expectedInvalidatedSnapshot: Value? = outcome.dispatchState.mutationDispatched
+                ? .string(snapshotID)
+                : nil
+            #expect(meta["invalidated_snapshot"] == expectedInvalidatedSnapshot)
         }
+    }
+
+    @Test
+    @MainActor
+    func `returned non dispatched outcome preserves its request snapshot`() async throws {
+        let automation = StubAutomationService()
+        automation.actionOutcome = .refused(reason: .permissionDenied)
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await context.uiSnapshots.createSnapshot()
+        let snapshotID = await snapshot.id
+
+        let response = try await ActionTool(context: context).execute(arguments: ToolArguments(raw: [
+            "on": "B1",
+            "action": "AXPress",
+            "snapshot": snapshotID,
+        ]))
+
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(meta["invalidated_snapshot"] == nil)
+        #expect(await context.uiSnapshots.getSnapshot(id: nil)?.id == snapshotID)
+    }
+
+    @Test
+    @MainActor
+    func `snapshot independent dispatched failure invalidates the session implicit latest`() async throws {
+        let uiSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
+        let snapshot = await uiSnapshots.createSnapshot()
+        let snapshotID = await snapshot.id
+        let failure = DesktopActionFailure.dispatchedUnverified(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted,
+            message: "Raw input was dispatched")
+
+        let response = try await MCPDesktopActionFailureHandler.response(
+            for: failure,
+            uiSnapshots: uiSnapshots,
+            snapshotID: nil)
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["invalidated_snapshot"] == .string(snapshotID))
+        #expect(await uiSnapshots.getSnapshot(id: nil) == nil)
     }
 
     @Test
@@ -171,6 +234,7 @@ struct MCPDesktopActionOutcomeProjectionTests {
         ]
 
         for response in responses {
+            #expect(response.isError)
             try Self.expect(outcome: outcome, in: response)
         }
     }
@@ -203,15 +267,125 @@ struct MCPDesktopActionOutcomeProjectionTests {
             #expect(meta[key] == nil)
         }
         #expect(meta["invalidated_snapshot"] != nil)
+        #expect(await context.uiSnapshots.getSnapshot(id: nil) == nil)
+    }
+}
+
+extension MCPDesktopActionOutcomeProjectionTests {
+    @Test
+    @MainActor
+    func `multi chord homogeneous success publishes one canonical aggregate`() async throws {
+        let automation = StubAutomationService()
+        automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground))
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+
+        let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
+            "keys": ["cmd+a", "cmd+c"],
+            "foreground": true,
+        ]))
+
+        #expect(!response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["total_presses"] == .int(2))
+        #expect(meta["state"] == .string("confirmed_change"))
+        #expect(meta["effect"] == .string("confirmed"))
+        #expect(meta["dispatched_unit_count"] == .int(2))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["requires_fresh_observation"] == .bool(false))
     }
 
     @Test
     @MainActor
-    func `multi chord success preserves legacy safety metadata without inventing a canonical state`() async throws {
+    func `multi chord confirmed no change does not fabricate dispatch`() async throws {
         let automation = StubAutomationService()
-        automation.actionOutcome = .dispatchedUnverified(
-            delivery: .init(mechanism: .globalEvents, mode: .foreground),
-            evidence: .deliveryAccepted)
+        automation.actionOutcome = .confirmedNoChange()
+        StubAutomationOutcomeTestControl.resetHotkeyCalls(for: automation)
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+
+        let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
+            "keys": ["cmd+a", "cmd+c"],
+            "foreground": true,
+        ]))
+
+        #expect(!response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["total_presses"] == .int(2))
+        #expect(meta["state"] == .string("confirmed_no_change"))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["delivery_mode"] == nil)
+        #expect(StubAutomationOutcomeTestControl.hotkeyCallCount(for: automation) == 2)
+    }
+
+    @Test
+    @MainActor
+    func `heterogeneous no change chords do not fabricate foreground delivery`() async throws {
+        let automation = StubAutomationService()
+        StubAutomationOutcomeTestControl.setHotkeyOutcomes([
+            .confirmedNoChange(route: .local),
+            .confirmedNoChange(route: .bridge),
+        ], for: automation)
+        defer { StubAutomationOutcomeTestControl.setHotkeyOutcomes(nil, for: automation) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+
+        let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
+            "keys": ["cmd+a", "cmd+c"],
+            "foreground": true,
+        ]))
+
+        #expect(!response.isError)
+        guard case let .text(text, _, _) = response.content.first else {
+            Issue.record("Expected text response")
+            return
+        }
+        let meta = try #require(response.meta?.objectValue)
+        #expect(text.contains("all chords confirmed no change"))
+        #expect(!text.contains("Dispatched"))
+        #expect(!text.contains("unverifiable"))
+        #expect(meta["delivery_mode"] == nil)
+        #expect(meta["mutation_dispatched"] == nil)
+        #expect(meta["invalidated_snapshot"] == nil)
+    }
+
+    @Test
+    @MainActor
+    func `target focus stays separate from authoritative no change chords`() async throws {
+        let automation = StubAutomationService()
+        StubAutomationOutcomeTestControl.setHotkeyOutcomes([
+            .confirmedNoChange(route: .local),
+            .confirmedNoChange(route: .bridge),
+        ], for: automation)
+        defer { StubAutomationOutcomeTestControl.setHotkeyOutcomes(nil, for: automation) }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: EmptyRecordingWindowService())
+
+        let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
+            "keys": ["cmd+a", "cmd+c"],
+            "app": "Example",
+            "foreground": true,
+        ]))
+
+        #expect(!response.isError)
+        guard case let .text(text, _, _) = response.content.first else {
+            Issue.record("Expected text response")
+            return
+        }
+        let meta = try #require(response.meta?.objectValue)
+        #expect(text.contains("all chords confirmed no change"))
+        #expect(text.contains("setup-focus effect is unverifiable"))
+        #expect(!text.contains("Dispatched"))
+        #expect(meta["effect"] == .string("unverifiable"))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["requires_fresh_observation"] == .bool(true))
+        #expect(meta["delivery_mode"] == nil)
+    }
+
+    @Test
+    @MainActor
+    func `multi chord legacy success preserves conservative safety metadata`() async throws {
+        let automation = MockAutomationService(accessibilityGranted: true)
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
 
         let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -225,19 +399,48 @@ struct MCPDesktopActionOutcomeProjectionTests {
         #expect(meta["state"] == nil)
         #expect(meta["effect"] == .string("unverifiable"))
         #expect(meta["mutation_dispatched"] == .bool(true))
-        #expect(meta["retry_safe"] == .bool(false))
         #expect(meta["requires_fresh_observation"] == .bool(true))
     }
 
     @Test
+    @MainActor
+    func `press stops a sequence after a nonconfirmed native leaf`() async throws {
+        let outcomes: [DesktopActionOutcome] = [
+            .refused(reason: .permissionDenied),
+            .indeterminate(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .completionUnknown),
+        ]
+
+        for outcome in outcomes {
+            let automation = StubAutomationService()
+            automation.actionOutcome = outcome
+            StubAutomationOutcomeTestControl.resetHotkeyCalls(for: automation)
+            let context = await MCPToolTestHelpers.makeContext(automation: automation)
+
+            let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
+                "keys": ["cmd+a", "cmd+c"],
+                "foreground": true,
+            ]))
+
+            #expect(response.isError)
+            try Self.expect(outcome: outcome, in: response)
+            #expect(StubAutomationOutcomeTestControl.hotkeyCallCount(for: automation) == 1)
+        }
+    }
+
+    @Test
     func `multi chord leaf failure preserves cumulative canonical partial semantics`() throws {
+        var progress = PressSequenceProgress()
+        progress.record(outcome: .confirmedChange(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground)))
         let leafFailure = DesktopActionFailure.partial(
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
             unitCount: DesktopActionOutcome.DispatchUnitCount(1),
             message: "Second chord completed but cleanup failed")
         let aggregate = PressTool.aggregateSequenceFailure(
             leafFailure,
-            completedPresses: 1,
+            progress: progress,
             setupFocusCompleted: false)
         let response = try MCPToolResponseMetadataProjector.errorResponse(
             for: aggregate,
@@ -260,13 +463,31 @@ struct MCPDesktopActionOutcomeProjectionTests {
 
         let aggregate = PressTool.aggregateSequenceFailure(
             leafFailure,
-            completedPresses: 0,
+            progress: PressSequenceProgress(),
             setupFocusCompleted: true)
 
         #expect(aggregate.outcome.state == .indeterminate)
         #expect(aggregate.outcome.delivery == nil)
         #expect(aggregate.outcome.dispatchState.unitCount?.rawValue == 1)
         #expect(aggregate.outcome.retrySafety == .unsafe)
+        #expect(aggregate.outcome.escalation == .observeBeforeRetry)
+    }
+
+    @Test
+    func `press does not assign a partial leaf delivery to completed target focus`() {
+        let leafFailure = DesktopActionFailure.partial(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            unitCount: DesktopActionOutcome.DispatchUnitCount(1),
+            message: "Chord completed but cleanup failed")
+
+        let aggregate = PressTool.aggregateSequenceFailure(
+            leafFailure,
+            progress: PressSequenceProgress(),
+            setupFocusCompleted: true)
+
+        #expect(aggregate.outcome.state == .indeterminate)
+        #expect(aggregate.outcome.delivery == nil)
+        #expect(aggregate.outcome.dispatchState.unitCount?.rawValue == 2)
         #expect(aggregate.outcome.escalation == .observeBeforeRetry)
     }
 
@@ -347,6 +568,81 @@ struct MCPDesktopActionOutcomeProjectionTests {
     }
 
     @Test
+    @MainActor
+    func `type aggregates a returned refusal after confirmed focus`() async throws {
+        let automation = StubAutomationService()
+        automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .accessibilityAction, mode: .background))
+        StubAutomationOutcomeTestControl.setTypeOutcome(
+            .refused(reason: .permissionDenied),
+            for: automation)
+        defer { StubAutomationOutcomeTestControl.setTypeOutcome(nil, for: automation) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
+
+        let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "on": "T1",
+            "text": "hello",
+            "snapshot": snapshotID,
+        ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("indeterminate"))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["dispatched_unit_count"] == .int(1))
+        #expect(meta["invalidated_snapshot"] == .string(snapshotID))
+        #expect(await context.uiSnapshots.getSnapshot(id: nil) == nil)
+    }
+
+    @Test
+    @MainActor
+    func `generic typing error after no change focus does not invent a mutation`() async throws {
+        let automation = StubAutomationService()
+        automation.actionOutcome = .confirmedNoChange()
+        automation.targetedTypeError = PeekabooError.invalidInput("typing refused before dispatch")
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
+
+        let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "on": "T1",
+            "text": "hello",
+            "snapshot": snapshotID,
+        ]))
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == nil)
+        #expect(response.meta?.objectValue?["state"] == nil)
+        #expect(await context.uiSnapshots.getSnapshot(id: nil)?.id == snapshotID)
+    }
+
+    @Test
+    @MainActor
+    func `returned dispatched type outcome invalidates its explicit snapshot through failure handling`() async throws {
+        let automation = StubAutomationService()
+        automation.actionOutcome = .dispatchedUnverified(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted)
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await context.uiSnapshots.createSnapshot()
+        let snapshotID = await snapshot.id
+
+        let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "text": "hello",
+            "snapshot": snapshotID,
+            "foreground": true,
+        ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("dispatched_unverified"))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["invalidated_snapshot"] == .string(snapshotID))
+        #expect(await context.uiSnapshots.getSnapshot(id: nil) == nil)
+    }
+
+    @Test
     func `type conservatively counts a receiptless completed focus before refusal`() {
         let leafFailure = DesktopActionFailure.refused(
             reason: .permissionDenied,
@@ -363,7 +659,7 @@ struct MCPDesktopActionOutcomeProjectionTests {
     }
 
     @Test
-    func `type preserves partial recovery semantics after confirmed focus`() {
+    func `type omits a leaf delivery for heterogeneous partial typing after focus`() {
         let focusOutcome = DesktopActionOutcome.confirmedChange(
             delivery: .init(mechanism: .accessibilityAction, mode: .background))
         let leafFailure = DesktopActionFailure.partial(
@@ -375,10 +671,70 @@ struct MCPDesktopActionOutcomeProjectionTests {
             leafFailure,
             after: TypeFocusResult(completed: true, outcome: focusOutcome))
 
+        #expect(aggregate.outcome.state == .indeterminate)
+        #expect(aggregate.outcome.dispatchState.unitCount?.rawValue == 3)
+        #expect(aggregate.outcome.delivery == nil)
+        #expect(aggregate.outcome.escalation == .observeBeforeRetry)
+        #expect(aggregate.outcome.projection.requiresFreshObservation)
+    }
+
+    @Test
+    func `type preserves partial recovery for one homogeneous delivery`() {
+        let delivery = DesktopActionOutcome.Delivery(
+            mechanism: .processTargetedEvents,
+            mode: .background)
+        let focusOutcome = DesktopActionOutcome.confirmedChange(delivery: delivery)
+        let leafFailure = DesktopActionFailure.partial(
+            delivery: delivery,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(2),
+            message: "Typing completed but cleanup failed")
+
+        let aggregate = TypeTool.aggregateTypingFailure(
+            leafFailure,
+            after: TypeFocusResult(completed: true, outcome: focusOutcome))
+
         #expect(aggregate.outcome.state == .partial)
         #expect(aggregate.outcome.dispatchState.unitCount?.rawValue == 3)
+        #expect(aggregate.outcome.delivery == delivery)
         #expect(aggregate.outcome.escalation == .recoverSideEffect)
         #expect(!aggregate.outcome.projection.requiresFreshObservation)
+    }
+
+    @Test
+    func `type omits a partial leaf route from a heterogeneous aggregate`() {
+        let delivery = DesktopActionOutcome.Delivery(
+            mechanism: .processTargetedEvents,
+            mode: .background)
+        let focusOutcome = DesktopActionOutcome.confirmedChange(
+            route: .local,
+            delivery: delivery)
+        let leafFailure = DesktopActionFailure.partial(
+            route: .bridge,
+            delivery: delivery,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(1),
+            message: "Typing completed but cleanup failed")
+
+        let aggregate = TypeTool.aggregateTypingFailure(
+            leafFailure,
+            after: TypeFocusResult(completed: true, outcome: focusOutcome))
+
+        #expect(aggregate.outcome.state == .indeterminate)
+        #expect(aggregate.outcome.route == .bridge)
+        #expect(aggregate.outcome.delivery == nil)
+        #expect(aggregate.outcome.dispatchState.unitCount?.rawValue == 2)
+    }
+
+    @Test
+    func `type preserves confirmed no change when no composite unit dispatched`() {
+        let outcome = DesktopActionOutcome.confirmedNoChange()
+
+        let aggregate = TypeTool.aggregateTypingSuccess(
+            outcome,
+            after: TypeFocusResult(completed: true, outcome: .confirmedNoChange()))
+
+        #expect(aggregate == outcome)
+        #expect(aggregate?.state == .confirmedNoChange)
+        #expect(aggregate?.dispatchState.mutationDispatched == false)
     }
 
     @Test
@@ -408,7 +764,7 @@ struct MCPDesktopActionOutcomeProjectionTests {
 
     @Test
     @MainActor
-    func `type omits a leaf outcome after a separate focus action`() async throws {
+    func `type aggregates homogeneous successful focus and typing outcomes`() async throws {
         let automation = StubAutomationService()
         automation.actionOutcome = .confirmedChange(
             delivery: .init(mechanism: .accessibilityAction, mode: .background))
@@ -424,10 +780,68 @@ struct MCPDesktopActionOutcomeProjectionTests {
 
         #expect(!response.isError)
         let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("confirmed_change"))
+        #expect(meta["effect"] == .string("confirmed"))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["delivery_mechanism"] == .string("accessibility_action"))
+        #expect(meta["delivery_mode"] == .string("background"))
+        #expect(meta["dispatched_unit_count"] == .int(2))
+        #expect(meta["invalidated_snapshot"] == .string(snapshotID))
+        #expect(meta["requires_fresh_observation"] == .bool(false))
+    }
+
+    @Test
+    @MainActor
+    func `type reports zero typed characters for an authoritative no change leaf`() async throws {
+        let automation = StubAutomationService()
+        automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .accessibilityAction, mode: .background))
+        StubAutomationOutcomeTestControl.setTypeOutcome(.confirmedNoChange(), for: automation)
+        defer { StubAutomationOutcomeTestControl.setTypeOutcome(nil, for: automation) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        await context.uiSnapshots.removeOwner()
+        let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
+
+        let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "on": "T1",
+            "text": "hello",
+            "snapshot": snapshotID,
+        ]))
+
+        #expect(!response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("confirmed_change"))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["characters_typed"] == .double(0))
+    }
+
+    @Test
+    @MainActor
+    func `type omits delivery for heterogeneous successful focus and typing outcomes`() async throws {
+        let automation = StubAutomationService()
+        automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .accessibilityAction, mode: .background))
+        StubAutomationOutcomeTestControl.setTypeOutcome(
+            .confirmedChange(delivery: .init(mechanism: .processTargetedEvents, mode: .background)),
+            for: automation)
+        defer { StubAutomationOutcomeTestControl.setTypeOutcome(nil, for: automation) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
+
+        let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "on": "T1",
+            "text": "hello",
+            "snapshot": snapshotID,
+        ]))
+
+        #expect(!response.isError)
+        let meta = try #require(response.meta?.objectValue)
         #expect(meta["state"] == nil)
         #expect(meta["effect"] == nil)
-        #expect(meta["mutation_dispatched"] == nil)
+        #expect(meta["delivery_mechanism"] == nil)
+        #expect(meta["delivery_mode"] == nil)
         #expect(meta["requires_fresh_observation"] == .bool(true))
+        #expect(meta["invalidated_snapshot"] == .string(snapshotID))
     }
 
     @Test
@@ -499,6 +913,57 @@ struct MCPDesktopActionOutcomeProjectionTests {
             #expect(meta["escalation"] == .string("update_runtime"))
             #expect(meta["retry_safe"] == .bool(true))
         }
+    }
+
+    @Test
+    @MainActor
+    func `mutation tool validation emits canonical predispatch refusals`() async throws {
+        let automation = MockAutomationService(accessibilityGranted: true)
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let responses = try await [
+            TypeTool(context: context).execute(arguments: ToolArguments(raw: [:])),
+            PressTool(context: context).execute(arguments: ToolArguments(raw: [
+                "keys": ["cmd+a"],
+                "count": 0,
+                "foreground": true,
+            ])),
+            PressTool(context: context).execute(arguments: ToolArguments(raw: [
+                "keys": ["cmd+a"],
+                "count": 1.5,
+                "foreground": true,
+            ])),
+            ScrollTool(context: context).execute(arguments: ToolArguments(raw: [:])),
+        ]
+
+        for response in responses {
+            #expect(response.isError)
+            let meta = try #require(response.meta?.objectValue)
+            #expect(meta["state"] == .string("refused"))
+            #expect(meta["refusal_reason"] == .string("invalid_request"))
+            #expect(meta["mutation_dispatched"] == .bool(false))
+            #expect(meta["retry_safe"] == .bool(true))
+            #expect(meta["requires_fresh_observation"] == .bool(false))
+        }
+    }
+
+    @Test
+    @MainActor
+    func `missing type snapshot is a canonical target refusal`() async throws {
+        let automation = MockAutomationService(accessibilityGranted: true)
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+
+        let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "text": "hello",
+            "snapshot": "missing-snapshot",
+        ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("refused"))
+        #expect(meta["refusal_reason"] == .string("target_unavailable"))
+        #expect(meta["escalation"] == .string("refresh_target"))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["retry_safe"] == .bool(true))
     }
 
     @MainActor

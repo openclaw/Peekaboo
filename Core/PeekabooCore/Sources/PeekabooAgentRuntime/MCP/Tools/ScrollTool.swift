@@ -62,7 +62,9 @@ public struct ScrollTool: MCPTool {
             let request = try self.parseRequest(arguments: arguments)
             return try await self.performScroll(request: request)
         } catch let error as ScrollToolValidationError {
-            return ToolResponse.error(error.message)
+            return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+                message: error.message,
+                reason: error.refusalReason)
         } catch {
             self.logger.error("Scroll execution failed: \(error)")
             return ToolResponse.error("Failed to perform scroll: \(error.localizedDescription)")
@@ -160,6 +162,9 @@ public struct ScrollTool: MCPTool {
                     payload: automation.scroll(serviceRequest),
                     outcome: nil)
             }
+            try MCPDesktopActionFailureHandler.requireConfirmed(
+                actionResult.outcome,
+                operation: "Scroll")
         } catch let failure as DesktopActionFailure {
             return try await MCPDesktopActionFailureHandler.response(
                 for: failure,
@@ -167,7 +172,10 @@ public struct ScrollTool: MCPTool {
                 snapshotID: target.snapshotId)
         }
 
-        let invalidatedSnapshotId = await self.context.uiSnapshots.invalidateActiveSnapshot(id: target.snapshotId)
+        let invalidatedSnapshotId = await MCPDesktopActionSnapshotInvalidator.invalidate(
+            uiSnapshots: self.context.uiSnapshots,
+            snapshotID: target.snapshotId,
+            outcome: actionResult.outcome)
         let executionTime = Date().timeIntervalSince(startTime)
         let scrollDescription = request.smooth ? "smooth scroll" : "scroll"
         let duration = String(format: "%.2f", executionTime) + "s"
@@ -203,12 +211,15 @@ public struct ScrollTool: MCPTool {
         }
 
         guard let snapshot = await self.getSnapshot(id: request.snapshotId) else {
-            throw ScrollToolValidationError("No active snapshot. Run 'see' or 'inspect_ui' first to capture UI state.")
+            throw ScrollToolValidationError(
+                "No active snapshot. Run 'see' or 'inspect_ui' first to capture UI state.",
+                refusalReason: .targetUnavailable)
         }
 
         guard let element = await snapshot.getElement(byId: elementId) else {
             throw ScrollToolValidationError(
-                "Element '\(elementId)' not found in current snapshot. Run 'see' or 'inspect_ui' to update UI state.")
+                "Element '\(elementId)' not found in current snapshot. Run 'see' or 'inspect_ui' to update UI state.",
+                refusalReason: .targetUnavailable)
         }
         guard !element.isOCRSemanticEvidence else {
             throw ScrollToolValidationError(OCRSemanticEvidencePolicy.interactionRefusalMessage)
@@ -259,7 +270,13 @@ private struct ScrollTargetDescription {
 
 private struct ScrollToolValidationError: Error {
     let message: String
-    init(_ message: String) {
+    let refusalReason: DesktopActionOutcome.RefusalReason
+
+    init(
+        _ message: String,
+        refusalReason: DesktopActionOutcome.RefusalReason = .invalidRequest)
+    {
         self.message = message
+        self.refusalReason = refusalReason
     }
 }

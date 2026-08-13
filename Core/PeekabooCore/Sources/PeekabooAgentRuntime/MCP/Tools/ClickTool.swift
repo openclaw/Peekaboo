@@ -161,9 +161,14 @@ public struct ClickTool: MCPTool {
                 intent: request.intent,
                 deliveryMode: request.deliveryMode,
                 targetProcessIdentity: effectiveTargetProcessIdentity)
+            try MCPDesktopActionFailureHandler.requireConfirmed(
+                outcome,
+                operation: "Click")
 
-            let invalidatedSnapshotId = await self.context.uiSnapshots
-                .invalidateActiveSnapshot(id: resolution.snapshotIdToInvalidate)
+            let invalidatedSnapshotId = await MCPDesktopActionSnapshotInvalidator.invalidate(
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: resolution.snapshotIdToInvalidate,
+                outcome: outcome)
             let executionTime = Date().timeIntervalSince(startTime)
             return try self.buildResponse(
                 intent: request.intent,
@@ -181,9 +186,9 @@ public struct ClickTool: MCPTool {
                 uiSnapshots: self.context.uiSnapshots,
                 snapshotID: snapshotIdToInvalidate)
         } catch let error as InputDeliveryIndeterminateError {
-            let delivery: DesktopActionOutcome.Delivery? = request.deliveryMode == .foreground
-                ? .init(mechanism: .globalEvents, mode: .foreground)
-                : nil
+            // Target mode does not prove the mechanism: element clicks can use Accessibility while
+            // coordinate clicks synthesize events. Legacy errors do not carry that route.
+            let delivery: DesktopActionOutcome.Delivery? = nil
             return try await MCPDesktopActionFailureHandler.response(
                 for: error.desktopActionFailure(delivery: delivery),
                 uiSnapshots: self.context.uiSnapshots,
@@ -632,10 +637,9 @@ public struct ClickTool: MCPTool {
     }
 
     private static func preDispatchErrorResponse(_ error: ClickToolError) throws -> ToolResponse {
-        let outcome = DesktopActionOutcome.refused(reason: error.refusalReason)
-        return try ToolResponse.error(
-            error.message,
-            meta: .object(MCPToolResponseMetadataProjector.fields(for: outcome.projection)))
+        MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+            message: error.message,
+            reason: error.refusalReason)
     }
 
     fileprivate static let backgroundCoordinateReferenceMessage =
