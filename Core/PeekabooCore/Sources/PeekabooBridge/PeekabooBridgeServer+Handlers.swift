@@ -28,7 +28,7 @@ extension PeekabooBridgeServer {
         case .listWindows, .focusWindow, .moveWindow, .resizeWindow, .setWindowBounds, .closeWindow,
              .backgroundCloseWindow,
              .minimizeWindow, .restoreWindow, .maximizeWindow, .getFocusedWindow:
-            return try await .init(response: self.handleWindowRequest(request))
+            return try await self.handleWindowRequest(request)
         case .listApplications, .findApplication, .getFrontmostApplication, .isApplicationRunning,
              .launchApplication, .launchApplicationWithOptions, .relaunchApplicationWithOptions,
              .activateApplication, .quitApplication,
@@ -713,77 +713,141 @@ extension PeekabooBridgeServer {
         return .init(response: .ok)
     }
 
-    private func handleWindowRequest(_ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeResponse {
+    private func handleWindowRequest(_ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeHandledResponse {
         switch request {
         case let .listWindows(payload):
             let result = try await self.services.windows.listWindows(target: payload.target)
-            return .windows(result)
+            return .init(response: .windows(result))
         case let .focusWindow(payload):
             try await self.services.windows.focusWindow(target: payload.target)
-            return .ok
+            return .init(response: .ok)
         case let .moveWindow(payload):
             let identity = try Self.requireWindowMutationReceipt(payload.expectedIdentity, operation: .moveWindow)
-            try await self.services.windows.moveWindow(
-                target: payload.target,
-                expectedIdentity: identity,
-                to: payload.position)
-            return .ok
+            return try await self.handleWindowAction(
+                withOutcome: { service in
+                    try await service.moveWindowWithOutcome(
+                        target: payload.target,
+                        expectedIdentity: identity,
+                        to: payload.position)
+                },
+                legacy: {
+                    try await self.services.windows.moveWindow(
+                        target: payload.target,
+                        expectedIdentity: identity,
+                        to: payload.position)
+                })
         case let .resizeWindow(payload):
             let identity = try Self.requireWindowMutationReceipt(payload.expectedIdentity, operation: .resizeWindow)
-            try await self.services.windows.resizeWindow(
-                target: payload.target,
-                expectedIdentity: identity,
-                to: payload.size)
-            return .ok
+            return try await self.handleWindowAction(
+                withOutcome: { service in
+                    try await service.resizeWindowWithOutcome(
+                        target: payload.target,
+                        expectedIdentity: identity,
+                        to: payload.size)
+                },
+                legacy: {
+                    try await self.services.windows.resizeWindow(
+                        target: payload.target,
+                        expectedIdentity: identity,
+                        to: payload.size)
+                })
         case let .setWindowBounds(payload):
             let identity = try Self.requireWindowMutationReceipt(
                 payload.expectedIdentity,
                 operation: .setWindowBounds)
-            try await self.services.windows.setWindowBounds(
-                target: payload.target,
-                expectedIdentity: identity,
-                bounds: payload.bounds)
-            return .ok
+            return try await self.handleWindowAction(
+                withOutcome: { service in
+                    try await service.setWindowBoundsWithOutcome(
+                        target: payload.target,
+                        expectedIdentity: identity,
+                        bounds: payload.bounds)
+                },
+                legacy: {
+                    try await self.services.windows.setWindowBounds(
+                        target: payload.target,
+                        expectedIdentity: identity,
+                        bounds: payload.bounds)
+                })
         case let .closeWindow(payload):
             let identity = try Self.requireWindowMutationReceipt(payload.expectedIdentity, operation: .closeWindow)
             try await self.services.windows.closeWindow(
                 target: payload.target,
                 expectedIdentity: identity,
                 allowForegroundFallback: true)
-            return .ok
+            return .init(response: .ok)
         case let .backgroundCloseWindow(payload):
             let identity = try Self.requireWindowMutationReceipt(
                 payload.expectedIdentity,
                 operation: .backgroundCloseWindow)
-            try await self.services.windows.closeWindow(
-                target: payload.target,
-                expectedIdentity: identity,
-                allowForegroundFallback: false)
-            return .ok
+            return try await self.handleWindowAction(
+                withOutcome: { service in
+                    try await service.closeWindowWithOutcome(
+                        target: payload.target,
+                        expectedIdentity: identity)
+                },
+                legacy: {
+                    try await self.services.windows.closeWindow(
+                        target: payload.target,
+                        expectedIdentity: identity,
+                        allowForegroundFallback: false)
+                })
         case let .minimizeWindow(payload):
             let identity = try Self.requireWindowMutationReceipt(payload.expectedIdentity, operation: .minimizeWindow)
-            try await self.services.windows.minimizeWindow(
-                target: payload.target,
-                expectedIdentity: identity)
-            return .ok
+            return try await self.handleWindowAction(
+                withOutcome: { service in
+                    try await service.minimizeWindowWithOutcome(
+                        target: payload.target,
+                        expectedIdentity: identity)
+                },
+                legacy: {
+                    try await self.services.windows.minimizeWindow(
+                        target: payload.target,
+                        expectedIdentity: identity)
+                })
         case let .restoreWindow(payload):
             let identity = try Self.requireWindowMutationReceipt(payload.expectedIdentity, operation: .restoreWindow)
-            try await self.services.windows.restoreWindow(
-                target: payload.target,
-                expectedIdentity: identity)
-            return .ok
+            return try await self.handleWindowAction(
+                withOutcome: { service in
+                    try await service.restoreWindowWithOutcome(
+                        target: payload.target,
+                        expectedIdentity: identity)
+                },
+                legacy: {
+                    try await self.services.windows.restoreWindow(
+                        target: payload.target,
+                        expectedIdentity: identity)
+                })
         case let .maximizeWindow(payload):
             let identity = try Self.requireWindowMutationReceipt(payload.expectedIdentity, operation: .maximizeWindow)
-            try await self.services.windows.maximizeWindow(
-                target: payload.target,
-                expectedIdentity: identity)
-            return .ok
+            return try await self.handleWindowAction(
+                withOutcome: { service in
+                    try await service.maximizeWindowWithOutcome(
+                        target: payload.target,
+                        expectedIdentity: identity)
+                },
+                legacy: {
+                    try await self.services.windows.maximizeWindow(
+                        target: payload.target,
+                        expectedIdentity: identity)
+                })
         case .getFocusedWindow:
             let window = try await self.services.windows.getFocusedWindow()
-            return .window(window)
+            return .init(response: .window(window))
         default:
             throw Self.invalidRequest(for: request)
         }
+    }
+
+    private func handleWindowAction(
+        withOutcome: (any WindowManagementActionOutcomeProviding) async throws -> DesktopActionOutcome?,
+        legacy: () async throws -> Void) async throws -> PeekabooBridgeHandledResponse
+    {
+        guard let service = self.services.windows as? any WindowManagementActionOutcomeProviding else {
+            try await legacy()
+            return .init(response: .ok)
+        }
+        let outcome = try await withOutcome(service)
+        return .init(response: .ok, outcome: outcome)
     }
 
     private static func requireWindowMutationReceipt(

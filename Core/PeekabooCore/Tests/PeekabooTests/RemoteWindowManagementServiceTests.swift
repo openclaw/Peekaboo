@@ -1,6 +1,8 @@
 import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
+import PeekabooFoundation
 import Testing
 @testable import PeekabooBridge
 @testable import PeekabooCore
@@ -13,6 +15,101 @@ struct RemoteWindowManagementServiceTests {
         ownerProcessIdentifier: 420,
         ownerProcessStartIdentity: 9001,
         capturedBounds: CGRect(x: 0, y: 0, width: 100, height: 100))
+
+    @Test
+    func `capable remote preserves every window mutation outcome through protocol 1 23`() async throws {
+        let socketPath = "/tmp/peekaboo-remote-window-outcome-\(UUID().uuidString).sock"
+        let expected = AutomationTestFixtures.canonicalActionOutcomes[0]
+        let windows = RemoteWindowMutationFixture(identity: self.identity, actionOutcome: expected)
+        let server = PeekabooBridgeServer(
+            services: StubServices(windows: windows),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: Self.allowedOperations,
+            windowOwnerProcessIdentifierProvider: { _ in 420 },
+            windowBoundsProvider: { _ in CGRect(x: 0, y: 0, width: 100, height: 100) },
+            processStartIdentityProvider: { _ in 9001 })
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
+        let remote = RemoteWindowManagementService(
+            client: client,
+            supportsBackgroundClose: true,
+            supportsPinnedWindowMutations: true,
+            supportsWindowRestore: true)
+        let target = WindowTarget.windowId(self.identity.windowID)
+        let outcomes = try await [
+            remote.closeWindowWithOutcome(target: target, expectedIdentity: self.identity),
+            remote.minimizeWindowWithOutcome(target: target, expectedIdentity: self.identity),
+            remote.restoreWindowWithOutcome(target: target, expectedIdentity: self.identity),
+            remote.maximizeWindowWithOutcome(target: target, expectedIdentity: self.identity),
+            remote.moveWindowWithOutcome(target: target, expectedIdentity: self.identity, to: .zero),
+            remote.resizeWindowWithOutcome(target: target, expectedIdentity: self.identity, to: .zero),
+            remote.setWindowBoundsWithOutcome(target: target, expectedIdentity: self.identity, bounds: .zero),
+        ]
+
+        #expect(outcomes.allSatisfy { $0 == expected.routed(to: .bridge) })
+        for expectedOutcome in AutomationTestFixtures.canonicalActionOutcomes {
+            await windows.setActionOutcome(expectedOutcome)
+            let carried = try await remote.moveWindowWithOutcome(
+                target: target,
+                expectedIdentity: self.identity,
+                to: CGPoint(x: 12, y: 34))
+            #expect(carried == expectedOutcome.routed(to: .bridge))
+        }
+        await windows.setActionOutcome(nil)
+        #expect(try await remote.moveWindowWithOutcome(
+            target: target,
+            expectedIdentity: self.identity,
+            to: CGPoint(x: 56, y: 78)) == nil)
+        await host.stop()
+    }
+
+    @Test
+    func `legacy negotiated remote returns nil instead of fabricating window outcomes`() async throws {
+        let socketPath = "/tmp/peekaboo-remote-window-outcome-legacy-\(UUID().uuidString).sock"
+        let legacyVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 22)
+        let windows = RemoteWindowMutationFixture(
+            identity: self.identity,
+            actionOutcome: AutomationTestFixtures.canonicalActionOutcomes[0])
+        let server = PeekabooBridgeServer(
+            services: StubServices(windows: windows),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            supportedVersions: legacyVersion...legacyVersion,
+            allowedOperations: Self.allowedOperations,
+            windowOwnerProcessIdentifierProvider: { _ in 420 },
+            windowBoundsProvider: { _ in CGRect(x: 0, y: 0, width: 100, height: 100) },
+            processStartIdentityProvider: { _ in 9001 })
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity, protocolVersion: legacyVersion)
+        let remote = RemoteWindowManagementService(
+            client: client,
+            supportsPinnedWindowMutations: true)
+        let outcome = try await remote.moveWindowWithOutcome(
+            target: .windowId(self.identity.windowID),
+            expectedIdentity: self.identity,
+            to: CGPoint(x: 12, y: 34))
+
+        #expect(outcome == nil)
+        #expect(await windows.pinnedMutations.map(\.operation) == ["move"])
+        await host.stop()
+    }
 
     @Test
     func `legacy mutation overloads resolve and dispatch pinned identities`() async throws {
@@ -201,6 +298,12 @@ struct RemoteWindowManagementServiceTests {
         .maximizeWindow,
     ]
 
+    private static let clientIdentity = PeekabooBridgeClientIdentity(
+        bundleIdentifier: "dev.peekaboo.window-outcome-tests",
+        teamIdentifier: nil,
+        processIdentifier: getpid(),
+        hostname: nil)
+
     private static func waitForConnectionCount(
         _ expectedCount: Int,
         host: PeekabooBridgeHost) async throws
@@ -224,8 +327,9 @@ private struct RecordedRemoteWindowMutation: Equatable {
     let identity: WindowMutationIdentity
 }
 
-private actor RemoteWindowMutationFixture: WindowManagementServiceProtocol {
+private actor RemoteWindowMutationFixture: WindowManagementActionOutcomeProviding {
     let identity: WindowMutationIdentity
+    private var actionOutcome: DesktopActionOutcome?
     private let blocksFirstLegacyMove: Bool
     private var didBlockLegacyMove = false
     private var legacyMutationStarted = false
@@ -236,9 +340,18 @@ private actor RemoteWindowMutationFixture: WindowManagementServiceProtocol {
     private(set) var pinnedMutations: [RecordedRemoteWindowMutation] = []
     private(set) var focusedTargets: [String] = []
 
-    init(identity: WindowMutationIdentity, blocksFirstLegacyMove: Bool = false) {
+    init(
+        identity: WindowMutationIdentity,
+        blocksFirstLegacyMove: Bool = false,
+        actionOutcome: DesktopActionOutcome? = nil)
+    {
         self.identity = identity
         self.blocksFirstLegacyMove = blocksFirstLegacyMove
+        self.actionOutcome = actionOutcome
+    }
+
+    func setActionOutcome(_ outcome: DesktopActionOutcome?) {
+        self.actionOutcome = outcome
     }
 
     func closeWindow(target: WindowTarget) async throws {
@@ -260,12 +373,28 @@ private actor RemoteWindowMutationFixture: WindowManagementServiceProtocol {
             identity: expectedIdentity)
     }
 
+    func closeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+    {
+        self.record("background-close", target: target, identity: expectedIdentity)
+        return self.actionOutcome
+    }
+
     func minimizeWindow(target: WindowTarget) async throws {
         self.legacyMutations.append("minimize:\(target)")
     }
 
     func minimizeWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws {
         self.record("minimize", target: target, identity: expectedIdentity)
+    }
+
+    func minimizeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+    {
+        self.record("minimize", target: target, identity: expectedIdentity)
+        return self.actionOutcome
     }
 
     func restoreWindow(target: WindowTarget) async throws {
@@ -276,12 +405,28 @@ private actor RemoteWindowMutationFixture: WindowManagementServiceProtocol {
         self.record("restore", target: target, identity: expectedIdentity)
     }
 
+    func restoreWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+    {
+        self.record("restore", target: target, identity: expectedIdentity)
+        return self.actionOutcome
+    }
+
     func maximizeWindow(target: WindowTarget) async throws {
         self.legacyMutations.append("maximize:\(target)")
     }
 
     func maximizeWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws {
         self.record("maximize", target: target, identity: expectedIdentity)
+    }
+
+    func maximizeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+    {
+        self.record("maximize", target: target, identity: expectedIdentity)
+        return self.actionOutcome
     }
 
     func moveWindow(target: WindowTarget, to _: CGPoint) async throws {
@@ -308,6 +453,15 @@ private actor RemoteWindowMutationFixture: WindowManagementServiceProtocol {
         await withCheckedContinuation { self.releaseContinuation = $0 }
     }
 
+    func moveWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to position: CGPoint) async throws -> DesktopActionOutcome?
+    {
+        try await self.moveWindow(target: target, expectedIdentity: expectedIdentity, to: position)
+        return self.actionOutcome
+    }
+
     func resizeWindow(target: WindowTarget, to _: CGSize) async throws {
         self.legacyMutations.append("resize:\(target)")
     }
@@ -320,6 +474,15 @@ private actor RemoteWindowMutationFixture: WindowManagementServiceProtocol {
         self.record("resize", target: target, identity: expectedIdentity)
     }
 
+    func resizeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to _: CGSize) async throws -> DesktopActionOutcome?
+    {
+        self.record("resize", target: target, identity: expectedIdentity)
+        return self.actionOutcome
+    }
+
     func setWindowBounds(target: WindowTarget, bounds _: CGRect) async throws {
         self.legacyMutations.append("set-bounds:\(target)")
     }
@@ -330,6 +493,15 @@ private actor RemoteWindowMutationFixture: WindowManagementServiceProtocol {
         bounds _: CGRect) async throws
     {
         self.record("set-bounds", target: target, identity: expectedIdentity)
+    }
+
+    func setWindowBoundsWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        bounds _: CGRect) async throws -> DesktopActionOutcome?
+    {
+        self.record("set-bounds", target: target, identity: expectedIdentity)
+        return self.actionOutcome
     }
 
     func focusWindow(target: WindowTarget) async throws {

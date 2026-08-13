@@ -150,6 +150,45 @@ extension WindowManagementServiceProtocol {
     }
 }
 
+/// Additive capability for exact-window mutations that can report their canonical execution outcome.
+///
+/// Existing protocol methods remain the compatibility surface. The outcome is optional so a remote
+/// implementation negotiated with an older host can preserve the successful legacy operation without
+/// inventing verification evidence.
+public protocol WindowManagementActionOutcomeProviding: WindowManagementServiceProtocol {
+    /// Close the exact window through the background-only Accessibility route.
+    func closeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+
+    func minimizeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+
+    func restoreWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+
+    func maximizeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+
+    func moveWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to position: CGPoint) async throws -> DesktopActionOutcome?
+
+    func resizeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to size: CGSize) async throws -> DesktopActionOutcome?
+
+    func setWindowBoundsWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        bounds: CGRect) async throws -> DesktopActionOutcome?
+}
+
 /// Options for targeting a window
 public enum WindowTarget: Sendable, CustomStringConvertible, Codable {
     /// Target by application name or bundle ID

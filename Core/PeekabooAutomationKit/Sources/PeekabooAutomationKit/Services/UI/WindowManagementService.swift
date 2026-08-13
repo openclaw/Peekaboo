@@ -37,7 +37,7 @@ import PeekabooFoundation
  * - Since: PeekabooCore 1.0.0
  */
 @MainActor
-public final class WindowManagementService: WindowManagementServiceProtocol {
+public final class WindowManagementService: WindowManagementServiceProtocol, WindowManagementActionOutcomeProviding {
     let applicationService: any ApplicationServiceProtocol
     let windowIdentityService = WindowIdentityService()
     let cgInfoLookup: WindowCGInfoLookup

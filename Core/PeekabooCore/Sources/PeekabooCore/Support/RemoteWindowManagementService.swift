@@ -6,7 +6,9 @@ import PeekabooBridge
 import PeekabooFoundation
 
 @MainActor
-public final class RemoteWindowManagementService: WindowManagementServiceProtocol {
+public final class RemoteWindowManagementService: WindowManagementServiceProtocol,
+    WindowManagementActionOutcomeProviding
+{
     private let client: PeekabooBridgeClient
     private let supportsBackgroundClose: Bool
     private nonisolated let supportsPinnedWindowMutations: Bool
@@ -55,6 +57,22 @@ public final class RemoteWindowManagementService: WindowManagementServiceProtoco
             allowForegroundFallback: allowForegroundFallback)
     }
 
+    public func closeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+    {
+        try self.requirePinnedWindowMutationSupport()
+        guard self.supportsBackgroundClose else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Remote host does not support AX-only background window close; " +
+                    "update the host or use --no-remote")
+        }
+        return try await self.client.closeWindowWithOutcome(
+            target: target,
+            expectedIdentity: expectedIdentity)
+    }
+
     public func minimizeWindow(target: WindowTarget) async throws {
         try self.requirePinnedWindowMutationSupport()
         let pinned = try await self.client.resolvedPinnedWindowMutation(target: target)
@@ -62,8 +80,15 @@ public final class RemoteWindowManagementService: WindowManagementServiceProtoco
     }
 
     public func minimizeWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws {
+        _ = try await self.minimizeWindowWithOutcome(target: target, expectedIdentity: expectedIdentity)
+    }
+
+    public func minimizeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+    {
         try self.requirePinnedWindowMutationSupport()
-        try await self.client.minimizeWindow(target: target, expectedIdentity: expectedIdentity)
+        return try await self.client.minimizeWindowWithOutcome(target: target, expectedIdentity: expectedIdentity)
     }
 
     public func restoreWindow(target: WindowTarget) async throws {
@@ -73,8 +98,15 @@ public final class RemoteWindowManagementService: WindowManagementServiceProtoco
     }
 
     public func restoreWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws {
+        _ = try await self.restoreWindowWithOutcome(target: target, expectedIdentity: expectedIdentity)
+    }
+
+    public func restoreWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+    {
         try self.requireWindowRestoreSupport()
-        try await self.client.restoreWindow(target: target, expectedIdentity: expectedIdentity)
+        return try await self.client.restoreWindowWithOutcome(target: target, expectedIdentity: expectedIdentity)
     }
 
     public func maximizeWindow(target: WindowTarget) async throws {
@@ -84,8 +116,15 @@ public final class RemoteWindowManagementService: WindowManagementServiceProtoco
     }
 
     public func maximizeWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws {
+        _ = try await self.maximizeWindowWithOutcome(target: target, expectedIdentity: expectedIdentity)
+    }
+
+    public func maximizeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+    {
         try self.requirePinnedWindowMutationSupport()
-        try await self.client.maximizeWindow(target: target, expectedIdentity: expectedIdentity)
+        return try await self.client.maximizeWindowWithOutcome(target: target, expectedIdentity: expectedIdentity)
     }
 
     public func moveWindow(target: WindowTarget, to position: CGPoint) async throws {
@@ -102,8 +141,22 @@ public final class RemoteWindowManagementService: WindowManagementServiceProtoco
         expectedIdentity: WindowMutationIdentity,
         to position: CGPoint) async throws
     {
+        _ = try await self.moveWindowWithOutcome(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            to: position)
+    }
+
+    public func moveWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to position: CGPoint) async throws -> DesktopActionOutcome?
+    {
         try self.requirePinnedWindowMutationSupport()
-        try await self.client.moveWindow(target: target, expectedIdentity: expectedIdentity, to: position)
+        return try await self.client.moveWindowWithOutcome(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            to: position)
     }
 
     public func resizeWindow(target: WindowTarget, to size: CGSize) async throws {
@@ -120,8 +173,22 @@ public final class RemoteWindowManagementService: WindowManagementServiceProtoco
         expectedIdentity: WindowMutationIdentity,
         to size: CGSize) async throws
     {
+        _ = try await self.resizeWindowWithOutcome(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            to: size)
+    }
+
+    public func resizeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to size: CGSize) async throws -> DesktopActionOutcome?
+    {
         try self.requirePinnedWindowMutationSupport()
-        try await self.client.resizeWindow(target: target, expectedIdentity: expectedIdentity, to: size)
+        return try await self.client.resizeWindowWithOutcome(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            to: size)
     }
 
     public func setWindowBounds(target: WindowTarget, bounds: CGRect) async throws {
@@ -138,8 +205,19 @@ public final class RemoteWindowManagementService: WindowManagementServiceProtoco
         expectedIdentity: WindowMutationIdentity,
         bounds: CGRect) async throws
     {
+        _ = try await self.setWindowBoundsWithOutcome(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            bounds: bounds)
+    }
+
+    public func setWindowBoundsWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        bounds: CGRect) async throws -> DesktopActionOutcome?
+    {
         try self.requirePinnedWindowMutationSupport()
-        try await self.client.setWindowBounds(
+        return try await self.client.setWindowBoundsWithOutcome(
             target: target,
             expectedIdentity: expectedIdentity,
             bounds: bounds)

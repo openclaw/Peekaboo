@@ -512,6 +512,14 @@ struct WindowStateMutationPolicyTests {
     }
 
     @Test
+    func `close outcome keeps unavailable verification distinct from observed no op`() {
+        #expect(pinnedWindowCloseAttemptDisposition(for: .succeeded) == .disappeared)
+        #expect(pinnedWindowCloseAttemptDisposition(for: .retryClose) == .remained)
+        #expect(pinnedWindowCloseAttemptDisposition(for: .pending) == .unverifiable)
+        #expect(pinnedWindowCloseAttemptDisposition(for: .unverifiable) == .unverifiable)
+    }
+
+    @Test
     func `background close succeeds only after exact disappearance`() throws {
         try validateBackgroundCloseOutcome(dispatchSucceeded: true, disappeared: true)
     }

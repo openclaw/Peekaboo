@@ -33,7 +33,18 @@ extension PeekabooBridgeClient {
         expectedIdentity: WindowMutationIdentity,
         to position: CGPoint) async throws
     {
-        try await self.sendExpectOK(.moveWindow(PeekabooBridgeWindowMoveRequest(
+        _ = try await self.moveWindowWithOutcome(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            to: position)
+    }
+
+    public func moveWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to position: CGPoint) async throws -> DesktopActionOutcome?
+    {
+        try await self.sendExpectOKCarryingActionOutcome(.moveWindow(PeekabooBridgeWindowMoveRequest(
             target: target,
             expectedIdentity: expectedIdentity,
             position: position)))
@@ -49,7 +60,18 @@ extension PeekabooBridgeClient {
         expectedIdentity: WindowMutationIdentity,
         to size: CGSize) async throws
     {
-        try await self.sendExpectOK(.resizeWindow(PeekabooBridgeWindowResizeRequest(
+        _ = try await self.resizeWindowWithOutcome(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            to: size)
+    }
+
+    public func resizeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to size: CGSize) async throws -> DesktopActionOutcome?
+    {
+        try await self.sendExpectOKCarryingActionOutcome(.resizeWindow(PeekabooBridgeWindowResizeRequest(
             target: target,
             expectedIdentity: expectedIdentity,
             size: size)))
@@ -68,7 +90,18 @@ extension PeekabooBridgeClient {
         expectedIdentity: WindowMutationIdentity,
         bounds: CGRect) async throws
     {
-        try await self.sendExpectOK(.setWindowBounds(PeekabooBridgeWindowBoundsRequest(
+        _ = try await self.setWindowBoundsWithOutcome(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            bounds: bounds)
+    }
+
+    public func setWindowBoundsWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        bounds: CGRect) async throws -> DesktopActionOutcome?
+    {
+        try await self.sendExpectOKCarryingActionOutcome(.setWindowBounds(PeekabooBridgeWindowBoundsRequest(
             target: target,
             expectedIdentity: expectedIdentity,
             bounds: bounds)))
@@ -97,8 +130,19 @@ extension PeekabooBridgeClient {
         if allowForegroundFallback {
             try await self.sendExpectOK(.closeWindow(request))
         } else {
-            try await self.sendExpectOK(.backgroundCloseWindow(request))
+            _ = try await self.closeWindowWithOutcome(
+                target: target,
+                expectedIdentity: expectedIdentity)
         }
+    }
+
+    public func closeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+    {
+        try await self.sendExpectOKCarryingActionOutcome(.backgroundCloseWindow(.init(
+            target: target,
+            expectedIdentity: expectedIdentity)))
     }
 
     public func minimizeWindow(target: WindowTarget) async throws {
@@ -107,7 +151,14 @@ extension PeekabooBridgeClient {
     }
 
     public func minimizeWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws {
-        try await self.sendExpectOK(.minimizeWindow(PeekabooBridgeWindowTargetRequest(
+        _ = try await self.minimizeWindowWithOutcome(target: target, expectedIdentity: expectedIdentity)
+    }
+
+    public func minimizeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+    {
+        try await self.sendExpectOKCarryingActionOutcome(.minimizeWindow(PeekabooBridgeWindowTargetRequest(
             target: target,
             expectedIdentity: expectedIdentity)))
     }
@@ -118,7 +169,14 @@ extension PeekabooBridgeClient {
     }
 
     public func restoreWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws {
-        try await self.sendExpectOK(.restoreWindow(PeekabooBridgeWindowTargetRequest(
+        _ = try await self.restoreWindowWithOutcome(target: target, expectedIdentity: expectedIdentity)
+    }
+
+    public func restoreWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+    {
+        try await self.sendExpectOKCarryingActionOutcome(.restoreWindow(PeekabooBridgeWindowTargetRequest(
             target: target,
             expectedIdentity: expectedIdentity)))
     }
@@ -129,7 +187,14 @@ extension PeekabooBridgeClient {
     }
 
     public func maximizeWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws {
-        try await self.sendExpectOK(.maximizeWindow(PeekabooBridgeWindowTargetRequest(
+        _ = try await self.maximizeWindowWithOutcome(target: target, expectedIdentity: expectedIdentity)
+    }
+
+    public func maximizeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+    {
+        try await self.sendExpectOKCarryingActionOutcome(.maximizeWindow(PeekabooBridgeWindowTargetRequest(
             target: target,
             expectedIdentity: expectedIdentity)))
     }

@@ -17,24 +17,49 @@ extension WindowManagementService {
         expectedIdentity: WindowMutationIdentity,
         to position: CGPoint) async throws
     {
-        try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
-            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-            guard let capturedBounds = expectedIdentity.capturedBounds else {
-                throw PeekabooError.commandFailed("Window mutation receipt lacks capture-time bounds")
-            }
-            let window = try await self.element(for: target)
-            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-            try self.validatePinnedWindowElement(window, expectedIdentity: expectedIdentity)
-            let success = window.moveWindow(to: position)
+        _ = try await self.moveWindowWithOutcome(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            to: position)
+    }
 
-            if !success {
-                throw OperationError.interactionFailed(
-                    action: "move window",
-                    reason: "Window move operation failed")
+    public func moveWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to position: CGPoint) async throws -> DesktopActionOutcome?
+    {
+        try await WindowManagementActionOutcome.perform(action: "move window") {
+            try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
+                try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+                guard let capturedBounds = expectedIdentity.capturedBounds else {
+                    throw PeekabooError.commandFailed("Window mutation receipt lacks capture-time bounds")
+                }
+                let window = try await self.element(for: target)
+                try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+                try self.validatePinnedWindowElement(window, expectedIdentity: expectedIdentity)
+                guard capturedBounds.origin != position else {
+                    return WindowManagementActionOutcome.confirmedNoChange
+                }
+                guard window.moveWindow(to: position) else {
+                    throw OperationError.interactionFailed(
+                        action: "move window",
+                        reason: "Window move operation failed")
+                }
+                do {
+                    _ = try await self.waitForRepinnedWindowMutation(
+                        expectedIdentity,
+                        expectedBounds: CGRect(origin: position, size: capturedBounds.size))
+                } catch {
+                    throw self.geometryVerificationFailure(
+                        action: "move window",
+                        expectedIdentity: expectedIdentity,
+                        dispatchCount: 1,
+                        cause: error)
+                }
+                return WindowManagementActionOutcome.confirmedChange(
+                    delivery: WindowManagementActionOutcome.backgroundValueDelivery,
+                    dispatchCount: 1)
             }
-            _ = try await self.waitForRepinnedWindowMutation(
-                expectedIdentity,
-                expectedBounds: CGRect(origin: position, size: capturedBounds.size))
         }
     }
 
@@ -51,31 +76,58 @@ extension WindowManagementService {
         expectedIdentity: WindowMutationIdentity,
         to size: CGSize) async throws
     {
-        try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
-            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-            guard let capturedBounds = expectedIdentity.capturedBounds else {
-                throw PeekabooError.commandFailed("Window mutation receipt lacks capture-time bounds")
+        _ = try await self.resizeWindowWithOutcome(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            to: size)
+    }
+
+    public func resizeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to size: CGSize) async throws -> DesktopActionOutcome?
+    {
+        try await WindowManagementActionOutcome.perform(action: "resize window") {
+            try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
+                try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+                guard let capturedBounds = expectedIdentity.capturedBounds else {
+                    throw PeekabooError.commandFailed("Window mutation receipt lacks capture-time bounds")
+                }
+                let resizeDescription = "target=\(target), size=(width: \(size.width), height: \(size.height))"
+                self.logger.info("Starting resize window operation: \(resizeDescription)")
+                let startTime = Date()
+
+                let window = try await self.element(for: target)
+                try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+                try self.validatePinnedWindowElement(window, expectedIdentity: expectedIdentity)
+                guard capturedBounds.size != size else {
+                    return WindowManagementActionOutcome.confirmedNoChange
+                }
+                let success = window.resizeWindow(to: size)
+
+                let elapsed = Date().timeIntervalSince(startTime)
+                self.logger.info("Resize window operation completed in \(elapsed)s")
+
+                guard success else {
+                    throw OperationError.interactionFailed(
+                        action: "resize window",
+                        reason: "Window resize operation failed")
+                }
+                do {
+                    _ = try await self.waitForRepinnedWindowMutation(
+                        expectedIdentity,
+                        expectedBounds: CGRect(origin: capturedBounds.origin, size: size))
+                } catch {
+                    throw self.geometryVerificationFailure(
+                        action: "resize window",
+                        expectedIdentity: expectedIdentity,
+                        dispatchCount: 1,
+                        cause: error)
+                }
+                return WindowManagementActionOutcome.confirmedChange(
+                    delivery: WindowManagementActionOutcome.backgroundValueDelivery,
+                    dispatchCount: 1)
             }
-            let resizeDescription = "target=\(target), size=(width: \(size.width), height: \(size.height))"
-            self.logger.info("Starting resize window operation: \(resizeDescription)")
-            let startTime = Date()
-
-            let window = try await self.element(for: target)
-            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-            try self.validatePinnedWindowElement(window, expectedIdentity: expectedIdentity)
-            let success = window.resizeWindow(to: size)
-
-            let elapsed = Date().timeIntervalSince(startTime)
-            self.logger.info("Resize window operation completed in \(elapsed)s")
-
-            if !success {
-                throw OperationError.interactionFailed(
-                    action: "resize window",
-                    reason: "Window resize operation failed")
-            }
-            _ = try await self.waitForRepinnedWindowMutation(
-                expectedIdentity,
-                expectedBounds: CGRect(origin: capturedBounds.origin, size: size))
         }
     }
 
@@ -92,19 +144,48 @@ extension WindowManagementService {
         expectedIdentity: WindowMutationIdentity,
         bounds: CGRect) async throws
     {
-        try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
-            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-            let window = try await self.element(for: target)
-            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-            try self.validatePinnedWindowElement(window, expectedIdentity: expectedIdentity)
-            let success = window.setWindowBounds(bounds)
+        _ = try await self.setWindowBoundsWithOutcome(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            bounds: bounds)
+    }
 
-            if !success {
-                throw OperationError.interactionFailed(
-                    action: "set window bounds",
-                    reason: "Window bounds operation failed")
+    public func setWindowBoundsWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        bounds: CGRect) async throws -> DesktopActionOutcome?
+    {
+        try await WindowManagementActionOutcome.perform(action: "set window bounds") {
+            try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
+                try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+                let window = try await self.element(for: target)
+                try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+                try self.validatePinnedWindowElement(window, expectedIdentity: expectedIdentity)
+                guard expectedIdentity.capturedBounds != bounds else {
+                    return WindowManagementActionOutcome.confirmedNoChange
+                }
+                let dispatch = WindowGeometryDispatchAcceptance(
+                    positionAccepted: window.setPosition(bounds.origin) == .success,
+                    sizeAccepted: window.setSize(bounds.size) == .success)
+                let dispatchCount = dispatch.dispatchCount
+                guard dispatchCount > 0 else {
+                    throw OperationError.interactionFailed(
+                        action: "set window bounds",
+                        reason: "Window bounds operation failed")
+                }
+                do {
+                    _ = try await self.waitForRepinnedWindowMutation(expectedIdentity, expectedBounds: bounds)
+                } catch {
+                    throw self.geometryVerificationFailure(
+                        action: "set window bounds",
+                        expectedIdentity: expectedIdentity,
+                        dispatchCount: dispatchCount,
+                        cause: error)
+                }
+                return WindowManagementActionOutcome.confirmedChange(
+                    delivery: WindowManagementActionOutcome.backgroundValueDelivery,
+                    dispatchCount: dispatchCount)
             }
-            _ = try await self.waitForRepinnedWindowMutation(expectedIdentity, expectedBounds: bounds)
         }
     }
 }

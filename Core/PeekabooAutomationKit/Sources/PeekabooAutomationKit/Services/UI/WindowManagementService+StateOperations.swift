@@ -24,8 +24,13 @@ extension WindowManagementService {
         expectedIdentity: WindowMutationIdentity,
         allowForegroundFallback: Bool) async throws
     {
-        let operationScope: DesktopOperationScope = allowForegroundFallback ? .global : .window(expectedIdentity)
-        try await self.operationLaneCoordinator.run(scope: operationScope, access: .write) {
+        if !allowForegroundFallback {
+            _ = try await self.closeWindowWithOutcome(
+                target: target,
+                expectedIdentity: expectedIdentity)
+            return
+        }
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
             try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
             let trackedWindowID = expectedIdentity.windowID
             try Task.checkCancellation()
@@ -38,18 +43,9 @@ extension WindowManagementService {
             else {
                 throw PeekabooError.windowNotFound(criteria: "windowId \(trackedWindowID)")
             }
-            if minimizedCloseRequiresForegroundFallback(isMinimized: expectedIdentity.isMinimized == true),
-               !allowForegroundFallback
-            {
-                throw OperationError.interactionFailed(
-                    action: "close window",
-                    reason: "A minimized window cannot be closed with a verified background-only route; " +
-                        "run `peekaboo window restore` for the same exact target first, or retry with --foreground")
-            }
-
             let backgroundAttempt: PinnedWindowCloseAttemptResult
             if expectedIdentity.isMinimized == true {
-                backgroundAttempt = PinnedWindowCloseAttemptResult(dispatched: false, disappeared: false)
+                backgroundAttempt = PinnedWindowCloseAttemptResult(dispatchCount: 0, disappeared: false)
             } else {
                 do {
                     backgroundAttempt = try await self.attemptPinnedBackgroundClose(expectedIdentity)
@@ -58,23 +54,6 @@ extension WindowManagementService {
                 }
             }
             try Task.checkCancellation()
-
-            if !allowForegroundFallback {
-                do {
-                    try validateBackgroundCloseOutcome(
-                        dispatchSucceeded: backgroundAttempt.dispatched,
-                        disappeared: backgroundAttempt.disappeared)
-                } catch {
-                    if shouldRestoreMinimizedWindowAfterCloseFailure(
-                        wasMinimized: expectedIdentity.isMinimized == true,
-                        closeCompleted: false)
-                    {
-                        _ = try? await self.restorePinnedMinimizedWindow(expectedIdentity)
-                    }
-                    throw error
-                }
-                return
-            }
 
             if backgroundAttempt.disappeared {
                 return
@@ -138,27 +117,98 @@ extension WindowManagementService {
         }
     }
 
+    public func closeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+    {
+        try await WindowManagementActionOutcome.perform(action: "close window") {
+            try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
+                try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+                let trackedWindowID = expectedIdentity.windowID
+                try Task.checkCancellation()
+                let windowServerInfo = self.windowIdentityService
+                    .getWindowServerInfo(windowID: CGWindowID(trackedWindowID))
+                guard hasSufficientMetadataForPinnedClose(
+                    hasWindowServerMetadata: windowServerInfo != nil,
+                    expectedMinimized: expectedIdentity.isMinimized == true)
+                else {
+                    throw PeekabooError.windowNotFound(criteria: "windowId \(trackedWindowID)")
+                }
+                if minimizedCloseRequiresForegroundFallback(isMinimized: expectedIdentity.isMinimized == true) {
+                    throw DesktopActionFailure.refused(
+                        reason: .foregroundConsentRequired,
+                        message: "A minimized window cannot be closed with a verified background-only route",
+                        hint: "Restore the same exact window first, or retry with explicit foreground consent.")
+                }
+
+                let attempt = try await self.attemptPinnedBackgroundClose(expectedIdentity)
+                guard attempt.dispatched else {
+                    throw OperationError.interactionFailed(
+                        action: "close window",
+                        reason: "Window close operation failed")
+                }
+                guard attempt.disappeared else {
+                    throw WindowManagementActionOutcome.suspectedNoop(
+                        action: "close window",
+                        delivery: WindowManagementActionOutcome.backgroundActionDelivery,
+                        dispatchCount: attempt.dispatchCount)
+                }
+                return WindowManagementActionOutcome.confirmedChange(
+                    delivery: WindowManagementActionOutcome.backgroundActionDelivery,
+                    dispatchCount: attempt.dispatchCount)
+            }
+        }
+    }
+
     public func minimizeWindow(target: WindowTarget) async throws {
         let pinned = try await self.pinnedWindowMutation(for: target)
         try await self.minimizeWindow(target: pinned.target, expectedIdentity: pinned.identity)
     }
 
     public func minimizeWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws {
-        try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
-            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-            let window = try await self.element(for: target)
-            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-            try self.validatePinnedWindowElement(window, expectedIdentity: expectedIdentity)
-            let success = window.minimizeWindow()
+        _ = try await self.minimizeWindowWithOutcome(target: target, expectedIdentity: expectedIdentity)
+    }
 
-            if !success {
-                throw OperationError.interactionFailed(
-                    action: "minimize window",
-                    reason: "Window minimize operation failed")
-            }
-            guard try await self.waitForPinnedWindowMinimized(window, expectedIdentity: expectedIdentity) else {
-                throw PeekabooError.commandFailed(
-                    "Window \(expectedIdentity.windowID) did not reach verified minimized state")
+    public func minimizeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+    {
+        try await WindowManagementActionOutcome.perform(action: "minimize window") {
+            try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
+                try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+                let window = try await self.element(for: target)
+                try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+                try self.validatePinnedWindowElement(window, expectedIdentity: expectedIdentity)
+                if window.isMinimized() == true {
+                    return WindowManagementActionOutcome.confirmedNoChange
+                }
+                guard window.setMinimized(true) == .success else {
+                    throw OperationError.interactionFailed(
+                        action: "minimize window",
+                        reason: "Window minimize operation failed")
+                }
+                do {
+                    guard try await self.waitForPinnedWindowMinimized(
+                        window,
+                        expectedIdentity: expectedIdentity)
+                    else {
+                        throw WindowManagementActionOutcome.suspectedNoop(
+                            action: "minimize window",
+                            delivery: WindowManagementActionOutcome.backgroundValueDelivery,
+                            dispatchCount: 1)
+                    }
+                } catch let failure as DesktopActionFailure {
+                    throw failure
+                } catch {
+                    throw WindowManagementActionOutcome.dispatchedUnverified(
+                        action: "minimize window",
+                        delivery: WindowManagementActionOutcome.backgroundValueDelivery,
+                        dispatchCount: 1,
+                        cause: error)
+                }
+                return WindowManagementActionOutcome.confirmedChange(
+                    delivery: WindowManagementActionOutcome.backgroundValueDelivery,
+                    dispatchCount: 1)
             }
         }
     }
@@ -169,32 +219,81 @@ extension WindowManagementService {
     }
 
     public func restoreWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws {
-        try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
-            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-            if expectedIdentity.isMinimized == true {
-                try await self.restorePinnedMinimizedWindow(expectedIdentity)
-                return
-            }
-            let window = try await self.element(for: target)
-            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-            try self.validatePinnedWindowElement(window, expectedIdentity: expectedIdentity)
+        _ = try await self.restoreWindowWithOutcome(target: target, expectedIdentity: expectedIdentity)
+    }
 
-            if window.isMinimized() == false {
-                guard SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity) else {
-                    throw PeekabooError.commandFailed(
-                        "Window \(expectedIdentity.windowID) changed identity before restore completion")
+    public func restoreWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+    {
+        try await WindowManagementActionOutcome.perform(action: "restore window") {
+            try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
+                try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+                if expectedIdentity.isMinimized == true {
+                    var dispatchAccepted = false
+                    do {
+                        _ = try await completePinnedMinimizedWindowRestore(
+                            expectedIdentity: expectedIdentity,
+                            dispatch: {
+                                dispatchAccepted = await BoundedBackgroundWindowAX.dispatchMinimizedRestore(
+                                    expectedIdentity: expectedIdentity)
+                                return dispatchAccepted
+                            },
+                            repin: { identity, expectedBounds in
+                                try await self.waitForRepinnedWindowMutation(
+                                    identity,
+                                    expectedBounds: expectedBounds)
+                            })
+                    } catch let failure as DesktopActionFailure {
+                        throw failure
+                    } catch {
+                        guard dispatchAccepted else { throw error }
+                        throw WindowManagementActionOutcome.dispatchedUnverified(
+                            action: "restore window",
+                            delivery: WindowManagementActionOutcome.backgroundValueDelivery,
+                            dispatchCount: 1,
+                            cause: error)
+                    }
+                    return WindowManagementActionOutcome.confirmedChange(
+                        delivery: WindowManagementActionOutcome.backgroundValueDelivery,
+                        dispatchCount: 1)
                 }
-                return
-            }
+                let window = try await self.element(for: target)
+                try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+                try self.validatePinnedWindowElement(window, expectedIdentity: expectedIdentity)
 
-            guard window.unminimizeWindow() else {
-                throw OperationError.interactionFailed(
-                    action: "restore window",
-                    reason: "Window restore operation failed")
-            }
-            guard try await self.waitForPinnedWindowRestored(window, expectedIdentity: expectedIdentity) else {
-                throw PeekabooError.commandFailed(
-                    "Window \(expectedIdentity.windowID) did not reach verified restored state")
+                if window.isMinimized() == false {
+                    guard SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity) else {
+                        throw PeekabooError.commandFailed(
+                            "Window \(expectedIdentity.windowID) changed identity before restore completion")
+                    }
+                    return WindowManagementActionOutcome.confirmedNoChange
+                }
+
+                guard window.unminimizeWindow() else {
+                    throw OperationError.interactionFailed(
+                        action: "restore window",
+                        reason: "Window restore operation failed")
+                }
+                do {
+                    guard try await self.waitForPinnedWindowRestored(window, expectedIdentity: expectedIdentity) else {
+                        throw WindowManagementActionOutcome.suspectedNoop(
+                            action: "restore window",
+                            delivery: WindowManagementActionOutcome.backgroundValueDelivery,
+                            dispatchCount: 1)
+                    }
+                } catch let failure as DesktopActionFailure {
+                    throw failure
+                } catch {
+                    throw WindowManagementActionOutcome.dispatchedUnverified(
+                        action: "restore window",
+                        delivery: WindowManagementActionOutcome.backgroundValueDelivery,
+                        dispatchCount: 1,
+                        cause: error)
+                }
+                return WindowManagementActionOutcome.confirmedChange(
+                    delivery: WindowManagementActionOutcome.backgroundValueDelivery,
+                    dispatchCount: 1)
             }
         }
     }
@@ -216,45 +315,87 @@ extension WindowManagementService {
     }
 
     public func maximizeWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws {
-        try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
-            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-            guard let windowInfo = try await self.listWindows(target: target).first else {
-                throw PeekabooError.windowNotFound(criteria: "No exact window identity was available for maximize")
-            }
-            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-            let desiredBounds = try self.maximizedBounds(for: windowInfo.bounds)
+        _ = try await self.maximizeWindowWithOutcome(target: target, expectedIdentity: expectedIdentity)
+    }
 
-            if Self.windowBoundsMatch(windowInfo.bounds, desiredBounds, tolerance: 4) {
-                return
-            }
+    public func maximizeWindowWithOutcome(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+    {
+        try await WindowManagementActionOutcome.perform(action: "maximize window") {
+            try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
+                try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+                guard let windowInfo = try await self.listWindows(target: target).first else {
+                    throw PeekabooError.windowNotFound(
+                        criteria: "No exact window identity was available for maximize")
+                }
+                try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+                let desiredBounds = try self.maximizedBounds(for: windowInfo.bounds)
 
-            guard self.windowIdentityService
-                .getWindowServerInfo(windowID: CGWindowID(windowInfo.windowID)) != nil
-            else {
-                throw PeekabooError.windowNotFound(criteria: "windowId \(windowInfo.windowID)")
-            }
-            let success = await BoundedBackgroundWindowAX.setBounds(
-                expectedIdentity: expectedIdentity,
-                bounds: desiredBounds)
+                if Self.windowBoundsMatch(windowInfo.bounds, desiredBounds, tolerance: 4) {
+                    return WindowManagementActionOutcome.confirmedNoChange
+                }
 
-            if !success {
-                throw OperationError.interactionFailed(
-                    action: "maximize window",
-                    reason: "The bounded background geometry request failed")
-            }
+                guard self.windowIdentityService
+                    .getWindowServerInfo(windowID: CGWindowID(windowInfo.windowID)) != nil
+                else {
+                    throw PeekabooError.windowNotFound(criteria: "windowId \(windowInfo.windowID)")
+                }
+                let dispatch = await BoundedBackgroundWindowAX.setBounds(
+                    expectedIdentity: expectedIdentity,
+                    bounds: desiredBounds)
+                guard dispatch.dispatchCount > 0 else {
+                    throw OperationError.interactionFailed(
+                        action: "maximize window",
+                        reason: "The bounded background geometry request failed before dispatch")
+                }
+                guard dispatch.identityRemainedPinned else {
+                    throw WindowManagementActionOutcome.dispatchedUnverified(
+                        action: "maximize window",
+                        delivery: WindowManagementActionOutcome.backgroundValueDelivery,
+                        dispatchCount: dispatch.dispatchCount,
+                        cause: PeekabooError.commandFailed(
+                            "Window identity changed during bounded background geometry dispatch"))
+                }
 
-            guard try await self.waitForWindowBounds(
-                windowID: windowInfo.windowID,
-                expectedIdentity: expectedIdentity,
-                expected: desiredBounds,
-                timeoutSeconds: 2)
-            else {
-                let achieved = self.windowIdentityService
-                    .getWindowServerInfo(windowID: CGWindowID(windowInfo.windowID))?.bounds
-                throw OperationError.interactionFailed(
-                    action: "maximize window",
-                    reason: "The window did not reach the target screen's visible bounds within 2 seconds " +
-                        "(requested: \(desiredBounds), achieved: \(String(describing: achieved)))")
+                do {
+                    guard try await self.waitForWindowBounds(
+                        windowID: windowInfo.windowID,
+                        expectedIdentity: expectedIdentity,
+                        expected: desiredBounds,
+                        timeoutSeconds: 2)
+                    else {
+                        let achieved = self.windowIdentityService
+                            .getWindowServerInfo(windowID: CGWindowID(windowInfo.windowID))?.bounds
+                        let cause = OperationError.interactionFailed(
+                            action: "maximize window",
+                            reason: "The window did not reach the target screen's visible bounds within 2 seconds " +
+                                "(requested: \(desiredBounds), achieved: \(String(describing: achieved)))")
+                        if Self.windowBoundsMatch(windowInfo.bounds, achieved ?? .null, tolerance: 4) {
+                            throw WindowManagementActionOutcome.suspectedNoop(
+                                action: "maximize window",
+                                delivery: WindowManagementActionOutcome.backgroundValueDelivery,
+                                dispatchCount: dispatch.dispatchCount,
+                                cause: cause)
+                        }
+                        throw WindowManagementActionOutcome.dispatchedUnverified(
+                            action: "maximize window",
+                            delivery: WindowManagementActionOutcome.backgroundValueDelivery,
+                            dispatchCount: dispatch.dispatchCount,
+                            cause: cause)
+                    }
+                } catch let failure as DesktopActionFailure {
+                    throw failure
+                } catch {
+                    throw WindowManagementActionOutcome.dispatchedUnverified(
+                        action: "maximize window",
+                        delivery: WindowManagementActionOutcome.backgroundValueDelivery,
+                        dispatchCount: dispatch.dispatchCount,
+                        cause: error)
+                }
+                return WindowManagementActionOutcome.confirmedChange(
+                    delivery: WindowManagementActionOutcome.backgroundValueDelivery,
+                    dispatchCount: dispatch.dispatchCount)
             }
         }
     }
@@ -354,11 +495,24 @@ extension WindowManagementService {
             expectedIdentity: expectedIdentity,
             action: .windowClose)
         if primaryDispatched {
-            switch try await self.verifyPinnedWindowClose(expectedIdentity) {
-            case .succeeded:
-                return PinnedWindowCloseAttemptResult(dispatched: true, disappeared: true)
-            case .pending, .retryClose, .unverifiable:
-                break
+            do {
+                switch try await pinnedWindowCloseAttemptDisposition(
+                    for: self.verifyPinnedWindowClose(expectedIdentity))
+                {
+                case .disappeared:
+                    return PinnedWindowCloseAttemptResult(dispatchCount: 1, disappeared: true)
+                case .remained:
+                    break
+                case .unverifiable:
+                    throw PeekabooError.commandFailed(
+                        "The exact window close result could not be verified")
+                }
+            } catch {
+                throw WindowManagementActionOutcome.dispatchedUnverified(
+                    action: "close window",
+                    delivery: WindowManagementActionOutcome.backgroundActionDelivery,
+                    dispatchCount: 1,
+                    cause: error)
             }
         }
 
@@ -366,15 +520,28 @@ extension WindowManagementService {
         let fallbackDispatched = await BoundedBackgroundWindowAX.dispatchClose(
             expectedIdentity: expectedIdentity,
             action: .closeButton)
-        let anyDispatched = primaryDispatched || fallbackDispatched
-        guard anyDispatched else {
-            return PinnedWindowCloseAttemptResult(dispatched: false, disappeared: false)
+        let dispatchCount = (primaryDispatched ? 1 : 0) + (fallbackDispatched ? 1 : 0)
+        guard dispatchCount > 0 else {
+            return PinnedWindowCloseAttemptResult(dispatchCount: 0, disappeared: false)
         }
 
-        let fallbackDecision = try await self.verifyPinnedWindowClose(expectedIdentity)
-        return PinnedWindowCloseAttemptResult(
-            dispatched: true,
-            disappeared: fallbackDecision == .succeeded)
+        do {
+            let disposition = try await pinnedWindowCloseAttemptDisposition(
+                for: self.verifyPinnedWindowClose(expectedIdentity))
+            guard disposition != .unverifiable else {
+                throw PeekabooError.commandFailed(
+                    "The exact window close result could not be verified")
+            }
+            return PinnedWindowCloseAttemptResult(
+                dispatchCount: dispatchCount,
+                disappeared: disposition == .disappeared)
+        } catch {
+            throw WindowManagementActionOutcome.dispatchedUnverified(
+                action: "close window",
+                delivery: WindowManagementActionOutcome.backgroundActionDelivery,
+                dispatchCount: dispatchCount,
+                cause: error)
+        }
     }
 
     private func verifyPinnedWindowClose(
@@ -589,6 +756,25 @@ enum PinnedWindowCloseVerificationDecision: Equatable {
     case unverifiable
 }
 
+enum PinnedWindowCloseAttemptDisposition: Equatable {
+    case disappeared
+    case remained
+    case unverifiable
+}
+
+func pinnedWindowCloseAttemptDisposition(
+    for decision: PinnedWindowCloseVerificationDecision) -> PinnedWindowCloseAttemptDisposition
+{
+    switch decision {
+    case .succeeded:
+        .disappeared
+    case .retryClose:
+        .remained
+    case .pending, .unverifiable:
+        .unverifiable
+    }
+}
+
 struct PinnedWindowCloseVerification {
     private let successHorizon: Duration
     private let disappearanceStability: Duration
@@ -737,8 +923,12 @@ func withMinimizedWindowFailureRecovery<T>(
 }
 
 private struct PinnedWindowCloseAttemptResult {
-    let dispatched: Bool
+    let dispatchCount: Int
     let disappeared: Bool
+
+    var dispatched: Bool {
+        self.dispatchCount > 0
+    }
 }
 
 func hasSufficientMetadataForPinnedClose(
@@ -941,6 +1131,21 @@ func backgroundGeometryDispatchRemainsPinned(
         candidateWindowID == expectedIdentity.windowID
 }
 
+private struct BackgroundWindowGeometryDispatchResult {
+    let acceptance: WindowGeometryDispatchAcceptance
+    let identityRemainedPinned: Bool
+
+    static let notDispatched = Self(
+        acceptance: WindowGeometryDispatchAcceptance(
+            positionAccepted: false,
+            sizeAccepted: false),
+        identityRemainedPinned: false)
+
+    var dispatchCount: Int {
+        self.acceptance.dispatchCount
+    }
+}
+
 extension CGRect {
     fileprivate var area: CGFloat {
         guard !self.isNull, !self.isInfinite else { return 0 }
@@ -1092,7 +1297,10 @@ private enum BoundedBackgroundWindowAX {
         }.value
     }
 
-    static func setBounds(expectedIdentity: WindowMutationIdentity, bounds: CGRect) async -> Bool {
+    static func setBounds(
+        expectedIdentity: WindowMutationIdentity,
+        bounds: CGRect) async -> BackgroundWindowGeometryDispatchResult
+    {
         await Task.detached(priority: .userInitiated) {
             guard SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity),
                   let capturedBounds = expectedIdentity.capturedBounds,
@@ -1101,7 +1309,7 @@ private enum BoundedBackgroundWindowAX {
                       windowID: windowID,
                       ownerPID: expectedIdentity.ownerProcessIdentifier)
             else {
-                return false
+                return .notDispatched
             }
             return AXChildWindowMessagingTimeout.perform(
                 on: rawWindow,
@@ -1110,7 +1318,7 @@ private enum BoundedBackgroundWindowAX {
                 guard SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity),
                       self.bounds(of: childWindow) == capturedBounds
                 else {
-                    return false
+                    return .notDispatched
                 }
 
                 var origin = bounds.origin
@@ -1118,7 +1326,7 @@ private enum BoundedBackgroundWindowAX {
                 guard let originValue = AXValueCreate(.cgPoint, &origin),
                       let sizeValue = AXValueCreate(.cgSize, &size)
                 else {
-                    return false
+                    return .notDispatched
                 }
 
                 let positionResult = AXUIElementSetAttributeValue(
@@ -1133,13 +1341,17 @@ private enum BoundedBackgroundWindowAX {
                 let windowIDResult = AXWindowIDResolver.copyWindowID(
                     childWindow,
                     into: &candidateWindowID)
-                return backgroundGeometryDispatchRemainsPinned(
-                    expectedIdentity: expectedIdentity,
-                    positionSetSucceeded: positionResult == .success,
-                    sizeSetSucceeded: sizeResult == .success,
-                    liveProcessStartIdentity: SystemIdentityResolver.processStartIdentity(
-                        expectedIdentity.ownerProcessIdentifier),
-                    candidateWindowID: windowIDResult == .success ? Int(candidateWindowID) : nil)
+                let positionAccepted = positionResult == .success
+                let sizeAccepted = sizeResult == .success
+                let liveProcessStartIdentity = SystemIdentityResolver.processStartIdentity(
+                    expectedIdentity.ownerProcessIdentifier)
+                let resolvedCandidateWindowID = windowIDResult == .success ? Int(candidateWindowID) : nil
+                return BackgroundWindowGeometryDispatchResult(
+                    acceptance: WindowGeometryDispatchAcceptance(
+                        positionAccepted: positionAccepted,
+                        sizeAccepted: sizeAccepted),
+                    identityRemainedPinned: liveProcessStartIdentity == expectedIdentity.ownerProcessStartIdentity &&
+                        resolvedCandidateWindowID == expectedIdentity.windowID)
             }
         }.value
     }
