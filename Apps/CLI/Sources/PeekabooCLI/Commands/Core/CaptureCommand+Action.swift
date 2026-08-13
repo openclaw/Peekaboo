@@ -595,7 +595,14 @@ extension CaptureActionCommand: CommanderSignatureProviding {
             ),
         ]
         return CommandSignature(
-            arguments: live.arguments,
+            arguments: live.arguments + [
+                .make(
+                    label: "command...",
+                    help: "Command to run; usually pass after --",
+                    isOptional: true,
+                    parsing: .remaining
+                ),
+            ],
             options: options,
             flags: live.flags,
             optionGroups: live.optionGroups
@@ -637,6 +644,10 @@ extension CaptureActionCommand: CommanderBindableCommand {
         self.path = values.singleOption("path")
         self.autoclean = try values.decodeOption("autoclean", as: CLIDuration.self)
         self.videoOut = values.singleOption("videoOut")
-        self.command = values.optionValues("command")
+        let optionCommand = values.optionValues("command")
+        if !values.positional.isEmpty, !optionCommand.isEmpty {
+            throw ValidationError("Provide the action command after -- or with --command, not both")
+        }
+        self.command = values.positional.isEmpty ? optionCommand : values.positional
     }
 }

@@ -27,6 +27,7 @@ struct CommanderRuntimeRouterHelpPathTests {
         )
 
         #expect(ObjectIdentifier(resolved.type) == ObjectIdentifier(CaptureActionCommand.self))
-        #expect(resolved.parsedValues.options["command"] == ["/bin/echo", "--help"])
+        #expect(resolved.parsedValues.positional == ["/bin/echo", "--help"])
+        #expect(resolved.parsedValues.options["command"] == nil)
     }
 }

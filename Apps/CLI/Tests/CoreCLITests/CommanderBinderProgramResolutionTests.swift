@@ -255,7 +255,8 @@ struct CommanderBinderProgramResolutionTests {
         let values = invocation.parsedValues
         #expect(invocation.path == ["capture", "action"])
         #expect(values.options["durationLimit"] == ["3"])
-        #expect(values.options["command"] == ["echo", "hello", "--flag"])
+        #expect(values.positional == ["echo", "hello", "--flag"])
+        #expect(values.options["command"] == nil)
     }
 
     @Test

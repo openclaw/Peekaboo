@@ -41,6 +41,25 @@ struct CaptureActionCommandBindingTests {
         let signature = CaptureActionCommand.commanderSignature()
         #expect(signature.options.contains { $0.label == "durationLimit" })
         #expect(signature.options.contains { $0.label == "command" && $0.parsing == .remaining })
+        #expect(signature.arguments.last?.label == "command...")
+        #expect(signature.arguments.last?.isOptional == true)
+        #expect(signature.arguments.last?.parsing == .remaining)
         #expect(!signature.options.contains { $0.label == "duration" })
+    }
+
+    @Test
+    func `Capture action command rejects mixed tail forms`() {
+        let parsed = ParsedValues(
+            positional: ["echo", "tail"],
+            options: ["command": ["echo", "option"]],
+            flags: []
+        )
+
+        #expect(throws: ValidationError.self) {
+            _ = try CommanderCLIBinder.instantiateCommand(
+                ofType: CaptureActionCommand.self,
+                parsedValues: parsed
+            )
+        }
     }
 }
