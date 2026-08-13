@@ -83,6 +83,17 @@ struct PeekabooBridgeClientTransportOutcomeTests {
     }
 
     @Test
+    func `stop wakes an idle accept before any client connects`() async throws {
+        let peer = try ScriptedBridgePeer(steps: [.idle(seconds: 5)])
+        let startedAt = ContinuousClock.now
+
+        await peer.stop()
+
+        #expect(startedAt.duration(to: .now) < .seconds(1))
+        #expect(!FileManager.default.fileExists(atPath: peer.socketPath))
+    }
+
+    @Test
     func `deinit unblocks an accepted client before request EOF`() async throws {
         var peer: ScriptedBridgePeer? = try ScriptedBridgePeer(steps: [.idle(seconds: 5)])
         let client = try Self.connectRawClient(to: #require(peer).socketPath)
@@ -94,6 +105,16 @@ struct PeekabooBridgeClientTransportOutcomeTests {
         var descriptor = pollfd(fd: client, events: Int16(POLLIN | POLLHUP), revents: 0)
         #expect(Darwin.poll(&descriptor, 1, 1000) == 1)
         #expect(descriptor.revents & Int16(POLLIN | POLLHUP) != 0)
+    }
+
+    @Test
+    func `deinit wakes an idle accept before any client connects`() async throws {
+        var peer: ScriptedBridgePeer? = try ScriptedBridgePeer(steps: [.idle(seconds: 5)])
+        let socketPath = try #require(peer).socketPath
+
+        peer = nil
+
+        #expect(await Self.waitUntilSocketRemoved(socketPath))
     }
 
     @Test
@@ -350,6 +371,16 @@ struct PeekabooBridgeClientTransportOutcomeTests {
     private static func waitUntilAccepted(_ peer: ScriptedBridgePeer) async -> Bool {
         for _ in 0..<200 {
             if await peer.acceptedConnectionCount == 1 {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return false
+    }
+
+    private static func waitUntilSocketRemoved(_ socketPath: String) async -> Bool {
+        for _ in 0..<200 {
+            if !FileManager.default.fileExists(atPath: socketPath) {
                 return true
             }
             try? await Task.sleep(for: .milliseconds(5))

@@ -144,7 +144,7 @@ public final class ScriptedBridgePeer: @unchecked Sendable {
 
     deinit {
         self.task.cancel()
-        self.descriptors.cancel()
+        self.cancelDescriptors()
     }
 
     public func waitUntilFinished() async {
@@ -154,9 +154,14 @@ public final class ScriptedBridgePeer: @unchecked Sendable {
 
     public func stop() async {
         self.task.cancel()
-        self.descriptors.cancel()
+        self.cancelDescriptors()
         await self.task.value
         self.descriptors.finish()
+    }
+
+    private func cancelDescriptors() {
+        guard self.descriptors.cancel() else { return }
+        Self.wakeListener(at: self.socketPath)
     }
 
     private nonisolated static func bindAndListen(
@@ -180,6 +185,25 @@ public final class ScriptedBridgePeer: @unchecked Sendable {
         }
         guard bindResult == 0, listen(descriptor, Int32(backlog)) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
+
+    private nonisolated static func wakeListener(at socketPath: String) {
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { return }
+        defer { Darwin.close(descriptor) }
+
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        address.sun_len = UInt8(MemoryLayout.size(ofValue: address))
+        let copied = socketPath.withCString { source in
+            strlcpy(&address.sun_path.0, source, MemoryLayout.size(ofValue: address.sun_path))
+        }
+        guard copied < MemoryLayout.size(ofValue: address.sun_path) else { return }
+
+        let length = socklen_t(MemoryLayout.size(ofValue: address))
+        _ = withUnsafePointer(to: &address) { pointer in
+            Darwin.connect(descriptor, UnsafePointer<sockaddr>(OpaquePointer(pointer)), length)
         }
     }
 
@@ -285,17 +309,15 @@ public final class ScriptedBridgePeer: @unchecked Sendable {
             Darwin.close(client)
         }
 
-        func cancel() {
+        func cancel() -> Bool {
             self.lock.lock()
             defer { self.lock.unlock() }
-            guard !self.cancelled else { return }
+            guard !self.cancelled else { return false }
             self.cancelled = true
-            if let listener {
-                _ = shutdown(listener, SHUT_RDWR)
-            }
             if let activeClient {
                 _ = shutdown(activeClient, SHUT_RDWR)
             }
+            return self.listener != nil
         }
 
         func finish() {
