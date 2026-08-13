@@ -183,7 +183,7 @@ final class UnusedSnapshotManager: SnapshotManagerProtocol {
 
 @available(macOS 14.0, *)
 @MainActor
-final class UnusedUIAutomationService: UIAutomationServiceProtocol {
+class UnusedUIAutomationService: UIAutomationServiceProtocol {
     func detectElements(in imageData: Data, snapshotId: String?, windowContext: WindowContext?) async throws
         -> ElementDetectionResult
     {

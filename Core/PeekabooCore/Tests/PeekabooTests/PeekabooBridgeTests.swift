@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import PeekabooAutomation
 import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
 import PeekabooCore
 import PeekabooFoundation
 import Testing
@@ -2090,9 +2091,17 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
     var exactTypeError: (any Error)?
     var exactHotkeyError: (any Error)?
     var targetedClickError: (any Error)?
-    var actionOutcome = DesktopActionOutcome.dispatchedUnverified(
+    private static let defaultActionOutcome = DesktopActionOutcome.dispatchedUnverified(
         delivery: .init(mechanism: .accessibilityAction, mode: .background),
         evidence: .deliveryAccepted)
+    let uiAutomationOutcomeScript = UIAutomationOutcomeScript(
+        defaultResponse: .outcome(StubAutomationService.defaultActionOutcome))
+    var actionOutcome = StubAutomationService.defaultActionOutcome {
+        didSet {
+            self.uiAutomationOutcomeScript.setDefaultOutcome(self.actionOutcome)
+        }
+    }
+
     var exactKeyboardDelayNanoseconds: UInt64 = 0
     var recordsExactKeyboardEvents = false
     private(set) var exactKeyboardEvents: [String] = []

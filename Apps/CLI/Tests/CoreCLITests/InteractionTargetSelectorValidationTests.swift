@@ -1,4 +1,5 @@
 import Commander
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -12,51 +13,30 @@ struct InteractionTargetSelectorValidationTests {
         let windowID: Int?
     }
 
-    @Test(arguments: [
-        Selectors(app: nil, pid: nil, windowTitle: nil, windowIndex: nil, windowID: nil),
-        Selectors(app: "TextEdit", pid: nil, windowTitle: nil, windowIndex: nil, windowID: nil),
-        Selectors(app: nil, pid: 42, windowTitle: nil, windowIndex: nil, windowID: nil),
-        Selectors(app: nil, pid: nil, windowTitle: nil, windowIndex: nil, windowID: 7),
-        Selectors(app: "TextEdit", pid: nil, windowTitle: "Document", windowIndex: nil, windowID: nil),
-        Selectors(app: nil, pid: 42, windowTitle: "Document", windowIndex: nil, windowID: nil),
-        Selectors(app: "TextEdit", pid: nil, windowTitle: nil, windowIndex: 2, windowID: nil),
-        Selectors(app: nil, pid: 42, windowTitle: nil, windowIndex: 2, windowID: nil),
-    ])
-    func `valid shared interaction selector combinations pass`(_ selectors: Selectors) throws {
+    @Test(arguments: InteractionTargetSelectorFixtures.validCases)
+    func `valid shared interaction selector combinations pass`(_ selectors: InteractionTargetSelectorCase) throws {
         let target = Self.makeTarget(selectors)
         try target.validate()
     }
 
-    @Test(arguments: [
-        Selectors(app: "TextEdit", pid: 42, windowTitle: nil, windowIndex: nil, windowID: nil),
-        Selectors(app: "PID:42", pid: 42, windowTitle: nil, windowIndex: nil, windowID: nil),
-        Selectors(app: "TextEdit", pid: 42, windowTitle: nil, windowIndex: nil, windowID: 7),
-    ])
-    func `app and pid fail closed`(_ selectors: Selectors) {
+    @Test(arguments: InteractionTargetSelectorFixtures.applicationAndProcessIdentifierCases)
+    func `app and pid fail closed`(_ selectors: InteractionTargetSelectorCase) {
         let target = Self.makeTarget(selectors)
         #expect(throws: ValidationError.self) {
             try target.validate()
         }
     }
 
-    @Test(arguments: [
-        Selectors(app: "TextEdit", pid: nil, windowTitle: "Document", windowIndex: nil, windowID: 7),
-        Selectors(app: "TextEdit", pid: nil, windowTitle: nil, windowIndex: 2, windowID: 7),
-        Selectors(app: "TextEdit", pid: nil, windowTitle: "Document", windowIndex: 2, windowID: nil),
-        Selectors(app: "TextEdit", pid: nil, windowTitle: "Document", windowIndex: 2, windowID: 7),
-    ])
-    func `multiple window selectors fail closed`(_ selectors: Selectors) {
+    @Test(arguments: InteractionTargetSelectorFixtures.multipleWindowSelectorCases)
+    func `multiple window selectors fail closed`(_ selectors: InteractionTargetSelectorCase) {
         let target = Self.makeTarget(selectors)
         #expect(throws: ValidationError.self) {
             try target.validate()
         }
     }
 
-    @Test(arguments: [
-        Selectors(app: nil, pid: nil, windowTitle: "Document", windowIndex: nil, windowID: nil),
-        Selectors(app: nil, pid: nil, windowTitle: nil, windowIndex: 2, windowID: nil),
-    ])
-    func `relative window selectors require an owner`(_ selectors: Selectors) {
+    @Test(arguments: InteractionTargetSelectorFixtures.windowSelectorRequiresApplicationCases)
+    func `relative window selectors require an owner`(_ selectors: InteractionTargetSelectorCase) {
         let target = Self.makeTarget(selectors)
         #expect(throws: ValidationError.self) {
             try target.validate()
@@ -162,5 +142,15 @@ struct InteractionTargetSelectorValidationTests {
         target.windowIndex = selectors.windowIndex
         target.windowId = selectors.windowID
         return target
+    }
+
+    private static func makeTarget(_ selectors: InteractionTargetSelectorCase) -> InteractionTargetOptions {
+        self.makeTarget(Selectors(
+            app: selectors.hasApplication ? "TextEdit" : nil,
+            pid: selectors.hasProcessIdentifier ? 42 : nil,
+            windowTitle: selectors.hasWindowTitle ? "Document" : nil,
+            windowIndex: selectors.hasWindowIndex ? 2 : nil,
+            windowID: selectors.hasWindowID ? 7 : nil
+        ))
     }
 }

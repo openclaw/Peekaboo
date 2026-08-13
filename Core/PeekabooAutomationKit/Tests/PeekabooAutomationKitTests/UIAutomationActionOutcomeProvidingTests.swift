@@ -9,6 +9,7 @@ import struct PeekabooFoundation.DesktopActionFailure
 import struct PeekabooFoundation.DesktopActionOutcome
 import enum PeekabooFoundation.ScrollDirection
 import enum PeekabooFoundation.TypeAction
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -17,7 +18,7 @@ import Testing
 struct UIAutomationActionOutcomeProvidingTests {
     @Test
     func `carrier preserves every canonical outcome and the legacy missing-outcome case`() {
-        let outcomes = AutomationTestFixtures.canonicalActionOutcomes
+        let outcomes = DesktopActionOutcomeFixtures.canonicalOutcomes
 
         #expect(outcomes.map(\.state) == [
             .confirmedChange,

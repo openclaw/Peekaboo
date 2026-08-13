@@ -1,4 +1,5 @@
 import PeekabooAutomation
+import PeekabooFoundationTestSupport
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
@@ -90,50 +91,41 @@ struct MCPInteractionTargetTests {
         let windowID: Int?
     }
 
-    @Test(arguments: [
-        Selectors(app: nil, pid: nil, windowTitle: nil, windowIndex: nil, windowID: nil),
-        Selectors(app: "Preview", pid: nil, windowTitle: nil, windowIndex: nil, windowID: nil),
-        Selectors(app: nil, pid: 42, windowTitle: nil, windowIndex: nil, windowID: nil),
-        Selectors(app: nil, pid: nil, windowTitle: nil, windowIndex: nil, windowID: 7),
-        Selectors(app: "Preview", pid: nil, windowTitle: "Main", windowIndex: nil, windowID: nil),
-        Selectors(app: nil, pid: 42, windowTitle: "Main", windowIndex: nil, windowID: nil),
-        Selectors(app: "Preview", pid: nil, windowTitle: nil, windowIndex: 2, windowID: nil),
-        Selectors(app: nil, pid: 42, windowTitle: nil, windowIndex: 2, windowID: nil),
-    ])
-    func `valid selector combinations construct`(_ selectors: Selectors) throws {
+    @Test(arguments: InteractionTargetSelectorFixtures.validCases)
+    func `valid selector combinations construct`(_ selectors: InteractionTargetSelectorCase) throws {
         _ = try Self.makeTarget(selectors)
     }
 
-    @Test(arguments: [
-        Selectors(app: "Preview", pid: 42, windowTitle: nil, windowIndex: nil, windowID: nil),
-        Selectors(app: "PID:42", pid: 42, windowTitle: nil, windowIndex: nil, windowID: nil),
-        Selectors(app: "Preview", pid: 42, windowTitle: nil, windowIndex: nil, windowID: 7),
-    ])
-    func `app and pid fail closed during construction`(_ selectors: Selectors) {
+    @Test(arguments: InteractionTargetSelectorFixtures.applicationAndProcessIdentifierCases)
+    func `app and pid fail closed during construction`(_ selectors: InteractionTargetSelectorCase) {
         #expect(throws: MCPInteractionTargetError.applicationAndProcessIdentifier) {
             _ = try Self.makeTarget(selectors)
         }
     }
 
-    @Test(arguments: [
-        Selectors(app: "Preview", pid: nil, windowTitle: "Main", windowIndex: nil, windowID: 7),
-        Selectors(app: "Preview", pid: nil, windowTitle: nil, windowIndex: 2, windowID: 7),
-        Selectors(app: "Preview", pid: nil, windowTitle: "Main", windowIndex: 2, windowID: nil),
-        Selectors(app: "Preview", pid: nil, windowTitle: "Main", windowIndex: 2, windowID: 7),
-    ])
-    func `multiple window selectors fail closed during construction`(_ selectors: Selectors) {
+    @Test(arguments: InteractionTargetSelectorFixtures.multipleWindowSelectorCases)
+    func `multiple window selectors fail closed during construction`(_ selectors: InteractionTargetSelectorCase) {
         #expect(throws: MCPInteractionTargetError.multipleWindowSelectors) {
             _ = try Self.makeTarget(selectors)
         }
     }
 
-    @Test(arguments: [
-        Selectors(app: nil, pid: nil, windowTitle: "Main", windowIndex: nil, windowID: nil),
-        Selectors(app: nil, pid: nil, windowTitle: nil, windowIndex: 2, windowID: nil),
-    ])
-    func `relative window selectors require an owner during construction`(_ selectors: Selectors) {
+    @Test(arguments: InteractionTargetSelectorFixtures.windowSelectorRequiresApplicationCases)
+    func `relative window selectors require an owner during construction`(_ selectors: InteractionTargetSelectorCase) {
         #expect(throws: MCPInteractionTargetError.windowSelectorRequiresApp) {
             _ = try Self.makeTarget(selectors)
+        }
+    }
+
+    @Test
+    func `PID prefixed app and explicit pid remain mutually exclusive`() {
+        #expect(throws: MCPInteractionTargetError.applicationAndProcessIdentifier) {
+            _ = try Self.makeTarget(Selectors(
+                app: "PID:42",
+                pid: 42,
+                windowTitle: nil,
+                windowIndex: nil,
+                windowID: nil))
         }
     }
 
@@ -226,5 +218,14 @@ struct MCPInteractionTargetTests {
             windowTitle: selectors.windowTitle,
             windowIndex: selectors.windowIndex,
             windowId: selectors.windowID)
+    }
+
+    private static func makeTarget(_ selectors: InteractionTargetSelectorCase) throws -> MCPInteractionTarget {
+        try self.makeTarget(Selectors(
+            app: selectors.hasApplication ? "Preview" : nil,
+            pid: selectors.hasProcessIdentifier ? 42 : nil,
+            windowTitle: selectors.hasWindowTitle ? "Main" : nil,
+            windowIndex: selectors.hasWindowIndex ? 2 : nil,
+            windowID: selectors.hasWindowID ? 7 : nil))
     }
 }

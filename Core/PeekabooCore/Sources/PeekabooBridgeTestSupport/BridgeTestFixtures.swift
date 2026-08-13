@@ -1,15 +1,9 @@
 import PeekabooAutomationKit
-import PeekabooAutomationKitTestSupport
 import PeekabooBridge
 import PeekabooFoundation
 
 /// Canonical builders for Bridge protocol and transport tests.
 public enum BridgeTestFixtures {
-    /// One valid outcome for every canonical desktop-action state.
-    public static var canonicalActionOutcomes: [DesktopActionOutcome] {
-        AutomationTestFixtures.canonicalActionOutcomes
-    }
-
     /// Builds one internally coherent handshake while keeping protocol versions explicit at every call site.
     public static func handshake(
         negotiatedVersion: PeekabooBridgeProtocolVersion,
@@ -74,5 +68,47 @@ public enum BridgeTestFixtures {
             permission: permission,
             kind: kind,
             context: context))
+    }
+
+    /// Builds the canonical legacy response paired with a desktop-action outcome in projection tests.
+    ///
+    /// Confirmed outcomes retain the historical success shape. Every other outcome retains the historical
+    /// error shape, including the conservative compatibility bit that old clients understand.
+    public static func actionResponse(for outcome: DesktopActionOutcome) -> PeekabooBridgeResponse {
+        guard !outcome.isConfirmed else { return .ok }
+        return self.errorResponse(
+            code: .internalError,
+            message: "Fixture \(outcome.state.rawValue)",
+            details: "Fixture details \(outcome.state.rawValue)",
+            permission: .accessibility,
+            kind: .appNotFound,
+            context: "fixture:\(outcome.state.rawValue)",
+            operationMayHaveCompleted: outcome.projection.mutationDispatched)
+    }
+
+    /// Wraps the canonical legacy response and its matching action projection in the additive current carriage.
+    public static func projectedActionResponse(for outcome: DesktopActionOutcome) -> PeekabooBridgeResponse {
+        let legacyResponse = self.actionResponse(for: outcome)
+        let response: PeekabooBridgeResponse
+        if case let .error(error) = legacyResponse {
+            guard let failure = DesktopActionFailure(
+                outcome: outcome,
+                message: error.message)
+            else {
+                preconditionFailure("A confirmed outcome cannot produce a fixture error response")
+            }
+            response = self.actionFailureResponse(
+                code: error.code,
+                failure: failure,
+                details: error.details,
+                permission: error.permission,
+                kind: error.kind,
+                context: error.context)
+        } else {
+            response = legacyResponse
+        }
+        return .projectedAction(.init(
+            response: response,
+            outcome: outcome.projection))
     }
 }

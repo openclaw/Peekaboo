@@ -1,9 +1,10 @@
 import CoreGraphics
-import Darwin
 import Foundation
 import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
 import PeekabooBridgeTestSupport
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooBridge
 @testable import PeekabooCore
@@ -70,7 +71,7 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             supportedOperations: [.click],
             hostCapabilities: [PeekabooBridgeHostCapability.desktopActionOutcomeProjection])
-        let currentPeer = try NegotiatedProjectionBridgePeer(responses: [
+        let currentPeer = try ScriptedBridgePeer(responses: [
             .handshake(currentHandshake),
             .projectedAction(.init(response: .ok, outcome: nil)),
         ])
@@ -96,7 +97,7 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             negotiatedVersion: .init(major: 1, minor: 22),
             supportedOperations: [.click],
             hostCapabilities: [PeekabooBridgeHostCapability.desktopActionOutcomeProjection])
-        let previousPeer = try NegotiatedProjectionBridgePeer(responses: [
+        let previousPeer = try ScriptedBridgePeer(responses: [
             .handshake(previousHandshake),
             .ok,
         ])
@@ -123,7 +124,7 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             supportedOperations: [.click],
             hostCapabilities: [PeekabooBridgeHostCapability.desktopActionOutcomeProjection])
-        let peer = try NegotiatedProjectionBridgePeer(responses: [.handshake(handshake), .ok])
+        let peer = try ScriptedBridgePeer(responses: [.handshake(handshake), .ok])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
 
         _ = try await client.handshake(client: Self.clientIdentity)
@@ -207,7 +208,7 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             hostIdentity: nil,
             permissionStatusEvaluator: { _ in Self.grantedPermissions })
 
-        for outcome in BridgeTestFixtures.canonicalActionOutcomes {
+        for outcome in DesktopActionOutcomeFixtures.canonicalOutcomes {
             services.automationStub.actionOutcome = outcome
             let legacy = try await Self.send(Self.clickRequest, to: server)
             guard case .ok = legacy else {
@@ -279,7 +280,7 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             supportedOperations: [.click],
             hostCapabilities: [PeekabooBridgeHostCapability.desktopActionOutcomeProjection])
-        let currentPeer = try NegotiatedProjectionBridgePeer(responses: [
+        let currentPeer = try ScriptedBridgePeer(responses: [
             .handshake(currentHandshake),
             .projectedAction(.init(response: .ok, outcome: currentOutcome.projection)),
         ])
@@ -296,7 +297,7 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
         let previousHandshake = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 22),
             supportedOperations: [.click])
-        let previousPeer = try NegotiatedProjectionBridgePeer(responses: [
+        let previousPeer = try ScriptedBridgePeer(responses: [
             .handshake(previousHandshake),
             .ok,
         ])
@@ -313,7 +314,7 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
 
     @Test
     func `remote automation preserves canonical current failures before legacy mapping`() async throws {
-        let expected = try DesktopActionFailure.partial(
+        let expected = DesktopActionFailure.partial(
             route: .bridge,
             delivery: .init(mechanism: .accessibilityAction, mode: .background),
             unitCount: DesktopActionOutcome.DispatchUnitCount(2),
@@ -325,7 +326,7 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             supportedOperations: [.click],
             hostCapabilities: [PeekabooBridgeHostCapability.desktopActionOutcomeProjection])
-        let peer = try NegotiatedProjectionBridgePeer(responses: [
+        let peer = try ScriptedBridgePeer(responses: [
             .handshake(handshake),
             .projectedAction(.init(
                 response: .error(envelope),
@@ -365,10 +366,9 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
 
     @Test
     func `projected response round trips every canonical action outcome`() throws {
-        let outcomes = BridgeTestFixtures.canonicalActionOutcomes
-        let expectations = Self.projectionExpectations
+        let cases = DesktopActionOutcomeFixtures.canonicalCases
 
-        #expect(outcomes.map(\.state) == [
+        #expect(cases.map(\.state) == [
             .confirmedChange,
             .confirmedNoChange,
             .partial,
@@ -377,13 +377,10 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             .refused,
             .indeterminate,
         ])
-        #expect(outcomes.count == expectations.count)
 
-        for (outcome, expectation) in zip(outcomes, expectations) {
-            let legacyResponse = Self.legacyResponse(for: outcome)
-            let response = PeekabooBridgeResponse.projectedAction(.init(
-                response: legacyResponse,
-                outcome: outcome.projection))
+        for expectation in cases {
+            let outcome = expectation.outcome
+            let response = BridgeTestFixtures.projectedActionResponse(for: outcome)
             let data = try JSONEncoder.peekabooBridgeEncoder().encode(response)
             let projection = try #require(Self.projectedAssociation(from: data)["outcome"] as? [String: Any])
             Self.expectProjection(projection, equals: expectation)
@@ -416,7 +413,7 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
         #expect(Set(requestAssociation.keys) == ["request"])
         #expect(try Self.canonicalJSON(requestWrapper) == Self.canonicalJSON(legacyRequestObject))
 
-        let outcome = BridgeTestFixtures.canonicalActionOutcomes[0]
+        let outcome = DesktopActionOutcomeFixtures.canonicalOutcomes[0]
         let projectedResponse = PeekabooBridgeResponse.projectedAction(.init(
             response: .ok,
             outcome: outcome.projection))
@@ -604,18 +601,6 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
         #expect(payload.outcome == nil)
     }
 
-    private static func legacyResponse(for outcome: DesktopActionOutcome) -> PeekabooBridgeResponse {
-        guard !outcome.isConfirmed else { return .ok }
-        return BridgeTestFixtures.errorResponse(
-            code: .internalError,
-            message: "Fixture \(outcome.state.rawValue)",
-            details: "Fixture details \(outcome.state.rawValue)",
-            permission: .accessibility,
-            kind: .appNotFound,
-            context: "fixture:\(outcome.state.rawValue)",
-            operationMayHaveCompleted: outcome.projection.mutationDispatched)
-    }
-
     private static func expectResponseKind(
         _ response: PeekabooBridgeResponse,
         matches outcome: DesktopActionOutcome)
@@ -625,6 +610,7 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             break
         case let (.error(error), false):
             #expect(error.code == .internalError)
+            #expect(error.actionOutcome == outcome.projection)
             #expect(error.message == "Fixture \(outcome.state.rawValue)")
             #expect(error.details == "Fixture details \(outcome.state.rawValue)")
             #expect(error.permission == .accessibility)
@@ -638,7 +624,7 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
 
     private static func expectProjection(
         _ projection: [String: Any],
-        equals expected: ProjectionExpectation)
+        equals expected: CanonicalDesktopActionOutcomeCase)
     {
         var expectedKeys: Set = [
             "state",
@@ -652,10 +638,10 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             "retry_safe",
             "requires_fresh_observation",
         ]
-        if expected.deliveryMechanism != nil {
+        if expected.delivery != nil {
             expectedKeys.formUnion(["delivery_mechanism", "delivery_mode"])
         }
-        if expected.dispatchedUnitCount != nil {
+        if expected.unitCount != nil {
             expectedKeys.insert("dispatched_unit_count")
         }
         if expected.refusalReason != nil {
@@ -663,20 +649,28 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
         }
 
         #expect(Set(projection.keys) == expectedKeys)
-        #expect(projection["state"] as? String == expected.state)
-        #expect(projection["effect"] as? String == expected.effect)
-        #expect(projection["route"] as? String == "local")
-        #expect(projection["delivery_mechanism"] as? String == expected.deliveryMechanism)
-        #expect(projection["delivery_mode"] as? String == expected.deliveryMode)
-        #expect(projection["evidence"] as? String == expected.evidence)
-        #expect(projection["dispatch_state"] as? String == expected.dispatchState)
-        #expect(projection["dispatched_unit_count"] as? Int == expected.dispatchedUnitCount)
-        #expect(projection["retry_safety"] as? String == expected.retrySafety)
-        #expect(projection["escalation"] as? String == expected.escalation)
-        #expect(projection["refusal_reason"] as? String == expected.refusalReason)
+        #expect(projection["state"] as? String == expected.state.rawValue)
+        #expect(projection["effect"] as? String == expected.effect.rawValue)
+        #expect(projection["route"] as? String == expected.route.rawValue)
+        #expect(projection["delivery_mechanism"] as? String == expected.delivery?.mechanism.rawValue)
+        #expect(projection["delivery_mode"] as? String == expected.delivery?.mode.rawValue)
+        #expect(projection["evidence"] as? String == expected.evidence.rawValue)
+        #expect(projection["dispatch_state"] as? String == Self.dispatchStateName(expected.dispatchState))
+        #expect(projection["dispatched_unit_count"] as? Int == expected.unitCount?.rawValue)
+        #expect(projection["retry_safety"] as? String == expected.retrySafety.rawValue)
+        #expect(projection["escalation"] as? String == expected.escalation.rawValue)
+        #expect(projection["refusal_reason"] as? String == expected.refusalReason?.rawValue)
         #expect(projection["mutation_dispatched"] as? Bool == expected.mutationDispatched)
         #expect(projection["retry_safe"] as? Bool == expected.retrySafe)
         #expect(projection["requires_fresh_observation"] as? Bool == expected.requiresFreshObservation)
+    }
+
+    private static func dispatchStateName(_ state: DesktopActionOutcome.DispatchState) -> String {
+        switch state {
+        case .none: "none"
+        case .dispatched: "dispatched"
+        case .mayHaveDispatched: "may_have_dispatched"
+        }
     }
 
     private static func object(from data: Data) throws -> [String: Any] {
@@ -729,496 +723,6 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
 
     private static let legacyClickRequestData = Data(
         #"{"click":{"_0":{"clickType":"single","target":{"kind":"coordinates","x":17,"y":29}}}}"#.utf8)
-
-    private static let projectionExpectations: [ProjectionExpectation] = [
-        .init(
-            state: "confirmed_change",
-            effect: "confirmed",
-            deliveryMechanism: "accessibility_action",
-            deliveryMode: "background",
-            evidence: "verified_change",
-            dispatchState: "dispatched",
-            dispatchedUnitCount: 1,
-            retrySafety: "not_applicable",
-            escalation: "none",
-            refusalReason: nil,
-            mutationDispatched: true,
-            retrySafe: false,
-            requiresFreshObservation: false),
-        .init(
-            state: "confirmed_no_change",
-            effect: "confirmed",
-            deliveryMechanism: nil,
-            deliveryMode: nil,
-            evidence: "verified_no_change",
-            dispatchState: "none",
-            dispatchedUnitCount: nil,
-            retrySafety: "not_applicable",
-            escalation: "none",
-            refusalReason: nil,
-            mutationDispatched: false,
-            retrySafe: false,
-            requiresFreshObservation: false),
-        .init(
-            state: "partial",
-            effect: "partial",
-            deliveryMechanism: "accessibility_action",
-            deliveryMode: "background",
-            evidence: "primary_change_verified_cleanup_failed",
-            dispatchState: "dispatched",
-            dispatchedUnitCount: 2,
-            retrySafety: "unsafe",
-            escalation: "recover_side_effect",
-            refusalReason: nil,
-            mutationDispatched: true,
-            retrySafe: false,
-            requiresFreshObservation: false),
-        .init(
-            state: "dispatched_unverified",
-            effect: "unverifiable",
-            deliveryMechanism: "process_targeted_events",
-            deliveryMode: "background",
-            evidence: "operation_still_running",
-            dispatchState: "dispatched",
-            dispatchedUnitCount: 3,
-            retrySafety: "unsafe",
-            escalation: "observe_before_retry",
-            refusalReason: nil,
-            mutationDispatched: true,
-            retrySafe: false,
-            requiresFreshObservation: true),
-        .init(
-            state: "suspected_noop",
-            effect: "suspected_noop",
-            deliveryMechanism: "accessibility_action",
-            deliveryMode: "background",
-            evidence: "observed_no_change",
-            dispatchState: "dispatched",
-            dispatchedUnitCount: 1,
-            retrySafety: "safe",
-            escalation: "refresh_target",
-            refusalReason: nil,
-            mutationDispatched: true,
-            retrySafe: true,
-            requiresFreshObservation: false),
-        .init(
-            state: "refused",
-            effect: "refused",
-            deliveryMechanism: nil,
-            deliveryMode: nil,
-            evidence: "request_refused",
-            dispatchState: "none",
-            dispatchedUnitCount: nil,
-            retrySafety: "safe",
-            escalation: "grant_permission",
-            refusalReason: "permission_denied",
-            mutationDispatched: false,
-            retrySafe: true,
-            requiresFreshObservation: false),
-        .init(
-            state: "indeterminate",
-            effect: "unverifiable",
-            deliveryMechanism: "process_targeted_events",
-            deliveryMode: "background",
-            evidence: "response_lost",
-            dispatchState: "may_have_dispatched",
-            dispatchedUnitCount: 2,
-            retrySafety: "unsafe",
-            escalation: "observe_before_retry",
-            refusalReason: nil,
-            mutationDispatched: true,
-            retrySafe: false,
-            requiresFreshObservation: true),
-    ]
-
-    private struct ProjectionExpectation {
-        let state: String
-        let effect: String
-        let deliveryMechanism: String?
-        let deliveryMode: String?
-        let evidence: String
-        let dispatchState: String
-        let dispatchedUnitCount: Int?
-        let retrySafety: String
-        let escalation: String
-        let refusalReason: String?
-        let mutationDispatched: Bool
-        let retrySafe: Bool
-        let requiresFreshObservation: Bool
-    }
 }
 
-@MainActor
-enum StubAutomationOutcomeTestControl {
-    private static var typeOutcomes: [ObjectIdentifier: DesktopActionOutcome] = [:]
-    private static var hotkeyOutcomes: [ObjectIdentifier: [DesktopActionOutcome]] = [:]
-    private static var hotkeyCallCounts: [ObjectIdentifier: Int] = [:]
-
-    static func setTypeOutcome(_ outcome: DesktopActionOutcome?, for automation: StubAutomationService) {
-        self.typeOutcomes[ObjectIdentifier(automation)] = outcome
-    }
-
-    static func typeOutcome(for automation: StubAutomationService) -> DesktopActionOutcome? {
-        self.typeOutcomes[ObjectIdentifier(automation)]
-    }
-
-    static func setHotkeyOutcomes(_ outcomes: [DesktopActionOutcome]?, for automation: StubAutomationService) {
-        self.hotkeyOutcomes[ObjectIdentifier(automation)] = outcomes
-    }
-
-    static func nextHotkeyOutcome(for automation: StubAutomationService) -> DesktopActionOutcome? {
-        let identifier = ObjectIdentifier(automation)
-        guard var outcomes = self.hotkeyOutcomes[identifier], !outcomes.isEmpty else { return nil }
-        let outcome = outcomes.removeFirst()
-        self.hotkeyOutcomes[identifier] = outcomes
-        return outcome
-    }
-
-    static func resetHotkeyCalls(for automation: StubAutomationService) {
-        self.hotkeyCallCounts[ObjectIdentifier(automation)] = 0
-    }
-
-    static func recordHotkeyCall(for automation: StubAutomationService) {
-        let identifier = ObjectIdentifier(automation)
-        self.hotkeyCallCounts[identifier, default: 0] += 1
-    }
-
-    static func hotkeyCallCount(for automation: StubAutomationService) -> Int {
-        self.hotkeyCallCounts[ObjectIdentifier(automation), default: 0]
-    }
-}
-
-extension StubAutomationService: UIAutomationActionOutcomeProviding {
-    func clickWithOutcome(
-        target: ClickTarget,
-        clickType: ClickType,
-        snapshotId: String?) async throws -> UIAutomationActionResult<Void>
-    {
-        try await self.click(target: target, clickType: clickType, snapshotId: snapshotId)
-        return self.actionResult(())
-    }
-
-    func clickWithOutcome(
-        target: ClickTarget,
-        clickType: ClickType,
-        snapshotId: String?,
-        targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<Void>
-    {
-        try await self.click(
-            target: target,
-            clickType: clickType,
-            snapshotId: snapshotId,
-            targetProcessIdentifier: targetProcessIdentifier)
-        return self.actionResult(())
-    }
-
-    func clickWithOutcome(
-        target: ClickTarget,
-        clickType: ClickType,
-        snapshotId: String?,
-        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<Void>
-    {
-        try await self.click(
-            target: target,
-            clickType: clickType,
-            snapshotId: snapshotId,
-            expectedProcessIdentity: expectedProcessIdentity)
-        return self.actionResult(())
-    }
-
-    func clickWithOutcome(
-        target: ClickTarget,
-        clickType: ClickType,
-        snapshotId: String?,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<Void>
-    {
-        try await self.click(
-            target: target,
-            clickType: clickType,
-            snapshotId: snapshotId,
-            expectedWindowIdentity: expectedWindowIdentity,
-            expectedWindowBounds: expectedWindowBounds)
-        return self.actionResult(())
-    }
-
-    func typeWithOutcome(
-        text: String,
-        target: String?,
-        clearExisting: Bool,
-        typingDelay: Int,
-        snapshotId: String?) async throws -> UIAutomationActionResult<Void>
-    {
-        try await self.type(
-            text: text,
-            target: target,
-            clearExisting: clearExisting,
-            typingDelay: typingDelay,
-            snapshotId: snapshotId)
-        return self.actionResult(())
-    }
-
-    func typeActionsWithOutcome(
-        _ actions: [TypeAction],
-        cadence: TypingCadence,
-        snapshotId: String?) async throws -> UIAutomationActionResult<TypeResult>
-    {
-        try await self.typeActionResult(self.typeActions(actions, cadence: cadence, snapshotId: snapshotId))
-    }
-
-    func typeActionsWithOutcome(
-        _ actions: [TypeAction],
-        cadence: TypingCadence,
-        snapshotId: String?,
-        targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<TypeResult>
-    {
-        try await self.typeActionResult(self.typeActions(
-            actions,
-            cadence: cadence,
-            snapshotId: snapshotId,
-            targetProcessIdentifier: targetProcessIdentifier))
-    }
-
-    func typeActionsWithOutcome(
-        _ actions: [TypeAction],
-        cadence: TypingCadence,
-        snapshotId: String?,
-        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<TypeResult>
-    {
-        try await self.typeActionResult(self.typeActions(
-            actions,
-            cadence: cadence,
-            snapshotId: snapshotId,
-            expectedProcessIdentity: expectedProcessIdentity))
-    }
-
-    func typeActionsWithOutcome(
-        _ actions: [TypeAction],
-        cadence: TypingCadence,
-        snapshotId: String?,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<TypeResult>
-    {
-        try await self.typeActionResult(self.typeActions(
-            actions,
-            cadence: cadence,
-            snapshotId: snapshotId,
-            expectedWindowIdentity: expectedWindowIdentity,
-            expectedWindowBounds: expectedWindowBounds))
-    }
-
-    func typeActionsWithOutcome(
-        _ actions: [TypeAction],
-        cadence: TypingCadence,
-        snapshotId: String?,
-        target: ExactWindowKeyboardTarget) async throws -> UIAutomationActionResult<TypeResult>
-    {
-        try await self.typeActionResult(self.typeActions(
-            actions,
-            cadence: cadence,
-            snapshotId: snapshotId,
-            target: target))
-    }
-
-    func scrollWithOutcome(_ request: ScrollRequest) async throws -> UIAutomationActionResult<Void> {
-        try await self.scroll(request)
-        return self.actionResult(())
-    }
-
-    func hotkeyWithOutcome(
-        keys: String,
-        holdDuration: Int) async throws -> UIAutomationActionResult<Void>
-    {
-        StubAutomationOutcomeTestControl.recordHotkeyCall(for: self)
-        try await self.hotkey(keys: keys, holdDuration: holdDuration)
-        if let outcome = StubAutomationOutcomeTestControl.nextHotkeyOutcome(for: self) {
-            return UIAutomationActionResult(payload: (), outcome: outcome)
-        }
-        return self.actionResult(())
-    }
-
-    func hotkeyWithOutcome(
-        keys: String,
-        holdDuration: Int,
-        targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<Void>
-    {
-        try await self.hotkey(
-            keys: keys,
-            holdDuration: holdDuration,
-            targetProcessIdentifier: targetProcessIdentifier)
-        return self.actionResult(())
-    }
-
-    func hotkeyWithOutcome(
-        keys: String,
-        holdDuration: Int,
-        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<Void>
-    {
-        try await self.hotkey(
-            keys: keys,
-            holdDuration: holdDuration,
-            expectedProcessIdentity: expectedProcessIdentity)
-        return self.actionResult(())
-    }
-
-    func hotkeyWithOutcome(
-        keys: String,
-        holdDuration: Int,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<Void>
-    {
-        try await self.hotkey(
-            keys: keys,
-            holdDuration: holdDuration,
-            expectedWindowIdentity: expectedWindowIdentity,
-            expectedWindowBounds: expectedWindowBounds)
-        return self.actionResult(())
-    }
-
-    func hotkeyWithOutcome(
-        keys: String,
-        holdDuration: Int,
-        target: ExactWindowKeyboardTarget) async throws -> UIAutomationActionResult<Void>
-    {
-        try await self.hotkey(keys: keys, holdDuration: holdDuration, target: target)
-        return self.actionResult(())
-    }
-
-    func setValueWithOutcome(
-        target: String,
-        value: UIElementValue,
-        snapshotId: String?) async throws -> UIAutomationActionResult<ElementActionResult>
-    {
-        try await self.actionResult(self.setValue(target: target, value: value, snapshotId: snapshotId))
-    }
-
-    func performActionWithOutcome(
-        target: String,
-        actionName: String,
-        snapshotId: String?) async throws -> UIAutomationActionResult<ElementActionResult>
-    {
-        try await self.actionResult(self.performAction(
-            target: target,
-            actionName: actionName,
-            snapshotId: snapshotId))
-    }
-
-    private func actionResult<Payload: Sendable>(_ payload: Payload) -> UIAutomationActionResult<Payload> {
-        UIAutomationActionResult(payload: payload, outcome: self.actionOutcome)
-    }
-
-    private func typeActionResult<Payload: Sendable>(_ payload: Payload) -> UIAutomationActionResult<Payload> {
-        UIAutomationActionResult(
-            payload: payload,
-            outcome: StubAutomationOutcomeTestControl.typeOutcome(for: self) ?? self.actionOutcome)
-    }
-}
-
-private actor NegotiatedProjectionBridgePeerState {
-    private(set) var requests: [Data] = []
-
-    func record(_ request: Data) {
-        self.requests.append(request)
-    }
-}
-
-private final class NegotiatedProjectionBridgePeer: @unchecked Sendable {
-    let socketPath: String
-    private let listener: Int32
-    private let state = NegotiatedProjectionBridgePeerState()
-    private var task: Task<Void, Never>?
-
-    var requests: [Data] {
-        get async { await self.state.requests }
-    }
-
-    init(responses: [PeekabooBridgeResponse]) throws {
-        self.socketPath = "/tmp/pb-projection-negotiation-\(UUID().uuidString).sock"
-        self.listener = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard self.listener >= 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
-        do {
-            var address = sockaddr_un()
-            address.sun_family = sa_family_t(AF_UNIX)
-            address.sun_len = UInt8(MemoryLayout.size(ofValue: address))
-            let copied = self.socketPath.withCString { source in
-                strlcpy(&address.sun_path.0, source, MemoryLayout.size(ofValue: address.sun_path))
-            }
-            guard copied < MemoryLayout.size(ofValue: address.sun_path) else {
-                throw POSIXError(.ENAMETOOLONG)
-            }
-            let length = socklen_t(MemoryLayout.size(ofValue: address))
-            let bindResult = withUnsafePointer(to: &address) { pointer in
-                Darwin.bind(self.listener, UnsafePointer<sockaddr>(OpaquePointer(pointer)), length)
-            }
-            guard bindResult == 0, listen(self.listener, Int32(responses.count)) == 0 else {
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-            }
-        } catch {
-            Darwin.close(self.listener)
-            try? FileManager.default.removeItem(atPath: self.socketPath)
-            throw error
-        }
-
-        let listener = self.listener
-        let socketPath = self.socketPath
-        let state = self.state
-        self.task = Task.detached {
-            defer {
-                Darwin.close(listener)
-                try? FileManager.default.removeItem(atPath: socketPath)
-            }
-            for response in responses {
-                let client = accept(listener, nil, nil)
-                guard client >= 0 else { return }
-                let request = Self.readRequest(from: client)
-                await state.record(request)
-                if let data = try? JSONEncoder.peekabooBridgeEncoder().encode(response) {
-                    Self.write(data, to: client)
-                }
-                Darwin.close(client)
-            }
-        }
-    }
-
-    func waitUntilFinished() async {
-        await self.task?.value
-        self.task = nil
-    }
-
-    private nonisolated static func readRequest(from descriptor: Int32) -> Data {
-        var result = Data()
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        while true {
-            let count = buffer.withUnsafeMutableBytes { bytes in
-                Darwin.read(descriptor, bytes.baseAddress, bytes.count)
-            }
-            if count > 0 {
-                result.append(contentsOf: buffer.prefix(count))
-                continue
-            }
-            if count < 0, errno == EINTR {
-                continue
-            }
-            return result
-        }
-    }
-
-    private nonisolated static func write(_ data: Data, to descriptor: Int32) {
-        data.withUnsafeBytes { bytes in
-            guard let baseAddress = bytes.baseAddress else { return }
-            var offset = 0
-            while offset < bytes.count {
-                let count = Darwin.write(descriptor, baseAddress.advanced(by: offset), bytes.count - offset)
-                if count > 0 {
-                    offset += count
-                } else if count < 0, errno == EINTR {
-                    continue
-                } else {
-                    return
-                }
-            }
-        }
-    }
-}
+extension StubAutomationService: ScriptedUIAutomationActionOutcomeProviding {}

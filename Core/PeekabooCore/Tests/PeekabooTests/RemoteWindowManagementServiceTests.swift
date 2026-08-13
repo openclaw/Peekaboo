@@ -3,6 +3,7 @@ import Foundation
 import PeekabooAutomationKit
 import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooBridge
 @testable import PeekabooCore
@@ -19,7 +20,7 @@ struct RemoteWindowManagementServiceTests {
     @Test
     func `capable remote preserves every window mutation outcome through protocol 1 23`() async throws {
         let socketPath = "/tmp/peekaboo-remote-window-outcome-\(UUID().uuidString).sock"
-        let expected = AutomationTestFixtures.canonicalActionOutcomes[0]
+        let expected = DesktopActionOutcomeFixtures.canonicalOutcomes[0]
         let windows = RemoteWindowMutationFixture(identity: self.identity, actionOutcome: expected)
         let server = PeekabooBridgeServer(
             services: StubServices(windows: windows),
@@ -56,7 +57,7 @@ struct RemoteWindowManagementServiceTests {
         ]
 
         #expect(outcomes.allSatisfy { $0 == expected.routed(to: .bridge) })
-        for expectedOutcome in AutomationTestFixtures.canonicalActionOutcomes {
+        for expectedOutcome in DesktopActionOutcomeFixtures.canonicalOutcomes {
             await windows.setActionOutcome(expectedOutcome)
             let carried = try await remote.moveWindowWithOutcome(
                 target: target,
@@ -78,7 +79,7 @@ struct RemoteWindowManagementServiceTests {
         let legacyVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 22)
         let windows = RemoteWindowMutationFixture(
             identity: self.identity,
-            actionOutcome: AutomationTestFixtures.canonicalActionOutcomes[0])
+            actionOutcome: DesktopActionOutcomeFixtures.canonicalOutcomes[0])
         let server = PeekabooBridgeServer(
             services: StubServices(windows: windows),
             allowlistedTeams: [],

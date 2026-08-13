@@ -2,6 +2,7 @@ import Foundation
 import PeekabooAutomationKit
 import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -9,7 +10,7 @@ struct ResultEnvelopeTests {
     private struct Payload: Codable { let value: Int }
 
     @Test func `success envelope round trips every canonical nested outcome`() throws {
-        for outcome in AutomationTestFixtures.canonicalActionOutcomes {
+        for outcome in DesktopActionOutcomeFixtures.canonicalOutcomes {
             let envelope = makeSuccessEnvelope(
                 data: Payload(value: 1),
                 effect: .confirmed,
@@ -24,7 +25,7 @@ struct ResultEnvelopeTests {
     }
 
     @Test func `nested canonical outcome rejects contradictory derived fields`() throws {
-        let outcome = AutomationTestFixtures.canonicalActionOutcomes[0]
+        let outcome = DesktopActionOutcomeFixtures.canonicalOutcomes[0]
         let encoded = try JSONEncoder().encode(makeSuccessEnvelope(data: Payload(value: 1), outcome: outcome))
         var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
         var projection = try #require(object["outcome"] as? [String: Any])
@@ -86,7 +87,7 @@ struct ResultEnvelopeTests {
             "⚠️ Click outcome is indeterminate; observe the target before retrying",
         ]
 
-        for (outcome, expectedLine) in zip(AutomationTestFixtures.canonicalActionOutcomes, expected) {
+        for (outcome, expectedLine) in zip(DesktopActionOutcomeFixtures.canonicalOutcomes, expected) {
             #expect(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Click") == expectedLine)
         }
     }

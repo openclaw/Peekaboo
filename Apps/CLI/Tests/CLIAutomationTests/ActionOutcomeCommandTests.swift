@@ -4,6 +4,7 @@ import PeekabooAutomationKit
 import PeekabooAutomationKitTestSupport
 import PeekabooCore
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -14,7 +15,7 @@ struct ActionOutcomeCommandTests {
     func `service bridge preserves every canonical fixture without inference`() async throws {
         let automation = OutcomeStubAutomationService()
 
-        for expected in AutomationTestFixtures.canonicalActionOutcomes {
+        for expected in DesktopActionOutcomeFixtures.canonicalOutcomes {
             automation.actionOutcome = expected
             let result = try await AutomationServiceBridge.hotkey(
                 automation: automation,
@@ -58,10 +59,12 @@ struct ActionOutcomeCommandTests {
                 arguments + ["--json", "--no-remote"],
                 services: context.services
             )
+            let envelope = try ActionEnvelopeTestProbe.decode(result.stdout)
             let object = try Self.jsonObject(result.stdout)
             let projection = try #require(object["outcome"] as? [String: Any])
 
             #expect(result.exitStatus == 0, "Unexpected failure for \(arguments[0]): \(result.combinedOutput)")
+            ActionEnvelopeTestAssertions.expectCanonicalOutcome(outcome, in: envelope)
             #expect(object["effect"] as? String == "confirmed")
             #expect(projection["state"] as? String == "confirmed_change")
             #expect(projection["effect"] as? String == "confirmed")
@@ -121,7 +124,7 @@ struct ActionOutcomeCommandTests {
             message: "Second chord partially dispatched",
             hint: "Recover the partial chord."
         )
-        context.automation.hotkeyOutcomeErrorProvider = { call in call == 2 ? leafFailure : nil }
+        context.automation.failHotkey(leafFailure, onCall: 2)
 
         let result = try await InProcessCommandRunner.run(
             ["press", "cmd+a", "cmd+c", "--foreground", "--json", "--no-remote"],
@@ -152,7 +155,7 @@ struct ActionOutcomeCommandTests {
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
             message: "Second chord partially dispatched with unknown count"
         )
-        context.automation.hotkeyOutcomeErrorProvider = { call in call == 2 ? leafFailure : nil }
+        context.automation.failHotkey(leafFailure, onCall: 2)
 
         let result = try await InProcessCommandRunner.run(
             ["press", "cmd+a", "cmd+c", "--foreground", "--json", "--no-remote"],
@@ -179,7 +182,7 @@ struct ActionOutcomeCommandTests {
             emittedUnitCount: 2,
             causeDescription: "Second chord completion is unknown"
         )
-        context.automation.hotkeyOutcomeErrorProvider = { call in call == 2 ? leafFailure : nil }
+        context.automation.failHotkey(leafFailure, onCall: 2)
 
         let result = try await InProcessCommandRunner.run(
             ["press", "cmd+a", "cmd+c", "--foreground", "--json", "--no-remote"],
@@ -203,7 +206,7 @@ struct ActionOutcomeCommandTests {
             emittedUnitCount: nil,
             causeDescription: "First chord completion is unknown"
         )
-        context.automation.hotkeyOutcomeErrorProvider = { _ in leafFailure }
+        context.automation.failHotkey(leafFailure, onCall: 1)
 
         let result = try await InProcessCommandRunner.run(
             ["press", "cmd+a", "--foreground", "--json", "--no-remote"],
@@ -231,7 +234,7 @@ struct ActionOutcomeCommandTests {
             emittedUnitCount: nil,
             causeDescription: "Second chord dispatch count is unknown"
         )
-        context.automation.hotkeyOutcomeErrorProvider = { call in call == 2 ? leafFailure : nil }
+        context.automation.failHotkey(leafFailure, onCall: 2)
 
         let result = try await InProcessCommandRunner.run(
             ["press", "cmd+a", "cmd+c", "--foreground", "--json", "--no-remote"],

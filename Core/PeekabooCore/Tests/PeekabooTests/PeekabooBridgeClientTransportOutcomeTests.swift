@@ -12,7 +12,7 @@ import Testing
 struct PeekabooBridgeClientTransportOutcomeTests {
     @Test
     func `mutation response timeout is indeterminate and retry unsafe`() async throws {
-        let peer = try ScriptedBridgePeer(behavior: .idle(seconds: 0.15))
+        let peer = try ScriptedBridgePeer(steps: [.idle(seconds: 0.15)])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 0.05)
 
         do {
@@ -26,7 +26,7 @@ struct PeekabooBridgeClientTransportOutcomeTests {
 
     @Test
     func `read-only response timeout remains an ordinary transport failure`() async throws {
-        let peer = try ScriptedBridgePeer(behavior: .idle(seconds: 0.15))
+        let peer = try ScriptedBridgePeer(steps: [.idle(seconds: 0.15)])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 0.05)
 
         do {
@@ -40,7 +40,13 @@ struct PeekabooBridgeClientTransportOutcomeTests {
 
     @Test
     func `handshake timeout is shared across protocol fallback attempts`() async throws {
-        let peer = try VersionMismatchBridgePeer(firstResponseDelay: 0.3)
+        let versionMismatch = BridgeTestFixtures.errorResponse(
+            code: .versionMismatch,
+            message: "scripted version mismatch")
+        let peer = try ScriptedBridgePeer(scripts: [
+            [.delay(seconds: 0.3), .respond(versionMismatch)],
+            [.idle(seconds: 5)],
+        ])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
         let identity = PeekabooBridgeClientIdentity(
             bundleIdentifier: "dev.peekaboo.tests",
@@ -64,8 +70,35 @@ struct PeekabooBridgeClientTransportOutcomeTests {
     }
 
     @Test
+    func `stop unblocks an accepted client before request EOF and is idempotent`() async throws {
+        let peer = try ScriptedBridgePeer(steps: [.idle(seconds: 5)])
+        let client = try Self.connectRawClient(to: peer.socketPath)
+        defer { Darwin.close(client) }
+        #expect(await Self.waitUntilAccepted(peer))
+
+        let startedAt = ContinuousClock.now
+        await peer.stop()
+        #expect(startedAt.duration(to: .now) < .seconds(1))
+        await peer.stop()
+    }
+
+    @Test
+    func `deinit unblocks an accepted client before request EOF`() async throws {
+        var peer: ScriptedBridgePeer? = try ScriptedBridgePeer(steps: [.idle(seconds: 5)])
+        let client = try Self.connectRawClient(to: #require(peer).socketPath)
+        defer { Darwin.close(client) }
+        let accepted = try await Self.waitUntilAccepted(#require(peer))
+        #expect(accepted)
+
+        peer = nil
+        var descriptor = pollfd(fd: client, events: Int16(POLLIN | POLLHUP), revents: 0)
+        #expect(Darwin.poll(&descriptor, 1, 1000) == 1)
+        #expect(descriptor.revents & Int16(POLLIN | POLLHUP) != 0)
+    }
+
+    @Test
     func `mutation response EOF is indeterminate and retry unsafe`() async throws {
-        let peer = try ScriptedBridgePeer(behavior: .closeWithoutResponse)
+        let peer = try ScriptedBridgePeer(steps: [.close])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
 
         do {
@@ -79,7 +112,7 @@ struct PeekabooBridgeClientTransportOutcomeTests {
 
     @Test
     func `read-only response EOF remains retry safe`() async throws {
-        let peer = try ScriptedBridgePeer(behavior: .closeWithoutResponse)
+        let peer = try ScriptedBridgePeer(steps: [.close])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
 
         do {
@@ -94,7 +127,7 @@ struct PeekabooBridgeClientTransportOutcomeTests {
 
     @Test
     func `mutation malformed response is indeterminate and retry unsafe`() async throws {
-        let peer = try ScriptedBridgePeer(behavior: .respond(Data("not-json".utf8)))
+        let peer = try ScriptedBridgePeer(steps: [.respondData(Data("not-json".utf8))])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
 
         do {
@@ -126,7 +159,7 @@ struct PeekabooBridgeClientTransportOutcomeTests {
     @Test
     @MainActor
     func `remote targeted click maps response loss to retry-unsafe delivery`() async throws {
-        let peer = try ScriptedBridgePeer(behavior: .idle(seconds: 0.15))
+        let peer = try ScriptedBridgePeer(steps: [.idle(seconds: 0.15)])
         let remote = RemoteUIAutomationService(
             client: PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 0.05),
             supportsTargetedClicks: true)
@@ -184,8 +217,7 @@ struct PeekabooBridgeClientTransportOutcomeTests {
 
         for expected in failures {
             let response = BridgeTestFixtures.actionFailureResponse(failure: expected)
-            let data = try JSONEncoder.peekabooBridgeEncoder().encode(response)
-            let peer = try ScriptedBridgePeer(behavior: .respond(data))
+            let peer = try ScriptedBridgePeer(steps: [.respond(response)])
             let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
 
             do {
@@ -205,8 +237,7 @@ struct PeekabooBridgeClientTransportOutcomeTests {
             message: "Legacy host could not verify completion",
             details: "legacy detail",
             operationMayHaveCompleted: true)
-        let data = try JSONEncoder.peekabooBridgeEncoder().encode(response)
-        let peer = try ScriptedBridgePeer(behavior: .respond(data))
+        let peer = try ScriptedBridgePeer(steps: [.respond(response)])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
 
         do {
@@ -231,8 +262,7 @@ struct PeekabooBridgeClientTransportOutcomeTests {
             evidence: .completionUnknown,
             message: "Fixture action failure on a read-only request")
         let response = BridgeTestFixtures.actionFailureResponse(failure: failure)
-        let data = try JSONEncoder.peekabooBridgeEncoder().encode(response)
-        let peer = try ScriptedBridgePeer(behavior: .respond(data))
+        let peer = try ScriptedBridgePeer(steps: [.respond(response)])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
 
         let actual = try await client.send(.permissionsStatus)
@@ -287,191 +317,43 @@ struct PeekabooBridgeClientTransportOutcomeTests {
         #expect(failure.message.contains("do not retry"))
         #expect(PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: failure))
     }
-}
 
-private final class ScriptedBridgePeer: @unchecked Sendable {
-    enum Behavior: Sendable {
-        case idle(seconds: TimeInterval)
-        case closeWithoutResponse
-        case respond(Data)
-    }
-
-    let socketPath: String
-    private var task: Task<Void, Never>?
-
-    init(behavior: Behavior) throws {
-        self.socketPath = "/tmp/pb-client-transport-\(UUID().uuidString).sock"
-        let listener = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard listener >= 0 else {
+    private static func connectRawClient(to socketPath: String) throws -> Int32 {
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
         do {
             var address = sockaddr_un()
             address.sun_family = sa_family_t(AF_UNIX)
             address.sun_len = UInt8(MemoryLayout.size(ofValue: address))
-            let copied = self.socketPath.withCString { source in
+            let copied = socketPath.withCString { source in
                 strlcpy(&address.sun_path.0, source, MemoryLayout.size(ofValue: address.sun_path))
             }
             guard copied < MemoryLayout.size(ofValue: address.sun_path) else {
                 throw POSIXError(.ENAMETOOLONG)
             }
             let length = socklen_t(MemoryLayout.size(ofValue: address))
-            let bindResult = withUnsafePointer(to: &address) { pointer in
-                Darwin.bind(listener, UnsafePointer<sockaddr>(OpaquePointer(pointer)), length)
+            let result = withUnsafePointer(to: &address) { pointer in
+                Darwin.connect(descriptor, UnsafePointer<sockaddr>(OpaquePointer(pointer)), length)
             }
-            guard bindResult == 0 else {
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            guard result == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .ECONNREFUSED)
             }
-            guard listen(listener, 1) == 0 else {
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-            }
+            return descriptor
         } catch {
-            Darwin.close(listener)
-            try? FileManager.default.removeItem(atPath: self.socketPath)
+            Darwin.close(descriptor)
             throw error
         }
+    }
 
-        let socketPath = self.socketPath
-        self.task = Task.detached {
-            defer {
-                Darwin.close(listener)
-                try? FileManager.default.removeItem(atPath: socketPath)
+    private static func waitUntilAccepted(_ peer: ScriptedBridgePeer) async -> Bool {
+        for _ in 0..<200 {
+            if await peer.acceptedConnectionCount == 1 {
+                return true
             }
-            let client = accept(listener, nil, nil)
-            guard client >= 0 else { return }
-            defer { Darwin.close(client) }
-
-            var buffer = [UInt8](repeating: 0, count: 4096)
-            while true {
-                let count = buffer.withUnsafeMutableBytes { bytes in
-                    Darwin.read(client, bytes.baseAddress, bytes.count)
-                }
-                if count > 0 {
-                    continue
-                }
-                if count < 0, errno == EINTR {
-                    continue
-                }
-                break
-            }
-
-            switch behavior {
-            case let .idle(seconds):
-                try? await Task.sleep(for: .seconds(seconds))
-            case .closeWithoutResponse:
-                return
-            case let .respond(data):
-                _ = data.withUnsafeBytes { bytes in
-                    Darwin.write(client, bytes.baseAddress, bytes.count)
-                }
-            }
+            try? await Task.sleep(for: .milliseconds(5))
         }
-    }
-
-    func waitUntilFinished() async {
-        await self.task?.value
-        self.task = nil
-    }
-}
-
-private actor VersionMismatchBridgePeerState {
-    private(set) var acceptedConnectionCount = 0
-
-    func recordConnection() {
-        self.acceptedConnectionCount += 1
-    }
-}
-
-private final class VersionMismatchBridgePeer: @unchecked Sendable {
-    let socketPath: String
-    private let listener: Int32
-    private let state = VersionMismatchBridgePeerState()
-    private var task: Task<Void, Never>?
-
-    var acceptedConnectionCount: Int {
-        get async { await self.state.acceptedConnectionCount }
-    }
-
-    init(firstResponseDelay: TimeInterval) throws {
-        self.socketPath = "/tmp/pb-handshake-fallback-\(UUID().uuidString).sock"
-        self.listener = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard self.listener >= 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
-        do {
-            var address = sockaddr_un()
-            address.sun_family = sa_family_t(AF_UNIX)
-            address.sun_len = UInt8(MemoryLayout.size(ofValue: address))
-            let copied = self.socketPath.withCString { source in
-                strlcpy(&address.sun_path.0, source, MemoryLayout.size(ofValue: address.sun_path))
-            }
-            guard copied < MemoryLayout.size(ofValue: address.sun_path) else {
-                throw POSIXError(.ENAMETOOLONG)
-            }
-            let length = socklen_t(MemoryLayout.size(ofValue: address))
-            let bindResult = withUnsafePointer(to: &address) { pointer in
-                Darwin.bind(self.listener, UnsafePointer<sockaddr>(OpaquePointer(pointer)), length)
-            }
-            guard bindResult == 0, listen(self.listener, 2) == 0 else {
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-            }
-        } catch {
-            Darwin.close(self.listener)
-            try? FileManager.default.removeItem(atPath: self.socketPath)
-            throw error
-        }
-
-        let listener = self.listener
-        let socketPath = self.socketPath
-        let state = self.state
-        self.task = Task.detached {
-            defer {
-                Darwin.close(listener)
-                try? FileManager.default.removeItem(atPath: socketPath)
-            }
-            for attempt in 0..<2 {
-                let client = accept(listener, nil, nil)
-                guard client >= 0 else { return }
-                await state.recordConnection()
-                Self.drainRequest(client)
-                if attempt == 0 {
-                    try? await Task.sleep(for: .seconds(firstResponseDelay))
-                    let response = BridgeTestFixtures.errorResponse(
-                        code: .versionMismatch,
-                        message: "scripted version mismatch")
-                    if let data = try? JSONEncoder.peekabooBridgeEncoder().encode(response) {
-                        _ = data.withUnsafeBytes { bytes in
-                            Darwin.write(client, bytes.baseAddress, bytes.count)
-                        }
-                    }
-                } else {
-                    try? await Task.sleep(for: .seconds(5))
-                }
-                Darwin.close(client)
-            }
-        }
-    }
-
-    func stop() async {
-        self.task?.cancel()
-        _ = shutdown(self.listener, SHUT_RDWR)
-        await self.task?.value
-        self.task = nil
-    }
-
-    private nonisolated static func drainRequest(_ descriptor: Int32) {
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        while true {
-            let count = buffer.withUnsafeMutableBytes { bytes in
-                Darwin.read(descriptor, bytes.baseAddress, bytes.count)
-            }
-            if count > 0 {
-                continue
-            }
-            if count < 0, errno == EINTR {
-                continue
-            }
-            return
-        }
+        return false
     }
 }

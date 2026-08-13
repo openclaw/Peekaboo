@@ -4,6 +4,7 @@ import MCP
 import PeekabooAutomationKit
 import PeekabooBridgeTestSupport
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
@@ -12,33 +13,14 @@ import Testing
 struct MCPDesktopActionOutcomeProjectionTests {
     @Test
     func `canonical projection drives the complete seven state MCP matrix`() throws {
-        let expectations: [ProjectionExpectation] = [
-            .init(state: .confirmedChange, dispatched: true, retrySafe: false, fresh: false, escalation: .none),
-            .init(state: .confirmedNoChange, dispatched: false, retrySafe: false, fresh: false, escalation: .none),
-            .init(state: .partial, dispatched: true, retrySafe: false, fresh: false, escalation: .recoverSideEffect),
-            .init(
-                state: .dispatchedUnverified,
-                dispatched: true,
-                retrySafe: false,
-                fresh: true,
-                escalation: .observeBeforeRetry),
-            .init(state: .suspectedNoop, dispatched: true, retrySafe: true, fresh: false, escalation: .refreshTarget),
-            .init(state: .refused, dispatched: false, retrySafe: true, fresh: false, escalation: .grantPermission),
-            .init(
-                state: .indeterminate,
-                dispatched: true,
-                retrySafe: false,
-                fresh: true,
-                escalation: .observeBeforeRetry),
-        ]
-
-        for (outcome, expectation) in zip(BridgeTestFixtures.canonicalActionOutcomes, expectations) {
+        for expectation in DesktopActionOutcomeFixtures.canonicalCases {
+            let outcome = expectation.outcome
             let fields = try MCPToolResponseMetadataProjector.fields(for: outcome.projection)
 
             #expect(fields["state"] == .string(expectation.state.rawValue))
-            #expect(fields["mutation_dispatched"] == .bool(expectation.dispatched))
+            #expect(fields["mutation_dispatched"] == .bool(expectation.mutationDispatched))
             #expect(fields["retry_safe"] == .bool(expectation.retrySafe))
-            #expect(fields["requires_fresh_observation"] == .bool(expectation.fresh))
+            #expect(fields["requires_fresh_observation"] == .bool(expectation.requiresFreshObservation))
             #expect(fields["escalation"] == .string(expectation.escalation.rawValue))
 
             let external = MCPToolResponseMetadataProjector.externalFields(
@@ -130,7 +112,7 @@ struct MCPDesktopActionOutcomeProjectionTests {
         let snapshot = await context.uiSnapshots.createSnapshot()
         let snapshotID = await snapshot.id
 
-        for outcome in BridgeTestFixtures.canonicalActionOutcomes {
+        for outcome in DesktopActionOutcomeFixtures.canonicalOutcomes {
             automation.actionOutcome = outcome
             let response = try await ActionTool(context: context).execute(arguments: ToolArguments(raw: [
                 "on": "B1",
@@ -138,7 +120,7 @@ struct MCPDesktopActionOutcomeProjectionTests {
                 "snapshot": snapshotID,
             ]))
 
-            try Self.expect(outcome: outcome, in: response)
+            try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(outcome, in: response)
             #expect(response.isError == !outcome.isConfirmed)
             guard case let .object(meta) = response.meta else { continue }
             let expectedInvalidatedSnapshot: Value? = outcome.dispatchState.mutationDispatched
@@ -235,7 +217,7 @@ struct MCPDesktopActionOutcomeProjectionTests {
 
         for response in responses {
             #expect(response.isError)
-            try Self.expect(outcome: outcome, in: response)
+            try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(outcome, in: response)
         }
     }
 
@@ -360,7 +342,6 @@ extension MCPDesktopActionOutcomeProjectionTests {
     func `multi chord confirmed no change does not fabricate dispatch`() async throws {
         let automation = StubAutomationService()
         automation.actionOutcome = .confirmedNoChange()
-        StubAutomationOutcomeTestControl.resetHotkeyCalls(for: automation)
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
 
         let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -374,18 +355,15 @@ extension MCPDesktopActionOutcomeProjectionTests {
         #expect(meta["state"] == .string("confirmed_no_change"))
         #expect(meta["mutation_dispatched"] == .bool(false))
         #expect(meta["delivery_mode"] == nil)
-        #expect(StubAutomationOutcomeTestControl.hotkeyCallCount(for: automation) == 2)
+        #expect(automation.uiAutomationOutcomeScript.callCount(for: .hotkey) == 2)
     }
 
     @Test
     @MainActor
     func `heterogeneous no change chords do not fabricate foreground delivery`() async throws {
         let automation = StubAutomationService()
-        StubAutomationOutcomeTestControl.setHotkeyOutcomes([
-            .confirmedNoChange(route: .local),
-            .confirmedNoChange(route: .bridge),
-        ], for: automation)
-        defer { StubAutomationOutcomeTestControl.setHotkeyOutcomes(nil, for: automation) }
+        automation.uiAutomationOutcomeScript.append(.confirmedNoChange(route: .local), for: .hotkey)
+        automation.uiAutomationOutcomeScript.append(.confirmedNoChange(route: .bridge), for: .hotkey)
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
 
         let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -411,11 +389,8 @@ extension MCPDesktopActionOutcomeProjectionTests {
     @MainActor
     func `target focus stays separate from authoritative no change chords`() async throws {
         let automation = StubAutomationService()
-        StubAutomationOutcomeTestControl.setHotkeyOutcomes([
-            .confirmedNoChange(route: .local),
-            .confirmedNoChange(route: .bridge),
-        ], for: automation)
-        defer { StubAutomationOutcomeTestControl.setHotkeyOutcomes(nil, for: automation) }
+        automation.uiAutomationOutcomeScript.append(.confirmedNoChange(route: .local), for: .hotkey)
+        automation.uiAutomationOutcomeScript.append(.confirmedNoChange(route: .bridge), for: .hotkey)
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             windows: EmptyRecordingWindowService())
@@ -474,7 +449,6 @@ extension MCPDesktopActionOutcomeProjectionTests {
         for outcome in outcomes {
             let automation = StubAutomationService()
             automation.actionOutcome = outcome
-            StubAutomationOutcomeTestControl.resetHotkeyCalls(for: automation)
             let context = await MCPToolTestHelpers.makeContext(automation: automation)
 
             let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -483,8 +457,8 @@ extension MCPDesktopActionOutcomeProjectionTests {
             ]))
 
             #expect(response.isError)
-            try Self.expect(outcome: outcome, in: response)
-            #expect(StubAutomationOutcomeTestControl.hotkeyCallCount(for: automation) == 1)
+            try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(outcome, in: response)
+            #expect(automation.uiAutomationOutcomeScript.callCount(for: .hotkey) == 1)
         }
     }
 
@@ -594,7 +568,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
         ]))
 
         #expect(response.isError)
-        try Self.expect(outcome: outcome, in: response)
+        try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(outcome, in: response)
         #expect(automation.lastProcessTargetedTypeIdentity == nil)
     }
 
@@ -632,10 +606,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
         let automation = StubAutomationService()
         automation.actionOutcome = .confirmedChange(
             delivery: .init(mechanism: .accessibilityAction, mode: .background))
-        StubAutomationOutcomeTestControl.setTypeOutcome(
-            .refused(reason: .permissionDenied),
-            for: automation)
-        defer { StubAutomationOutcomeTestControl.setTypeOutcome(nil, for: automation) }
+        automation.uiAutomationOutcomeScript.append(.refused(reason: .permissionDenied), for: .typeActions)
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
         let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
 
@@ -811,7 +782,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
         ]))
 
         #expect(!response.isError)
-        try Self.expect(outcome: outcome, in: response)
+        try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(outcome, in: response)
         guard case let .text(text, _, _) = response.content.first else {
             Issue.record("Expected press text response")
             return
@@ -855,8 +826,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
         let automation = StubAutomationService()
         automation.actionOutcome = .confirmedChange(
             delivery: .init(mechanism: .accessibilityAction, mode: .background))
-        StubAutomationOutcomeTestControl.setTypeOutcome(.confirmedNoChange(), for: automation)
-        defer { StubAutomationOutcomeTestControl.setTypeOutcome(nil, for: automation) }
+        automation.uiAutomationOutcomeScript.append(.confirmedNoChange(), for: .typeActions)
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
         await context.uiSnapshots.removeOwner()
         let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
@@ -891,10 +861,9 @@ extension MCPDesktopActionOutcomeProjectionTests {
         let automation = StubAutomationService()
         automation.actionOutcome = .confirmedChange(
             delivery: .init(mechanism: .accessibilityAction, mode: .background))
-        StubAutomationOutcomeTestControl.setTypeOutcome(
+        automation.uiAutomationOutcomeScript.append(
             .confirmedChange(delivery: .init(mechanism: .processTargetedEvents, mode: .background)),
-            for: automation)
-        defer { StubAutomationOutcomeTestControl.setTypeOutcome(nil, for: automation) }
+            for: .typeActions)
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
         let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
 
@@ -977,11 +946,11 @@ extension MCPDesktopActionOutcomeProjectionTests {
 
         for response in responses {
             #expect(response.isError)
+            try MCPToolTestHelpers.expectCanonicalRefusalMetadata(
+                reason: .runtimeIncompatible,
+                in: response)
             let meta = try #require(response.meta?.objectValue)
-            #expect(meta["state"] == .string("refused"))
-            #expect(meta["refusal_reason"] == .string("runtime_incompatible"))
             #expect(meta["escalation"] == .string("update_runtime"))
-            #expect(meta["retry_safe"] == .bool(true))
         }
     }
 
@@ -1007,12 +976,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
 
         for response in responses {
             #expect(response.isError)
-            let meta = try #require(response.meta?.objectValue)
-            #expect(meta["state"] == .string("refused"))
-            #expect(meta["refusal_reason"] == .string("invalid_request"))
-            #expect(meta["mutation_dispatched"] == .bool(false))
-            #expect(meta["retry_safe"] == .bool(true))
-            #expect(meta["requires_fresh_observation"] == .bool(false))
+            try MCPToolTestHelpers.expectCanonicalRefusalMetadata(reason: .invalidRequest, in: response)
         }
     }
 
@@ -1028,12 +992,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
         ]))
 
         #expect(response.isError)
-        let meta = try #require(response.meta?.objectValue)
-        #expect(meta["state"] == .string("refused"))
-        #expect(meta["refusal_reason"] == .string("target_unavailable"))
-        #expect(meta["escalation"] == .string("refresh_target"))
-        #expect(meta["mutation_dispatched"] == .bool(false))
-        #expect(meta["retry_safe"] == .bool(true))
+        try MCPToolTestHelpers.expectCanonicalRefusalMetadata(reason: .targetUnavailable, in: response)
     }
 
     @MainActor
@@ -1066,21 +1025,5 @@ extension MCPDesktopActionOutcomeProjectionTests {
                 isActionable: true),
         ])
         return snapshotID
-    }
-
-    private static func expect(outcome: DesktopActionOutcome, in response: ToolResponse) throws {
-        let expected = try MCPToolResponseMetadataProjector.fields(for: outcome.projection)
-        let actual = try #require(response.meta?.objectValue)
-        for (key, value) in expected {
-            #expect(actual[key] == value, "Canonical field \(key) was not preserved")
-        }
-    }
-
-    private struct ProjectionExpectation {
-        let state: DesktopActionOutcome.State
-        let dispatched: Bool
-        let retrySafe: Bool
-        let fresh: Bool
-        let escalation: DesktopActionOutcome.Escalation
     }
 }

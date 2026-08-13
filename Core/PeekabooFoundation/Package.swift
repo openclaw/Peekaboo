@@ -21,6 +21,10 @@ let package = Package(
         .library(
             name: "PeekabooFoundation",
             targets: ["PeekabooFoundation"]),
+        // Test-only support product. Production targets do not depend on or link this module.
+        .library(
+            name: "PeekabooFoundationTestSupport",
+            targets: ["PeekabooFoundationTestSupport"]),
     ],
     dependencies: [],
     targets: [
@@ -28,9 +32,13 @@ let package = Package(
             name: "PeekabooFoundation",
             dependencies: [],
             swiftSettings: foundationTargetSettings),
+        .target(
+            name: "PeekabooFoundationTestSupport",
+            dependencies: ["PeekabooFoundation"],
+            swiftSettings: approachableConcurrencySettings),
         .testTarget(
             name: "PeekabooFoundationTests",
-            dependencies: ["PeekabooFoundation"],
+            dependencies: ["PeekabooFoundation", "PeekabooFoundationTestSupport"],
             swiftSettings: approachableConcurrencySettings),
     ],
     swiftLanguageModes: [.v6])

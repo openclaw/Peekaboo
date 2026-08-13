@@ -1,33 +1,27 @@
 import Foundation
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 
 struct DesktopActionOutcomeTests {
-    private let backgroundAX = DesktopActionOutcome.Delivery(
-        mechanism: .accessibilityAction,
-        mode: .background)
+    private let backgroundAX = DesktopActionOutcomeFixtures.backgroundAccessibilityDelivery
 
     @Test
     func `factories produce the closed action state matrix`() throws {
-        let oneUnit = try self.positiveUnitCount(1)
         let twoUnits = try self.positiveUnitCount(2)
-        let threeUnits = try self.positiveUnitCount(3)
-        let confirmed = DesktopActionOutcome.confirmedChange(delivery: self.backgroundAX, unitCount: oneUnit)
-        #expect(confirmed.state == .confirmedChange)
-        #expect(confirmed.effect == .confirmed)
-        #expect(confirmed.dispatchState == .dispatched(unitCount: oneUnit))
-        #expect(confirmed.retrySafety == .notApplicable)
-        #expect(confirmed.escalation == .none)
-
-        let unchanged = DesktopActionOutcome.confirmedNoChange(route: .bridge)
-        #expect(unchanged.effect == .confirmed)
-        #expect(unchanged.dispatchState == .none)
-        #expect(unchanged.delivery == nil)
-
-        let partial = DesktopActionOutcome.partial(delivery: self.backgroundAX)
-        #expect(partial.effect == .partial)
-        #expect(partial.retrySafety == .unsafe)
-        #expect(partial.escalation == .recoverSideEffect)
+        for item in DesktopActionOutcomeFixtures.canonicalCases {
+            #expect(item.outcome.state == item.state)
+            #expect(item.outcome.effect == item.effect)
+            #expect(item.outcome.route == item.route)
+            #expect(item.outcome.delivery == item.delivery)
+            #expect(item.outcome.evidence == item.evidence)
+            #expect(item.outcome.dispatchState == item.dispatchState)
+            #expect(item.outcome.retrySafety == item.retrySafety)
+            #expect(item.outcome.escalation == item.escalation)
+            #expect(item.outcome.refusalReason == item.refusalReason)
+            #expect(item.isFailureEligible == !item.outcome.isConfirmed)
+            #expect(item.failure?.outcome == (item.outcome.isConfirmed ? nil : item.outcome))
+        }
 
         let accepted = DesktopActionOutcome.dispatchedUnverified(
             delivery: self.backgroundAX,
@@ -37,48 +31,18 @@ struct DesktopActionOutcomeTests {
         #expect(accepted.evidence == .deliveryAccepted)
         #expect(accepted.dispatchState == .dispatched(unitCount: twoUnits))
         #expect(accepted.escalation == .observeBeforeRetry)
-
-        let running = DesktopActionOutcome.dispatchedUnverified(
-            delivery: self.backgroundAX,
-            evidence: .operationStillRunning)
-        #expect(running.effect == .unverifiable)
-        #expect(running.evidence == .operationStillRunning)
-        #expect(!running.isConfirmed)
-
-        let noOp = DesktopActionOutcome.suspectedNoop(delivery: self.backgroundAX)
-        #expect(noOp.effect == .suspectedNoop)
-        #expect(noOp.retrySafety == .safe)
-        #expect(noOp.escalation == .refreshTarget)
-
-        let refusal = DesktopActionOutcome.refused(reason: .permissionDenied)
-        #expect(refusal.effect == .refused)
-        #expect(refusal.dispatchState == .none)
-        #expect(refusal.escalation == .grantPermission)
-
-        let indeterminate = DesktopActionOutcome.indeterminate(
-            route: .bridge,
-            delivery: self.backgroundAX,
-            evidence: .responseLost,
-            unitCount: threeUnits)
-        #expect(indeterminate.effect == .unverifiable)
-        #expect(indeterminate.dispatchState == .mayHaveDispatched(unitCount: threeUnits))
-        #expect(indeterminate.retrySafety == .unsafe)
     }
 
     @Test
     func `all factories round trip through the validated flat encoding`() throws {
-        let outcomes = try [
-            DesktopActionOutcome.confirmedChange(
-                delivery: self.backgroundAX,
-                unitCount: self.positiveUnitCount(1)),
-            DesktopActionOutcome.confirmedNoChange(),
-            DesktopActionOutcome.partial(route: .bridge, delivery: self.backgroundAX),
+        let outcomes = try DesktopActionOutcomeFixtures.canonicalCases.map(\.outcome) + [
             DesktopActionOutcome.dispatchedUnverified(
                 delivery: self.backgroundAX,
-                evidence: .operationStillRunning),
-            DesktopActionOutcome.suspectedNoop(delivery: self.backgroundAX),
+                evidence: .deliveryAccepted),
             DesktopActionOutcome.refused(route: .bridge, reason: .runtimeIncompatible),
-            DesktopActionOutcome.indeterminate(evidence: .completionUnknown),
+            DesktopActionOutcome.indeterminate(
+                evidence: .completionUnknown,
+                unitCount: self.positiveUnitCount(1)),
         ]
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys

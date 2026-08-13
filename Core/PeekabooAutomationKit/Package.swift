@@ -49,11 +49,16 @@ let package = Package(
             dependencies: [
                 "PeekabooAutomationKit",
                 .product(name: "PeekabooFoundation", package: "PeekabooFoundation"),
+                .product(name: "PeekabooFoundationTestSupport", package: "PeekabooFoundation"),
             ],
             swiftSettings: approachableConcurrencySettings),
         .testTarget(
             name: "PeekabooAutomationKitTests",
-            dependencies: ["PeekabooAutomationKit", "PeekabooAutomationKitTestSupport"],
+            dependencies: [
+                "PeekabooAutomationKit",
+                "PeekabooAutomationKitTestSupport",
+                .product(name: "PeekabooFoundationTestSupport", package: "PeekabooFoundation"),
+            ],
             path: "Tests/PeekabooAutomationKitTests",
             swiftSettings: approachableConcurrencySettings),
     ],

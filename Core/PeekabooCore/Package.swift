@@ -156,6 +156,7 @@ let package = Package(
                 .product(name: "PeekabooAutomationKit", package: "PeekabooAutomationKit"),
                 .product(name: "PeekabooVisualizer", package: "PeekabooVisualizer"),
                 "PeekabooFoundation",
+                .product(name: "PeekabooFoundationTestSupport", package: "PeekabooFoundation"),
                 "PeekabooProtocols",
                 "PeekabooBridgeTestSupport",
                 .product(name: "PeekabooAutomationKitTestSupport", package: "PeekabooAutomationKit"),

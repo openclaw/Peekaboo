@@ -5,6 +5,18 @@ import Testing
 @Suite("UI snapshot session ownership")
 struct UISnapshotStoreOwnerTests {
     @Test
+    func `contexts isolate by default and share only through the explicit legacy helper`() async {
+        let first = await MCPToolTestHelpers.makeContext()
+        let second = await MCPToolTestHelpers.makeContext()
+        let firstLegacy = await MCPToolTestHelpers.makeLegacyContext()
+        let secondLegacy = await MCPToolTestHelpers.makeLegacyContext()
+
+        #expect(first.uiSnapshots.owner != second.uiSnapshots.owner)
+        #expect(firstLegacy.uiSnapshots.owner == .legacyProcess)
+        #expect(firstLegacy.uiSnapshots.owner == secondLegacy.uiSnapshots.owner)
+    }
+
+    @Test
     func `identical external IDs remain distinct per owner`() async {
         let manager = UISnapshotManager(maximumRetainedSnapshots: 2)
         let first = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner(), manager: manager)

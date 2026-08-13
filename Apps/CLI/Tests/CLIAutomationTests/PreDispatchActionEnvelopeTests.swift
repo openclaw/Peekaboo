@@ -5,14 +5,6 @@ import Testing
 
 @Suite(.serialized)
 struct PreDispatchActionEnvelopeTests {
-    private struct FailureEnvelope: Decodable {
-        let success: Bool
-        let effect: ActionEffect?
-        let outcome: DesktopActionOutcome.Projection?
-        let data: Empty?
-        let error: ErrorInfo?
-    }
-
     struct ValidationCase {
         let name: String
         let arguments: [String]
@@ -76,14 +68,14 @@ struct PreDispatchActionEnvelopeTests {
                 allowedExitCodes: [1]
             )
             let data = Data(result.stdout.utf8)
-            let envelope = try JSONDecoder().decode(FailureEnvelope.self, from: data)
+            let envelope = try ActionEnvelopeTestProbe.decode(result.stdout)
             let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
 
             #expect(envelope.success == false, "Expected failure for \(testCase.name)")
             #expect(envelope.effect == .refused, "Action was not refused for \(testCase.name)")
             #expect(envelope.data == nil)
             #expect(envelope.error?.code == testCase.errorCode.rawValue)
-            Self.expectCanonicalRefusal(envelope, reason: .invalidRequest, name: testCase.name)
+            ActionEnvelopeTestAssertions.expectCanonicalRefusal(reason: .invalidRequest, in: envelope)
             #expect(object["effect"] as? String == ActionEffect.refused.rawValue)
             #expect(object["data"] is NSNull)
             #expect(result.stderr.isEmpty)
@@ -137,11 +129,11 @@ struct PreDispatchActionEnvelopeTests {
                 testCase.arguments,
                 allowedExitCodes: [1]
             )
-            let envelope = try JSONDecoder().decode(FailureEnvelope.self, from: Data(result.stdout.utf8))
+            let envelope = try ActionEnvelopeTestProbe.decode(result.stdout)
 
             #expect(envelope.success == false, "Expected failure for \(testCase.name)")
             #expect(envelope.error?.code == testCase.code.rawValue)
-            Self.expectCanonicalRefusal(envelope, reason: testCase.reason, name: testCase.name)
+            ActionEnvelopeTestAssertions.expectCanonicalRefusal(reason: testCase.reason, in: envelope)
             #expect(result.stderr.isEmpty)
         }
     }
@@ -196,7 +188,7 @@ struct PreDispatchActionEnvelopeTests {
                 allowedExitCodes: [1]
             )
             let data = Data(result.stdout.utf8)
-            let envelope = try JSONDecoder().decode(FailureEnvelope.self, from: data)
+            let envelope = try ActionEnvelopeTestProbe.decode(result.stdout)
             let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
 
             #expect(envelope.success == false, "Expected failure for \(testCase.name)")
@@ -231,23 +223,5 @@ struct PreDispatchActionEnvelopeTests {
         #expect(bindingResult.stderr.hasPrefix("Error: "))
         #expect(!bindingResult.stderr.contains("\"effect\""))
         #expect(!bindingResult.stderr.contains("{"))
-    }
-
-    private static func expectCanonicalRefusal(
-        _ envelope: FailureEnvelope,
-        reason: DesktopActionOutcome.RefusalReason,
-        name: String
-    ) {
-        #expect(envelope.effect == .refused, "Action was not refused for \(name)")
-        #expect(envelope.outcome?.state == .refused, "Missing canonical refusal for \(name)")
-        #expect(envelope.outcome?.refusalReason == reason, "Wrong refusal reason for \(name)")
-        #expect(
-            envelope.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none,
-            "Dispatch was claimed for \(name)"
-        )
-        #expect(envelope.outcome?.retrySafe == true, "Retry was not safe for \(name)")
-        #expect(envelope.outcome?.requiresFreshObservation == false, "Fresh observation was requested for \(name)")
-        #expect(envelope.error?.retry_safe == true, "Legacy retry field disagreed for \(name)")
-        #expect(envelope.error?.mutation_dispatched == false, "Legacy dispatch field disagreed for \(name)")
     }
 }

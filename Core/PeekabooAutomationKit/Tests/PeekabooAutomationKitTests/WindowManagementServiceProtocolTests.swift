@@ -1,6 +1,7 @@
 import CoreGraphics
 import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -10,7 +11,7 @@ struct WindowManagementServiceProtocolTests {
         let service = OutcomeWindowManagementService()
         let identity = AutomationTestFixtures.windowIdentity()
         let target = WindowTarget.windowId(identity.windowID)
-        let outcomes = AutomationTestFixtures.canonicalActionOutcomes.map(Optional.some) + [nil]
+        let outcomes = DesktopActionOutcomeFixtures.canonicalOutcomes.map(Optional.some) + [nil]
 
         for (index, outcome) in outcomes.enumerated() {
             await service.setOutcome(outcome)
