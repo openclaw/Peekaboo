@@ -340,7 +340,8 @@ struct UIAutomationActionOutcomeProvidingTests {
             label: "Value")
         let detection = AutomationTestFixtures.detectionResult(
             snapshotID: "snapshot",
-            elements: DetectedElements(textFields: [detected]))
+            elements: DetectedElements(textFields: [detected]),
+            windowContext: WindowContext(applicationProcessId: getpid()))
         return UIAutomationService(
             snapshotManager: InMemorySnapshotManager(detectionResult: detection),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),

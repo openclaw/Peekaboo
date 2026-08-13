@@ -441,7 +441,11 @@ struct ActionInputDriverTests {
             snapshotId: "snapshot",
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(buttons: [detected]),
-            metadata: DetectionMetadata(detectionTime: 0.01, elementCount: 1, method: "test"))
+            metadata: DetectionMetadata(
+                detectionTime: 0.01,
+                elementCount: 1,
+                method: "test",
+                windowContext: WindowContext(applicationProcessId: getpid())))
         let service = UIAutomationService(
             snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),

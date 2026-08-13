@@ -21,7 +21,8 @@ enum DesktopOperationSnapshotReceiptValidator {
             guard !requireExactWindow else {
                 throw PeekabooError.snapshotStale("background mutation requires a fresh exact-window snapshot")
             }
-            return DesktopOperationPlan.CaptureReceipt(snapshotID: snapshotID, target: .foreground)
+            throw PeekabooError.snapshotStale(
+                "background mutation requires a fresh process-targeted snapshot")
         }
         guard detectionResult.snapshotId == snapshotID else {
             throw PeekabooError.snapshotStale("snapshot identity changed before desktop mutation planning")
@@ -33,10 +34,16 @@ enum DesktopOperationSnapshotReceiptValidator {
                 throw PeekabooError.snapshotStale(
                     "background mutation snapshot has no exact process-generation and window receipt")
             }
-            return DesktopOperationPlan.CaptureReceipt(
+            guard let context = detectionResult.metadata.windowContext,
+                  let processIdentifier = context.applicationProcessId
+            else {
+                throw PeekabooError.snapshotStale(
+                    "background mutation snapshot has no process target")
+            }
+            return try DesktopOperationPlan.CaptureReceipt(
                 snapshotID: snapshotID,
-                bundleIdentifier: detectionResult.metadata.windowContext?.applicationBundleId,
-                target: .foreground,
+                bundleIdentifier: context.applicationBundleId,
+                target: .process(UIAutomationTarget.Process(processIdentifier: processIdentifier)),
                 coordinateContext: detectionResult.metadata.captureCoordinateContext)
         }
         guard let bounds = context.windowBounds,

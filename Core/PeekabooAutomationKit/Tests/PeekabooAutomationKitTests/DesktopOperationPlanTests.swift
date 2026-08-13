@@ -95,6 +95,39 @@ struct DesktopOperationPlanTests {
             exactWindowIdentityValidator: { _, _ in false })
     }
 
+    @Test
+    func `nonexact background receipt retains its process target`() throws {
+        let processIdentifier: pid_t = 321
+        let detectionResult = AutomationTestFixtures.detectionResult(
+            windowContext: WindowContext(
+                applicationBundleId: "com.example.TestApp",
+                applicationProcessId: processIdentifier))
+
+        let receipt = try DesktopOperationSnapshotReceiptValidator.captureReceipt(
+            snapshotID: detectionResult.snapshotId,
+            detectionResult: detectionResult,
+            requireExactWindow: false,
+            processStartIdentityProvider: { _ in nil },
+            exactWindowIdentityValidator: { _, _ in false })
+
+        #expect(try receipt.target == .process(UIAutomationTarget.Process(processIdentifier: processIdentifier)))
+        #expect(receipt.processIdentity == nil)
+    }
+
+    @Test
+    func `nonexact background receipt rejects a missing process target`() {
+        let detectionResult = AutomationTestFixtures.detectionResult()
+
+        #expect(throws: (any Error).self) {
+            _ = try DesktopOperationSnapshotReceiptValidator.captureReceipt(
+                snapshotID: detectionResult.snapshotId,
+                detectionResult: detectionResult,
+                requireExactWindow: false,
+                processStartIdentityProvider: { _ in nil },
+                exactWindowIdentityValidator: { _, _ in false })
+        }
+    }
+
     private func makePlan(
         selector: DesktopOperationPlan.Selector = .focused,
         receipt: DesktopOperationPlan.CaptureReceipt? = nil) throws -> DesktopOperationPlan
