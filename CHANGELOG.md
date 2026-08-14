@@ -3,8 +3,8 @@
 ## [4.1.1] - Unreleased
 
 ### Added
-
 - Add Bridge protocol 1.25 one-shot dialog receipts that uniquely bind an exact process/window, raw dialog or sheet, and semantic AXPress button for background click/dismiss, with read-only targeted listing and canonical postcondition outcomes.
+- Add a background-first native Bridge host runtime for signed macOS apps, with explicit caller allowlists, shared mutation/snapshot state, checked lifecycle, and no Core, provider, browser, daemon, or AppleScript surface.
 
 ### Changed
 - Build branded release disk images from pinned direct Finder-metadata tooling, preserving the signed and notarized drag-to-Applications layout without GUI automation.
@@ -29,7 +29,6 @@
 
 - Add receipt-pinned exact-window background `type`, `paste`, and `press`, preserving process generation, window bounds, and focused-element identity while refusing ambiguous app/PID targets and unsafe Agent dialog/shared-UI routes.
 - Restore the root SwiftPM facade for external consumers with four lean library products—Foundation, Protocols, AutomationKit, and Bridge—plus a fresh-consumer build contract that prevents manifest and product drift.
-- Add a background-first native Bridge host runtime for signed macOS apps, with explicit caller allowlists, shared mutation/snapshot state, checked lifecycle, and no Core, provider, browser, daemon, or AppleScript surface.
 - Add opt-in host-local Vision OCR to CLI/MCP `see`, preserving incomplete AX evidence, exact snapshot receipts, logical bounds, confidence, background-only observation, and fail-before-dispatch compatibility with older Bridge hosts.
 - Stateless exact-window ROI capture for CLI/MCP `see`, with generation-pinned
   full-window receipts, AX/OCR filtering, snapshot-bound pixel mapping, and

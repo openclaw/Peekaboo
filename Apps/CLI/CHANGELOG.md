@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Report exact standard windows with live attached sheets as dialog-active observations, using shared native role evidence without changing the parent window receipt.
+- Preserve default automatic capture through an owner-aware Bridge by clamping it to classic-only around an auxiliary legacy ScreenCaptureKit owner, while explicit modern and owner-unaware routes remain fail-closed.
 
 ## [4.1.0] - 2026-08-13
 
