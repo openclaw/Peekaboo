@@ -88,6 +88,8 @@ struct ScrollServiceTargetResolutionTests {
             postSkyLight: { _, _ in true },
             postPublic: { _, _ in posted += 1 },
             resolveTransport: { _ in .publicCGEvent },
+            applicationIsVisible: { _ in true },
+            windowIsVisible: { _ in true },
             sleep: { _ in })
         let action = ScrollRecordingActionInputDriver(scrollError: .unsupported(.actionUnsupported))
         let synthetic = ScrollRecordingSyntheticInputDriver()
