@@ -32,6 +32,11 @@ public struct BrowserTool: MCPTool {
                     Chrome channel for auto-connect. Defaults to the running Chrome channel, then stable.
                     """,
                     enum: BrowserMCPChannel.allCases.map(\.rawValue)),
+                "browser_url": SchemaBuilder.string(description: """
+                Exact loopback DevTools HTTP endpoint for connect, for example http://127.0.0.1:9222.
+                Peekaboo resolves and pins its browser WebSocket identity. Required when multiple Chrome
+                processes share one channel.
+                """),
                 "page_id": SchemaBuilder.integer(description: """
                 Chrome DevTools page ID. Required for every page-scoped action so concurrent clients cannot
                 redirect one another by changing the shared selected page. Use list_pages to discover IDs.
@@ -40,7 +45,10 @@ public struct BrowserTool: MCPTool {
                 "navigation_type": SchemaBuilder.string(
                     description: "Navigation type for navigate.",
                     enum: ["url", "back", "forward", "reload"]),
-                "uid": SchemaBuilder.string(description: "Element uid from the latest browser snapshot."),
+                "uid": SchemaBuilder.string(description: """
+                Element uid from the latest browser snapshot. Required for element actions, including type and
+                press_key so keyboard input cannot inherit an unrelated focused element.
+                """),
                 "to_uid": SchemaBuilder.string(description: "Drop target uid for drag."),
                 "text": SchemaBuilder.string(description: "Text for type or wait_for."),
                 "value": SchemaBuilder.string(description: "Value for fill."),
@@ -71,7 +79,8 @@ public struct BrowserTool: MCPTool {
                 "request_id": SchemaBuilder.integer(description: "Network request ID for get_network_request."),
                 "request_file_path": SchemaBuilder.string(description: "Path for saving a network request body."),
                 "response_file_path": SchemaBuilder.string(description: "Path for saving a network response body."),
-                "path": SchemaBuilder.string(description: "File path for snapshots, screenshots, or trace output."),
+                "path": SchemaBuilder.string(description: "Absolute input file for upload_file; output path for " +
+                    "snapshots, screenshots, or traces. Uploads accept current-user regular files up to 100 MiB."),
                 "format": SchemaBuilder.string(
                     description: "Screenshot format.",
                     enum: ["png", "jpeg", "webp"]),
@@ -117,13 +126,17 @@ public struct BrowserTool: MCPTool {
         } else {
             channel = nil
         }
+        let browserURL = arguments.getString("browser_url")
+        if browserURL != nil, action != .connect {
+            return ToolResponse.error("browser_url is accepted only by the connect action")
+        }
 
         do {
             switch action {
             case .status:
                 return await self.statusResponse(channel: channel)
             case .connect:
-                let status = try await self.client.connect(channel: channel)
+                let status = try await self.client.connect(channel: channel, browserURL: browserURL)
                 return self.formatStatus(status, headline: "Connected Chrome DevTools MCP")
             case .disconnect:
                 await self.client.disconnect()
@@ -131,15 +144,14 @@ public struct BrowserTool: MCPTool {
             case .call:
                 return try await self.executeRawCall(arguments: arguments, channel: channel)
             default:
-                let call = try BrowserMCPCallMapper.map(action: action, arguments: arguments)
-                return try await self.client.execute(
-                    toolName: call.toolName,
-                    arguments: call.arguments,
-                    channel: channel)
+                let calls = try BrowserMCPCallMapper.mapSequence(action: action, arguments: arguments)
+                return try await self.client.executeSequence(calls, channel: channel)
             }
         } catch let error as BrowserToolError {
             return ToolResponse.error(error.localizedDescription)
         } catch let error as MCPToolArgumentValueError {
+            return ToolResponse.error(error.localizedDescription)
+        } catch let error as BrowserMCPUploadStagingError {
             return ToolResponse.error(error.localizedDescription)
         } catch {
             return ToolResponse.error(Self.permissionHelp(error: error))
@@ -189,6 +201,20 @@ public struct BrowserTool: MCPTool {
             lines.append("Error: \(error)")
         }
 
+        if let receipt = status.connectionReceipt {
+            lines.append("Exact connection:")
+            if let processIdentifier = receipt.processIdentifier,
+               let processStartIdentity = receipt.processStartIdentity
+            {
+                lines.append("- pid=\(processIdentifier) generation=\(processStartIdentity)")
+            }
+            if let browserURL = receipt.browserURL,
+               let browserID = receipt.devToolsBrowserID
+            {
+                lines.append("- endpoint=\(browserURL) browser_id=\(browserID)")
+            }
+        }
+
         if !status.isConnected {
             lines.append("")
             lines.append(contentsOf: Self.permissionInstructions())
@@ -198,12 +224,41 @@ public struct BrowserTool: MCPTool {
     }
 
     private func statusMeta(_ status: BrowserMCPStatus) -> Value {
-        .object([
+        var meta: [String: Value] = [
             "connected": .bool(status.isConnected),
             "tool_count": .int(status.toolCount),
             "browser_count": .int(status.detectedBrowsers.count),
             "channels": .array(status.detectedBrowsers.map { .string($0.channel.rawValue) }),
-        ])
+        ]
+        if let receipt = status.connectionReceipt {
+            var receiptMeta: [String: Value] = [:]
+            if let channel = receipt.channel {
+                receiptMeta["channel"] = .string(channel.rawValue)
+            }
+            if let processIdentifier = receipt.processIdentifier {
+                receiptMeta["pid"] = .int(Int(processIdentifier))
+            }
+            if let processStartIdentity = receipt.processStartIdentity {
+                receiptMeta["process_start_identity_decimal"] = .string(String(processStartIdentity))
+            }
+            if let bundleIdentifier = receipt.bundleIdentifier {
+                receiptMeta["bundle_id"] = .string(bundleIdentifier)
+            }
+            if let browserURL = receipt.browserURL {
+                receiptMeta["browser_url"] = .string(browserURL)
+            }
+            if let browserID = receipt.devToolsBrowserID {
+                receiptMeta["browser_id"] = .string(browserID)
+            }
+            if let browserVersion = receipt.browserVersion {
+                receiptMeta["browser_version"] = .string(browserVersion)
+            }
+            if let protocolVersion = receipt.protocolVersion {
+                receiptMeta["protocol_version"] = .string(protocolVersion)
+            }
+            meta["connection_receipt"] = .object(receiptMeta)
+        }
+        return .object(meta)
     }
 
     private static func permissionHelp(error: any Error) -> String {
@@ -220,6 +275,7 @@ public struct BrowserTool: MCPTool {
             "3. Enable remote debugging for this profile.",
             "4. Run browser { \"action\": \"connect\" }.",
             "5. Accept Chrome's remote debugging permission prompt.",
+            "If multiple Chrome processes share a channel, pass browser_url for one exact loopback DevTools port.",
         ]
     }
 
@@ -303,6 +359,39 @@ public struct BrowserMCPMappedCall {
 
 public enum BrowserMCPCallMapper {
     public static func map(action: BrowserAction, arguments: ToolArguments) throws -> BrowserMCPMappedCall {
+        guard action != .type, action != .pressKey else {
+            throw BrowserToolError.invalidAction("\(action.rawValue) requires an exact atomic call sequence")
+        }
+        return try self.mapSingle(action: action, arguments: arguments)
+    }
+
+    public static func mapSequence(
+        action: BrowserAction,
+        arguments: ToolArguments) throws -> [BrowserMCPMappedCall]
+    {
+        let calls: [BrowserMCPMappedCall] = switch action {
+        case .type, .pressKey:
+            try [
+                BrowserMCPMappedCall(toolName: "click", arguments: [
+                    "uid": self.requiredString("uid", arguments),
+                    "dblClick": false,
+                    "includeSnapshot": false,
+                ]),
+                self.mapSingle(action: action, arguments: arguments),
+            ]
+        default:
+            try [self.mapSingle(action: action, arguments: arguments)]
+        }
+        guard self.requiresPageID(action) else { return calls }
+        let pageID = try self.requiredPageID(arguments)
+        return calls.map { call in
+            var mappedArguments = call.arguments
+            mappedArguments["pageId"] = pageID
+            return BrowserMCPMappedCall(toolName: call.toolName, arguments: mappedArguments)
+        }
+    }
+
+    private static func mapSingle(action: BrowserAction, arguments: ToolArguments) throws -> BrowserMCPMappedCall {
         let call: BrowserMCPMappedCall = switch action {
         case .status, .connect, .disconnect, .call:
             throw BrowserToolError.invalidAction(action.rawValue)

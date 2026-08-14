@@ -3,6 +3,7 @@
 ## [4.1.1] - Unreleased
 
 ### Added
+- Add Bridge protocol 1.26 exact browser connection receipts, binding persistent Chrome DevTools MCP sessions to one process generation or validated loopback DevTools browser identity.
 - Add Bridge protocol 1.25 one-shot dialog receipts that uniquely bind an exact process/window, raw dialog or sheet, and semantic AXPress button for background click/dismiss, with read-only targeted listing and canonical postcondition outcomes.
 - Add a background-first native Bridge host runtime for signed macOS apps, with explicit caller allowlists, shared mutation/snapshot state, checked lifecycle, and no Core, provider, browser, daemon, or AppleScript surface.
 - Add capability-gated exact-window background wheel delivery for opaque WKWebView/Tauri scroll targets, preserving the foreground app and physical cursor while refusing hidden, stale, Electron, Chromium, Catalyst, or AX-only routes.
@@ -15,6 +16,8 @@
 - Add Bridge protocol 1.26 explicit-reference-only coordinate receipts for exact-window `see --no-elements`, making the documented background coordinate-click workflow consumable without Accessibility traversal or replacing the prior implicit element snapshot while older hosts fail before receipt allocation.
 - Honor cancellation while draining and reaping MCP ShellTool subprocesses so canceled commands cannot linger behind pipe cleanup. Thanks @SebTardif for #454.
 - Reject unknown and non-object MCP `tools/call` arguments as JSON-RPC invalid params before policy checks or tool dispatch, recursively honoring the closed schemas advertised by `tools/list`.
+- Probe Chrome before reporting browser connection success, reject ambiguous same-channel profiles, preserve structured Bridge failures, never silently rediscover another profile after a session or endpoint is lost, and atomically focus the exact snapshot uid before browser typing or key presses.
+- Stage browser uploads from race-checked, current-user regular files into one private per-session Chrome MCP temporary root, without unrestricted filesystem access, and terminate the exact child before cancellation cleanup.
 - Classify an exact standard window with a live attached sheet as dialog-active during observation, sharing native role evidence with dialog actions while keeping the parent window receipt exact.
 - Report exact ScreenCaptureKit owner PID, process generation, safe build identity, and selected-versus-owner Bridge sockets when available; automatic capture can still use an owner-aware host's classic-only path around an auxiliary legacy owner, while explicit modern and ambiguous legacy ownership remain fail-closed without unsafe process-stop guidance.
 

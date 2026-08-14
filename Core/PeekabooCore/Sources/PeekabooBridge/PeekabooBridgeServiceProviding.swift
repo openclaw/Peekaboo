@@ -25,6 +25,7 @@ public protocol PeekabooBridgeServiceProviding: AnyObject, Sendable {
 
     func browserStatus(channel: String?) async throws -> PeekabooBridgeBrowserStatus
     func browserConnect(channel: String?) async throws -> PeekabooBridgeBrowserStatus
+    func browserConnect(channel: String?, browserURL: String?) async throws -> PeekabooBridgeBrowserStatus
     func browserDisconnect() async throws
     func browserExecute(_ request: PeekabooBridgeBrowserExecuteRequest) async throws
         -> PeekabooBridgeBrowserToolResponse
@@ -54,6 +55,15 @@ extension PeekabooBridgeServiceProviding {
         throw PeekabooBridgeErrorEnvelope(
             code: .operationNotSupported,
             message: "Browser MCP is not supported by this bridge host")
+    }
+
+    public func browserConnect(channel: String?, browserURL: String?) async throws -> PeekabooBridgeBrowserStatus {
+        guard browserURL == nil else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "This bridge host cannot carry an exact browser endpoint")
+        }
+        return try await self.browserConnect(channel: channel)
     }
 
     public func browserDisconnect() async throws {

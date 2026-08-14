@@ -363,10 +363,11 @@ struct CommandRuntimeInjectionTests {
         var options = CommandRuntimeOptions()
         options.requiresBrowserMCP = true
         let supported = BridgeTestFixtures.handshake(
-            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 4),
-            hostKind: .gui,
+            negotiatedVersion: PeekabooBridgeConstants.browserConnectionReceiptVersion,
+            hostKind: .onDemand,
             build: nil,
-            supportedOperations: [.captureScreen, .browserStatus, .browserConnect, .browserDisconnect, .browserExecute]
+            supportedOperations: [.captureScreen, .browserStatus, .browserConnect, .browserDisconnect, .browserExecute],
+            hostCapabilities: [PeekabooBridgeHostCapability.browserConnectionReceipts]
         )
         let older = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 3),
@@ -375,18 +376,36 @@ struct CommandRuntimeInjectionTests {
             supportedOperations: [.captureScreen, .browserStatus, .browserConnect, .browserDisconnect, .browserExecute]
         )
         let missingExecute = BridgeTestFixtures.handshake(
-            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 4),
+            negotiatedVersion: PeekabooBridgeConstants.browserConnectionReceiptVersion,
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: [.captureScreen, .browserStatus, .browserConnect, .browserDisconnect],
+            hostCapabilities: [PeekabooBridgeHostCapability.browserConnectionReceipts]
+        )
+        let gui = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.browserConnectionReceiptVersion,
             hostKind: .gui,
             build: nil,
-            supportedOperations: [.captureScreen, .browserStatus, .browserConnect, .browserDisconnect]
+            supportedOperations: [.captureScreen, .browserStatus, .browserConnect, .browserDisconnect, .browserExecute],
+            hostCapabilities: [PeekabooBridgeHostCapability.browserConnectionReceipts]
+        )
+        let missingReceiptCapability = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.browserConnectionReceiptVersion,
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: [.captureScreen, .browserStatus, .browserConnect, .browserDisconnect, .browserExecute]
         )
 
         #expect(CommandRuntime.supportsBrowserMCP(for: supported))
         #expect(!CommandRuntime.supportsBrowserMCP(for: older))
         #expect(!CommandRuntime.supportsBrowserMCP(for: missingExecute))
+        #expect(!CommandRuntime.supportsBrowserMCP(for: gui))
+        #expect(!CommandRuntime.supportsBrowserMCP(for: missingReceiptCapability))
         #expect(CommandRuntime.supportsRemoteRequirements(for: supported, options: options))
         #expect(!CommandRuntime.supportsRemoteRequirements(for: older, options: options))
         #expect(!CommandRuntime.supportsRemoteRequirements(for: missingExecute, options: options))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: gui, options: options))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: missingReceiptCapability, options: options))
     }
 
     @Test

@@ -222,6 +222,60 @@ struct PeekabooBridgeCapabilityTests {
         #expect(requests == [request])
     }
 
+    @Test
+    func `current daemon advertises exact browser connection receipts`() async throws {
+        let browserOperations: Set<PeekabooBridgeOperation> = [
+            .browserStatus,
+            .browserConnect,
+            .browserDisconnect,
+            .browserExecute,
+        ]
+        let legacyVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 25)
+        let legacyRange = PeekabooBridgeConstants.minimumProtocolVersion...legacyVersion
+        let current = await MainActor.run {
+            PeekabooBridgeServer(
+                services: StubServices(),
+                hostKind: .onDemand,
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                allowedOperations: browserOperations)
+        }
+        let legacy = await MainActor.run {
+            PeekabooBridgeServer(
+                services: StubServices(),
+                hostKind: .onDemand,
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                supportedVersions: legacyRange,
+                allowedOperations: browserOperations)
+        }
+
+        let currentHandshake = try await self.handshake(server: current, hostKind: .onDemand)
+        #expect(currentHandshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.browserConnectionReceipts) == true)
+
+        let legacyRequest = PeekabooBridgeRequest.handshake(.init(
+            protocolVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 25),
+            client: .init(
+                bundleIdentifier: "dev.peeka.legacy-browser",
+                teamIdentifier: "TEAMID",
+                processIdentifier: getpid(),
+                hostname: Host.current().name),
+            requestedHostKind: .onDemand))
+        let legacyData = try await legacy.decodeAndHandle(
+            JSONEncoder.peekabooBridgeEncoder().encode(legacyRequest),
+            peer: nil)
+        let legacyResponse = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeResponse.self,
+            from: legacyData)
+        guard case let .handshake(legacyHandshake) = legacyResponse else {
+            Issue.record("Expected legacy handshake")
+            return
+        }
+        #expect(legacyHandshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.browserConnectionReceipts) != true)
+    }
+
     private func handshake(
         server: PeekabooBridgeServer,
         hostKind: PeekabooBridgeHostKind) async throws -> PeekabooBridgeHandshakeResponse

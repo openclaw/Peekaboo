@@ -11,6 +11,7 @@ struct MCPWrapperCommandBindingTests {
             positional: ["navigate"],
             options: [
                 "channel": ["stable"],
+                "browserUrl": ["http://127.0.0.1:9222"],
                 "url": ["https://example.com"],
                 "timeout": ["5000"],
                 "types": ["error,warning", "info"],
@@ -21,6 +22,7 @@ struct MCPWrapperCommandBindingTests {
         let command = try CommanderCLIBinder.instantiateCommand(ofType: BrowserCommand.self, parsedValues: parsed)
         #expect(command.action == "navigate")
         #expect(command.channel == "stable")
+        #expect(command.browserUrl == "http://127.0.0.1:9222")
         #expect(command.url == "https://example.com")
         #expect(command.timeout?.roundedMilliseconds == 5000)
         #expect(command.types == ["error", "warning", "info"])

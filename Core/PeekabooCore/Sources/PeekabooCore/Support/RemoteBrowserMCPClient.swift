@@ -26,7 +26,14 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, @unchecked
 
     @MainActor
     public func connect(channel: BrowserMCPChannel?) async throws -> BrowserMCPStatus {
-        try await Self.status(from: self.client.browserConnect(channel: channel?.rawValue))
+        try await self.connect(channel: channel, browserURL: nil)
+    }
+
+    @MainActor
+    public func connect(channel: BrowserMCPChannel?, browserURL: String?) async throws -> BrowserMCPStatus {
+        try await Self.status(from: self.client.browserConnect(
+            channel: channel?.rawValue,
+            browserURL: browserURL))
     }
 
     @MainActor
@@ -48,6 +55,22 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, @unchecked
         return try Self.toolResponse(from: response)
     }
 
+    @MainActor
+    public func executeSequence(
+        _ calls: [BrowserMCPMappedCall],
+        channel: BrowserMCPChannel?) async throws -> ToolResponse
+    {
+        let bridgeCalls = try calls.map { call in
+            try PeekabooBridgeBrowserToolCall(
+                toolName: call.toolName,
+                arguments: call.arguments.mapValues { try PeekabooBridgeJSONValue.fromAny($0) })
+        }
+        let response = try await self.client.browserExecute(PeekabooBridgeBrowserExecuteRequest(
+            calls: bridgeCalls,
+            channel: channel?.rawValue))
+        return try Self.toolResponse(from: response)
+    }
+
     private static func status(from bridgeStatus: PeekabooBridgeBrowserStatus) -> BrowserMCPStatus {
         BrowserMCPStatus(
             isConnected: bridgeStatus.isConnected,
@@ -60,6 +83,18 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, @unchecked
                     processIdentifier: browser.processIdentifier,
                     version: browser.version,
                     channel: channel)
+            },
+            connectionReceipt: bridgeStatus.connectionReceipt.map { receipt in
+                BrowserMCPConnectionReceipt(
+                    channel: receipt.channel.flatMap(BrowserMCPChannel.init(rawValue:)),
+                    processIdentifier: receipt.processIdentifier,
+                    processStartIdentity: receipt.processStartIdentity,
+                    bundleIdentifier: receipt.bundleIdentifier,
+                    browserURL: receipt.browserURL,
+                    webSocketDebuggerURL: receipt.webSocketDebuggerURL,
+                    devToolsBrowserID: receipt.devToolsBrowserID,
+                    browserVersion: receipt.browserVersion,
+                    protocolVersion: receipt.protocolVersion)
             },
             error: bridgeStatus.error)
     }

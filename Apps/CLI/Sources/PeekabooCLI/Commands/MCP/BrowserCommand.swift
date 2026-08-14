@@ -8,6 +8,7 @@ struct BrowserCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsCo
 InjectedRuntimeBackedCommand {
     var action = "status"
     var channel: String?
+    var browserUrl: String?
     var pageId: Int?
     var url: String?
     var navigationType: String?
@@ -130,6 +131,7 @@ InjectedRuntimeBackedCommand {
 
         var arguments: [String: Any] = ["action": normalizedAction]
         self.add(self.channel, as: "channel", to: &arguments)
+        self.add(self.browserUrl, as: "browser_url", to: &arguments)
         self.add(self.pageId, as: "page_id", to: &arguments)
         self.add(self.url, as: "url", to: &arguments)
         self.add(self.navigationType, as: "navigation_type", to: &arguments)
@@ -223,6 +225,11 @@ extension BrowserCommand: CommanderSignatureProviding {
             ],
             options: [
                 .commandOption("channel", help: "Chrome channel", long: "channel"),
+                .commandOption(
+                    "browserUrl",
+                    help: "Exact loopback DevTools HTTP endpoint for connect",
+                    long: "browser-url"
+                ),
                 .commandOption("pageId", help: "Chrome DevTools page ID", long: "page-id"),
                 .commandOption("url", help: "URL for navigate/new-page", long: "url"),
                 .commandOption(
@@ -260,7 +267,11 @@ extension BrowserCommand: CommanderSignatureProviding {
                 .commandOption("requestId", help: "Network request ID", long: "request-id"),
                 .commandOption("requestFilePath", help: "Path for saving a request body", long: "request-file-path"),
                 .commandOption("responseFilePath", help: "Path for saving a response body", long: "response-file-path"),
-                .commandOption("path", help: "Output path for snapshot/screenshot/trace", long: "path"),
+                .commandOption(
+                    "path",
+                    help: "Absolute input file for upload-file; output path for snapshot/screenshot/trace",
+                    long: "path"
+                ),
                 .commandOption("format", help: "Screenshot format: png|jpeg|webp", long: "format"),
                 .commandOption("quality", help: "Screenshot quality for jpeg/webp", long: "quality"),
                 .commandOption("traceAction", help: "Trace action: start|stop|analyze", long: "trace-action"),
@@ -305,6 +316,7 @@ extension BrowserCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.action = values.positionalValue(at: 0) ?? "status"
         self.channel = values.singleOption("channel")
+        self.browserUrl = values.singleOption("browserUrl")
         self.pageId = try values.decodeOption("pageId", as: Int.self)
         self.url = values.singleOption("url")
         self.navigationType = values.singleOption("navigationType")

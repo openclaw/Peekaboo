@@ -84,6 +84,16 @@ public final class PeekabooBridgeServer {
             hostCapabilities,
             supportedVersions: supportedVersions,
             supportsExplicitSnapshotPublication: services.snapshots.supportsExplicitSnapshotPublication)
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.browserConnectionReceiptVersion,
+           self.allowedOperations.isSuperset(of: [
+               .browserStatus,
+               .browserConnect,
+               .browserDisconnect,
+               .browserExecute,
+           ])
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.browserConnectionReceipts)
+        }
         let registeredScreenCaptureKitOwnership = services.supportsScreenCaptureKitProcessOwnership &&
             (try? ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()) != nil
         if hostIdentity?.processStartIdentity != nil {

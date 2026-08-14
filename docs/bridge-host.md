@@ -132,6 +132,8 @@ Protocol `1.3` adds element action operations:
 - `performAction` for named accessibility action invocation.
 
 Protocol `1.4` adds browser MCP operations for persistent Chrome DevTools MCP sessions.
+Protocol `1.26` makes those sessions fail closed: connection success requires a read-only page probe and an exact
+process-generation or loopback DevTools-browser receipt, and later calls cannot silently rediscover another profile.
 
 Protocol `1.5` adds `desktopObservation`, used by daemon-backed `image` and `see` paths. The host performs target resolution, capture, optional detection, and file writes, then returns lightweight metadata instead of embedding screenshot bytes in the Bridge response.
 

@@ -118,6 +118,70 @@ struct BrowserToolTests {
         #expect(foregroundPage.arguments["background"] as? Bool == false)
     }
 
+    @Test(arguments: [
+        BrowserAction.click,
+        .fill,
+        .drag,
+        .hover,
+        .uploadFile,
+        .screenshot,
+    ])
+    func `Browser mapper forwards every declared page selector`(action: BrowserAction) throws {
+        let raw: [String: Any] = switch action {
+        case .click:
+            ["page_id": 17, "uid": "17_1", "double": true, "include_snapshot": true]
+        case .fill:
+            ["page_id": 17, "uid": "17_2", "value": "value", "include_snapshot": true]
+        case .drag:
+            ["page_id": 17, "uid": "17_3", "to_uid": "17_4", "include_snapshot": true]
+        case .hover:
+            ["page_id": 17, "uid": "17_5", "include_snapshot": true]
+        case .uploadFile:
+            ["page_id": 17, "uid": "17_6", "path": "/tmp/fixture", "include_snapshot": true]
+        case .screenshot:
+            ["page_id": 17, "uid": "17_7", "path": "/tmp/fixture.png"]
+        default:
+            [:]
+        }
+
+        let call = try BrowserMCPCallMapper.map(action: action, arguments: ToolArguments(raw: raw))
+        #expect(call.arguments["pageId"] as? Int == 17)
+        #expect(call.arguments["uid"] as? String == raw["uid"] as? String || action == .drag)
+        if action == .drag {
+            #expect(call.arguments["from_uid"] as? String == "17_3")
+            #expect(call.arguments["to_uid"] as? String == "17_4")
+        }
+        if action == .fill {
+            #expect(call.arguments["value"] as? String == "value")
+        }
+        if action == .uploadFile {
+            #expect(call.arguments["filePath"] as? String == "/tmp/fixture")
+        }
+    }
+
+    @Test(arguments: [BrowserAction.type, .pressKey])
+    func `Browser keyboard actions require exact uid and map atomic focus sequence`(action: BrowserAction) throws {
+        let raw: [String: Any] = action == .type
+            ? ["page_id": 21, "uid": "21_8", "text": "typed", "submit_key": "Tab"]
+            : ["page_id": 21, "uid": "21_8", "key": "Enter", "include_snapshot": true]
+        let calls = try BrowserMCPCallMapper.mapSequence(action: action, arguments: ToolArguments(raw: raw))
+
+        #expect(calls.count == 2)
+        #expect(calls[0].toolName == "click")
+        #expect(calls[0].arguments["uid"] as? String == "21_8")
+        #expect(calls[0].arguments["pageId"] as? Int == 21)
+        #expect(calls[1].toolName == (action == .type ? "type_text" : "press_key"))
+        #expect(calls[1].arguments["pageId"] as? Int == 21)
+
+        #expect(throws: (any Error).self) {
+            _ = try BrowserMCPCallMapper.mapSequence(
+                action: action,
+                arguments: ToolArguments(raw: action == .type
+                    ? ["page_id": 21, "text": "typed"]
+                    : ["page_id": 21, "key": "Enter"]))
+        }
+    }
+
     @Test
     func `Browser call mapper preserves MCP-decoded data URLs`() throws {
         let encodedURL: Value = .data(mimeType: "text/html", Data("ALPHA_CONTENT".utf8))
@@ -189,6 +253,79 @@ struct BrowserToolTests {
         #expect(client.executedTools.last?.arguments["pageId"] as? Int == 4)
         #expect(client.executedTools.last?.arguments["uid"] as? String == "7_1")
         #expect(client.executedTools.last?.channel == nil)
+    }
+
+    @Test
+    func `Browser tool sends targeted type as one client-owned sequence`() async throws {
+        let client = MockBrowserMCPClient(status: BrowserMCPStatus(
+            isConnected: true,
+            toolCount: 29,
+            detectedBrowsers: []))
+        let tool = BrowserTool(client: client)
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "action": "type",
+            "page_id": 7,
+            "uid": "7_9",
+            "text": "typed",
+        ]))
+
+        #expect(!response.isError)
+        #expect(client.executedSequences.count == 1)
+        #expect(client.executedSequences[0].map(\.toolName) == ["click", "type_text"])
+        #expect(client.executedSequences[0][0].arguments["uid"] as? String == "7_9")
+    }
+
+    @Test
+    func `Browser tool forwards exact endpoint and reports connection receipt`() async throws {
+        let receipt = BrowserMCPConnectionReceipt(
+            browserURL: "http://127.0.0.1:9222/",
+            webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
+            devToolsBrowserID: "browser-a",
+            browserVersion: "Chrome/151.0",
+            protocolVersion: "1.3")
+        let client = MockBrowserMCPClient(status: BrowserMCPStatus(
+            isConnected: true,
+            toolCount: 29,
+            detectedBrowsers: [],
+            connectionReceipt: receipt))
+        let tool = BrowserTool(client: client)
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "action": "connect",
+            "browser_url": "http://127.0.0.1:9222",
+        ]))
+
+        #expect(!response.isError)
+        #expect(client.connectedBrowserURLs == ["http://127.0.0.1:9222"])
+        #expect(Self.text(from: response).contains("browser_id=browser-a"))
+        guard case let .object(meta) = response.meta else {
+            Issue.record("Expected browser status metadata")
+            return
+        }
+        guard case let .object(receiptMeta) = meta["connection_receipt"] else {
+            Issue.record("Expected exact connection receipt")
+            return
+        }
+        #expect(receiptMeta["browser_id"] == .string("browser-a"))
+    }
+
+    @Test
+    func `Browser tool rejects endpoint on non-connect action`() async throws {
+        let client = MockBrowserMCPClient(status: BrowserMCPStatus(
+            isConnected: false,
+            toolCount: 0,
+            detectedBrowsers: []))
+        let tool = BrowserTool(client: client)
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "action": "list_pages",
+            "browser_url": "http://127.0.0.1:9222",
+        ]))
+
+        #expect(response.isError)
+        #expect(Self.text(from: response) == "browser_url is accepted only by the connect action")
+        #expect(client.executedTools.isEmpty)
     }
 
     @Test
@@ -427,8 +564,10 @@ private final class MockBrowserMCPClient: BrowserMCPClientProviding, @unchecked 
 
     var status: BrowserMCPStatus
     var connectedChannels: [BrowserMCPChannel?] = []
+    var connectedBrowserURLs: [String?] = []
     var disconnected = false
     var executedTools: [ExecutedTool] = []
+    var executedSequences: [[ExecutedTool]] = []
 
     init(status: BrowserMCPStatus) {
         self.status = status
@@ -443,6 +582,12 @@ private final class MockBrowserMCPClient: BrowserMCPClientProviding, @unchecked 
         return self.status
     }
 
+    func connect(channel: BrowserMCPChannel?, browserURL: String?) async throws -> BrowserMCPStatus {
+        self.connectedChannels.append(channel)
+        self.connectedBrowserURLs.append(browserURL)
+        return self.status
+    }
+
     func disconnect() async {
         self.disconnected = true
     }
@@ -454,5 +599,17 @@ private final class MockBrowserMCPClient: BrowserMCPClientProviding, @unchecked 
     {
         self.executedTools.append(ExecutedTool(toolName: toolName, arguments: arguments, channel: channel))
         return ToolResponse.text("called \(toolName)")
+    }
+
+    func executeSequence(
+        _ calls: [BrowserMCPMappedCall],
+        channel: BrowserMCPChannel?) async throws -> ToolResponse
+    {
+        let sequence = calls.map { call in
+            ExecutedTool(toolName: call.toolName, arguments: call.arguments, channel: channel)
+        }
+        self.executedSequences.append(sequence)
+        self.executedTools.append(contentsOf: sequence)
+        return ToolResponse.text("called \(calls.last?.toolName ?? "none")")
     }
 }

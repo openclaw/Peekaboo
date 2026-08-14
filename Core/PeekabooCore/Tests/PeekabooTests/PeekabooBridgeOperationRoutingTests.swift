@@ -146,7 +146,7 @@ struct PeekabooBridgeOperationRoutingTests {
             services: services,
             allowlistedTeams: [],
             allowlistedBundles: [],
-            allowedOperations: [.browserStatus, .browserExecute])
+            allowedOperations: [.browserStatus, .browserConnect, .browserExecute])
 
         let statusRequest = PeekabooBridgeRequest.browserStatus(.init(channel: "stable"))
         let statusData = try JSONEncoder.peekabooBridgeEncoder().encode(statusRequest)
@@ -159,6 +159,20 @@ struct PeekabooBridgeOperationRoutingTests {
         #expect(status.isConnected)
         #expect(status.toolCount == 1)
         #expect(services.lastBrowserStatusChannel == "stable")
+        #expect(status.connectionReceipt?.processIdentifier == 42)
+        #expect(status.connectionReceipt?.processStartIdentityDecimal == "10042")
+
+        let connectRequest = PeekabooBridgeRequest.browserConnect(.init(
+            channel: "stable",
+            browserURL: "http://127.0.0.1:9222"))
+        let connectData = try JSONEncoder.peekabooBridgeEncoder().encode(connectRequest)
+        let connectResponse = try await self.decode(server.decodeAndHandle(connectData, peer: nil))
+        guard case .browserStatus = connectResponse else {
+            Issue.record("Expected browserStatus connect response, got \(connectResponse)")
+            return
+        }
+        #expect(services.lastBrowserConnectTarget?.channel == "stable")
+        #expect(services.lastBrowserConnectTarget?.browserURL == "http://127.0.0.1:9222")
 
         let executeRequest = PeekabooBridgeRequest.browserExecute(.init(
             toolName: "list_pages",
@@ -174,6 +188,14 @@ struct PeekabooBridgeOperationRoutingTests {
         #expect(toolResponse.isError == false)
         #expect(services.lastBrowserExecute?.toolName == "list_pages")
         #expect(services.lastBrowserExecute?.channel == "canary")
+
+        let sequenceRequest = PeekabooBridgeRequest.browserExecute(.init(calls: [
+            .init(toolName: "click", arguments: ["uid": .string("2_1")]),
+            .init(toolName: "type_text", arguments: ["text": .string("value")]),
+        ], channel: "stable"))
+        let sequenceData = try JSONEncoder.peekabooBridgeEncoder().encode(sequenceRequest)
+        _ = try await self.decode(server.decodeAndHandle(sequenceData, peer: nil))
+        #expect(services.lastBrowserExecute?.resolvedCalls.map(\.toolName) == ["click", "type_text"])
     }
 
     private static func mutatingObservationRequest(snapshotID: String) -> DesktopObservationRequest {

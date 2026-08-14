@@ -321,6 +321,7 @@ public enum PeekabooBridgeHostCapability {
         "processGenerationPinnedApplicationActivation"
     public static let desktopActionOutcomeProjection = "desktopActionOutcomeProjection"
     public static let explicitSnapshotPublication = "explicitSnapshotPublication"
+    public static let browserConnectionReceipts = "browserConnectionReceipts"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {

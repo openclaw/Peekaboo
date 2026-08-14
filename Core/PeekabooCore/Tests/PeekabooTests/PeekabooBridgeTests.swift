@@ -1859,6 +1859,7 @@ final class StubServices: PeekabooBridgeServiceProviding {
     let desktopObservation: any DesktopObservationServiceProtocol
     let permissions: PermissionsService = .init()
     var lastBrowserStatusChannel: String?
+    var lastBrowserConnectTarget: (channel: String?, browserURL: String?)?
     var lastBrowserExecute: PeekabooBridgeBrowserExecuteRequest?
 
     init(
@@ -1889,7 +1890,18 @@ final class StubServices: PeekabooBridgeServiceProviding {
                     processIdentifier: 42,
                     version: "144.0",
                     channel: "stable"),
-            ])
+            ],
+            connectionReceipt: PeekabooBridgeBrowserConnectionReceipt(
+                channel: "stable",
+                processIdentifier: 42,
+                processStartIdentity: 10042,
+                bundleIdentifier: "com.google.Chrome",
+                browserVersion: "144.0"))
+    }
+
+    func browserConnect(channel: String?, browserURL: String?) async throws -> PeekabooBridgeBrowserStatus {
+        self.lastBrowserConnectTarget = (channel, browserURL)
+        return try await self.browserStatus(channel: channel)
     }
 
     func browserExecute(_ request: PeekabooBridgeBrowserExecuteRequest) async throws

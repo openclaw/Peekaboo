@@ -686,6 +686,8 @@ struct RuntimeHostResolverTests {
         snapshotMutation.requiresImplicitSnapshotInvalidation = true
         var longLivedSnapshotRuntime = CommandRuntimeOptions()
         longLivedSnapshotRuntime.usesPerToolSnapshotInvalidation = true
+        var browserRuntime = CommandRuntimeOptions()
+        browserRuntime.requiresBrowserMCP = true
         var applicationInventory = snapshotProducer
         applicationInventory.requiresHostApplicationInventory = true
         var applicationLaunch = snapshotMutation
@@ -708,6 +710,11 @@ struct RuntimeHostResolverTests {
         ))
         #expect(RuntimeHostResolver.prefersExactBuildScopedHost(
             options: longLivedSnapshotRuntime,
+            explicitSocket: nil,
+            buildScopedDaemonSocketPath: buildScopedSocketPath
+        ))
+        #expect(RuntimeHostResolver.prefersExactBuildScopedHost(
+            options: browserRuntime,
             explicitSocket: nil,
             buildScopedDaemonSocketPath: buildScopedSocketPath
         ))

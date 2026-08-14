@@ -34,6 +34,10 @@ public enum PeekabooBridgeConstants {
     public static let explicitSnapshotPublicationVersion =
         PeekabooBridgeProtocolVersion(major: 1, minor: 26)
 
+    /// First protocol whose browser connection is probed and pinned to one exact Chrome identity.
+    public static let browserConnectionReceiptVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 26)
+
     /// First protocol with host-retained, one-shot exact dialog/button action receipts.
     public static let receiptPinnedDialogActionVersion =
         PeekabooBridgeProtocolVersion(major: 1, minor: 25)

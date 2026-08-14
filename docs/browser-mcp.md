@@ -51,7 +51,25 @@ For deterministic local tests or custom Chrome endpoints:
 - `PEEKABOO_BROWSER_MCP_HEADLESS=1` makes that launched browser headless.
 - `PEEKABOO_BROWSER_MCP_BROWSER_URL=http://127.0.0.1:9222` connects to an explicit debuggable Chrome endpoint instead of auto-connect.
 
+The CLI exposes the safer request-carried equivalent:
+
+```bash
+peekaboo browser connect --browser-url http://127.0.0.1:9222 --json
+```
+
+Only loopback HTTP endpoints are accepted. Peekaboo resolves `/json/version`, pins the returned browser WebSocket
+identity, probes `list_pages` before reporting connected, and revalidates that identity before every later tool call.
+When multiple Chrome processes share one channel, channel-only connection refuses and requires this exact endpoint.
+
 The tool can expose page content, cookies/session-backed data visible to the page, console messages, network requests, screenshots, and traces to the active agent/MCP client. Do not enable it for browser profiles containing sensitive data unless that exposure is acceptable.
+
+Browser uploads are host-owned. Peekaboo gives each Chrome DevTools MCP child one private owner-only temporary root and
+does not pass `--allowUnrestrictedPaths`. Every mapped or raw `upload_file` call is intercepted before dispatch: the
+source must be an absolute, current-user-owned regular file no larger than 100 MiB, opened without following a final
+symlink, and copied from that checked descriptor into a read-only transfer directory under the child root. The copy is
+kept for the exact browser session because Chrome can read an attached file after the upload tool returns; it is removed
+only after the MCP child terminates on disconnect, connection loss, endpoint drift, or cancellation. External upload
+authorization remains the caller's responsibility.
 
 ## Persistence
 
@@ -60,7 +78,14 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
 - In a local MCP process, the browser tool uses the `BrowserMCPService` from `MCPToolContext`.
 - In daemon-backed mode, `RemotePeekabooServices` forwards browser status/connect/execute calls over the Bridge socket.
 - The daemon owns the `chrome-devtools-mcp` child process and per-page snapshot UID state.
-- Browser page actions auto-connect through the same session manager. If a call names a different Chrome channel than the active session, the manager reconnects to that channel before forwarding the action.
+- Separate CLI invocations require the same current-build reusable daemon. Peekaboo.app and older Bridge hosts are not
+  eligible for browser session routing because they cannot attest the exact persistent connection receipt.
+- A first page action may connect only when exactly one process exists for the selected channel. Once connected, the
+  channel/process generation or explicit DevTools identity remains locked until `disconnect`.
+- Child-process loss, PID reuse, endpoint restart, or an attempted retarget fails closed with reconnect guidance. Peekaboo
+  never silently rediscovers another same-channel profile.
+- Active upload cancellation terminates the exact MCP child before deleting its private transfer root; an operation ID
+  prevents delayed cancellation cleanup from terminating a newer browser session.
 - Peekaboo enables Chrome DevTools MCP's page-ID routing. Every page-scoped action requires `page_id` and is
   routed directly to that page instead of relying on the process-global selected page. The upstream MCP server
   serializes calls with its FIFO tool mutex, so concurrent agents cannot redirect one another between selection
@@ -104,6 +129,9 @@ Start page work with `list_pages` or `new_page`, retain the returned page ID, an
 page-scoped action. `select_page` and `new_page` stay in the background by default. Use `bring_to_front: true` or
 `background: false` only when foreground interaction is intentional.
 
+`type` and `press_key` also require a fresh snapshot `uid`. Peekaboo holds one browser execution gate while it
+focuses that exact uid and sends the keyboard operation; concurrent page work cannot interleave between those leaves.
+
 ## Examples
 
 CLI:
@@ -111,6 +139,7 @@ CLI:
 ```bash
 peekaboo browser status --json
 peekaboo browser connect --channel stable
+peekaboo browser connect --browser-url http://127.0.0.1:9222
 peekaboo browser new-page --url https://example.com
 peekaboo browser navigate --page-id 2 --url https://example.com/docs
 peekaboo browser snapshot --page-id 2 --path /tmp/page.txt

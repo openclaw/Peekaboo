@@ -12,7 +12,13 @@ extension PeekabooServices {
     }
 
     public func browserConnect(channel: String?) async throws -> PeekabooBridgeBrowserStatus {
-        let status = try await self.browser.connect(channel: channel.flatMap(BrowserMCPChannel.init(rawValue:)))
+        try await self.browserConnect(channel: channel, browserURL: nil)
+    }
+
+    public func browserConnect(channel: String?, browserURL: String?) async throws -> PeekabooBridgeBrowserStatus {
+        let status = try await self.browser.connect(
+            channel: channel.flatMap(BrowserMCPChannel.init(rawValue:)),
+            browserURL: browserURL)
         return Self.bridgeStatus(from: status)
     }
 
@@ -23,9 +29,13 @@ extension PeekabooServices {
     public func browserExecute(_ request: PeekabooBridgeBrowserExecuteRequest) async throws
         -> PeekabooBridgeBrowserToolResponse
     {
-        let response = try await self.browser.execute(
-            toolName: request.toolName,
-            arguments: request.arguments.mapValues { $0.toAny() },
+        let calls = request.resolvedCalls.map { call in
+            BrowserMCPMappedCall(
+                toolName: call.toolName,
+                arguments: call.arguments.mapValues { $0.toAny() })
+        }
+        let response = try await self.browser.executeSequence(
+            calls,
             channel: request.channel.flatMap(BrowserMCPChannel.init(rawValue:)))
         return try Self.bridgeToolResponse(from: response)
     }
@@ -41,6 +51,18 @@ extension PeekabooServices {
                     processIdentifier: $0.processIdentifier,
                     version: $0.version,
                     channel: $0.channel.rawValue)
+            },
+            connectionReceipt: status.connectionReceipt.map {
+                PeekabooBridgeBrowserConnectionReceipt(
+                    channel: $0.channel?.rawValue,
+                    processIdentifier: $0.processIdentifier,
+                    processStartIdentity: $0.processStartIdentity,
+                    bundleIdentifier: $0.bundleIdentifier,
+                    browserURL: $0.browserURL,
+                    webSocketDebuggerURL: $0.webSocketDebuggerURL,
+                    devToolsBrowserID: $0.devToolsBrowserID,
+                    browserVersion: $0.browserVersion,
+                    protocolVersion: $0.protocolVersion)
             },
             error: status.error)
     }

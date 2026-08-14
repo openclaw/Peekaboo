@@ -9,11 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Add protocol 1.26 explicit-reference-only snapshot publication so exact-window `see --no-elements` can return coordinate receipts without replacing implicit latest element maps, while older hosts fail before allocation.
+- Add `browser connect --browser-url` for an exact loopback DevTools endpoint and expose its pinned browser identity in status metadata through Bridge protocol 1.26.
 - Add protocol 1.25 exact dialog click/dismiss receipts with unique target planning, raw AX identity revalidation, verified disappearance outcomes, and read-only targeted listing.
 - Add capability-gated exact-window background wheel delivery for opaque WKWebView/Tauri scroll targets, with retry-unsafe unverifiable outcomes and no activation or shared-cursor fallback.
 
 ### Fixed
 - Reject unknown and non-object MCP `tools/call` arguments as JSON-RPC invalid params before policy checks or tool dispatch, recursively honoring the closed schemas advertised by `tools/list`.
+- Keep browser CLI calls on one current-build reusable daemon, probe Chrome before reporting connected, require explicit reconnect instead of falling back to another same-channel profile after connection loss, and bind browser typing/key presses to an exact uid in one host-owned sequence.
+- Fail browser uploads closed through a private per-session Chrome MCP temporary root, race-safe regular-file staging, a 100 MiB bound, and child-before-cleanup cancellation without unrestricted path access.
 - Report exact standard windows with live attached sheets as dialog-active observations, using shared native role evidence without changing the parent window receipt.
 - Preserve default automatic capture through an owner-aware Bridge by clamping it to classic-only around an auxiliary legacy ScreenCaptureKit owner, while explicit modern and owner-unaware routes remain fail-closed.
 

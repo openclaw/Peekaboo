@@ -602,6 +602,7 @@ enum RuntimeHostResolver {
         }
         return options.requiresScreenCapturePermission ||
             options.requiresInspectAccessibilityTree ||
+            options.requiresBrowserMCP ||
             options.requiresImplicitSnapshotInvalidation ||
             options.usesPerToolSnapshotInvalidation
     }
