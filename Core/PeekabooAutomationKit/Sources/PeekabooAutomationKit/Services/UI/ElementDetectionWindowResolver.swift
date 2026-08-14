@@ -150,10 +150,8 @@ struct ElementDetectionWindowResolver {
                 let identifier = app.localizedName ?? app.bundleIdentifier ?? "PID:\(app.processIdentifier)"
                 self.logger.notice("Resolved window via CGWindowID \(windowID): '\(title)' for \(identifier)")
 
-                let subrole = window.subrole() ?? ""
-                let isDialogRole = ["AXDialog", "AXSystemDialog", "AXSheet"].contains(subrole)
-                let isFileDialog = self.isFileDialogTitle(window.title() ?? "")
-                let isDialog = isDialogRole || isFileDialog
+                let isDialog = DialogElementClassifier.isObservationDialog(
+                    DialogElementClassifier.evidence(for: window))
 
                 return WindowResolution(appElement: appElement, window: window, isDialog: isDialog)
             }
@@ -213,24 +211,18 @@ struct ElementDetectionWindowResolver {
         self.logger.debug("Checking \(windows.count) windows for dialog characteristics")
         for window in windows {
             let title = window.title() ?? ""
-            let subrole = window.subrole() ?? ""
-            let isFileDialog = self.isFileDialogTitle(title)
-            let isDialogRole = ["AXDialog", "AXSystemDialog", "AXSheet"].contains(subrole)
+            let evidence = DialogElementClassifier.evidence(for: window)
 
-            guard isFileDialog || isDialogRole else { continue }
+            guard DialogElementClassifier.isObservationDialog(evidence) else { continue }
             if let targetWindow, targetWindow.title() == window.title() {
-                self.logger.info("🗨️ Target window is a dialog: '\(title)' (subrole: \(subrole))")
+                self.logger.info("🗨️ Target window is dialog-active: '\(title)' (subrole: \(evidence.subrole))")
                 return DialogResolution(window: targetWindow, isDialog: true)
             }
 
-            self.logger.info("🗨️ Using dialog window: '\(title)' (subrole: \(subrole))")
+            self.logger.info("🗨️ Using dialog-active window: '\(title)' (subrole: \(evidence.subrole))")
             return DialogResolution(window: window, isDialog: true)
         }
         return DialogResolution(window: targetWindow, isDialog: false)
-    }
-
-    private func isFileDialogTitle(_ title: String) -> Bool {
-        ["Open", "Save", "Export", "Import"].contains(title) || title.hasPrefix("Save As")
     }
 
     private func handleMissingWindow(app: NSRunningApplication, windows: [Element]) throws -> Never {

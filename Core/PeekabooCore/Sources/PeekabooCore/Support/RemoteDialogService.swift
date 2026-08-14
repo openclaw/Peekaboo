@@ -149,8 +149,8 @@ public final class RemoteDialogService: DialogServiceProtocol {
             return try await self.client.performPreparedDialogAction(receipt)
         } catch let failure as DesktopActionFailure {
             throw failure
-        } catch let envelope as PeekabooBridgeErrorEnvelope where !envelope.operationMayHaveCompleted {
-            throw Self.preDispatchFailure(for: envelope)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.actionFailure(for: envelope)
         }
     }
 
@@ -193,6 +193,20 @@ public final class RemoteDialogService: DialogServiceProtocol {
             reason: reason,
             message: envelope.message,
             hint: "Refresh the dialog target or update the selected Bridge host before retrying.",
+            causeDescription: envelope.details)
+    }
+
+    static func actionFailure(for envelope: PeekabooBridgeErrorEnvelope) -> DesktopActionFailure {
+        guard envelope.operationMayHaveCompleted else {
+            return self.preDispatchFailure(for: envelope)
+        }
+        return .indeterminate(
+            route: .bridge,
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: envelope.message,
+            hint: "Observe the dialog before retrying; the exact action may already have completed.",
             causeDescription: envelope.details)
     }
 }

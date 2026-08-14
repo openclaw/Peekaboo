@@ -2,10 +2,16 @@
 
 ## [4.1.1] - Unreleased
 
+### Added
+
+- Add Bridge protocol 1.25 one-shot dialog receipts that uniquely bind an exact process/window, raw dialog or sheet, and semantic AXPress button for background click/dismiss, with read-only targeted listing and canonical postcondition outcomes.
+
 ### Changed
 - Build branded release disk images from pinned direct Finder-metadata tooling, preserving the signed and notarized drag-to-Applications layout without GUI automation.
 
 ### Fixed
+
+- Classify an exact standard window with a live attached sheet as dialog-active during observation, sharing native role evidence with dialog actions while keeping the parent window receipt exact.
 - Report exact ScreenCaptureKit owner PID, process generation, safe build identity, and selected-versus-owner Bridge sockets when available; automatic capture can still use an owner-aware host's classic-only path around an auxiliary legacy owner, while explicit modern and ambiguous legacy ownership remain fail-closed without unsafe process-stop guidance.
 
 ## [4.1.0] - 2026-08-13
@@ -21,7 +27,6 @@
 
 ### Added
 
-- Add Bridge protocol 1.25 one-shot dialog receipts that uniquely bind an exact process/window, raw dialog or sheet, and semantic AXPress button for background click/dismiss, with read-only targeted listing and canonical postcondition outcomes.
 - Add receipt-pinned exact-window background `type`, `paste`, and `press`, preserving process generation, window bounds, and focused-element identity while refusing ambiguous app/PID targets and unsafe Agent dialog/shared-UI routes.
 - Restore the root SwiftPM facade for external consumers with four lean library products—Foundation, Protocols, AutomationKit, and Bridge—plus a fresh-consumer build contract that prevents manifest and product drift.
 - Add a background-first native Bridge host runtime for signed macOS apps, with explicit caller allowlists, shared mutation/snapshot state, checked lifecycle, and no Core, provider, browser, daemon, or AppleScript surface.

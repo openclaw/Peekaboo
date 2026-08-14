@@ -83,7 +83,6 @@ extension CommanderCLIBinder {
             }
             try rejectForegroundOptionsWithoutConsent()
         } else if commandType == DialogCommand.InputSubcommand.self {
-            try requireTarget()
             guard values.flag("foreground") else {
                 try refuse(
                     "Dialog input uses keyboard interaction and requires --foreground.",
@@ -91,7 +90,6 @@ extension CommanderCLIBinder {
                 )
             }
         } else if commandType == DialogCommand.FileSubcommand.self {
-            try requireTarget()
             guard values.flag("foreground") else {
                 try refuse(
                     "Dialog file interaction requires --foreground.",

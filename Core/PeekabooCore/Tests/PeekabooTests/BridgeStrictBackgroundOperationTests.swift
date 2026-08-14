@@ -195,6 +195,24 @@ struct BridgeStrictBackgroundOperationTests {
     }
 
     @Test
+    func `remote prepared action may-complete errors remain indeterminate and retry unsafe`() {
+        let envelope = PeekabooBridgeErrorEnvelope(
+            code: .internalError,
+            message: "Dialog completion could not be verified",
+            details: "response lost after AXPress",
+            operationMayHaveCompleted: true)
+        let failure = RemoteDialogService.actionFailure(for: envelope)
+
+        #expect(failure.outcome.route == .bridge)
+        #expect(failure.outcome.state == .indeterminate)
+        #expect(failure.outcome.evidence == .completionUnknown)
+        #expect(failure.outcome.dispatchState.mutationDispatched)
+        #expect(failure.outcome.retrySafety == .unsafe)
+        #expect(failure.outcome.projection.requiresFreshObservation)
+        #expect(failure.causeDescription == "response lost after AXPress")
+    }
+
+    @Test
     func `prepared dialog request wire retains exact action and window receipt`() throws {
         let bounds = CGRect(x: 1, y: 2, width: 300, height: 200)
         let identity = WindowMutationIdentity(

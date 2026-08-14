@@ -43,7 +43,7 @@ import PeekabooFoundation
                 method: usedCache ? "AXorcist (cached)" : "AXorcist",
                 warnings: warnings,
                 windowContext: windowContext,
-                isDialog: isDialog,
+                isDialog: isDialog || DialogElementClassifier.containsDialog(in: elements),
                 truncationInfo: truncationInfo))
     }
 

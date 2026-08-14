@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.1.1] - Unreleased
 
+### Added
+- Add protocol 1.25 exact dialog click/dismiss receipts with unique target planning, raw AX identity revalidation, verified disappearance outcomes, and read-only targeted listing.
+
+### Fixed
+- Report exact standard windows with live attached sheets as dialog-active observations, using shared native role evidence without changing the parent window receipt.
+
 ## [4.1.0] - 2026-08-13
 
 ### Highlights
@@ -19,7 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The CLI and companion runtime are native-only and externally consumable.** AppleScript permission and execution surfaces are gone, release gates reject Apple Events/OSA behavior, and the restored SwiftPM facade exports the lean Foundation, Protocols, AutomationKit, and Bridge products.
 
 ### Added
-- Add protocol 1.25 exact dialog click/dismiss receipts with unique target planning, raw AX identity revalidation, verified disappearance outcomes, and read-only targeted listing.
 - Add receipt-pinned exact-window background `type`, `paste`, and `press`, with focused-element revalidation and fail-closed app/PID ambiguity handling.
 - Add `see --ocr` for additive host-local Vision text with preserved AX warnings, exact snapshot receipts, logical bounds, confidence, background-only observation, and fail-before-dispatch compatibility with older Bridge hosts.
 - Add `see --roi x,y,width,height` for stateless exact-window crops with fresh snapshot receipts, ROI-local element output, and safe coordinate metadata.

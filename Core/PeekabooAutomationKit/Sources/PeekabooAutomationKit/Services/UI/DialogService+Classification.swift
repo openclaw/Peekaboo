@@ -4,40 +4,19 @@ import Foundation
 @MainActor
 extension DialogService {
     func isDialogElement(_ element: Element, matching title: String?) -> Bool {
-        let role = element.role() ?? ""
-        let subrole = element.subrole() ?? ""
-        let roleDescription = element.attribute(Attribute<String>("AXRoleDescription")) ?? ""
-        let identifier = element.attribute(Attribute<String>("AXIdentifier")) ?? ""
-        let windowTitle = element.title() ?? ""
-
-        if let expectedTitle = title, !windowTitle.elementsEqual(expectedTitle) {
-            return false
-        }
-
-        if role == "AXSheet" || role == "AXDialog" {
-            return true
-        }
-
-        if subrole == "AXDialog" || subrole == "AXSystemDialog" || subrole == "AXAlert" {
-            return true
-        }
-
-        if roleDescription.localizedCaseInsensitiveContains("dialog") {
-            return true
-        }
-
-        if identifier.contains("NSOpenPanel") || identifier.contains("NSSavePanel") {
-            return true
-        }
-
-        if self.dialogTitleHints.contains(where: { windowTitle.localizedCaseInsensitiveContains($0) }) {
+        let evidence = DialogElementClassifier.evidence(for: element)
+        if DialogElementClassifier.isDialog(
+            evidence,
+            matching: title,
+            titleHints: self.dialogTitleHints)
+        {
             return true
         }
 
         // Some apps expose sheets as AXWindow/AXUnknown instead of AXSheet. Avoid treating every AXUnknown
         // window as a dialog (TextEdit's main document window can be AXUnknown), and instead require at
         // least one dialog-ish signal.
-        if subrole == "AXUnknown", title != nil {
+        if evidence.subrole == "AXUnknown", title != nil {
             let buttonTitles = Set(self.collectButtons(from: element).compactMap { $0.title()?.lowercased() })
             let hasCancel = buttonTitles.contains("cancel")
             let hasDialogButton = hasCancel ||
@@ -59,14 +38,8 @@ extension DialogService {
     }
 
     func isFileDialogElement(_ element: Element) -> Bool {
-        let identifier = element.attribute(Attribute<String>("AXIdentifier")) ?? ""
-        let windowTitle = element.title() ?? ""
-
-        if identifier.contains("NSOpenPanel") || identifier.contains("NSSavePanel") {
-            return true
-        }
-
-        if self.dialogTitleHints.contains(where: { windowTitle.localizedCaseInsensitiveContains($0) }) {
+        let evidence = DialogElementClassifier.evidence(for: element)
+        if DialogElementClassifier.isFileDialog(evidence, titleHints: self.dialogTitleHints) {
             return true
         }
 

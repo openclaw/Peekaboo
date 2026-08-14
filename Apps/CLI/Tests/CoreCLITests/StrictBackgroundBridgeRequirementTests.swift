@@ -62,11 +62,20 @@ struct StrictBackgroundBridgeRequirementTests {
                 commandType: DialogCommand.ClickSubcommand.self
             )
         }
-        #expect(throws: PreDispatchActionError.self) {
-            _ = try CommanderCLIBinder.makeRuntimeOptions(
-                from: ParsedValues(positional: [], options: ["text": ["value"], "pid": ["42"]], flags: []),
-                commandType: DialogCommand.InputSubcommand.self
-            )
+        for commandType in [DialogCommand.InputSubcommand.self, DialogCommand.FileSubcommand.self]
+            as [any ParsableCommand.Type] {
+            #expect(throws: PreDispatchActionError.self) {
+                _ = try CommanderCLIBinder.makeRuntimeOptions(
+                    from: ParsedValues(positional: [], options: [:], flags: []),
+                    commandType: commandType
+                )
+            }
+            #expect(throws: Never.self) {
+                _ = try CommanderCLIBinder.makeRuntimeOptions(
+                    from: ParsedValues(positional: [], options: [:], flags: ["foreground"]),
+                    commandType: commandType
+                )
+            }
         }
     }
 

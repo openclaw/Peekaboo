@@ -51,7 +51,7 @@ extension DialogError: LocalizedError {
 @MainActor
 public final class DialogService: DialogServiceProtocol {
     let logger = Logger(subsystem: "boo.peekaboo.core", category: "DialogService")
-    let dialogTitleHints = ["open", "save", "export", "import", "choose", "replace"]
+    let dialogTitleHints = DialogElementClassifier.titleHints
     let activeDialogSearchTimeout: Float = 0.25
     let targetedDialogSearchTimeout: Float = 0.5
     let applicationService: any ApplicationServiceProtocol

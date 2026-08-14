@@ -31,7 +31,8 @@ public struct DialogTool: MCPTool {
         - dismiss: close the active dialog
 
         Targeting:
-        - click, input, file, and non-forced dismiss require app/pid or an exact window_id target.
+        - click and non-forced dismiss require app/pid or an exact window_id target.
+        - input and file may use the current dialog only with foreground=true; an explicit target is recommended.
         - list may be targetless; targeted list remains read-only and must resolve exactly one dialog.
         - app and pid are alternatives. Provide at most one window selector; title/index require app or pid.
         - Set foreground=true only for keyboard/file interaction or an explicit global fallback.
@@ -119,8 +120,8 @@ public struct DialogTool: MCPTool {
                 windowIndex: inputs.windowIndex,
                 windowId: inputs.windowId)
             let dialogTarget = try inputs.targetSelector()
-            let permitsTargetlessMutation = action == .dismiss && inputs.force == true
-            if action != .list, !permitsTargetlessMutation, !dialogTarget.hasTarget {
+            let requiresPreparedTarget = action == .click || (action == .dismiss && inputs.force != true)
+            if requiresPreparedTarget, !dialogTarget.hasTarget {
                 throw DialogToolInputError.missingForAction(action: action, field: "app, pid, or window_id target")
             }
 

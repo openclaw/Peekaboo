@@ -114,6 +114,33 @@ struct MCPDialogPreparedActionTests {
         #expect(dialogs.executeCount == 0)
         #expect(await windows.focusRequests.isEmpty)
     }
+
+    @Test
+    func `targetless foreground input and file preserve legacy current-dialog behavior`() async throws {
+        let dialogs = PreparedDialogService()
+        let context = await MCPToolTestHelpers.makeContext(dialogs: dialogs)
+
+        let input = try await context.execute(
+            tool: DialogTool(context: context),
+            arguments: ToolArguments(raw: [
+                "action": "input",
+                "text": "value",
+                "foreground": true,
+            ]))
+        let file = try await context.execute(
+            tool: DialogTool(context: context),
+            arguments: ToolArguments(raw: [
+                "action": "file",
+                "path": "/tmp",
+                "foreground": true,
+            ]))
+
+        #expect(!input.isError)
+        #expect(!file.isError)
+        #expect(dialogs.prepareCount == 0)
+        #expect(dialogs.inputCount == 1)
+        #expect(dialogs.fileCount == 1)
+    }
 }
 
 @MainActor
@@ -123,6 +150,8 @@ private final class PreparedDialogService: DialogServiceProtocol {
         unitCount: .one)
     var prepareCount = 0
     var executeCount = 0
+    var inputCount = 0
+    var fileCount = 0
     var lastPreparation: DialogActionPreparationRequest?
     var preparationFailure: DesktopActionFailure?
 
@@ -170,7 +199,12 @@ private final class PreparedDialogService: DialogServiceProtocol {
         windowTitle _: String?,
         appName _: String?) async throws -> DialogActionResult
     {
-        throw DialogError.noActiveDialog
+        self.inputCount += 1
+        return DialogActionResult(
+            success: true,
+            action: .enterText,
+            details: ["field": "Text Field", "text_length": "5"],
+            outcome: self.outcome)
     }
 
     func handleFileDialog(
@@ -180,7 +214,12 @@ private final class PreparedDialogService: DialogServiceProtocol {
         ensureExpanded _: Bool,
         appName _: String?) async throws -> DialogActionResult
     {
-        throw DialogError.noActiveDialog
+        self.fileCount += 1
+        return DialogActionResult(
+            success: true,
+            action: .handleFileDialog,
+            details: ["button_clicked": "Open"],
+            outcome: self.outcome)
     }
 
     func dismissDialog(force _: Bool, windowTitle _: String?, appName _: String?) async throws -> DialogActionResult {

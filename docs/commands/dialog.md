@@ -13,8 +13,8 @@ read_when:
 | Name | Purpose | Key options |
 | --- | --- | --- |
 | `click` | Press a dialog button with AX. | `--button <exact label>` and an app/PID/window target are required; `--foreground` may focus first but never enables pointer fallback. |
-| `input` | Enter text into a dialog field. | `--foreground`, `--text`, and an app/PID/window target are required; optional `--field <label>` or `--index <0-based>` and `--clear`. |
-| `file` | Drive NSOpenPanel/NSSavePanel style dialogs. | `--foreground` and an app/PID/window target are required; `--path <dir>`, `--name <filename>`, `--select <button>`, `--ensure-expanded`, and `--timeout <duration>`. Save-like actions verify the file exists and return `saved_path`. |
+| `input` | Enter text into a dialog field. | `--foreground` and `--text` are required; an app/PID/window target is optional and recommended. Optional `--field <label>` or `--index <0-based>` and `--clear`. |
+| `file` | Drive NSOpenPanel/NSSavePanel style dialogs. | `--foreground` is required; an app/PID/window target is optional and recommended. Supports `--path <dir>`, `--name <filename>`, `--select <button>`, `--ensure-expanded`, and `--timeout <duration>`. Save-like actions verify the file exists and return `saved_path`. |
 | `dismiss` | Close the current dialog. | Normal dismissal requires a target and uniquely resolves one cancel/close AXPress button in the background. `--force --foreground` explicitly sends global Escape. |
 | `list` | Read dialog metadata (buttons, text fields, static text) without focusing or mutating it. | Optional `--app`/`--pid`, optional `--window-id`/`--window-title`/`--window-index`, and `--timeout <duration>`. |
 
@@ -25,6 +25,7 @@ read_when:
 - Success is confirmed only after the retained dialog or sheet disappears. An accepted press without a verified postcondition is retry-unsafe and requires fresh observation; planning or identity ambiguity is a retry-safe pre-dispatch refusal.
 - Remote targeted list/prepare/click/dismiss require the exact advertised and enabled operation, not merely a 1.25 version number. Missing capabilities refuse before operation transport.
 - `dialog input`, `dialog file`, and forced dismissal use global keyboard or coordinate events and therefore reject calls without `--foreground` (or `foreground: true` over MCP).
+- For compatibility with interactive foreground workflows, `dialog input` and `dialog file` may target the current dialog without an app/window selector. Receipt-pinned background click and non-forced dismiss never allow this targetless path.
 - Button clicks and text entry route through `services.dialogs` helpers, which return dictionaries describing what happened; JSON output exposes those details verbatim (`button`, `field`, `text_length`, etc.).
 - `dialog input` accepts either a field label (`--field`) or an index; when neither is provided it targets the first text field. `--clear` issues a Cmd+A/Delete before typing.
 - `dialog file` can both navigate to a path and fill the filename field, then clicks the action button you specify (`--select Save`, `--select Open`, etc.). Leave `--path` blank to simply confirm the current directory.
