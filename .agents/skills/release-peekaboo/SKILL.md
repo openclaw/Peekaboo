@@ -19,9 +19,10 @@ Use `$one-password`, `$browser-use`, `$npm`, `$autoreview`, and repo `AGENTS.md`
 
 Sparkle key:
 
-- Repo `.mac-release.env` points at `op://Molty/Peekaboo Sparkle EdDSA/private key`.
-- The shared release helper resolves that exact item with the prompt-free service account, verifies the public key,
-  and owns its mode-0600 temporary file cleanup. Do not set `SPARKLE_PRIVATE_KEY_FILE` for normal releases.
+- Resolve the exact `MAC_RELEASE_SPARKLE_OP_REF` from `$release-private` into the private release environment or tmux
+  session; never add the locator to this public repo, status output, or logs.
+- The shared release helper uses the prompt-free service account, verifies the public key, and owns its mode-0600
+  temporary file cleanup. Do not set `SPARKLE_PRIVATE_KEY_FILE` for normal releases.
 
 Developer ID release keychain:
 

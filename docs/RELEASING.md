@@ -31,9 +31,10 @@ when it is left to choose its own endpoint, even while the canonical TSA is reac
 Notarization resolves the three App Store Connect API fields from the canonical Molty release item, validates them
 with `notarytool history`, and submits with S3 acceleration disabled. The tracked manifest clears both supported
 keychain-profile variables so a stale value inherited from the caller cannot override the current release item.
-Sparkle signing resolves `Peekaboo Sparkle EdDSA` from Molty through the shared release helper's prompt-free service
-account path. The helper writes a mode-0600 temporary key, verifies its public key against the tracked
-`SUPublicEDKey`, and removes it on success or failure; releases do not use login-keychain or Dropbox fallbacks.
+Sparkle signing receives `MAC_RELEASE_SPARKLE_OP_REF` from the private release environment and resolves it through
+the shared release helper's prompt-free service-account path. The helper writes a mode-0600 temporary key, verifies
+its public key against the tracked `SUPublicEDKey`, and removes it on success or failure; releases do not use
+login-keychain or Dropbox fallbacks, and the private locator is never tracked in this repository.
 
 ## 1. Prepare
 

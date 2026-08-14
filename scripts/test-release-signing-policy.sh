@@ -9,7 +9,8 @@ FOUNDATION_TEAM='FWJYW4S8P8'
 pushd "$ROOT_DIR" >/dev/null
 NOTARYTOOL_KEYCHAIN_PROFILE=stale-inherited-profile
 NOTARYTOOL_PROFILE=stale-inherited-profile
-export NOTARYTOOL_KEYCHAIN_PROFILE NOTARYTOOL_PROFILE
+MAC_RELEASE_SPARKLE_OP_REF='op://Private/Fixture/private key'
+export NOTARYTOOL_KEYCHAIN_PROFILE NOTARYTOOL_PROFILE MAC_RELEASE_SPARKLE_OP_REF
 # shellcheck source=/Users/steipete/Projects/Peekaboo/.mac-release.env
 source .mac-release.env
 popd >/dev/null
@@ -22,6 +23,8 @@ popd >/dev/null
 [[ "$MAC_RELEASE_OP_FIELDS" == *APP_STORE_CONNECT_KEY_ID* ]]
 [[ "$MAC_RELEASE_OP_FIELDS" == *APP_STORE_CONNECT_ISSUER_ID* ]]
 [[ "$MAC_RELEASE_OP_FIELDS" == *APP_STORE_CONNECT_API_KEY_P8* ]]
+[[ "$MAC_RELEASE_SPARKLE_OP_REF" == 'op://Private/Fixture/private key' ]]
+[[ "$MAC_RELEASE_SPARKLE_OP_USE_SERVICE_ACCOUNT" == 1 ]]
 
 policy_files=(
   "$ROOT_DIR/.mac-release.env"
@@ -63,11 +66,20 @@ rg -Fq 'libswiftCompatibility*.dylib' "$ROOT_DIR/package.json"
 rg -Fq 'libswiftCompatibility*.dylib' "$ROOT_DIR/homebrew/peekaboo.rb"
 rg -Fq -- '--options runtime' "$ROOT_DIR/scripts/copy-swift-runtime-libraries.sh"
 rg -Fq 'MAC_RELEASE_CODESIGN_TEAM_ID' "$ROOT_DIR/scripts/verify-swift-runtime-libraries.sh"
-rg -Fq "MAC_RELEASE_SPARKLE_OP_REF='op://Molty/Peekaboo Sparkle EdDSA/private key'" \
+rg -Fq 'MAC_RELEASE_SPARKLE_OP_REF=${MAC_RELEASE_SPARKLE_OP_REF:-}' "$ROOT_DIR/.mac-release.env"
+rg -Fq 'MAC_RELEASE_SPARKLE_OP_USE_SERVICE_ACCOUNT=${MAC_RELEASE_SPARKLE_OP_USE_SERVICE_ACCOUNT:-1}' \
   "$ROOT_DIR/.mac-release.env"
-rg -Fq 'MAC_RELEASE_SPARKLE_OP_USE_SERVICE_ACCOUNT=1' "$ROOT_DIR/.mac-release.env"
-if rg -n 'Dropbox|MAC_RELEASE_SIGNING_KEY_FILE' "$ROOT_DIR/.mac-release.env"; then
-  printf 'Stale Sparkle file fallback remains in the release manifest\n' >&2
+if rg -n 'Dropbox|MAC_RELEASE_SIGNING_KEY_FILE|MAC_RELEASE_SPARKLE_OP_REF=.*op://' \
+  "$ROOT_DIR/.mac-release.env"; then
+  printf 'Private or stale Sparkle locator remains in the public release manifest\n' >&2
+  exit 1
+fi
+private_sparkle_item_pattern='Peekaboo Sparkle '"EdDSA"
+if rg -n "$private_sparkle_item_pattern" \
+  "$ROOT_DIR/.agents/skills/release-peekaboo/SKILL.md" \
+  "$ROOT_DIR/docs/RELEASING.md" \
+  "$ROOT_DIR/scripts/test-release-signing-policy.sh"; then
+  printf 'App-specific Sparkle locator remains in a public release surface\n' >&2
   exit 1
 fi
 
