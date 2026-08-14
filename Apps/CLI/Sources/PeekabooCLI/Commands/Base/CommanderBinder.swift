@@ -560,6 +560,9 @@ enum CommanderCLIBinder {
         _ commandType: (any ParsableCommand.Type)?,
         parsedValues: ParsedValues
     ) -> Bool {
+        if commandType == CaptureVideoCommand.self {
+            return true
+        }
         guard commandType == PermissionsCommand.RequestSubcommand.self else { return false }
         return CommanderBindableValues(parsedValues: parsedValues).positionalValue(at: 0) != "event-synthesizing"
     }

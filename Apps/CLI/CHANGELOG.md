@@ -14,12 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add capability-gated exact-window background wheel delivery for opaque WKWebView/Tauri scroll targets, with retry-unsafe unverifiable outcomes and no activation or shared-cursor fallback.
 
 ### Fixed
-- Treat `capture video` as caller-local media ingestion so valid files and typed media failures bypass Screen Recording and ScreenCaptureKit-owner preflight while live capture remains gated.
 - Keep normal exact-window Finder `see` usable when the window exposes no semantic AX value, without weakening hard Accessibility-read failures or the typed incomplete-evidence refusal.
 - Project dialog input and forced Escape through canonical unverified outcomes and exact PID/generation/window receipts so retained-value evidence, driver cancellation, legacy Bridge PID targets, and concurrent-controller races cannot be reported as confirmed effects.
 - Refuse exact-window combined `see` results when Accessibility returns no usable elements, including legacy Bridge responses that omit the incomplete-read marker, while preserving the requested raster and explicit `--no-elements` screenshot-only success.
 - Validate request-only `click`, `move`, `type`, and `drag` arguments before runtime-host selection so malformed requests cannot be masked by Bridge availability or trigger unnecessary host startup.
-- Keep concrete interaction snapshots out of ScreenCaptureKit-owner preflight because they cannot refresh or capture, and give omitted/latest snapshot flows an actionable `see --capture-engine classic` recovery.
 - Reject unknown and non-object MCP `tools/call` arguments as JSON-RPC invalid params before policy checks or tool dispatch, recursively honoring the closed schemas advertised by `tools/list`.
 - Keep browser CLI calls on one current-build reusable daemon, probe Chrome before reporting connected, require explicit reconnect instead of falling back to another same-channel profile after connection loss, and bind browser typing/key presses to an exact uid in one host-owned sequence.
 - Fail browser uploads closed through a private per-session Chrome MCP temporary root, race-safe regular-file staging, a 100 MiB bound, and child-before-cleanup cancellation without unrestricted path access.

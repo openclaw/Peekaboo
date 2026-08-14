@@ -68,18 +68,26 @@ struct CaptureVideoLocalIngestTests {
             from: ParsedValues(
                 positional: [input.path],
                 options: [:],
-                flags: ["no-remote"]
+                flags: []
             ),
             commandType: CaptureVideoCommand.self
         )
+        #expect(!options.preferRemote)
+        #expect(!options.remoteIsolationRequested)
         #expect(!options.requiresScreenCapturePermission)
         #expect(!options.requiresSilentCapture)
         #expect(!options.requiresDesktopObservation)
         #expect(!options.requiresScreenCaptureKitOwnerCapability)
+        #expect(!RuntimeHostResolver.shouldResolveKnownRemoteEndpoints(
+            options: options,
+            environment: [:],
+            configurationInput: nil
+        ))
 
         var claimCalls = 0
         var inspectOwnerCalls = 0
         var inspectSafetyCalls = 0
+        var remoteCandidatePlanCalls = 0
         var localFactoryCalls = 0
         let resolution = try await RuntimeHostResolver.resolveServices(
             options: options,
@@ -105,6 +113,18 @@ struct CaptureVideoLocalIngestTests {
                         processIdentifier: 3131,
                         processStartIdentity: 4141
                     )
+                },
+                remoteCandidatePlan: { _, _ in
+                    remoteCandidatePlanCalls += 1
+                    return RuntimeHostResolver.RemoteCandidatePlan(
+                        explicitSocket: nil,
+                        daemonSocketPath: "/tmp/peekaboo-video-ingest-daemon.sock",
+                        runtimeBuildIdentity: "video-ingest-test",
+                        buildScopedDaemonSocketPath: "/tmp/peekaboo-video-ingest-current.sock",
+                        historicalBuildScopedDaemonTargets: [],
+                        historicalBuildScopedDaemonSocketPaths: [],
+                        candidates: []
+                    )
                 }
             )
         )
@@ -112,6 +132,7 @@ struct CaptureVideoLocalIngestTests {
         #expect(claimCalls == 0)
         #expect(inspectOwnerCalls == 0)
         #expect(inspectSafetyCalls == 0)
+        #expect(remoteCandidatePlanCalls == 0)
         #expect(localFactoryCalls == 1)
         #expect(resolution.selectedRemoteSocketPath == nil)
         return resolution
