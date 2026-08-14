@@ -83,7 +83,7 @@ By default, Peekaboo will:
 
 ## Focus Options
 
-Interaction commands that use foreground delivery support these focus-related options. `click`, `type`, and `paste` default to background delivery when Peekaboo can resolve a target process. Raw `press` always requires `--foreground`. Targeted scroll is background Accessibility-only, while targetless/smooth scroll and all move/drag operations require explicit foreground mode.
+Interaction commands that use foreground delivery support these focus-related options. `click`, `type`, and `paste` default to background delivery when Peekaboo can resolve a target process. Raw `press` always requires `--foreground`. Targeted scroll stays background through Accessibility or a capability-gated exact-window WebKit route, while targetless/smooth scroll and all move/drag operations require explicit foreground mode.
 
 ### `--no-auto-focus`
 Disables automatic focus management (not recommended).
@@ -115,7 +115,7 @@ Use cases:
 
 Currently, typed text and paste use background delivery when `--app`, `--pid`, or supported snapshot process metadata identifies a live process. Raw key chords cannot prove semantic intent or effect and are refused without `--foreground`. Background click can preserve an exact window/element target.
 
-Background delivery is a delivery mode, not a focus mode. It cannot be combined with foreground focus timeout, retry, or Space-switching flags. Background element/query/coordinate clicks and targeted scroll use Accessibility. Keyboard delivery and foreground synthetic pointer operations require Event Synthesizing; `peekaboo permissions request event-synthesizing` requests it for the selected bridge host by default, or for the local CLI with `--no-remote`.
+Background delivery is a delivery mode, not a focus mode. It cannot be combined with foreground focus timeout, retry, or Space-switching flags. Background element/query/coordinate clicks and targeted scroll prefer Accessibility; an opaque WebKit scroll target may use exact PID/window wheel delivery without focus. Keyboard delivery, that WebKit wheel route, and foreground synthetic pointer operations require Event Synthesizing; `peekaboo permissions request event-synthesizing` requests it for the selected bridge host by default, or for the local CLI with `--no-remote`.
 
 ### `--focus-timeout <duration>`
 Sets how long to wait for focus operations (default: `5s`; bare values are milliseconds).

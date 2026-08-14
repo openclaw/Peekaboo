@@ -217,6 +217,7 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
     var typeTextCalls: [TypeTextCall] = []
     var typeActionsCalls: [TypeActionsCall] = []
     var scrollCalls: [ScrollCall] = []
+    var scrollError: (any Error)?
     var swipeCalls: [SwipeCall] = []
     var dragCalls: [DragCall] = []
     var moveMouseCalls: [MoveMouseCall] = []
@@ -427,6 +428,9 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
         self.scrollCalls.append(
             ScrollCall(request: request)
         )
+        if let scrollError {
+            throw scrollError
+        }
     }
 
     func setValue(

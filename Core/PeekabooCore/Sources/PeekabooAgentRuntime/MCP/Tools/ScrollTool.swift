@@ -17,8 +17,9 @@ public struct ScrollTool: MCPTool {
 
     public var description: String {
         """
-        Scrolls a UI target through Accessibility without interrupting the user by default.
-        Set foreground=true to focus the target and allow synthetic wheel events at the pointer.
+        Scrolls a fresh UI target in the background without interrupting the user. Peekaboo prefers
+        Accessibility, then may use exact-window PID-routed wheel events for an opaque visible WebKit target.
+        Set foreground=true to focus the target and allow global wheel events at the pointer.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.6
         and anthropic/claude-opus-5
         """
@@ -31,8 +32,8 @@ public struct ScrollTool: MCPTool {
                     description: "Scroll direction: up (content moves up), down (content moves down), left, or right.",
                     enum: ["up", "down", "left", "right"]),
                 "on": SchemaBuilder.string(
-                    description: "Optional. Element ID to scroll on (from `see` or `inspect_ui`). " +
-                        "If not specified, scrolls at current mouse position."),
+                    description: "Element ID from `see` or `inspect_ui`. Required in background mode; " +
+                        "omit only with foreground=true to scroll at the current physical pointer."),
                 "snapshot": SchemaBuilder.string(
                     description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
                         "Uses latest snapshot if not specified."),
@@ -46,7 +47,7 @@ public struct ScrollTool: MCPTool {
                     description: "Optional. Use smooth synthetic scrolling; requires foreground=true.",
                     default: false),
                 "foreground": SchemaBuilder.boolean(
-                    description: "Optional. Focus the target and allow synthetic wheel events. Default: false.",
+                    description: "Optional. Focus the target and allow global wheel events. Default: false.",
                     default: false),
             ],
             required: ["direction"])
@@ -118,7 +119,7 @@ public struct ScrollTool: MCPTool {
         }
         guard foreground || elementId != nil else {
             throw ScrollToolValidationError(
-                "Background scroll requires 'on' with an Accessibility-scrollable element; " +
+                "Background scroll requires 'on' from a fresh scrollable or exact-window WebKit snapshot; " +
                     "set foreground=true to scroll at the physical pointer.")
         }
         guard foreground || (!smooth && delay == 0) else {

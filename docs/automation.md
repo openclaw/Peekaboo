@@ -34,7 +34,7 @@ Focus flags tune foreground focus behavior but do not silently change delivery m
 
 All CLI timing flags use the same grammar: bare numbers are milliseconds, and `ms`/`s` suffixes are accepted (`500`, `500ms`, `2s`, `1.5s`).
 
-Pointer delivery is deliberately stricter. A targeted `scroll --on <id>` stays in the background and invokes only the element's Accessibility scroll action; it never falls back to the shared cursor. Targetless, smooth, or delayed wheel input requires `--foreground`. `move`, `drag`, and `click --long-press` manipulate shared physical pointer state, so they also require explicit `--foreground` consent. Their Space/focus modifiers are only valid with that foreground mode; there is no misleading `--no-auto-focus` escape hatch.
+Pointer delivery is deliberately stricter. A targeted `scroll --on <id>` stays in the background and prefers the element's Accessibility scroll action. Opaque groups in a visible WebKit-linked app may use exact PID/window-routed wheel events from a fresh pixel snapshot; that route is retry-unsafe because macOS does not acknowledge the receiver's effect. It never falls back to the shared cursor. Targetless, smooth, or delayed wheel input requires `--foreground`. `move`, `drag`, and `click --long-press` manipulate shared physical pointer state, so they also require explicit `--foreground` consent. Their Space/focus modifiers are only valid with that foreground mode; there is no misleading `--no-auto-focus` escape hatch.
 
 Application menu list/click, dialog list, dialog button click, normal dialog dismissal, window close, and exact minimized-window restore also default to background Accessibility actions. Restore changes only the retained window's `AXMinimized` state. Dialog list never focuses. Dialog keyboard/file flows, forced Escape dismissal, coordinate fallback, and window-close Cmd-W fallback require an explicit `--foreground` (or `foreground: true` in MCP) so these global actions cannot interrupt an unrelated foreground app by accident.
 
@@ -59,7 +59,7 @@ peekaboo type "github.com/openclaw/Peekaboo" --app Safari --foreground && peekab
 | [click](commands/click.md) | mouse clicks, double/triple, right/middle, hold |
 | [type](commands/type.md) | typing strings into targeted fields |
 | [press](commands/press.md) | explicit-foreground individual keys and xdotool-style raw chords |
-| [scroll](commands/scroll.md) | background AX scrolling on a target, or explicit foreground wheel input |
+| [scroll](commands/scroll.md) | background AX/exact-window scrolling on a target, or explicit foreground wheel input |
 | [drag](commands/drag.md) | press, move, release — files, sliders, selections |
 | [move](commands/move.md) | warp the mouse without clicking |
 | [set-value](commands/set-value.md) | write to text fields without typing |
@@ -107,7 +107,7 @@ Three primitives, four lines. The agent does the same thing under the hood — i
 - Always run [`peekaboo see`](commands/see.md) when an element is unreachable. The AX tree refreshes after focus changes; capture again if a click fails.
 - Use [focus](focus.md) and [application-resolving](application-resolving.md) for tricky cases (multiple windows, helper apps, processes that hide on activation).
 - Use `/bin/sleep` between shell-composed actions when a target genuinely needs settling time.
-- Prefer background click, semantic text/value actions, menus, and targeted AX scrolling for routine app-specific input.
+- Prefer background click, semantic text/value actions, menus, and targeted background scrolling for routine app-specific input.
 - Add `--foreground` only when an app needs a focused key window, Space switch, or foreground mouse event.
 
 ## Going further

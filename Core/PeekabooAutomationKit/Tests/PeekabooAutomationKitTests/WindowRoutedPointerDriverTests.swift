@@ -21,6 +21,110 @@ struct WindowRoutedPointerDriverTests {
 
     @Test
     @MainActor
+    func `background wheel stamps exact route without pointer primer`() async throws {
+        var directions: [PeekabooFoundation.ScrollDirection] = []
+        var windowPoints: [CGPoint] = []
+        var publicEvents: [CGEvent] = []
+        var clickEventsConstructed = 0
+        var validations = 0
+        let receipt = Self.receipt()
+        let driver = WindowRoutedPointerDriver(
+            hasPostEventAccess: { true },
+            resolveRoute: { _, _, _ in receipt },
+            routeIsCurrent: { _ in validations += 1; return true },
+            makeEvent: { _, _ in clickEventsConstructed += 1; return nil },
+            makeScrollEvent: { direction, point in
+                directions.append(direction)
+                let event = CGEvent(
+                    scrollWheelEvent2Source: nil,
+                    units: .line,
+                    wheelCount: 2,
+                    wheel1: -1,
+                    wheel2: 0,
+                    wheel3: 0)
+                event?.location = point
+                return event
+            },
+            stampWindowLocation: { _, point in windowPoints.append(point); return true },
+            postSkyLight: { _, _ in true },
+            postPublic: { event, _ in publicEvents.append(event) },
+            resolveTransport: { _ in .publicCGEvent },
+            sleep: { _ in },
+            clickGroupIdentifier: { 992 })
+
+        let outcome = try await driver.scroll(
+            at: receipt.screenPoint,
+            direction: .down,
+            ticks: 3,
+            targetProcessIdentifier: receipt.identity.ownerProcessIdentifier,
+            targetWindowID: CGWindowID(receipt.identity.windowID),
+            expectedWindowIdentity: receipt.identity,
+            expectedWindowBounds: receipt.bounds)
+
+        #expect(outcome.state == .dispatchedUnverified)
+        #expect(outcome.delivery == .init(mechanism: .windowTargetedEvents, mode: .background))
+        #expect(outcome.dispatchState.unitCount?.rawValue == 3)
+        #expect(outcome.retrySafety == .unsafe)
+        #expect(directions == [.down, .down, .down])
+        #expect(windowPoints == Array(repeating: receipt.windowPoint, count: 3))
+        #expect(clickEventsConstructed == 0)
+        #expect(publicEvents.count == 3)
+        #expect(validations == 4)
+        for event in publicEvents {
+            #expect(event.getIntegerValueField(.eventTargetUnixProcessID) == 42)
+            #expect(try event.getIntegerValueField(#require(CGEventField(rawValue: 51))) == 7)
+            #expect(try event.getIntegerValueField(#require(CGEventField(rawValue: 58))) == 992)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `background wheel route drift after dispatch is retry unsafe`() async {
+        var validations = 0
+        var posts = 0
+        let receipt = Self.receipt()
+        let driver = WindowRoutedPointerDriver(
+            hasPostEventAccess: { true },
+            resolveRoute: { _, _, _ in receipt },
+            routeIsCurrent: { _ in validations += 1; return validations == 1 },
+            makeScrollEvent: { _, _ in
+                CGEvent(
+                    scrollWheelEvent2Source: nil,
+                    units: .line,
+                    wheelCount: 1,
+                    wheel1: -1,
+                    wheel2: 0,
+                    wheel3: 0)
+            },
+            stampWindowLocation: { _, _ in true },
+            postSkyLight: { _, _ in true },
+            postPublic: { _, _ in posts += 1 },
+            resolveTransport: { _ in .publicCGEvent },
+            sleep: { _ in })
+
+        do {
+            _ = try await driver.scroll(
+                at: receipt.screenPoint,
+                direction: .down,
+                ticks: 3,
+                targetProcessIdentifier: receipt.identity.ownerProcessIdentifier,
+                targetWindowID: CGWindowID(receipt.identity.windowID),
+                expectedWindowIdentity: receipt.identity,
+                expectedWindowBounds: receipt.bounds)
+            Issue.record("Expected post-dispatch route drift")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.dispatchState.unitCount?.rawValue == 1)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.dispatchState.mutationDispatched)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(posts == 1)
+        #expect(validations == 2)
+    }
+
+    @Test
+    @MainActor
     func `right click stamps exact window route and reports unverifiable dispatch`() async throws {
         var specifications: [WindowRoutedPointerDriver.EventSpecification] = []
         var windowPoints: [CGPoint] = []

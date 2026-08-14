@@ -18,9 +18,10 @@ app/window as the sentinel. It explicitly foreground-launches the controlled fix
 and verifies that exact sentinel window. The monitored phase never activates Calculator or restores a stale foreground
 app after the run. It then exercises fresh, exact PID/window snapshots through
 `see` (including AX-only and screenshot-only modes), `capture live`, click by ID and query, `type`, raw-press refusal, `paste`,
-`set-value`, `action`, and Accessibility-only targeted scroll. Stale snapshots and unsupported named AX actions must
-fail nonzero instead of falling back to foreground synthesis. Targeted scroll must report confirmed Accessibility
-delivery and produce an independent, PID-scoped Playground offset change.
+`set-value`, `action`, and targeted background scroll. Stale snapshots and unsupported named AX actions must
+fail nonzero instead of falling back to foreground synthesis. Standard targeted scroll must report Accessibility
+delivery and produce an independent, PID-scoped Playground offset change; controlled WebKit fixtures may instead
+report exact-window routed, unverifiable delivery and must prove the offset independently before any retry.
 The monitored lifecycle phase also launches distinct TextEdit processes with exact window receipts, establishes a
 non-maximized exact frame, then maximizes and closes that background window. Quit accepts exactly two tuples: confirmed
 success with the target process gone, or `suspected_noop`/`INTERACTION_FAILED` with that target still alive. The harness

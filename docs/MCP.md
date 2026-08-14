@@ -236,7 +236,7 @@ count, `characters_typed` reports that lower bound. Rich/binary and current-clip
 exact-window capability before clipboard mutation or Cmd+V dispatch, then return the normal retry-unsafe
 may-have-pasted result because macOS does not acknowledge receiver consumption.
 
-Pointer tools use an explicit interruption policy. `scroll` is background-safe only when `on` identifies an Accessibility-scrollable element; it never falls back to the shared cursor. Set `foreground: true` for targetless, smooth, or delayed scrolling. `move` and `drag` always manipulate the shared physical cursor, require `foreground: true`, and abort if a requested target cannot be focused. MCP schemas intentionally omit background/auto-focus fields for those global pointer tools.
+Pointer tools use an explicit interruption policy. `scroll` is background-safe only when `on` identifies an Accessibility-scrollable element or a pixel-backed opaque group in a fresh exact-window snapshot of a visible WebKit-linked app. The latter uses PID-routed wheel events, reports an unverifiable retry-unsafe effect, and refuses Electron/Chromium/Catalyst or stale targets instead of falling back to the shared cursor. Set `foreground: true` for targetless, smooth, or delayed scrolling. `move` and `drag` always manipulate the shared physical cursor, require `foreground: true`, and abort if a requested target cannot be focused. MCP schemas intentionally omit background/auto-focus fields for those global pointer tools.
 
 ```json
 {

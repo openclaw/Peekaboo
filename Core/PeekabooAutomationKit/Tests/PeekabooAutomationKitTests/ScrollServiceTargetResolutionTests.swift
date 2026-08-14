@@ -56,6 +56,121 @@ struct ScrollServiceTargetResolutionTests {
 
     @Test
     @MainActor
+    func `unsupported AX group uses exact WebKit wheel route without global synthesis`() async throws {
+        let laneRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("web-scroll-lane-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: laneRoot) }
+        let element = DetectedElement(
+            id: "S1",
+            type: .group,
+            label: "Web content",
+            bounds: CGRect(x: 20, y: 30, width: 300, height: 400),
+            attributes: ["role": "AXGroup"])
+        let detectionResult = Self.exactDetectionResult(element: element)
+        let identity = try #require(detectionResult.metadata.windowContext?.windowMutationIdentity)
+        let bounds = try #require(detectionResult.metadata.windowContext?.windowBounds)
+        let point = CGPoint(x: element.bounds.midX, y: element.bounds.midY)
+        var posted = 0
+        let routedDriver = WindowRoutedPointerDriver(
+            hasPostEventAccess: { true },
+            resolveRoute: { _, _, _ in .init(identity: identity, bounds: bounds, screenPoint: point) },
+            routeIsCurrent: { _ in true },
+            makeScrollEvent: { _, _ in
+                CGEvent(
+                    scrollWheelEvent2Source: nil,
+                    units: .line,
+                    wheelCount: 1,
+                    wheel1: -1,
+                    wheel2: 0,
+                    wheel3: 0)
+            },
+            stampWindowLocation: { _, _ in true },
+            postSkyLight: { _, _ in true },
+            postPublic: { _, _ in posted += 1 },
+            resolveTransport: { _ in .publicCGEvent },
+            sleep: { _ in })
+        let action = ScrollRecordingActionInputDriver(scrollError: .unsupported(.actionUnsupported))
+        let synthetic = ScrollRecordingSyntheticInputDriver()
+        let service = ScrollService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            actionInputDriver: action,
+            syntheticInputDriver: synthetic,
+            automationElementResolver: ScrollFixedAutomationElementResolver(),
+            windowRoutedPointerDriver: routedDriver,
+            backgroundWheelCapability: { _ in true },
+            exactWindowIdentityValidator: { _, _ in true },
+            processStartIdentityProvider: { _ in 11 },
+            desktopOperationExecutor: DesktopOperationExecutor(
+                laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: laneRoot)))
+
+        let result = try await service.scroll(ScrollRequest(
+            direction: .down,
+            amount: 2,
+            target: "S1",
+            snapshotId: "snapshot"))
+
+        #expect(result.path == .action)
+        #expect(result.actionName == "WindowRoutedWheel")
+        #expect(result.outcome.state == .dispatchedUnverified)
+        #expect(result.outcome.delivery == .init(mechanism: .windowTargetedEvents, mode: .background))
+        #expect(result.outcome.dispatchState.unitCount?.rawValue == 2)
+        #expect(result.outcome.retrySafety == .unsafe)
+        #expect(posted == 2)
+        #expect(synthetic.events.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `unsupported AX group refuses when application lacks WebKit capability`() async {
+        let laneRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("web-scroll-refusal-lane-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: laneRoot) }
+        let element = DetectedElement(
+            id: "S1",
+            type: .group,
+            label: "Opaque panel",
+            bounds: CGRect(x: 20, y: 30, width: 300, height: 400),
+            attributes: ["role": "AXGroup"])
+        let action = ScrollRecordingActionInputDriver(scrollError: .unsupported(.actionUnsupported))
+        let service = ScrollService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: Self.exactDetectionResult(element: element)),
+            actionInputDriver: action,
+            automationElementResolver: ScrollFixedAutomationElementResolver(),
+            backgroundWheelCapability: { _ in false },
+            exactWindowIdentityValidator: { _, _ in true },
+            processStartIdentityProvider: { _ in 11 },
+            desktopOperationExecutor: DesktopOperationExecutor(
+                laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: laneRoot)))
+
+        do {
+            _ = try await service.scroll(Self.backgroundRequest())
+            Issue.record("Expected foreground-required refusal")
+        } catch let error as PeekabooError {
+            #expect(error.localizedDescription.contains("foreground"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(action.scrollCalls.count == 1)
+    }
+
+    @Test
+    func `window-routed wheel requires pixel-backed container evidence`() {
+        let element = DetectedElement(
+            id: "S1",
+            type: .group,
+            label: "Web content",
+            bounds: CGRect(x: 20, y: 30, width: 300, height: 400),
+            attributes: ["role": "AXGroup"])
+
+        #expect(ScrollService.supportsWindowRoutedWheelTarget(element, screenshotPath: "/tmp/shot.png"))
+        #expect(!ScrollService.supportsWindowRoutedWheelTarget(element, screenshotPath: ""))
+        #expect(!ScrollService.supportsWindowRoutedWheelTarget(
+            DetectedElement(id: "B1", type: .button, label: "Button", bounds: element.bounds),
+            screenshotPath: "/tmp/shot.png"))
+    }
+
+    @Test
+    @MainActor
     func `action-first missing snapshot fails as stale instead of falling back`() async {
         let service = ScrollService(
             snapshotManager: InMemorySnapshotManager(),
@@ -456,9 +571,14 @@ private final class ScrollRecordingActionInputDriver: ActionInputDriving {
 
     private(set) var scrollCalls: [ScrollCall] = []
     private let afterScroll: @MainActor () -> Void
+    private let scrollError: ActionInputError?
 
-    init(afterScroll: @escaping @MainActor () -> Void = {}) {
+    init(
+        afterScroll: @escaping @MainActor () -> Void = {},
+        scrollError: ActionInputError? = nil)
+    {
         self.afterScroll = afterScroll
+        self.scrollError = scrollError
     }
 
     func tryClick(element _: AutomationElement) throws -> UIInputExecutionResult.Action {
@@ -478,6 +598,9 @@ private final class ScrollRecordingActionInputDriver: ActionInputDriving {
     {
         self.scrollCalls.append(.init(direction: direction, pages: pages))
         self.afterScroll()
+        if let scrollError {
+            throw scrollError
+        }
         return AutomationTestFixtures.uiActionReceipt(actionName: "AXScroll", elementRole: "AXScrollArea")
     }
 

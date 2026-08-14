@@ -32,6 +32,8 @@ public final class ScrollService {
     private let actionInputDriver: any ActionInputDriving
     private let syntheticInputDriver: any SyntheticInputDriving
     private let automationElementResolver: any AutomationElementResolving
+    private let windowRoutedPointerDriver: WindowRoutedPointerDriver
+    private let backgroundWheelCapability: @MainActor (pid_t) -> Bool
     private let exactWindowIdentityValidator: @Sendable (WindowMutationIdentity, CGRect) -> Bool
     private let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
     private let desktopOperationExecutor: DesktopOperationExecutor
@@ -58,6 +60,9 @@ public final class ScrollService {
         actionInputDriver: any ActionInputDriving = ActionInputDriver(),
         syntheticInputDriver: any SyntheticInputDriving = SyntheticInputDriver(),
         automationElementResolver: any AutomationElementResolving = AutomationElementResolver(),
+        windowRoutedPointerDriver: WindowRoutedPointerDriver = WindowRoutedPointerDriver(),
+        backgroundWheelCapability: @escaping @MainActor (pid_t) -> Bool =
+            WindowRoutedApplicationClassifier.supportsBackgroundWheelScroll,
         exactWindowIdentityValidator: @escaping @Sendable (WindowMutationIdentity, CGRect) -> Bool =
             SystemIdentityResolver.validateWindowMutationIdentity,
         processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? =
@@ -79,6 +84,8 @@ public final class ScrollService {
         self.actionInputDriver = actionInputDriver
         self.syntheticInputDriver = syntheticInputDriver
         self.automationElementResolver = automationElementResolver
+        self.windowRoutedPointerDriver = windowRoutedPointerDriver
+        self.backgroundWheelCapability = backgroundWheelCapability
         self.exactWindowIdentityValidator = exactWindowIdentityValidator
         self.processStartIdentityProvider = processStartIdentityProvider
         self.desktopOperationExecutor = desktopOperationExecutor
@@ -104,6 +111,7 @@ public final class ScrollService {
         self.logger.debug("\(description, privacy: .public)")
         var bundleIdentifier: String?
         var preparedElement: AutomationElement?
+        var preparedDetectedElement: DetectedElement?
         let strategy: UIInputStrategy = request.foreground ? .synthOnly : .actionOnly
         let captureReceipt: DesktopOperationPlan.CaptureReceipt
         if request.foreground {
@@ -149,7 +157,9 @@ public final class ScrollService {
                             receipt: captureReceipt,
                             processStartIdentityProvider: self.processStartIdentityProvider,
                             exactWindowIdentityValidator: self.exactWindowIdentityValidator)
-                        preparedElement = try self.resolveActionScrollElement(request, in: detectionResult)
+                        let preparedTarget = try self.resolveActionScrollTarget(request, in: detectionResult)
+                        preparedElement = preparedTarget.element
+                        preparedDetectedElement = preparedTarget.detected
                         bundleIdentifier = captureReceipt.bundleIdentifier
                     }
                     await lanePreparation()
@@ -175,10 +185,40 @@ public final class ScrollService {
                         receipt: captureReceipt,
                         processStartIdentityProvider: self.processStartIdentityProvider,
                         exactWindowIdentityValidator: self.exactWindowIdentityValidator)
-                    return try self.actionInputDriver.tryScroll(
-                        element: preparedElement,
-                        direction: request.direction,
-                        pages: Self.actionScrollPages(amount: request.amount, strategy: strategy))
+                    do {
+                        return try self.actionInputDriver.tryScroll(
+                            element: preparedElement,
+                            direction: request.direction,
+                            pages: Self.actionScrollPages(amount: request.amount, strategy: strategy))
+                    } catch let error as ActionInputError {
+                        guard case .unsupported = error,
+                              let preparedDetectedElement,
+                              let exactWindow = captureReceipt.exactWindow,
+                              Self.supportsWindowRoutedWheelTarget(
+                                  preparedDetectedElement,
+                                  screenshotPath: detectionResult.screenshotPath),
+                              self.backgroundWheelCapability(exactWindow.identity.ownerProcessIdentifier),
+                              let targetWindowID = CGWindowID(exactly: exactWindow.identity.windowID)
+                        else {
+                            throw error
+                        }
+                        let point = CGPoint(
+                            x: preparedDetectedElement.bounds.midX,
+                            y: preparedDetectedElement.bounds.midY)
+                        let outcome = try await self.windowRoutedPointerDriver.scroll(
+                            at: point,
+                            direction: request.direction,
+                            ticks: Self.actionScrollPages(amount: request.amount, strategy: strategy),
+                            targetProcessIdentifier: exactWindow.identity.ownerProcessIdentifier,
+                            targetWindowID: targetWindowID,
+                            expectedWindowIdentity: exactWindow.identity,
+                            expectedWindowBounds: exactWindow.bounds)
+                        return UIInputExecutionResult.Action(
+                            outcome: outcome,
+                            actionName: "WindowRoutedWheel",
+                            anchorPoint: point,
+                            elementRole: preparedElement.role)
+                    }
                 },
                 synthesis: DesktopOperationPlan.SynthesisRoute {
                     try await self.performSyntheticScroll(request)
@@ -229,9 +269,24 @@ public final class ScrollService {
             "Retry with foreground enabled to allow synthetic wheel events."
     }
 
-    private func resolveActionScrollElement(
+    nonisolated static func supportsWindowRoutedWheelTarget(
+        _ element: DetectedElement,
+        screenshotPath: String) -> Bool
+    {
+        guard !screenshotPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              element.bounds.width > 0,
+              element.bounds.height > 0,
+              element.isOCRSemanticEvidence == false
+        else {
+            return false
+        }
+        let role = element.attributes["role"]?.lowercased()
+        return element.type == .group || role == "axgroup" || role == "axwebarea"
+    }
+
+    private func resolveActionScrollTarget(
         _ request: ScrollRequest,
-        in detectionResult: ElementDetectionResult) throws -> AutomationElement
+        in detectionResult: ElementDetectionResult) throws -> (detected: DetectedElement, element: AutomationElement)
     {
         guard let target = request.target?.trimmingCharacters(in: .whitespacesAndNewlines),
               !target.isEmpty
@@ -250,7 +305,7 @@ public final class ScrollService {
             else {
                 throw ActionInputError.unsupported(.missingElement)
             }
-            return element
+            return (detected, element)
         }
         throw NotFoundError.element(target)
     }

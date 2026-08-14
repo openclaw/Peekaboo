@@ -51,6 +51,9 @@ struct WindowRoutedPointerDriver {
     typealias EventFactory = @MainActor (
         _ specification: EventSpecification,
         _ screenPoint: CGPoint) -> CGEvent?
+    typealias ScrollEventFactory = @MainActor (
+        _ direction: PeekabooFoundation.ScrollDirection,
+        _ screenPoint: CGPoint) -> CGEvent?
     typealias WindowLocationStamper = @MainActor (_ event: CGEvent, _ windowPoint: CGPoint) -> Bool
     typealias EventPoster = @MainActor (_ event: CGEvent, _ pid: pid_t) -> Void
     typealias SkyLightEventPoster = @MainActor (_ event: CGEvent, _ pid: pid_t) -> Bool
@@ -62,6 +65,7 @@ struct WindowRoutedPointerDriver {
     private let routeIsCurrent: RouteValidator
     private let processGenerationIsCurrent: ProcessGenerationValidator
     private let makeEvent: EventFactory
+    private let makeScrollEvent: ScrollEventFactory
     private let stampWindowLocation: WindowLocationStamper
     private let postSkyLight: SkyLightEventPoster
     private let postPublic: EventPoster
@@ -75,6 +79,7 @@ struct WindowRoutedPointerDriver {
         routeIsCurrent: @escaping RouteValidator = Self.validateLiveRoute,
         processGenerationIsCurrent: @escaping ProcessGenerationValidator = Self.validateLiveProcessGeneration,
         makeEvent: @escaping EventFactory = Self.makeCGEvent,
+        makeScrollEvent: @escaping ScrollEventFactory = Self.makeCGScrollEvent,
         stampWindowLocation: @escaping WindowLocationStamper = WindowRoutedPointerSPI.setWindowLocation,
         postSkyLight: @escaping SkyLightEventPoster = WindowRoutedPointerSPI.postToPid,
         postPublic: @escaping EventPoster = { event, pid in event.postToPid(pid) },
@@ -96,6 +101,7 @@ struct WindowRoutedPointerDriver {
         self.routeIsCurrent = routeIsCurrent
         self.processGenerationIsCurrent = processGenerationIsCurrent
         self.makeEvent = makeEvent
+        self.makeScrollEvent = makeScrollEvent
         self.stampWindowLocation = stampWindowLocation
         self.postSkyLight = postSkyLight
         self.postPublic = postPublic
@@ -218,6 +224,135 @@ struct WindowRoutedPointerDriver {
         return outcome
     }
 
+    /// Posts line-based wheel events to one exact visible background window without cursor movement.
+    ///
+    /// This is intentionally lower-level than an Accessibility scroll action. Callers must first
+    /// capability-gate the target application and retain a fresh exact-window capture receipt.
+    func scroll(
+        at point: CGPoint,
+        direction: PeekabooFoundation.ScrollDirection,
+        ticks: Int,
+        targetProcessIdentifier: pid_t,
+        targetWindowID: CGWindowID,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws -> DesktopActionOutcome
+    {
+        guard ticks > 0 else {
+            throw PeekabooError.invalidInput("Window-routed scroll requires at least one tick")
+        }
+        guard self.hasPostEventAccess() else {
+            throw PeekabooError.permissionDeniedEventSynthesizing
+        }
+        try Task.checkCancellation()
+
+        let receipt = try self.resolveRoute(targetProcessIdentifier, targetWindowID, point)
+        guard receipt.identity == expectedWindowIdentity,
+              receipt.bounds == expectedWindowBounds,
+              receipt.bounds.contains(point)
+        else {
+            throw PeekabooError.snapshotStale(
+                "Resolved background wheel route does not match the captured PID, window, bounds, or point")
+        }
+
+        let transport = self.resolveTransport(targetProcessIdentifier)
+        var postedEventCount = 0
+        for tick in 0..<ticks {
+            if Task.isCancelled {
+                if postedEventCount == 0 {
+                    throw CancellationError()
+                }
+                throw Self.scrollDispatchFailure(
+                    eventCount: postedEventCount,
+                    cause: "The request was cancelled after routed wheel events were emitted")
+            }
+            guard self.routeIsCurrent(receipt) else {
+                if postedEventCount == 0 {
+                    throw PeekabooError.snapshotStale(
+                        "Background wheel target changed owner, process generation, window identity, or bounds")
+                }
+                throw Self.scrollDispatchFailure(
+                    eventCount: postedEventCount,
+                    cause: "The exact background wheel route changed during delivery")
+            }
+            guard let event = self.makeScrollEvent(direction, receipt.screenPoint) else {
+                if postedEventCount == 0 {
+                    throw PeekabooError.operationError(message: "Failed to create a window-routed wheel event")
+                }
+                throw Self.scrollDispatchFailure(
+                    eventCount: postedEventCount,
+                    cause: "The next window-routed wheel event could not be constructed")
+            }
+            guard self.stampWindowLocation(event, receipt.windowPoint) else {
+                if postedEventCount == 0 {
+                    throw PeekabooError.serviceUnavailable(
+                        "Window-local wheel routing is unavailable on this macOS build; no scroll was dispatched")
+                }
+                throw Self.scrollDispatchFailure(
+                    eventCount: postedEventCount,
+                    cause: "The next wheel event could not be stamped with its window-local point")
+            }
+
+            Self.stampRoutingFields(
+                on: event,
+                receipt: receipt,
+                clickGroup: self.clickGroupIdentifier())
+            try self.postScrollEvent(
+                event,
+                receipt: receipt,
+                transport: transport,
+                postedEventCount: &postedEventCount)
+            if tick + 1 < ticks {
+                await self.sleep(.milliseconds(12))
+            }
+        }
+
+        guard self.routeIsCurrent(receipt) else {
+            throw Self.scrollDispatchFailure(
+                eventCount: postedEventCount,
+                cause: "Window-routed wheel events were posted, but final target validation failed")
+        }
+        guard let unitCount = DesktopActionOutcome.DispatchUnitCount(postedEventCount) else {
+            throw PeekabooError.operationError(
+                message: "Window-routed wheel delivery completed without posting an event")
+        }
+        return .dispatchedUnverified(
+            delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: unitCount)
+    }
+
+    private func postScrollEvent(
+        _ event: CGEvent,
+        receipt: RouteReceipt,
+        transport: WindowRoutedPointerTransport,
+        postedEventCount: inout Int) throws
+    {
+        switch transport {
+        case .publicCGEvent:
+            self.postPublic(event, receipt.identity.ownerProcessIdentifier)
+        case .skyLight:
+            guard self.postSkyLight(event, receipt.identity.ownerProcessIdentifier) else {
+                let cause = "SkyLight PID wheel routing is unavailable; no global fallback was used"
+                if postedEventCount == 0 {
+                    throw PeekabooError.serviceUnavailable(cause)
+                }
+                throw Self.scrollDispatchFailure(eventCount: postedEventCount, cause: cause)
+            }
+        }
+        postedEventCount += 1
+    }
+
+    private static func scrollDispatchFailure(eventCount: Int, cause: String) -> DesktopActionFailure {
+        let unitCount = DesktopActionOutcome.DispatchUnitCount(eventCount)
+        return .dispatchedUnverified(
+            delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: unitCount,
+            message: "Window-routed wheel outcome is indeterminate; do not retry blindly",
+            hint: "Observe the target before taking another scroll action.",
+            causeDescription: cause)
+    }
+
     private func post(
         _ specification: EventSpecification,
         receipt: RouteReceipt,
@@ -261,16 +396,10 @@ struct WindowRoutedPointerDriver {
                 "Window-local pointer routing is unavailable on this macOS build; no click was dispatched")
         }
 
-        let targetPID = Int64(receipt.identity.ownerProcessIdentifier)
-        let windowID = Int64(receipt.identity.windowID)
-        event.setIntegerValueField(.eventTargetUnixProcessID, value: targetPID)
+        Self.stampRoutingFields(on: event, receipt: receipt, clickGroup: clickGroup)
         Self.setIntegerField(1, clickState: specification.clickState, on: event)
         Self.setIntegerField(3, clickState: specification.buttonNumber, on: event)
         Self.setIntegerField(7, clickState: 3, on: event)
-        Self.setIntegerField(51, clickState: windowID, on: event)
-        Self.setIntegerField(58, clickState: clickGroup, on: event)
-        Self.setIntegerField(91, clickState: windowID, on: event)
-        Self.setIntegerField(92, clickState: windowID, on: event)
 
         // A logical event is posted exactly once. AppKit consumes the public PID route while
         // Chromium/Catalyst require SkyLight's activity-monitor path; broadcasting to both makes
@@ -369,6 +498,20 @@ struct WindowRoutedPointerDriver {
         event.setIntegerValueField(field, value: value)
     }
 
+    private static func stampRoutingFields(
+        on event: CGEvent,
+        receipt: RouteReceipt,
+        clickGroup: Int64)
+    {
+        let targetPID = Int64(receipt.identity.ownerProcessIdentifier)
+        let windowID = Int64(receipt.identity.windowID)
+        event.setIntegerValueField(.eventTargetUnixProcessID, value: targetPID)
+        Self.setIntegerField(51, clickState: windowID, on: event)
+        Self.setIntegerField(58, clickState: clickGroup, on: event)
+        Self.setIntegerField(91, clickState: windowID, on: event)
+        Self.setIntegerField(92, clickState: windowID, on: event)
+    }
+
     private static func checkCancellation(afterPosting eventCount: Int) throws {
         guard Task.isCancelled else { return }
         guard eventCount > 0 else { throw CancellationError() }
@@ -387,6 +530,30 @@ struct WindowRoutedPointerDriver {
             mouseType: specification.type,
             mouseCursorPosition: screenPoint,
             mouseButton: specification.button)
+    }
+
+    private static func makeCGScrollEvent(
+        _ direction: PeekabooFoundation.ScrollDirection,
+        _ screenPoint: CGPoint) -> CGEvent?
+    {
+        let (vertical, horizontal): (Int32, Int32) = switch direction {
+        case .up: (1, 0)
+        case .down: (-1, 0)
+        case .left: (0, 1)
+        case .right: (0, -1)
+        }
+        guard let event = CGEvent(
+            scrollWheelEvent2Source: CGEventSource(stateID: .hidSystemState),
+            units: .line,
+            wheelCount: 2,
+            wheel1: vertical,
+            wheel2: horizontal,
+            wheel3: 0)
+        else {
+            return nil
+        }
+        event.location = screenPoint
+        return event
     }
 
     private static func resolveLiveRoute(
@@ -449,32 +616,12 @@ struct WindowRoutedPointerDriver {
     }
 
     private static func resolveLiveTransport(_ processIdentifier: pid_t) -> WindowRoutedPointerTransport {
-        guard let application = NSRunningApplication(processIdentifier: processIdentifier) else {
-            return .publicCGEvent
+        switch WindowRoutedApplicationClassifier.kind(processIdentifier: processIdentifier) {
+        case .catalyst, .chromium, .electron:
+            .skyLight
+        case .appKit, .webKit:
+            .publicCGEvent
         }
-        let bundleIdentifier = application.bundleIdentifier?.lowercased() ?? ""
-        let chromiumPrefixes = [
-            "com.google.chrome",
-            "org.chromium.chromium",
-            "com.microsoft.edgemac",
-            "com.brave.browser",
-            "com.vivaldi.vivaldi",
-            "company.thebrowser.browser",
-        ]
-        if chromiumPrefixes.contains(where: bundleIdentifier.hasPrefix) {
-            return .skyLight
-        }
-
-        guard let info = application.bundleURL
-            .flatMap(Bundle.init(url:))?
-            .infoDictionary
-        else {
-            return .publicCGEvent
-        }
-        let principalClass = (info["NSPrincipalClass"] as? String)?.lowercased() ?? ""
-        let isElectron = principalClass.contains("atomapplication") || info["ElectronAsarIntegrity"] != nil
-        let isCatalyst = info["UIApplicationSceneManifest"] != nil || info["UIDeviceFamily"] != nil
-        return isElectron || isCatalyst ? .skyLight : .publicCGEvent
     }
 }
 

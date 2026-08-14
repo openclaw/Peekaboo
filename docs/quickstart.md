@@ -80,7 +80,7 @@ the target app requires focused synthetic input. See [automation.md](automation.
 
 Targeted click and type use background delivery by default, so Safari can receive them without becoming frontmost. Raw `press` requires explicit `--foreground`; prefer semantic actions for background confirmation when one exists.
 
-Targeted `scroll --on <id>` is also background-safe through Accessibility. Targetless/smooth scroll, `move`, and `drag` use the shared physical cursor and require explicit `--foreground`.
+Targeted `scroll --on <id>` is background-safe through Accessibility or, for a fresh exact-window pixel snapshot of a visible WebKit surface, PID-routed wheel events. The latter reports an unverifiable effect and must be observed before retry. Targetless/smooth scroll, `move`, and `drag` use the shared physical cursor and require explicit `--foreground`.
 
 ## 5. Run an agent
 

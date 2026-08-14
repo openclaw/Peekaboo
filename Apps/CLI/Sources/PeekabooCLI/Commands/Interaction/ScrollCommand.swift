@@ -161,7 +161,15 @@ RuntimeBackedCommand {
             }
 
         } catch {
-            self.handleError(error)
+            // ScrollService converts every post-dispatch identity drift into DesktopActionFailure.
+            // A raw stale-snapshot error therefore proves that no scroll unit was emitted.
+            let presentedError: any Error = if let peekabooError = error as? PeekabooError,
+                                               case .snapshotStale = peekabooError {
+                self.preDispatchActionError(for: peekabooError, reason: .targetUnavailable)
+            } else {
+                error
+            }
+            self.handleError(presentedError)
             throw ExitCode.failure
         }
     }
@@ -239,9 +247,9 @@ extension ScrollCommand: ParsableCommand {
                 commandName: "scroll",
                 abstract: "Scroll the mouse wheel in any direction",
                 discussion: """
-                    The 'scroll' command scrolls through Accessibility by default so the target
-                    application stays in the background. Add --foreground to focus the target and
-                    allow synthetic mouse-wheel events.
+                    The 'scroll' command keeps a fresh target in the background. It prefers
+                    Accessibility and can use exact-window wheel routing for opaque visible WebKit
+                    surfaces. Add --foreground to focus the target and use the physical pointer.
 
                     EXAMPLES:
                       peekaboo scroll --direction up --amount 10 --on element_42
