@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Keep normal exact-window Finder `see` usable when the window exposes no semantic AX value, without weakening hard Accessibility-read failures or the typed incomplete-evidence refusal.
 - Refuse exact-window combined `see` results when Accessibility returns no usable elements, including legacy Bridge responses that omit the incomplete-read marker, while preserving the requested raster and explicit `--no-elements` screenshot-only success.
-- Validate `click` and physical-cursor `move` coordinates before runtime-host selection so malformed requests cannot be masked by Bridge availability or trigger unnecessary host startup.
+- Validate request-only `click`, `move`, `type`, and `drag` arguments before runtime-host selection so malformed requests cannot be masked by Bridge availability or trigger unnecessary host startup.
 - Reject unknown and non-object MCP `tools/call` arguments as JSON-RPC invalid params before policy checks or tool dispatch, recursively honoring the closed schemas advertised by `tools/list`.
 - Keep browser CLI calls on one current-build reusable daemon, probe Chrome before reporting connected, require explicit reconnect instead of falling back to another same-channel profile after connection loss, and bind browser typing/key presses to an exact uid in one host-owned sequence.
 - Fail browser uploads closed through a private per-session Chrome MCP temporary root, race-safe regular-file staging, a 100 MiB bound, and child-before-cleanup cancellation without unrestricted path access.

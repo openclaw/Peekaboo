@@ -39,6 +39,17 @@ struct PreRuntimeSemanticValidationTests {
             ],
             expectedMessage: "Invalid coordinates format. Use: x,y"
         ),
+        Case(
+            arguments: ["peekaboo", "type", "--profile", "human", "--no-remote", "--json"],
+            expectedMessage: "No input specified. Provide text or use --clear."
+        ),
+        Case(
+            arguments: [
+                "peekaboo", "drag", "--from", "source_id", "--to", "target_id", "--button", "middle",
+                "--foreground", "--no-remote", "--json",
+            ],
+            expectedMessage: "--button must be either 'left' or 'right'"
+        ),
     ])
     func `request semantics validate through the pre-runtime hook`(_ testCase: Case) throws {
         let resolved = try CommanderRuntimeRouter.resolve(argv: testCase.arguments)
@@ -69,6 +80,22 @@ struct PreRuntimeSemanticValidationTests {
             try validator.validateBeforeRuntime()
         }
         #expect(error?.localizedDescription == "Invalid coordinates format. Use: x,y")
+    }
+
+    @Test
+    func `drag element selectors remain valid before runtime selection`() throws {
+        let resolved = try CommanderRuntimeRouter.resolve(argv: [
+            "peekaboo", "drag", "--from", "row_1", "--to", "row_5", "--foreground", "--json",
+        ])
+        let command = try CommanderCLIBinder.instantiateCommand(
+            type: resolved.type,
+            parsedValues: resolved.parsedValues
+        )
+        let validator = try #require(command as? any PreRuntimeValidatingCommand)
+
+        #expect(throws: Never.self) {
+            try validator.validateBeforeRuntime()
+        }
     }
 
     @Test

@@ -15,7 +15,7 @@
 - Refuse exact-window and dialog Accessibility reads when macOS cannot arm their per-element messaging deadline, and surface timeout reset failures instead of continuing unbounded.
 - Treat Finder's role-inapplicable `AXWindow` value failure as sparse descriptor data so normal exact-window combined observations retain usable Accessibility elements, while every other hard AX read and genuinely incomplete window remains fail-closed.
 - Refuse exact-window combined observations when Accessibility returns no usable elements, preserving the requested raster and retry-safe `ACCESSIBILITY_INCOMPLETE` semantics across current and legacy Bridge hosts while explicit screenshot-only capture remains successful.
-- Validate `click` and physical-cursor `move` coordinates before runtime-host selection so malformed requests cannot be masked by Bridge availability or trigger unnecessary host startup.
+- Validate request-only `click`, `move`, `type`, and `drag` arguments before runtime-host selection so malformed requests cannot be masked by Bridge availability or trigger unnecessary host startup.
 - Add Bridge protocol 1.26 explicit-reference-only coordinate receipts for exact-window `see --no-elements`, making the documented background coordinate-click workflow consumable without Accessibility traversal or replacing the prior implicit element snapshot while older hosts fail before receipt allocation.
 - Honor cancellation while draining and reaping MCP ShellTool subprocesses so canceled commands cannot linger behind pipe cleanup. Thanks @SebTardif for #454.
 - Reject unknown and non-object MCP `tools/call` arguments as JSON-RPC invalid params before policy checks or tool dispatch, recursively honoring the closed schemas advertised by `tools/list`.

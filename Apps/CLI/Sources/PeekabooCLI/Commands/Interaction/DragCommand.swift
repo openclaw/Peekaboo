@@ -260,6 +260,13 @@ struct DragCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
 
 // MARK: - Conformances
 
+extension DragCommand: PreRuntimeValidatingCommand {
+    func validateBeforeRuntime() throws {
+        var command = self
+        try command.validateInputs()
+    }
+}
+
 @MainActor
 extension DragCommand: ParsableCommand {
     nonisolated(unsafe) static var commandDescription: CommandDescription {

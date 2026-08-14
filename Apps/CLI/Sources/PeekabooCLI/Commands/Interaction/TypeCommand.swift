@@ -405,6 +405,14 @@ extension TypeCommand: CommanderBindableCommand {
 
 // MARK: - Conformances
 
+extension TypeCommand: PreRuntimeValidatingCommand {
+    func validateBeforeRuntime() throws {
+        var command = self
+        try command.validate()
+        _ = try command.buildActions()
+    }
+}
+
 @MainActor
 extension TypeCommand: ParsableCommand {
     nonisolated(unsafe) static var commandDescription: CommandDescription {
