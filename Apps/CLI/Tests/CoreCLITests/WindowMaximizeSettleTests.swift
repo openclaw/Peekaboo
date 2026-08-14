@@ -212,6 +212,27 @@ struct WindowMaximizeSettleTests {
         #expect(outcome.alreadyMaximized)
     }
 
+    @Test func `maximize output publishes only a service-produced action receipt`() {
+        let serviceOutcome = DesktopActionOutcome.confirmedChange(
+            delivery: .init(mechanism: .accessibilityValue, mode: .background),
+            unitCount: .one
+        )
+        let actionResult = DesktopActionResult<Void>(outcome: serviceOutcome)
+
+        #expect(reportedMaximizeOutcome(
+            actionResult: actionResult,
+            alreadyMaximized: false
+        ) == serviceOutcome)
+        #expect(reportedMaximizeOutcome(
+            actionResult: actionResult,
+            alreadyMaximized: true
+        ) == nil)
+        #expect(reportedMaximizeOutcome(
+            actionResult: nil,
+            alreadyMaximized: false
+        ) == nil)
+    }
+
     @Test func `maximize twice in a row leaves the window maximized`() async throws {
         let window = FakeMaximizeWindow(
             isMaximized: false,

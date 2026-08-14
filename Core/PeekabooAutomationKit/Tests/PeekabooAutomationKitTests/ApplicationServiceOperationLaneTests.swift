@@ -20,6 +20,7 @@ struct ApplicationServiceOperationLaneTests {
             processStartIdentity: 70)
         let ownerStarted = ApplicationOperationLatch()
         let ownerRelease = ApplicationOperationLatch()
+        let unrelatedStarted = ApplicationOperationLatch()
         let currentGeneration = ApplicationOperationGenerationBox(70)
         var terminationCalls = 0
         let service = ApplicationService(
@@ -45,14 +46,79 @@ struct ApplicationServiceOperationLaneTests {
         }
         try await Task.sleep(for: .milliseconds(50))
         #expect(terminationCalls == 0)
+        let unrelated = Task {
+            try await coordinator.run(
+                scope: .process(ApplicationProcessIdentity(
+                    processIdentifier: runningApplication.processIdentifier + 1,
+                    processStartIdentity: 700)),
+                access: .write)
+            {
+                await unrelatedStarted.open()
+            }
+        }
+        #expect(await unrelatedStarted.opensWithin(.milliseconds(100)))
         currentGeneration.value = 71
         await ownerRelease.open()
 
         try await owner.value
+        try await unrelated.value
         await #expect(throws: PeekabooError.self) {
             try await quit.value
         }
         #expect(terminationCalls == 0)
+    }
+
+    @Test
+    @MainActor
+    func `Visibility mutation leaves unrelated process lanes available`() async throws {
+        let runningApplication = try #require(NSWorkspace.shared.runningApplications.first {
+            $0.processIdentifier > 0 && !$0.isTerminated
+        })
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-visibility-lane-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = DesktopOperationLaneCoordinator(coordinationRootURL: root)
+        let visibilitySleepStarted = ApplicationOperationLatch()
+        let visibilitySleepRelease = ApplicationOperationLatch()
+        let unrelatedStarted = ApplicationOperationLatch()
+        let processIdentity = ApplicationProcessIdentity(
+            processIdentifier: runningApplication.processIdentifier,
+            processStartIdentity: 80)
+        var isHidden = false
+        let service = ApplicationService(
+            operationLaneCoordinator: coordinator,
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            processStartIdentityProvider: { _ in processIdentity.processStartIdentity },
+            applicationHiddenProvider: { _ in isHidden },
+            applicationVisibilityHandler: { _, hidden in hidden },
+            applicationVisibilitySleepHandler: { _ in
+                await visibilitySleepStarted.open()
+                await visibilitySleepRelease.wait()
+                isHidden = true
+            },
+            applicationVisibilityTimeout: 1)
+
+        let visibility = Task { @MainActor in
+            try await service.hideApplicationActionResult(
+                identifier: "PID:\(runningApplication.processIdentifier)")
+        }
+        await visibilitySleepStarted.wait()
+        let unrelated = Task {
+            try await coordinator.run(
+                scope: .process(ApplicationProcessIdentity(
+                    processIdentifier: runningApplication.processIdentifier + 1,
+                    processStartIdentity: 800)),
+                access: .write)
+            {
+                await unrelatedStarted.open()
+            }
+        }
+
+        #expect(await unrelatedStarted.opensWithin(.milliseconds(100)))
+        await visibilitySleepRelease.open()
+        let result = try await visibility.value
+        try await unrelated.value
+        #expect(result.outcome?.state == .confirmedChange)
     }
 
     @Test

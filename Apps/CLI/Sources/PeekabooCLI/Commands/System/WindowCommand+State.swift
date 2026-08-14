@@ -276,7 +276,7 @@ extension WindowCommand {
                     convertAppKitFrameToTopLeft($0.visibleFrame, primaryDisplayHeight: primaryDisplayHeight)
                 }
                 self.resolvedRuntime.beginInteractionMutation()
-                var actionResult = DesktopActionResult<Void>(outcome: .confirmedNoChange())
+                var actionResult: DesktopActionResult<Void>?
                 let outcome = try await resolveIdempotentMaximize(
                     original: windowInfo,
                     screenVisibleFramesTopLeft: screenVisibleFramesTopLeft,
@@ -324,7 +324,14 @@ extension WindowCommand {
                 } else {
                     .confirmed
                 }
-                output(data, effect: effect, outcome: actionResult.outcome) {
+                output(
+                    data,
+                    effect: effect,
+                    outcome: reportedMaximizeOutcome(
+                        actionResult: actionResult,
+                        alreadyMaximized: outcome.alreadyMaximized
+                    )
+                ) {
                     let title = finalWindowInfo.title
                     if outcome.alreadyMaximized {
                         print("Window '\(title)' of \(appName) is already maximized")
@@ -342,6 +349,13 @@ extension WindowCommand {
             }
         }
     }
+}
+
+func reportedMaximizeOutcome(
+    actionResult: DesktopActionResult<Void>?,
+    alreadyMaximized: Bool
+) -> DesktopActionOutcome? {
+    alreadyMaximized ? nil : actionResult?.outcome
 }
 
 @MainActor

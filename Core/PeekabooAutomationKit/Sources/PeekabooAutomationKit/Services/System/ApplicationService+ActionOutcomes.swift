@@ -39,18 +39,20 @@ extension ApplicationService {
     public func quitApplicationActionResult(
         request: ApplicationQuitRequest) async throws -> DesktopActionResult<Bool>
     {
-        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
-            self.logger.info("Quitting application: \(request.identifier) (force: \(request.force))")
-            let app = try await self.findApplication(identifier: request.identifier)
-            let expectedIdentity: ApplicationProcessIdentity
-            if let requestedIdentity = request.expectedIdentity {
-                expectedIdentity = requestedIdentity
-            } else if let resolvedIdentity = app.processIdentity {
-                expectedIdentity = resolvedIdentity
-            } else {
-                throw PeekabooError.commandFailed(
-                    "Could not capture a stable process-generation identity for \(app.name)")
-            }
+        self.logger.info("Quitting application: \(request.identifier) (force: \(request.force))")
+        let app = try await self.findApplication(identifier: request.identifier)
+        let expectedIdentity: ApplicationProcessIdentity
+        if let requestedIdentity = request.expectedIdentity {
+            expectedIdentity = requestedIdentity
+        } else if let resolvedIdentity = app.processIdentity {
+            expectedIdentity = resolvedIdentity
+        } else {
+            throw PeekabooError.commandFailed(
+                "Could not capture a stable process-generation identity for \(app.name)")
+        }
+        try self.validateApplicationQuitIdentity(expectedIdentity, resolvedApplication: app)
+
+        return try await self.operationLaneCoordinator.run(scope: .process(expectedIdentity), access: .write) {
             try self.validateApplicationQuitIdentity(expectedIdentity, resolvedApplication: app)
 
             let attempt = try await self.quitApplicationWithOwnedLane(
@@ -143,12 +145,14 @@ extension ApplicationService {
         identifier: String,
         hidden requestedHiddenState: Bool) async throws -> DesktopActionResult<Void>
     {
-        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
-            let app = try await self.findApplication(identifier: identifier)
-            guard let processIdentity = app.processIdentity else {
-                throw PeekabooError.commandFailed(
-                    "Could not capture a stable process-generation identity for \(app.name)")
-            }
+        let app = try await self.findApplication(identifier: identifier)
+        guard let processIdentity = app.processIdentity else {
+            throw PeekabooError.commandFailed(
+                "Could not capture a stable process-generation identity for \(app.name)")
+        }
+        try self.validateApplicationQuitIdentity(processIdentity, resolvedApplication: app)
+
+        return try await self.operationLaneCoordinator.run(scope: .process(processIdentity), access: .write) {
             try self.validateApplicationQuitIdentity(processIdentity, resolvedApplication: app)
             guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier) else {
                 throw NotFoundError.application(identifier)
