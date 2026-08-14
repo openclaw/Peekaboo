@@ -186,6 +186,40 @@ struct RemoteCaptureGateOwnershipTests {
     }
 
     @Test
+    func `remote combined observation rejects legacy empty exact AX while screenshot only succeeds`() async throws {
+        let socketPath = "/tmp/peekaboo-remote-empty-evidence-\(UUID().uuidString).sock"
+        let observation = LegacyEmptyExactObservationService()
+        let server = self.makeROIServer(services: StubServices(desktopObservation: observation))
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 5)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let remote = RemoteDesktopObservationService(
+            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 5))
+
+        let error = await #expect(throws: PeekabooError.self) {
+            _ = try await remote.observe(DesktopObservationRequest(
+                target: .windowID(42),
+                detection: DesktopDetectionOptions(mode: .accessibility)))
+        }
+        guard case .accessibilityIncomplete? = error else {
+            Issue.record("Expected accessibilityIncomplete, got \(String(describing: error))")
+            return
+        }
+        #expect(error?.localizedDescription.contains("Exact window 42") == true)
+
+        let screenshotOnly = try await remote.observe(DesktopObservationRequest(
+            target: .windowID(42),
+            detection: DesktopDetectionOptions(mode: .none)))
+        #expect(screenshotOnly.elements == nil)
+        #expect(observation.requests.map(\.detection.mode) == [.accessibility, .none])
+        await host.stop()
+    }
+
+    @Test
     func `remote ROI rejects an exhausted overall deadline before transport`() async {
         let remote = RemoteDesktopObservationService(
             client: PeekabooBridgeClient(
@@ -284,6 +318,7 @@ struct RemoteCaptureGateOwnershipTests {
             target: .windowID(42),
             capture: DesktopCaptureOptions(
                 roi: CaptureRegionOfInterest(bounds: CGRect(x: 0, y: 0, width: 10, height: 10))),
+            detection: DesktopDetectionOptions(mode: .none),
             output: DesktopObservationOutputOptions(
                 path: outputURL.path,
                 saveRawScreenshot: true,
@@ -324,6 +359,7 @@ struct RemoteCaptureGateOwnershipTests {
             target: .windowID(42),
             capture: DesktopCaptureOptions(
                 roi: CaptureRegionOfInterest(bounds: CGRect(x: 0, y: 0, width: 10, height: 10))),
+            detection: DesktopDetectionOptions(mode: .none),
             output: DesktopObservationOutputOptions(
                 path: outputURL.path,
                 saveRawScreenshot: true))
@@ -361,6 +397,7 @@ struct RemoteCaptureGateOwnershipTests {
             target: .windowID(42),
             capture: DesktopCaptureOptions(
                 roi: CaptureRegionOfInterest(bounds: CGRect(x: 0, y: 0, width: 10, height: 10))),
+            detection: DesktopDetectionOptions(mode: .none),
             output: DesktopObservationOutputOptions(
                 path: outputURL.path,
                 saveRawScreenshot: true)))
@@ -397,6 +434,7 @@ struct RemoteCaptureGateOwnershipTests {
             target: .windowID(42),
             capture: DesktopCaptureOptions(
                 roi: CaptureRegionOfInterest(bounds: CGRect(x: 0, y: 0, width: 10, height: 10))),
+            detection: DesktopDetectionOptions(mode: .none),
             output: DesktopObservationOutputOptions(
                 path: outputDirectory.path,
                 saveRawScreenshot: true)))
@@ -926,6 +964,68 @@ private final class ROIFileObservationService: DesktopObservationServiceProtocol
 
 private enum StagedArtifactPreflightError: Error {
     case expected
+}
+
+@MainActor
+private final class LegacyEmptyExactObservationService: DesktopObservationServiceProtocol {
+    private(set) var requests: [DesktopObservationRequest] = []
+
+    func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
+        self.requests.append(request)
+        let bounds = CGRect(x: 100, y: 200, width: 100, height: 80)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 123,
+            ownerProcessStartIdentity: 456,
+            capturedBounds: bounds)
+        let context = WindowContext(
+            applicationName: "Legacy Fixture",
+            applicationBundleId: "test.legacy-empty",
+            applicationProcessId: 123,
+            windowTitle: "Empty",
+            windowID: 42,
+            windowBounds: bounds,
+            windowMutationIdentity: identity)
+        let elements: ElementDetectionResult? = request.detection.mode == .none
+            ? nil
+            : ElementDetectionResult(
+                snapshotId: request.output.snapshotID ?? "legacy-empty",
+                screenshotPath: request.output.path ?? "",
+                elements: DetectedElements(),
+                metadata: DetectionMetadata(
+                    detectionTime: 0.01,
+                    elementCount: 0,
+                    method: "legacy AX",
+                    windowContext: context))
+        return DesktopObservationResult(
+            target: ResolvedObservationTarget(
+                kind: .windowID(42),
+                app: ApplicationIdentity(
+                    processIdentifier: 123,
+                    processStartIdentity: 456,
+                    bundleIdentifier: "test.legacy-empty",
+                    name: "Legacy Fixture"),
+                window: WindowIdentity(windowID: 42, title: "Empty", bounds: bounds, index: 0),
+                bounds: bounds,
+                detectionContext: context),
+            capture: CaptureResult(
+                imageData: Data([9]),
+                metadata: CaptureMetadata(
+                    size: bounds.size,
+                    mode: .window,
+                    applicationInfo: ServiceApplicationInfo(
+                        processIdentifier: 123,
+                        processStartIdentity: 456,
+                        bundleIdentifier: "test.legacy-empty",
+                        name: "Legacy Fixture"),
+                    windowInfo: ServiceWindowInfo(
+                        windowID: 42,
+                        title: "Empty",
+                        bounds: bounds,
+                        mutationIdentity: identity))),
+            elements: elements,
+            files: DesktopObservationFiles(rawScreenshotPath: request.output.path))
+    }
 }
 
 private func makeROITestImageData(

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add capability-gated exact-window background wheel delivery for opaque WKWebView/Tauri scroll targets, with retry-unsafe unverifiable outcomes and no activation or shared-cursor fallback.
 
 ### Fixed
+- Refuse exact-window combined `see` results when Accessibility returns no usable elements, including legacy Bridge responses that omit the incomplete-read marker, while preserving the requested raster and explicit `--no-elements` screenshot-only success.
 - Reject unknown and non-object MCP `tools/call` arguments as JSON-RPC invalid params before policy checks or tool dispatch, recursively honoring the closed schemas advertised by `tools/list`.
 - Report exact standard windows with live attached sheets as dialog-active observations, using shared native role evidence without changing the parent window receipt.
 - Preserve default automatic capture through an owner-aware Bridge by clamping it to classic-only around an auxiliary legacy ScreenCaptureKit owner, while explicit modern and owner-unaware routes remain fail-closed.

@@ -321,6 +321,153 @@ extension DesktopObservationServiceTests {
         ])
     }
 
+    func testCombinedObservationRejectsEmptyIncompleteAccessibilityEvidenceButPreservesRaster() async throws {
+        let app = Self.app()
+        let window = Self.window(
+            id: 177,
+            title: "Incomplete",
+            bounds: CGRect(x: 100, y: 100, width: 500, height: 400))
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-incomplete-combined-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        let automation = RecordingUIAutomationService(fixedResult: ElementDetectionResult(
+            snapshotId: "empty-incomplete",
+            screenshotPath: "",
+            elements: DetectedElements(),
+            metadata: DetectionMetadata(
+                detectionTime: 0.01,
+                elementCount: 0,
+                method: "AXorcist",
+                truncationInfo: DetectionTruncationInfo(incompleteAccessibilityRead: true))))
+        let snapshots = InMemorySnapshotManager()
+        let service = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window)),
+            automation: automation,
+            applications: RecordingApplicationService(applications: [app], windows: [window]),
+            snapshotManager: snapshots)
+
+        do {
+            _ = try await service.observe(DesktopObservationRequest(
+                target: .app(identifier: "Fixture", window: .automatic),
+                detection: DesktopDetectionOptions(mode: .accessibility),
+                output: DesktopObservationOutputOptions(
+                    path: outputURL.path,
+                    saveRawScreenshot: true,
+                    saveSnapshot: true,
+                    snapshotID: "empty-incomplete")))
+            XCTFail("Expected empty incomplete combined evidence to fail")
+        } catch let error as PeekabooError {
+            guard case .accessibilityIncomplete = error else {
+                XCTFail("Expected accessibilityIncomplete, got \(error)")
+                return
+            }
+        }
+
+        XCTAssertEqual(automation.detectCalls, 1)
+        XCTAssertEqual(try Data(contentsOf: outputURL), Data([9]))
+        let publishedSnapshots = try await snapshots.listSnapshots()
+        XCTAssertTrue(publishedSnapshots.isEmpty)
+    }
+
+    func testCombinedObservationRejectsExactEmptyAccessibilityEvidenceFromLegacyHostShape() async throws {
+        let app = Self.app()
+        let window = Self.window(
+            id: 178,
+            title: "Legacy empty",
+            bounds: CGRect(x: 100, y: 100, width: 500, height: 400))
+        let automation = RecordingUIAutomationService(fixedResult: ElementDetectionResult(
+            snapshotId: "legacy-empty",
+            screenshotPath: "",
+            elements: DetectedElements(),
+            metadata: DetectionMetadata(
+                detectionTime: 0.01,
+                elementCount: 0,
+                method: "AXorcist")))
+        let service = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window)),
+            automation: automation,
+            applications: RecordingApplicationService(applications: [app], windows: [window]))
+
+        var capturedError: PeekabooError?
+        do {
+            _ = try await service.observe(DesktopObservationRequest(
+                target: .app(identifier: "Fixture", window: .automatic),
+                detection: DesktopDetectionOptions(mode: .accessibility)))
+            XCTFail("Expected exact empty combined evidence to fail")
+        } catch let error as PeekabooError {
+            capturedError = error
+        }
+        guard case .accessibilityIncomplete? = capturedError else {
+            XCTFail("Expected accessibilityIncomplete, got \(String(describing: capturedError))")
+            return
+        }
+        XCTAssertTrue(capturedError?.localizedDescription.contains("Exact window 178") == true)
+    }
+
+    func testScreenshotOnlyObservationPreservesExactEmptyAccessibilitySuccess() async throws {
+        let app = Self.app()
+        let window = Self.window(
+            id: 179,
+            title: "Pixels only",
+            bounds: CGRect(x: 100, y: 100, width: 500, height: 400))
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-screenshot-only-empty-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        let automation = RecordingUIAutomationService(fixedResult: ElementDetectionResult(
+            snapshotId: "unused-empty",
+            screenshotPath: "",
+            elements: DetectedElements(),
+            metadata: DetectionMetadata(detectionTime: 0, elementCount: 0, method: "AXorcist")))
+        let service = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window)),
+            automation: automation,
+            applications: RecordingApplicationService(applications: [app], windows: [window]))
+
+        let result = try await service.observe(DesktopObservationRequest(
+            target: .app(identifier: "Fixture", window: .automatic),
+            detection: DesktopDetectionOptions(mode: .none),
+            output: DesktopObservationOutputOptions(
+                path: outputURL.path,
+                saveRawScreenshot: true)))
+
+        XCTAssertNil(result.elements)
+        XCTAssertEqual(automation.detectCalls, 0)
+        XCTAssertEqual(try Data(contentsOf: outputURL), Data([9]))
+    }
+
+    func testCombinedObservationPreservesUsefulPartialIncompleteAccessibilityEvidence() async throws {
+        let app = Self.app()
+        let window = Self.window(
+            id: 180,
+            title: "Partial",
+            bounds: CGRect(x: 100, y: 100, width: 500, height: 400))
+        let partial = DetectedElement(
+            id: "B1",
+            type: .button,
+            label: "Recovered",
+            bounds: CGRect(x: 20, y: 30, width: 100, height: 32))
+        let automation = RecordingUIAutomationService(fixedResult: ElementDetectionResult(
+            snapshotId: "partial-incomplete",
+            screenshotPath: "",
+            elements: DetectedElements(buttons: [partial]),
+            metadata: DetectionMetadata(
+                detectionTime: 0.01,
+                elementCount: 1,
+                method: "AXorcist",
+                truncationInfo: DetectionTruncationInfo(incompleteAccessibilityRead: true))))
+        let service = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window)),
+            automation: automation,
+            applications: RecordingApplicationService(applications: [app], windows: [window]))
+
+        let result = try await service.observe(DesktopObservationRequest(
+            target: .app(identifier: "Fixture", window: .automatic),
+            detection: DesktopDetectionOptions(mode: .accessibility)))
+
+        XCTAssertEqual(result.elements?.elements.buttons.map(\.id), ["B1"])
+        XCTAssertEqual(result.elements?.metadata.truncationInfo?.incompleteAccessibilityRead, true)
+    }
+
     func testObservationWithAccessibilityAndOCRMergesStaticTextElements() async throws {
         let app = Self.app()
         let window = Self.window(id: 78, title: "OCR", bounds: CGRect(x: 10, y: 20, width: 200, height: 100))
@@ -1357,7 +1504,11 @@ final class RecordingUIAutomationService: UIAutomationServiceProtocol {
     fileprivate init(
         delay: TimeInterval = 0,
         ignoresCancellation: Bool = false,
-        elements: DetectedElements = DetectedElements(),
+        elements: DetectedElements = DetectedElements(groups: [DetectedElement(
+            id: "fixture-root",
+            type: .group,
+            label: "Fixture",
+            bounds: CGRect(x: 0, y: 0, width: 1, height: 1))]),
         result: ElementDetectionResult? = nil,
         detectionSuspension: ObservationDetectionSuspension? = nil)
     {
@@ -1403,7 +1554,10 @@ final class RecordingUIAutomationService: UIAutomationServiceProtocol {
             snapshotId: snapshotId ?? "generated",
             screenshotPath: "/tmp/fake.png",
             elements: self.elements,
-            metadata: DetectionMetadata(detectionTime: 0, elementCount: 0, method: "fake"))
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: self.elements.all.count,
+                method: "fake"))
     }
 
     func click(target _: ClickTarget, clickType _: ClickType, snapshotId _: String?) async throws {}

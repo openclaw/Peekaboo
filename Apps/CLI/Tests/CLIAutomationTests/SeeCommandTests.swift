@@ -1037,6 +1037,104 @@ struct SeeCommandRuntimeTests {
 extension SeeCommandRuntimeTests {
     @Test
     @MainActor
+    func `combined See returns typed failure for legacy exact empty accessibility evidence`() async throws {
+        try await self.withTempConfigEnv { _ in
+            let fixture = Self.makeSeeCommandRuntimeFixture()
+            let automation = StubAutomationService()
+            automation.detectElementsHandler = { _, snapshotID, _ in
+                ElementDetectionResult(
+                    snapshotId: snapshotID ?? "legacy-empty",
+                    screenshotPath: "",
+                    elements: DetectedElements(),
+                    metadata: DetectionMetadata(
+                        detectionTime: 0.1,
+                        elementCount: 0,
+                        method: "legacy AX"
+                    )
+                )
+            }
+            let (context, outputURL) = Self.makeSeeCommandRuntimeContext(
+                automation: automation,
+                screenCapture: fixture.screenCapture,
+                applicationInfo: fixture.applicationInfo,
+                windowInfo: fixture.windowInfo
+            )
+            defer { try? FileManager.default.removeItem(at: outputURL) }
+
+            let result = try await InProcessCommandRunner.run(
+                [
+                    "see",
+                    "--app", fixture.applicationInfo.name,
+                    "--path", outputURL.path,
+                    "--json",
+                ],
+                services: context.services
+            )
+            let envelope = try #require(
+                JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+            )
+            let error = try #require(envelope["error"] as? [String: Any])
+
+            #expect(result.exitStatus == 1)
+            #expect(result.stderr.isEmpty)
+            #expect(envelope["success"] as? Bool == false)
+            #expect(error["code"] as? String == "ACCESSIBILITY_INCOMPLETE")
+            #expect(error["retry_safe"] as? Bool == true)
+            #expect(error["mutation_dispatched"] as? Bool == false)
+            #expect((error["message"] as? String)?.contains("Exact window 101") == true)
+            #expect(FileManager.default.fileExists(atPath: outputURL.path))
+            #expect(try await context.snapshots.listSnapshots().isEmpty)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `screenshot only See preserves exact empty accessibility success`() async throws {
+        try await self.withTempConfigEnv { _ in
+            let fixture = Self.makeSeeCommandRuntimeFixture()
+            let automation = StubAutomationService()
+            var detectionCalled = false
+            automation.detectElementsHandler = { _, snapshotID, _ in
+                detectionCalled = true
+                return ElementDetectionResult(
+                    snapshotId: snapshotID ?? "unused-empty",
+                    screenshotPath: "",
+                    elements: DetectedElements(),
+                    metadata: DetectionMetadata(detectionTime: 0, elementCount: 0, method: "legacy AX")
+                )
+            }
+            let (context, outputURL) = Self.makeSeeCommandRuntimeContext(
+                automation: automation,
+                screenCapture: fixture.screenCapture,
+                applicationInfo: fixture.applicationInfo,
+                windowInfo: fixture.windowInfo
+            )
+            defer { try? FileManager.default.removeItem(at: outputURL) }
+
+            let result = try await InProcessCommandRunner.run(
+                [
+                    "see",
+                    "--app", fixture.applicationInfo.name,
+                    "--no-elements",
+                    "--path", outputURL.path,
+                    "--json",
+                ],
+                services: context.services
+            )
+            let envelope = try #require(
+                JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+            )
+
+            #expect(result.exitStatus == 0)
+            #expect(result.stderr.isEmpty)
+            #expect(envelope["success"] as? Bool == true)
+            #expect(detectionCalled == false)
+            #expect(FileManager.default.fileExists(atPath: outputURL.path))
+        }
+    }
+
+    @Test
+    @MainActor
     func `tree only See returns typed retry-safe failure for Calendar-shaped incomplete evidence`() async throws {
         try await self.withTempConfigEnv { _ in
             let fixture = Self.makeSeeCommandRuntimeFixture()

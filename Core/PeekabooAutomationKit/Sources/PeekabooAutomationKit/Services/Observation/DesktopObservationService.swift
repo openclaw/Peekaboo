@@ -164,12 +164,27 @@ public final class DesktopObservationService: DesktopObservationServiceProtocol 
             elements: elements,
             ocr: ocr)
         try Task.checkCancellation()
+        let evidenceError = DesktopObservationEvidencePolicy.accessibilityEvidenceError(
+            roiResult.elements,
+            target: target,
+            capture: roiResult.capture,
+            request: request)
+        var outputOptions = request.output
+        if evidenceError != nil {
+            // Preserve the valid raster for callers that requested it, but never publish an unusable element map.
+            outputOptions.saveRawScreenshot = outputOptions.saveRawScreenshot ||
+                outputOptions.saveAnnotatedScreenshot || outputOptions.saveSnapshot
+            outputOptions.saveSnapshot = false
+        }
         let files = try await self.writeOutputIfNeeded(
             capture: roiResult.capture,
             elements: roiResult.elements,
-            options: request.output,
+            options: outputOptions,
             tracer: tracer)
         try Task.checkCancellation()
+        if let evidenceError {
+            throw evidenceError
+        }
         tracer.record("desktop.observe", start: observeStart)
 
         var warnings = roiResult.capture.warning.map { [$0] } ?? []

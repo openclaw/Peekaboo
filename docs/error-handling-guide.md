@@ -125,9 +125,12 @@ Commands conforming to `ErrorHandlingCommand` call `handleError(_:customCode:)`.
 
 The CLI's `ErrorCode` names are an output contract separate from `StandardErrorCode`; `CommandErrorHandling.swift` owns the explicit mapping between them.
 
-AX-only observation uses `ACCESSIBILITY_INCOMPLETE` only when the exact target was positively resolved but an
-explicitly incomplete read produced no usable elements. It is retry-safe and mutation-free. It must not replace
-`TIMEOUT`, permission/target errors, native AX failures, or successful nonempty truncated evidence.
+AX-only and combined screenshot+AX observation use `ACCESSIBILITY_INCOMPLETE` only when the exact target was
+positively resolved but the Accessibility result contains no usable elements. This includes legacy Bridge results
+that omit the incomplete-read marker: an exact empty map is not evidence of completeness. The failure is retry-safe
+and mutation-free; combined observation preserves a requested raster without publishing the unusable element
+snapshot. It must not replace `TIMEOUT`, permission/target errors, native AX failures, explicit
+screenshot-only success, or successful nonempty truncated evidence.
 
 ## Best Practices
 

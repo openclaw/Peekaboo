@@ -81,7 +81,13 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
             throw RemoteDesktopObservationCapabilityPolicy.captureEnginePreferenceUnavailableError()
         }
         guard request.capture.roi != nil else {
-            return try await self.client.desktopObservation(request)
+            let result = try await self.client.desktopObservation(request)
+            try DesktopObservationEvidencePolicy.requireUsableAccessibilityEvidence(
+                result.elements,
+                target: result.target,
+                capture: result.capture,
+                request: request)
+            return result
         }
         guard self.supportsExactWindowROIObservation else {
             throw PeekabooBridgeErrorEnvelope(
@@ -118,6 +124,11 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
             }
             throw envelope
         }
+        let evidenceError = DesktopObservationEvidencePolicy.accessibilityEvidenceError(
+            result.elements,
+            target: result.target,
+            capture: result.capture,
+            request: request)
         try DesktopObservationROIProcessor.validateApplied(
             request.capture.roi,
             requestTarget: request.target,
@@ -137,22 +148,30 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
         defer { Self.discardStagedArtifacts(stagedArtifacts) }
         try Self.checkPostProcessingAllowance(deadline: deadline, timeout: overallTimeout)
         let commitTask = Task { @MainActor in
-            try await self.storeSnapshotIfNeeded(
-                prepared,
-                request: request,
-                deadline: deadline,
-                timeout: overallTimeout)
+            if evidenceError == nil {
+                try await self.storeSnapshotIfNeeded(
+                    prepared,
+                    request: request,
+                    deadline: deadline,
+                    timeout: overallTimeout)
+            }
             let installedArtifacts: [ArtifactPublication]
             try self.artifactInstallationPreflight()
             do {
                 installedArtifacts = try Self.installArtifacts(stagedArtifacts)
             } catch is ArtifactPublicationError {
+                if let evidenceError {
+                    throw evidenceError
+                }
                 guard request.output.saveSnapshot else {
                     throw CaptureROIError.invalidSourceImage
                 }
                 return Self.snapshotOnlyResult(prepared.result)
             }
             Self.finalizeArtifacts(installedArtifacts)
+            if let evidenceError {
+                throw evidenceError
+            }
             return prepared.result
         }
         return try await commitTask.value
