@@ -4,6 +4,22 @@ import Testing
 
 @MainActor
 struct CommanderRuntimeRouterHelpPathTests {
+    @Test(arguments: [
+        ["peekaboo", "--junk", "--help"],
+        ["peekaboo", "--junk", "-h"],
+        ["peekaboo", "--json", "--help"],
+        ["peekaboo", "help", "--junk"],
+        ["peekaboo", "--junk", "--version"],
+        ["peekaboo", "--junk", "-V"],
+        ["peekaboo", "--json", "--version"],
+    ])
+    func `root early-exit flags ignore preceding root options`(arguments: [String]) {
+        let exitCode = #expect(throws: ExitCode.self) {
+            _ = try CommanderRuntimeRouter.resolve(argv: arguments)
+        }
+        #expect(exitCode == .success)
+    }
+
     @Test
     func `help resolves longest matching command prefix`() {
         let exitCode = #expect(throws: ExitCode.self) {
@@ -29,5 +45,37 @@ struct CommanderRuntimeRouterHelpPathTests {
         #expect(ObjectIdentifier(resolved.type) == ObjectIdentifier(CaptureActionCommand.self))
         #expect(resolved.parsedValues.positional == ["/bin/echo", "--help"])
         #expect(resolved.parsedValues.options["command"] == nil)
+    }
+
+    @Test
+    func `unknown positional help target remains an error`() {
+        let error = #expect(throws: CommanderProgramError.self) {
+            _ = try CommanderRuntimeRouter.resolve(argv: ["peekaboo", "does-not-exist", "--help"])
+        }
+        #expect(error == .unknownCommand("does-not-exist"))
+    }
+
+    @Test
+    func `early-exit flags after double dash remain ordinary arguments`() {
+        do {
+            _ = try CommanderRuntimeRouter.resolve(argv: ["peekaboo", "--junk", "--", "--help"])
+            Issue.record("Expected an argument error")
+        } catch let exitCode as ExitCode {
+            #expect(exitCode != .success)
+        } catch {
+            // Any ordinary parser error proves the root help short-circuit did not run.
+        }
+    }
+
+    @Test
+    func `leaf version remains an option error`() {
+        do {
+            _ = try CommanderRuntimeRouter.resolve(argv: ["peekaboo", "click", "--version"])
+            Issue.record("Expected an option error")
+        } catch let exitCode as ExitCode {
+            #expect(exitCode != .success)
+        } catch {
+            // Expected: version is a root early-exit flag, not a leaf command option.
+        }
     }
 }

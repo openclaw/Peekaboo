@@ -16,7 +16,7 @@ enum CommanderRuntimeRouter {
             self.printRootHelp(descriptors: descriptors)
             throw ExitCode.success
         }
-        if Self.handleVersionRequest(arguments: trimmedArgs) {
+        if Self.handleRootEarlyExitRequest(arguments: trimmedArgs, descriptors: descriptors) {
             throw ExitCode.success
         }
         if let migrationError = CommanderMigrationAdvisor.commandError(for: trimmedArgs) {
@@ -127,6 +127,7 @@ enum CommanderRuntimeRouter {
         descriptors: [CommanderCommandDescriptor]
     ) -> [String] {
         guard !tokens.isEmpty else { return [] }
+        guard tokens.first?.hasPrefix("-") != true else { return [] }
 
         for length in stride(from: tokens.count, through: 1, by: -1) {
             let candidate = Array(tokens.prefix(length))
@@ -139,11 +140,24 @@ enum CommanderRuntimeRouter {
         return tokens
     }
 
-    private static func handleVersionRequest(arguments: [String]) -> Bool {
-        guard let first = arguments.first else { return false }
-        guard self.isVersionToken(first) else { return false }
+    private static func handleRootEarlyExitRequest(
+        arguments: [String],
+        descriptors: [CommanderCommandDescriptor]
+    ) -> Bool {
+        let searchable = Array(arguments.prefix { $0 != "--" })
+        guard let index = searchable.firstIndex(where: { self.isHelpToken($0) || self.isVersionToken($0) }) else {
+            return false
+        }
+        guard searchable.prefix(index).allSatisfy({ $0.hasPrefix("-") }) else { return false }
+
+        let token = searchable[index]
+        if self.isHelpToken(token) {
+            self.printRootHelp(descriptors: descriptors)
+            return true
+        }
+
         let jsonTokens = Set(["--json", "-j", "--json-output", "--jsonOutput"])
-        if arguments.dropFirst().contains(where: jsonTokens.contains) {
+        if searchable.contains(where: jsonTokens.contains) {
             outputSuccessCodable(data: Version.metadata, logger: .shared)
         } else {
             print(Version.fullVersion)
