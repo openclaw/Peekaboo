@@ -80,9 +80,46 @@ not certified merely because the cases that happened to execute passed. The mach
 `certification.json` beside the normal summary.
 
 Completeness is relative to this source-controlled 34-case single-controller matrix; it is not a claim that every
-Peekaboo CLI combination is represented. Dual-controller overlap is intentionally outside these rows and is not yet an
-in-tree certification cell. Once source-controlled, it should remain one complementary workflow-level cell rather than
-duplicating its internal steps in this catalog.
+Peekaboo CLI combination is represented. `scripts/test-dual-controller-overlap.sh` is the complementary workflow-level
+cell; its internal steps deliberately stay outside the 34-row command catalog.
+
+The overlap cell starts two owned TextEdit executable generations during setup, pins their exact process/window
+receipts, and then restores an independently selected sentinel window. Two separate controller processes launch
+independently generation- and executable-attested CLI clients through one explicit signed current Bridge socket:
+controller A completes an observe/type/press/type/readback workflow while controller B continuously observes and updates
+its different exact window. Both restore their original text, cleanup uses the launch
+receipts, and the validator requires real bidirectional interval overlap plus independent readback with no cross-target
+token. The native monitor keeps focus, top-window, session-global Peekaboo input, clipboard change count, visible
+Peekaboo alpha windows, host generation, and heartbeat liveness fail-closed through cleanup. Physical cursor motion is
+recorded as observational evidence and never fails the cell because the user may be working concurrently. Every CLI
+generation is registered before it can run and has a 30-second deadline (bounded to 1–300 seconds with
+`PEEKABOO_OVERLAP_OPERATION_TIMEOUT_SECONDS`); timeout and abort cleanup escalate from TERM to KILL while the invariant
+monitor remains active. Each target starts as a stopped direct child: its intended executable path and process generation
+are recorded durably before resume, then the live executable path is verified after `exec`; cleanup never infers ownership
+from an ambient application-inventory delta or a response that can be interrupted.
+
+Live execution is deliberately reserved until the CLI exposes an opaque host receipt from `bridge status` and validates
+that receipt on the same authenticated connection that performs every operation. The current command refuses before UI
+setup; its deterministic contract/self-test is landable infrastructure, not signed-live certification. After the receipt
+owner lands, the opt-in invocation will require a clean source tree, matching stamped CLI/host source commits, one exact
+signed Bridge host, and an already-running sentinel receipt:
+
+```bash
+PEEKABOO_RUN_DUAL_CONTROLLER_OVERLAP=1 \
+scripts/test-dual-controller-overlap.sh \
+  --bin /absolute/path/to/peekaboo \
+  --bridge-socket /absolute/path/to/bridge.sock \
+  --sentinel-pid 1234 \
+  --sentinel-window-id 5678 \
+  --artifacts /absolute/new/artifact-directory
+```
+
+The safe source/contract gate never touches UI:
+
+```bash
+scripts/test-dual-controller-overlap.sh --self-test \
+  --artifacts /absolute/new/self-test-directory
+```
 
 For the interaction commands exercised here, background is the omission contract: `--foreground` is the only consent
 for focus/activation, global keyboard input, physical cursor movement, or synthetic pointer/wheel events. Explicit app

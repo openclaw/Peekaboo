@@ -433,7 +433,8 @@ if $SELF_TEST_ONLY; then
     "$PROBE_BIN" process-identity --pid "$$" \
         --output "$ARTIFACT_ROOT/probe-process-identity.json"
     jq -e --argjson pid "$$" \
-        '.pid == $pid and (.startIdentity | type) == "number" and .startIdentity > 0' \
+        '.pid == $pid and (.startIdentity | type) == "string" and
+            (.startIdentity | test("^[1-9][0-9]*$"))' \
         "$ARTIFACT_ROOT/probe-process-identity.json" >/dev/null
     same_process_generation 7 7
     if same_process_generation 7 8 || same_process_generation "" 7; then

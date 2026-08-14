@@ -44,6 +44,9 @@ private struct WatchHeartbeat: Codable {
     let inputAttributionAvailable: Bool
     let allowedProducerRevision: UInt64
     let phase: String
+    let cursorMovementObserved: Bool
+    let pendingActivationCount: Int
+    let pendingFocusedWindowChange: Bool
 }
 
 private struct ContaminationRecord: Codable {
@@ -62,7 +65,25 @@ private struct AppIdentity: Codable {
 
 private struct ProcessIdentity: Codable {
     let pid: Int32
-    let startIdentity: UInt64
+    let startIdentity: String
+}
+
+private struct ProcessExecutable: Codable {
+    let pid: Int32
+    let startIdentity: String
+    let path: String
+    let sha256: String
+}
+
+private struct ProcessExecutableIdentity: Codable {
+    let pid: Int32
+    let startIdentity: String
+    let path: String
+}
+
+private struct ClockSample: Codable {
+    let wallTime: Double
+    let monotonicSeconds: Double
 }
 
 private enum ProbeError: Error, CustomStringConvertible {
@@ -126,6 +147,7 @@ private struct InvariantEvaluationContext {
     let interactiveBaseline: InteractiveBaseline
     let allowClipboardMutation: Bool
     let evaluateInteractiveInvariants: Bool
+    let cursorObservational: Bool
     let projection: InvariantProjection
 }
 
@@ -137,6 +159,11 @@ private struct InputEventBatch {
     let externalSourcePIDs: [Int32]
     let externalEventTypes: [UInt32]
     let attributionFailed: Bool
+}
+
+private func physicalInputIsObservational(_ batch: InputEventBatch, enabled: Bool) -> Bool {
+    enabled && batch.externalEventCount > 0 && batch.externalSourcePIDs == [0] &&
+        batch.externalEventTypes == [CGEventType.mouseMoved.rawValue]
 }
 
 private struct AllowedEventProducer: Codable, Hashable {
@@ -590,7 +617,7 @@ private func violations(current: SystemSample, context: InvariantEvaluationConte
 
         let cursorMoved = abs(current.cursor.x - context.interactiveBaseline.cursor.x) > 0.5 ||
             abs(current.cursor.y - context.interactiveBaseline.cursor.y) > 0.5
-        if cursorMoved {
+        if cursorMoved, !context.cursorObservational {
             result.insert(Violation(
                 kind: context.projection[.physicalCursor],
                 expected: "\(context.interactiveBaseline.cursor.x),\(context.interactiveBaseline.cursor.y)",
@@ -670,6 +697,8 @@ private struct WatchState {
     let baseline: SystemSample
     let interactiveBaseline: InteractiveBaseline
     let allowClipboardMutation: Bool
+    let physicalInputObservational: Bool
+    let cursorObservational: Bool
     let projection: InvariantProjection
     let outputPath: String
     let contaminationOutputPath: String
@@ -683,6 +712,7 @@ private struct WatchState {
     private var allowedProducerReceipts: [Int32: String] = [:]
     private var pendingActivations: [Int32] = []
     private var pendingFocusedWindowChange = false
+    private var cursorMovementObserved = false
 
     mutating func applyProducerSet(
         _ producerSet: AllowedEventProducerSet,
@@ -723,6 +753,11 @@ private struct WatchState {
         unexpectedActivations: [Int32],
         focusedWindowChanged: Bool) throws -> WatchHeartbeat
     {
+        if abs(current.cursor.x - self.interactiveBaseline.cursor.x) > 0.5 ||
+            abs(current.cursor.y - self.interactiveBaseline.cursor.y) > 0.5
+        {
+            self.cursorMovementObserved = true
+        }
         let deferredActivations = self.pendingActivations
         let deferredFocusedWindowChange = self.pendingFocusedWindowChange
         self.pendingActivations = unexpectedActivations
@@ -748,7 +783,10 @@ private struct WatchState {
                 attributionFailed: true,
                 countsRetry: false)
         }
-        if inputBatch.externalEventCount > 0 {
+        let observesPhysicalInput = physicalInputIsObservational(
+            inputBatch,
+            enabled: self.physicalInputObservational)
+        if inputBatch.externalEventCount > 0, !observesPhysicalInput {
             try self.block(
                 reason: phase == "setup" ? "blocked_setup_attempt" : "blocked_active_attempt",
                 sourcePIDs: inputBatch.externalSourcePIDs,
@@ -756,7 +794,8 @@ private struct WatchState {
                 attributionFailed: false,
                 countsRetry: true)
         }
-        let evaluateInteractive = inputBatch.externalEventCount == 0 &&
+        let externalInputPermitsEvaluation = observesPhysicalInput || inputBatch.externalEventCount == 0
+        let evaluateInteractive = externalInputPermitsEvaluation &&
             unexpectedActivations.isEmpty && !focusedWindowChanged && self.inputAttributionAvailable &&
             self.contaminationState.permitsInteractiveEvaluation
         let context = InvariantEvaluationContext(
@@ -764,11 +803,12 @@ private struct WatchState {
             interactiveBaseline: self.interactiveBaseline,
             allowClipboardMutation: self.allowClipboardMutation,
             evaluateInteractiveInvariants: evaluateInteractive,
+            cursorObservational: self.cursorObservational,
             projection: self.projection)
         var currentViolations = violations(current: current, context: context)
         if self.contaminationState.permitsInteractiveEvaluation {
             currentViolations.formUnion(transientFocusViolations(
-                externalEventCount: inputBatch.externalEventCount,
+                externalEventCount: observesPhysicalInput ? 0 : inputBatch.externalEventCount,
                 unexpectedActivations: deferredActivations,
                 focusedWindowChanged: deferredFocusedWindowChange,
                 baseline: self.interactiveBaseline,
@@ -796,7 +836,10 @@ private struct WatchState {
             contaminationBlocked: self.contaminationState.blocked,
             inputAttributionAvailable: self.inputAttributionAvailable,
             allowedProducerRevision: self.allowedProducerRevision ?? 0,
-            phase: phase)
+            phase: phase,
+            cursorMovementObserved: self.cursorMovementObserved,
+            pendingActivationCount: self.pendingActivations.count,
+            pendingFocusedWindowChange: self.pendingFocusedWindowChange)
     }
 
     private mutating func block(
@@ -877,6 +920,8 @@ private func runWatch(arguments: [String]) throws -> Never {
         throw ProbeError.invalidArguments("watch interval must be valid")
     }
     let allowClipboardMutation = arguments.contains("--allow-clipboard-mutation")
+    let physicalInputObservational = arguments.contains("--physical-input-observational")
+    let cursorObservational = arguments.contains("--cursor-observational")
     let invariantProjection = try InvariantProjection(json: invariantNamesJSON)
     let baselineData = try Data(contentsOf: URL(fileURLWithPath: baselinePath))
     let baseline = try JSONDecoder().decode(SystemSample.self, from: baselineData)
@@ -905,6 +950,8 @@ private func runWatch(arguments: [String]) throws -> Never {
             frontmostWindowID: baseline.frontmostWindowID,
             cursor: baseline.cursor),
         allowClipboardMutation: allowClipboardMutation,
+        physicalInputObservational: physicalInputObservational,
+        cursorObservational: cursorObservational,
         projection: invariantProjection,
         outputPath: outputPath,
         contaminationOutputPath: contaminationOutputPath)
@@ -941,6 +988,81 @@ private func runWatch(arguments: [String]) throws -> Never {
     }
 }
 
+private func producerReceiptSchemaIsLossless() -> Bool {
+    let data = Data(#"{"revision":1,"producers":[{"pid":42,"startIdentity":"987654321"}]}"#.utf8)
+    guard let decoded = try? JSONDecoder().decode(AllowedEventProducerSet.self, from: data) else { return false }
+    return decoded.revision == 1 &&
+        decoded.producers.first?.pid == 42 &&
+        decoded.producers.first?.startIdentity == "987654321"
+}
+
+private func physicalInputPolicyIsSafe() -> Bool {
+    let physicalBatch = InputEventBatch(
+        producerEventCount: 0,
+        producerSourcePIDs: [],
+        producerEventTypes: [],
+        externalEventCount: 1,
+        externalSourcePIDs: [0],
+        externalEventTypes: [CGEventType.mouseMoved.rawValue],
+        attributionFailed: false)
+    let processBatch = InputEventBatch(
+        producerEventCount: 0,
+        producerSourcePIDs: [],
+        producerEventTypes: [],
+        externalEventCount: 1,
+        externalSourcePIDs: [4242],
+        externalEventTypes: [CGEventType.keyDown.rawValue],
+        attributionFailed: false)
+    let physicalKeyBatch = InputEventBatch(
+        producerEventCount: 0,
+        producerSourcePIDs: [],
+        producerEventTypes: [],
+        externalEventCount: 1,
+        externalSourcePIDs: [0],
+        externalEventTypes: [CGEventType.keyDown.rawValue],
+        attributionFailed: false)
+    let physicalClickBatch = InputEventBatch(
+        producerEventCount: 0,
+        producerSourcePIDs: [],
+        producerEventTypes: [],
+        externalEventCount: 1,
+        externalSourcePIDs: [0],
+        externalEventTypes: [CGEventType.leftMouseDown.rawValue],
+        attributionFailed: false)
+    let physicalScrollBatch = InputEventBatch(
+        producerEventCount: 0,
+        producerSourcePIDs: [],
+        producerEventTypes: [],
+        externalEventCount: 1,
+        externalSourcePIDs: [0],
+        externalEventTypes: [CGEventType.scrollWheel.rawValue],
+        attributionFailed: false)
+    let mixedPhysicalBatch = InputEventBatch(
+        producerEventCount: 0,
+        producerSourcePIDs: [],
+        producerEventTypes: [],
+        externalEventCount: 2,
+        externalSourcePIDs: [0],
+        externalEventTypes: [CGEventType.mouseMoved.rawValue, CGEventType.keyDown.rawValue],
+        attributionFailed: false)
+    let unattributedBatch = InputEventBatch(
+        producerEventCount: 0,
+        producerSourcePIDs: [],
+        producerEventTypes: [],
+        externalEventCount: 1,
+        externalSourcePIDs: [],
+        externalEventTypes: [CGEventType.keyDown.rawValue],
+        attributionFailed: false)
+    return physicalInputIsObservational(physicalBatch, enabled: true) &&
+        !physicalInputIsObservational(physicalKeyBatch, enabled: true) &&
+        !physicalInputIsObservational(physicalClickBatch, enabled: true) &&
+        !physicalInputIsObservational(physicalScrollBatch, enabled: true) &&
+        !physicalInputIsObservational(mixedPhysicalBatch, enabled: true) &&
+        !physicalInputIsObservational(processBatch, enabled: true) &&
+        !physicalInputIsObservational(unattributedBatch, enabled: true) &&
+        !physicalInputIsObservational(physicalBatch, enabled: false)
+}
+
 private func runSelfTest() throws {
     let projection = InvariantProjection(names: InvariantSlot.allCases.map { "slot-\($0.rawValue)" })
     let baseline = SystemSample(
@@ -963,6 +1085,7 @@ private func runSelfTest() throws {
         interactiveBaseline: interactiveBaseline,
         allowClipboardMutation: false,
         evaluateInteractiveInvariants: true,
+        cursorObservational: false,
         projection: projection)
     guard violations(current: baseline, context: baselineContext).isEmpty
     else {
@@ -986,6 +1109,7 @@ private func runSelfTest() throws {
             interactiveBaseline: interactiveBaseline,
             allowClipboardMutation: false,
             evaluateInteractiveInvariants: true,
+            cursorObservational: false,
             projection: projection)).map(\.kind))
     let expected = Set(projection.names).subtracting([projection[.globalInputEvent]])
     guard kinds == expected else {
@@ -998,6 +1122,7 @@ private func runSelfTest() throws {
             interactiveBaseline: interactiveBaseline,
             allowClipboardMutation: true,
             evaluateInteractiveInvariants: true,
+            cursorObservational: false,
             projection: projection)).map(\.kind))
     guard !allowedKinds.contains(projection[.clipboardChangeCount]) else {
         throw ProbeError.invalidArguments("clipboard mutation allowance was ignored")
@@ -1010,6 +1135,7 @@ private func runSelfTest() throws {
             interactiveBaseline: interactiveBaseline,
             allowClipboardMutation: false,
             evaluateInteractiveInvariants: false,
+            cursorObservational: false,
             projection: projection)).map(\.kind))
     guard !contaminatedKinds.contains(projection[.frontmostPID]),
           !contaminatedKinds.contains(projection[.frontmostWindow]),
@@ -1040,6 +1166,9 @@ private func runSelfTest() throws {
     else {
         throw ProbeError.invalidArguments("global producer input was not retained as an invariant violation")
     }
+    guard physicalInputPolicyIsSafe() else {
+        throw ProbeError.invalidArguments("only hardware-origin cursor motion may be observational")
+    }
     guard let selfIdentity = processStartIdentity(pid: getpid()),
           producerEventsMatchReceipts(
               batch: producerBatch,
@@ -1054,6 +1183,9 @@ private func runSelfTest() throws {
     }
     guard InputEventTracker.validateMonitoredEventMask() else {
         throw ProbeError.invalidArguments("input event mask does not cover the complete public input family")
+    }
+    guard producerReceiptSchemaIsLossless() else {
+        throw ProbeError.invalidArguments("producer start identities must decode as lossless decimal strings")
     }
     let transientKinds = Set(transientFocusViolations(
         externalEventCount: 0,
@@ -1072,7 +1204,23 @@ private func runSelfTest() throws {
         throw ProbeError.invalidArguments("transient focus attribution did not distinguish external input")
     }
 
-    try writeJSON(SelfTestResult(success: true, tests: 11), to: nil)
+    let cursorObservationalKinds = Set(violations(
+        current: changed,
+        context: InvariantEvaluationContext(
+            baseline: baseline,
+            interactiveBaseline: interactiveBaseline,
+            allowClipboardMutation: false,
+            evaluateInteractiveInvariants: true,
+            cursorObservational: true,
+            projection: projection)).map(\.kind))
+    guard !cursorObservationalKinds.contains(projection[.physicalCursor]),
+          cursorObservationalKinds.contains(projection[.frontmostPID]),
+          cursorObservationalKinds.contains(projection[.frontmostWindow])
+    else {
+        throw ProbeError.invalidArguments("observational cursor mode weakened focus invariants")
+    }
+
+    try writeJSON(SelfTestResult(success: true, tests: 14), to: nil)
 }
 
 private func findApp(arguments: [String]) throws {
@@ -1100,8 +1248,73 @@ private func writeProcessIdentity(arguments: [String]) throws {
         throw ProbeError.invalidArguments("process-identity requires a live positive --pid")
     }
     try writeJSON(
-        ProcessIdentity(pid: pid, startIdentity: startIdentity),
+        ProcessIdentity(pid: pid, startIdentity: String(startIdentity)),
         to: argument("--output", in: arguments))
+}
+
+private func writeProcessExecutable(arguments: [String]) throws {
+    guard let value = argument("--pid", in: arguments),
+          let pid = Int32(value),
+          let startIdentity = processStartIdentity(pid: pid)
+    else {
+        throw ProbeError.invalidArguments("process-executable requires a live positive --pid")
+    }
+    var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+    let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+    guard length > 0 else {
+        throw ProbeError.invalidArguments("process-executable could not resolve the executable path")
+    }
+    let executablePath = String(cString: buffer)
+    let executableData = try Data(contentsOf: URL(fileURLWithPath: executablePath), options: .mappedIfSafe)
+    let digest = SHA256.hash(data: executableData).map { String(format: "%02x", $0) }.joined()
+    guard processStartIdentity(pid: pid) == startIdentity else {
+        throw ProbeError.invalidArguments("process-executable generation changed while hashing")
+    }
+    try writeJSON(
+        ProcessExecutable(
+            pid: pid,
+            startIdentity: String(startIdentity),
+            path: executablePath,
+            sha256: digest),
+        to: argument("--output", in: arguments))
+}
+
+private func writeProcessExecutableIdentity(arguments: [String]) throws {
+    guard let value = argument("--pid", in: arguments),
+          let pid = Int32(value),
+          let startIdentity = processStartIdentity(pid: pid)
+    else {
+        throw ProbeError.invalidArguments("process-executable-identity requires a live positive --pid")
+    }
+    var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+    guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0,
+          processStartIdentity(pid: pid) == startIdentity
+    else {
+        throw ProbeError.invalidArguments("process-executable-identity generation changed while resolving")
+    }
+    try writeJSON(
+        ProcessExecutableIdentity(
+            pid: pid,
+            startIdentity: String(startIdentity),
+            path: String(cString: buffer)),
+        to: argument("--output", in: arguments))
+}
+
+private func clockSample() -> ClockSample {
+    var timebase = mach_timebase_info_data_t()
+    mach_timebase_info(&timebase)
+    let ticks = mach_continuous_time()
+    let nanoseconds = Double(ticks) * Double(timebase.numer) / Double(timebase.denom)
+    return ClockSample(
+        wallTime: Date().timeIntervalSince1970,
+        monotonicSeconds: nanoseconds / 1_000_000_000)
+}
+
+private func runIgnoringTermination() -> Never {
+    signal(SIGTERM, SIG_IGN)
+    while true {
+        pause()
+    }
 }
 
 private struct SelfTestResult: Encodable {
@@ -1112,17 +1325,29 @@ private struct SelfTestResult: Encodable {
 do {
     let arguments = Array(CommandLine.arguments.dropFirst())
     guard let mode = arguments.first else {
-        throw ProbeError.invalidArguments("expected sample, watch, find-app, process-identity, or self-test")
+        throw ProbeError.invalidArguments(
+            "expected sample, clock, watch, find-app, process-identity, process-executable, " +
+                "process-executable-identity, ignore-term, or self-test")
     }
     switch mode {
     case "sample":
-        try writeJSON(sample(), to: argument("--output", in: arguments))
+        try writeJSON(
+            sample(includeClipboardDigest: !arguments.contains("--no-clipboard-digest")),
+            to: argument("--output", in: arguments))
+    case "clock":
+        try writeJSON(clockSample(), to: argument("--output", in: arguments))
     case "watch":
         try runWatch(arguments: arguments)
     case "find-app":
         try findApp(arguments: arguments)
     case "process-identity":
         try writeProcessIdentity(arguments: arguments)
+    case "process-executable":
+        try writeProcessExecutable(arguments: arguments)
+    case "process-executable-identity":
+        try writeProcessExecutableIdentity(arguments: arguments)
+    case "ignore-term":
+        runIgnoringTermination()
     case "self-test":
         try runSelfTest()
     default:
