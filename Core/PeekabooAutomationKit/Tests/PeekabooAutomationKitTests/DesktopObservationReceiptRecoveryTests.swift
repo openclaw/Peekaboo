@@ -299,8 +299,10 @@ private final class ReceiptRecoveryAutomationService: UIAutomationServiceProtoco
         return ElementDetectionResult(
             snapshotId: snapshotId ?? "generated",
             screenshotPath: "/tmp/fake.png",
-            elements: DetectedElements(),
-            metadata: DetectionMetadata(detectionTime: 0, elementCount: 0, method: "fake"))
+            elements: DetectedElements(buttons: [
+                DetectedElement(id: "B1", type: .button, label: "Fixture", bounds: .zero),
+            ]),
+            metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "fake"))
     }
 
     func click(target _: ClickTarget, clickType _: ClickType, snapshotId _: String?) async throws {}

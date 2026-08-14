@@ -131,6 +131,14 @@ enum DetachedAXObservationWorker {
         self.descriptorAttributeNames.count
     }
 
+    static var descriptorAttributes: [String] {
+        self.descriptorAttributeNames
+    }
+
+    static func descriptorAttributeIndex(_ name: String) -> Int? {
+        self.descriptorAttributeNames.firstIndex(of: name)
+    }
+
     static var childAttributeCount: Int {
         self.childAttributeNames.count
     }
@@ -138,10 +146,32 @@ enum DetachedAXObservationWorker {
     static func descriptorReadDisposition(error: AXError, values: [Any]?)
         -> DetachedAXMultiAttributeReadDisposition
     {
-        self.multiAttributeReadDisposition(
+        let disposition = self.multiAttributeReadDisposition(
             error: error,
             values: values,
             expectedValueCount: self.descriptorAttributeNames.count)
+        guard disposition == .incomplete,
+              error == .success,
+              let values,
+              values.count == self.descriptorAttributeNames.count
+        else {
+            return disposition
+        }
+
+        let byName = Dictionary(uniqueKeysWithValues: zip(self.descriptorAttributeNames, values))
+        let role = self.stringValue(byName[kAXRoleAttribute])
+        let hasHardFailure = byName.contains { name, value in
+            guard let embeddedError = AXAttributeReadCompletenessPolicy.embeddedError(in: value),
+                  AXAttributeReadCompletenessPolicy.isIncomplete(error: embeddedError)
+            else {
+                return false
+            }
+            // Finder exposes no semantic AXValue on its AXWindow root and reports the absence as
+            // a generic failure rather than attributeUnsupported. The exact window and its tree
+            // remain readable, so this one role-inapplicable value is sparse evidence.
+            return !(name == kAXValueAttribute && role == kAXWindowRole && embeddedError == .failure)
+        }
+        return hasHardFailure ? .incomplete : .values
     }
 
     static func childrenReadDisposition(error: AXError, values: [Any]?)

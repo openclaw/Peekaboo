@@ -105,6 +105,46 @@ struct DetachedAXObservationWorkerTests {
     }
 
     @Test
+    func `only a window value failure is sparse in an otherwise usable descriptor`() throws {
+        let valueIndex = try #require(DetachedAXObservationWorker.descriptorAttributeIndex(kAXValueAttribute))
+        var values = try Self.usableDescriptorValues(role: kAXWindowRole)
+        values[valueIndex] = try Self.errorValue(.failure)
+
+        #expect(DetachedAXObservationWorker.descriptorReadDisposition(
+            error: .success,
+            values: values) == .values)
+
+        for role in [kAXButtonRole, kAXTextFieldRole, kAXGroupRole] {
+            var controlValues = try Self.usableDescriptorValues(role: role)
+            controlValues[valueIndex] = try Self.errorValue(.failure)
+            #expect(DetachedAXObservationWorker.descriptorReadDisposition(
+                error: .success,
+                values: controlValues) == .incomplete)
+        }
+
+        for attribute in DetachedAXObservationWorker.descriptorAttributes where attribute != kAXValueAttribute {
+            var failedValues = try Self.usableDescriptorValues(role: kAXWindowRole)
+            let index = try #require(DetachedAXObservationWorker.descriptorAttributeIndex(attribute))
+            failedValues[index] = try Self.errorValue(.failure)
+            #expect(DetachedAXObservationWorker.descriptorReadDisposition(
+                error: .success,
+                values: failedValues) == .incomplete)
+        }
+
+        for error in [AXError.cannotComplete, .invalidUIElement, .apiDisabled] {
+            var failedValues = try Self.usableDescriptorValues(role: kAXWindowRole)
+            failedValues[valueIndex] = try Self.errorValue(error)
+            #expect(DetachedAXObservationWorker.descriptorReadDisposition(
+                error: .success,
+                values: failedValues) == .incomplete)
+        }
+
+        #expect(DetachedAXObservationWorker.descriptorReadDisposition(
+            error: .failure,
+            values: values) == .incomplete)
+    }
+
+    @Test
     func `embedded children read failure is not mistaken for an absent child list`() throws {
         var values = [Any](
             repeating: NSNull(),
@@ -306,6 +346,22 @@ struct DetachedAXObservationWorkerTests {
             appIsActive: false,
             traversalBudget: AXTraversalBudget(),
             timing: DetachedAXObservationTiming(hardTimeoutSeconds: 1))
+    }
+
+    private static func usableDescriptorValues(role: String) throws -> [Any] {
+        var position = CGPoint(x: 10, y: 20)
+        var size = CGSize(width: 800, height: 600)
+        var values = [Any](
+            repeating: NSNull(),
+            count: DetachedAXObservationWorker.descriptorAttributeCount)
+        let positionIndex = try #require(
+            DetachedAXObservationWorker.descriptorAttributeIndex(kAXPositionAttribute))
+        let sizeIndex = try #require(DetachedAXObservationWorker.descriptorAttributeIndex(kAXSizeAttribute))
+        let roleIndex = try #require(DetachedAXObservationWorker.descriptorAttributeIndex(kAXRoleAttribute))
+        values[positionIndex] = try #require(AXValueCreate(.cgPoint, &position))
+        values[sizeIndex] = try #require(AXValueCreate(.cgSize, &size))
+        values[roleIndex] = role
+        return values
     }
 
     private static func errorValue(_ error: AXError) throws -> AXValue {
