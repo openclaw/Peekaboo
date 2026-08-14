@@ -5,11 +5,17 @@ import PeekabooFoundation
 
 @MainActor
 final class OutcomeStubApplicationService: StubApplicationService, ApplicationServiceActionResultProviding {
+    enum QuitActionStep {
+        case result(payload: Bool, outcome: DesktopActionOutcome?)
+        case failure(any Error)
+    }
+
     var actionOutcome: DesktopActionOutcome? = .confirmedChange(
         delivery: .init(mechanism: .nativeFramework, mode: .background),
         unitCount: .one
     )
     var quitError: (any Error)?
+    var quitActionSteps: [QuitActionStep] = []
     private(set) var quitActionResultCallCount = 0
 
     func launchApplicationActionResult(
@@ -35,6 +41,15 @@ final class OutcomeStubApplicationService: StubApplicationService, ApplicationSe
         request: ApplicationQuitRequest
     ) async throws -> DesktopActionResult<Bool> {
         self.quitActionResultCallCount += 1
+        if !self.quitActionSteps.isEmpty {
+            switch self.quitActionSteps.removeFirst() {
+            case let .result(payload, outcome):
+                _ = try await self.quitApplication(request: request)
+                return DesktopActionResult(payload: payload, outcome: outcome)
+            case let .failure(error):
+                throw error
+            }
+        }
         if let quitError {
             throw quitError
         }

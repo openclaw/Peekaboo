@@ -204,6 +204,68 @@ public struct DesktopActionSequenceAccumulator: Sendable {
             attemptedCount: attemptedCount)
     }
 
+    /// Resolves the completed prefix of a batch that stopped before every planned target finished.
+    ///
+    /// A complete prefix cannot remain a confirmed outcome for the whole batch. Definite, homogeneous
+    /// delivery becomes partial; stronger uncertainty remains authoritative. If cancellation interrupted
+    /// an in-flight attempt, that attempt may have dispatched and the aggregate becomes indeterminate.
+    /// Receiptless prefixes continue to omit the additive outcome only when cancellation happened
+    /// between targets; an in-flight interruption must retain possible-dispatch uncertainty.
+    public static func interruptedBatch(
+        completedOutcomes outcomes: [DesktopActionOutcome?],
+        succeededCount: Int,
+        attemptedCount: Int,
+        plannedCount: Int,
+        inFlightAttemptMayHaveDispatched: Bool,
+        fallbackRoute: DesktopActionOutcome.Route = .local) -> DesktopActionOutcome?
+    {
+        guard plannedCount > attemptedCount,
+              attemptedCount >= 0,
+              (0...attemptedCount).contains(succeededCount),
+              outcomes.count == attemptedCount
+        else { return nil }
+
+        let hasReportedOutcome = outcomes.contains(where: { $0 != nil })
+        guard hasReportedOutcome || inFlightAttemptMayHaveDispatched else { return nil }
+
+        let completedOutcome = self.completedBatch(
+            outcomes: outcomes,
+            succeededCount: succeededCount,
+            attemptedCount: attemptedCount,
+            fallbackRoute: fallbackRoute)
+
+        if inFlightAttemptMayHaveDispatched {
+            var sequence = Self()
+            for outcome in outcomes {
+                if let outcome {
+                    sequence.record(.reportedOutcome(outcome, defaultDispatchedUnitCount: .one))
+                } else {
+                    sequence.record(.mayHaveDispatched(route: nil, delivery: nil, unitCount: .one))
+                }
+            }
+            sequence.record(.mayHaveDispatched(route: nil, delivery: nil, unitCount: .one))
+            return .indeterminate(
+                route: completedOutcome?.route ?? fallbackRoute,
+                delivery: nil,
+                evidence: .completionUnknown,
+                unitCount: sequence.mutationDisposition.unitCount)
+        }
+
+        guard let completedOutcome else { return nil }
+        switch completedOutcome.state {
+        case .confirmedChange, .suspectedNoop:
+            guard let delivery = completedOutcome.delivery else { return nil }
+            return .partial(
+                route: completedOutcome.route,
+                delivery: delivery,
+                unitCount: completedOutcome.dispatchState.unitCount)
+        case .confirmedNoChange, .refused:
+            return nil
+        case .partial, .dispatchedUnverified, .indeterminate:
+            return completedOutcome
+        }
+    }
+
     public mutating func record(_ step: Step) {
         self.completedStepCount += 1
         switch step {

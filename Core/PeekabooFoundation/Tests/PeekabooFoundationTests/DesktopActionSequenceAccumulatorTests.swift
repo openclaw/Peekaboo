@@ -427,6 +427,76 @@ struct DesktopActionSequenceAccumulatorTests {
     }
 
     @Test
+    func `interrupted batch never promotes its completed prefix to whole batch confirmation`() throws {
+        let confirmed = DesktopActionOutcome.confirmedChange(
+            route: .bridge,
+            delivery: self.localBackground,
+            unitCount: .one)
+
+        let betweenTargets = try #require(DesktopActionSequenceAccumulator.interruptedBatch(
+            completedOutcomes: [confirmed],
+            succeededCount: 1,
+            attemptedCount: 1,
+            plannedCount: 2,
+            inFlightAttemptMayHaveDispatched: false))
+        #expect(betweenTargets.state == .partial)
+        #expect(betweenTargets.route == .bridge)
+        #expect(betweenTargets.delivery == self.localBackground)
+        #expect(betweenTargets.dispatchState == .dispatched(unitCount: .one))
+
+        let duringTarget = try #require(DesktopActionSequenceAccumulator.interruptedBatch(
+            completedOutcomes: [confirmed],
+            succeededCount: 1,
+            attemptedCount: 1,
+            plannedCount: 2,
+            inFlightAttemptMayHaveDispatched: true))
+        #expect(duringTarget.state == .indeterminate)
+        #expect(duringTarget.route == .bridge)
+        #expect(duringTarget.delivery == nil)
+        #expect(try duringTarget.dispatchState == .mayHaveDispatched(unitCount: self.units(2)))
+        #expect(duringTarget.retrySafety == .unsafe)
+        #expect(duringTarget.projection.requiresFreshObservation)
+
+        #expect(DesktopActionSequenceAccumulator.interruptedBatch(
+            completedOutcomes: [.confirmedNoChange(route: .bridge)],
+            succeededCount: 1,
+            attemptedCount: 1,
+            plannedCount: 2,
+            inFlightAttemptMayHaveDispatched: false) == nil)
+        let receiptlessInFlight = try #require(DesktopActionSequenceAccumulator.interruptedBatch(
+            completedOutcomes: [nil],
+            succeededCount: 1,
+            attemptedCount: 1,
+            plannedCount: 2,
+            inFlightAttemptMayHaveDispatched: true))
+        #expect(receiptlessInFlight.state == .indeterminate)
+        #expect(receiptlessInFlight.delivery == nil)
+        #expect(try receiptlessInFlight.dispatchState == .mayHaveDispatched(unitCount: self.units(2)))
+        #expect(receiptlessInFlight.retrySafety == .unsafe)
+        let firstInFlight = try #require(DesktopActionSequenceAccumulator.interruptedBatch(
+            completedOutcomes: [],
+            succeededCount: 0,
+            attemptedCount: 0,
+            plannedCount: 1,
+            inFlightAttemptMayHaveDispatched: true))
+        #expect(firstInFlight.state == .indeterminate)
+        #expect(firstInFlight.dispatchState == .mayHaveDispatched(unitCount: .one))
+        #expect(firstInFlight.retrySafety == .unsafe)
+        #expect(DesktopActionSequenceAccumulator.interruptedBatch(
+            completedOutcomes: [nil],
+            succeededCount: 1,
+            attemptedCount: 1,
+            plannedCount: 2,
+            inFlightAttemptMayHaveDispatched: false) == nil)
+        #expect(DesktopActionSequenceAccumulator.interruptedBatch(
+            completedOutcomes: [confirmed],
+            succeededCount: 2,
+            attemptedCount: 1,
+            plannedCount: 2,
+            inFlightAttemptMayHaveDispatched: true) == nil)
+    }
+
+    @Test
     func `completed batch does not weaken response loss to definite partial completion`() throws {
         let confirmed = DesktopActionOutcome.confirmedChange(
             route: .bridge,

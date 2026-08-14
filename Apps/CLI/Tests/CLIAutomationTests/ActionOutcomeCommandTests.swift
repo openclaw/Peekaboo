@@ -580,7 +580,7 @@ struct ActionOutcomeCommandTests {
     }
 
     @Test
-    func `quit batch stops immediately when a legacy service cancels`() async throws {
+    func `quit batch preserves possible dispatch when its first legacy attempt cancels`() async throws {
         let applications = [
             AutomationTestFixtures.application(
                 processIdentifier: 42,
@@ -609,10 +609,23 @@ struct ActionOutcomeCommandTests {
             ["app", "quit", "--all", "--json", "--no-remote"],
             services: services
         )
+        let object = try Self.jsonObject(result.stdout)
+        let data = try #require(object["data"] as? [String: Any])
+        let results = try #require(data["results"] as? [[String: Any]])
+        let outcome = try #require(object["outcome"] as? [String: Any])
+        let error = try #require(object["error"] as? [String: Any])
 
         #expect(result.exitStatus == 1)
         #expect(service.quitCallCount == 1)
-        #expect(!result.stdout.contains("results"))
+        #expect(results.isEmpty)
+        #expect(object["effect"] as? String == "unverifiable")
+        #expect(outcome["state"] as? String == "indeterminate")
+        #expect(outcome["dispatch_state"] as? String == "may_have_dispatched")
+        #expect(outcome["dispatched_unit_count"] as? Int == 1)
+        #expect(outcome["retry_safe"] as? Bool == false)
+        #expect(outcome["requires_fresh_observation"] as? Bool == true)
+        #expect(error["retry_safe"] as? Bool == false)
+        #expect(error["mutation_dispatched"] as? Bool == true)
     }
 
     @Test
@@ -655,8 +668,72 @@ struct ActionOutcomeCommandTests {
         #expect(service.quitCallCount == 2)
         #expect(results.count == 1)
         #expect(results.first?["success"] as? Bool == true)
-        #expect(object["effect"] as? String == "partial")
+        #expect(object["effect"] as? String == "unverifiable")
+        let outcome = try #require(object["outcome"] as? [String: Any])
+        #expect(outcome["state"] as? String == "indeterminate")
+        #expect(outcome["dispatch_state"] as? String == "may_have_dispatched")
+        #expect(outcome["dispatched_unit_count"] as? Int == 2)
+        #expect(outcome["retry_safe"] as? Bool == false)
+        #expect(outcome["requires_fresh_observation"] as? Bool == true)
+        #expect(error["retry_safe"] as? Bool == false)
+        #expect(error["mutation_dispatched"] as? Bool == true)
         #expect((error["message"] as? String)?.contains("cancelled after 1 of 2") == true)
+    }
+
+    @Test
+    func `quit batch cancellation cannot confirm only its completed canonical prefix`() async throws {
+        let applications = [
+            AutomationTestFixtures.application(
+                processIdentifier: 42,
+                processStartIdentity: 7,
+                bundleIdentifier: "com.example.first",
+                name: "First Fixture",
+                isHiddenKnown: true,
+                activationPolicy: .regular
+            ),
+            AutomationTestFixtures.application(
+                processIdentifier: 43,
+                processStartIdentity: 8,
+                bundleIdentifier: "com.example.second",
+                name: "Second Fixture",
+                isHiddenKnown: true,
+                activationPolicy: .regular
+            ),
+        ]
+        let service = OutcomeStubApplicationService(applications: applications)
+        service.quitActionSteps = [
+            .result(
+                payload: true,
+                outcome: .confirmedChange(
+                    route: .bridge,
+                    delivery: .init(mechanism: .nativeFramework, mode: .background),
+                    unitCount: .one
+                )
+            ),
+            .failure(CancellationError()),
+        ]
+        let services = TestServicesFactory.makePeekabooServices(applications: service)
+
+        let result = try await InProcessCommandRunner.run(
+            ["app", "quit", "--all", "--json", "--no-remote"],
+            services: services
+        )
+        let object = try Self.jsonObject(result.stdout)
+        let outcome = try #require(object["outcome"] as? [String: Any])
+        let error = try #require(object["error"] as? [String: Any])
+
+        #expect(result.exitStatus == 1)
+        #expect(service.quitActionResultCallCount == 2)
+        #expect(object["success"] as? Bool == false)
+        #expect(object["effect"] as? String == "unverifiable")
+        #expect(outcome["state"] as? String == "indeterminate")
+        #expect(outcome["route"] as? String == "bridge")
+        #expect(outcome["dispatch_state"] as? String == "may_have_dispatched")
+        #expect(outcome["dispatched_unit_count"] as? Int == 2)
+        #expect(outcome["retry_safe"] as? Bool == false)
+        #expect(outcome["requires_fresh_observation"] as? Bool == true)
+        #expect(error["retry_safe"] as? Bool == false)
+        #expect(error["mutation_dispatched"] as? Bool == true)
     }
 
     @Test

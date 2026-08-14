@@ -57,6 +57,7 @@ extension AppCommand {
                 var actionOutcomes: [DesktopActionOutcome?] = []
                 var caughtFailureHints: [String?] = []
                 var wasCancelled = false
+                var cancellationInterruptedAttempt = false
                 for target in quitApps {
                     if Task.isCancelled {
                         guard !results.isEmpty else { throw CancellationError() }
@@ -82,9 +83,9 @@ extension AppCommand {
                         )
                         success = actionResult.payload
                         actionOutcomes.append(actionResult.outcome)
-                    } catch let cancellation as CancellationError {
-                        guard !results.isEmpty else { throw cancellation }
+                    } catch is CancellationError {
                         wasCancelled = true
+                        cancellationInterruptedAttempt = true
                         break
                     } catch let failure as DesktopActionFailure {
                         success = false
@@ -116,11 +117,21 @@ extension AppCommand {
                 )
                 let allSucceeded = !wasCancelled && results.allSatisfy(\.success)
                 let succeededCount = results.count(where: \.success)
-                let aggregateOutcome = DesktopActionSequenceAccumulator.completedBatch(
-                    outcomes: actionOutcomes,
-                    succeededCount: succeededCount,
-                    attemptedCount: results.count
-                )
+                let aggregateOutcome = if wasCancelled {
+                    DesktopActionSequenceAccumulator.interruptedBatch(
+                        completedOutcomes: actionOutcomes,
+                        succeededCount: succeededCount,
+                        attemptedCount: results.count,
+                        plannedCount: quitApps.count,
+                        inFlightAttemptMayHaveDispatched: cancellationInterruptedAttempt
+                    )
+                } else {
+                    DesktopActionSequenceAccumulator.completedBatch(
+                        outcomes: actionOutcomes,
+                        succeededCount: succeededCount,
+                        attemptedCount: results.count
+                    )
+                }
                 let singleFailureHint = results.count == 1 ? caughtFailureHints[0] : nil
                 let failureHint: String? = if wasCancelled {
                     "The quit batch was cancelled; inspect completed targets before retrying."
@@ -144,7 +155,8 @@ extension AppCommand {
                     let response = ResultEnvelope(
                         success: allSucceeded,
                         effect: aggregateOutcome?.effect ??
-                            (allSucceeded ? .confirmed : (succeededCount > 0 ? .partial : .suspectedNoop)),
+                            (allSucceeded ? .confirmed :
+                                (wasCancelled || succeededCount > 0 ? .partial : .suspectedNoop)),
                         outcome: aggregateOutcome?.projection,
                         data: data,
                         messages: nil,
