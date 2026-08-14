@@ -318,6 +318,41 @@ struct ScrollCommandResultStructTests {
         #expect(result.location["x"] == 500.0)
         #expect(result.location["y"] == 300.0)
         #expect(result.totalTicks == 5)
+        #expect(result.targetReceipt == nil)
         #expect(result.executionTime == 0.15)
+    }
+
+    @Test
+    func `Scroll exact target receipt preserves generation as decimal text`() throws {
+        let bounds = CGRect(x: 10, y: 20, width: 600, height: 400)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 123,
+            ownerProcessStartIdentity: 9_007_199_254_740_993,
+            capturedBounds: bounds
+        )
+        let result = ElementDetectionResult(
+            snapshotId: "snapshot",
+            screenshotPath: "/tmp/shot.png",
+            elements: DetectedElements(),
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: 0,
+                method: "test",
+                windowContext: WindowContext(
+                    applicationProcessId: 123,
+                    windowID: 42,
+                    windowBounds: bounds,
+                    windowMutationIdentity: identity
+                )
+            )
+        )
+
+        let receipt = try #require(ScrollTargetReceipt(snapshotId: "snapshot", detectionResult: result))
+
+        #expect(receipt.processIdentifier == 123)
+        #expect(receipt.processStartIdentityDecimal == "9007199254740993")
+        #expect(receipt.windowId == 42)
+        #expect(receipt.windowBounds == bounds)
     }
 }

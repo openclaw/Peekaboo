@@ -112,9 +112,14 @@ RuntimeBackedCommand {
             let totalTicks = self.smooth ? self.amount * 10 : self.amount
 
             // Determine scroll location for output
+            let resultDetection: ElementDetectionResult? = if let snapshotId = observation.snapshotId {
+                try await self.services.snapshots.getDetectionResult(snapshotId: snapshotId)
+            } else {
+                nil
+            }
             let scrollResolution: InteractionTargetPointResolution = if let elementId = on {
                 if let snapshotId = observation.snapshotId,
-                   let detectionResult = try await self.services.snapshots.getDetectionResult(snapshotId: snapshotId),
+                   let detectionResult = resultDetection,
                    let element = detectionResult.elements.findById(elementId) {
                     try await InteractionTargetPointResolver.elementCenterResolution(
                         element: element,
@@ -140,6 +145,10 @@ RuntimeBackedCommand {
                 location: ["x": scrollLocation.x, "y": scrollLocation.y],
                 totalTicks: totalTicks,
                 targetPoint: scrollResolution.diagnostics,
+                targetReceipt: ScrollTargetReceipt(
+                    snapshotId: observation.snapshotId,
+                    detectionResult: resultDetection
+                ),
                 executionTime: Date().timeIntervalSince(startTime)
             )
             output(
@@ -218,6 +227,7 @@ struct ScrollResult: Codable {
     let location: [String: Double]
     let totalTicks: Int
     let targetPoint: InteractionTargetPointDiagnostics?
+    let targetReceipt: ScrollTargetReceipt?
     let executionTime: TimeInterval
 
     init(
@@ -226,6 +236,7 @@ struct ScrollResult: Codable {
         location: [String: Double],
         totalTicks: Int,
         targetPoint: InteractionTargetPointDiagnostics? = nil,
+        targetReceipt: ScrollTargetReceipt? = nil,
         executionTime: TimeInterval
     ) {
         self.direction = direction
@@ -233,7 +244,36 @@ struct ScrollResult: Codable {
         self.location = location
         self.totalTicks = totalTicks
         self.targetPoint = targetPoint
+        self.targetReceipt = targetReceipt
         self.executionTime = executionTime
+    }
+}
+
+struct ScrollTargetReceipt: Codable, Equatable {
+    let snapshotId: String
+    let processIdentifier: Int32
+    let processStartIdentityDecimal: String
+    let windowId: Int
+    let windowBounds: CGRect
+
+    init?(snapshotId: String?, detectionResult: ElementDetectionResult?) {
+        guard let snapshotId,
+              let context = detectionResult?.metadata.windowContext,
+              let processIdentifier = context.applicationProcessId,
+              let windowId = context.windowID,
+              let windowBounds = context.windowBounds,
+              let identity = context.windowMutationIdentity,
+              identity.ownerProcessIdentifier == processIdentifier,
+              identity.windowID == windowId,
+              identity.capturedBounds == nil || identity.capturedBounds == windowBounds
+        else {
+            return nil
+        }
+        self.snapshotId = snapshotId
+        self.processIdentifier = processIdentifier
+        self.processStartIdentityDecimal = String(identity.ownerProcessStartIdentity)
+        self.windowId = windowId
+        self.windowBounds = windowBounds
     }
 }
 

@@ -28,7 +28,7 @@ read_when:
 - Background scrolling first invokes a directional Accessibility action, then tries a settable descendant `AXScrollBar` used by standard AppKit scroll areas. If an opaque group still cannot scroll, a pixel-backed exact-window snapshot may use native PID-routed wheel events only for a visible, WebKit-linked, non-Electron app. Peekaboo revalidates the captured process generation, window ID, bounds, and point around every tick; it never activates the app, moves the cursor, or falls back to a desktop-global event.
 - macOS does not acknowledge receiver consumption for PID-routed wheel events. A successful routed dispatch therefore reports `effect: "unverifiable"`, `retry_safe: false`, and requires a fresh observation before another scroll. Hidden apps, AX-only snapshots, Electron/Chromium/Catalyst apps, stale receipts, and changed bounds keep the existing pre-dispatch refusal.
 - Foreground mode verifies focus when a target exists, then uses synthetic wheel events. Focus failure aborts before pointer dispatch.
-- JSON output reports target diagnostics for element scrolls and the current pointer position for explicit foreground targetless scrolls.
+- JSON output reports target diagnostics for element scrolls and the current pointer position for explicit foreground targetless scrolls. When a snapshot carries a complete exact receipt, `targetReceipt` repeats its snapshot ID, PID, decimal process-generation identity, window ID, and bounds so callers can audit the dispatched destination.
 - `ScrollRequest` is handed directly to `AutomationServiceBridge.scroll`, so the CLI benefits from the same smooth/step semantics the agent runtime sees.
 
 ## Examples
