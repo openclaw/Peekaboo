@@ -7,7 +7,7 @@ import PeekabooFoundation
 
 @MainActor
 extension SeeCommand {
-    func performPixelCapture() async throws -> [ImageCapturedFile] {
+    func performPixelCapture(snapshotID: String? = nil) async throws -> [ImageCapturedFile] {
         if let appName = self.app?.lowercased() {
             switch appName {
             case "menubar":
@@ -27,7 +27,7 @@ extension SeeCommand {
             results = try await self.captureScreens(allScreens: false)
         case .window:
             if let windowId = self.windowId {
-                results = try await self.captureWindowById(windowId)
+                results = try await self.captureWindowById(windowId, snapshotID: snapshotID)
             } else {
                 let target = try self.observationApplicationTargetForWindowCapture()
                 results = try await self.captureApplicationWindow(target)
@@ -48,12 +48,13 @@ extension SeeCommand {
         return results
     }
 
-    private func captureWindowById(_ windowId: Int) async throws -> [ImageCapturedFile] {
+    private func captureWindowById(_ windowId: Int, snapshotID: String?) async throws -> [ImageCapturedFile] {
         let target = try self.observationTargetForExactWindowCapture(windowId)
         let observation = try await self.captureObservation(
             target: target,
             preferredName: "window-\(windowId)",
-            index: nil
+            index: nil,
+            snapshotID: snapshotID
         )
 
         let title = observation.capture.metadata.windowInfo?.title
@@ -67,7 +68,8 @@ extension SeeCommand {
             self.capturedFile(
                 from: observation,
                 preferredName: preferredName,
-                windowIndex: nil
+                windowIndex: nil,
+                snapshotID: snapshotID
             ),
         ]
     }
@@ -246,13 +248,15 @@ extension SeeCommand {
     private func captureObservation(
         target: DesktopObservationTargetRequest,
         preferredName: String?,
-        index: Int?
+        index: Int?,
+        snapshotID: String? = nil
     ) async throws -> DesktopObservationResult {
         let url = self.makeOutputURL(preferredName: preferredName, index: index)
 
         return try await self.services.desktopObservation.observe(self.makePixelObservationRequest(
             target: target,
-            outputURL: url
+            outputURL: url,
+            snapshotID: snapshotID
         ))
     }
 }

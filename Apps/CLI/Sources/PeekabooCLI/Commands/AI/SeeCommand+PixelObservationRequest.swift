@@ -55,7 +55,8 @@ extension SeeCommand {
 
     func makePixelObservationRequest(
         target: DesktopObservationTargetRequest,
-        outputURL: URL
+        outputURL: URL,
+        snapshotID: String? = nil
     ) -> DesktopObservationRequest {
         DesktopObservationRequest(
             target: target,
@@ -69,7 +70,9 @@ extension SeeCommand {
             output: DesktopObservationOutputOptions(
                 path: outputURL.path,
                 format: self.format,
-                saveRawScreenshot: true
+                saveRawScreenshot: true,
+                saveSnapshot: snapshotID != nil,
+                snapshotID: snapshotID
             )
         )
     }

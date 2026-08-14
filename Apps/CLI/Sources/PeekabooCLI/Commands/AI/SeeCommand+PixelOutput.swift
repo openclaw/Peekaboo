@@ -13,6 +13,7 @@ struct ImageAnalysisData: Codable {
 struct ImageCapturedFile {
     let file: SavedFile
     let observation: ImageObservationDiagnostics
+    let snapshotID: String?
 }
 
 struct ImageObservationDiagnostics: Codable {
@@ -141,12 +142,14 @@ enum ImageBlankCaptureDiagnostics {
 struct ImageCaptureResult: Codable {
     let files: [SavedFile]
     let observations: [ImageObservationDiagnostics]
+    let snapshot_id: String?
 }
 
 struct ImageAnalyzeResult: Codable {
     let files: [SavedFile]
     let analysis: ImageAnalysisData
     let observations: [ImageObservationDiagnostics]
+    let snapshot_id: String?
 }
 
 @MainActor
@@ -187,7 +190,8 @@ extension SeeCommand {
     func outputResults(_ captures: [ImageCapturedFile]) {
         let output = ImageCaptureResult(
             files: captures.map(\.file),
-            observations: captures.map(\.observation)
+            observations: captures.map(\.observation),
+            snapshot_id: captures.first?.snapshotID
         )
         if self.jsonOutput {
             outputSuccessCodable(data: output, logger: self.outputLogger)
@@ -196,6 +200,7 @@ extension SeeCommand {
                 print("📸 \(self.describeSavedFile(capture.file))")
                 self.printWarnings(capture.observation.warnings)
             }
+            self.printSnapshotID(captures.first?.snapshotID)
         }
     }
 
@@ -203,7 +208,8 @@ extension SeeCommand {
         let output = ImageAnalyzeResult(
             files: captures.map(\.file),
             analysis: analysis,
-            observations: captures.map(\.observation)
+            observations: captures.map(\.observation),
+            snapshot_id: captures.first?.snapshotID
         )
         if self.jsonOutput {
             outputSuccessCodable(data: output, logger: self.outputLogger)
@@ -212,6 +218,7 @@ extension SeeCommand {
                 print("📸 \(self.describeSavedFile(capture.file))")
                 self.printWarnings(capture.observation.warnings)
             }
+            self.printSnapshotID(captures.first?.snapshotID)
             print("\n🤖 Analysis (\(analysis.provider)) - \(analysis.model):")
             print(analysis.text)
         }
@@ -236,6 +243,11 @@ extension SeeCommand {
 
     private func printWarnings(_ warnings: [String]) {
         warnings.forEach { print("⚠️  \($0)") }
+    }
+
+    private func printSnapshotID(_ snapshotID: String?) {
+        guard let snapshotID else { return }
+        print("\nSnapshot ID: \(snapshotID)")
     }
 }
 

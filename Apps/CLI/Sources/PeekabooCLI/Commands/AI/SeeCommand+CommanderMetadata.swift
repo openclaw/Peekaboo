@@ -111,7 +111,7 @@ extension SeeCommand: CommanderSignatureProviding {
                 ),
                 .commandFlag(
                     "noElements",
-                    help: "Skip element detection for a faster screenshot-only capture",
+                    help: "Skip element detection; exact --window-id captures still publish a coordinate receipt",
                     long: "no-elements"
                 ),
                 .commandFlag(

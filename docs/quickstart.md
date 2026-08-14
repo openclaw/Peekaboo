@@ -71,7 +71,8 @@ Coordinate clicks need a fresh capture receipt and an exact target in the defaul
 `peekaboo window list --app Safari --json`, copy the intended `window_id`, and capture that exact window:
 
 ```bash
-peekaboo see --window-id "$WINDOW_ID" --no-elements --json
+CAPTURE=$(peekaboo see --window-id "$WINDOW_ID" --no-elements --json)
+SNAPSHOT_ID=$(printf '%s' "$CAPTURE" | jq -r '.data.snapshot_id')
 peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 480,120
 ```
 

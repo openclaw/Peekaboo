@@ -7,7 +7,8 @@ extension SeeCommand {
     func capturedFile(
         from observation: DesktopObservationResult,
         preferredName: String?,
-        windowIndex: Int?
+        windowIndex: Int?,
+        snapshotID: String? = nil
     ) throws -> ImageCapturedFile {
         try ImageCapturedFile(
             file: self.savedFile(
@@ -19,7 +20,8 @@ extension SeeCommand {
                 timings: observation.timings,
                 diagnostics: observation.diagnostics,
                 capture: observation.capture
-            )
+            ),
+            snapshotID: snapshotID
         )
     }
 

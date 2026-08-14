@@ -60,6 +60,29 @@ struct ObservationPolicyDefaultsTests {
     }
 
     @Test
+    func `exact pixel observation can publish a coordinate receipt without detection`() throws {
+        let command = try SeeCommand.parse(["--window-id", "42", "--no-elements"])
+        let processTarget = try SeeCommand.parse(["--app", "Fixture", "--no-elements"])
+        let streamed = try SeeCommand.parse(["--window-id", "42", "--no-elements", "--path", "-"])
+        let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("capture.png")
+        let ordinary = command.makePixelObservationRequest(target: .windowID(42), outputURL: outputURL)
+        let receipt = command.makePixelObservationRequest(
+            target: .windowID(42),
+            outputURL: outputURL,
+            snapshotID: "coordinate-receipt"
+        )
+
+        #expect(command.publishesPixelCoordinateReceipt)
+        #expect(!processTarget.publishesPixelCoordinateReceipt)
+        #expect(!streamed.publishesPixelCoordinateReceipt)
+        #expect(!ordinary.output.saveSnapshot)
+        #expect(ordinary.output.snapshotID == nil)
+        #expect(receipt.detection.mode == .none)
+        #expect(receipt.output.saveSnapshot)
+        #expect(receipt.output.snapshotID == "coordinate-receipt")
+    }
+
+    @Test
     func `See web focus fallback is a positive opt in`() throws {
         let enabled = try SeeCommand.parse(["--web-focus"])
         #expect(enabled.webFocus)

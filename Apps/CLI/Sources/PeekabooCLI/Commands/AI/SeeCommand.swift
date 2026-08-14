@@ -57,7 +57,7 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
     @Flag(help: "Generate annotated screenshot with interaction markers")
     var annotate = false
 
-    @Flag(help: "Skip element detection for a faster screenshot-only capture")
+    @Flag(help: "Skip element detection; exact --window-id captures still publish a coordinate receipt")
     var noElements = false
 
     @Flag(help: "Add host-local Vision OCR text to the accessibility element map")
@@ -450,15 +450,32 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
 
     private func runPixelOnlyCapture() async throws {
         try self.validateStdoutStreamingOptions()
-        let captures = try await self.performPixelCapture()
-        if self.streamsImageToStdout {
-            try self.outputImageToStdout(captures)
-        } else if let prompt = self.analyze, let firstFile = captures.first?.file {
-            let analysis = try await self.analyzeImage(at: firstFile.path, with: prompt)
-            self.outputResultsWithAnalysis(captures, analysis: analysis)
+        let coordinateReceiptID: String? = if self.publishesPixelCoordinateReceipt {
+            try await self.services.snapshots.createSnapshot()
         } else {
-            self.outputResults(captures)
+            nil
         }
+
+        do {
+            let captures = try await self.performPixelCapture(snapshotID: coordinateReceiptID)
+            if self.streamsImageToStdout {
+                try self.outputImageToStdout(captures)
+            } else if let prompt = self.analyze, let firstFile = captures.first?.file {
+                let analysis = try await self.analyzeImage(at: firstFile.path, with: prompt)
+                self.outputResultsWithAnalysis(captures, analysis: analysis)
+            } else {
+                self.outputResults(captures)
+            }
+        } catch {
+            if let coordinateReceiptID {
+                try? await self.services.snapshots.cleanSnapshot(snapshotId: coordinateReceiptID)
+            }
+            throw error
+        }
+    }
+
+    var publishesPixelCoordinateReceipt: Bool {
+        self.noElements && self.windowId != nil && !self.streamsImageToStdout
     }
 
     private static func remainingObservationTimeout(
