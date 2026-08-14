@@ -79,7 +79,10 @@ extension SeeCommand {
     }
 
     private var pixelObservationCaptureEnginePreference: CaptureEnginePreference {
-        ObservationCommandSupport.captureEnginePreference(
+        if let safetyOverride = self.runtime?.captureEngineSafetyOverride {
+            return safetyOverride
+        }
+        return ObservationCommandSupport.captureEnginePreference(
             cliValue: self.captureEngine,
             configuredValue: self.configuredCaptureEnginePreference
         )

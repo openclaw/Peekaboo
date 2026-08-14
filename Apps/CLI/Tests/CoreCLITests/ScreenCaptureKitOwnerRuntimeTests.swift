@@ -304,6 +304,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
         )
 
         #expect(resolution.selectedRemoteSocketPath == selectedSocket)
+        #expect(resolution.captureEngineSafetyOverride == .legacy)
         #expect(recordedBlockers == [auxiliaryBlocker])
         #expect(localFactoryCalls == 0)
         await ownerAwareHost.stop()

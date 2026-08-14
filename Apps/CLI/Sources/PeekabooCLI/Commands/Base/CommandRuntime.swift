@@ -156,6 +156,7 @@ struct CommandRuntime {
     let hostDescription: String
     let selectedRemoteSocketPath: String?
     let selectedRemoteHostProcessIdentifier: pid_t?
+    let captureEngineSafetyOverride: CaptureEnginePreference?
     let snapshotInvalidationRemoteSocketPaths: [String]
     let applicationRelaunchAllowed: Bool
     let requiredHostFailure: String?
@@ -178,6 +179,7 @@ struct CommandRuntime {
         hostDescription: String = "local (in-process)",
         selectedRemoteSocketPath: String? = nil,
         selectedRemoteHostProcessIdentifier: pid_t? = nil,
+        captureEngineSafetyOverride: CaptureEnginePreference? = nil,
         snapshotInvalidationRemoteSocketPaths: [String] = [],
         applicationRelaunchAllowed: Bool = true,
         requiredHostFailure: String? = nil,
@@ -191,6 +193,7 @@ struct CommandRuntime {
         self.hostDescription = hostDescription
         self.selectedRemoteSocketPath = selectedRemoteSocketPath
         self.selectedRemoteHostProcessIdentifier = selectedRemoteHostProcessIdentifier
+        self.captureEngineSafetyOverride = captureEngineSafetyOverride
         self.snapshotInvalidationRemoteSocketPaths = snapshotInvalidationRemoteSocketPaths
         self.applicationRelaunchAllowed = applicationRelaunchAllowed
         self.requiredHostFailure = requiredHostFailure
@@ -269,6 +272,7 @@ extension CommandRuntime {
             hostDescription: resolution.hostDescription,
             selectedRemoteSocketPath: resolution.selectedRemoteSocketPath,
             selectedRemoteHostProcessIdentifier: resolution.selectedRemoteHostProcessIdentifier,
+            captureEngineSafetyOverride: resolution.captureEngineSafetyOverride,
             snapshotInvalidationRemoteSocketPaths: resolution.snapshotInvalidationRemoteSocketPaths,
             applicationRelaunchAllowed: resolution.applicationRelaunchAllowed,
             requiredHostFailure: resolution.requiredHostFailure

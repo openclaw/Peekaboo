@@ -7,16 +7,6 @@ import PeekabooCore
 
 @MainActor
 enum RuntimeHostResolver {
-    struct Resolution {
-        let services: any PeekabooServiceProviding
-        let hostDescription: String
-        let selectedRemoteSocketPath: String?
-        let selectedRemoteHostProcessIdentifier: pid_t?
-        let snapshotInvalidationRemoteSocketPaths: [String]
-        let applicationRelaunchAllowed: Bool
-        let requiredHostFailure: String?
-    }
-
     struct ImplicitRemoteCandidate: Equatable {
         let socketPath: String
         let requireReusableDaemon: Bool
@@ -61,6 +51,7 @@ enum RuntimeHostResolver {
         dependencies: Dependencies
     ) async throws -> Resolution {
         var deferredScreenCaptureKitSafetyBlocker = false
+        var captureEngineSafetyOverride: CaptureEnginePreference?
         if self.requiresCallerLocalModernOwnerClaim(options: options, environment: environment) {
             do {
                 if let owner = try dependencies.inspectScreenCaptureKitOwner(),
@@ -92,8 +83,9 @@ enum RuntimeHostResolver {
                 case .refuse: throw self.ownerCapabilityRefusal(host: oldHost, selectedSocket: plan.explicitSocket)
                 case .deferLocalRuntime: deferredScreenCaptureKitSafetyBlocker = true
                 case .routeAutomaticCapture:
-                    // Auto is classic-first. The selected host still refuses any later SCK fallback.
-                    break
+                    // The blocker tombstone belongs to this caller process. Clamp the transported
+                    // request so a different Bridge process cannot fall back from classic to SCK.
+                    captureEngineSafetyOverride = .legacy
                 }
             }
         } else {
@@ -120,7 +112,8 @@ enum RuntimeHostResolver {
                 selectedRemoteHostProcessIdentifier: nil,
                 snapshotInvalidationRemoteSocketPaths: [],
                 applicationRelaunchAllowed: true,
-                requiredHostFailure: nil
+                requiredHostFailure: nil,
+                captureEngineSafetyOverride: captureEngineSafetyOverride
             )
         }
 
@@ -148,7 +141,8 @@ enum RuntimeHostResolver {
                 selectedRemoteHostProcessIdentifier: nil,
                 snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
                 applicationRelaunchAllowed: true,
-                requiredHostFailure: nil
+                requiredHostFailure: nil,
+                captureEngineSafetyOverride: captureEngineSafetyOverride
             )
         }
 
@@ -178,7 +172,8 @@ enum RuntimeHostResolver {
                 selectedRemoteHostProcessIdentifier: nil,
                 snapshotInvalidationRemoteSocketPaths: localSnapshotInvalidationPaths,
                 applicationRelaunchAllowed: true,
-                requiredHostFailure: nil
+                requiredHostFailure: nil,
+                captureEngineSafetyOverride: captureEngineSafetyOverride
             )
         }
 
@@ -189,7 +184,7 @@ enum RuntimeHostResolver {
             hostname: Host.current().name
         )
 
-        return try await self.resolveRemoteRouting(context: RemoteResolutionContext(
+        var resolution = try await self.resolveRemoteRouting(context: RemoteResolutionContext(
             options: options,
             environment: environment,
             candidatePlan: candidatePlan,
@@ -200,6 +195,8 @@ enum RuntimeHostResolver {
             inspectScreenCaptureKitSafety: dependencies.inspectScreenCaptureKitSafety,
             recordScreenCaptureKitSafetyBlocker: dependencies.recordScreenCaptureKitSafetyBlocker
         ))
+        resolution.captureEngineSafetyOverride = captureEngineSafetyOverride
+        return resolution
     }
 
     private static func resolveRemoteRouting(

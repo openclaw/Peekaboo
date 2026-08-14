@@ -1,4 +1,5 @@
 import Commander
+import Foundation
 import PeekabooCore
 import Testing
 @testable import PeekabooCLI
@@ -40,6 +41,22 @@ struct ObservationPolicyDefaultsTests {
 
         #expect(try classic.makeObservationRequest(target: .frontmost).capture.engine == .legacy)
         #expect(try modern.makeObservationRequest(target: .frontmost).capture.engine == .modern)
+    }
+
+    @Test
+    func `See safety override clamps transported auto requests to classic`() throws {
+        var command = try SeeCommand.parse(["--capture-engine", "auto"])
+        command.runtime = CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: false, logLevel: nil),
+            services: PeekabooServices(),
+            captureEngineSafetyOverride: .legacy
+        )
+
+        #expect(try command.makeObservationRequest(target: .frontmost).capture.engine == .legacy)
+        #expect(command.makePixelObservationRequest(
+            target: .frontmost,
+            outputURL: FileManager.default.temporaryDirectory.appendingPathComponent("capture.png")
+        ).capture.engine == .legacy)
     }
 
     @Test
