@@ -16,62 +16,7 @@ extension PeekabooBridgeRequest {
     /// Native services own these leases after resolving and revalidating their exact target.
     /// Remote callers and the Bridge router must not acquire a second copy of the same lane.
     var nativeLeafOwnsDesktopOperationLane: Bool {
-        switch self {
-        case .click,
-             .type,
-             .typeActions,
-             .targetedTypeActions,
-             .exactWindowTargetedTypeActions,
-             .setValue,
-             .performAction,
-             .scroll,
-             .targetedScroll,
-             .hotkey,
-             .targetedHotkey,
-             .exactWindowTargetedHotkey,
-             .targetedClick,
-             .swipe,
-             .drag,
-             .moveMouse,
-             .focusWindow,
-             .moveWindow,
-             .resizeWindow,
-             .setWindowBounds,
-             .closeWindow,
-             .backgroundCloseWindow,
-             .minimizeWindow,
-             .restoreWindow,
-             .maximizeWindow,
-             .launchApplication,
-             .launchApplicationWithOptions,
-             .relaunchApplicationWithOptions,
-             .activateApplication,
-             .quitApplication,
-             .hideApplication,
-             .unhideApplication,
-             .hideOtherApplications,
-             .showAllApplications,
-             .clickMenuItem,
-             .clickMenuItemByName,
-             .clickMenuExtra,
-             .clickMenuBarItemNamed,
-             .clickMenuBarItemIndex,
-             .launchDockItem,
-             .rightClickDockItem,
-             .hideDock,
-             .showDock,
-             .dialogFindActive,
-             .dialogClickButton,
-             .backgroundDialogClickButton,
-             .dialogEnterText,
-             .dialogHandleFile,
-             .dialogDismiss,
-             .dialogListElements,
-             .desktopObservation:
-            true
-        default:
-            false
-        }
+        self.operation.nativeServiceOwnsDesktopOperationLane
     }
 
     var desktopOperationScope: DesktopOperationScope {

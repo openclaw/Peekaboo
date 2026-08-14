@@ -113,6 +113,16 @@ let failure = DesktopActionFailure.refused(
     reason: .targetUnavailable,
     message: "Consumer contract probe")
 precondition(!pendingReservationDisposition(for: failure))
+
+@MainActor
+func makeEmbeddedRuntime() -> PeekabooEmbeddedBridgeRuntime {
+    PeekabooEmbeddedBridgeRuntime.make(configuration: .init(
+        socketPath: "/tmp/peekaboo-consumer-contract.sock",
+        allowlistedTeams: ["TEAMID"],
+        allowlistedBundles: ["com.example.PeekabooConsumer"]))
+}
+
+_ = makeEmbeddedRuntime
 EOF
 
 swift package --package-path "${consumer_dir}" resolve

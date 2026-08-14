@@ -91,6 +91,15 @@ let package = Package(
             ],
             path: "Sources/PeekabooBridge",
             swiftSettings: coreTargetSettings),
+        .testTarget(
+            name: "PeekabooBridgeTests",
+            dependencies: [
+                "PeekabooBridge",
+                .product(name: "PeekabooAutomationKit", package: "PeekabooAutomationKit"),
+                .product(name: "PeekabooFoundation", package: "PeekabooFoundation"),
+            ],
+            path: "Tests/PeekabooBridgeTests",
+            swiftSettings: testTargetSettings),
         .target(
             name: "PeekabooBridgeTestSupport",
             dependencies: [

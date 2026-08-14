@@ -70,6 +70,40 @@ launch remains background-only.
 `peekaboo mcp` never hosts a Bridge listener. When it must run services locally, its in-process daemon is limited to
 the window tracker and other process-local support.
 
+## Embedding a native host
+
+Signed macOS applications can host the native automation surface without linking `PeekabooCore`, Tachikoma, browser
+support, or agent/provider state. The `PeekabooBridge` product exposes a checked runtime with an explicit socket and
+explicit caller-signing policy:
+
+```swift
+import PeekabooBridge
+
+let runtime = await PeekabooEmbeddedBridgeRuntime.make(
+    configuration: .init(
+        socketPath: embeddedBridgeSocketPath,
+        allowlistedTeams: ["YOUR_TEAM_ID"],
+        allowlistedBundles: ["com.example.AutomationClient"]))
+try await runtime.startChecked()
+```
+
+The standard assembly uses one durable desktop-mutation watermark with one in-memory snapshot manager, copies retained
+capture artifacts into manager-owned storage, and defaults action-capable input to accessibility-first background
+delivery. Its allowlist is native-only: browser MCP, daemon control, interactive permission prompts, and the legacy
+AppleScript probe cannot be enabled by configuration. The containing app remains responsible for presenting permission
+UI and choosing an app-specific socket path; embedded hosts never compete for Peekaboo.app's socket by default. The
+runtime always advertises the `backgroundBridgeHost` capability; caller-supplied capabilities are additive and cannot
+remove that routing contract.
+
+Retain the runtime for the full host lifetime. `startChecked()` returns only after the private UNIX listener is ready,
+and `stopChecked()` waits for non-cooperative in-flight requests to release the socket lease. Concurrent start, stop,
+and restart intents execute in arrival order, so a later stop cannot be undone by an older suspended restart. A failed
+signing-capability registration or bind leaves the runtime stopped and does not publish a partial host.
+
+Peekaboo.app and the reusable daemon still use the full `PeekabooServices` registry because they also own agent,
+browser, configuration, audio, and visualizer state. A follow-up can make that registry compose this native bundle once
+those app-only services are injected separately; moving them into the embedded runtime would defeat its lean boundary.
+
 ## Transport
 
 - **UNIX-domain socket**, single request per connection:

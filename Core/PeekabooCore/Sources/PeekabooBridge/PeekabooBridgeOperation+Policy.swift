@@ -1,6 +1,117 @@
 import Foundation
 
 extension PeekabooBridgeOperation {
+    /// Whether Peekaboo's concrete native service retains desktop-lane ownership through its dispatch leaf.
+    ///
+    /// Bridge routing consults this policy together with the service provider's ownership claim. Keeping the
+    /// exhaustive operation list here prevents native host assemblies and request routing from drifting apart.
+    public var nativeServiceOwnsDesktopOperationLane: Bool {
+        switch self {
+        case .click,
+             .type,
+             .typeActions,
+             .targetedTypeActions,
+             .exactWindowTargetedTypeActions,
+             .setValue,
+             .performAction,
+             .scroll,
+             .targetedScroll,
+             .hotkey,
+             .targetedHotkey,
+             .exactWindowTargetedHotkey,
+             .targetedClick,
+             .exactWindowTargetedClick,
+             .swipe,
+             .drag,
+             .moveMouse,
+             .focusWindow,
+             .moveWindow,
+             .resizeWindow,
+             .setWindowBounds,
+             .closeWindow,
+             .backgroundCloseWindow,
+             .minimizeWindow,
+             .restoreWindow,
+             .maximizeWindow,
+             .launchApplication,
+             .launchApplicationWithOptions,
+             .relaunchApplicationWithOptions,
+             .activateApplication,
+             .quitApplication,
+             .hideApplication,
+             .unhideApplication,
+             .hideOtherApplications,
+             .showAllApplications,
+             .clickMenuItem,
+             .clickMenuItemByName,
+             .clickMenuExtra,
+             .clickMenuBarItemNamed,
+             .clickMenuBarItemIndex,
+             .launchDockItem,
+             .rightClickDockItem,
+             .hideDock,
+             .showDock,
+             .dialogFindActive,
+             .dialogClickButton,
+             .backgroundDialogClickButton,
+             .dialogEnterText,
+             .dialogHandleFile,
+             .dialogDismiss,
+             .dialogListElements,
+             .desktopObservation:
+            true
+        case .permissionsStatus,
+             .requestPostEventPermission,
+             .daemonStatus,
+             .daemonStop,
+             .browserStatus,
+             .browserConnect,
+             .browserDisconnect,
+             .browserExecute,
+             .captureScreen,
+             .captureWindow,
+             .captureFrontmost,
+             .captureArea,
+             .detectElements,
+             .inspectAccessibilityTree,
+             .getFocusedElement,
+             .waitForElement,
+             .listWindows,
+             .getFocusedWindow,
+             .listApplications,
+             .findApplication,
+             .getFrontmostApplication,
+             .isApplicationRunning,
+             .listMenus,
+             .listFrontmostMenus,
+             .listMenuExtras,
+             .menuExtraOpenMenuFrame,
+             .listMenuBarItems,
+             .listDockItems,
+             .isDockHidden,
+             .findDockItem,
+             .createSnapshot,
+             .storeDetectionResult,
+             .getDetectionResult,
+             .storeScreenshot,
+             .storeObservationSnapshot,
+             .storeAnnotatedScreenshot,
+             .listSnapshots,
+             .getMostRecentSnapshot,
+             .invalidateImplicitLatestSnapshot,
+             .beginSnapshotMutation,
+             .finishSnapshotMutation,
+             .cleanSnapshot,
+             .cleanSnapshotsOlderThan,
+             .cleanAllSnapshots,
+             ._appleScriptProbe:
+            false
+        }
+    }
+
+    public static let nativeDesktopOperationLaneOperations: Set<PeekabooBridgeOperation> =
+        Set(Self.allCases.filter(\.nativeServiceOwnsDesktopOperationLane))
+
     /// TCC permissions an operation relies on. Used to gate advertisement/handling.
     public var requiredPermissions: Set<PeekabooBridgePermissionKind> {
         switch self {
@@ -163,4 +274,19 @@ extension PeekabooBridgeOperation {
         .cleanSnapshotsOlderThan,
         .cleanAllSnapshots,
     ]
+
+    /// Native operations exposed by an embedded host.
+    ///
+    /// Embedded hosts intentionally do not acquire browser, daemon-control, or interactive permission-prompt
+    /// responsibilities. The containing app remains the owner of those product-specific surfaces.
+    public static let embeddedDefaultAllowlist: Set<PeekabooBridgeOperation> =
+        PeekabooBridgeOperation.remoteDefaultAllowlist.subtracting([
+            .requestPostEventPermission,
+            .daemonStatus,
+            .daemonStop,
+            .browserStatus,
+            .browserConnect,
+            .browserDisconnect,
+            .browserExecute,
+        ])
 }

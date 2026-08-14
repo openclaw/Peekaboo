@@ -215,7 +215,7 @@ public final class PeekabooServices {
 
         // Agent service will be initialized by createShared method
         self.agent = nil
-        self.nativeDesktopOperationLaneOperations = Self.defaultNativeDesktopOperationLaneOperations
+        self.nativeDesktopOperationLaneOperations = PeekabooBridgeOperation.nativeDesktopOperationLaneOperations
 
         self.logger.debug("✨ PeekabooServices initialization complete")
         self.refreshAgentService()
@@ -299,7 +299,7 @@ public final class PeekabooServices {
             configuration: configuration,
             agent: nil,
             screens: screens,
-            nativeDesktopOperationLaneOperations: Self.defaultNativeDesktopOperationLaneOperations)
+            nativeDesktopOperationLaneOperations: PeekabooBridgeOperation.nativeDesktopOperationLaneOperations)
 
         logger.debug("✨ PeekabooServices initialization complete (custom snapshots)")
         self.refreshAgentService()
@@ -418,63 +418,6 @@ extension PeekabooServices: PeekabooBridgeServiceProviding {
     public func ownsDesktopOperationLane(for operation: PeekabooBridgeOperation) -> Bool {
         self.nativeDesktopOperationLaneOperations.contains(operation)
     }
-}
-
-extension PeekabooServices {
-    private static let defaultNativeDesktopOperationLaneOperations: Set<PeekabooBridgeOperation> = [
-        .click,
-        .type,
-        .typeActions,
-        .targetedTypeActions,
-        .exactWindowTargetedTypeActions,
-        .setValue,
-        .performAction,
-        .scroll,
-        .targetedScroll,
-        .hotkey,
-        .targetedHotkey,
-        .exactWindowTargetedHotkey,
-        .targetedClick,
-        .exactWindowTargetedClick,
-        .swipe,
-        .drag,
-        .moveMouse,
-        .focusWindow,
-        .moveWindow,
-        .resizeWindow,
-        .setWindowBounds,
-        .closeWindow,
-        .backgroundCloseWindow,
-        .minimizeWindow,
-        .restoreWindow,
-        .maximizeWindow,
-        .launchApplication,
-        .launchApplicationWithOptions,
-        .relaunchApplicationWithOptions,
-        .activateApplication,
-        .quitApplication,
-        .hideApplication,
-        .unhideApplication,
-        .hideOtherApplications,
-        .showAllApplications,
-        .clickMenuItem,
-        .clickMenuItemByName,
-        .clickMenuExtra,
-        .clickMenuBarItemNamed,
-        .clickMenuBarItemIndex,
-        .launchDockItem,
-        .rightClickDockItem,
-        .hideDock,
-        .showDock,
-        .dialogFindActive,
-        .dialogClickButton,
-        .backgroundDialogClickButton,
-        .dialogEnterText,
-        .dialogHandleFile,
-        .dialogDismiss,
-        .dialogListElements,
-        .desktopObservation,
-    ]
 }
 
 typealias SystemLogger = os.Logger

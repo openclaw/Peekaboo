@@ -502,6 +502,11 @@ public final actor PeekabooBridgeHost {
         return outcome
     }
 
+    /// Waits for deferred request draining to release the socket lease after `stop()` retained ownership.
+    public func waitUntilFullyStopped() async {
+        await self.ownershipCleanupTask?.value
+    }
+
     private func stopOnce() async -> PeekabooBridgeHostStopOutcome {
         if self.ownershipCleanupTask != nil {
             let snapshot = self.requestTracker.drainSnapshot
