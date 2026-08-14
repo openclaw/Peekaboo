@@ -12,6 +12,10 @@ struct CommanderRuntimeRouterHelpPathTests {
         ["peekaboo", "--junk", "--version"],
         ["peekaboo", "--junk", "-V"],
         ["peekaboo", "--json", "--version"],
+        ["peekaboo", "--log-level", "debug", "--version"],
+        ["peekaboo", "--logLevel=debug", "-V"],
+        ["peekaboo", "--bridge-socket", "/tmp/missing.sock", "--help"],
+        ["peekaboo", "--input-strategy", "actionOnly", "-h"],
     ])
     func `root early-exit flags ignore preceding root options`(arguments: [String]) {
         let exitCode = #expect(throws: ExitCode.self) {
@@ -32,6 +36,17 @@ struct CommanderRuntimeRouterHelpPathTests {
     func `help ignores option-like trailing tokens`() {
         let exitCode = #expect(throws: ExitCode.self) {
             _ = try CommanderRuntimeRouter.resolve(argv: ["peekaboo", "help", "app", "quit", "--pid", "123"])
+        }
+        #expect(exitCode == .success)
+    }
+
+    @Test(arguments: [
+        ["peekaboo", "--junk", "click", "--help"],
+        ["peekaboo", "--unknown=1", "app", "list", "--help"],
+    ])
+    func `option-leading command help retains the command path`(arguments: [String]) {
+        let exitCode = #expect(throws: ExitCode.self) {
+            _ = try CommanderRuntimeRouter.resolve(argv: arguments)
         }
         #expect(exitCode == .success)
     }

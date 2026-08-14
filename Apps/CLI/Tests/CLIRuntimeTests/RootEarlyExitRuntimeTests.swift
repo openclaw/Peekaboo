@@ -41,4 +41,43 @@ struct RootEarlyExitRuntimeTests {
         #expect(result.standardOutput.contains("Usage"))
         #expect(result.standardOutput.contains("Global Runtime Flags"))
     }
+
+    @Test(arguments: [
+        ["--log-level", "debug", "--version"],
+        ["--logLevel=debug", "-V"],
+        ["--bridge-socket", "/tmp/peekaboo-root-help-missing.sock", "--version"],
+        ["--input-strategy", "actionOnly", "--version"],
+    ])
+    func `root version consumes documented runtime option values`(arguments: [String]) async throws {
+        guard TestChildProcess.canLocatePeekabooBinary() else {
+            Issue.record("Build peekaboo before running CLI runtime tests.")
+            return
+        }
+
+        let result = try await TestChildProcess.runPeekaboo(arguments, isolateFromRemoteHosts: false)
+
+        #expect(result.status == .exited(0))
+        #expect(result.standardError.isEmpty)
+        #expect(result.standardOutput.hasPrefix("Peekaboo "))
+        #expect(!result.standardOutput.contains("Bridge"))
+    }
+
+    @Test(arguments: [
+        ["--junk", "click", "--help"],
+        ["--unknown=1", "app", "list", "--help"],
+    ])
+    func `option-leading command help stays command scoped`(arguments: [String]) async throws {
+        guard TestChildProcess.canLocatePeekabooBinary() else {
+            Issue.record("Build peekaboo before running CLI runtime tests.")
+            return
+        }
+
+        let result = try await TestChildProcess.runPeekaboo(arguments, isolateFromRemoteHosts: false)
+
+        #expect(result.status == .exited(0))
+        #expect(result.standardError.isEmpty)
+        #expect(result.standardOutput
+            .contains("Usage\n  peekaboo \(arguments.contains("click") ? "click" : "app list")"))
+        #expect(!result.standardOutput.contains("Core Commands"))
+    }
 }

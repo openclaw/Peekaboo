@@ -126,18 +126,18 @@ enum CommanderRuntimeRouter {
         from tokens: [String],
         descriptors: [CommanderCommandDescriptor]
     ) -> [String] {
-        guard !tokens.isEmpty else { return [] }
-        guard tokens.first?.hasPrefix("-") != true else { return [] }
+        let commandTokens = self.droppingLeadingRuntimeOptions(from: tokens)
+        guard !commandTokens.isEmpty else { return [] }
 
-        for length in stride(from: tokens.count, through: 1, by: -1) {
-            let candidate = Array(tokens.prefix(length))
+        for length in stride(from: commandTokens.count, through: 1, by: -1) {
+            let candidate = Array(commandTokens.prefix(length))
             if self.findDescriptor(in: descriptors, matching: candidate) != nil {
                 return candidate
             }
         }
 
-        // Preserve previous behavior for unknown paths: let printHelp throw with the original tokens.
-        return tokens
+        // Preserve previous behavior for unknown paths after discarding only the leading option prefix.
+        return commandTokens
     }
 
     private static func handleRootEarlyExitRequest(
@@ -148,7 +148,7 @@ enum CommanderRuntimeRouter {
         guard let index = searchable.firstIndex(where: { self.isHelpToken($0) || self.isVersionToken($0) }) else {
             return false
         }
-        guard searchable.prefix(index).allSatisfy({ $0.hasPrefix("-") }) else { return false }
+        guard self.containsOnlyLeadingRuntimeOptions(Array(searchable.prefix(index))) else { return false }
 
         let token = searchable[index]
         if self.isHelpToken(token) {
@@ -163,6 +163,52 @@ enum CommanderRuntimeRouter {
             print(Version.fullVersion)
         }
         return true
+    }
+
+    private static let runtimeValueOptionNames: Set<String> = {
+        let signature = CommandSignature().withPeekabooRuntimeFlags().flattened()
+        return Set(signature.options.flatMap { option in
+            option.names.map { Self.commandLineToken(for: $0) }
+        })
+    }()
+
+    private static func commandLineToken(for name: CommanderName) -> String {
+        switch name {
+        case let .short(value), let .aliasShort(value):
+            "-\(value)"
+        case let .long(value), let .aliasLong(value):
+            "--\(value)"
+        }
+    }
+
+    private static func runtimeOptionConsumesFollowingValue(_ token: String) -> Bool {
+        !token.contains("=") && self.runtimeValueOptionNames.contains(token)
+    }
+
+    private static func containsOnlyLeadingRuntimeOptions(_ tokens: [String]) -> Bool {
+        var index = 0
+        while index < tokens.count {
+            let token = tokens[index]
+            guard token.hasPrefix("-") else { return false }
+            index += 1
+            if self.runtimeOptionConsumesFollowingValue(token) {
+                guard index < tokens.count else { return false }
+                index += 1
+            }
+        }
+        return true
+    }
+
+    private static func droppingLeadingRuntimeOptions(from tokens: [String]) -> [String] {
+        var index = 0
+        while index < tokens.count, tokens[index].hasPrefix("-") {
+            let token = tokens[index]
+            index += 1
+            if self.runtimeOptionConsumesFollowingValue(token), index < tokens.count {
+                index += 1
+            }
+        }
+        return Array(tokens.dropFirst(index))
     }
 
     private static func handleBareInvocation(
