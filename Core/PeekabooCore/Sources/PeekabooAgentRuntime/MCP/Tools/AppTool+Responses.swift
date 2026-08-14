@@ -1,6 +1,7 @@
 import Foundation
 import MCP
 import PeekabooAutomation
+import PeekabooFoundation
 import TachikomaMCP
 
 @MainActor
@@ -9,7 +10,8 @@ extension AppToolActions {
         message: String,
         app: ServiceApplicationInfo,
         startTime: Date,
-        extraMeta: [String: Value] = [:]) -> ToolResponse
+        extraMeta: [String: Value] = [:],
+        outcome: DesktopActionOutcome? = nil) throws -> ToolResponse
     {
         var meta: [String: Value] = [
             "app_name": .string(app.name),
@@ -22,12 +24,19 @@ extension AppToolActions {
         meta.merge(extraMeta) { $1 }
 
         let summary = self.makeSummary(for: app, action: self.actionDescription(from: message), notes: nil)
-        return ToolResponse(
+        return try ToolResponse(
             content: [.text(text: message, annotations: nil, _meta: nil)],
-            meta: ToolEventSummary.merge(summary: summary, into: .object(meta)))
+            meta: MCPToolResponseMetadataProjector.metadata(
+                merging: ToolEventSummary.merge(summary: summary, into: .object(meta)).objectValue ?? [:],
+                outcome: outcome))
     }
 
-    func focusResponse(app: ServiceApplicationInfo, startTime: Date, verb: String) -> ToolResponse {
+    func focusResponse(
+        app: ServiceApplicationInfo,
+        startTime: Date,
+        verb: String,
+        outcome: DesktopActionOutcome?) throws -> ToolResponse
+    {
         let statusLine = "\(AgentDisplayTokens.Status.success) \(verb) \(app.name) (PID: \(app.processIdentifier))"
         let baseMeta: [String: Value] = [
             "app_name": .string(app.name),
@@ -35,9 +44,11 @@ extension AppToolActions {
             "execution_time": .double(self.executionTime(since: startTime)),
         ]
         let summary = self.makeSummary(for: app, action: verb, notes: nil)
-        return ToolResponse(
+        return try ToolResponse(
             content: [.text(text: statusLine, annotations: nil, _meta: nil)],
-            meta: ToolEventSummary.merge(summary: summary, into: .object(baseMeta)))
+            meta: MCPToolResponseMetadataProjector.metadata(
+                merging: ToolEventSummary.merge(summary: summary, into: .object(baseMeta)).objectValue ?? [:],
+                outcome: outcome))
     }
 
     func executionMeta(from startTime: Date) -> Value {

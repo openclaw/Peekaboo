@@ -53,9 +53,12 @@ struct AppCommandTests {
         let output = try await runAppCommand(["app", "launch", "TextEdit", "--json"])
         let object = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
         let data = try #require(object["data"] as? [String: Any])
+        let outcome = try #require(object["outcome"] as? [String: Any])
 
         #expect((data["pid"] as? NSNumber)?.int32Value == 202)
         #expect((data["process_start_identity"] as? NSNumber)?.uint64Value == 2002)
+        #expect(outcome["state"] as? String == "confirmed_change")
+        #expect(object["effect"] as? String == outcome["effect"] as? String)
     }
 
     @Test
@@ -133,6 +136,7 @@ struct AppCommandTests {
         ])
         let object = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
         #expect(object["effect"] as? String == "confirmed")
+        #expect((object["outcome"] as? [String: Any])?["effect"] as? String == "confirmed")
         #expect(await appServiceState(service) { $0.activateCalls } == ["PID:202"])
     }
 
@@ -417,7 +421,10 @@ private func runAppCommandWithService(
 @MainActor
 private func makeAppCommandContext() -> AppCommandContext {
     let data = defaultAppCommandData()
-    let applicationService = StubApplicationService(applications: data.applications, windowsByApp: data.windowsByApp)
+    let applicationService = OutcomeStubApplicationService(
+        applications: data.applications,
+        windowsByApp: data.windowsByApp
+    )
     let windowService = StubWindowService(windowsByApp: data.windowsByApp)
     let services = TestServicesFactory.makePeekabooServices(
         applications: applicationService,

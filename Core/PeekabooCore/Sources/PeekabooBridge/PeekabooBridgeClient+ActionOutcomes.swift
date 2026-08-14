@@ -303,7 +303,7 @@ extension PeekabooBridgeClient {
     {
         let reply = try await self.sendCarryingActionOutcome(request)
         if case let .error(envelope) = reply.response {
-            throw envelope
+            try Self.throwActionFailureOrEnvelope(envelope)
         }
         guard let payload = extract(reply.response) else {
             throw PeekabooBridgeErrorEnvelope(

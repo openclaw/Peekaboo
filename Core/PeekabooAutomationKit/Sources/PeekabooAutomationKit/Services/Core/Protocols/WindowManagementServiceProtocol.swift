@@ -152,9 +152,8 @@ extension WindowManagementServiceProtocol {
 
 /// Additive capability for exact-window mutations that can report their canonical execution outcome.
 ///
-/// Existing protocol methods remain the compatibility surface. The outcome is optional so a remote
-/// implementation negotiated with an older host can preserve the successful legacy operation without
-/// inventing verification evidence.
+/// Existing conformers and callers use this compatibility surface from Peekaboo 4.1.0. New services
+/// should also adopt ``WindowManagementActionResultProviding`` to return the shared result carrier.
 public protocol WindowManagementActionOutcomeProviding: WindowManagementServiceProtocol {
     /// Close the exact window through the background-only Accessibility route.
     func closeWindowWithOutcome(
@@ -187,6 +186,196 @@ public protocol WindowManagementActionOutcomeProviding: WindowManagementServiceP
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity,
         bounds: CGRect) async throws -> DesktopActionOutcome?
+}
+
+/// Additive capability for exact-window mutations that return the shared action-result carrier.
+///
+/// Requirement names intentionally differ from the public `*Result` adapters below. Keeping the
+/// capability witnesses distinct prevents an adapter default from satisfying this protocol and
+/// recursively redispatching to itself.
+public protocol WindowManagementActionResultProviding: WindowManagementServiceProtocol {
+    func closeWindowActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        allowForegroundFallback: Bool) async throws -> DesktopActionResult<Void>
+
+    func minimizeWindowActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
+
+    func restoreWindowActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
+
+    func maximizeWindowActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
+
+    func moveWindowActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to position: CGPoint) async throws -> DesktopActionResult<Void>
+
+    func resizeWindowActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to size: CGSize) async throws -> DesktopActionResult<Void>
+
+    func setWindowBoundsActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        bounds: CGRect) async throws -> DesktopActionResult<Void>
+}
+
+extension WindowManagementServiceProtocol {
+    public func closeWindowResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        allowForegroundFallback: Bool) async throws -> DesktopActionResult<Void>
+    {
+        if let results = self as? any WindowManagementActionResultProviding {
+            return try await results.closeWindowActionResult(
+                target: target,
+                expectedIdentity: expectedIdentity,
+                allowForegroundFallback: allowForegroundFallback)
+        }
+        if !allowForegroundFallback,
+           let outcomes = self as? any WindowManagementActionOutcomeProviding
+        {
+            return try await DesktopActionResult(
+                outcome: outcomes.closeWindowWithOutcome(
+                    target: target,
+                    expectedIdentity: expectedIdentity))
+        }
+        try await self.closeWindow(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            allowForegroundFallback: allowForegroundFallback)
+        return DesktopActionResult(outcome: nil)
+    }
+
+    public func minimizeWindowResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
+    {
+        if let results = self as? any WindowManagementActionResultProviding {
+            return try await results.minimizeWindowActionResult(
+                target: target,
+                expectedIdentity: expectedIdentity)
+        }
+        if let outcomes = self as? any WindowManagementActionOutcomeProviding {
+            return try await DesktopActionResult(
+                outcome: outcomes.minimizeWindowWithOutcome(
+                    target: target,
+                    expectedIdentity: expectedIdentity))
+        }
+        try await self.minimizeWindow(target: target, expectedIdentity: expectedIdentity)
+        return DesktopActionResult(outcome: nil)
+    }
+
+    public func restoreWindowResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
+    {
+        if let results = self as? any WindowManagementActionResultProviding {
+            return try await results.restoreWindowActionResult(
+                target: target,
+                expectedIdentity: expectedIdentity)
+        }
+        if let outcomes = self as? any WindowManagementActionOutcomeProviding {
+            return try await DesktopActionResult(
+                outcome: outcomes.restoreWindowWithOutcome(
+                    target: target,
+                    expectedIdentity: expectedIdentity))
+        }
+        try await self.restoreWindow(target: target, expectedIdentity: expectedIdentity)
+        return DesktopActionResult(outcome: nil)
+    }
+
+    public func maximizeWindowResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
+    {
+        if let results = self as? any WindowManagementActionResultProviding {
+            return try await results.maximizeWindowActionResult(
+                target: target,
+                expectedIdentity: expectedIdentity)
+        }
+        if let outcomes = self as? any WindowManagementActionOutcomeProviding {
+            return try await DesktopActionResult(
+                outcome: outcomes.maximizeWindowWithOutcome(
+                    target: target,
+                    expectedIdentity: expectedIdentity))
+        }
+        try await self.maximizeWindow(target: target, expectedIdentity: expectedIdentity)
+        return DesktopActionResult(outcome: nil)
+    }
+
+    public func moveWindowResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to position: CGPoint) async throws -> DesktopActionResult<Void>
+    {
+        if let results = self as? any WindowManagementActionResultProviding {
+            return try await results.moveWindowActionResult(
+                target: target,
+                expectedIdentity: expectedIdentity,
+                to: position)
+        }
+        if let outcomes = self as? any WindowManagementActionOutcomeProviding {
+            return try await DesktopActionResult(
+                outcome: outcomes.moveWindowWithOutcome(
+                    target: target,
+                    expectedIdentity: expectedIdentity,
+                    to: position))
+        }
+        try await self.moveWindow(target: target, expectedIdentity: expectedIdentity, to: position)
+        return DesktopActionResult(outcome: nil)
+    }
+
+    public func resizeWindowResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to size: CGSize) async throws -> DesktopActionResult<Void>
+    {
+        if let results = self as? any WindowManagementActionResultProviding {
+            return try await results.resizeWindowActionResult(
+                target: target,
+                expectedIdentity: expectedIdentity,
+                to: size)
+        }
+        if let outcomes = self as? any WindowManagementActionOutcomeProviding {
+            return try await DesktopActionResult(
+                outcome: outcomes.resizeWindowWithOutcome(
+                    target: target,
+                    expectedIdentity: expectedIdentity,
+                    to: size))
+        }
+        try await self.resizeWindow(target: target, expectedIdentity: expectedIdentity, to: size)
+        return DesktopActionResult(outcome: nil)
+    }
+
+    public func setWindowBoundsResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        bounds: CGRect) async throws -> DesktopActionResult<Void>
+    {
+        if let results = self as? any WindowManagementActionResultProviding {
+            return try await results.setWindowBoundsActionResult(
+                target: target,
+                expectedIdentity: expectedIdentity,
+                bounds: bounds)
+        }
+        if let outcomes = self as? any WindowManagementActionOutcomeProviding {
+            return try await DesktopActionResult(
+                outcome: outcomes.setWindowBoundsWithOutcome(
+                    target: target,
+                    expectedIdentity: expectedIdentity,
+                    bounds: bounds))
+        }
+        try await self.setWindowBounds(target: target, expectedIdentity: expectedIdentity, bounds: bounds)
+        return DesktopActionResult(outcome: nil)
+    }
 }
 
 /// Options for targeting a window

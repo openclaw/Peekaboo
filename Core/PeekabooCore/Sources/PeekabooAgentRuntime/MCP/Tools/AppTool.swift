@@ -107,6 +107,11 @@ public struct AppTool: MCPTool {
             return try await actions.perform(action: action, request: request)
         } catch {
             self.logger.error("App control execution failed: \(error, privacy: .public)")
+            if let failure = error as? DesktopActionFailure {
+                return try MCPToolResponseMetadataProjector.errorResponse(
+                    for: failure,
+                    invalidatedSnapshotID: nil)
+            }
             if let lifecycleFailure = error as? any ApplicationLifecycleFailureMetadataProviding,
                let metadata = lifecycleFailure.applicationLifecycleFailureMetadata
             {

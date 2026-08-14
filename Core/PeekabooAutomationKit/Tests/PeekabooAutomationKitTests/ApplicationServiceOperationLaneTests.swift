@@ -140,8 +140,13 @@ struct ApplicationServiceOperationLaneTests {
 
         #expect(await !(contenderStarted.opensWithin(.milliseconds(100))))
         await openRelease.open()
-        await #expect(throws: CancellationError.self) {
-            try await launch.value
+        do {
+            _ = try await launch.value
+            Issue.record("Expected canonical post-dispatch cancellation")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .dispatchedUnverified)
+            #expect(failure.outcome.evidence == .operationStillRunning)
+            #expect(failure.outcome.retrySafety == .unsafe)
         }
         #expect(!openObservedCancellation)
         try await contender.value

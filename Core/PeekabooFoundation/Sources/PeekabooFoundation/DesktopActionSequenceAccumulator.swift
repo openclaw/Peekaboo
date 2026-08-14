@@ -81,12 +81,112 @@ public struct DesktopActionSequenceAccumulator: Sendable {
     private var allReportedOutcomesAreConfirmedNoChange = true
 
     private var allReportedOutcomesAreConfirmed = true
+    private var allReportedOutcomesAreSuspectedNoop = true
+    private var hasReportedResponseLoss = false
     private var singleReportedOutcome: DesktopActionOutcome?
     private var dispatchedRoute = HomogeneousValue<DesktopActionOutcome.Route>()
-    private var dispatchedDelivery = HomogeneousValue<DesktopActionOutcome.Delivery>()
+    private var dispatchedDelivery = CompatibleDeliveryValue()
     private var noDispatchRoute = HomogeneousValue<DesktopActionOutcome.Route>()
 
     public init() {}
+
+    /// Resolves a batch whose caller separately tracks which payloads succeeded.
+    ///
+    /// Callers provide exactly one optional receipt per attempt. A batch with no reported receipts
+    /// preserves legacy omission so callers can retain their payload-based compatibility semantics.
+    /// Once any receipt is present, each missing receipt is treated as a possible one-unit dispatch,
+    /// never as proof that nothing happened. A one-item batch preserves its exact reported receipt.
+    /// Multi-item partial completion is representable only when every receipt is present and every
+    /// dispatched item is definite with one route and delivery mechanism; otherwise normal sequence
+    /// resolution retains the stronger uncertainty evidence.
+    public static func completedBatch(
+        outcomes: [DesktopActionOutcome?],
+        succeededCount: Int,
+        attemptedCount: Int,
+        fallbackRoute: DesktopActionOutcome.Route = .local) -> DesktopActionOutcome?
+    {
+        guard attemptedCount >= 0,
+              (0...attemptedCount).contains(succeededCount),
+              outcomes.count == attemptedCount
+        else { return nil }
+        if outcomes.count == 1, let outcome = outcomes[0] {
+            return outcome
+        }
+
+        let reportedOutcomes = outcomes.compactMap(\.self)
+        guard !reportedOutcomes.isEmpty else { return nil }
+        if succeededCount == 0,
+           reportedOutcomes.count == attemptedCount,
+           let first = reportedOutcomes.first,
+           first.state == .refused,
+           let refusalReason = first.refusalReason,
+           reportedOutcomes.allSatisfy({
+               $0.state == .refused &&
+                   $0.route == first.route &&
+                   $0.refusalReason == refusalReason
+           })
+        {
+            return .refused(route: first.route, reason: refusalReason)
+        }
+
+        var sequence = Self()
+        for outcome in outcomes {
+            if let outcome {
+                sequence.record(.reportedOutcome(outcome, defaultDispatchedUnitCount: .one))
+            } else {
+                sequence.record(.mayHaveDispatched(route: nil, delivery: nil, unitCount: .one))
+            }
+        }
+        let resolution = sequence.successResolution()
+        let hasMissingReceipt = reportedOutcomes.count != outcomes.count
+        if hasMissingReceipt {
+            guard attemptedCount > 0 else { return nil }
+            let responseLost = reportedOutcomes.first { $0.evidence == .responseLost }
+            let indeterminate = responseLost ?? reportedOutcomes.first { $0.state == .indeterminate }
+            let homogeneousRoute = reportedOutcomes.first.map(\.route).flatMap { route in
+                reportedOutcomes.allSatisfy { $0.route == route } ? route : nil
+            }
+            return .indeterminate(
+                route: indeterminate?.route ?? homogeneousRoute ?? fallbackRoute,
+                delivery: indeterminate?.delivery,
+                evidence: responseLost == nil ? .completionUnknown : .responseLost,
+                unitCount: resolution.mutationDisposition.unitCount)
+        }
+        guard succeededCount > 0, succeededCount < attemptedCount else {
+            return resolution.outcome
+        }
+
+        let dispatched = reportedOutcomes.filter(\.dispatchState.mutationDispatched)
+        guard !dispatched.isEmpty,
+              let route = sequence.dispatchedRoute.value,
+              let delivery = sequence.dispatchedDelivery.value,
+              dispatched.allSatisfy({
+                  if case .dispatched = $0.dispatchState {
+                      true
+                  } else {
+                      false
+                  }
+              })
+        else {
+            return resolution.outcome
+        }
+        return .partial(
+            route: route,
+            delivery: delivery,
+            unitCount: resolution.mutationDisposition.unitCount)
+    }
+
+    /// Convenience for batches where every attempt returned a canonical receipt.
+    public static func completedBatch(
+        outcomes: [DesktopActionOutcome],
+        succeededCount: Int,
+        attemptedCount: Int) -> DesktopActionOutcome?
+    {
+        self.completedBatch(
+            outcomes: outcomes.map(Optional.some),
+            succeededCount: succeededCount,
+            attemptedCount: attemptedCount)
+    }
 
     public mutating func record(_ step: Step) {
         self.completedStepCount += 1
@@ -139,6 +239,12 @@ public struct DesktopActionSequenceAccumulator: Sendable {
                let delivery = self.dispatchedDelivery.value
             {
                 .confirmedChange(route: route, delivery: delivery, unitCount: unitCount)
+            } else if self.allStepsReported,
+                      self.allReportedOutcomesAreSuspectedNoop,
+                      let route = self.dispatchedRoute.value,
+                      let delivery = self.dispatchedDelivery.value
+            {
+                .suspectedNoop(route: route, delivery: delivery, unitCount: unitCount)
             } else if let route = self.dispatchedRoute.value,
                       let delivery = self.dispatchedDelivery.value
             {
@@ -155,7 +261,7 @@ public struct DesktopActionSequenceAccumulator: Sendable {
                 .indeterminate(
                     route: route,
                     delivery: self.dispatchedDelivery.value,
-                    evidence: .completionUnknown,
+                    evidence: self.hasReportedResponseLoss ? .responseLost : .completionUnknown,
                     unitCount: unitCount)
             } else {
                 nil
@@ -240,6 +346,9 @@ public struct DesktopActionSequenceAccumulator: Sendable {
             self.singleReportedOutcome = nil
         }
         self.allReportedOutcomesAreConfirmed = self.allReportedOutcomesAreConfirmed && outcome.isConfirmed
+        self.allReportedOutcomesAreSuspectedNoop = self.allReportedOutcomesAreSuspectedNoop &&
+            outcome.state == .suspectedNoop
+        self.hasReportedResponseLoss = self.hasReportedResponseLoss || outcome.evidence == .responseLost
         self.allReportedOutcomesAreConfirmedNoChange = self.allReportedOutcomesAreConfirmedNoChange &&
             outcome.state == .confirmedNoChange
         let disposition: DesktopActionMutationDisposition = switch outcome.dispatchState {
@@ -267,6 +376,7 @@ public struct DesktopActionSequenceAccumulator: Sendable {
         self.singleReportedOutcome = nil
         self.allStepsReported = false
         self.allReportedOutcomesAreConfirmed = false
+        self.allReportedOutcomesAreSuspectedNoop = false
         self.allReportedOutcomesAreConfirmedNoChange = false
         self.dispatchedRoute.record(route)
         self.dispatchedDelivery.record(delivery)
@@ -323,5 +433,32 @@ private struct HomogeneousValue<Value: Equatable & Sendable>: Sendable {
         } else {
             self.value = value
         }
+    }
+}
+
+/// Combines one delivery mechanism while retaining the most disruptive mode it used.
+private struct CompatibleDeliveryValue: Sendable {
+    private(set) var value: DesktopActionOutcome.Delivery?
+    private var isAvailable = true
+
+    mutating func record(_ value: DesktopActionOutcome.Delivery?) {
+        guard self.isAvailable else { return }
+        guard let value else {
+            self.value = nil
+            self.isAvailable = false
+            return
+        }
+        guard let existing = self.value else {
+            self.value = value
+            return
+        }
+        guard existing.mechanism == value.mechanism else {
+            self.value = nil
+            self.isAvailable = false
+            return
+        }
+        self.value = DesktopActionOutcome.Delivery(
+            mechanism: existing.mechanism,
+            mode: existing.mode == .foreground || value.mode == .foreground ? .foreground : .background)
     }
 }

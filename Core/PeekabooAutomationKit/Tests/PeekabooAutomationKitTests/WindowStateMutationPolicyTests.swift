@@ -28,6 +28,20 @@ struct WindowStateMutationPolicyTests {
     }
 
     @Test
+    func `minimize accepts transient AX window ID loss when WindowServer receipt remains exact`() {
+        #expect(pinnedWindowMinimizeIdentityMatches(
+            expectedIdentity: self.identity,
+            currentProcessStartIdentity: 7,
+            currentWindowID: nil,
+            windowServerIdentityMatches: true))
+        #expect(!pinnedWindowMinimizeIdentityMatches(
+            expectedIdentity: self.identity,
+            currentProcessStartIdentity: 7,
+            currentWindowID: 925,
+            windowServerIdentityMatches: true))
+    }
+
+    @Test
     func `restore completion preserves the captured exact window receipt`() {
         #expect(pinnedWindowRestoreIdentityMatches(
             expectedIdentity: self.identity,

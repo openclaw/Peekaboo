@@ -62,6 +62,8 @@ struct WindowCommandTests {
         )
 
         #expect(response.data.action == "restore")
+        #expect(response.outcome == context.windowService.actionOutcome?.projection)
+        #expect(response.effect == context.windowService.actionOutcome?.effect)
         #expect(await MainActor.run {
             context.windowService.windowsByApp[appName]?.first?.isMinimized
         } == false)
@@ -518,7 +520,7 @@ struct WindowCommandTests {
         windows: [String: [ServiceWindowInfo]]
     ) -> WindowHarnessContext {
         let applicationService = StubApplicationService(applications: [appInfo], windowsByApp: windows)
-        let windowService = StubWindowService(windowsByApp: windows)
+        let windowService = OutcomeStubWindowService(windowsByApp: windows)
         let services = TestServicesFactory.makePeekabooServices(
             applications: applicationService,
             windows: windowService
@@ -532,7 +534,7 @@ struct WindowCommandTests {
 
     private struct WindowHarnessContext {
         let services: PeekabooServices
-        let windowService: StubWindowService
+        let windowService: OutcomeStubWindowService
         let applicationService: StubApplicationService
     }
 }

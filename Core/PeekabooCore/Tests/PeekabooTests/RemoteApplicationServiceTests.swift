@@ -212,6 +212,103 @@ struct RemoteApplicationServiceTests {
     }
 
     @Test
+    func `current remote preserves the canonical application outcome`() async throws {
+        let socketPath = "/tmp/peekaboo-bridge-app-outcome-\(UUID().uuidString).sock"
+        let applications = await MainActor.run { StubApplicationService() }
+        let expected = DesktopActionOutcome.confirmedChange(
+            delivery: .init(mechanism: .nativeFramework, mode: .background),
+            unitCount: .one)
+        await MainActor.run { applications.actionOutcome = expected }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: StubServices(applications: applications),
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [])
+        }
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: PeekabooBridgeClientIdentity(
+            bundleIdentifier: "dev.peekaboo.tests",
+            teamIdentifier: nil,
+            processIdentifier: getpid(),
+            hostname: nil))
+        let remote = await MainActor.run {
+            RemoteApplicationService(client: client, supportsPinnedQuit: true)
+        }
+        let result = try await remote.quitApplicationResult(request: ApplicationQuitRequest(
+            identifier: "PID:123",
+            force: true,
+            expectedIdentity: .init(processIdentifier: 123, processStartIdentity: 456)))
+
+        #expect(result.payload)
+        #expect(result.outcome == expected.routed(to: .bridge))
+        await host.stop()
+    }
+
+    @Test
+    func `quit rejection remains false for Bool clients and retains projected outcome`() async throws {
+        let socketPath = "/tmp/peekaboo-bridge-quit-refusal-\(UUID().uuidString).sock"
+        let applications = await MainActor.run { StubApplicationService() }
+        let refusal = DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "The native quit request was rejected.",
+            hint: "Refresh the application inventory before retrying.")
+        await MainActor.run { applications.quitResultError = refusal }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: StubServices(applications: applications),
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [])
+        }
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let request = ApplicationQuitRequest(
+            identifier: "PID:123",
+            force: false,
+            expectedIdentity: .init(processIdentifier: 123, processStartIdentity: 456))
+        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+
+        let legacySucceeded = try await client.quitApplication(
+            request: request,
+            supportsPinnedQuit: true)
+        #expect(!legacySucceeded)
+
+        _ = try await client.handshake(client: PeekabooBridgeClientIdentity(
+            bundleIdentifier: "dev.peekaboo.tests",
+            teamIdentifier: nil,
+            processIdentifier: getpid(),
+            hostname: nil))
+        let remote = await MainActor.run {
+            RemoteApplicationService(client: client, supportsPinnedQuit: true)
+        }
+        let remoteSucceeded = try await remote.quitApplication(request: request)
+        #expect(!remoteSucceeded)
+        let identifierSucceeded = try await remote.quitApplication(identifier: "StubApp", force: false)
+        #expect(!identifierSucceeded)
+
+        let projected = try await remote.quitApplicationResult(request: request)
+        #expect(!projected.payload)
+        #expect(projected.outcome == refusal.outcome.routed(to: .bridge))
+        #expect(projected.outcome?.refusalReason == .targetUnavailable)
+        #expect(projected.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
+        await host.stop()
+    }
+
+    @Test
     func `current bridge legacy quit resolves and forwards pinned identity`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-legacy-quit-\(UUID().uuidString).sock"
         let applications = await MainActor.run { StubApplicationService() }

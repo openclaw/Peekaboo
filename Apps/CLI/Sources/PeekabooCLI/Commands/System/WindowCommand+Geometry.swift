@@ -51,7 +51,7 @@ extension WindowCommand {
                 // Move the window
                 let newOrigin = CGPoint(x: x, y: y)
                 self.resolvedRuntime.beginInteractionMutation()
-                try await WindowServiceBridge.moveWindow(
+                let actionResult = try await WindowServiceBridge.moveWindow(
                     windows: self.services.windows,
                     target: target,
                     expectedIdentity: mutationIdentity,
@@ -81,7 +81,7 @@ extension WindowCommand {
                     windowInfo: verified.windowInfo
                 )
 
-                output(verified.result, effect: verified.effect) {
+                output(verified.result, effect: verified.effect, outcome: actionResult.outcome) {
                     let title = verified.windowInfo?.title ?? "Untitled"
                     let actualOrigin = verified.windowInfo?.bounds.origin ?? newOrigin
                     if let warning = verified.warning {
@@ -149,7 +149,7 @@ extension WindowCommand {
                 // Resize the window
                 let newSize = CGSize(width: width, height: height)
                 self.resolvedRuntime.beginInteractionMutation()
-                try await WindowServiceBridge.resizeWindow(
+                let actionResult = try await WindowServiceBridge.resizeWindow(
                     windows: self.services.windows,
                     target: target,
                     expectedIdentity: mutationIdentity,
@@ -179,7 +179,7 @@ extension WindowCommand {
                     windowInfo: verified.windowInfo
                 )
 
-                output(verified.result, effect: verified.effect) {
+                output(verified.result, effect: verified.effect, outcome: actionResult.outcome) {
                     let title = verified.windowInfo?.title ?? "Untitled"
                     let actualSize = verified.windowInfo?.bounds.size ?? newSize
                     if let warning = verified.warning {
@@ -253,7 +253,7 @@ extension WindowCommand {
                 // Set bounds
                 let newBounds = CGRect(x: x, y: y, width: width, height: height)
                 self.resolvedRuntime.beginInteractionMutation()
-                try await WindowServiceBridge.setWindowBounds(
+                let actionResult = try await WindowServiceBridge.setWindowBounds(
                     windows: self.services.windows,
                     target: target,
                     expectedIdentity: mutationIdentity,
@@ -283,7 +283,7 @@ extension WindowCommand {
                     windowInfo: verified.windowInfo
                 )
 
-                output(verified.result, effect: verified.effect) {
+                output(verified.result, effect: verified.effect, outcome: actionResult.outcome) {
                     let title = verified.windowInfo?.title ?? "Untitled"
                     let actualBounds = verified.windowInfo?.bounds ?? newBounds
                     let actualDescription =

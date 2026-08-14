@@ -269,6 +269,21 @@ struct UIAutomationTargetTests {
         }
     }
 
+    @Test
+    func `published automation result converts to and from the shared carrier`() {
+        let outcome = DesktopActionOutcome.confirmedChange(
+            delivery: .init(mechanism: .accessibilityValue, mode: .background))
+        let published = UIAutomationActionResult(payload: 42, outcome: outcome)
+
+        let shared = published.desktopActionResult
+        let roundTripped = UIAutomationActionResult(shared)
+
+        #expect(shared.payload == 42)
+        #expect(shared.outcome == outcome)
+        #expect(roundTripped.payload == published.payload)
+        #expect(roundTripped.outcome == published.outcome)
+    }
+
     private func exactWindowTarget(isMinimized: Bool = false) throws -> UIAutomationTarget.ExactWindow {
         try UIAutomationTarget.ExactWindow(
             identity: AutomationTestFixtures.windowIdentity(

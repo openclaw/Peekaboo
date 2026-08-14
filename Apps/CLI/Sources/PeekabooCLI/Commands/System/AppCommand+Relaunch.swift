@@ -72,7 +72,8 @@ extension AppCommand {
                 let launchIdentifier = appInfo.bundlePath ?? (appInfo.bundleIdentifier == nil ? appInfo.name : nil)
                 let launchBundleIdentifier = appInfo.bundlePath == nil ? appInfo.bundleIdentifier : nil
                 self.resolvedRuntime.beginInteractionMutation()
-                let launchedApp = try await services.applications.relaunchApplication(
+                let actionResult = try await ApplicationServiceBridge.relaunchApplication(
+                    applications: services.applications,
                     request: ApplicationRelaunchRequest(
                         targetIdentifier: processIdentifier,
                         expectedTargetIdentity: originalProcessIdentity,
@@ -86,6 +87,7 @@ extension AppCommand {
                         waitSeconds: self.wait.seconds
                     )
                 )
+                let launchedApp = actionResult.payload
                 await InteractionObservationInvalidator.invalidateAfterMutation(
                     targets: self.resolvedRuntime.interactionMutationTargets,
                     logger: self.logger,
@@ -116,7 +118,7 @@ extension AppCommand {
                     launch_success: !self.waitUntilReady || launchedApp.isFinishedLaunching == true
                 )
 
-                output(data) {
+                output(data, outcome: actionResult.outcome) {
                     print("✓ Relaunched \(appInfo.name)")
                     print("  Old PID: \(originalPID) → New PID: \(launchedApp.processIdentifier)")
                     if self.waitUntilReady {

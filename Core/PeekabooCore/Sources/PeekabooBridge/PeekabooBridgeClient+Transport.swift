@@ -177,10 +177,19 @@ extension PeekabooBridgeClient {
         case .ok:
             return reply.outcome?.outcome
         case let .error(envelope):
-            throw envelope
+            try Self.throwActionFailureOrEnvelope(envelope)
         default:
             throw PeekabooBridgeErrorEnvelope(code: .invalidRequest, message: "Unexpected response for void request")
         }
+    }
+
+    nonisolated static func throwActionFailureOrEnvelope(
+        _ envelope: PeekabooBridgeErrorEnvelope) throws -> Never
+    {
+        if let failure = envelope.desktopActionFailure {
+            throw failure
+        }
+        throw envelope
     }
 
     private nonisolated static func disableSigPipe(fd: Int32) {

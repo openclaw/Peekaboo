@@ -239,8 +239,7 @@ public struct TypeResult: Sendable, Codable {
 
 /// Payload returned by an automation action together with its canonical execution outcome.
 ///
-/// The outcome is optional so capability implementations backed by an older transport can preserve
-/// their payload without inventing execution evidence. Local automation always supplies it.
+/// This remains a nominal type for source and binary compatibility with Peekaboo 4.1.0.
 public struct UIAutomationActionResult<Payload: Sendable>: Sendable {
     public let payload: Payload
     public let outcome: DesktopActionOutcome?
@@ -248,6 +247,14 @@ public struct UIAutomationActionResult<Payload: Sendable>: Sendable {
     public init(payload: Payload, outcome: DesktopActionOutcome?) {
         self.payload = payload
         self.outcome = outcome
+    }
+
+    public init(_ result: DesktopActionResult<Payload>) {
+        self.init(payload: result.payload, outcome: result.outcome)
+    }
+
+    public var desktopActionResult: DesktopActionResult<Payload> {
+        DesktopActionResult(payload: self.payload, outcome: self.outcome)
     }
 }
 

@@ -385,7 +385,7 @@ struct PeekabooBridgeApplicationLaunchTests {
             },
             relaunchQuitHandler: { _ in
                 relaunchQuitCalls += 1
-                return true
+                return .init(requestAccepted: true, terminated: true)
             })
         let server = PeekabooBridgeServer(
             services: StubServices(applications: applicationService),

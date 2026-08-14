@@ -42,11 +42,52 @@ struct ApplicationServiceLifecycleTests {
             applicationActivationSleepHandler: { _ in sleepCount += 1 },
             applicationActivationTimeout: .seconds(1))
 
-        try await service.activateApplication(identifier: "PID:\(targetProcessIdentifier)")
+        let result = try await service.activateApplicationResult(request: ApplicationActivationRequest(
+            identifier: "PID:\(targetProcessIdentifier)"))
 
         #expect(nativeActivationCount == 2)
         #expect(accessibilityActivationCount == 1)
         #expect(sleepCount == 1)
+        #expect(result.outcome?.delivery == .init(mechanism: .accessibilityAction, mode: .foreground))
+        #expect(result.outcome?.dispatchState == .dispatched(unitCount: nil))
+    }
+
+    @Test
+    @MainActor
+    func `application activation reports native delivery when native request verifies immediately`() async throws {
+        let runningApplication = try self.runningApplication()
+        let processIdentifier = runningApplication.processIdentifier
+        var nativeActivationCount = 0
+        var accessibilityActivationCount = 0
+        var isActive = false
+        var frontmostProcessIdentifier: pid_t?
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            applicationActivationHandler: { _ in
+                nativeActivationCount += 1
+                isActive = true
+                frontmostProcessIdentifier = processIdentifier
+                return true
+            },
+            applicationAccessibilityActivationHandler: { _ in
+                accessibilityActivationCount += 1
+                return true
+            },
+            applicationActiveProvider: { _ in isActive },
+            frontmostProcessIdentifierProvider: { frontmostProcessIdentifier },
+            windowServerActivationStateProvider: { _ in
+                ApplicationService.WindowServerActivationState(
+                    targetHasVisibleWindow: false,
+                    frontmostWindowProcessIdentifier: nil)
+            })
+
+        let result = try await service.activateApplicationResult(request: ApplicationActivationRequest(
+            identifier: "PID:\(processIdentifier)"))
+
+        #expect(result.outcome?.delivery == .init(mechanism: .nativeFramework, mode: .foreground))
+        #expect(result.outcome?.dispatchState == .dispatched(unitCount: .one))
+        #expect(nativeActivationCount == 1)
+        #expect(accessibilityActivationCount == 0)
     }
 
     @Test
@@ -129,8 +170,57 @@ struct ApplicationServiceLifecycleTests {
             },
             applicationActivationTimeout: .zero)
 
-        await #expect(throws: PeekabooError.self) {
+        do {
             try await service.activateApplication(identifier: "PID:\(runningApplication.processIdentifier)")
+            Issue.record("Expected canonical activation failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .suspectedNoop)
+            #expect(failure.outcome.dispatchState == .dispatched(unitCount: .one))
+        }
+    }
+
+    @Test
+    @MainActor
+    func `application activation refuses when native and accessibility requests are rejected`() async throws {
+        let runningApplication = try self.runningApplication()
+        let processIdentifier = runningApplication.processIdentifier
+        let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(processIdentifier))
+        var nativeRequestCount = 0
+        var accessibilityRequestCount = 0
+        var sleepCount = 0
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            applicationActivationHandler: { _ in
+                nativeRequestCount += 1
+                return false
+            },
+            applicationAccessibilityActivationHandler: { _ in
+                accessibilityRequestCount += 1
+                return false
+            },
+            applicationActiveProvider: { _ in false },
+            frontmostProcessIdentifierProvider: { nil },
+            windowServerActivationStateProvider: { _ in
+                ApplicationService.WindowServerActivationState(
+                    targetHasVisibleWindow: false,
+                    frontmostWindowProcessIdentifier: nil)
+            },
+            applicationActivationSleepHandler: { _ in sleepCount += 1 },
+            processStartIdentityProvider: { _ in processStartIdentity },
+            applicationActivationTimeout: .zero)
+
+        do {
+            _ = try await service.activateApplicationResult(request: ApplicationActivationRequest(
+                identifier: "PID:\(processIdentifier)"))
+            Issue.record("Expected pre-dispatch activation refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure.outcome.retrySafety == .safe)
+            #expect(nativeRequestCount == 1)
+            #expect(accessibilityRequestCount == 1)
+            #expect(sleepCount == 0)
         }
     }
 
@@ -296,13 +386,13 @@ struct ApplicationServiceLifecycleTests {
 
     @Test
     @MainActor
-    func `legacy quit overload pins generation and rejects PID reuse`() async throws {
+    func `legacy quit overload unwraps the lane-owned result and rejects PID reuse`() async throws {
         let runningApplication = try #require(NSWorkspace.shared.runningApplications.first {
             $0.processIdentifier > 0 && !$0.isTerminated
         })
 
         for force in [false, true] {
-            var identities: [UInt64] = [70, 70, 70, 70, 70, 71]
+            var identities: [UInt64] = [70, 70, 70, 71]
             var terminationCalls = 0
             let service = ApplicationService(
                 applicationOpenHandler: { _, _, _ in runningApplication },
@@ -756,7 +846,7 @@ extension ApplicationServiceLifecycleTests {
 
     @Test
     @MainActor
-    func `relaunch quits and polls only the canonical target PID`() async throws {
+    func `normal local relaunch composes background quit and foreground launch`() async throws {
         let lifecycle = RelaunchLifecycleRecorder(targetPID: 4242)
         let openRecorder = ApplicationOpenRecorder()
         let service = ApplicationService(
@@ -764,9 +854,10 @@ extension ApplicationServiceLifecycleTests {
             relaunchTargetResolver: lifecycle.resolve,
             relaunchQuitHandler: lifecycle.quit,
             relaunchRunningHandler: lifecycle.isRunning,
+            applicationActiveProvider: { _ in true },
             processStartIdentityProvider: { _ in 700 })
 
-        _ = try await service.relaunchApplication(request: ApplicationRelaunchRequest(
+        let result = try await service.relaunchApplicationResult(request: ApplicationRelaunchRequest(
             targetIdentifier: "  Example  ",
             expectedTargetIdentity: ApplicationProcessIdentity(
                 processIdentifier: 4242,
@@ -785,6 +876,10 @@ extension ApplicationServiceLifecycleTests {
                 processStartIdentity: 700))])
         #expect(lifecycle.runningIdentifiers == ["PID:4242"])
         #expect(openRecorder.calls.count == 1)
+        #expect(result.outcome?.state == .confirmedChange)
+        #expect(result.outcome?.delivery == .init(mechanism: .nativeFramework, mode: .foreground))
+        #expect(result.outcome?.dispatchState == .dispatched(
+            unitCount: DesktopActionOutcome.DispatchUnitCount(2)))
     }
 
     @Test
@@ -812,6 +907,634 @@ extension ApplicationServiceLifecycleTests {
 
         #expect(lifecycle.quitCalls.isEmpty)
         #expect(openRecorder.calls.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `relaunch refuses when its quit request is rejected before dispatch`() async throws {
+        let lifecycle = RelaunchLifecycleRecorder(
+            targetPID: 4242,
+            quitAttempt: .init(requestAccepted: false, terminated: false))
+        let openRecorder = ApplicationOpenRecorder()
+        let service = ApplicationService(
+            applicationOpenHandler: openRecorder.open,
+            relaunchTargetResolver: lifecycle.resolve,
+            relaunchQuitHandler: lifecycle.quit,
+            relaunchRunningHandler: lifecycle.isRunning,
+            processStartIdentityProvider: { _ in 700 })
+
+        do {
+            _ = try await service.relaunchApplicationResult(request: ApplicationRelaunchRequest(
+                targetIdentifier: "Example",
+                expectedTargetIdentity: ApplicationProcessIdentity(
+                    processIdentifier: 4242,
+                    processStartIdentity: 700),
+                launchRequest: ApplicationLaunchRequest(
+                    applicationIdentifier: "Finder",
+                    activates: true),
+                waitSeconds: 0))
+            Issue.record("Expected pre-dispatch relaunch refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure.outcome.retrySafety == .safe)
+            #expect(lifecycle.quitCalls.count == 1)
+            #expect(lifecycle.runningIdentifiers.isEmpty)
+            #expect(openRecorder.calls.isEmpty)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `background launch result is a confirmed no-op with no dispatch`() async throws {
+        let recorder = ApplicationOpenRecorder()
+        let service = ApplicationService(
+            applicationOpenHandler: recorder.open,
+            runningApplicationsForURLProvider: { _ in [recorder.runningApplication] })
+
+        let result = try await service.launchApplicationResult(request: ApplicationLaunchRequest(
+            applicationIdentifier: "Finder",
+            activates: false))
+
+        #expect(result.outcome?.state == .confirmedNoChange)
+        #expect(result.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(recorder.calls.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `foreground launch counts only its accepted open when activation is already complete`() async throws {
+        let recorder = ApplicationOpenRecorder()
+        var activationRequestCount = 0
+        let service = ApplicationService(
+            applicationOpenHandler: recorder.open,
+            applicationActivationHandler: { _ in
+                activationRequestCount += 1
+                return true
+            },
+            applicationActiveProvider: { _ in true })
+
+        let result = try await service.launchApplicationResult(request: ApplicationLaunchRequest(
+            applicationIdentifier: "Finder",
+            activates: true))
+
+        #expect(result.outcome?.state == .confirmedChange)
+        #expect(result.outcome?.delivery == .init(mechanism: .nativeFramework, mode: .foreground))
+        #expect(result.outcome?.dispatchState == .dispatched(unitCount: .one))
+        #expect(recorder.calls.count == 1)
+        #expect(activationRequestCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `foreground launch counts every accepted native activation retry after open`() async throws {
+        let recorder = ApplicationOpenRecorder()
+        var acceptedActivationCount = 0
+        var isActive = false
+        let service = ApplicationService(
+            applicationOpenHandler: recorder.open,
+            applicationActivationHandler: { _ in
+                acceptedActivationCount += 1
+                isActive = acceptedActivationCount == 2
+                return true
+            },
+            applicationActiveProvider: { _ in isActive },
+            applicationActivationSleepHandler: { _ in })
+
+        let result = try await service.launchApplicationResult(request: ApplicationLaunchRequest(
+            applicationIdentifier: "Finder",
+            activates: true))
+
+        #expect(result.outcome?.state == .confirmedChange)
+        #expect(result.outcome?.delivery == .init(mechanism: .nativeFramework, mode: .foreground))
+        #expect(result.outcome?.dispatchState == .dispatched(
+            unitCount: DesktopActionOutcome.DispatchUnitCount(3)))
+        #expect(recorder.calls.count == 1)
+        #expect(acceptedActivationCount == 2)
+    }
+
+    @Test
+    @MainActor
+    func `foreground launch failure retains open and accepted activation counts`() async throws {
+        let recorder = ApplicationOpenRecorder()
+        var acceptedActivationCount = 0
+        let service = ApplicationService(
+            applicationOpenHandler: recorder.open,
+            applicationActivationHandler: { _ in
+                acceptedActivationCount += 1
+                return true
+            },
+            applicationActiveProvider: { _ in false },
+            applicationActivationSleepHandler: { _ in
+                throw ApplicationLifecycleFixtureError.dispatchFailed
+            })
+
+        do {
+            _ = try await service.launchApplicationResult(request: ApplicationLaunchRequest(
+                applicationIdentifier: "Finder",
+                activates: true))
+            Issue.record("Expected canonical post-dispatch launch failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .dispatchedUnverified)
+            #expect(failure.outcome.delivery == .init(mechanism: .nativeFramework, mode: .foreground))
+            #expect(failure.outcome.dispatchState == .dispatched(
+                unitCount: DesktopActionOutcome.DispatchUnitCount(3)))
+            #expect(recorder.calls.count == 1)
+            #expect(acceptedActivationCount == 2)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `relaunch rejects a PID-selected launch before resolving or quitting the target`() async throws {
+        let lifecycle = RelaunchLifecycleRecorder(targetPID: 4242)
+        let openRecorder = ApplicationOpenRecorder()
+        let launchApplication = openRecorder.runningApplication
+        let launchProcessIdentifier = launchApplication.processIdentifier
+        let service = ApplicationService(
+            applicationOpenHandler: openRecorder.open,
+            relaunchTargetResolver: lifecycle.resolve,
+            relaunchQuitHandler: lifecycle.quit,
+            relaunchRunningHandler: lifecycle.isRunning)
+
+        await #expect(throws: PeekabooError.self) {
+            try await service.relaunchApplicationResult(request: ApplicationRelaunchRequest(
+                targetIdentifier: "Example",
+                expectedTargetIdentity: ApplicationProcessIdentity(
+                    processIdentifier: 4242,
+                    processStartIdentity: 700),
+                launchRequest: ApplicationLaunchRequest(
+                    applicationIdentifier: "PID:\(launchProcessIdentifier)",
+                    activates: true),
+                waitSeconds: 0))
+        }
+
+        #expect(lifecycle.resolvedIdentifiers.isEmpty)
+        #expect(lifecycle.quitCalls.isEmpty)
+        #expect(lifecycle.runningIdentifiers.isEmpty)
+        #expect(openRecorder.calls.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `launch handler failure is canonical and retry unsafe`() async throws {
+        let service = ApplicationService(applicationOpenHandler: { _, _, _ in
+            throw ApplicationLifecycleFixtureError.dispatchFailed
+        })
+
+        do {
+            _ = try await service.launchApplicationResult(request: ApplicationLaunchRequest(
+                applicationIdentifier: "Finder",
+                activates: true))
+            Issue.record("Expected canonical launch failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: .one))
+        }
+    }
+
+    @Test
+    @MainActor
+    func `relaunch uncertain launch failure composes with confirmed quit`() async throws {
+        let lifecycle = RelaunchLifecycleRecorder(targetPID: 4242)
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in
+                throw ApplicationLifecycleFixtureError.dispatchFailed
+            },
+            relaunchTargetResolver: lifecycle.resolve,
+            relaunchQuitHandler: lifecycle.quit,
+            relaunchRunningHandler: lifecycle.isRunning,
+            processStartIdentityProvider: { _ in 700 })
+
+        do {
+            _ = try await service.relaunchApplicationResult(request: ApplicationRelaunchRequest(
+                targetIdentifier: "Example",
+                expectedTargetIdentity: ApplicationProcessIdentity(
+                    processIdentifier: 4242,
+                    processStartIdentity: 700),
+                launchRequest: ApplicationLaunchRequest(
+                    applicationIdentifier: "Finder",
+                    activates: true),
+                waitSeconds: 0))
+            Issue.record("Expected indeterminate relaunch failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.delivery == .init(mechanism: .nativeFramework, mode: .foreground))
+            #expect(failure.outcome.evidence == .completionUnknown)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.dispatchState == .mayHaveDispatched(
+                unitCount: DesktopActionOutcome.DispatchUnitCount(2)))
+            #expect(lifecycle.quitCalls.count == 1)
+            #expect(lifecycle.runningIdentifiers == ["PID:4242"])
+        }
+    }
+
+    @Test
+    @MainActor
+    func `relaunch preserves response loss across confirmed quit and uncertain foreground launch`() async throws {
+        let lifecycle = RelaunchLifecycleRecorder(targetPID: 4242)
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in
+                throw DesktopActionFailure.indeterminate(
+                    delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                    evidence: .responseLost,
+                    unitCount: .one,
+                    message: "The launch response was lost.")
+            },
+            relaunchTargetResolver: lifecycle.resolve,
+            relaunchQuitHandler: lifecycle.quit,
+            relaunchRunningHandler: lifecycle.isRunning,
+            processStartIdentityProvider: { _ in 700 })
+
+        do {
+            _ = try await service.relaunchApplicationResult(request: ApplicationRelaunchRequest(
+                targetIdentifier: "Example",
+                expectedTargetIdentity: ApplicationProcessIdentity(
+                    processIdentifier: 4242,
+                    processStartIdentity: 700),
+                launchRequest: ApplicationLaunchRequest(
+                    applicationIdentifier: "Finder",
+                    activates: true),
+                waitSeconds: 0))
+            Issue.record("Expected response-lost relaunch failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.route == .local)
+            #expect(failure.outcome.delivery == .init(mechanism: .nativeFramework, mode: .foreground))
+            #expect(failure.outcome.evidence == .responseLost)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.dispatchState == .mayHaveDispatched(
+                unitCount: DesktopActionOutcome.DispatchUnitCount(2)))
+            #expect(lifecycle.quitCalls.count == 1)
+            #expect(lifecycle.runningIdentifiers == ["PID:4242"])
+        }
+    }
+
+    @Test
+    @MainActor
+    func `relaunch cancellation during wait keeps confirmed quit background delivery`() async throws {
+        let lifecycle = RelaunchLifecycleRecorder(targetPID: 4242)
+        let openRecorder = ApplicationOpenRecorder()
+        let service = ApplicationService(
+            applicationOpenHandler: openRecorder.open,
+            relaunchTargetResolver: lifecycle.resolve,
+            relaunchQuitHandler: lifecycle.quit,
+            relaunchRunningHandler: lifecycle.isRunning,
+            processStartIdentityProvider: { _ in 700 })
+        let task = Task { @MainActor in
+            try await service.relaunchApplicationResult(request: ApplicationRelaunchRequest(
+                targetIdentifier: "Example",
+                expectedTargetIdentity: ApplicationProcessIdentity(
+                    processIdentifier: 4242,
+                    processStartIdentity: 700),
+                launchRequest: ApplicationLaunchRequest(
+                    applicationIdentifier: "Finder",
+                    activates: true),
+                waitSeconds: 30))
+        }
+        while lifecycle.runningIdentifiers.isEmpty {
+            await Task.yield()
+        }
+
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            Issue.record("Expected partial relaunch cancellation failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .partial)
+            #expect(failure.outcome.delivery == .init(mechanism: .nativeFramework, mode: .background))
+            #expect(failure.outcome.dispatchState == .dispatched(unitCount: .one))
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(openRecorder.calls.isEmpty)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `relaunch cancellation while target remains alive is unverified rather than partial`() async throws {
+        let lifecycle = RelaunchLifecycleRecorder(targetPID: 4242)
+        let openRecorder = ApplicationOpenRecorder()
+        var runningCheckCount = 0
+        let service = ApplicationService(
+            applicationOpenHandler: openRecorder.open,
+            relaunchTargetResolver: lifecycle.resolve,
+            relaunchQuitHandler: lifecycle.quit,
+            relaunchRunningHandler: { _ in
+                runningCheckCount += 1
+                return true
+            },
+            processStartIdentityProvider: { _ in 700 })
+        let task = Task { @MainActor in
+            try await service.relaunchApplicationResult(request: ApplicationRelaunchRequest(
+                targetIdentifier: "Example",
+                expectedTargetIdentity: ApplicationProcessIdentity(
+                    processIdentifier: 4242,
+                    processStartIdentity: 700),
+                launchRequest: ApplicationLaunchRequest(
+                    applicationIdentifier: "Finder",
+                    activates: true),
+                waitSeconds: 0))
+        }
+        while runningCheckCount == 0 {
+            await Task.yield()
+        }
+
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            Issue.record("Expected canonical relaunch cancellation failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .dispatchedUnverified)
+            #expect(failure.outcome.evidence == .operationStillRunning)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.dispatchState == .dispatched(unitCount: .one))
+            #expect(openRecorder.calls.isEmpty)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `relaunch termination timeout is a suspected no-op instead of a partial quit`() async throws {
+        let lifecycle = RelaunchLifecycleRecorder(targetPID: 4242)
+        let openRecorder = ApplicationOpenRecorder()
+        let service = ApplicationService(
+            applicationOpenHandler: openRecorder.open,
+            relaunchTargetResolver: lifecycle.resolve,
+            relaunchQuitHandler: lifecycle.quit,
+            relaunchRunningHandler: { _ in true },
+            processStartIdentityProvider: { _ in 700 })
+
+        do {
+            _ = try await service.performApplicationRelaunchWithOutcomeOwnedLane(
+                ApplicationRelaunchRequest(
+                    targetIdentifier: "Example",
+                    expectedTargetIdentity: ApplicationProcessIdentity(
+                        processIdentifier: 4242,
+                        processStartIdentity: 700),
+                    launchRequest: ApplicationLaunchRequest(
+                        applicationIdentifier: "Finder",
+                        activates: true),
+                    waitSeconds: 0),
+                terminationTimeoutSeconds: 0)
+            Issue.record("Expected canonical relaunch termination failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .suspectedNoop)
+            #expect(failure.outcome.dispatchState == .dispatched(unitCount: .one))
+            #expect(failure.outcome.retrySafety == .safe)
+            #expect(lifecycle.quitCalls.count == 1)
+            #expect(openRecorder.calls.isEmpty)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `already active activation result is confirmed no-change without dispatch`() async throws {
+        let runningApplication = try self.runningApplication()
+        var dispatchCount = 0
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            applicationActivationHandler: { _ in
+                dispatchCount += 1
+                return true
+            },
+            applicationActiveProvider: { _ in true },
+            frontmostProcessIdentifierProvider: { runningApplication.processIdentifier },
+            windowServerActivationStateProvider: { _ in
+                ApplicationService.WindowServerActivationState(
+                    targetHasVisibleWindow: false,
+                    frontmostWindowProcessIdentifier: nil)
+            })
+
+        let result = try await service.activateApplicationResult(request: ApplicationActivationRequest(
+            identifier: "PID:\(runningApplication.processIdentifier)"))
+
+        #expect(result.outcome?.state == .confirmedNoChange)
+        #expect(result.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(dispatchCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `legacy quit overloads return false while result refuses a rejected request`() async throws {
+        let runningApplication = try self.runningApplication()
+        let processIdentifier = runningApplication.processIdentifier
+        let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(processIdentifier))
+        var quitRequestForces: [Bool] = []
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            processStartIdentityProvider: { _ in processStartIdentity },
+            applicationQuitHandler: { _, force in
+                quitRequestForces.append(force)
+                return false
+            })
+        let identifier = "PID:\(processIdentifier)"
+
+        let identifierResult = try await service.quitApplication(identifier: identifier)
+        let requestResult = try await service.quitApplication(request: ApplicationQuitRequest(
+            identifier: identifier,
+            force: true))
+
+        #expect(!identifierResult)
+        #expect(!requestResult)
+
+        do {
+            _ = try await service.quitApplicationResult(request: ApplicationQuitRequest(
+                identifier: identifier))
+            Issue.record("Expected pre-dispatch quit refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure.outcome.retrySafety == .safe)
+        }
+        #expect(quitRequestForces == [false, true, false])
+    }
+
+    @Test
+    @MainActor
+    func `legacy quit propagates an unsafe failure after dispatch`() async throws {
+        let runningApplication = try self.runningApplication()
+        let processIdentifier = runningApplication.processIdentifier
+        let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(processIdentifier))
+        var requestAccepted = false
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            processStartIdentityProvider: { _ in processStartIdentity },
+            applicationQuitHandler: { _, _ in
+                requestAccepted = true
+                return true
+            },
+            applicationQuitTimeout: 30)
+        let task = Task { @MainActor in
+            try await service.quitApplication(identifier: "PID:\(processIdentifier)")
+        }
+        while !requestAccepted {
+            await Task.yield()
+        }
+
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            Issue.record("Expected unsafe post-dispatch quit failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .dispatchedUnverified)
+            #expect(failure.outcome.dispatchState == .dispatched(unitCount: .one))
+            #expect(failure.outcome.retrySafety == .unsafe)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `accepted quit with no observed effect preserves false payload and suspected no-op`() async throws {
+        let runningApplication = try self.runningApplication()
+        let processIdentifier = runningApplication.processIdentifier
+        let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(processIdentifier))
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            processStartIdentityProvider: { _ in processStartIdentity },
+            applicationQuitHandler: { _, _ in true },
+            applicationQuitTimeout: 0)
+
+        let result = try await service.quitApplicationResult(request: ApplicationQuitRequest(
+            identifier: "PID:\(processIdentifier)"))
+
+        #expect(!result.payload)
+        #expect(result.outcome?.state == .suspectedNoop)
+        #expect(result.outcome?.dispatchState == .dispatched(unitCount: .one))
+        #expect(result.outcome?.retrySafety == .safe)
+    }
+
+    @Test
+    @MainActor
+    func `activation cancellation after dispatch is a canonical unsafe failure`() async throws {
+        let runningApplication = try self.runningApplication()
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            applicationActivationHandler: { _ in true },
+            applicationActiveProvider: { _ in false },
+            frontmostProcessIdentifierProvider: { nil },
+            windowServerActivationStateProvider: { _ in
+                ApplicationService.WindowServerActivationState(
+                    targetHasVisibleWindow: false,
+                    frontmostWindowProcessIdentifier: nil)
+            },
+            applicationActivationSleepHandler: { _ in throw CancellationError() },
+            applicationActivationTimeout: .seconds(1))
+
+        do {
+            _ = try await service.activateApplicationResult(request: ApplicationActivationRequest(
+                identifier: "PID:\(runningApplication.processIdentifier)"))
+            Issue.record("Expected canonical post-dispatch cancellation")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .dispatchedUnverified)
+            #expect(failure.outcome.evidence == .operationStillRunning)
+            #expect(failure.outcome.retrySafety == .unsafe)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `visibility result never reports no-change after dispatch`() async throws {
+        let runningApplication = try self.runningApplication()
+        var isHidden = false
+        var dispatchCount = 0
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            applicationHiddenProvider: { _ in isHidden },
+            applicationVisibilityHandler: { _, hidden in
+                dispatchCount += 1
+                isHidden = hidden
+                return true
+            },
+            applicationVisibilityTimeout: 0)
+
+        let result = try await service.hideApplicationResult(
+            identifier: "PID:\(runningApplication.processIdentifier)")
+
+        #expect(result.outcome?.state == .confirmedChange)
+        #expect(result.outcome?.delivery == .init(mechanism: .nativeFramework, mode: .background))
+        #expect(result.outcome?.dispatchState == .dispatched(unitCount: .one))
+        #expect(dispatchCount == 1)
+    }
+
+    @Test
+    @MainActor
+    func `AX hide result reports accessibility action delivery`() async throws {
+        let runningApplication = try self.runningApplication()
+        var isHidden = false
+        var accessibilityHideCount = 0
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            applicationHiddenProvider: { _ in isHidden },
+            applicationAccessibilityHideHandler: { _ in
+                accessibilityHideCount += 1
+                isHidden = true
+            },
+            applicationVisibilityTimeout: 0)
+
+        let result = try await service.hideApplicationResult(
+            identifier: "PID:\(runningApplication.processIdentifier)")
+
+        #expect(result.outcome?.state == .confirmedChange)
+        #expect(result.outcome?.delivery == .init(mechanism: .accessibilityAction, mode: .background))
+        #expect(result.outcome?.dispatchState == .dispatched(unitCount: .one))
+        #expect(accessibilityHideCount == 1)
+    }
+
+    @Test
+    @MainActor
+    func `visibility request with observed no effect throws suspected no-op`() async throws {
+        let runningApplication = try self.runningApplication()
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            applicationHiddenProvider: { _ in false },
+            applicationVisibilityHandler: { _, _ in true },
+            applicationVisibilityTimeout: 0)
+
+        do {
+            _ = try await service.hideApplicationResult(
+                identifier: "PID:\(runningApplication.processIdentifier)")
+            Issue.record("Expected suspected no-op visibility failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .suspectedNoop)
+            #expect(failure.outcome.dispatchState == .dispatched(unitCount: .one))
+        }
+    }
+
+    @Test
+    @MainActor
+    func `rejected visibility request is refused without dispatch or polling`() async throws {
+        let runningApplication = try self.runningApplication()
+        var visibilityReadCount = 0
+        var sleepCount = 0
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            applicationHiddenProvider: { _ in
+                visibilityReadCount += 1
+                return false
+            },
+            applicationVisibilityHandler: { _, _ in false },
+            applicationVisibilitySleepHandler: { _ in sleepCount += 1 },
+            applicationVisibilityTimeout: 1)
+
+        do {
+            _ = try await service.hideApplicationResult(
+                identifier: "PID:\(runningApplication.processIdentifier)")
+            Issue.record("Expected pre-dispatch visibility refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure.outcome.retrySafety == .safe)
+            #expect(failure.message.contains("visibility request was not accepted"))
+            #expect(visibilityReadCount == 2)
+            #expect(sleepCount == 0)
+        }
     }
 }
 
@@ -893,12 +1616,19 @@ private final class RelaunchLifecycleRecorder {
     }
 
     private let targetPID: Int32
+    private let quitAttempt: ApplicationService.ApplicationQuitAttempt
     private(set) var resolvedIdentifiers: [String] = []
     private(set) var quitCalls: [QuitCall] = []
     private(set) var runningIdentifiers: [String] = []
 
-    init(targetPID: Int32) {
+    init(
+        targetPID: Int32,
+        quitAttempt: ApplicationService.ApplicationQuitAttempt = .init(
+            requestAccepted: true,
+            terminated: true))
+    {
         self.targetPID = targetPID
+        self.quitAttempt = quitAttempt
     }
 
     func resolve(identifier: String) async throws -> ServiceApplicationInfo {
@@ -910,16 +1640,20 @@ private final class RelaunchLifecycleRecorder {
             name: "Target")
     }
 
-    func quit(request: ApplicationQuitRequest) async throws -> Bool {
+    func quit(request: ApplicationQuitRequest) async throws -> ApplicationService.ApplicationQuitAttempt {
         self.quitCalls.append(.init(
             identifier: request.identifier,
             force: request.force,
             expectedIdentity: request.expectedIdentity))
-        return true
+        return self.quitAttempt
     }
 
     func isRunning(identifier: String) async -> Bool {
         self.runningIdentifiers.append(identifier)
         return false
     }
+}
+
+private enum ApplicationLifecycleFixtureError: Error {
+    case dispatchFailed
 }

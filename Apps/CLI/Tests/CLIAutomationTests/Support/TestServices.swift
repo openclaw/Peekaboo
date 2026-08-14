@@ -576,7 +576,7 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
 }
 
 @MainActor
-final class StubApplicationService: ApplicationServiceProtocol {
+class StubApplicationService: ApplicationServiceProtocol {
     let supportsApplicationLaunchOptions = true
     let supportsApplicationRelaunch = true
     var applications: [ServiceApplicationInfo]
@@ -1408,7 +1408,7 @@ final class StubDialogService: DialogServiceProtocol {
 }
 
 @MainActor
-final class StubWindowService: WindowManagementServiceProtocol {
+class StubWindowService: WindowManagementServiceProtocol {
     var windowsByApp: [String: [ServiceWindowInfo]]
     var focusCalls: [WindowTarget] = []
     var closeFallbackRequests: [Bool] = []

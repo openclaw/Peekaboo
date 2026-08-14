@@ -29,18 +29,52 @@ struct ActionOutcomeCommandTests {
     }
 
     @Test
-    func `service bridge preserves every canonical fixture without inference`() async throws {
+    func `service bridges preserve every canonical fixture without inference`() async throws {
         let automation = OutcomeStubAutomationService()
+        let application = AutomationTestFixtures.application(
+            processIdentifier: 42,
+            processStartIdentity: 7,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture"
+        )
+        let applications = OutcomeStubApplicationService(applications: [application])
+        let windowIdentity = WindowMutationIdentity(
+            windowID: 101,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: 7,
+            capturedBounds: CGRect(x: 10, y: 20, width: 640, height: 480)
+        )
+        let window = ServiceWindowInfo(
+            windowID: 101,
+            title: "Fixture",
+            bounds: CGRect(x: 10, y: 20, width: 640, height: 480),
+            mutationIdentity: windowIdentity
+        )
+        let windows = OutcomeStubWindowService(windowsByApp: ["Fixture": [window]])
 
         for expected in DesktopActionOutcomeFixtures.canonicalOutcomes {
             automation.actionOutcome = expected
-            let result = try await AutomationServiceBridge.hotkey(
+            applications.actionOutcome = expected
+            windows.actionOutcome = expected
+            let automationResult = try await AutomationServiceBridge.hotkey(
                 automation: automation,
                 keys: "cmd+a",
                 holdDuration: 50
             )
+            let applicationResult = try await ApplicationServiceBridge.launchApplication(
+                applications: applications,
+                request: ApplicationLaunchRequest(applicationIdentifier: "Fixture")
+            )
+            let windowResult = try await WindowServiceBridge.setWindowBounds(
+                windows: windows,
+                target: .windowId(101),
+                expectedIdentity: windowIdentity,
+                bounds: CGRect(x: 30, y: 40, width: 640, height: 480)
+            )
 
-            #expect(result.outcome == expected)
+            #expect(automationResult.outcome == expected)
+            #expect(applicationResult.outcome == expected)
+            #expect(windowResult.outcome == expected)
         }
     }
 
@@ -89,6 +123,429 @@ struct ActionOutcomeCommandTests {
             #expect(projection["retry_safe"] as? Bool == false)
             #expect(projection["requires_fresh_observation"] as? Bool == false)
         }
+    }
+
+    @Test
+    func `window and application commands publish the service carrier`() async throws {
+        let outcome = DesktopActionOutcome.confirmedChange(
+            delivery: .init(mechanism: .nativeFramework, mode: .background),
+            unitCount: .one
+        )
+        let application = AutomationTestFixtures.application(
+            processIdentifier: 42,
+            processStartIdentity: 7,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture"
+        )
+        let applications = OutcomeStubApplicationService(applications: [application])
+        applications.actionOutcome = outcome
+        let window = ServiceWindowInfo(
+            windowID: 101,
+            title: "Fixture",
+            bounds: CGRect(x: 10, y: 20, width: 640, height: 480),
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 101,
+                ownerProcessIdentifier: 42,
+                ownerProcessStartIdentity: 7,
+                capturedBounds: CGRect(x: 10, y: 20, width: 640, height: 480)
+            )
+        )
+        let windows = OutcomeStubWindowService(windowsByApp: ["Fixture": [window]])
+        windows.actionOutcome = outcome
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: applications,
+            windows: windows
+        )
+
+        let results = try await [
+            InProcessCommandRunner.run(
+                ["app", "launch", "Fixture", "--json", "--no-remote"],
+                services: services
+            ),
+            InProcessCommandRunner.run(
+                [
+                    "window", "set-bounds", "--pid", "42", "--window-id", "101",
+                    "--x", "30", "--y", "40", "--width", "640", "--height", "480",
+                    "--json", "--no-remote",
+                ],
+                services: services
+            ),
+        ]
+
+        for result in results {
+            #expect(result.exitStatus == 0, "Unexpected command failure: \(result.combinedOutput)")
+            let object = try Self.jsonObject(result.stdout)
+            #expect(object["effect"] as? String == outcome.effect.rawValue)
+            let projection = try #require(object["outcome"] as? [String: Any])
+            #expect(projection["state"] as? String == outcome.state.rawValue)
+            #expect(projection["mutation_dispatched"] as? Bool == true)
+        }
+    }
+
+    @Test
+    func `confirmed no-change launch does not claim a launch was dispatched`() async throws {
+        let application = AutomationTestFixtures.application(
+            processIdentifier: 42,
+            processStartIdentity: 7,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture"
+        )
+        let applications = OutcomeStubApplicationService(applications: [application])
+        applications.actionOutcome = .confirmedNoChange()
+        let services = TestServicesFactory.makePeekabooServices(applications: applications)
+
+        let result = try await InProcessCommandRunner.run(
+            ["app", "launch", "Fixture", "--no-remote"],
+            services: services
+        )
+
+        #expect(result.exitStatus == 0)
+        #expect(result.stdout.contains("Already running: Fixture"))
+        #expect(result.stdout.contains("no launch dispatched"))
+        #expect(!result.stdout.contains("✓ Launched"))
+    }
+
+    @Test
+    func `single app quit preserves a suspected no-op receipt`() async throws {
+        let application = AutomationTestFixtures.application(
+            processIdentifier: 42,
+            processStartIdentity: 7,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture"
+        )
+        let applications = OutcomeStubApplicationService(applications: [application])
+        applications.quitShouldSucceed = false
+        let outcome = DesktopActionOutcome.suspectedNoop(
+            delivery: .init(mechanism: .nativeFramework, mode: .background),
+            unitCount: .one
+        )
+        applications.actionOutcome = outcome
+        let services = TestServicesFactory.makePeekabooServices(applications: applications)
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "app", "quit", "--pid", "42", "--expected-process-start-identity", "7",
+                "--json", "--no-remote",
+            ],
+            services: services
+        )
+        let object = try Self.jsonObject(result.stdout)
+        let projection = try #require(object["outcome"] as? [String: Any])
+        let error = try #require(object["error"] as? [String: Any])
+
+        #expect(result.exitStatus == 1)
+        #expect(object["effect"] as? String == "suspected_noop")
+        #expect(projection["state"] as? String == "suspected_noop")
+        #expect(projection["retry_safe"] as? Bool == true)
+        #expect(error["retry_safe"] as? Bool == true)
+        #expect(error["mutation_dispatched"] as? Bool == true)
+        #expect(error["hint"] as? String == "Try --force to force quit.")
+    }
+
+    @Test
+    func `bridge target refusal refreshes inventory instead of suggesting force`() async throws {
+        let application = AutomationTestFixtures.application(
+            processIdentifier: 42,
+            processStartIdentity: 7,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture"
+        )
+        let applications = OutcomeStubApplicationService(applications: [application])
+        applications.quitShouldSucceed = false
+        applications.actionOutcome = .refused(route: .bridge, reason: .targetUnavailable)
+        let services = TestServicesFactory.makePeekabooServices(applications: applications)
+        let arguments = [
+            "app", "quit", "--pid", "42", "--expected-process-start-identity", "7",
+            "--no-remote",
+        ]
+
+        let jsonResult = try await InProcessCommandRunner.run(arguments + ["--json"], services: services)
+        let object = try Self.jsonObject(jsonResult.stdout)
+        let projection = try #require(object["outcome"] as? [String: Any])
+        let error = try #require(object["error"] as? [String: Any])
+        let hint = try #require(error["hint"] as? String)
+
+        #expect(jsonResult.exitStatus == 1)
+        #expect(object["success"] as? Bool == false)
+        #expect(object["effect"] as? String == "refused")
+        #expect(projection["state"] as? String == "refused")
+        #expect(projection["route"] as? String == "bridge")
+        #expect(projection["refusal_reason"] as? String == "target_unavailable")
+        #expect(projection["escalation"] as? String == "refresh_target")
+        #expect(projection["retry_safe"] as? Bool == true)
+        #expect(error["retry_safe"] as? Bool == true)
+        #expect(error["mutation_dispatched"] as? Bool == false)
+        #expect(hint.contains("Refresh the application inventory"))
+        #expect(hint.contains("current target"))
+        #expect(!hint.contains("--force"))
+
+        let humanResult = try await InProcessCommandRunner.run(arguments, services: services)
+        #expect(humanResult.exitStatus == 1)
+        #expect(humanResult.stdout.contains(hint))
+        #expect(!humanResult.combinedOutput.contains("--force"))
+    }
+
+    @Test
+    func `quit batch preserves compatible pre-dispatch refusals`() async throws {
+        let applications = [
+            AutomationTestFixtures.application(
+                processIdentifier: 42,
+                processStartIdentity: 7,
+                bundleIdentifier: "com.example.first",
+                name: "First Fixture",
+                isHiddenKnown: true,
+                activationPolicy: .regular
+            ),
+            AutomationTestFixtures.application(
+                processIdentifier: 43,
+                processStartIdentity: 8,
+                bundleIdentifier: "com.example.second",
+                name: "Second Fixture",
+                isHiddenKnown: true,
+                activationPolicy: .regular
+            ),
+        ]
+        let refusal = DesktopActionFailure.preDispatchRefusal(
+            route: .bridge,
+            reason: .targetUnavailable,
+            message: "The pinned application target changed"
+        )
+        let service = ReceiptlessBatchQuitApplicationService(
+            applications: applications,
+            errors: [refusal, refusal]
+        )
+        let services = TestServicesFactory.makePeekabooServices(applications: service)
+
+        let result = try await InProcessCommandRunner.run(
+            ["app", "quit", "--all", "--json", "--no-remote"],
+            services: services
+        )
+        let object = try Self.jsonObject(result.stdout)
+        let outcome = try #require(object["outcome"] as? [String: Any])
+        let error = try #require(object["error"] as? [String: Any])
+
+        #expect(result.exitStatus == 1)
+        #expect(object["effect"] as? String == "refused")
+        #expect(outcome["state"] as? String == "refused")
+        #expect(outcome["route"] as? String == "bridge")
+        #expect(outcome["refusal_reason"] as? String == "target_unavailable")
+        #expect(outcome["mutation_dispatched"] as? Bool == false)
+        #expect(outcome["retry_safe"] as? Bool == true)
+        #expect(error["mutation_dispatched"] as? Bool == false)
+        #expect(error["retry_safe"] as? Bool == true)
+        #expect((error["hint"] as? String)?.contains("Refresh the application inventory") == true)
+    }
+
+    @Test
+    func `single app quit preserves an indeterminate failure receipt and legacy data`() async throws {
+        let application = AutomationTestFixtures.application(
+            processIdentifier: 42,
+            processStartIdentity: 7,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture"
+        )
+        let applications = OutcomeStubApplicationService(applications: [application])
+        applications.quitError = DesktopActionFailure.indeterminate(
+            route: .bridge,
+            delivery: .init(mechanism: .nativeFramework, mode: .background),
+            evidence: .responseLost,
+            unitCount: .one,
+            message: "Quit response was lost",
+            hint: "Observe the process before retrying."
+        )
+        let services = TestServicesFactory.makePeekabooServices(applications: applications)
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "app", "quit", "--pid", "42", "--expected-process-start-identity", "7",
+                "--json", "--no-remote",
+            ],
+            services: services
+        )
+        let object = try Self.jsonObject(result.stdout)
+        let data = try #require(object["data"] as? [String: Any])
+        let results = try #require(data["results"] as? [[String: Any]])
+        let projection = try #require(object["outcome"] as? [String: Any])
+        let error = try #require(object["error"] as? [String: Any])
+
+        #expect(result.exitStatus == 1)
+        #expect(object["success"] as? Bool == false)
+        #expect(object["effect"] as? String == "unverifiable")
+        #expect(data["action"] as? String == "quit")
+        #expect(data["force"] as? Bool == false)
+        #expect(results.count == 1)
+        #expect(results.first?["app_name"] as? String == "PID 42")
+        #expect(results.first?["pid"] as? Int == 42)
+        #expect(results.first?["success"] as? Bool == false)
+        #expect(projection["state"] as? String == "indeterminate")
+        #expect(projection["route"] as? String == "bridge")
+        #expect(projection["evidence"] as? String == "response_lost")
+        #expect(projection["retry_safe"] as? Bool == false)
+        #expect(projection["mutation_dispatched"] as? Bool == true)
+        #expect(error["code"] as? String == "INTERACTION_FAILED")
+        #expect(error["retry_safe"] as? Bool == false)
+        #expect(error["mutation_dispatched"] as? Bool == true)
+        #expect(error["hint"] as? String == "Observe the process before retrying.")
+        #expect((error["hint"] as? String)?.contains("--force") == false)
+
+        let humanResult = try await InProcessCommandRunner.run(
+            [
+                "app", "quit", "--pid", "42", "--expected-process-start-identity", "7",
+                "--no-remote",
+            ],
+            services: services
+        )
+        #expect(humanResult.exitStatus == 1)
+        #expect(humanResult.stdout.contains("Observe the process before retrying."))
+        #expect(!humanResult.combinedOutput.contains("--force"))
+    }
+
+    @Test
+    func `unsafe quit receipt requires fresh observation instead of force`() async throws {
+        let application = AutomationTestFixtures.application(
+            processIdentifier: 42,
+            processStartIdentity: 7,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture"
+        )
+        let applications = OutcomeStubApplicationService(applications: [application])
+        applications.quitShouldSucceed = false
+        applications.actionOutcome = .partial(
+            delivery: .init(mechanism: .nativeFramework, mode: .background),
+            unitCount: .one
+        )
+        let services = TestServicesFactory.makePeekabooServices(applications: applications)
+        let arguments = [
+            "app", "quit", "--pid", "42", "--expected-process-start-identity", "7",
+            "--no-remote",
+        ]
+
+        let jsonResult = try await InProcessCommandRunner.run(arguments + ["--json"], services: services)
+        let object = try Self.jsonObject(jsonResult.stdout)
+        let error = try #require(object["error"] as? [String: Any])
+        let hint = try #require(error["hint"] as? String)
+        #expect(jsonResult.exitStatus == 1)
+        #expect(hint.contains("fresh observation"))
+        #expect(!hint.contains("--force"))
+
+        let humanResult = try await InProcessCommandRunner.run(arguments, services: services)
+        #expect(humanResult.exitStatus == 1)
+        #expect(humanResult.stdout.contains(hint))
+        #expect(!humanResult.combinedOutput.contains("--force"))
+    }
+
+    @Test
+    func `quit batch keeps response loss unsafe when another attempt has no receipt`() async throws {
+        let applications = [
+            AutomationTestFixtures.application(
+                processIdentifier: 42,
+                processStartIdentity: 7,
+                bundleIdentifier: "com.example.first",
+                name: "First Fixture",
+                isHiddenKnown: true,
+                activationPolicy: .regular
+            ),
+            AutomationTestFixtures.application(
+                processIdentifier: 43,
+                processStartIdentity: 8,
+                bundleIdentifier: "com.example.second",
+                name: "Second Fixture",
+                isHiddenKnown: true,
+                activationPolicy: .regular
+            ),
+        ]
+        let service = ReceiptlessBatchQuitApplicationService(
+            applications: applications,
+            errors: [
+                DesktopActionFailure.indeterminate(
+                    route: .bridge,
+                    delivery: .init(mechanism: .nativeFramework, mode: .background),
+                    evidence: .responseLost,
+                    unitCount: .one,
+                    message: "Quit response was lost"
+                ),
+                PeekabooError.commandFailed("Legacy quit failed without a canonical receipt"),
+            ]
+        )
+        let services = TestServicesFactory.makePeekabooServices(applications: service)
+
+        let result = try await InProcessCommandRunner.run(
+            ["app", "quit", "--all", "--json", "--no-remote"],
+            services: services
+        )
+        let object = try Self.jsonObject(result.stdout)
+        let data = try #require(object["data"] as? [String: Any])
+        let results = try #require(data["results"] as? [[String: Any]])
+        let outcome = try #require(object["outcome"] as? [String: Any])
+        let error = try #require(object["error"] as? [String: Any])
+
+        #expect(result.exitStatus == 1)
+        #expect(object["success"] as? Bool == false)
+        #expect(object["effect"] as? String == "unverifiable")
+        #expect(data["action"] as? String == "quit")
+        #expect(results.count == 2)
+        #expect(results.map { $0["app_name"] as? String } == ["First Fixture", "Second Fixture"])
+        #expect(results.allSatisfy { $0["success"] as? Bool == false })
+        #expect(outcome["state"] as? String == "indeterminate")
+        #expect(outcome["route"] as? String == "bridge")
+        #expect(outcome["evidence"] as? String == "response_lost")
+        #expect(outcome["dispatch_state"] as? String == "may_have_dispatched")
+        #expect(outcome["dispatched_unit_count"] as? Int == 2)
+        #expect(outcome["retry_safe"] as? Bool == false)
+        #expect(outcome["requires_fresh_observation"] as? Bool == true)
+        #expect(error["retry_safe"] as? Bool == false)
+        #expect(error["mutation_dispatched"] as? Bool == true)
+        #expect((error["hint"] as? String)?.contains("fresh observation") == true)
+    }
+
+    @Test
+    func `legacy quit batch keeps receiptless failure effect and payload`() async throws {
+        let applications = [
+            AutomationTestFixtures.application(
+                processIdentifier: 42,
+                processStartIdentity: 7,
+                bundleIdentifier: "com.example.first",
+                name: "First Fixture",
+                isHiddenKnown: true,
+                activationPolicy: .regular
+            ),
+            AutomationTestFixtures.application(
+                processIdentifier: 43,
+                processStartIdentity: 8,
+                bundleIdentifier: "com.example.second",
+                name: "Second Fixture",
+                isHiddenKnown: true,
+                activationPolicy: .regular
+            ),
+        ]
+        let service = ReceiptlessBatchQuitApplicationService(
+            applications: applications,
+            errors: [
+                PeekabooError.commandFailed("First legacy quit failed"),
+                PeekabooError.commandFailed("Second legacy quit failed"),
+            ]
+        )
+        let services = TestServicesFactory.makePeekabooServices(applications: service)
+
+        let result = try await InProcessCommandRunner.run(
+            ["app", "quit", "--all", "--json", "--no-remote"],
+            services: services
+        )
+        let object = try Self.jsonObject(result.stdout)
+        let data = try #require(object["data"] as? [String: Any])
+        let results = try #require(data["results"] as? [[String: Any]])
+        let error = try #require(object["error"] as? [String: Any])
+
+        #expect(result.exitStatus == 1)
+        #expect(object["success"] as? Bool == false)
+        #expect(object["effect"] as? String == "suspected_noop")
+        #expect(object["outcome"] == nil)
+        #expect(data["action"] as? String == "quit")
+        #expect(data["force"] as? Bool == false)
+        #expect(results.map { $0["app_name"] as? String } == ["First Fixture", "Second Fixture"])
+        #expect(results.allSatisfy { $0["success"] as? Bool == false })
+        #expect(error["retry_safe"] == nil)
+        #expect(error["mutation_dispatched"] == nil)
     }
 
     @Test
@@ -596,5 +1053,23 @@ struct ActionOutcomeCommandTests {
         let services: PeekabooServices
         let automation: OutcomeStubAutomationService
         let snapshots: StubSnapshotManager
+    }
+}
+
+@MainActor
+private final class ReceiptlessBatchQuitApplicationService: StubApplicationService {
+    private var errors: [any Error]
+
+    init(applications: [ServiceApplicationInfo], errors: [any Error]) {
+        self.errors = errors
+        super.init(applications: applications)
+    }
+
+    override func quitApplication(request _: ApplicationQuitRequest) async throws -> Bool {
+        guard !self.errors.isEmpty else {
+            Issue.record("Received more quit attempts than scripted errors")
+            return false
+        }
+        throw self.errors.removeFirst()
     }
 }

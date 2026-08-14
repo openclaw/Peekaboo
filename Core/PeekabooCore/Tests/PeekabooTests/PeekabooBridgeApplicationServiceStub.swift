@@ -3,7 +3,7 @@ import PeekabooAutomationKit
 import PeekabooFoundation
 
 @MainActor
-class StubApplicationService: ApplicationServiceProtocol {
+class StubApplicationService: ApplicationServiceProtocol, ApplicationServiceActionResultProviding {
     let supportsApplicationLaunchOptions: Bool
     let supportsApplicationRelaunch: Bool
     var supportsProcessGenerationPinnedApplicationQuit: Bool {
@@ -17,6 +17,10 @@ class StubApplicationService: ApplicationServiceProtocol {
     private(set) var relaunchRequests: [ApplicationRelaunchRequest] = []
     private(set) var quitRequests: [ApplicationQuitRequest] = []
     private(set) var activationRequests: [ApplicationActivationRequest] = []
+    var actionOutcome: DesktopActionOutcome? = .confirmedChange(
+        delivery: .init(mechanism: .nativeFramework, mode: .background),
+        unitCount: .one)
+    var quitResultError: (any Error)?
 
     private let app = ServiceApplicationInfo(
         processIdentifier: 123,
@@ -92,4 +96,43 @@ class StubApplicationService: ApplicationServiceProtocol {
     func unhideApplication(identifier _: String) async throws {}
     func hideOtherApplications(identifier _: String) async throws {}
     func showAllApplications() async throws {}
+
+    func launchApplicationActionResult(
+        request: ApplicationLaunchRequest) async throws -> DesktopActionResult<ServiceApplicationInfo>
+    {
+        try await DesktopActionResult(payload: self.launchApplication(request: request), outcome: self.actionOutcome)
+    }
+
+    func relaunchApplicationActionResult(
+        request: ApplicationRelaunchRequest) async throws -> DesktopActionResult<ServiceApplicationInfo>
+    {
+        try await DesktopActionResult(payload: self.relaunchApplication(request: request), outcome: self.actionOutcome)
+    }
+
+    func activateApplicationActionResult(
+        request: ApplicationActivationRequest) async throws -> DesktopActionResult<Void>
+    {
+        try await self.activateApplication(request: request)
+        return DesktopActionResult(outcome: self.actionOutcome)
+    }
+
+    func quitApplicationActionResult(
+        request: ApplicationQuitRequest) async throws -> DesktopActionResult<Bool>
+    {
+        let payload = try await self.quitApplication(request: request)
+        if let quitResultError {
+            throw quitResultError
+        }
+        return DesktopActionResult(payload: payload, outcome: self.actionOutcome)
+    }
+
+    func hideApplicationActionResult(identifier: String) async throws -> DesktopActionResult<Void> {
+        try await self.hideApplication(identifier: identifier)
+        return DesktopActionResult(outcome: self.actionOutcome)
+    }
+
+    func unhideApplicationActionResult(identifier: String) async throws -> DesktopActionResult<Void> {
+        try await self.unhideApplication(identifier: identifier)
+        return DesktopActionResult(outcome: self.actionOutcome)
+    }
 }

@@ -48,6 +48,67 @@ struct DesktopActionSequenceAccumulatorTests {
     }
 
     @Test
+    func `compatible mixed-mode sequence reports foreground maximum impact and exact units`() throws {
+        let background = DesktopActionOutcome.Delivery(mechanism: .nativeFramework, mode: .background)
+        let foreground = DesktopActionOutcome.Delivery(mechanism: .nativeFramework, mode: .foreground)
+        var sequence = DesktopActionSequenceAccumulator()
+        try sequence.record(.outcome(.confirmedChange(
+            route: .bridge,
+            delivery: background,
+            unitCount: self.units(2))))
+        try sequence.record(.outcome(.confirmedChange(
+            route: .bridge,
+            delivery: foreground,
+            unitCount: self.units(3))))
+
+        let resolution = sequence.successResolution()
+        #expect(try resolution.outcome == .confirmedChange(
+            route: .bridge,
+            delivery: foreground,
+            unitCount: self.units(5)))
+        #expect(try resolution.mutationDisposition == .definite(unitCount: self.units(5)))
+    }
+
+    @Test
+    func `homogeneous suspected no-op sequence preserves observed no-change evidence`() throws {
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.outcome(.suspectedNoop(
+            route: .bridge,
+            delivery: self.localBackground,
+            unitCount: .one)))
+        try sequence.record(.outcome(.suspectedNoop(
+            route: .bridge,
+            delivery: self.localBackground,
+            unitCount: self.units(2))))
+
+        let resolution = sequence.successResolution()
+        #expect(try resolution.outcome == .suspectedNoop(
+            route: .bridge,
+            delivery: self.localBackground,
+            unitCount: self.units(3)))
+        #expect(try resolution.mutationDisposition == .definite(unitCount: self.units(3)))
+        #expect(resolution.retrySafe)
+        #expect(!resolution.requiresFreshObservation)
+    }
+
+    @Test
+    func `suspected no-op sequence does not absorb mixed evidence`() throws {
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.outcome(.suspectedNoop(
+            delivery: self.localBackground,
+            unitCount: .one)))
+        sequence.record(.outcome(.dispatchedUnverified(
+            delivery: self.localBackground,
+            evidence: .deliveryAccepted,
+            unitCount: .one)))
+
+        #expect(try sequence.successResolution().outcome == .dispatchedUnverified(
+            delivery: self.localBackground,
+            evidence: .deliveryAccepted,
+            unitCount: self.units(2)))
+    }
+
+    @Test
     func `single reported leaf preserves its exact canonical receipt`() {
         let leaf = DesktopActionOutcome.confirmedChange(delivery: self.localForeground)
         var sequence = DesktopActionSequenceAccumulator()
@@ -111,7 +172,7 @@ struct DesktopActionSequenceAccumulatorTests {
     }
 
     @Test
-    func `mixed route or delivery keeps disposition but suppresses a false aggregate`() throws {
+    func `mixed route or mechanism keeps disposition but suppresses a false aggregate`() throws {
         var mixedRoute = DesktopActionSequenceAccumulator()
         try mixedRoute.record(.outcome(.confirmedChange(
             route: .local,
@@ -273,6 +334,179 @@ struct DesktopActionSequenceAccumulatorTests {
                 try DesktopActionFailure.requireConfirmedIfReported(outcome, operation: "Fixture")
             }
         }
+    }
+
+    @Test
+    func `completed batch preserves one receipt and composes only homogeneous partial delivery`() throws {
+        let noOp = DesktopActionOutcome.suspectedNoop(
+            delivery: self.localBackground,
+            unitCount: .one)
+        #expect(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [noOp],
+            succeededCount: 0,
+            attemptedCount: 1) == noOp)
+
+        let confirmed = DesktopActionOutcome.confirmedChange(
+            delivery: self.localBackground,
+            unitCount: .one)
+        let partial = try #require(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [confirmed, noOp],
+            succeededCount: 1,
+            attemptedCount: 2))
+        #expect(partial.state == .partial)
+        #expect(partial.delivery == self.localBackground)
+        let twoUnits = try self.units(2)
+        #expect(partial.dispatchState.unitCount == twoUnits)
+
+        let foreground = DesktopActionOutcome.suspectedNoop(
+            delivery: .init(mechanism: .processTargetedEvents, mode: .foreground),
+            unitCount: .one)
+        let mixedModePartial = try #require(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [confirmed, foreground],
+            succeededCount: 1,
+            attemptedCount: 2))
+        #expect(mixedModePartial.state == .partial)
+        #expect(mixedModePartial.delivery == .init(mechanism: .processTargetedEvents, mode: .foreground))
+        #expect(mixedModePartial.dispatchState.unitCount == twoUnits)
+
+        let mixedDelivery = DesktopActionOutcome.suspectedNoop(
+            delivery: self.localForeground,
+            unitCount: .one)
+        #expect(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [confirmed, mixedDelivery],
+            succeededCount: 1,
+            attemptedCount: 2) == nil)
+        #expect(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [confirmed],
+            succeededCount: 1,
+            attemptedCount: 2) == nil)
+    }
+
+    @Test
+    func `completed batch does not weaken response loss to definite partial completion`() throws {
+        let confirmed = DesktopActionOutcome.confirmedChange(
+            route: .bridge,
+            delivery: self.localBackground,
+            unitCount: .one)
+        let responseLost = DesktopActionOutcome.indeterminate(
+            route: .bridge,
+            delivery: self.localBackground,
+            evidence: .responseLost,
+            unitCount: .one)
+
+        let aggregate = try #require(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [confirmed, responseLost],
+            succeededCount: 1,
+            attemptedCount: 2))
+
+        #expect(aggregate.state == .indeterminate)
+        #expect(aggregate.route == .bridge)
+        #expect(aggregate.delivery == self.localBackground)
+        #expect(aggregate.evidence == .responseLost)
+        #expect(try aggregate.dispatchState == .mayHaveDispatched(unitCount: self.units(2)))
+        #expect(aggregate.retrySafety == .unsafe)
+        #expect(aggregate.escalation == .observeBeforeRetry)
+        #expect(aggregate.projection.requiresFreshObservation)
+
+        let unknownUnits = try #require(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [
+                confirmed,
+                .indeterminate(
+                    route: .bridge,
+                    delivery: self.localBackground,
+                    evidence: .responseLost),
+            ],
+            succeededCount: 1,
+            attemptedCount: 2))
+        #expect(unknownUnits.dispatchState == .mayHaveDispatched(unitCount: nil))
+    }
+
+    @Test
+    func `completed batch treats missing receipts as possible dispatch without erasing response loss`() throws {
+        let responseLost = DesktopActionOutcome.indeterminate(
+            route: .bridge,
+            delivery: self.localBackground,
+            evidence: .responseLost,
+            unitCount: .one)
+
+        let mixed = try #require(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [responseLost, nil],
+            succeededCount: 0,
+            attemptedCount: 2))
+
+        #expect(mixed.state == .indeterminate)
+        #expect(mixed.route == .bridge)
+        #expect(mixed.delivery == self.localBackground)
+        #expect(mixed.evidence == .responseLost)
+        #expect(try mixed.dispatchState == .mayHaveDispatched(unitCount: self.units(2)))
+        #expect(mixed.retrySafety == .unsafe)
+        #expect(mixed.projection.requiresFreshObservation)
+    }
+
+    @Test
+    func `completed batch preserves legacy omission when every receipt is missing`() {
+        #expect(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [nil, nil],
+            succeededCount: 2,
+            attemptedCount: 2) == nil)
+        #expect(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [nil, nil],
+            succeededCount: 0,
+            attemptedCount: 2) == nil)
+    }
+
+    @Test
+    func `completed batch preserves homogeneous suspected no-op evidence`() throws {
+        let noOp = DesktopActionOutcome.suspectedNoop(
+            route: .bridge,
+            delivery: self.localBackground,
+            unitCount: .one)
+        let aggregate = DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [noOp, noOp],
+            succeededCount: 0,
+            attemptedCount: 2)
+
+        #expect(try aggregate == .suspectedNoop(
+            route: .bridge,
+            delivery: self.localBackground,
+            unitCount: self.units(2)))
+
+        let differentRoute = DesktopActionOutcome.suspectedNoop(
+            route: .local,
+            delivery: self.localBackground,
+            unitCount: .one)
+        #expect(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [noOp, differentRoute],
+            succeededCount: 0,
+            attemptedCount: 2) == nil)
+    }
+
+    @Test
+    func `completed batch preserves compatible refusals and rejects contradictory refusal receipts`() throws {
+        let refusal = DesktopActionOutcome.refused(route: .bridge, reason: .targetUnavailable)
+        #expect(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [refusal, refusal],
+            succeededCount: 0,
+            attemptedCount: 2) == refusal)
+
+        let differentReason = DesktopActionOutcome.refused(route: .bridge, reason: .permissionDenied)
+        #expect(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [refusal, differentReason],
+            succeededCount: 0,
+            attemptedCount: 2) == nil)
+
+        let differentRoute = DesktopActionOutcome.refused(route: .local, reason: .targetUnavailable)
+        #expect(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [refusal, differentRoute],
+            succeededCount: 0,
+            attemptedCount: 2) == nil)
+
+        let missing = try #require(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [refusal, nil],
+            succeededCount: 0,
+            attemptedCount: 2))
+        #expect(missing.state == .indeterminate)
+        #expect(missing.dispatchState == .mayHaveDispatched(unitCount: .one))
     }
 
     @Test

@@ -12,6 +12,130 @@ import Testing
 struct PeekabooBridgeActionOutcomeProjectionTests {
     @Test
     @MainActor
+    func `application actions carry every canonical service outcome across Bridge`() async throws {
+        let applications = StubApplicationService()
+        let server = PeekabooBridgeServer(
+            services: StubServices(applications: applications),
+            hostKind: .onDemand,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            hostIdentity: nil,
+            postEventAccessEvaluator: { false },
+            postEventAccessRequester: { false },
+            permissionStatusEvaluator: { _ in Self.grantedPermissions })
+        let request = PeekabooBridgeRequest.activateApplication(.init(
+            identifier: "PID:123",
+            expectedIdentity: .init(processIdentifier: 123, processStartIdentity: 456)))
+
+        for expected in DesktopActionOutcomeFixtures.canonicalOutcomes {
+            applications.actionOutcome = expected
+            let response = try await Self.send(.projectedAction(.init(request: request)), to: server)
+            guard case let .projectedAction(projected) = response else {
+                Issue.record("Expected projected application response")
+                continue
+            }
+            if expected.isConfirmed {
+                guard case .ok = projected.response else {
+                    Issue.record("Expected ok payload inside confirmed projected response")
+                    continue
+                }
+            }
+            #expect(projected.outcome == expected.routed(to: .bridge).projection)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `quit rejection preserves false legacy payload and projected refusal`() async throws {
+        let applications = StubApplicationService()
+        let refusal = DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "The native quit request was rejected.",
+            hint: "Refresh the application inventory before retrying.")
+        applications.quitResultError = refusal
+        let server = PeekabooBridgeServer(
+            services: StubServices(applications: applications),
+            hostKind: .onDemand,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            hostIdentity: nil,
+            permissionStatusEvaluator: { _ in Self.grantedPermissions })
+
+        let handled = try await server.handleAuthorized(
+            Self.quitRequest,
+            peer: nil,
+            permissions: Self.grantedPermissions)
+        guard case let .bool(handledSucceeded) = handled.response else {
+            Issue.record("Expected a handled bool response")
+            return
+        }
+        #expect(!handledSucceeded)
+        #expect(handled.outcome == refusal.outcome)
+
+        let legacyResponse = try await Self.send(Self.quitRequest, to: server)
+        guard case let .bool(legacySucceeded) = legacyResponse else {
+            Issue.record("Expected a bare legacy bool response")
+            return
+        }
+        #expect(!legacySucceeded)
+
+        let projectedResponse = try await Self.send(
+            .projectedAction(.init(request: Self.quitRequest)),
+            to: server)
+        guard case let .projectedAction(projected) = projectedResponse,
+              case let .bool(projectedSucceeded) = projected.response
+        else {
+            Issue.record("Expected a projected bool response")
+            return
+        }
+        #expect(!projectedSucceeded)
+        #expect(projected.outcome == refusal.outcome.routed(to: .bridge).projection)
+        #expect(projected.outcome?.state == .refused)
+        #expect(projected.outcome?.refusalReason == .targetUnavailable)
+        #expect(projected.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
+    }
+
+    @Test
+    @MainActor
+    func `quit compatibility does not swallow drift or unsafe failures`() async throws {
+        let applications = StubApplicationService()
+        let server = PeekabooBridgeServer(
+            services: StubServices(applications: applications),
+            hostKind: .onDemand,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            hostIdentity: nil,
+            permissionStatusEvaluator: { _ in Self.grantedPermissions })
+
+        applications.quitResultError = PeekabooError.commandFailed(
+            "Application PID changed process generation")
+        let driftResponse = try await Self.send(Self.quitRequest, to: server)
+        guard case .error = driftResponse else {
+            Issue.record("Expected process-generation drift to remain an error")
+            return
+        }
+
+        let unsafeFailure = DesktopActionFailure.indeterminate(
+            delivery: .init(mechanism: .nativeFramework, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: "The quit request may have been dispatched.",
+            hint: "Observe the target before retrying.")
+        applications.quitResultError = unsafeFailure
+        let unsafeResponse = try await Self.send(
+            .projectedAction(.init(request: Self.quitRequest)),
+            to: server)
+        guard case let .projectedAction(projected) = unsafeResponse,
+              case .error = projected.response
+        else {
+            Issue.record("Expected unsafe quit failure to remain an error")
+            return
+        }
+        #expect(projected.outcome == unsafeFailure.outcome.routed(to: .bridge).projection)
+    }
+
+    @Test
+    @MainActor
     func `current server preserves legacy shape and honors projected opt in`() async throws {
         let server = PeekabooBridgeServer(
             services: StubServices(),
@@ -344,6 +468,39 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             Issue.record("Expected canonical remote action failure")
         } catch let actual as DesktopActionFailure {
             #expect(actual == expected)
+        }
+        await peer.waitUntilFinished()
+    }
+
+    @Test
+    func `remote background launch preserves canonical failure context across client boundary`() async throws {
+        let expected = DesktopActionFailure.partial(
+            route: .bridge,
+            delivery: .init(mechanism: .nativeFramework, mode: .background),
+            unitCount: .one,
+            message: "The application launched but readiness verification failed",
+            hint: "Observe the application before attempting another launch.",
+            causeDescription: "the host could not acquire a readiness receipt")
+        let peer = try ScriptedBridgePeer(responses: [
+            BridgeTestFixtures.actionFailureResponse(failure: expected),
+        ])
+        let remote = await MainActor.run {
+            RemoteApplicationService(
+                client: PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1),
+                supportsLaunchOptions: true,
+                supportsSafeBackgroundLaunchNoOp: true)
+        }
+
+        do {
+            _ = try await remote.launchApplicationResult(request: ApplicationLaunchRequest(
+                applicationIdentifier: "TextEdit",
+                activates: false))
+            Issue.record("Expected canonical background-launch failure")
+        } catch let actual as DesktopActionFailure {
+            #expect(actual == expected)
+            #expect(actual.outcome.projection == expected.outcome.projection)
+            #expect(actual.hint == expected.hint)
+            #expect(actual.causeDescription == expected.causeDescription)
         }
         await peer.waitUntilFinished()
     }
@@ -711,6 +868,11 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
     private static let clickRequest = PeekabooBridgeRequest.click(.init(
         target: .coordinates(CGPoint(x: 17, y: 29)),
         clickType: .single))
+
+    private static let quitRequest = PeekabooBridgeRequest.quitApplication(.init(
+        identifier: "PID:123",
+        force: false,
+        expectedIdentity: .init(processIdentifier: 123, processStartIdentity: 456)))
 
     private static let clientIdentity = PeekabooBridgeClientIdentity(
         bundleIdentifier: "dev.peekaboo.tests",

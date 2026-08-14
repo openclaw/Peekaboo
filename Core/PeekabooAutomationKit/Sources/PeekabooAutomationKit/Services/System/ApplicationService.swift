@@ -42,7 +42,7 @@ import PeekabooFoundation
  * - Since: PeekabooCore 1.0.0
  */
 @MainActor
-public final class ApplicationService: ApplicationServiceProtocol {
+public final class ApplicationService: ApplicationServiceProtocol, ApplicationServiceActionResultProviding {
     public let supportsApplicationLaunchOptions = true
     public let supportsSafeBackgroundApplicationLaunchNoOp = true
     public let supportsNewApplicationInstanceLaunch = true
@@ -56,6 +56,45 @@ public final class ApplicationService: ApplicationServiceProtocol {
         let frontmostWindowProcessIdentifier: pid_t?
     }
 
+    struct ApplicationQuitAttempt: Equatable, Sendable {
+        let requestAccepted: Bool
+        let terminated: Bool
+    }
+
+    struct ApplicationActionDispatch: Equatable, Sendable {
+        let delivery: DesktopActionOutcome.Delivery
+        let unitCount: DesktopActionOutcome.DispatchUnitCount?
+
+        init(
+            delivery: DesktopActionOutcome.Delivery,
+            unitCount: DesktopActionOutcome.DispatchUnitCount?)
+        {
+            self.delivery = delivery
+            self.unitCount = unitCount
+        }
+
+        init?(
+            mechanism: DesktopActionOutcome.Delivery.Mechanism?,
+            mode: DesktopActionOutcome.Delivery.Mode,
+            acceptedRequestCount: Int?)
+        {
+            guard let mechanism else { return nil }
+            self.delivery = DesktopActionOutcome.Delivery(mechanism: mechanism, mode: mode)
+            self.unitCount = acceptedRequestCount.flatMap { count in
+                DesktopActionOutcome.DispatchUnitCount(count)
+            }
+        }
+    }
+
+    enum ApplicationVisibilityAttempt: Equatable, Sendable {
+        case accepted(ApplicationActionDispatch)
+        case rejected
+        case mayHaveDispatched(
+            delivery: DesktopActionOutcome.Delivery,
+            unitCount: DesktopActionOutcome.DispatchUnitCount?,
+            causeDescription: String)
+    }
+
     typealias ApplicationOpenHandler = @MainActor (
         _ applicationURL: URL,
         _ openURLs: [URL],
@@ -65,7 +104,8 @@ public final class ApplicationService: ApplicationServiceProtocol {
         _ configuration: NSWorkspace.OpenConfiguration) async throws -> NSRunningApplication
     typealias RunningApplicationsForURLProvider = @MainActor (_ applicationURL: URL) -> [NSRunningApplication]
     typealias RelaunchTargetResolver = @MainActor (_ identifier: String) async throws -> ServiceApplicationInfo
-    typealias RelaunchQuitHandler = @MainActor (_ request: ApplicationQuitRequest) async throws -> Bool
+    typealias RelaunchQuitHandler = @MainActor (_ request: ApplicationQuitRequest) async throws
+        -> ApplicationQuitAttempt
     typealias RelaunchRunningHandler = @MainActor (_ identifier: String) async throws -> Bool
     typealias ApplicationReadinessHandler = @MainActor (_ application: NSRunningApplication) -> Bool
     typealias ApplicationActivationHandler = @MainActor (_ application: NSRunningApplication) -> Bool
@@ -77,6 +117,15 @@ public final class ApplicationService: ApplicationServiceProtocol {
     typealias ApplicationActivationSleepHandler = @MainActor (_ duration: Duration) async throws -> Void
     typealias ProcessStartIdentityProvider = @MainActor (_ processIdentifier: pid_t) -> UInt64?
     typealias ApplicationQuitHandler = @MainActor (_ application: NSRunningApplication, _ force: Bool) -> Bool
+    typealias ApplicationHiddenProvider = @MainActor (_ application: NSRunningApplication) throws -> Bool
+    typealias ApplicationAccessibilityHideHandler = @MainActor (_ application: NSRunningApplication) throws -> Void
+    typealias ApplicationNativeVisibilityHandler = @MainActor (
+        _ application: NSRunningApplication,
+        _ hidden: Bool) -> Bool
+    typealias ApplicationVisibilityHandler = @MainActor (
+        _ application: NSRunningApplication,
+        _ hidden: Bool) throws -> Bool
+    typealias ApplicationVisibilitySleepHandler = @MainActor (_ duration: Duration) async throws -> Void
     typealias RunningApplicationProcessIdentifiersProvider = @MainActor () -> [pid_t]
     typealias ApplicationWindowCatalogProvider = @MainActor () -> [WindowIdentityInfo]?
     typealias ApplicationInventoryNowProvider = @MainActor () -> ContinuousClock.Instant
@@ -104,6 +153,11 @@ public final class ApplicationService: ApplicationServiceProtocol {
     let applicationActivationSleepHandler: ApplicationActivationSleepHandler
     let processStartIdentityProvider: ProcessStartIdentityProvider
     let applicationQuitHandler: ApplicationQuitHandler
+    let applicationHiddenProvider: ApplicationHiddenProvider
+    let applicationAccessibilityHideHandler: ApplicationAccessibilityHideHandler
+    let applicationNativeVisibilityHandler: ApplicationNativeVisibilityHandler
+    let applicationVisibilityHandler: ApplicationVisibilityHandler?
+    let applicationVisibilitySleepHandler: ApplicationVisibilitySleepHandler
     let runningApplicationProcessIdentifiersProvider: RunningApplicationProcessIdentifiersProvider
     let applicationWindowCatalogProvider: ApplicationWindowCatalogProvider
     let applicationInventoryNowProvider: ApplicationInventoryNowProvider
@@ -113,6 +167,8 @@ public final class ApplicationService: ApplicationServiceProtocol {
     let maximumConcurrentApplicationMetadataReads: Int
     let applicationReadinessTimeout: TimeInterval
     let applicationActivationTimeout: Duration
+    let applicationQuitTimeout: TimeInterval
+    let applicationVisibilityTimeout: TimeInterval
     let operationLaneCoordinator: DesktopOperationLaneCoordinator
 
     /// Timeout for accessibility API calls to prevent hangs
@@ -184,6 +240,17 @@ public final class ApplicationService: ApplicationServiceProtocol {
         applicationQuitHandler: @escaping ApplicationQuitHandler = { application, force in
             force ? application.forceTerminate() : application.terminate()
         },
+        applicationHiddenProvider: @escaping ApplicationHiddenProvider = { $0.isHidden },
+        applicationAccessibilityHideHandler: @escaping ApplicationAccessibilityHideHandler = { application in
+            try AXApp(application).element.performAction(Attribute<String>("AXHide"))
+        },
+        applicationNativeVisibilityHandler: @escaping ApplicationNativeVisibilityHandler = { application, hidden in
+            hidden ? application.hide() : application.unhide()
+        },
+        applicationVisibilityHandler: ApplicationVisibilityHandler? = nil,
+        applicationVisibilitySleepHandler: @escaping ApplicationVisibilitySleepHandler = { duration in
+            try await Task.sleep(for: duration)
+        },
         runningApplicationProcessIdentifiersProvider: @escaping RunningApplicationProcessIdentifiersProvider = {
             NSWorkspace.shared.runningApplications.map(\.processIdentifier)
         },
@@ -201,7 +268,9 @@ public final class ApplicationService: ApplicationServiceProtocol {
         applicationInventoryOverallTimeout: TimeInterval = ApplicationService.applicationInventoryOverallTimeout,
         maximumConcurrentApplicationMetadataReads: Int = ApplicationService.maximumConcurrentApplicationMetadataReads,
         applicationReadinessTimeout: TimeInterval = 10,
-        applicationActivationTimeout: Duration = .seconds(2))
+        applicationActivationTimeout: Duration = .seconds(2),
+        applicationQuitTimeout: TimeInterval = 3,
+        applicationVisibilityTimeout: TimeInterval = 1)
     {
         // Set global AX timeout to prevent hangs
         AXTimeoutConfiguration.setGlobalTimeout(Self.axTimeout)
@@ -223,6 +292,11 @@ public final class ApplicationService: ApplicationServiceProtocol {
         self.applicationActivationSleepHandler = applicationActivationSleepHandler
         self.processStartIdentityProvider = processStartIdentityProvider
         self.applicationQuitHandler = applicationQuitHandler
+        self.applicationHiddenProvider = applicationHiddenProvider
+        self.applicationAccessibilityHideHandler = applicationAccessibilityHideHandler
+        self.applicationNativeVisibilityHandler = applicationNativeVisibilityHandler
+        self.applicationVisibilityHandler = applicationVisibilityHandler
+        self.applicationVisibilitySleepHandler = applicationVisibilitySleepHandler
         self.runningApplicationProcessIdentifiersProvider = runningApplicationProcessIdentifiersProvider
         self.applicationWindowCatalogProvider = applicationWindowCatalogProvider
         self.applicationInventoryNowProvider = applicationInventoryNowProvider
@@ -232,6 +306,8 @@ public final class ApplicationService: ApplicationServiceProtocol {
         self.maximumConcurrentApplicationMetadataReads = max(1, maximumConcurrentApplicationMetadataReads)
         self.applicationReadinessTimeout = applicationReadinessTimeout
         self.applicationActivationTimeout = applicationActivationTimeout
+        self.applicationQuitTimeout = max(0, applicationQuitTimeout)
+        self.applicationVisibilityTimeout = max(0, applicationVisibilityTimeout)
 
         // Connect to visual feedback if available.
         let isMacApp = Bundle.main.bundleIdentifier?.hasPrefix("boo.peekaboo.mac") == true

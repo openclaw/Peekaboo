@@ -233,7 +233,89 @@ public protocol ApplicationServiceProtocol: Sendable {
     func showAllApplications() async throws
 }
 
+/// Additive capability for application mutations that return the shared action-result carrier.
+///
+/// Requirement names intentionally differ from the public `*Result` adapters below. Keeping the
+/// capability witnesses distinct prevents an adapter default from satisfying this protocol and
+/// recursively redispatching to itself.
+public protocol ApplicationServiceActionResultProviding: ApplicationServiceProtocol {
+    func launchApplicationActionResult(
+        request: ApplicationLaunchRequest) async throws -> DesktopActionResult<ServiceApplicationInfo>
+
+    func relaunchApplicationActionResult(
+        request: ApplicationRelaunchRequest) async throws -> DesktopActionResult<ServiceApplicationInfo>
+
+    func activateApplicationActionResult(
+        request: ApplicationActivationRequest) async throws -> DesktopActionResult<Void>
+
+    func quitApplicationActionResult(
+        request: ApplicationQuitRequest) async throws -> DesktopActionResult<Bool>
+
+    func hideApplicationActionResult(identifier: String) async throws -> DesktopActionResult<Void>
+
+    func unhideApplicationActionResult(identifier: String) async throws -> DesktopActionResult<Void>
+}
+
 extension ApplicationServiceProtocol {
+    public func launchApplicationResult(
+        request: ApplicationLaunchRequest) async throws -> DesktopActionResult<ServiceApplicationInfo>
+    {
+        if let results = self as? any ApplicationServiceActionResultProviding {
+            return try await results.launchApplicationActionResult(request: request)
+        }
+        return try await DesktopActionResult(
+            payload: self.launchApplication(request: request),
+            outcome: nil)
+    }
+
+    public func relaunchApplicationResult(
+        request: ApplicationRelaunchRequest) async throws -> DesktopActionResult<ServiceApplicationInfo>
+    {
+        if let results = self as? any ApplicationServiceActionResultProviding {
+            return try await results.relaunchApplicationActionResult(request: request)
+        }
+        return try await DesktopActionResult(
+            payload: self.relaunchApplication(request: request),
+            outcome: nil)
+    }
+
+    public func activateApplicationResult(
+        request: ApplicationActivationRequest) async throws -> DesktopActionResult<Void>
+    {
+        if let results = self as? any ApplicationServiceActionResultProviding {
+            return try await results.activateApplicationActionResult(request: request)
+        }
+        try await self.activateApplication(request: request)
+        return DesktopActionResult(outcome: nil)
+    }
+
+    public func quitApplicationResult(
+        request: ApplicationQuitRequest) async throws -> DesktopActionResult<Bool>
+    {
+        if let results = self as? any ApplicationServiceActionResultProviding {
+            return try await results.quitApplicationActionResult(request: request)
+        }
+        return try await DesktopActionResult(
+            payload: self.quitApplication(request: request),
+            outcome: nil)
+    }
+
+    public func hideApplicationResult(identifier: String) async throws -> DesktopActionResult<Void> {
+        if let results = self as? any ApplicationServiceActionResultProviding {
+            return try await results.hideApplicationActionResult(identifier: identifier)
+        }
+        try await self.hideApplication(identifier: identifier)
+        return DesktopActionResult(outcome: nil)
+    }
+
+    public func unhideApplicationResult(identifier: String) async throws -> DesktopActionResult<Void> {
+        if let results = self as? any ApplicationServiceActionResultProviding {
+            return try await results.unhideApplicationActionResult(identifier: identifier)
+        }
+        try await self.unhideApplication(identifier: identifier)
+        return DesktopActionResult(outcome: nil)
+    }
+
     public var supportsApplicationLaunchOptions: Bool {
         false
     }

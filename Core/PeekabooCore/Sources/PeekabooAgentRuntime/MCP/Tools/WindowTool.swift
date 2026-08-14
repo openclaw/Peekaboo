@@ -163,6 +163,11 @@ public struct WindowTool: MCPTool {
                 startTime: startTime)
         } catch let validationError as WindowActionError {
             return ToolResponse.error(validationError.message)
+        } catch let failure as DesktopActionFailure {
+            self.logger.error("Window operation execution failed: \(failure)")
+            return try MCPToolResponseMetadataProjector.errorResponse(
+                for: failure,
+                invalidatedSnapshotID: nil)
         } catch {
             self.logger.error("Window operation execution failed: \(error)")
             return ToolResponse.error("Failed to \(action.description) window: \(error.localizedDescription)")

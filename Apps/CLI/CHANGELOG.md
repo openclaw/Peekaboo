@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fail browser uploads closed through a private per-session Chrome MCP temporary root, race-safe regular-file staging, a 100 MiB bound, and child-before-cleanup cancellation without unrestricted path access.
 - Report exact standard windows with live attached sheets as dialog-active observations, using shared native role evidence without changing the parent window receipt.
 - Preserve default automatic capture through an owner-aware Bridge by clamping it to classic-only around an auxiliary legacy ScreenCaptureKit owner, while explicit modern and owner-unaware routes remain fail-closed.
+- Preserve canonical application/window outcome and retry semantics across CLI, MCP, and Bridge—including failed quits and truthful no-op launch output—while retaining legacy JSON fields and v4.1.0 public APIs.
 
 ## [4.1.0] - 2026-08-13
 

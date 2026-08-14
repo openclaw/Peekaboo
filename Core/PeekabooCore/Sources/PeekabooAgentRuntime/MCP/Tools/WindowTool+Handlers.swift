@@ -25,19 +25,20 @@ extension WindowTool {
         }
         try self.validateWindowOwner(mutationIdentity, expected: target.expectedOwnerIdentity)
 
-        try await service.closeWindow(
+        let actionResult = try await service.closeWindowResult(
             target: exactTarget,
             expectedIdentity: mutationIdentity,
             allowForegroundFallback: allowForegroundFallback)
 
         let executionTime = Date().timeIntervalSince(startTime)
         let message = self.successMessage(action: "Closed window '\(windowInfo.title)'", duration: executionTime)
-        return self.windowResponse(
+        return try self.windowResponse(
             message: message,
             appName: appName,
             windowInfo: windowInfo,
             actionDescription: "Window Close",
-            baseMeta: ["execution_time": .double(executionTime)])
+            baseMeta: ["execution_time": .double(executionTime)],
+            outcome: actionResult.outcome)
     }
 
     func handleMinimize(
@@ -56,18 +57,20 @@ extension WindowTool {
         }
         try self.validateWindowOwner(mutationIdentity, expected: target.expectedOwnerIdentity)
 
-        try await service.minimizeWindow(
-            target: .windowId(windowInfo.windowID),
+        let exactTarget = WindowTarget.windowId(windowInfo.windowID)
+        let actionResult = try await service.minimizeWindowResult(
+            target: exactTarget,
             expectedIdentity: mutationIdentity)
 
         let executionTime = Date().timeIntervalSince(startTime)
         let message = self.successMessage(action: "Minimized window '\(windowInfo.title)'", duration: executionTime)
-        return self.windowResponse(
+        return try self.windowResponse(
             message: message,
             appName: appName,
             windowInfo: windowInfo,
             actionDescription: "Window Minimize",
-            baseMeta: ["execution_time": .double(executionTime)])
+            baseMeta: ["execution_time": .double(executionTime)],
+            outcome: actionResult.outcome)
     }
 
     func handleRestore(
@@ -87,19 +90,26 @@ extension WindowTool {
         try self.validateWindowOwner(mutationIdentity, expected: target.expectedOwnerIdentity)
 
         let exactTarget = WindowTarget.windowId(windowInfo.windowID)
-        try await service.restoreWindow(target: exactTarget, expectedIdentity: mutationIdentity)
-        let refreshedWindowInfo = try await service.listWindows(target: exactTarget).first ?? windowInfo
+        let actionResult = try await service.restoreWindowResult(
+            target: exactTarget,
+            expectedIdentity: mutationIdentity)
+        let refreshedWindowInfo = try await self.readBackWindowAfterMutation(
+            service: service,
+            target: exactTarget,
+            action: "Restore",
+            outcome: actionResult.outcome)
 
         let executionTime = Date().timeIntervalSince(startTime)
         let message = self.successMessage(
             action: "Restored window '\(refreshedWindowInfo.title)'",
             duration: executionTime)
-        return self.windowResponse(
+        return try self.windowResponse(
             message: message,
             appName: appName,
             windowInfo: refreshedWindowInfo,
             actionDescription: "Window Restore",
-            baseMeta: ["execution_time": .double(executionTime)])
+            baseMeta: ["execution_time": .double(executionTime)],
+            outcome: actionResult.outcome)
     }
 
     func handleMaximize(
@@ -119,21 +129,26 @@ extension WindowTool {
                 "Window \(windowInfo.windowID) did not include a process-generation identity")
         }
         try self.validateWindowOwner(mutationIdentity, expected: target.expectedOwnerIdentity)
-        try await service.maximizeWindow(target: exactTarget, expectedIdentity: mutationIdentity)
-        guard let refreshedWindowInfo = try await service.listWindows(target: exactTarget).first else {
-            return ToolResponse.error("Maximize completed but the exact window could not be read back")
-        }
+        let actionResult = try await service.maximizeWindowResult(
+            target: exactTarget,
+            expectedIdentity: mutationIdentity)
+        let refreshedWindowInfo = try await self.readBackWindowAfterMutation(
+            service: service,
+            target: exactTarget,
+            action: "Maximize",
+            outcome: actionResult.outcome)
 
         let executionTime = Date().timeIntervalSince(startTime)
         let message = self.successMessage(
             action: "Maximized window '\(refreshedWindowInfo.title)'",
             duration: executionTime)
-        return self.windowResponse(
+        return try self.windowResponse(
             message: message,
             appName: appName,
             windowInfo: refreshedWindowInfo,
             actionDescription: "Window Maximize",
-            baseMeta: ["execution_time": .double(executionTime)])
+            baseMeta: ["execution_time": .double(executionTime)],
+            outcome: actionResult.outcome)
     }
 
     func handleMove(
@@ -153,15 +168,16 @@ extension WindowTool {
         }
         try self.validateWindowOwner(mutationIdentity, expected: target.expectedOwnerIdentity)
 
-        try await service.moveWindow(
-            target: .windowId(windowInfo.windowID),
+        let exactTarget = WindowTarget.windowId(windowInfo.windowID)
+        let actionResult = try await service.moveWindowResult(
+            target: exactTarget,
             expectedIdentity: mutationIdentity,
             to: position)
 
         let executionTime = Date().timeIntervalSince(startTime)
         let detail = "Moved window '\(windowInfo.title)' to (\(Int(position.x)), \(Int(position.y)))"
         let message = self.successMessage(action: detail, duration: executionTime)
-        return self.windowResponse(
+        return try self.windowResponse(
             message: message,
             appName: appName,
             windowInfo: windowInfo,
@@ -171,7 +187,8 @@ extension WindowTool {
                 "new_x": .double(Double(position.x)),
                 "new_y": .double(Double(position.y)),
                 "execution_time": .double(executionTime),
-            ])
+            ],
+            outcome: actionResult.outcome)
     }
 
     func handleResize(
@@ -191,15 +208,16 @@ extension WindowTool {
         }
         try self.validateWindowOwner(mutationIdentity, expected: target.expectedOwnerIdentity)
 
-        try await service.resizeWindow(
-            target: .windowId(windowInfo.windowID),
+        let exactTarget = WindowTarget.windowId(windowInfo.windowID)
+        let actionResult = try await service.resizeWindowResult(
+            target: exactTarget,
             expectedIdentity: mutationIdentity,
             to: size)
 
         let executionTime = Date().timeIntervalSince(startTime)
         let detail = "Resized window '\(windowInfo.title)' to \(Int(size.width)) × \(Int(size.height))"
         let message = self.successMessage(action: detail, duration: executionTime)
-        return self.windowResponse(
+        return try self.windowResponse(
             message: message,
             appName: appName,
             windowInfo: windowInfo,
@@ -209,7 +227,8 @@ extension WindowTool {
                 "new_width": .double(Double(size.width)),
                 "new_height": .double(Double(size.height)),
                 "execution_time": .double(executionTime),
-            ])
+            ],
+            outcome: actionResult.outcome)
     }
 
     func handleSetBounds(
@@ -229,8 +248,9 @@ extension WindowTool {
         }
         try self.validateWindowOwner(mutationIdentity, expected: target.expectedOwnerIdentity)
 
-        try await service.setWindowBounds(
-            target: .windowId(windowInfo.windowID),
+        let exactTarget = WindowTarget.windowId(windowInfo.windowID)
+        let actionResult = try await service.setWindowBoundsResult(
+            target: exactTarget,
             expectedIdentity: mutationIdentity,
             bounds: bounds)
 
@@ -238,7 +258,7 @@ extension WindowTool {
         let detail = "Set bounds for window '\(windowInfo.title)' to (\(Int(bounds.origin.x)), "
             + "\(Int(bounds.origin.y)), \(Int(bounds.width)) × \(Int(bounds.height)))"
         let message = self.successMessage(action: detail, duration: executionTime)
-        return self.windowResponse(
+        return try self.windowResponse(
             message: message,
             appName: appName,
             windowInfo: windowInfo,
@@ -253,7 +273,8 @@ extension WindowTool {
                 "new_width": .double(Double(bounds.width)),
                 "new_height": .double(Double(bounds.height)),
                 "execution_time": .double(executionTime),
-            ])
+            ],
+            outcome: actionResult.outcome)
     }
 
     func handleFocus(
@@ -277,7 +298,7 @@ extension WindowTool {
 
         let executionTime = Date().timeIntervalSince(startTime)
         let message = self.successMessage(action: "Focused window '\(windowInfo.title)'", duration: executionTime)
-        return self.windowResponse(
+        return try self.windowResponse(
             message: message,
             appName: appName,
             windowInfo: windowInfo,
@@ -302,6 +323,43 @@ extension WindowTool {
         }
     }
 
+    private func readBackWindowAfterMutation(
+        service: any WindowManagementServiceProtocol,
+        target: WindowTarget,
+        action: String,
+        outcome: DesktopActionOutcome?) async throws -> ServiceWindowInfo
+    {
+        do {
+            guard let window = try await service.listWindows(target: target).first else {
+                throw PeekabooError.windowNotFound(
+                    criteria: "The exact window was absent from the post-\(action.lowercased()) readback")
+            }
+            return window
+        } catch {
+            let readbackFailure = if let failure = error as? DesktopActionFailure {
+                failure
+            } else {
+                DesktopActionFailure.preDispatchRefusal(
+                    route: outcome?.route ?? .local,
+                    reason: .targetUnavailable,
+                    message: "\(action) post-action readback failed.",
+                    hint: "Observe the exact window before deciding whether to retry.",
+                    causeDescription: error.localizedDescription)
+            }
+            var sequence = DesktopActionSequenceAccumulator()
+            if let outcome {
+                sequence.record(.outcome(outcome))
+            } else {
+                sequence.record(.dispatched(route: nil, delivery: nil, unitCount: .one))
+            }
+            throw sequence.failure(
+                combining: readbackFailure,
+                message: "\(action) was dispatched, but the exact window could not be read back.",
+                hint: "Observe the exact window before deciding whether to retry.",
+                causeDescription: error.localizedDescription)
+        }
+    }
+
     func windowResponse(
         message: String,
         appName: String?,
@@ -309,7 +367,8 @@ extension WindowTool {
         actionDescription: String,
         coordinates: ToolEventSummary.Coordinates? = nil,
         notes: String? = nil,
-        baseMeta: [String: Value]) -> ToolResponse
+        baseMeta: [String: Value],
+        outcome: DesktopActionOutcome? = nil) throws -> ToolResponse
     {
         var meta = baseMeta
         meta["window_title"] = .string(windowInfo.title)
@@ -321,8 +380,10 @@ extension WindowTool {
             actionDescription: actionDescription,
             coordinates: coordinates,
             notes: notes)
-        return ToolResponse(
+        return try ToolResponse(
             content: [.text(text: message, annotations: nil, _meta: nil)],
-            meta: ToolEventSummary.merge(summary: summary, into: .object(meta)))
+            meta: MCPToolResponseMetadataProjector.metadata(
+                merging: ToolEventSummary.merge(summary: summary, into: .object(meta)).objectValue ?? [:],
+                outcome: outcome))
     }
 }

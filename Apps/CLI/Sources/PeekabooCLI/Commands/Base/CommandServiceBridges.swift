@@ -526,26 +526,89 @@ struct DragRequest {
     let profile: MouseMovementProfile
 }
 
+enum ApplicationServiceBridge {
+    static func launchApplication(
+        applications: any ApplicationServiceProtocol,
+        request: ApplicationLaunchRequest
+    ) async throws -> DesktopActionResult<ServiceApplicationInfo> {
+        try await self.perform {
+            try await applications.launchApplicationResult(request: request)
+        }
+    }
+
+    static func relaunchApplication(
+        applications: any ApplicationServiceProtocol,
+        request: ApplicationRelaunchRequest
+    ) async throws -> DesktopActionResult<ServiceApplicationInfo> {
+        try await self.perform {
+            try await applications.relaunchApplicationResult(request: request)
+        }
+    }
+
+    static func activateApplication(
+        applications: any ApplicationServiceProtocol,
+        request: ApplicationActivationRequest
+    ) async throws -> DesktopActionResult<Void> {
+        try await self.perform {
+            try await applications.activateApplicationResult(request: request)
+        }
+    }
+
+    static func quitApplication(
+        applications: any ApplicationServiceProtocol,
+        request: ApplicationQuitRequest
+    ) async throws -> DesktopActionResult<Bool> {
+        try await self.perform {
+            try await applications.quitApplicationResult(request: request)
+        }
+    }
+
+    static func hideApplication(
+        applications: any ApplicationServiceProtocol,
+        identifier: String
+    ) async throws -> DesktopActionResult<Void> {
+        try await self.perform {
+            try await applications.hideApplicationResult(identifier: identifier)
+        }
+    }
+
+    private static func perform<Result: Sendable>(
+        _ body: @MainActor @Sendable () async throws -> Result
+    ) async throws -> Result {
+        try Task.checkCancellation()
+        return try await self.performOnMainActor(body)
+    }
+
+    @MainActor
+    private static func performOnMainActor<Result: Sendable>(
+        _ body: @MainActor @Sendable () async throws -> Result
+    ) async throws -> Result {
+        try Task.checkCancellation()
+        return try await body()
+    }
+}
+
 enum WindowServiceBridge {
+    @discardableResult
     static func closeWindow(
         windows: any WindowManagementServiceProtocol,
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity? = nil,
         allowForegroundFallback: Bool = false
-    ) async throws {
+    ) async throws -> DesktopActionResult<Void> {
         let operation = Task { @MainActor in
             if let expectedIdentity {
-                try await windows.closeWindow(
+                return try await windows.closeWindowResult(
                     target: target,
                     expectedIdentity: expectedIdentity,
                     allowForegroundFallback: allowForegroundFallback
                 )
-            } else {
-                try await windows.closeWindow(
-                    target: target,
-                    allowForegroundFallback: allowForegroundFallback
-                )
             }
+            try await windows.closeWindow(
+                target: target,
+                allowForegroundFallback: allowForegroundFallback
+            )
+            return DesktopActionResult(outcome: nil)
         }
 
         return try await withTaskCancellationHandler {
@@ -555,94 +618,117 @@ enum WindowServiceBridge {
         }
     }
 
+    @discardableResult
     static func minimizeWindow(
         windows: any WindowManagementServiceProtocol,
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity? = nil
-    ) async throws {
+    ) async throws -> DesktopActionResult<Void> {
         try await Task { @MainActor in
             if let expectedIdentity {
-                try await windows.minimizeWindow(target: target, expectedIdentity: expectedIdentity)
-            } else {
-                try await windows.minimizeWindow(target: target)
+                return try await windows.minimizeWindowResult(
+                    target: target,
+                    expectedIdentity: expectedIdentity
+                )
             }
+            try await windows.minimizeWindow(target: target)
+            return DesktopActionResult(outcome: nil)
         }.value
     }
 
+    @discardableResult
     static func restoreWindow(
         windows: any WindowManagementServiceProtocol,
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity? = nil
-    ) async throws {
+    ) async throws -> DesktopActionResult<Void> {
         try await Task { @MainActor in
             if let expectedIdentity {
-                try await windows.restoreWindow(target: target, expectedIdentity: expectedIdentity)
-            } else {
-                try await windows.restoreWindow(target: target)
+                return try await windows.restoreWindowResult(
+                    target: target,
+                    expectedIdentity: expectedIdentity
+                )
             }
+            try await windows.restoreWindow(target: target)
+            return DesktopActionResult(outcome: nil)
         }.value
     }
 
+    @discardableResult
     static func maximizeWindow(
         windows: any WindowManagementServiceProtocol,
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity? = nil
-    ) async throws {
+    ) async throws -> DesktopActionResult<Void> {
         try await Task { @MainActor in
             if let expectedIdentity {
-                try await windows.maximizeWindow(target: target, expectedIdentity: expectedIdentity)
-            } else {
-                try await windows.maximizeWindow(target: target)
+                return try await windows.maximizeWindowResult(
+                    target: target,
+                    expectedIdentity: expectedIdentity
+                )
             }
+            try await windows.maximizeWindow(target: target)
+            return DesktopActionResult(outcome: nil)
         }.value
     }
 
+    @discardableResult
     static func moveWindow(
         windows: any WindowManagementServiceProtocol,
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity? = nil,
         to origin: CGPoint
-    ) async throws {
+    ) async throws -> DesktopActionResult<Void> {
         try await Task { @MainActor in
             if let expectedIdentity {
-                try await windows.moveWindow(target: target, expectedIdentity: expectedIdentity, to: origin)
-            } else {
-                try await windows.moveWindow(target: target, to: origin)
+                return try await windows.moveWindowResult(
+                    target: target,
+                    expectedIdentity: expectedIdentity,
+                    to: origin
+                )
             }
+            try await windows.moveWindow(target: target, to: origin)
+            return DesktopActionResult(outcome: nil)
         }.value
     }
 
+    @discardableResult
     static func resizeWindow(
         windows: any WindowManagementServiceProtocol,
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity? = nil,
         to size: CGSize
-    ) async throws {
+    ) async throws -> DesktopActionResult<Void> {
         try await Task { @MainActor in
             if let expectedIdentity {
-                try await windows.resizeWindow(target: target, expectedIdentity: expectedIdentity, to: size)
-            } else {
-                try await windows.resizeWindow(target: target, to: size)
+                return try await windows.resizeWindowResult(
+                    target: target,
+                    expectedIdentity: expectedIdentity,
+                    to: size
+                )
             }
+            try await windows.resizeWindow(target: target, to: size)
+            return DesktopActionResult(outcome: nil)
         }.value
     }
 
+    @discardableResult
     static func setWindowBounds(
         windows: any WindowManagementServiceProtocol,
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity? = nil,
         bounds: CGRect
-    ) async throws {
+    ) async throws -> DesktopActionResult<Void> {
         try await Task { @MainActor in
             if let expectedIdentity {
-                try await windows.setWindowBounds(
+                return try await windows.setWindowBoundsResult(
                     target: target,
                     expectedIdentity: expectedIdentity,
                     bounds: bounds
                 )
-            } else {
-                try await windows.setWindowBounds(target: target, bounds: bounds)
             }
+            try await windows.setWindowBounds(target: target, bounds: bounds)
+            return DesktopActionResult(outcome: nil)
         }.value
     }
 

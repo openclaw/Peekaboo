@@ -5,38 +5,48 @@ import PeekabooFoundation
 
 @MainActor
 extension PeekabooBridgeServer {
-    func handleApplicationRequest(_ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeResponse {
+    func handleApplicationRequest(_ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeHandledResponse {
         switch request {
         case .listApplications:
             let apps = try await self.services.applications.listApplications()
-            return .applications(apps.data.applications)
+            return .init(response: .applications(apps.data.applications))
         case let .findApplication(payload):
             let app = try await self.services.applications.findApplication(identifier: payload.identifier)
-            return .application(app)
+            return .init(response: .application(app))
         case .getFrontmostApplication:
             let app = try await self.services.applications.getFrontmostApplication()
-            return .application(app)
+            return .init(response: .application(app))
         case let .isApplicationRunning(payload):
             let running = try await self.services.applications.isApplicationRunning(identifier: payload.identifier)
-            return .bool(running)
+            return .init(response: .bool(running))
         case let .launchApplication(payload):
-            let app = try await self.services.applications.launchApplication(identifier: payload.identifier)
-            self.automationActivityObserver?(pid_t(app.processIdentifier))
-            return .application(app)
+            let request = ApplicationLaunchRequest(applicationIdentifier: payload.identifier)
+            let result: DesktopActionResult<ServiceApplicationInfo> = if let results = self.services
+                .applications as? any ApplicationServiceActionResultProviding
+            {
+                try await results.launchApplicationActionResult(request: request)
+            } else {
+                try await DesktopActionResult(
+                    payload: self.services.applications.launchApplication(identifier: payload.identifier),
+                    outcome: nil)
+            }
+            self.automationActivityObserver?(pid_t(result.payload.processIdentifier))
+            return .init(response: .application(result.payload), outcome: result.outcome)
         case let .launchApplicationWithOptions(payload):
-            let app = try await self.services.applications.launchApplication(request: payload)
-            self.automationActivityObserver?(pid_t(app.processIdentifier))
-            return .application(app)
+            let result = try await self.services.applications.launchApplicationResult(request: payload)
+            self.automationActivityObserver?(pid_t(result.payload.processIdentifier))
+            return .init(response: .application(result.payload), outcome: result.outcome)
         case let .relaunchApplicationWithOptions(payload):
-            let app = try await self.services.applications.relaunchApplication(request: payload)
-            self.automationActivityObserver?(pid_t(app.processIdentifier))
-            return .application(app)
+            let result = try await self.services.applications.relaunchApplicationResult(request: payload)
+            self.automationActivityObserver?(pid_t(result.payload.processIdentifier))
+            return .init(response: .application(result.payload), outcome: result.outcome)
         case let .activateApplication(payload):
-            try await self.services.applications.activateApplication(request: ApplicationActivationRequest(
+            let request = ApplicationActivationRequest(
                 identifier: payload.identifier,
-                expectedIdentity: payload.expectedIdentity))
+                expectedIdentity: payload.expectedIdentity)
+            let result = try await self.services.applications.activateApplicationResult(request: request)
             await self.reportAutomationActivity(appIdentifier: payload.identifier)
-            return .ok
+            return .init(response: .ok, outcome: result.outcome)
         case let .quitApplication(payload):
             guard let expectedIdentity = payload.expectedIdentity else {
                 throw PeekabooError.invalidInput(
@@ -46,23 +56,29 @@ extension PeekabooBridgeServer {
             guard expectedIdentity.processIdentifier != getpid() else {
                 throw PeekabooError.serviceUnavailable("A runtime host cannot quit itself")
             }
-            let success = try await self.services.applications.quitApplication(request: ApplicationQuitRequest(
+            let request = ApplicationQuitRequest(
                 identifier: payload.identifier,
                 force: payload.force,
-                expectedIdentity: expectedIdentity))
-            return .bool(success)
+                expectedIdentity: expectedIdentity)
+            do {
+                let result = try await self.services.applications.quitApplicationResult(request: request)
+                return .init(response: .bool(result.payload), outcome: result.outcome)
+            } catch let failure as DesktopActionFailure {
+                guard Self.isNativeQuitRequestRejection(failure) else { throw failure }
+                return .init(response: .bool(false), outcome: failure.outcome)
+            }
         case let .hideApplication(payload):
-            try await self.services.applications.hideApplication(identifier: payload.identifier)
+            let result = try await self.services.applications.hideApplicationResult(identifier: payload.identifier)
             await self.reportAutomationActivity(appIdentifier: payload.identifier)
-            return .ok
+            return .init(response: .ok, outcome: result.outcome)
         case .unhideApplication:
             throw ApplicationLifecycleRefusalError.legacyBridgeUnhide()
         case let .hideOtherApplications(payload):
             try await self.services.applications.hideOtherApplications(identifier: payload.identifier)
-            return .ok
+            return .init(response: .ok)
         case .showAllApplications:
             try await self.services.applications.showAllApplications()
-            return .ok
+            return .init(response: .ok)
         default:
             throw Self.invalidRequest(for: request)
         }
@@ -75,6 +91,14 @@ extension PeekabooBridgeServer {
             return
         }
         observer(pid_t(app.processIdentifier))
+    }
+
+    private static func isNativeQuitRequestRejection(_ failure: DesktopActionFailure) -> Bool {
+        let outcome = failure.outcome
+        return outcome.route == .local &&
+            outcome.state == .refused &&
+            outcome.refusalReason == .targetUnavailable &&
+            outcome.dispatchState == .none
     }
 
     func handleMenuRequest(_ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeResponse {

@@ -74,7 +74,10 @@ struct AppCommand: ParsableCommand {
                 let appInfo = try await resolveApplication(appIdentifier, services: self.services)
 
                 self.resolvedRuntime.beginInteractionMutation()
-                try await self.services.applications.hideApplication(identifier: appIdentifier)
+                let actionResult = try await ApplicationServiceBridge.hideApplication(
+                    applications: self.services.applications,
+                    identifier: appIdentifier
+                )
 
                 let data = [
                     "action": "hide",
@@ -82,7 +85,7 @@ struct AppCommand: ParsableCommand {
                     "bundle_id": appInfo.bundleIdentifier ?? "unknown"
                 ]
 
-                output(data) {
+                output(data, outcome: actionResult.outcome) {
                     print("✓ Hidden \(appInfo.name)")
                 }
                 AutomationEventLogger.log(
@@ -131,7 +134,8 @@ struct AppCommand: ParsableCommand {
                 let appInfo = try await resolveApplication(appIdentifier, services: self.services)
 
                 self.resolvedRuntime.beginInteractionMutation()
-                try await self.services.applications.activateApplication(
+                let actionResult = try await ApplicationServiceBridge.activateApplication(
+                    applications: self.services.applications,
                     request: ApplicationActivationRequest(application: appInfo)
                 )
 
@@ -149,7 +153,7 @@ struct AppCommand: ParsableCommand {
                     activated: self.activate
                 )
 
-                output(data) {
+                output(data, outcome: actionResult.outcome) {
                     print("✓ Unhidden and activated \(appInfo.name)")
                 }
                 AutomationEventLogger.log(
@@ -197,7 +201,11 @@ struct AppCommand: ParsableCommand {
                         throw ValidationError("Verify is only supported with an app target (not --cycle)")
                     }
                     self.resolvedRuntime.beginInteractionMutation()
-                    try await self.services.automation.hotkey(keys: "cmd,tab", holdDuration: 0)
+                    let actionResult = try await AutomationServiceBridge.hotkey(
+                        automation: self.services.automation,
+                        keys: "cmd,tab",
+                        holdDuration: 0
+                    )
 
                     struct CycleResult: Codable {
                         let action: String
@@ -211,14 +219,15 @@ struct AppCommand: ParsableCommand {
                         logger: self.logger,
                         reason: "app switch cycle"
                     )
-                    output(data) {
+                    output(data, outcome: actionResult.outcome) {
                         print("✓ Cycled to next application")
                     }
                     AutomationEventLogger.log(.app, "switch action=cycle success=true")
                 } else if let targetApp = to {
                     let appInfo = try await resolveApplication(targetApp, services: self.services)
                     self.resolvedRuntime.beginInteractionMutation()
-                    try await self.services.applications.activateApplication(
+                    let actionResult = try await ApplicationServiceBridge.activateApplication(
+                        applications: self.services.applications,
                         request: ApplicationActivationRequest(application: appInfo)
                     )
                     await InteractionObservationInvalidator.invalidateAfterMutation(
@@ -244,7 +253,11 @@ struct AppCommand: ParsableCommand {
                         success: true
                     )
 
-                    output(data, effect: self.verify ? .confirmed : .unverifiable) {
+                    output(
+                        data,
+                        effect: self.verify ? .confirmed : .unverifiable,
+                        outcome: actionResult.outcome
+                    ) {
                         print("✓ Switched to \(appInfo.name)")
                     }
                     AutomationEventLogger.log(
@@ -308,7 +321,8 @@ struct AppCommand: ParsableCommand {
                 let appIdentifier = try self.resolveApplicationIdentifier()
                 let appInfo = try await resolveApplication(appIdentifier, services: self.services)
                 self.resolvedRuntime.beginInteractionMutation()
-                try await self.services.applications.activateApplication(
+                let actionResult = try await ApplicationServiceBridge.activateApplication(
+                    applications: self.services.applications,
                     request: ApplicationActivationRequest(application: appInfo)
                 )
 
@@ -317,7 +331,7 @@ struct AppCommand: ParsableCommand {
                     "app_name": appInfo.name,
                     "bundle_id": appInfo.bundleIdentifier ?? "unknown",
                 ]
-                output(result) {
+                output(result, outcome: actionResult.outcome) {
                     print("✓ Focused \(appInfo.name)")
                 }
                 AutomationEventLogger.log(

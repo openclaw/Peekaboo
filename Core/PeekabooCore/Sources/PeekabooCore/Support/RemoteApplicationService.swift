@@ -7,7 +7,7 @@ import PeekabooBridge
 import PeekabooFoundation
 
 @MainActor
-public final class RemoteApplicationService: ApplicationServiceProtocol {
+public final class RemoteApplicationService: ApplicationServiceProtocol, ApplicationServiceActionResultProviding {
     private let client: PeekabooBridgeClient
     private let localFallback: (any ApplicationServiceProtocol)?
     private let supportsLaunchOptions: Bool
@@ -119,6 +119,12 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
     }
 
     public func launchApplication(request: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {
+        try await self.launchApplicationResult(request: request).payload
+    }
+
+    public func launchApplicationActionResult(
+        request: ApplicationLaunchRequest) async throws -> DesktopActionResult<ServiceApplicationInfo>
+    {
         try self.validateAdvancedLaunchOptions(request)
         if !request.activates, !self.supportsSafeBackgroundLaunchNoOp {
             throw PeekabooBridgeErrorEnvelope(
@@ -127,7 +133,7 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
                     "update or relaunch it")
         }
         if self.supportsLaunchOptions {
-            return try await self.client.launchApplication(request: request)
+            return try await self.client.launchApplicationResult(request: request)
         }
 
         if let identifier = request.applicationIdentifier,
@@ -137,7 +143,8 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
            !request.waitForWindow,
            !request.createsNewInstance
         {
-            return try await self.client.launchApplication(identifier: identifier)
+            let application = try await self.client.launchApplication(identifier: identifier)
+            return DesktopActionResult(payload: application, outcome: nil)
         }
 
         throw PeekabooBridgeErrorEnvelope(
@@ -146,6 +153,12 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
     }
 
     public func relaunchApplication(request: ApplicationRelaunchRequest) async throws -> ServiceApplicationInfo {
+        try await self.relaunchApplicationResult(request: request).payload
+    }
+
+    public func relaunchApplicationActionResult(
+        request: ApplicationRelaunchRequest) async throws -> DesktopActionResult<ServiceApplicationInfo>
+    {
         guard self.supportsRelaunch else {
             throw PeekabooBridgeErrorEnvelope(
                 code: .operationNotSupported,
@@ -157,7 +170,7 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
                 message: "Atomic remote relaunch requires the initially selected process-generation receipt")
         }
         try self.validateAdvancedLaunchOptions(request.launchRequest)
-        return try await self.client.relaunchApplication(request: request)
+        return try await self.client.relaunchApplicationResult(request: request)
     }
 
     private func validateAdvancedLaunchOptions(_ request: ApplicationLaunchRequest) throws {
@@ -182,15 +195,21 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
     }
 
     public func activateApplication(request: ApplicationActivationRequest) async throws {
+        _ = try await self.activateApplicationResult(request: request)
+    }
+
+    public func activateApplicationActionResult(
+        request: ApplicationActivationRequest) async throws -> DesktopActionResult<Void>
+    {
         guard request.expectedIdentity == nil || self.supportsPinnedActivation else {
             throw PeekabooBridgeErrorEnvelope(
                 code: .operationNotSupported,
                 message: "The selected Peekaboo host does not support process-generation-pinned activation")
         }
-        try await self.runWithLifecycleFallback {
-            try await self.client.activateApplication(request: request)
+        return try await self.runWithLifecycleFallback {
+            try await self.client.activateApplicationResult(request: request)
         } fallback: { fallback in
-            try await fallback.activateApplication(request: request)
+            try await fallback.activateApplicationResult(request: request)
         }
     }
 
@@ -202,6 +221,12 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
     }
 
     public func quitApplication(request: ApplicationQuitRequest) async throws -> Bool {
+        try await self.quitApplicationResult(request: request).payload
+    }
+
+    public func quitApplicationActionResult(
+        request: ApplicationQuitRequest) async throws -> DesktopActionResult<Bool>
+    {
         guard self.supportsPinnedQuit else {
             throw PeekabooBridgeErrorEnvelope(
                 code: .operationNotSupported,
@@ -212,22 +237,30 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
                 code: .operationNotSupported,
                 message: "Remote application quit requires a process-generation identity; resolve the app again")
         }
-        return try await self.client.quitApplication(request: request, supportsPinnedQuit: true)
+        return try await self.client.quitApplicationResult(request: request, supportsPinnedQuit: true)
     }
 
     public func hideApplication(identifier: String) async throws {
+        _ = try await self.hideApplicationResult(identifier: identifier)
+    }
+
+    public func hideApplicationActionResult(identifier: String) async throws -> DesktopActionResult<Void> {
         try await self.runWithLifecycleFallback {
-            try await self.client.hideApplication(identifier: identifier)
+            try await self.client.hideApplicationResult(identifier: identifier)
         } fallback: { fallback in
-            try await fallback.hideApplication(identifier: identifier)
+            try await fallback.hideApplicationResult(identifier: identifier)
         }
     }
 
     public func unhideApplication(identifier: String) async throws {
+        _ = try await self.unhideApplicationResult(identifier: identifier)
+    }
+
+    public func unhideApplicationActionResult(identifier: String) async throws -> DesktopActionResult<Void> {
         try await self.runWithLifecycleFallback {
-            try await self.client.unhideApplication(identifier: identifier)
+            try await self.client.unhideApplicationResult(identifier: identifier)
         } fallback: { fallback in
-            try await fallback.unhideApplication(identifier: identifier)
+            try await fallback.unhideApplicationResult(identifier: identifier)
         }
     }
 
@@ -247,17 +280,17 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
         }
     }
 
-    private func runWithLifecycleFallback(
-        operation: () async throws -> Void,
-        fallback: (any ApplicationServiceProtocol) async throws -> Void) async throws
+    private func runWithLifecycleFallback<Payload: Sendable>(
+        operation: () async throws -> Payload,
+        fallback: (any ApplicationServiceProtocol) async throws -> Payload) async throws -> Payload
     {
         do {
-            try await operation()
+            return try await operation()
         } catch {
             guard let localFallback, Self.shouldUseLocalFallback(for: error) else {
                 throw error
             }
-            try await fallback(localFallback)
+            return try await fallback(localFallback)
         }
     }
 

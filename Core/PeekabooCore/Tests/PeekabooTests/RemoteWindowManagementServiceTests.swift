@@ -47,29 +47,42 @@ struct RemoteWindowManagementServiceTests {
             supportsWindowRestore: true)
         let target = WindowTarget.windowId(self.identity.windowID)
         let outcomes = try await [
-            remote.closeWindowWithOutcome(target: target, expectedIdentity: self.identity),
-            remote.minimizeWindowWithOutcome(target: target, expectedIdentity: self.identity),
-            remote.restoreWindowWithOutcome(target: target, expectedIdentity: self.identity),
-            remote.maximizeWindowWithOutcome(target: target, expectedIdentity: self.identity),
-            remote.moveWindowWithOutcome(target: target, expectedIdentity: self.identity, to: .zero),
-            remote.resizeWindowWithOutcome(target: target, expectedIdentity: self.identity, to: .zero),
-            remote.setWindowBoundsWithOutcome(target: target, expectedIdentity: self.identity, bounds: .zero),
+            remote.closeWindowResult(
+                target: target,
+                expectedIdentity: self.identity,
+                allowForegroundFallback: false),
+            remote.minimizeWindowResult(target: target, expectedIdentity: self.identity),
+            remote.restoreWindowResult(target: target, expectedIdentity: self.identity),
+            remote.maximizeWindowResult(target: target, expectedIdentity: self.identity),
+            remote.moveWindowResult(target: target, expectedIdentity: self.identity, to: .zero),
+            remote.resizeWindowResult(target: target, expectedIdentity: self.identity, to: .zero),
+            remote.setWindowBoundsResult(target: target, expectedIdentity: self.identity, bounds: .zero),
         ]
 
-        #expect(outcomes.allSatisfy { $0 == expected.routed(to: .bridge) })
+        #expect(outcomes.allSatisfy { $0.outcome == expected.routed(to: .bridge) })
+        let compatibilityOutcome: DesktopActionOutcome? = try await remote.moveWindowWithOutcome(
+            target: target,
+            expectedIdentity: self.identity,
+            to: .zero)
+        #expect(compatibilityOutcome == expected.routed(to: .bridge))
+        let bridgeCompatibilityOutcome: DesktopActionOutcome? = try await client.moveWindowWithOutcome(
+            target: target,
+            expectedIdentity: self.identity,
+            to: .zero)
+        #expect(bridgeCompatibilityOutcome == expected.routed(to: .bridge))
         for expectedOutcome in DesktopActionOutcomeFixtures.canonicalOutcomes {
             await windows.setActionOutcome(expectedOutcome)
-            let carried = try await remote.moveWindowWithOutcome(
+            let carried = try await remote.moveWindowResult(
                 target: target,
                 expectedIdentity: self.identity,
                 to: CGPoint(x: 12, y: 34))
-            #expect(carried == expectedOutcome.routed(to: .bridge))
+            #expect(carried.outcome == expectedOutcome.routed(to: .bridge))
         }
         await windows.setActionOutcome(nil)
-        #expect(try await remote.moveWindowWithOutcome(
+        #expect(try await remote.moveWindowResult(
             target: target,
             expectedIdentity: self.identity,
-            to: CGPoint(x: 56, y: 78)) == nil)
+            to: CGPoint(x: 56, y: 78)).outcome == nil)
         await host.stop()
     }
 
@@ -102,12 +115,12 @@ struct RemoteWindowManagementServiceTests {
         let remote = RemoteWindowManagementService(
             client: client,
             supportsPinnedWindowMutations: true)
-        let outcome = try await remote.moveWindowWithOutcome(
+        let outcome = try await remote.moveWindowResult(
             target: .windowId(self.identity.windowID),
             expectedIdentity: self.identity,
             to: CGPoint(x: 12, y: 34))
 
-        #expect(outcome == nil)
+        #expect(outcome.outcome == nil)
         #expect(await windows.pinnedMutations.map(\.operation) == ["move"])
         await host.stop()
     }
@@ -328,7 +341,7 @@ private struct RecordedRemoteWindowMutation: Equatable {
     let identity: WindowMutationIdentity
 }
 
-private actor RemoteWindowMutationFixture: WindowManagementActionOutcomeProviding {
+private actor RemoteWindowMutationFixture: WindowManagementActionResultProviding {
     let identity: WindowMutationIdentity
     private var actionOutcome: DesktopActionOutcome?
     private let blocksFirstLegacyMove: Bool
@@ -374,12 +387,16 @@ private actor RemoteWindowMutationFixture: WindowManagementActionOutcomeProvidin
             identity: expectedIdentity)
     }
 
-    func closeWindowWithOutcome(
+    func closeWindowActionResult(
         target: WindowTarget,
-        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+        expectedIdentity: WindowMutationIdentity,
+        allowForegroundFallback: Bool) async throws -> DesktopActionResult<Void>
     {
-        self.record("background-close", target: target, identity: expectedIdentity)
-        return self.actionOutcome
+        self.record(
+            allowForegroundFallback ? "close" : "background-close",
+            target: target,
+            identity: expectedIdentity)
+        return DesktopActionResult(outcome: self.actionOutcome)
     }
 
     func minimizeWindow(target: WindowTarget) async throws {
@@ -390,12 +407,12 @@ private actor RemoteWindowMutationFixture: WindowManagementActionOutcomeProvidin
         self.record("minimize", target: target, identity: expectedIdentity)
     }
 
-    func minimizeWindowWithOutcome(
+    func minimizeWindowActionResult(
         target: WindowTarget,
-        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
     {
         self.record("minimize", target: target, identity: expectedIdentity)
-        return self.actionOutcome
+        return DesktopActionResult(outcome: self.actionOutcome)
     }
 
     func restoreWindow(target: WindowTarget) async throws {
@@ -406,12 +423,12 @@ private actor RemoteWindowMutationFixture: WindowManagementActionOutcomeProvidin
         self.record("restore", target: target, identity: expectedIdentity)
     }
 
-    func restoreWindowWithOutcome(
+    func restoreWindowActionResult(
         target: WindowTarget,
-        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
     {
         self.record("restore", target: target, identity: expectedIdentity)
-        return self.actionOutcome
+        return DesktopActionResult(outcome: self.actionOutcome)
     }
 
     func maximizeWindow(target: WindowTarget) async throws {
@@ -422,12 +439,12 @@ private actor RemoteWindowMutationFixture: WindowManagementActionOutcomeProvidin
         self.record("maximize", target: target, identity: expectedIdentity)
     }
 
-    func maximizeWindowWithOutcome(
+    func maximizeWindowActionResult(
         target: WindowTarget,
-        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
     {
         self.record("maximize", target: target, identity: expectedIdentity)
-        return self.actionOutcome
+        return DesktopActionResult(outcome: self.actionOutcome)
     }
 
     func moveWindow(target: WindowTarget, to _: CGPoint) async throws {
@@ -454,13 +471,13 @@ private actor RemoteWindowMutationFixture: WindowManagementActionOutcomeProvidin
         await withCheckedContinuation { self.releaseContinuation = $0 }
     }
 
-    func moveWindowWithOutcome(
+    func moveWindowActionResult(
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity,
-        to position: CGPoint) async throws -> DesktopActionOutcome?
+        to position: CGPoint) async throws -> DesktopActionResult<Void>
     {
         try await self.moveWindow(target: target, expectedIdentity: expectedIdentity, to: position)
-        return self.actionOutcome
+        return DesktopActionResult(outcome: self.actionOutcome)
     }
 
     func resizeWindow(target: WindowTarget, to _: CGSize) async throws {
@@ -475,13 +492,13 @@ private actor RemoteWindowMutationFixture: WindowManagementActionOutcomeProvidin
         self.record("resize", target: target, identity: expectedIdentity)
     }
 
-    func resizeWindowWithOutcome(
+    func resizeWindowActionResult(
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity,
-        to _: CGSize) async throws -> DesktopActionOutcome?
+        to _: CGSize) async throws -> DesktopActionResult<Void>
     {
         self.record("resize", target: target, identity: expectedIdentity)
-        return self.actionOutcome
+        return DesktopActionResult(outcome: self.actionOutcome)
     }
 
     func setWindowBounds(target: WindowTarget, bounds _: CGRect) async throws {
@@ -496,13 +513,13 @@ private actor RemoteWindowMutationFixture: WindowManagementActionOutcomeProvidin
         self.record("set-bounds", target: target, identity: expectedIdentity)
     }
 
-    func setWindowBoundsWithOutcome(
+    func setWindowBoundsActionResult(
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity,
-        bounds _: CGRect) async throws -> DesktopActionOutcome?
+        bounds _: CGRect) async throws -> DesktopActionResult<Void>
     {
         self.record("set-bounds", target: target, identity: expectedIdentity)
-        return self.actionOutcome
+        return DesktopActionResult(outcome: self.actionOutcome)
     }
 
     func focusWindow(target: WindowTarget) async throws {

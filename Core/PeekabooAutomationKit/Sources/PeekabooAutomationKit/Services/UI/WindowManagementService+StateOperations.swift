@@ -121,7 +121,25 @@ extension WindowManagementService {
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
     {
-        try await WindowManagementActionOutcome.perform(action: "close window") {
+        try await self.closeWindowResult(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            allowForegroundFallback: false).outcome
+    }
+
+    public func closeWindowActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        allowForegroundFallback: Bool) async throws -> DesktopActionResult<Void>
+    {
+        if allowForegroundFallback {
+            try await self.closeWindow(
+                target: target,
+                expectedIdentity: expectedIdentity,
+                allowForegroundFallback: true)
+            return DesktopActionResult(outcome: nil)
+        }
+        let outcome = try await WindowManagementActionOutcome.perform(action: "close window") {
             try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
                 try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
                 let trackedWindowID = expectedIdentity.windowID
@@ -158,6 +176,7 @@ extension WindowManagementService {
                     dispatchCount: attempt.dispatchCount)
             }
         }
+        return DesktopActionResult(outcome: outcome)
     }
 
     public func minimizeWindow(target: WindowTarget) async throws {
@@ -166,14 +185,21 @@ extension WindowManagementService {
     }
 
     public func minimizeWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws {
-        _ = try await self.minimizeWindowWithOutcome(target: target, expectedIdentity: expectedIdentity)
+        _ = try await self.minimizeWindowResult(target: target, expectedIdentity: expectedIdentity)
     }
 
     public func minimizeWindowWithOutcome(
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
     {
-        try await WindowManagementActionOutcome.perform(action: "minimize window") {
+        try await self.minimizeWindowResult(target: target, expectedIdentity: expectedIdentity).outcome
+    }
+
+    public func minimizeWindowActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
+    {
+        let outcome = try await WindowManagementActionOutcome.perform(action: "minimize window") {
             try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
                 try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
                 let window = try await self.element(for: target)
@@ -211,6 +237,7 @@ extension WindowManagementService {
                     dispatchCount: 1)
             }
         }
+        return DesktopActionResult(outcome: outcome)
     }
 
     public func restoreWindow(target: WindowTarget) async throws {
@@ -219,14 +246,21 @@ extension WindowManagementService {
     }
 
     public func restoreWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws {
-        _ = try await self.restoreWindowWithOutcome(target: target, expectedIdentity: expectedIdentity)
+        _ = try await self.restoreWindowResult(target: target, expectedIdentity: expectedIdentity)
     }
 
     public func restoreWindowWithOutcome(
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
     {
-        try await WindowManagementActionOutcome.perform(action: "restore window") {
+        try await self.restoreWindowResult(target: target, expectedIdentity: expectedIdentity).outcome
+    }
+
+    public func restoreWindowActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
+    {
+        let outcome = try await WindowManagementActionOutcome.perform(action: "restore window") {
             try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
                 try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
                 if expectedIdentity.isMinimized == true {
@@ -296,6 +330,7 @@ extension WindowManagementService {
                     dispatchCount: 1)
             }
         }
+        return DesktopActionResult(outcome: outcome)
     }
 
     private func restorePinnedMinimizedWindow(_ expectedIdentity: WindowMutationIdentity) async throws {
@@ -315,14 +350,21 @@ extension WindowManagementService {
     }
 
     public func maximizeWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws {
-        _ = try await self.maximizeWindowWithOutcome(target: target, expectedIdentity: expectedIdentity)
+        _ = try await self.maximizeWindowResult(target: target, expectedIdentity: expectedIdentity)
     }
 
     public func maximizeWindowWithOutcome(
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionOutcome?
     {
-        try await WindowManagementActionOutcome.perform(action: "maximize window") {
+        try await self.maximizeWindowResult(target: target, expectedIdentity: expectedIdentity).outcome
+    }
+
+    public func maximizeWindowActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
+    {
+        let outcome = try await WindowManagementActionOutcome.perform(action: "maximize window") {
             try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
                 try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
                 guard let windowInfo = try await self.listWindows(target: target).first else {
@@ -398,6 +440,7 @@ extension WindowManagementService {
                     dispatchCount: dispatch.dispatchCount)
             }
         }
+        return DesktopActionResult(outcome: outcome)
     }
 
     private func maximizedBounds(for windowBounds: CGRect) throws -> CGRect {
@@ -664,10 +707,13 @@ extension WindowManagementService {
                 expectedIdentity.ownerProcessIdentifier)
             let currentWindowID = self.windowIdentityService.getWindowID(from: window).map(Int.init)
             let minimized = window.isMinimized()
+            let windowServerIdentityMatches = minimized == true &&
+                SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity)
             guard pinnedWindowMinimizeIdentityMatches(
                 expectedIdentity: expectedIdentity,
                 currentProcessStartIdentity: currentProcessStartIdentity,
-                currentWindowID: currentWindowID)
+                currentWindowID: currentWindowID,
+                windowServerIdentityMatches: windowServerIdentityMatches)
             else {
                 throw PeekabooError.commandFailed(
                     "Window \(expectedIdentity.windowID) changed owner/process generation during minimize")
@@ -1006,10 +1052,12 @@ func pinnedMinimizedWindowAXPresence(
 func pinnedWindowMinimizeIdentityMatches(
     expectedIdentity: WindowMutationIdentity,
     currentProcessStartIdentity: UInt64?,
-    currentWindowID: Int?) -> Bool
+    currentWindowID: Int?,
+    windowServerIdentityMatches: Bool = false) -> Bool
 {
     currentProcessStartIdentity == expectedIdentity.ownerProcessStartIdentity &&
-        currentWindowID == expectedIdentity.windowID
+        (currentWindowID == expectedIdentity.windowID ||
+            (currentWindowID == nil && windowServerIdentityMatches))
 }
 
 func pinnedWindowRestoreIdentityMatches(

@@ -17,7 +17,7 @@ extension WindowManagementService {
         expectedIdentity: WindowMutationIdentity,
         to position: CGPoint) async throws
     {
-        _ = try await self.moveWindowWithOutcome(
+        _ = try await self.moveWindowResult(
             target: target,
             expectedIdentity: expectedIdentity,
             to: position)
@@ -28,7 +28,18 @@ extension WindowManagementService {
         expectedIdentity: WindowMutationIdentity,
         to position: CGPoint) async throws -> DesktopActionOutcome?
     {
-        try await WindowManagementActionOutcome.perform(action: "move window") {
+        try await self.moveWindowResult(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            to: position).outcome
+    }
+
+    public func moveWindowActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to position: CGPoint) async throws -> DesktopActionResult<Void>
+    {
+        let outcome = try await WindowManagementActionOutcome.perform(action: "move window") {
             try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
                 try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
                 guard let capturedBounds = expectedIdentity.capturedBounds else {
@@ -61,6 +72,7 @@ extension WindowManagementService {
                     dispatchCount: 1)
             }
         }
+        return DesktopActionResult(outcome: outcome)
     }
 
     public func resizeWindow(target: WindowTarget, to size: CGSize) async throws {
@@ -76,7 +88,7 @@ extension WindowManagementService {
         expectedIdentity: WindowMutationIdentity,
         to size: CGSize) async throws
     {
-        _ = try await self.resizeWindowWithOutcome(
+        _ = try await self.resizeWindowResult(
             target: target,
             expectedIdentity: expectedIdentity,
             to: size)
@@ -87,7 +99,18 @@ extension WindowManagementService {
         expectedIdentity: WindowMutationIdentity,
         to size: CGSize) async throws -> DesktopActionOutcome?
     {
-        try await WindowManagementActionOutcome.perform(action: "resize window") {
+        try await self.resizeWindowResult(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            to: size).outcome
+    }
+
+    public func resizeWindowActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to size: CGSize) async throws -> DesktopActionResult<Void>
+    {
+        let outcome = try await WindowManagementActionOutcome.perform(action: "resize window") {
             try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
                 try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
                 guard let capturedBounds = expectedIdentity.capturedBounds else {
@@ -129,6 +152,7 @@ extension WindowManagementService {
                     dispatchCount: 1)
             }
         }
+        return DesktopActionResult(outcome: outcome)
     }
 
     public func setWindowBounds(target: WindowTarget, bounds: CGRect) async throws {
@@ -144,7 +168,7 @@ extension WindowManagementService {
         expectedIdentity: WindowMutationIdentity,
         bounds: CGRect) async throws
     {
-        _ = try await self.setWindowBoundsWithOutcome(
+        _ = try await self.setWindowBoundsResult(
             target: target,
             expectedIdentity: expectedIdentity,
             bounds: bounds)
@@ -155,7 +179,18 @@ extension WindowManagementService {
         expectedIdentity: WindowMutationIdentity,
         bounds: CGRect) async throws -> DesktopActionOutcome?
     {
-        try await WindowManagementActionOutcome.perform(action: "set window bounds") {
+        try await self.setWindowBoundsResult(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            bounds: bounds).outcome
+    }
+
+    public func setWindowBoundsActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        bounds: CGRect) async throws -> DesktopActionResult<Void>
+    {
+        let outcome = try await WindowManagementActionOutcome.perform(action: "set window bounds") {
             try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
                 try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
                 let window = try await self.element(for: target)
@@ -187,5 +222,6 @@ extension WindowManagementService {
                     dispatchCount: dispatchCount)
             }
         }
+        return DesktopActionResult(outcome: outcome)
     }
 }

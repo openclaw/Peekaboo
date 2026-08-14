@@ -23,13 +23,7 @@ extension ApplicationService {
     }
 
     public func launchApplication(request: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {
-        let identifier = request.applicationIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let bundleIdentifier = request.applicationBundleIdentifier?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        self.logger.info("Launching application: \(bundleIdentifier ?? identifier ?? "default handler")")
-
-        let preparedLaunch = try self.prepareApplicationLaunch(request)
-        return try await self.performApplicationLaunch(preparedLaunch)
+        try await self.launchApplicationResult(request: request).payload
     }
 
     func prepareApplicationLaunch(_ request: ApplicationLaunchRequest) throws -> PreparedApplicationLaunch {
@@ -82,23 +76,24 @@ extension ApplicationService {
             requestedRunningApplicationIdentity: requestedRunningApplication?.processIdentity)
     }
 
-    private func performApplicationLaunch(_ launch: PreparedApplicationLaunch) async throws -> ServiceApplicationInfo {
-        let access: DesktopOperationAccess = launch.activates ? .write : .read
-        return try await self.operationLaneCoordinator.run(scope: .global, access: access) {
-            try await self.performApplicationLaunchWithOwnedLane(launch)
-        }
-    }
-
-    private func performApplicationLaunchWithOwnedLane(
-        _ launch: PreparedApplicationLaunch) async throws -> ServiceApplicationInfo
+    func performApplicationLaunchWithOutcomeOwnedLane(
+        _ launch: PreparedApplicationLaunch) async throws -> DesktopActionResult<ServiceApplicationInfo>
     {
+        self.logger.info("Launching application from the owned desktop lane")
         if !launch.activates {
-            return try await self.performVerifiedBackgroundLaunchNoOp(launch)
+            let application = try await self.performVerifiedBackgroundLaunchNoOp(launch)
+            return DesktopActionResult(payload: application, outcome: .confirmedNoChange())
         }
         if let requestedIdentity = launch.requestedRunningApplicationIdentity {
-            return try await self.activateVerifiedRunningApplication(
+            let activation = try await self.activateVerifiedRunningApplication(
                 launch,
                 requestedIdentity: requestedIdentity)
+            let outcome: DesktopActionOutcome = if let dispatch = activation.dispatch {
+                .confirmedChange(delivery: dispatch.delivery, unitCount: dispatch.unitCount)
+            } else {
+                .confirmedNoChange()
+            }
+            return DesktopActionResult(payload: activation.application, outcome: outcome)
         }
 
         let config = NSWorkspace.OpenConfiguration()
@@ -123,33 +118,66 @@ extension ApplicationService {
             let targetURL = launch.openURLs[0]
             return try await self.defaultApplicationOpenHandler(targetURL, config)
         }
-        let runningApp = try await openTask.value
-        let launchProcessIdentity = try self.captureLaunchProcessIdentity(runningApp)
-        try Task.checkCancellation()
-
-        if !runningApp.isActive, !runningApp.activate(options: []) {
-            self.logger.warning("Launch succeeded but failed to activate \(runningApp.localizedName ?? "application")")
+        let runningApp: NSRunningApplication
+        do {
+            runningApp = try await openTask.value
+        } catch {
+            throw Self.uncertainDispatchFailure(
+                operation: "Launch application",
+                mode: .foreground,
+                error: error)
         }
 
-        try await self.waitUntilReadyIfNeeded(
-            runningApp,
-            requested: launch.waitUntilReady,
-            expectedIdentity: launchProcessIdentity)
-        try await self.waitForWindowIfNeeded(
-            runningApp,
-            requested: launch.waitForWindow,
-            expectedIdentity: launchProcessIdentity)
-        try await self.waitUntilActiveIfNeeded(runningApp, requested: true)
+        var acceptedNativeDispatchCount = 1
+        do {
+            let launchProcessIdentity = try self.captureLaunchProcessIdentity(runningApp)
+            try Task.checkCancellation()
 
-        let launchMessage =
-            "Successfully launched: \(runningApp.localizedName ?? "Unknown") (PID: \(runningApp.processIdentifier))"
-        self.logger.info("\(launchMessage)")
-        let application = self.createApplicationInfo(from: runningApp)
-        guard application.processIdentity == launchProcessIdentity else {
-            throw PeekabooError.commandFailed(
-                "Launched application process generation changed before its receipt could be returned")
+            if !self.applicationActiveProvider(runningApp) {
+                if self.applicationActivationHandler(runningApp) {
+                    acceptedNativeDispatchCount += 1
+                } else {
+                    self.logger.warning(
+                        "Launch succeeded but failed to activate \(runningApp.localizedName ?? "application")")
+                }
+            }
+
+            try await self.waitUntilReadyIfNeeded(
+                runningApp,
+                requested: launch.waitUntilReady,
+                expectedIdentity: launchProcessIdentity)
+            try await self.waitForWindowIfNeeded(
+                runningApp,
+                requested: launch.waitForWindow,
+                expectedIdentity: launchProcessIdentity)
+            try await self.waitUntilActiveIfNeeded(
+                runningApp,
+                requested: true,
+                recordAcceptedActivation: {
+                    acceptedNativeDispatchCount += 1
+                })
+
+            let launchMessage =
+                "Successfully launched: \(runningApp.localizedName ?? "Unknown") " +
+                "(PID: \(runningApp.processIdentifier))"
+            self.logger.info("\(launchMessage)")
+            let application = self.createApplicationInfo(from: runningApp)
+            guard application.processIdentity == launchProcessIdentity else {
+                throw PeekabooError.commandFailed(
+                    "Launched application process generation changed before its receipt could be returned")
+            }
+            return DesktopActionResult(
+                payload: application,
+                outcome: .confirmedChange(
+                    delivery: Self.applicationDelivery(mode: .foreground),
+                    unitCount: DesktopActionOutcome.DispatchUnitCount(acceptedNativeDispatchCount) ?? .one))
+        } catch {
+            throw Self.postDispatchFailure(
+                operation: "Launch application",
+                mode: .foreground,
+                error: error,
+                unitCount: DesktopActionOutcome.DispatchUnitCount(acceptedNativeDispatchCount) ?? .one)
         }
-        return application
     }
 
     private func performVerifiedBackgroundLaunchNoOp(
@@ -287,7 +315,8 @@ extension ApplicationService {
 
     private func activateVerifiedRunningApplication(
         _ launch: PreparedApplicationLaunch,
-        requestedIdentity: ApplicationProcessIdentity) async throws -> ServiceApplicationInfo
+        requestedIdentity: ApplicationProcessIdentity) async throws
+        -> (application: ServiceApplicationInfo, dispatch: ApplicationActionDispatch?)
     {
         guard let applicationURL = launch.applicationURL,
               let runningApplication = self.runningApplicationsForURLProvider(applicationURL)
@@ -301,27 +330,35 @@ extension ApplicationService {
                 "The PID-selected application stopped or changed process generation before activation")
         }
 
-        try await self.requestVerifiedActivation(
+        let dispatch = try await self.requestVerifiedActivation(
             runningApplication,
             applicationName: runningApplication.localizedName ?? "application")
-        guard self.application(runningApplication, matches: requestedIdentity) else {
-            throw PeekabooError.commandFailed(
-                "The PID-selected application changed process generation during activation")
+        do {
+            guard self.application(runningApplication, matches: requestedIdentity) else {
+                throw PeekabooError.commandFailed(
+                    "The PID-selected application changed process generation during activation")
+            }
+            try await self.waitUntilReadyIfNeeded(
+                runningApplication,
+                requested: launch.waitUntilReady,
+                expectedIdentity: requestedIdentity)
+            try await self.waitForWindowIfNeeded(
+                runningApplication,
+                requested: launch.waitForWindow,
+                expectedIdentity: requestedIdentity)
+            let application = self.createApplicationInfo(from: runningApplication)
+            guard application.processIdentity == requestedIdentity else {
+                throw PeekabooError.commandFailed(
+                    "The PID-selected application changed process generation before its receipt was returned")
+            }
+            return (application, dispatch)
+        } catch {
+            guard let dispatch else { throw error }
+            throw Self.postDispatchFailure(
+                operation: "Activate application for launch",
+                dispatch: dispatch,
+                error: error)
         }
-        try await self.waitUntilReadyIfNeeded(
-            runningApplication,
-            requested: launch.waitUntilReady,
-            expectedIdentity: requestedIdentity)
-        try await self.waitForWindowIfNeeded(
-            runningApplication,
-            requested: launch.waitForWindow,
-            expectedIdentity: requestedIdentity)
-        let application = self.createApplicationInfo(from: runningApplication)
-        guard application.processIdentity == requestedIdentity else {
-            throw PeekabooError.commandFailed(
-                "The PID-selected application changed process generation before its receipt was returned")
-        }
-        return application
     }
 
     /// Capture the process generation while the exact `NSRunningApplication` selected by
@@ -346,6 +383,13 @@ extension ApplicationService {
     }
 
     public func relaunchApplication(request: ApplicationRelaunchRequest) async throws -> ServiceApplicationInfo {
+        try await self.relaunchApplicationResult(request: request).payload
+    }
+
+    func performApplicationRelaunchWithOutcomeOwnedLane(
+        _ request: ApplicationRelaunchRequest,
+        terminationTimeoutSeconds: TimeInterval = 5) async throws -> DesktopActionResult<ServiceApplicationInfo>
+    {
         guard request.waitSeconds.isFinite, request.waitSeconds >= 0 else {
             throw PeekabooError.invalidInput("Relaunch wait must be a finite, non-negative number of seconds")
         }
@@ -357,6 +401,10 @@ extension ApplicationService {
 
         // Resolve every launch prerequisite before mutating the target application.
         let preparedLaunch = try self.prepareApplicationLaunch(request.launchRequest)
+        guard preparedLaunch.requestedRunningApplicationIdentity == nil else {
+            throw PeekabooError.invalidInput(
+                "Atomic relaunch requires a launchable app path or bundle identifier, not an already-running PID")
+        }
         guard let expectedTargetIdentity = request.expectedTargetIdentity else {
             throw PeekabooError.commandFailed(
                 "Atomic relaunch requires the initially selected process-generation receipt")
@@ -375,30 +423,87 @@ extension ApplicationService {
             force: request.force,
             expectedIdentity: expectedTargetIdentity)
 
-        return try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+        var quitCompleted = false
+        var relaunchSequence = DesktopActionSequenceAccumulator()
+        do {
             try self.validateApplicationQuitIdentity(
                 expectedTargetIdentity,
                 resolvedApplication: target)
-            guard try await self.quitRelaunchTarget(
-                quitRequest,
-                resolvedApplication: target,
-                expectedIdentity: expectedTargetIdentity)
-            else {
-                throw PeekabooError.commandFailed("Application refused to quit")
+            let quitAttempt: ApplicationQuitAttempt
+            do {
+                quitAttempt = try await self.quitRelaunchTarget(
+                    quitRequest,
+                    resolvedApplication: target,
+                    expectedIdentity: expectedTargetIdentity)
+            } catch {
+                throw Self.uncertainDispatchFailure(
+                    operation: "Quit application for relaunch",
+                    mode: .background,
+                    error: error)
             }
-
-            let terminationDeadline = Date().addingTimeInterval(5)
-            while try await self.isRelaunchTargetRunning(identifier: canonicalTargetIdentifier) {
-                guard Date() < terminationDeadline else {
-                    throw PeekabooError.timeout("Application did not terminate within 5 seconds")
+            guard quitAttempt.requestAccepted else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "The quit step of relaunch was not accepted for \(target.name).",
+                    hint: "Refresh the application inventory before retrying.")
+            }
+            guard quitAttempt.terminated else {
+                throw DesktopActionFailure.suspectedNoop(
+                    delivery: Self.applicationDelivery(mode: .background),
+                    unitCount: .one,
+                    message: "The quit step of relaunch did not terminate the application.",
+                    hint: "Refresh the application inventory before retrying.")
+            }
+            let terminationDeadline = Date().addingTimeInterval(terminationTimeoutSeconds)
+            do {
+                while try await self.isRelaunchTargetRunning(identifier: canonicalTargetIdentifier) {
+                    guard Date() < terminationDeadline else {
+                        throw DesktopActionFailure.suspectedNoop(
+                            delivery: Self.applicationDelivery(mode: .background),
+                            unitCount: .one,
+                            message: "The quit step of relaunch was accepted, but the application remained alive.",
+                            hint: "Refresh the application inventory before retrying.")
+                    }
+                    try await Task.sleep(for: .milliseconds(100))
                 }
-                try await Task.sleep(for: .milliseconds(100))
+            } catch {
+                throw Self.postDispatchFailure(
+                    operation: "Verify application termination for relaunch",
+                    mode: .background,
+                    error: error)
             }
+            quitCompleted = true
+            relaunchSequence.record(.outcome(.confirmedChange(
+                delivery: Self.applicationDelivery(mode: .background),
+                unitCount: .one)))
 
             if request.waitSeconds > 0 {
                 try await Task.sleep(for: .seconds(request.waitSeconds))
             }
-            return try await self.performApplicationLaunchWithOwnedLane(preparedLaunch)
+            let launchResult = try await self.performApplicationLaunchWithOutcomeOwnedLane(preparedLaunch)
+            guard let launchOutcome = launchResult.outcome else {
+                return DesktopActionResult(payload: launchResult.payload, outcome: nil)
+            }
+            relaunchSequence.record(.outcome(launchOutcome))
+            return DesktopActionResult(
+                payload: launchResult.payload,
+                outcome: relaunchSequence.successResolution().outcome)
+        } catch {
+            guard quitCompleted else { throw error }
+            let quitDelivery = Self.applicationDelivery(mode: .background)
+            if let failure = error as? DesktopActionFailure {
+                throw relaunchSequence.failure(
+                    combining: failure,
+                    message: "The application quit successfully, but relaunch did not complete.",
+                    hint: "Recover by observing whether launch completed before retrying.",
+                    causeDescription: String(describing: error))
+            }
+            throw DesktopActionFailure.partial(
+                delivery: quitDelivery,
+                unitCount: .one,
+                message: "The application quit successfully, but relaunch did not complete.",
+                hint: "Recover by launching the application again after confirming it remains stopped.",
+                causeDescription: String(describing: error))
         }
     }
 
@@ -412,7 +517,7 @@ extension ApplicationService {
     private func quitRelaunchTarget(
         _ request: ApplicationQuitRequest,
         resolvedApplication: ServiceApplicationInfo,
-        expectedIdentity: ApplicationProcessIdentity) async throws -> Bool
+        expectedIdentity: ApplicationProcessIdentity) async throws -> ApplicationQuitAttempt
     {
         if let relaunchQuitHandler = self.relaunchQuitHandler {
             return try await relaunchQuitHandler(request)
@@ -554,14 +659,20 @@ extension ApplicationService {
         }
     }
 
-    private func waitUntilActiveIfNeeded(_ app: NSRunningApplication, requested: Bool) async throws {
+    private func waitUntilActiveIfNeeded(
+        _ app: NSRunningApplication,
+        requested: Bool,
+        recordAcceptedActivation: () -> Void) async throws
+    {
         guard requested else { return }
         let deadline = Date().addingTimeInterval(2)
-        while !app.isActive, Date() < deadline {
-            _ = app.activate(options: [])
-            try await Task.sleep(nanoseconds: 50_000_000)
+        while !self.applicationActiveProvider(app), Date() < deadline {
+            if self.applicationActivationHandler(app) {
+                recordAcceptedActivation()
+            }
+            try await self.applicationActivationSleepHandler(.milliseconds(50))
         }
-        guard app.isActive else {
+        guard self.applicationActiveProvider(app) else {
             throw PeekabooError.timeout(
                 "Application did not become active within 2 seconds: \(app.localizedName ?? "unknown")")
         }
@@ -572,37 +683,47 @@ extension ApplicationService {
     }
 
     public func activateApplication(request: ApplicationActivationRequest) async throws {
-        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
-            self.logger.info("Activating application: \(request.identifier)")
-            let app = try await findApplication(identifier: request.identifier)
-            guard let resolvedIdentity = app.processIdentity else {
-                throw PeekabooError.commandFailed(
-                    "Application discovery did not return a stable process generation for activation")
-            }
-            let expectedIdentity = request.expectedIdentity ?? resolvedIdentity
-            guard resolvedIdentity == expectedIdentity else {
-                throw PeekabooError.commandFailed(
-                    "The activation target changed process generation after initial selection")
-            }
+        _ = try await self.activateApplicationResult(request: request)
+    }
 
-            let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier)
-            guard let runningApp, self.application(runningApp, matches: expectedIdentity) else {
-                throw PeekabooError.operationError(
-                    message: "Failed to activate application: target process generation changed before dispatch")
-            }
-
-            try await self.requestVerifiedActivation(runningApp, applicationName: app.name)
-            guard self.application(runningApp, matches: expectedIdentity) else {
-                throw PeekabooError.commandFailed(
-                    "The activation target changed process generation before verification completed")
-            }
-            self.logger.info("Successfully activated and verified frontmost: \(app.name)")
+    func performApplicationActivationWithOwnedLane(
+        _ request: ApplicationActivationRequest) async throws -> ApplicationActionDispatch?
+    {
+        self.logger.info("Activating application: \(request.identifier)")
+        let app = try await findApplication(identifier: request.identifier)
+        guard let resolvedIdentity = app.processIdentity else {
+            throw PeekabooError.commandFailed(
+                "Application discovery did not return a stable process generation for activation")
         }
+        let expectedIdentity = request.expectedIdentity ?? resolvedIdentity
+        guard resolvedIdentity == expectedIdentity else {
+            throw PeekabooError.commandFailed(
+                "The activation target changed process generation after initial selection")
+        }
+
+        let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier)
+        guard let runningApp, self.application(runningApp, matches: expectedIdentity) else {
+            throw PeekabooError.operationError(
+                message: "Failed to activate application: target process generation changed before dispatch")
+        }
+
+        let dispatch = try await self.requestVerifiedActivation(runningApp, applicationName: app.name)
+        guard self.application(runningApp, matches: expectedIdentity) else {
+            let error = PeekabooError.commandFailed(
+                "The activation target changed process generation before verification completed")
+            guard let dispatch else { throw error }
+            throw Self.postDispatchFailure(
+                operation: "Activate application",
+                dispatch: dispatch,
+                error: error)
+        }
+        self.logger.info("Successfully activated and verified frontmost: \(app.name)")
+        return dispatch
     }
 
     private func requestVerifiedActivation(
         _ application: NSRunningApplication,
-        applicationName: String) async throws
+        applicationName: String) async throws -> ApplicationActionDispatch?
     {
         let processIdentifier = application.processIdentifier
         let clock = ContinuousClock()
@@ -610,48 +731,89 @@ extension ApplicationService {
         var shouldUseAccessibilityFallback = false
         var nativeRequestAccepted = false
         var accessibilityRequestAccepted = false
+        var acceptedRequestCount = 0
+        var lastAcceptedMechanism: DesktopActionOutcome.Delivery.Mechanism?
+        var hasMixedAcceptedMechanisms = false
 
-        repeat {
-            try Task.checkCancellation()
-            guard !application.isTerminated else {
-                throw PeekabooError.operationError(
-                    message: "Failed to activate \(applicationName): application terminated during activation")
+        func dispatchReceipt() -> ApplicationActionDispatch? {
+            ApplicationActionDispatch(
+                mechanism: lastAcceptedMechanism,
+                mode: .foreground,
+                acceptedRequestCount: hasMixedAcceptedMechanisms ? nil : acceptedRequestCount)
+        }
+
+        func recordAcceptedRequest(_ mechanism: DesktopActionOutcome.Delivery.Mechanism) {
+            if let lastAcceptedMechanism, lastAcceptedMechanism != mechanism {
+                hasMixedAcceptedMechanisms = true
             }
-            if self.isVerifiedActive(application, processIdentifier: processIdentifier) {
-                return
+            acceptedRequestCount += 1
+            lastAcceptedMechanism = mechanism
+        }
+
+        do {
+            repeat {
+                try Task.checkCancellation()
+                guard !application.isTerminated else {
+                    throw PeekabooError.operationError(
+                        message: "Failed to activate \(applicationName): application terminated during activation")
+                }
+                if self.isVerifiedActive(application, processIdentifier: processIdentifier) {
+                    return dispatchReceipt()
+                }
+
+                let accepted = self.applicationActivationHandler(application)
+                nativeRequestAccepted = nativeRequestAccepted || accepted
+                if accepted {
+                    recordAcceptedRequest(.nativeFramework)
+                }
+                if shouldUseAccessibilityFallback || !accepted {
+                    let accessibilityAccepted = self.applicationAccessibilityActivationHandler(processIdentifier)
+                    accessibilityRequestAccepted = accessibilityAccepted || accessibilityRequestAccepted
+                    if accessibilityAccepted {
+                        recordAcceptedRequest(.accessibilityAction)
+                    }
+                }
+
+                if self.isVerifiedActive(application, processIdentifier: processIdentifier) {
+                    return dispatchReceipt()
+                }
+
+                let now = clock.now
+                guard now < deadline else { break }
+                try await self.applicationActivationSleepHandler(min(.milliseconds(100), now.duration(to: deadline)))
+                shouldUseAccessibilityFallback = true
+            } while true
+
+            let frontmostDescription = NSWorkspace.shared.frontmostApplication.map {
+                "\($0.localizedName ?? "unknown") (PID: \($0.processIdentifier))"
+            } ?? "none"
+            let windowServerState = self.windowServerActivationStateProvider(processIdentifier)
+            let frontmostWindowDescription = windowServerState.frontmostWindowProcessIdentifier
+                .map(String.init) ?? "none"
+            let diagnostic = "Activation verification failed for \(applicationName) " +
+                "(native accepted: \(nativeRequestAccepted), AX accepted: \(accessibilityRequestAccepted), " +
+                "frontmost: \(frontmostDescription), frontmost window PID: \(frontmostWindowDescription))"
+            self.logger.error("\(diagnostic, privacy: .public)")
+            guard let dispatch = dispatchReceipt() else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "The activation request was not accepted for \(applicationName).",
+                    hint: "Refresh the application inventory before retrying.",
+                    causeDescription: diagnostic)
             }
-
-            let accepted = self.applicationActivationHandler(application)
-            nativeRequestAccepted = nativeRequestAccepted || accepted
-            if shouldUseAccessibilityFallback || !accepted {
-                accessibilityRequestAccepted = self.applicationAccessibilityActivationHandler(processIdentifier) ||
-                    accessibilityRequestAccepted
-            }
-
-            if self.isVerifiedActive(application, processIdentifier: processIdentifier) {
-                return
-            }
-
-            let now = clock.now
-            guard now < deadline else { break }
-            try await self.applicationActivationSleepHandler(min(.milliseconds(100), now.duration(to: deadline)))
-            shouldUseAccessibilityFallback = true
-        } while true
-
-        let frontmostDescription = NSWorkspace.shared.frontmostApplication.map {
-            "\($0.localizedName ?? "unknown") (PID: \($0.processIdentifier))"
-        } ?? "none"
-        let windowServerState = self.windowServerActivationStateProvider(processIdentifier)
-        let frontmostWindowDescription = windowServerState.frontmostWindowProcessIdentifier
-            .map(String.init) ?? "none"
-        let diagnostic = "Activation verification failed for \(applicationName) " +
-            "(native accepted: \(nativeRequestAccepted), AX accepted: \(accessibilityRequestAccepted), " +
-            "frontmost: \(frontmostDescription), frontmost window PID: \(frontmostWindowDescription))"
-        self.logger.error("\(diagnostic, privacy: .public)")
-        throw PeekabooError.timeout(
-            "Application did not become active and frontmost: \(applicationName). " +
-                "Frontmost application: \(frontmostDescription). " +
-                "Frontmost window PID: \(frontmostWindowDescription)")
+            throw DesktopActionFailure.suspectedNoop(
+                delivery: dispatch.delivery,
+                unitCount: dispatch.unitCount,
+                message: "Application did not become active and frontmost: \(applicationName).",
+                hint: "Refresh the frontmost application and window inventory before retrying.",
+                causeDescription: diagnostic)
+        } catch {
+            guard let dispatch = dispatchReceipt() else { throw error }
+            throw Self.postDispatchFailure(
+                operation: "Activate application",
+                dispatch: dispatch,
+                error: error)
+        }
     }
 
     private func isVerifiedActive(
@@ -716,43 +878,36 @@ extension ApplicationService {
     }
 
     public func quitApplication(identifier: String, force: Bool = false) async throws -> Bool {
-        let selectedApplication = try await self.findApplication(identifier: identifier)
-        guard let expectedIdentity = selectedApplication.processIdentity else {
-            throw PeekabooError.commandFailed(
-                "Could not capture a stable process-generation identity for \(selectedApplication.name)")
-        }
-        return try await self.quitApplication(request: ApplicationQuitRequest(
-            identifier: "PID:\(selectedApplication.processIdentifier)",
-            force: force,
-            expectedIdentity: expectedIdentity))
+        try await self.legacyQuitApplication(request: ApplicationQuitRequest(
+            identifier: identifier,
+            force: force))
     }
 
     public func quitApplication(request: ApplicationQuitRequest) async throws -> Bool {
-        self.logger.info("Quitting application: \(request.identifier) (force: \(request.force))")
-        let app = try await findApplication(identifier: request.identifier)
-        let expectedIdentity: ApplicationProcessIdentity
-        if let requestedIdentity = request.expectedIdentity {
-            expectedIdentity = requestedIdentity
-        } else if let resolvedIdentity = app.processIdentity {
-            expectedIdentity = resolvedIdentity
-        } else {
-            throw PeekabooError.commandFailed(
-                "Could not capture a stable process-generation identity for \(app.name)")
-        }
-        try self.validateApplicationQuitIdentity(expectedIdentity, resolvedApplication: app)
+        try await self.legacyQuitApplication(request: request)
+    }
 
-        return try await self.operationLaneCoordinator.run(scope: .process(expectedIdentity), access: .write) {
-            try await self.quitApplicationWithOwnedLane(
-                request: request,
-                resolvedApplication: app,
-                expectedIdentity: expectedIdentity)
+    private func legacyQuitApplication(request: ApplicationQuitRequest) async throws -> Bool {
+        do {
+            return try await self.quitApplicationResult(request: request).payload
+        } catch let failure as DesktopActionFailure where Self.isRejectedLegacyQuitRequest(failure) {
+            // v4.1.0 exposed a rejected native terminate request as `false`. Preserve that
+            // contract without weakening canonical failures for the result API.
+            return false
         }
     }
 
-    private func quitApplicationWithOwnedLane(
+    private static func isRejectedLegacyQuitRequest(_ failure: DesktopActionFailure) -> Bool {
+        failure.outcome.route == .local &&
+            failure.outcome.state == .refused &&
+            failure.outcome.refusalReason == .targetUnavailable &&
+            failure.outcome.dispatchState == .none
+    }
+
+    func quitApplicationWithOwnedLane(
         request: ApplicationQuitRequest,
         resolvedApplication app: ServiceApplicationInfo,
-        expectedIdentity: ApplicationProcessIdentity) async throws -> Bool
+        expectedIdentity: ApplicationProcessIdentity) async throws -> ApplicationQuitAttempt
     {
         try self.validateApplicationQuitIdentity(expectedIdentity, resolvedApplication: app)
 
@@ -768,11 +923,19 @@ extension ApplicationService {
 
         guard success else {
             self.logger.error("Failed to quit: \(app.name)")
-            return false
+            return ApplicationQuitAttempt(requestAccepted: false, terminated: false)
         }
 
-        let terminated = try await waitForApplicationTermination(timeoutSeconds: 3) {
-            runningApp.isTerminated || NSRunningApplication(processIdentifier: app.processIdentifier) == nil
+        let terminated: Bool
+        do {
+            terminated = try await waitForApplicationTermination(timeoutSeconds: self.applicationQuitTimeout) {
+                runningApp.isTerminated || NSRunningApplication(processIdentifier: app.processIdentifier) == nil
+            }
+        } catch {
+            throw Self.postDispatchFailure(
+                operation: "Quit application",
+                mode: .background,
+                error: error)
         }
         if terminated {
             self.logger.info("Successfully quit and verified termination: \(app.name)")
@@ -781,10 +944,10 @@ extension ApplicationService {
                 "(PID: \(app.processIdentifier))"
             self.logger.error("\(message, privacy: .public)")
         }
-        return terminated
+        return ApplicationQuitAttempt(requestAccepted: true, terminated: terminated)
     }
 
-    private func validateApplicationQuitIdentity(
+    func validateApplicationQuitIdentity(
         _ expectedIdentity: ApplicationProcessIdentity,
         resolvedApplication: ServiceApplicationInfo) throws
     {
@@ -799,63 +962,57 @@ extension ApplicationService {
     }
 
     public func hideApplication(identifier: String) async throws {
-        self.logger.info("Hiding application: \(identifier)")
-        let app = try await findApplication(identifier: identifier)
-        guard let processIdentity = app.processIdentity else {
-            throw PeekabooError.commandFailed("Could not capture a stable process-generation identity for \(app.name)")
-        }
-        try await self.operationLaneCoordinator.run(scope: .process(processIdentity), access: .write) {
-            try self.validateApplicationQuitIdentity(processIdentity, resolvedApplication: app)
-
-            guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier) else {
-                throw NotFoundError.application(identifier)
-            }
-            let appElement = AXApp(runningApp).element
-
-            do {
-                try appElement.performAction(Attribute<String>("AXHide"))
-                self.logger.debug("Hidden via AX action: \(app.name)")
-            } catch {
-                // Log the error but use fallback
-                _ = error.asPeekabooError(context: "AX hide action failed for \(app.name)")
-                // Fallback to NSRunningApplication method
-                self.logger.debug("Using NSRunningApplication fallback")
-                let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier)
-                if let runningApp {
-                    runningApp.hide()
-                    self.logger.debug("Hidden via NSRunningApplication: \(app.name)")
-                }
-            }
-        }
+        _ = try await self.hideApplicationResult(identifier: identifier)
     }
 
     public func unhideApplication(identifier: String) async throws {
-        self.logger.info("Unhiding application: \(identifier)")
-        let app = try await findApplication(identifier: identifier)
-        guard let processIdentity = app.processIdentity else {
-            throw PeekabooError.commandFailed("Could not capture a stable process-generation identity for \(app.name)")
+        _ = try await self.unhideApplicationResult(identifier: identifier)
+    }
+
+    func requestApplicationVisibility(
+        _ application: NSRunningApplication,
+        hidden: Bool) throws -> ApplicationVisibilityAttempt
+    {
+        if let applicationVisibilityHandler = self.applicationVisibilityHandler {
+            let accepted = try applicationVisibilityHandler(application, hidden)
+            guard accepted else { return .rejected }
+            return .accepted(ApplicationActionDispatch(
+                delivery: DesktopActionOutcome.Delivery(
+                    mechanism: .nativeFramework,
+                    mode: .background),
+                unitCount: .one))
         }
-        try await self.operationLaneCoordinator.run(scope: .process(processIdentity), access: .write) {
-            try self.validateApplicationQuitIdentity(processIdentity, resolvedApplication: app)
+        if !hidden {
+            guard self.applicationNativeVisibilityHandler(application, false) else { return .rejected }
+            return .accepted(ApplicationActionDispatch(
+                delivery: DesktopActionOutcome.Delivery(
+                    mechanism: .nativeFramework,
+                    mode: .background),
+                unitCount: .one))
+        }
 
-            guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier) else {
-                throw NotFoundError.application(identifier)
+        do {
+            try self.applicationAccessibilityHideHandler(application)
+            return .accepted(ApplicationActionDispatch(
+                delivery: DesktopActionOutcome.Delivery(
+                    mechanism: .accessibilityAction,
+                    mode: .background),
+                unitCount: .one))
+        } catch {
+            _ = error.asPeekabooError(context: "AX hide action failed")
+            if self.applicationNativeVisibilityHandler(application, true) {
+                return .accepted(ApplicationActionDispatch(
+                    delivery: DesktopActionOutcome.Delivery(
+                        mechanism: .nativeFramework,
+                        mode: .background),
+                    unitCount: .one))
             }
-            let requestSent = runningApp.unhide()
-            let deadline = Date().addingTimeInterval(1)
-            repeat {
-                // NSRunningApplication state is cached until the next main run-loop turn.
-                try await Task.sleep(for: .milliseconds(50))
-                guard runningApp.isHidden else {
-                    self.logger.debug("Unhidden application without activation: \(app.name)")
-                    return
-                }
-            } while Date() < deadline
-
-            if requestSent {
-                throw PeekabooError.operationError(message: "Application remained hidden: \(app.name)")
-            }
-            throw PeekabooError.operationError(message: "Failed to request unhide for application: \(app.name)")
+            return .mayHaveDispatched(
+                delivery: DesktopActionOutcome.Delivery(
+                    mechanism: .accessibilityAction,
+                    mode: .background),
+                unitCount: .one,
+                causeDescription: String(describing: error))
         }
     }
 

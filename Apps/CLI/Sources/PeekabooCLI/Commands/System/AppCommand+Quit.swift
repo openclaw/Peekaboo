@@ -11,8 +11,7 @@ extension AppCommand {
     struct QuitSubcommand: InjectedRuntimeBackedCommand {
         static let commandDescription = CommandDescription(
             commandName: "quit",
-            abstract: "Quit one or more applications"
-        )
+            abstract: "Quit one or more applications")
 
         @Option(help: "Application to quit")
         var app: String?
@@ -22,8 +21,7 @@ extension AppCommand {
 
         @Option(
             name: .long,
-            help: "Require this process-start identity (cleanup safety; requires --pid)"
-        )
+            help: "Require this process-start identity (cleanup safety; requires --pid)")
         var expectedProcessStartIdentity: Int64?
 
         @Flag(help: "Quit all applications")
@@ -54,47 +52,39 @@ extension AppCommand {
                 }
 
                 var results: [AppQuitInfo] = []
+                var actionOutcomes: [DesktopActionOutcome?] = []
+                var caughtFailureHints: [String?] = []
                 for target in quitApps {
                     if target.pid == self.resolvedRuntime.selectedRemoteHostProcessIdentifier {
                         throw PeekabooError.invalidInput(
-                            "Cannot quit the daemon host executing this command; use a different runtime host"
-                        )
+                            "Cannot quit the daemon host executing this command; use a different runtime host")
                     }
                     self.resolvedRuntime.beginInteractionMutation()
-                    let success = await (try? self.services.applications
-                        .quitApplication(request: ApplicationQuitRequest(
-                            identifier: target.identifier,
-                            force: self.force,
-                            expectedIdentity: target.expectedIdentity
-                        ))) ?? false
+                    let success: Bool
+                    var caughtFailureHint: String?
+                    do {
+                        let actionResult = try await ApplicationServiceBridge.quitApplication(
+                            applications: self.services.applications,
+                            request: ApplicationQuitRequest(
+                                identifier: target.identifier,
+                                force: self.force,
+                                expectedIdentity: target.expectedIdentity))
+                        success = actionResult.payload
+                        actionOutcomes.append(actionResult.outcome)
+                    } catch let failure as DesktopActionFailure {
+                        success = false
+                        actionOutcomes.append(failure.outcome)
+                        caughtFailureHint = failure.hint
+                    } catch {
+                        // Preserve legacy per-app failure reporting for services without canonical receipts.
+                        success = false
+                        actionOutcomes.append(nil)
+                    }
                     results.append(AppQuitInfo(
                         app_name: target.name,
                         pid: target.pid,
-                        success: success
-                    ))
-
-                    // Log additional debug info when quit fails
-                    if !success && !self.jsonOutput {
-                        // Check if app might be in a modal state or have unsaved changes
-                        if !self.force {
-                            logger
-                                .debug(
-                                    """
-                                    Quit failed for \(target.name) (PID: \(target.pid)). \
-                                    The app may have unsaved changes or be showing a dialog. \
-                                    Try --force to force quit.
-                                    """
-                                )
-                        } else {
-                            logger
-                                .debug(
-                                    """
-                                    Force quit failed for \(target.name) (PID: \(target.pid)). \
-                                    The app may be unresponsive or protected.
-                                    """
-                                )
-                        }
-                    }
+                        success: success))
+                    caughtFailureHints.append(caughtFailureHint)
                 }
 
                 struct QuitResult: Codable {
@@ -106,24 +96,40 @@ extension AppCommand {
                 let data = QuitResult(
                     action: "quit",
                     force: force,
-                    results: results
-                )
+                    results: results)
                 let allSucceeded = results.allSatisfy(\.success)
+                let succeededCount = results.count(where: \.success)
+                let aggregateOutcome = DesktopActionSequenceAccumulator.completedBatch(
+                    outcomes: actionOutcomes,
+                    succeededCount: succeededCount,
+                    attemptedCount: results.count)
+                let singleFailureHint = results.count == 1 ? caughtFailureHints[0] : nil
+                let failureHint = allSucceeded ? nil : Self.failureHint(
+                    force: self.force,
+                    aggregateOutcome: aggregateOutcome,
+                    singleFailureHint: singleFailureHint)
+
+                for result in results where !result.success {
+                    let action = self.force ? "Force quit" : "Quit"
+                    let recovery = failureHint.map { " \($0)" } ?? ""
+                    logger.debug("\(action) failed for \(result.app_name) (PID: \(result.pid)).\(recovery)")
+                }
 
                 if self.jsonOutput {
-                    let succeededCount = results.count(where: \.success)
                     let response = ResultEnvelope(
                         success: allSucceeded,
-                        effect: allSucceeded ? .confirmed : (succeededCount > 0 ? .partial : .suspectedNoop),
+                        effect: aggregateOutcome?.effect ??
+                            (allSucceeded ? .confirmed : (succeededCount > 0 ? .partial : .suspectedNoop)),
+                        outcome: aggregateOutcome?.projection,
                         data: data,
                         messages: nil,
                         debug_logs: self.outputLogger.getDebugLogs(),
                         error: allSucceeded ? nil : ErrorInfo(
                             message: "Failed to quit \(results.count - succeededCount) application(s).",
                             code: .INTERACTION_FAILED,
-                            hint: self.force ? nil : "Try --force to force quit."
-                        )
-                    )
+                            hint: failureHint,
+                            retrySafe: aggregateOutcome.map { $0.retrySafety == .safe },
+                            mutationDispatched: aggregateOutcome.map(\.dispatchState.mutationDispatched)))
                     outputJSONCodable(response, logger: self.outputLogger)
                 } else {
                     for result in results {
@@ -131,20 +137,16 @@ extension AppCommand {
                             print("✓ Quit \(result.app_name)")
                         } else {
                             print("✗ Failed to quit \(result.app_name) (PID: \(result.pid))")
-                            if !self.force {
-                                print(
-                                    "  💡 Tip: The app may have unsaved changes or be showing a dialog. " +
-                                        "Try --force to force quit."
-                                )
-                            }
                         }
+                    }
+                    if let failureHint {
+                        print("  💡 Tip: \(failureHint)")
                     }
                 }
                 for result in results {
                     AutomationEventLogger.log(
                         .app,
-                        "quit app=\(result.app_name) pid=\(result.pid) success=\(result.success) force=\(self.force)"
-                    )
+                        "quit app=\(result.app_name) pid=\(result.pid) success=\(result.success) force=\(self.force)")
                 }
                 if !allSucceeded {
                     throw ExitCode.failure
@@ -162,13 +164,13 @@ extension AppCommand {
             if self.all {
                 guard self.app == nil, self.pid == nil, self.expectedProcessStartIdentity == nil else {
                     throw ValidationError(
-                        "Cannot combine --all with --app, --pid, or --expected-process-start-identity"
-                    )
+                        "Cannot combine --all with --app, --pid, or --expected-process-start-identity")
                 }
                 return
             }
             if let except = self.except,
-               !except.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+               !except.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
                 throw ValidationError("--except requires --all")
             }
             if self.app != nil, self.pid != nil {
@@ -178,12 +180,54 @@ extension AppCommand {
                 throw ValidationError("--expected-process-start-identity requires --pid")
             }
             if let expectedProcessStartIdentity = self.expectedProcessStartIdentity,
-               expectedProcessStartIdentity <= 0 {
+               expectedProcessStartIdentity <= 0
+            {
                 throw ValidationError("--expected-process-start-identity must be greater than zero")
             }
             if self.app == nil, self.pid == nil {
                 throw ValidationError("Either --app, --pid, or --all must be specified")
             }
+        }
+
+        private static func failureHint(
+            force: Bool,
+            aggregateOutcome: DesktopActionOutcome?,
+            singleFailureHint: String?) -> String?
+        {
+            if let singleFailureHint,
+               !singleFailureHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                return singleFailureHint
+            }
+            guard let aggregateOutcome else {
+                return "Perform a fresh observation of the targeted application state before taking another action."
+            }
+            if aggregateOutcome.state == .refused {
+                if aggregateOutcome.refusalReason == .targetUnavailable {
+                    return "Refresh the application inventory and select the current target before retrying."
+                }
+                return switch aggregateOutcome.escalation {
+                case .correctRequest:
+                    "Correct the quit request before retrying."
+                case .grantPermission:
+                    "Grant the required permission before retrying."
+                case .refreshTarget:
+                    "Refresh the targeted application state before retrying."
+                case .updateRuntime:
+                    "Update or select a compatible runtime before retrying."
+                case .recoverSideEffect, .observeBeforeRetry:
+                    "Perform a fresh observation of the targeted application state before taking another action."
+                case .none:
+                    "Review the refusal and correct the quit request before retrying."
+                }
+            }
+            guard aggregateOutcome.retrySafety == .safe else {
+                return "Perform a fresh observation of the targeted application state before taking another action."
+            }
+            guard aggregateOutcome.state == .suspectedNoop, !force else {
+                return nil
+            }
+            return "Try --force to force quit."
         }
 
         private func resolveQuitTargets() async throws -> [AppQuitTarget] {
@@ -208,8 +252,7 @@ extension AppCommand {
             if let processStartIdentity = self.expectedProcessStartIdentity {
                 return [AppQuitTarget(
                     processIdentifier: pid,
-                    processStartIdentity: UInt64(processStartIdentity)
-                )]
+                    processStartIdentity: UInt64(processStartIdentity))]
             }
             let appInfo = try await self.services.applications.findApplication(identifier: "PID:\(pid)")
             return try [AppQuitTarget(appInfo: appInfo)]
@@ -226,8 +269,7 @@ private struct AppQuitTarget {
     init(appInfo: ServiceApplicationInfo) throws {
         guard let processIdentity = appInfo.processIdentity else {
             throw PeekabooError.commandFailed(
-                "Application selection did not include a stable process-generation identity for \(appInfo.name)"
-            )
+                "Application selection did not include a stable process-generation identity for \(appInfo.name)")
         }
         self.name = appInfo.name
         self.pid = appInfo.processIdentifier
@@ -241,8 +283,7 @@ private struct AppQuitTarget {
         self.identifier = "PID:\(processIdentifier)"
         self.expectedIdentity = ApplicationProcessIdentity(
             processIdentifier: processIdentifier,
-            processStartIdentity: processStartIdentity
-        )
+            processStartIdentity: processStartIdentity)
     }
 }
 
@@ -258,8 +299,7 @@ extension AppCommand.QuitSubcommand: CommanderBindableCommand {
         self.pid = try values.decodeOption("pid", as: Int32.self)
         self.expectedProcessStartIdentity = try values.decodeOption(
             "expectedProcessStartIdentity",
-            as: Int64.self
-        )
+            as: Int64.self)
         self.all = values.flag("all")
         self.except = values.singleOption("except")
         self.force = values.flag("force")

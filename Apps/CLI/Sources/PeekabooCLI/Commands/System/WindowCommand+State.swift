@@ -45,7 +45,7 @@ extension WindowCommand {
 
                 // Perform the action
                 self.resolvedRuntime.beginInteractionMutation()
-                try await WindowServiceBridge.closeWindow(
+                let actionResult = try await WindowServiceBridge.closeWindow(
                     windows: self.services.windows,
                     target: exactTarget,
                     expectedIdentity: mutationIdentity,
@@ -68,7 +68,7 @@ extension WindowCommand {
                     appName: appName
                 )
 
-                output(data) {
+                output(data, outcome: actionResult.outcome) {
                     print("Successfully closed window '\(windowInfo.title)' of \(appName)")
                 }
 
@@ -116,7 +116,7 @@ extension WindowCommand {
 
                 // Perform the action
                 self.resolvedRuntime.beginInteractionMutation()
-                try await WindowServiceBridge.minimizeWindow(
+                let actionResult = try await WindowServiceBridge.minimizeWindow(
                     windows: self.services.windows,
                     target: exactTarget,
                     expectedIdentity: mutationIdentity
@@ -137,7 +137,7 @@ extension WindowCommand {
                     appName: appName
                 )
 
-                output(data) {
+                output(data, outcome: actionResult.outcome) {
                     print("Successfully minimized window '\(windowInfo.title)' of \(appName)")
                 }
 
@@ -182,7 +182,7 @@ extension WindowCommand {
                 let exactTarget = WindowTarget.windowId(windowInfo.windowID)
 
                 self.resolvedRuntime.beginInteractionMutation()
-                try await WindowServiceBridge.restoreWindow(
+                let actionResult = try await WindowServiceBridge.restoreWindow(
                     windows: self.services.windows,
                     target: exactTarget,
                     expectedIdentity: mutationIdentity
@@ -208,7 +208,7 @@ extension WindowCommand {
                     windowInfo: refreshedWindow,
                     appName: appName
                 )
-                output(data) {
+                output(data, outcome: actionResult.outcome) {
                     print("Successfully restored window '\(refreshedWindow?.title ?? windowInfo.title)' of \(appName)")
                 }
             } catch {
@@ -276,11 +276,12 @@ extension WindowCommand {
                     convertAppKitFrameToTopLeft($0.visibleFrame, primaryDisplayHeight: primaryDisplayHeight)
                 }
                 self.resolvedRuntime.beginInteractionMutation()
+                var actionResult = DesktopActionResult<Void>(outcome: .confirmedNoChange())
                 let outcome = try await resolveIdempotentMaximize(
                     original: windowInfo,
                     screenVisibleFramesTopLeft: screenVisibleFramesTopLeft,
                     apply: {
-                        try await WindowServiceBridge.maximizeWindow(
+                        actionResult = try await WindowServiceBridge.maximizeWindow(
                             windows: self.services.windows,
                             target: exactTarget,
                             expectedIdentity: mutationIdentity
@@ -323,7 +324,7 @@ extension WindowCommand {
                 } else {
                     .confirmed
                 }
-                output(data, effect: effect) {
+                output(data, effect: effect, outcome: actionResult.outcome) {
                     let title = finalWindowInfo.title
                     if outcome.alreadyMaximized {
                         print("Window '\(title)' of \(appName) is already maximized")

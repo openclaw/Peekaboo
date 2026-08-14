@@ -12,7 +12,6 @@
 - Build branded release disk images from pinned direct Finder-metadata tooling, preserving the signed and notarized drag-to-Applications layout without GUI automation.
 
 ### Fixed
-
 - Refuse exact-window combined observations when Accessibility returns no usable elements, preserving the requested raster and retry-safe `ACCESSIBILITY_INCOMPLETE` semantics across current and legacy Bridge hosts while explicit screenshot-only capture remains successful.
 - Add Bridge protocol 1.26 explicit-reference-only coordinate receipts for exact-window `see --no-elements`, making the documented background coordinate-click workflow consumable without Accessibility traversal or replacing the prior implicit element snapshot while older hosts fail before receipt allocation.
 - Honor cancellation while draining and reaping MCP ShellTool subprocesses so canceled commands cannot linger behind pipe cleanup. Thanks @SebTardif for #454.
@@ -21,6 +20,7 @@
 - Stage browser uploads from race-checked, current-user regular files into one private per-session Chrome MCP temporary root, without unrestricted filesystem access, and terminate the exact child before cancellation cleanup.
 - Classify an exact standard window with a live attached sheet as dialog-active during observation, sharing native role evidence with dialog actions while keeping the parent window receipt exact.
 - Report exact ScreenCaptureKit owner PID, process generation, safe build identity, and selected-versus-owner Bridge sockets when available; automatic capture can still use an owner-aware host's classic-only path around an auxiliary legacy owner, while explicit modern and ambiguous legacy ownership remain fail-closed without unsafe process-stop guidance.
+- Centralize canonical application/window outcomes across Foundation, services, Bridge, CLI, and MCP while preserving legacy JSON fields and v4.1.0 public APIs, and keep minimize verification exact when retained AX window IDs disappear transiently.
 
 ## [4.1.0] - 2026-08-13
 
