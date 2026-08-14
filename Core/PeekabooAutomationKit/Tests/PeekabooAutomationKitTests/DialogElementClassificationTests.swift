@@ -104,6 +104,26 @@ struct DialogElementClassificationTests {
         #expect(DialogElementClassifier.isDialog(identifierOnly))
         #expect(!DialogElementClassifier.isStructuralDialog(titleOnly))
         #expect(!DialogElementClassifier.isStructuralDialog(identifierOnly))
+        #expect(!DialogElementClassifier.permitsLegacyReadHeuristics(titleOnly))
+        #expect(!DialogElementClassifier.permitsLegacyReadHeuristics(identifierOnly))
+
+        let unknownWindow = DialogElementEvidence(
+            role: "AXWindow",
+            subrole: "AXUnknown",
+            roleDescription: "dialog",
+            identifier: "",
+            title: "Save")
+        #expect(!DialogElementClassifier.isStructuralDialog(unknownWindow))
+        #expect(DialogElementClassifier.permitsLegacyReadHeuristics(unknownWindow))
+        #expect(DialogElementClassifier.isDialog(unknownWindow))
+
+        let unknownButton = DialogElementEvidence(
+            role: "AXButton",
+            subrole: "AXUnknown",
+            roleDescription: "button",
+            identifier: "",
+            title: "Save")
+        #expect(!DialogElementClassifier.permitsLegacyReadHeuristics(unknownButton))
     }
 
     @Test(arguments: ["Open Questions", "Saved Draft", "Choose Theme", "Replacement Parts"])

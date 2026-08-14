@@ -63,6 +63,11 @@ enum DialogElementClassifier {
         self.hasIntrinsicDialogRole(role: evidence.role, subrole: evidence.subrole)
     }
 
+    static func permitsLegacyReadHeuristics(_ evidence: DialogElementEvidence) -> Bool {
+        self.isStructuralDialog(evidence) ||
+            ["AXWindow", "AXUnknown"].contains(evidence.role)
+    }
+
     static func containsDialog(in elements: [DetectedElement]) -> Bool {
         elements.contains { element in
             let role = element.attributes["role"] ?? ""

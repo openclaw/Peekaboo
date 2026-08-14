@@ -145,7 +145,9 @@ extension DialogService {
 
     public func listDialogElements(target: DialogTargetSelector) async throws -> DialogElements {
         try await self.operationLaneCoordinator.run(scope: .global, access: .read) {
-            let dialogs = try await self.targetedDialogCandidates(target: target)
+            let dialogs = try await self.targetedDialogCandidates(
+                target: target,
+                membership: .readOnlyCompatible)
             guard dialogs.count == 1, let selected = dialogs.first else {
                 throw self.dialogCandidateRefusal(target: target, candidates: dialogs)
             }
@@ -156,6 +158,11 @@ extension DialogService {
 
 @MainActor
 extension DialogService {
+    enum DialogCandidateMembership {
+        case structuralMutation
+        case readOnlyCompatible
+    }
+
     struct TargetedDialogCandidate {
         let target: UIAutomationTarget.ExactWindow
         let window: Element
@@ -182,7 +189,9 @@ extension DialogService {
     func preparedActionCandidates(for request: DialogActionPreparationRequest) async throws
         -> [PreparedActionCandidate]
     {
-        let dialogs = try await self.targetedDialogCandidates(target: request.target)
+        let dialogs = try await self.targetedDialogCandidates(
+            target: request.target,
+            membership: .structuralMutation)
         guard dialogs.count == 1, let candidate = dialogs.first else {
             throw self.dialogCandidateRefusal(target: request.target, candidates: dialogs)
         }
@@ -209,7 +218,9 @@ extension DialogService {
             button: button)]
     }
 
-    func targetedDialogCandidates(target selector: DialogTargetSelector) async throws
+    func targetedDialogCandidates(
+        target selector: DialogTargetSelector,
+        membership: DialogCandidateMembership = .structuralMutation) async throws
         -> [TargetedDialogCandidate]
     {
         guard selector.hasTarget else {
@@ -254,7 +265,9 @@ extension DialogService {
             else { continue }
 
             let exactWindow = try UIAutomationTarget.ExactWindow(window: window)
-            let freshDialogs = self.freshDialogElements(in: handle.element)
+            let freshDialogs = self.freshDialogElements(
+                in: handle.element,
+                membership: membership)
             guard freshDialogs.readable else {
                 throw self.targetUnavailable(
                     "Dialog hierarchy became unreadable while preparing the exact target.")
@@ -319,7 +332,10 @@ extension DialogService {
         return windows
     }
 
-    func freshDialogElements(in window: Element) -> (elements: [Element], readable: Bool) {
+    func freshDialogElements(
+        in window: Element,
+        membership: DialogCandidateMembership = .structuralMutation) -> (elements: [Element], readable: Bool)
+    {
         var dialogs: [Element] = []
         var visited: Set<Element> = []
         var stack = [window]
@@ -327,7 +343,15 @@ extension DialogService {
 
         while let element = stack.popLast() {
             guard visited.insert(element).inserted else { continue }
-            if DialogElementClassifier.isStructuralDialog(DialogElementClassifier.evidence(for: element)) {
+            let evidence = DialogElementClassifier.evidence(for: element)
+            let isDialog = switch membership {
+            case .structuralMutation:
+                DialogElementClassifier.isStructuralDialog(evidence)
+            case .readOnlyCompatible:
+                DialogElementClassifier.permitsLegacyReadHeuristics(evidence) &&
+                    self.isDialogElement(element, matching: nil)
+            }
+            if isDialog {
                 dialogs.append(element)
             }
             let traversal = Self.traversalChildren(of: element)
@@ -389,7 +413,9 @@ extension DialogService {
             throw self.targetUnavailable("Dialog window receipt changed before AXPress.")
         }
 
-        let freshDialogs = self.freshDialogElements(in: currentWindow.element)
+        let freshDialogs = self.freshDialogElements(
+            in: currentWindow.element,
+            membership: .structuralMutation)
         guard freshDialogs.readable,
               freshDialogs.elements.count == 1,
               let dialog = freshDialogs.elements.first,
