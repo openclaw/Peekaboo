@@ -245,6 +245,32 @@ struct MCPAppToolOutcomeTests {
 
     @Test
     @MainActor
+    func `quit all preserves completed receipt when a later attempt cancels`() async throws {
+        let outcome = DesktopActionOutcome.confirmedChange(
+            route: .bridge,
+            delivery: .init(mechanism: .nativeFramework, mode: .background),
+            unitCount: .one)
+        let service = ScriptedQuitAllApplicationService(attempts: [
+            .success(outcome),
+            .cancellation,
+        ])
+        let context = await MCPToolTestHelpers.makeContext(applications: service)
+
+        let response = try await AppTool(context: context).execute(arguments: ToolArguments(raw: [
+            "action": "quit",
+            "all": true,
+        ]))
+
+        #expect(response.isError)
+        #expect(service.attemptCount == 2)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["cancelled"] == .bool(true))
+        #expect(meta["quit_count"] == .double(1))
+        try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(outcome, in: response)
+    }
+
+    @Test
+    @MainActor
     func `background launch confirmed no-change reports the app was already running`() async throws {
         let service = StubApplicationService()
         let outcome = DesktopActionOutcome.confirmedNoChange(route: .local)
@@ -397,6 +423,7 @@ private final class ScriptedQuitAllApplicationService: StubApplicationService {
         case canonicalFailure(DesktopActionFailure)
         case receiptlessFailure
         case cancellation
+        case success(DesktopActionOutcome?)
     }
 
     private let targets = [
@@ -446,6 +473,8 @@ private final class ScriptedQuitAllApplicationService: StubApplicationService {
             throw PeekabooError.commandFailed("Legacy quit failed without a canonical receipt")
         case .cancellation:
             throw CancellationError()
+        case let .success(outcome):
+            return DesktopActionResult(payload: true, outcome: outcome)
         }
     }
 }

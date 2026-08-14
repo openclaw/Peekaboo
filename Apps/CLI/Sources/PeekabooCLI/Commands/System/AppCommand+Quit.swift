@@ -56,8 +56,13 @@ extension AppCommand {
                 var results: [AppQuitInfo] = []
                 var actionOutcomes: [DesktopActionOutcome?] = []
                 var caughtFailureHints: [String?] = []
+                var wasCancelled = false
                 for target in quitApps {
-                    try Task.checkCancellation()
+                    if Task.isCancelled {
+                        guard !results.isEmpty else { throw CancellationError() }
+                        wasCancelled = true
+                        break
+                    }
                     if target.pid == self.resolvedRuntime.selectedRemoteHostProcessIdentifier {
                         throw PeekabooError.invalidInput(
                             "Cannot quit the daemon host executing this command; use a different runtime host"
@@ -78,7 +83,9 @@ extension AppCommand {
                         success = actionResult.payload
                         actionOutcomes.append(actionResult.outcome)
                     } catch let cancellation as CancellationError {
-                        throw cancellation
+                        guard !results.isEmpty else { throw cancellation }
+                        wasCancelled = true
+                        break
                     } catch let failure as DesktopActionFailure {
                         success = false
                         actionOutcomes.append(failure.outcome)
@@ -107,7 +114,7 @@ extension AppCommand {
                     force: force,
                     results: results
                 )
-                let allSucceeded = results.allSatisfy(\.success)
+                let allSucceeded = !wasCancelled && results.allSatisfy(\.success)
                 let succeededCount = results.count(where: \.success)
                 let aggregateOutcome = DesktopActionSequenceAccumulator.completedBatch(
                     outcomes: actionOutcomes,
@@ -115,11 +122,17 @@ extension AppCommand {
                     attemptedCount: results.count
                 )
                 let singleFailureHint = results.count == 1 ? caughtFailureHints[0] : nil
-                let failureHint = allSucceeded ? nil : Self.failureHint(
-                    force: self.force,
-                    aggregateOutcome: aggregateOutcome,
-                    singleFailureHint: singleFailureHint
-                )
+                let failureHint: String? = if wasCancelled {
+                    "The quit batch was cancelled; inspect completed targets before retrying."
+                } else if allSucceeded {
+                    nil
+                } else {
+                    Self.failureHint(
+                        force: self.force,
+                        aggregateOutcome: aggregateOutcome,
+                        singleFailureHint: singleFailureHint
+                    )
+                }
 
                 for result in results where !result.success {
                     let action = self.force ? "Force quit" : "Quit"
@@ -137,7 +150,9 @@ extension AppCommand {
                         messages: nil,
                         debug_logs: self.outputLogger.getDebugLogs(),
                         error: allSucceeded ? nil : ErrorInfo(
-                            message: "Failed to quit \(results.count - succeededCount) application(s).",
+                            message: wasCancelled
+                                ? "Quit batch cancelled after \(results.count) of \(quitApps.count) target(s)."
+                                : "Failed to quit \(results.count - succeededCount) application(s).",
                             code: .INTERACTION_FAILED,
                             hint: failureHint,
                             retrySafe: aggregateOutcome.map { $0.retrySafety == .safe },
@@ -152,6 +167,9 @@ extension AppCommand {
                         } else {
                             print("✗ Failed to quit \(result.app_name) (PID: \(result.pid))")
                         }
+                    }
+                    if wasCancelled {
+                        print("✗ Quit batch cancelled after \(results.count) of \(quitApps.count) targets")
                     }
                     if let failureHint {
                         print("  💡 Tip: \(failureHint)")

@@ -911,6 +911,46 @@ extension ApplicationServiceLifecycleTests {
 
     @Test
     @MainActor
+    func `relaunch classifies in-lane generation drift as a pre-dispatch refusal`() async throws {
+        let runningApplication = try self.runningApplication()
+        let lifecycle = RelaunchLifecycleRecorder(targetPID: runningApplication.processIdentifier)
+        let openRecorder = ApplicationOpenRecorder()
+        var generations: [UInt64] = [700, 701]
+        var quitCalls = 0
+        let service = ApplicationService(
+            applicationOpenHandler: openRecorder.open,
+            relaunchTargetResolver: lifecycle.resolve,
+            processStartIdentityProvider: { _ in generations.removeFirst() },
+            applicationQuitHandler: { _, _ in
+                quitCalls += 1
+                return true
+            })
+
+        do {
+            _ = try await service.relaunchApplicationResult(request: ApplicationRelaunchRequest(
+                targetIdentifier: "PID:\(runningApplication.processIdentifier)",
+                expectedTargetIdentity: ApplicationProcessIdentity(
+                    processIdentifier: runningApplication.processIdentifier,
+                    processStartIdentity: 700),
+                launchRequest: ApplicationLaunchRequest(
+                    applicationBundleIdentifier: "com.apple.finder",
+                    activates: true),
+                waitSeconds: 0))
+            Issue.record("Expected a pre-dispatch relaunch refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        }
+
+        #expect(quitCalls == 0)
+        #expect(openRecorder.calls.isEmpty)
+        #expect(generations.isEmpty)
+    }
+
+    @Test
+    @MainActor
     func `relaunch refuses when its quit request is rejected before dispatch`() async throws {
         let lifecycle = RelaunchLifecycleRecorder(
             targetPID: 4242,

@@ -522,10 +522,22 @@ extension ApplicationService {
         if let relaunchQuitHandler = self.relaunchQuitHandler {
             return try await relaunchQuitHandler(request)
         }
-        return try await self.quitApplicationWithOwnedLane(
-            request: request,
-            resolvedApplication: resolvedApplication,
-            expectedIdentity: expectedIdentity)
+        do {
+            return try await self.quitApplicationWithOwnedLane(
+                request: request,
+                resolvedApplication: resolvedApplication,
+                expectedIdentity: expectedIdentity)
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch let error as PeekabooError {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The relaunch target disappeared or changed process generation before quit dispatch.",
+                hint: "Refresh the application inventory before retrying.",
+                causeDescription: String(describing: error))
+        } catch {
+            throw error
+        }
     }
 
     private func isRelaunchTargetRunning(identifier: String) async throws -> Bool {

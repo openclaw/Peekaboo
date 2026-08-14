@@ -258,8 +258,13 @@ extension AppToolActions {
         var quitCount = 0
         var failed = [String]()
         var outcomes = [DesktopActionOutcome?]()
+        var wasCancelled = false
         for app in targets {
-            try Task.checkCancellation()
+            if Task.isCancelled {
+                guard !outcomes.isEmpty else { throw CancellationError() }
+                wasCancelled = true
+                break
+            }
             do {
                 let quitRequest = try Self.pinnedQuitRequest(for: app, force: request.force)
                 let result = try await self.service.quitApplicationResult(request: quitRequest)
@@ -271,7 +276,9 @@ extension AppToolActions {
                     failed.append(app.name)
                 }
             } catch let cancellation as CancellationError {
-                throw cancellation
+                guard !outcomes.isEmpty else { throw cancellation }
+                wasCancelled = true
+                break
             } catch let failure as DesktopActionFailure {
                 outcomes.append(failure.outcome)
                 self.logger.error("Failed to quit \(app.name, privacy: .public): \(failure, privacy: .public)")
@@ -294,6 +301,10 @@ extension AppToolActions {
             let warningLine = "\n\(AgentDisplayTokens.Status.warning) Failed to quit: \(failureList)"
             message += warningLine
         }
+        if wasCancelled {
+            message += "\n\(AgentDisplayTokens.Status.warning) Quit batch cancelled after " +
+                "\(outcomes.count) of \(targets.count) targets"
+        }
 
         let baseMeta: [String: Value] = [
             "quit_count": .double(Double(quitCount)),
@@ -301,14 +312,16 @@ extension AppToolActions {
             "except": .array(excluded.map(Value.string)),
             "execution_time": .double(executionTime),
             "force": .bool(request.force),
+            "cancelled": .bool(wasCancelled),
         ]
         let summary = self.makeSummary(for: nil, action: "Quit Applications", notes: "Quit \(quitCount) apps")
         let outcome = DesktopActionSequenceAccumulator.completedBatch(
             outcomes: outcomes,
             succeededCount: quitCount,
-            attemptedCount: targets.count)
+            attemptedCount: outcomes.count)
         return try ToolResponse(
             content: [.text(text: message, annotations: nil, _meta: nil)],
+            isError: wasCancelled,
             meta: MCPToolResponseMetadataProjector.metadata(
                 merging: ToolEventSummary.merge(summary: summary, into: .object(baseMeta)).objectValue ?? [:],
                 outcome: outcome))
