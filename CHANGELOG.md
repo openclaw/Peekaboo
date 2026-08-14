@@ -2,6 +2,9 @@
 
 ## [4.1.1] - Unreleased
 
+### Changed
+- Build branded release disk images from pinned direct Finder-metadata tooling, preserving the signed and notarized drag-to-Applications layout without GUI automation.
+
 ## [4.1.0] - 2026-08-13
 
 ### Highlights

@@ -1,7 +1,7 @@
 ---
 name: release-peekaboo
 description: "Peekaboo release: notarization, npm/GitHub release, appcast, verify, closeout."
-metadata: {"clawdbot":{"emoji":"👁️","requires":{"bins":["pnpm","op","tmux","gh","xcrun","jq","node","npm","create-dmg"]}}}
+metadata: {"clawdbot":{"emoji":"👁️","requires":{"bins":["pnpm","op","tmux","gh","xcrun","jq","node","npm","uv"]}}}
 ---
 
 # Peekaboo Release

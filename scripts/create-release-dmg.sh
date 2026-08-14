@@ -24,6 +24,8 @@ RELEASE_DIR="${RELEASE_DIR:-$ROOT_DIR/build/release}"
 APP_ZIP="${APP_ZIP:-}"
 DMG_PATH="${DMG_PATH:-}"
 BACKGROUND="${DMG_BACKGROUND:-$ROOT_DIR/assets/dmg-background.png}"
+DMGBUILD_RUNNER="$ROOT_DIR/scripts/dmgbuild-runner.py"
+DMGBUILD_SETTINGS="$ROOT_DIR/scripts/dmgbuild-settings.py"
 NOTARIZE=true
 VERIFY_ONLY_DMG=""
 
@@ -186,7 +188,7 @@ detach_mount() {
 
 verify_dmg() {
   local dmg_path="$1"
-  local applications_link background_name
+  local applications_link
 
   [[ -f "$dmg_path" ]] || fail "DMG missing: $dmg_path"
   hdiutil verify "$dmg_path" >/dev/null
@@ -206,8 +208,7 @@ verify_dmg() {
   [[ -L "$applications_link" ]] || fail "Applications link missing from DMG"
   [[ "$(readlink "$applications_link")" == "/Applications" ]] ||
     fail "Applications link has unexpected target: $(readlink "$applications_link")"
-  background_name="$(basename "$BACKGROUND")"
-  [[ -f "$MOUNT_DIR/.background/$background_name" ]] || fail "DMG background missing"
+  [[ -f "$MOUNT_DIR/.background.png" ]] || fail "DMG background missing"
   [[ -f "$MOUNT_DIR/.DS_Store" ]] || fail "DMG Finder layout missing"
   [[ -f "$MOUNT_DIR/.VolumeIcon.icns" ]] || fail "DMG volume icon missing"
 
@@ -263,15 +264,18 @@ if [[ -n "$VERIFY_ONLY_DMG" ]]; then
   exit 0
 fi
 
-require_command create-dmg
 require_command ditto
 require_command sips
 require_command shasum
+require_command uv
 
 [[ "$SIGN_IDENTITY" == "$EXPECTED_SIGN_IDENTITY" ]] ||
   fail "official DMGs must use '$EXPECTED_SIGN_IDENTITY'"
 [[ -f "$APP_ZIP" ]] || fail "App zip not found: $APP_ZIP"
 [[ -f "$BACKGROUND" ]] || fail "DMG background not found: $BACKGROUND"
+[[ -f "$DMGBUILD_RUNNER" ]] || fail "DMG builder not found: $DMGBUILD_RUNNER"
+[[ -f "$DMGBUILD_RUNNER.lock" ]] || fail "DMG builder lock not found: $DMGBUILD_RUNNER.lock"
+[[ -f "$DMGBUILD_SETTINGS" ]] || fail "DMG layout settings not found: $DMGBUILD_SETTINGS"
 
 background_width="$(sips -g pixelWidth "$BACKGROUND" | awk '/pixelWidth/{print $2}')"
 background_height="$(sips -g pixelHeight "$BACKGROUND" | awk '/pixelHeight/{print $2}')"
@@ -290,22 +294,16 @@ mkdir -p "$(dirname "$DMG_PATH")"
 rm -f "$DMG_PATH"
 
 log "Creating branded DMG"
-create-dmg \
-  --volname "$APP_NAME $VERSION" \
-  --volicon "$VOLUME_ICON" \
-  --background "$BACKGROUND" \
-  --window-pos 200 120 \
-  --window-size 720 460 \
-  --text-size 13 \
-  --icon-size 128 \
-  --icon "$APP_NAME.app" 180 230 \
-  --hide-extension "$APP_NAME.app" \
-  --app-drop-link 540 230 \
-  --no-internet-enable \
-  --hdiutil-quiet \
-  --overwrite \
-  "$DMG_PATH" \
-  "$SOURCE_DIR"
+uv --no-config run --locked "$DMGBUILD_RUNNER" \
+  --no-hidpi \
+  --detach-retries 5 \
+  --settings "$DMGBUILD_SETTINGS" \
+  -D "app_name=$APP_NAME" \
+  -D "app_path=$APP_BUNDLE" \
+  -D "background=$BACKGROUND" \
+  -D "volume_icon=$VOLUME_ICON" \
+  "$APP_NAME $VERSION" \
+  "$DMG_PATH"
 
 log "Developer ID signing DMG"
 "$ROOT_DIR/scripts/codesign-with-retry.sh" --force --timestamp="$CODESIGN_TIMESTAMP_URL" --sign "$SIGN_IDENTITY" "$DMG_PATH"

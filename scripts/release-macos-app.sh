@@ -282,7 +282,7 @@ if [[ -z "$VERIFY_ONLY_ZIP" ]]; then
   require_command shasum
   require_command sign_update
   if [[ "$INCLUDE_DMG" == true ]]; then
-    require_command create-dmg
+    require_command uv
   fi
 fi
 if [[ "$NOTARIZE" == true ]]; then
