@@ -38,6 +38,40 @@ struct MCPKeyboardBackgroundToolTests {
     }
 
     @Test
+    func `Press tool reports empty and malformed input shapes without dispatch`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            snapshotOwner: Self.uiSnapshots.owner)
+        let cases: [([String: Any], String)] = [
+            ([:], "Provide either a non-empty keys array or a non-empty key with optional modifiers"),
+            (["keys": []], "keys must contain at least one chord"),
+            (["key": ""], "Provide either a non-empty keys array or a non-empty key with optional modifiers"),
+            (["keys": ""], "keys must be an array of chord strings"),
+            (["keys": [""]], "keys[0] must be a non-empty chord string"),
+        ]
+
+        for (arguments, expectedMessage) in cases {
+            let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: arguments))
+            #expect(response.isError)
+            guard case let .text(message, _, _)? = response.content.first else {
+                Issue.record("Expected press validation text")
+                continue
+            }
+            #expect(message.contains(expectedMessage))
+            #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
+            #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+            guard case let .object(meta) = response.meta else {
+                Issue.record("Expected press validation metadata")
+                continue
+            }
+            #expect(meta["mutation_dispatched"] == .bool(false))
+            #expect(meta["retry_safe"] == .bool(true))
+            #expect(meta["refusal_reason"] == .string("invalid_request"))
+        }
+    }
+
+    @Test
     func `Keyboard tools reject targetless input instead of injecting globally`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(

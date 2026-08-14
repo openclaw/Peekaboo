@@ -330,7 +330,7 @@ public struct PressTool: MCPTool {
     }
 
     static func parseChords(arguments: ToolArguments) throws -> [KeyboardChord] {
-        let sequence = arguments.getStringArray("keys")
+        let sequence = try self.validatedChordSequence(arguments: arguments)
         let key = arguments.getString("key")
         let modifiers = arguments.getStringArray("modifiers") ?? []
 
@@ -338,15 +338,31 @@ public struct PressTool: MCPTool {
             throw KeyboardChordError.invalid("Use either keys or key+modifiers, not both")
         }
         if let sequence {
-            guard !sequence.isEmpty else {
-                throw KeyboardChordError.invalid("keys")
-            }
             return try sequence.map(KeyboardChord.init(parsing:))
         }
         guard let key, !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw KeyboardChordError.invalid("Provide keys or key+modifiers")
+            throw PressToolValidationError(
+                message: "Provide either a non-empty keys array or a non-empty key with optional modifiers")
         }
         return try [KeyboardChord(parsing: (modifiers + [key]).joined(separator: "+"))]
+    }
+
+    private static func validatedChordSequence(arguments: ToolArguments) throws -> [String]? {
+        guard let value = arguments.getValue(for: "keys") else { return nil }
+        guard case let .array(items) = value else {
+            throw PressToolValidationError(message: "keys must be an array of chord strings")
+        }
+        guard !items.isEmpty else {
+            throw PressToolValidationError(message: "keys must contain at least one chord")
+        }
+        return try items.enumerated().map { index, item in
+            guard case let .string(chord) = item,
+                  !chord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                throw PressToolValidationError(message: "keys[\(index)] must be a non-empty chord string")
+            }
+            return chord
+        }
     }
 
     @MainActor
