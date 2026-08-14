@@ -188,6 +188,30 @@ extension DialogService {
                 message: "Dialog input was cancelled after the field focus mutation was accepted.",
                 hint: "Refresh the dialog and field focus before retrying.")
         }
+        // AX wrappers can retain the pre-input value after global keyboard delivery. Re-select the
+        // exact retained field before sampling the postcondition, then validate it again after the
+        // bounded read so a replacement field can never supply confirmation evidence.
+        do {
+            try await self.revalidateDialogTarget(
+                target: plan.target,
+                retainedWindow: plan.window,
+                retainedDialog: plan.dialog,
+                operation: "input retained-value read")
+            targetField = try self.revalidateDialogInputField(
+                targetField,
+                in: plan.dialog,
+                identifier: fieldIdentifier,
+                exactSelection: exactFieldSelection)
+        } catch {
+            guard let dispatchedUnitCount else { throw error }
+            throw DesktopActionFailure.dispatchedUnverified(
+                delivery: Self.foregroundKeyboardDelivery,
+                evidence: .deliveryAccepted,
+                unitCount: dispatchedUnitCount,
+                message: "Dialog input was dispatched, but the exact field could not be refreshed for verification.",
+                hint: "Observe the exact dialog and field before retrying.",
+                causeDescription: error.localizedDescription)
+        }
         let expectedValue = clearExisting ? text : nil
         let observedValue: String?
         do {
@@ -203,7 +227,7 @@ extension DialogService {
                 retainedWindow: plan.window,
                 retainedDialog: plan.dialog,
                 operation: "input postcondition")
-            _ = try self.revalidateDialogInputField(
+            targetField = try self.revalidateDialogInputField(
                 targetField,
                 in: plan.dialog,
                 identifier: fieldIdentifier,
