@@ -170,11 +170,17 @@ RuntimeBackedCommand {
             }
 
         } catch {
-            // ScrollService converts every post-dispatch identity drift into DesktopActionFailure.
-            // A raw stale-snapshot error therefore proves that no scroll unit was emitted.
-            let presentedError: any Error = if let peekabooError = error as? PeekabooError,
-                                               case .snapshotStale = peekabooError {
-                self.preDispatchActionError(for: peekabooError, reason: .targetUnavailable)
+            // ScrollService converts every post-dispatch failure into DesktopActionFailure. Raw
+            // stale/unsupported background errors therefore prove that no scroll unit was emitted.
+            let presentedError: any Error = if let peekabooError = error as? PeekabooError {
+                switch peekabooError {
+                case .snapshotStale:
+                    self.preDispatchActionError(for: peekabooError, reason: .targetUnavailable)
+                case .invalidInput where !self.focusOptions.foreground:
+                    self.preDispatchActionError(for: peekabooError, reason: .operationUnsupported)
+                default:
+                    error
+                }
             } else {
                 error
             }

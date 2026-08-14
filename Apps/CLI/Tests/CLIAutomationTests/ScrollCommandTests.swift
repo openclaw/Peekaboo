@@ -249,6 +249,40 @@ struct ScrollCommandTests {
         #expect(payload.outcome?.refusalReason == .targetUnavailable)
     }
 
+    @Test
+    func `unsupported background scroll reports canonical retry-safe refusal`() async throws {
+        let snapshotId = "unsupported-scroll-snapshot"
+        let context = await self.makeContext { automation, _ in
+            automation.scrollError = PeekabooError.invalidInput(
+                "Background scroll is unavailable for this target"
+            )
+        }
+        try await context.snapshots.storeDetectionResult(
+            snapshotId: snapshotId,
+            result: Self.detectionResult(snapshotId: snapshotId, element: Self.buttonElement(id: "B1"))
+        )
+
+        let result = try await self.runScroll(
+            arguments: [
+                "--direction", "down",
+                "--on", "B1",
+                "--snapshot", snapshotId,
+                "--json",
+            ],
+            context: context
+        )
+
+        #expect(result.exitStatus != 0)
+        let payloadData = try #require(self.output(from: result).data(using: .utf8))
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: payloadData)
+        #expect(!payload.success)
+        #expect(payload.error?.code == ErrorCode.INVALID_INPUT.rawValue)
+        #expect(payload.outcome?.state == .refused)
+        #expect(payload.outcome?.retrySafety == .safe)
+        #expect(payload.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(payload.outcome?.refusalReason == .operationUnsupported)
+    }
+
     // MARK: - Helpers
 
     private func runScroll(
