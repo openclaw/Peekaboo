@@ -720,13 +720,13 @@ extension DialogService {
     func readDialogInputValue(from field: Element, expectedValue: String?) async throws -> String? {
         if expectedValue == nil {
             try Task.checkCancellation()
-            return field.value() as? String
+            return self.uncachedDialogInputValue(from: field)
         }
 
         var lastReadableValue: String?
         for attempt in 0..<5 {
             try Task.checkCancellation()
-            if let value = field.value() as? String {
+            if let value = self.uncachedDialogInputValue(from: field) {
                 lastReadableValue = value
                 if value == expectedValue {
                     return value
@@ -737,6 +737,12 @@ extension DialogService {
             }
         }
         return lastReadableValue
+    }
+
+    private func uncachedDialogInputValue(from field: Element) -> String? {
+        // Element.value() deliberately prefers traversal-prefetched attributes. Those values can
+        // predate global keyboard delivery, so only a fresh AXValue read is postcondition evidence.
+        field.rawAttributeValue(named: AXAttributeNames.kAXValueAttribute) as? String
     }
 
     static func dialogInputOutcome(
