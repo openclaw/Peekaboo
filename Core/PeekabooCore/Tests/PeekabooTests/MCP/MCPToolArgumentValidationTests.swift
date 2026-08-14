@@ -162,6 +162,136 @@ struct MCPToolArgumentValidationTests {
 
         #expect(await counter.value == 0)
     }
+
+    @Test
+    func `every closed catalog schema rejects unknown top-level properties before dispatch`() async throws {
+        let context = await MCPToolTestHelpers.makeContext()
+        let counter = MCPUnknownPropertyDispatchCounter()
+        let tools = MCPToolCatalog.unfilteredTools(context: context)
+        let probeValues: [Value] = [
+            .bool(true),
+            .string("unexpected"),
+            .int(17),
+            .array([.string("nested")]),
+            .object(["nested": .bool(false)]),
+        ]
+
+        #expect(tools.count == 26)
+        for (index, sourceTool) in tools.enumerated() {
+            guard case let .object(schema) = sourceTool.inputSchema else {
+                Issue.record("Expected \(sourceTool.name) to advertise an object schema")
+                continue
+            }
+            #expect(schema["additionalProperties"] == .bool(false))
+
+            let unknownKey = "__unexpected_\(index)"
+            let response = try await context.execute(
+                tool: MCPUnknownPropertySchemaProbeTool(
+                    name: sourceTool.name,
+                    inputSchema: sourceTool.inputSchema,
+                    counter: counter),
+                arguments: ToolArguments(value: .object([
+                    unknownKey: probeValues[index % probeValues.count],
+                ])))
+
+            #expect(response.isError, "Expected \(sourceTool.name) to reject \(unknownKey)")
+        }
+
+        #expect(await counter.value == 0)
+    }
+
+    @Test
+    func `closed nested schemas reject unknown properties and accept declared properties`() async throws {
+        let context = await MCPToolTestHelpers.makeContext()
+        let counter = MCPUnknownPropertyDispatchCounter()
+        let cases: [(name: String, schema: Value, invalid: [String: Value], valid: [String: Value])] = [
+            (
+                "analyze",
+                AnalyzeTool().inputSchema,
+                [
+                    "question": .string("What is shown?"),
+                    "provider_config": .object(["bogus": .bool(true)]),
+                ],
+                [
+                    "question": .string("What is shown?"),
+                    "provider_config": .object(["type": .string("auto")]),
+                ]),
+            (
+                "verify_state",
+                VerifyStateTool(context: context).inputSchema,
+                [
+                    "predicates": .array([.object([
+                        "kind": .string("window_exists"),
+                        "expected": .bool(true),
+                        "bogus": .int(1),
+                    ])]),
+                ],
+                [
+                    "predicates": .array([.object([
+                        "kind": .string("window_exists"),
+                        "expected": .bool(true),
+                    ])]),
+                ]),
+            (
+                "verify_state",
+                VerifyStateTool(context: context).inputSchema,
+                [
+                    "predicates": .array([.object([
+                        "kind": .string("element_exists"),
+                        "selector": .object([
+                            "identifier": .string("save-button"),
+                            "bogus": .string("nested"),
+                        ]),
+                        "expected": .bool(true),
+                    ])]),
+                ],
+                [
+                    "predicates": .array([.object([
+                        "kind": .string("element_exists"),
+                        "selector": .object(["identifier": .string("save-button")]),
+                        "expected": .bool(true),
+                    ])]),
+                ]),
+        ]
+
+        for testCase in cases {
+            let probe = MCPUnknownPropertySchemaProbeTool(
+                name: testCase.name,
+                inputSchema: testCase.schema,
+                counter: counter)
+            let rejected = try await context.execute(
+                tool: probe,
+                arguments: ToolArguments(value: .object(testCase.invalid)))
+            #expect(rejected.isError)
+
+            let accepted = try await context.execute(
+                tool: probe,
+                arguments: ToolArguments(value: .object(testCase.valid)))
+            #expect(!accepted.isError)
+        }
+
+        #expect(await counter.value == cases.count)
+    }
+}
+
+private actor MCPUnknownPropertyDispatchCounter {
+    private(set) var value = 0
+
+    func increment() {
+        self.value += 1
+    }
+}
+
+private struct MCPUnknownPropertySchemaProbeTool: MCPTool {
+    let name: String
+    let description = "Unknown-property schema validation probe"
+    let inputSchema: Value
+    let counter: MCPUnknownPropertyDispatchCounter
+
+    func execute(arguments _: ToolArguments) async throws -> ToolResponse {
+        await self.counter.increment()
+        return .text("dispatched")
+    }
 }
 
 private actor MCPNumericDispatchCounter {

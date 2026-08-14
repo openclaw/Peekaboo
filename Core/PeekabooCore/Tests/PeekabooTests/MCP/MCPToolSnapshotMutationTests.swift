@@ -915,7 +915,7 @@ private struct StubMCPTool: MCPTool {
     }
 
     var inputSchema: Value {
-        SchemaBuilder.object(properties: [:], required: [])
+        SchemaBuilder.object(properties: [:], required: [], additionalProperties: true)
     }
 
     init(

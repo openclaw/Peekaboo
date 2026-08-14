@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add protocol 1.25 exact dialog click/dismiss receipts with unique target planning, raw AX identity revalidation, verified disappearance outcomes, and read-only targeted listing.
 
 ### Fixed
+- Reject unknown and non-object MCP `tools/call` arguments as JSON-RPC invalid params before policy checks or tool dispatch, recursively honoring the closed schemas advertised by `tools/list`.
 - Report exact standard windows with live attached sheets as dialog-active observations, using shared native role evidence without changing the parent window receipt.
 - Preserve default automatic capture through an owner-aware Bridge by clamping it to classic-only around an auxiliary legacy ScreenCaptureKit owner, while explicit modern and owner-unaware routes remain fail-closed.
 

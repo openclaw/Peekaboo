@@ -108,7 +108,7 @@ struct PeekabooMCPServerTests {
     @MainActor
     func `click wire schema requires an exclusive target and a background coordinate receipt`() async throws {
         let context = await MCPToolTestHelpers.makeContext()
-        let session = try await ClickMCPWireSession.connect(context: context)
+        let session = try await MCPWireSession.connect(context: context)
 
         do {
             let (tools, _) = try await session.client.listTools()
@@ -182,7 +182,7 @@ struct PeekabooMCPServerTests {
     func `click wire refuses mixed target routes before dispatch`() async throws {
         let automation = MockAutomationService(accessibilityGranted: true)
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
-        let session = try await ClickMCPWireSession.connect(context: context)
+        let session = try await MCPWireSession.connect(context: context)
         let invalidArguments: [[String: Value]] = [
             ["on": .string("B1"), "query": .string("Save")],
             ["on": .string("B1"), "coords": .string("10,20"), "foreground": .bool(true)],
@@ -208,6 +208,136 @@ struct PeekabooMCPServerTests {
         } catch {
             await session.stop()
             throw error
+        }
+
+        await session.stop()
+    }
+
+    @Test
+    @MainActor
+    func `every advertised closed schema rejects unknown properties as invalid params`() async throws {
+        let context = await MCPToolTestHelpers.makeContext()
+        let session = try await MCPWireSession.connect(context: context)
+        let probeValues: [Value] = [
+            .bool(true),
+            .string("unexpected"),
+            .int(17),
+            .array([.string("nested")]),
+            .object(["nested": .bool(false)]),
+        ]
+
+        do {
+            let (tools, _) = try await session.client.listTools()
+            #expect(tools.count == 26)
+
+            for (index, tool) in tools.sorted(by: { $0.name < $1.name }).enumerated() {
+                guard case let .object(schema) = tool.inputSchema else {
+                    Issue.record("Expected \(tool.name) to advertise an object schema")
+                    continue
+                }
+                #expect(schema["additionalProperties"] == .bool(false))
+
+                let unknownKey = "__unexpected_\(index)"
+                let detail = await Self.invalidParamsDetail(
+                    session: session,
+                    params: .object([
+                        "name": .string(tool.name),
+                        "arguments": .object([
+                            unknownKey: probeValues[index % probeValues.count],
+                        ]),
+                    ]))
+                #expect(detail?.contains(tool.name) == true)
+                #expect(detail?.contains(unknownKey) == true)
+            }
+        } catch {
+            await session.stop()
+            throw error
+        }
+
+        await session.stop()
+    }
+
+    @Test
+    @MainActor
+    func `wire decoder rejects non-object tool calls and preserves omitted arguments`() async throws {
+        let context = await MCPToolTestHelpers.makeContext()
+        let session = try await MCPWireSession.connect(context: context)
+
+        do {
+            for params: Value in [.null, .array([]), .string("permissions"), .bool(true)] {
+                let detail = await Self.invalidParamsDetail(session: session, params: params)
+                #expect(detail?.contains("params must be an object") == true)
+            }
+
+            for arguments: Value in [.null, .array([]), .string("bogus"), .bool(true), .int(1)] {
+                let detail = await Self.invalidParamsDetail(
+                    session: session,
+                    params: .object([
+                        "name": .string("permissions"),
+                        "arguments": arguments,
+                    ]))
+                #expect(detail?.contains("arguments must be an object") == true)
+            }
+
+            let result = try await session.callRaw(params: .object([
+                "name": .string("permissions"),
+            ]))
+            #expect(result.isError != true)
+        } catch {
+            await session.stop()
+            throw error
+        }
+
+        await session.stop()
+    }
+
+    @Test
+    @MainActor
+    func `wire decoder enforces nested closed schemas before dispatch`() async throws {
+        let context = await MCPToolTestHelpers.makeContext()
+        let session = try await MCPWireSession.connect(context: context)
+        let cases: [(name: String, arguments: [String: Value], path: String)] = [
+            (
+                "analyze",
+                [
+                    "question": .string("What is shown?"),
+                    "provider_config": .object(["bogus": .bool(true)]),
+                ],
+                "$.provider_config"),
+            (
+                "verify_state",
+                [
+                    "predicates": .array([.object([
+                        "kind": .string("window_exists"),
+                        "expected": .bool(true),
+                        "bogus": .string("nested"),
+                    ])]),
+                ],
+                "$.predicates[0]"),
+            (
+                "verify_state",
+                [
+                    "predicates": .array([.object([
+                        "kind": .string("element_exists"),
+                        "selector": .object([
+                            "identifier": .string("save-button"),
+                            "bogus": .int(9),
+                        ]),
+                        "expected": .bool(true),
+                    ])]),
+                ],
+                "$.predicates[0].selector"),
+        ]
+
+        for testCase in cases {
+            let detail = await Self.invalidParamsDetail(
+                session: session,
+                params: .object([
+                    "name": .string(testCase.name),
+                    "arguments": .object(testCase.arguments),
+                ]))
+            #expect(detail?.contains(testCase.path) == true)
+            #expect(detail?.contains("bogus") == true)
         }
 
         await session.stop()
@@ -308,6 +438,24 @@ struct PeekabooMCPServerTests {
         }
     }
 
+    private static func invalidParamsDetail(session: MCPWireSession, params: Value) async -> String? {
+        do {
+            _ = try await session.callRaw(params: params)
+            Issue.record("Expected tools/call to fail with invalid params")
+            return nil
+        } catch let error as MCP.MCPError {
+            #expect(error.code == -32602)
+            guard case let .invalidParams(detail) = error else {
+                Issue.record("Expected invalidParams, got \(error)")
+                return nil
+            }
+            return detail
+        } catch {
+            Issue.record("Expected MCPError.invalidParams, got \(error)")
+            return nil
+        }
+    }
+
     @Test
     @MainActor
     func `default server context inherits the installed agent execution gate`() async throws {
@@ -362,7 +510,7 @@ struct PeekabooMCPServerTests {
     }
 }
 
-private struct ClickMCPWireSession {
+private struct MCPWireSession {
     let client: Client
     let server: PeekabooMCPServer
 
@@ -385,6 +533,19 @@ private struct ClickMCPWireSession {
         await self.client.disconnect()
         await self.server.stopForTesting()
     }
+
+    func callRaw(params: Value) async throws -> CallTool.Result {
+        let request = RawCallTool.request(params)
+        let context: RequestContext<CallTool.Result> = try await self.client.send(request)
+        return try await context.value
+    }
+}
+
+private enum RawCallTool: MCP.Method {
+    typealias Parameters = Value
+    typealias Result = CallTool.Result
+
+    static let name = CallTool.name
 }
 
 @MainActor

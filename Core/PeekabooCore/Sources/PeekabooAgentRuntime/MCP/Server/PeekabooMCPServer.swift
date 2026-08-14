@@ -21,6 +21,37 @@ public enum TransportType: CustomStringConvertible, Sendable {
 
 /// Peekaboo MCP Server implementation
 public actor PeekabooMCPServer {
+    private enum StrictCallTool: MCP.Method {
+        typealias Parameters = Value
+        typealias Result = CallTool.Result
+
+        static let name = CallTool.name
+    }
+
+    private struct ToolCallRequest {
+        let name: String
+        let arguments: [String: Value]
+
+        init(params: Value) throws {
+            guard case let .object(fields) = params else {
+                throw MCP.MCPError.invalidParams("tools/call params must be an object")
+            }
+            guard case let .string(name)? = fields["name"], !name.isEmpty else {
+                throw MCP.MCPError.invalidParams("tools/call requires a nonempty string name")
+            }
+            self.name = name
+
+            switch fields["arguments"] {
+            case nil:
+                self.arguments = [:]
+            case let .object(arguments):
+                self.arguments = arguments
+            default:
+                throw MCP.MCPError.invalidParams("Tool '\(name)' arguments must be an object")
+            }
+        }
+    }
+
     private let server: Server
     private let toolRegistry: MCPToolRegistry
     private let logger: os.Logger
@@ -72,21 +103,29 @@ public actor PeekabooMCPServer {
         }
 
         // Tool call handler
-        await self.server.withMethodHandler(CallTool.self) { [weak self] params in
+        await self.server.withMethodHandler(StrictCallTool.self) { [weak self] params in
             guard let self else {
                 throw MCP.MCPError.methodNotFound("Server deallocated")
             }
 
-            guard let tool = await self.toolRegistry.tool(named: params.name) else {
-                throw MCP.MCPError.invalidParams("Tool '\(params.name)' not found")
+            let request = try ToolCallRequest(params: params)
+
+            guard let tool = await self.toolRegistry.tool(named: request.name) else {
+                throw MCP.MCPError.invalidParams("Tool '\(request.name)' not found")
             }
 
-            let arguments = ToolArguments(value: .object(params.arguments ?? [:]))
+            let arguments = ToolArguments(value: .object(request.arguments))
+            do {
+                try MCPToolArgumentValidator.validateClosedProperties(tool: tool, arguments: arguments)
+            } catch let error as MCPToolArgumentSchemaError {
+                throw MCP.MCPError.invalidParams(
+                    "Invalid arguments for tool '\(request.name)': \(error.localizedDescription)")
+            }
 
             // Execute tool on main thread
             let response = try await self.toolContext.execute(tool: tool, arguments: arguments)
 
-            return Self.callToolResult(from: response, toolName: params.name)
+            return Self.callToolResult(from: response, toolName: request.name)
         }
 
         // Resources list handler (empty for now, but prevents inspector errors)

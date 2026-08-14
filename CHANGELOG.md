@@ -11,6 +11,7 @@
 
 ### Fixed
 
+- Reject unknown and non-object MCP `tools/call` arguments as JSON-RPC invalid params before policy checks or tool dispatch, recursively honoring the closed schemas advertised by `tools/list`.
 - Classify an exact standard window with a live attached sheet as dialog-active during observation, sharing native role evidence with dialog actions while keeping the parent window receipt exact.
 - Report exact ScreenCaptureKit owner PID, process generation, safe build identity, and selected-versus-owner Bridge sockets when available; automatic capture can still use an owner-aware host's classic-only path around an auxiliary legacy owner, while explicit modern and ambiguous legacy ownership remain fail-closed without unsafe process-stop guidance.
 
