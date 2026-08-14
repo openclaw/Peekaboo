@@ -3,6 +3,46 @@ import Subprocess
 import Testing
 
 struct BridgeStatusCLITests {
+    @Test(arguments: ["click", "move"])
+    func `malformed coordinates fail before explicit Bridge resolution`(command: String) async throws {
+        guard TestChildProcess.canLocatePeekabooBinary() else {
+            Issue.record("Build peekaboo before running CLI runtime tests.")
+            return
+        }
+
+        let socketPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-missing-bridge-\(UUID().uuidString).sock").path
+        var arguments = [command, "--at", "not-a-coordinate"]
+        if command == "move" {
+            arguments.append("--foreground")
+        }
+        arguments += ["--bridge-socket", socketPath, "--json"]
+
+        let result = try await TestChildProcess.runPeekaboo(
+            arguments,
+            isolateFromRemoteHosts: false
+        )
+
+        #expect(result.status == .exited(1))
+        #expect(result.standardError.isEmpty)
+
+        let object = try JSONSerialization.jsonObject(with: Data(result.standardOutput.utf8))
+        let json = try #require(object as? [String: Any])
+        let error = try #require(json["error"] as? [String: Any])
+        let outcome = try #require(json["outcome"] as? [String: Any])
+        #expect(json["success"] as? Bool == false)
+        #expect(json["effect"] as? String == "refused")
+        #expect(error["code"] as? String == "VALIDATION_ERROR")
+        #expect(error["message"] as? String == "Invalid coordinates format. Use: x,y")
+        #expect(error["mutation_dispatched"] as? Bool == false)
+        #expect(error["retry_safe"] as? Bool == true)
+        #expect(outcome["dispatch_state"] as? String == "none")
+        #expect(outcome["state"] as? String == "refused")
+        #expect(!result.standardOutput.contains("BRIDGE_UNAVAILABLE"))
+        #expect(!result.standardOutput.contains(socketPath))
+        #expect(!result.standardOutput.contains("Runtime host:"))
+    }
+
     @Test
     func `explicit missing Bridge socket fails without local fallback`() async throws {
         guard TestChildProcess.canLocatePeekabooBinary() else {

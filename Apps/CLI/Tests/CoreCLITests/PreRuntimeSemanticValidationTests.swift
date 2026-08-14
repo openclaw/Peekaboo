@@ -33,6 +33,12 @@ struct PreRuntimeSemanticValidationTests {
             ],
             expectedMessage: "Invalid direction. Use: up, down, left, or right"
         ),
+        Case(
+            arguments: [
+                "peekaboo", "move", "--at", "not-a-coordinate", "--foreground", "--no-remote", "--json",
+            ],
+            expectedMessage: "Invalid coordinates format. Use: x,y"
+        ),
     ])
     func `request semantics validate through the pre-runtime hook`(_ testCase: Case) throws {
         let resolved = try CommanderRuntimeRouter.resolve(argv: testCase.arguments)
@@ -46,6 +52,23 @@ struct PreRuntimeSemanticValidationTests {
             try validator.validateBeforeRuntime()
         }
         #expect(error?.localizedDescription == testCase.expectedMessage)
+    }
+
+    @Test
+    func `click coordinates validate before runtime selection`() throws {
+        let resolved = try CommanderRuntimeRouter.resolve(argv: [
+            "peekaboo", "click", "--at", "not-a-coordinate", "--json",
+        ])
+        let command = try CommanderCLIBinder.instantiateCommand(
+            type: resolved.type,
+            parsedValues: resolved.parsedValues
+        )
+        let validator = try #require(command as? any PreRuntimeValidatingCommand)
+
+        let error = #expect(throws: PreDispatchActionError.self) {
+            try validator.validateBeforeRuntime()
+        }
+        #expect(error?.localizedDescription == "Invalid coordinates format. Use: x,y")
     }
 
     @Test

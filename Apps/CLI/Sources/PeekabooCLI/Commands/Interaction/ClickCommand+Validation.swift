@@ -3,7 +3,12 @@ import CoreGraphics
 import Foundation
 import PeekabooCore
 
-extension ClickCommand {
+extension ClickCommand: PreRuntimeValidatingCommand {
+    func validateBeforeRuntime() throws {
+        var command = self
+        try command.validate()
+    }
+
     mutating func validate() throws {
         try self.target.validate()
         self.query = Self.nonEmptyClickSelector(self.query)

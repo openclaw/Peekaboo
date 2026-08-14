@@ -238,3 +238,10 @@ struct MoveCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         return "\(roleDescription): \(label)"
     }
 }
+
+extension MoveCommand: PreRuntimeValidatingCommand {
+    func validateBeforeRuntime() throws {
+        var command = self
+        try command.validate()
+    }
+}
