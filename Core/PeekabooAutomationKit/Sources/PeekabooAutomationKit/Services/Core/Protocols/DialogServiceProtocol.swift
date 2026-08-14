@@ -5,6 +5,15 @@ import PeekabooFoundation
 /// Protocol defining dialog and alert management operations
 @MainActor
 public protocol DialogServiceProtocol: Sendable {
+    /// Whether the legacy `appName` parameter accepts an exact `PID:<n>` sentinel.
+    ///
+    /// Remote and third-party providers default to false so callers preserve the established
+    /// bundle/name contract until the provider explicitly opts into exact PID hints.
+    var supportsExactProcessIdentifierAppHint: Bool { get }
+
+    /// Canonical route for conservative outcomes synthesized from legacy foreground responses.
+    var foregroundOutcomeRoute: DesktopActionOutcome.Route { get }
+
     /// Find and return information about the active dialog
     /// - Parameter windowTitle: Optional specific window title to target
     /// - Returns: Information about the active dialog
@@ -87,6 +96,14 @@ public protocol DialogServiceProtocol: Sendable {
 }
 
 extension DialogServiceProtocol {
+    public var supportsExactProcessIdentifierAppHint: Bool {
+        false
+    }
+
+    public var foregroundOutcomeRoute: DesktopActionOutcome.Route {
+        .local
+    }
+
     public func clickButton(
         buttonText: String,
         windowTitle: String?,
@@ -228,6 +245,16 @@ public struct DialogActionResult: Sendable, Codable {
 }
 
 extension DialogActionResult {
+    /// Legacy foreground dialog providers may omit canonical outcomes. A successful return proves
+    /// only that shared global input was accepted, never which controller caused the visible effect.
+    public func foregroundOutcomeOrUnverified(route: DesktopActionOutcome.Route) -> DesktopActionOutcome {
+        self.outcome ?? .dispatchedUnverified(
+            route: route,
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: nil)
+    }
+
     /// Validates the exact contract required from receipt-pinned background dialog actions.
     public func requiredPreparedOutcome(kind: DialogPreparedActionKind) throws -> DesktopActionOutcome {
         let expectedAction: DialogActionType = kind == .clickButton ? .clickButton : .dismiss

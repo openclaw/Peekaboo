@@ -52,6 +52,9 @@ extension DialogCommand {
                         windowTitle: context.windowTitle,
                         appName: context.appHint
                     )
+                    let outcome = result.foregroundOutcomeOrUnverified(
+                        route: context.services.dialogs.foregroundOutcomeRoute
+                    )
 
                     if self.jsonOutput {
                         let outputData = DialogInputResult(
@@ -60,9 +63,13 @@ extension DialogCommand {
                             textLength: result.details["text_length"] ?? String(self.text.count),
                             cleared: result.details["cleared"] ?? String(self.clear)
                         )
-                        outputSuccessCodable(data: outputData, effect: .confirmed, logger: self.outputLogger)
+                        outputSuccessCodable(
+                            data: outputData,
+                            outcome: outcome,
+                            logger: self.outputLogger
+                        )
                     } else {
-                        print("✓ Entered text in '\(result.details["field"] ?? "field")'")
+                        print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Dialog input"))
                     }
                     let fieldDescription = result.details["field"]
                         ?? self.field

@@ -342,6 +342,215 @@ struct DialogCommandTests {
     }
 
     @Test
+    func `dialog PID app hint uses exact local capability and preserves legacy provider names`() async throws {
+        var target = InteractionTargetOptions()
+        target.pid = 42
+        let application = ServiceApplicationInfo(
+            processIdentifier: 42,
+            processStartIdentity: 9001,
+            bundleIdentifier: "com.example.LegacyDialogApp",
+            name: "Legacy Dialog App"
+        )
+        let applications = StubApplicationService(applications: [application])
+
+        let exactServices = TestServicesFactory.makePeekabooServices(
+            applications: applications,
+            dialogs: DialogService(applicationService: applications)
+        )
+        let exactHint = try await DialogCommand.resolveDialogAppHint(target: target, services: exactServices)
+        #expect(exactHint == "PID:42")
+
+        let legacyServices = TestServicesFactory.makePeekabooServices(
+            applications: applications,
+            dialogs: StubDialogService()
+        )
+        let legacyHint = try await DialogCommand.resolveDialogAppHint(target: target, services: legacyServices)
+        #expect(legacyHint == "com.example.LegacyDialogApp")
+
+        var appPIDTarget = InteractionTargetOptions()
+        appPIDTarget.app = "PID:42"
+        let exactAppPIDHint = try await DialogCommand.resolveDialogAppHint(
+            target: appPIDTarget,
+            services: exactServices
+        )
+        #expect(exactAppPIDHint == "PID:42")
+        let legacyAppPIDHint = try await DialogCommand.resolveDialogAppHint(
+            target: appPIDTarget,
+            services: legacyServices
+        )
+        #expect(legacyAppPIDHint == "com.example.LegacyDialogApp")
+
+        let staleLegacyServices = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: []),
+            dialogs: StubDialogService()
+        )
+        for staleTarget in [target, appPIDTarget] {
+            do {
+                _ = try await DialogCommand.resolveDialogAppHint(
+                    target: staleTarget,
+                    services: staleLegacyServices,
+                    refusalRoute: .bridge
+                )
+                Issue.record("Expected stale explicit PID to refuse before dialog dispatch")
+            } catch let failure as DesktopActionFailure {
+                #expect(failure.outcome.route == .bridge)
+                #expect(failure.outcome.state == .refused)
+                #expect(failure.outcome.refusalReason == .targetUnavailable)
+                #expect(failure.outcome.dispatchState == .none)
+            }
+        }
+
+        let nameFallbackServices = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: [ServiceApplicationInfo(
+                processIdentifier: 42,
+                bundleIdentifier: "  ",
+                name: "Fallback Name"
+            )]),
+            dialogs: StubDialogService()
+        )
+        let nameFallback = try await DialogCommand.resolveDialogAppHint(
+            target: target,
+            services: nameFallbackServices
+        )
+        #expect(nameFallback == "Fallback Name")
+
+        let emptyIdentityServices = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: [ServiceApplicationInfo(
+                processIdentifier: 42,
+                bundleIdentifier: "",
+                name: " "
+            )]),
+            dialogs: StubDialogService()
+        )
+        do {
+            _ = try await DialogCommand.resolveDialogAppHint(
+                target: target,
+                services: emptyIdentityServices
+            )
+            Issue.record("Expected empty legacy application identity to refuse")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.outcome.dispatchState == .none)
+        }
+    }
+
+    @Test
+    func `legacy foreground dialog successes remain unverified`() async throws {
+        let dialogService = StubDialogService(elements: DialogElements(
+            dialogInfo: DialogInfo(
+                title: "Alert",
+                role: "AXSheet",
+                bounds: .init(x: 0, y: 0, width: 400, height: 300)
+            )
+        ))
+        dialogService.enterTextResult = DialogActionResult(success: true, action: .enterText)
+        dialogService.dismissResult = DialogActionResult(
+            success: true,
+            action: .dismiss,
+            details: ["method": "escape"]
+        )
+        let services = self.makeTestServices(dialogs: dialogService)
+
+        for arguments in [
+            ["dialog", "input", "--text", "hello", "--foreground", "--no-auto-focus", "--json"],
+            ["dialog", "dismiss", "--force", "--foreground", "--no-auto-focus", "--json"],
+        ] {
+            let result = try await InProcessCommandRunner.run(arguments, services: services)
+            #expect(result.exitStatus == 0)
+            let object = try #require(
+                JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+            )
+            #expect(object["effect"] as? String == "unverifiable")
+            let outcome = try #require(object["outcome"] as? [String: Any])
+            #expect(outcome["state"] as? String == "dispatched_unverified")
+            #expect(outcome["retry_safe"] as? Bool == false)
+        }
+    }
+
+    @Test
+    func `dialog input projects canonical unverified outcome instead of confirmed`() async throws {
+        let dialogService = StubDialogService(elements: DialogElements(
+            dialogInfo: DialogInfo(
+                title: "Alert",
+                role: "AXSheet",
+                bounds: .init(x: 0, y: 0, width: 400, height: 300)
+            ),
+            textFields: [DialogTextField(title: "Name", value: "", index: 0)]
+        ))
+        dialogService.enterTextResult = DialogActionResult(
+            success: true,
+            action: .enterText,
+            details: ["field": "Name", "text_length": "5"],
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .one
+            )
+        )
+        let services = self.makeTestServices(dialogs: dialogService)
+
+        let result = try await InProcessCommandRunner.run(
+            ["dialog", "input", "--text", "hello", "--foreground", "--no-auto-focus", "--json"],
+            services: services
+        )
+
+        #expect(result.exitStatus == 0)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+        )
+        #expect(object["effect"] as? String == "unverifiable")
+        let outcome = try #require(object["outcome"] as? [String: Any])
+        #expect(outcome["state"] as? String == "dispatched_unverified")
+        #expect(outcome["retry_safe"] as? Bool == false)
+    }
+
+    @Test
+    func `forced dialog dismiss projects canonical unverified Escape outcome`() async throws {
+        let dialogService = StubDialogService(elements: DialogElements(
+            dialogInfo: DialogInfo(
+                title: "Save",
+                role: "AXSheet",
+                bounds: .init(x: 0, y: 0, width: 400, height: 300)
+            )
+        ))
+        dialogService.dismissResult = DialogActionResult(
+            success: true,
+            action: .dismiss,
+            details: [
+                "method": "escape",
+                "pid": "42",
+                "process_start_identity": "9007199254740993",
+                "process_start_identity_decimal": "9007199254740993",
+                "window_id": "73",
+            ],
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .one
+            )
+        )
+        let services = self.makeTestServices(dialogs: dialogService)
+
+        let result = try await InProcessCommandRunner.run(
+            ["dialog", "dismiss", "--force", "--foreground", "--no-auto-focus", "--json"],
+            services: services
+        )
+
+        #expect(result.exitStatus == 0)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+        )
+        #expect(object["effect"] as? String == "unverifiable")
+        let data = try #require(object["data"] as? [String: Any])
+        #expect(data["pid"] as? Int == 42)
+        #expect(data["process_start_identity_decimal"] as? String == "9007199254740993")
+        #expect(data["window_id"] as? Int == 73)
+        let outcome = try #require(object["outcome"] as? [String: Any])
+        #expect(outcome["state"] as? String == "dispatched_unverified")
+        #expect(outcome["requires_fresh_observation"] as? Bool == true)
+    }
+
+    @Test
     func `dialog input maps noActiveDialog to NO_ACTIVE_DIALOG`() async throws {
         let services = self.makeTestServices(dialogs: StubDialogService(elements: nil))
         let result = try await InProcessCommandRunner.run(

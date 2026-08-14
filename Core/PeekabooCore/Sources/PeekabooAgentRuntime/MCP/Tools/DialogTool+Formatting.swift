@@ -1,6 +1,7 @@
 import Foundation
 import MCP
 import PeekabooAutomation
+import PeekabooFoundation
 import TachikomaMCP
 
 extension DialogTool {
@@ -14,10 +15,19 @@ extension DialogTool {
     func formatActionResult(
         context: ActionResultContext,
         result: DialogActionResult,
+        outcome: DesktopActionOutcome,
         startTime: Date) -> ToolResponse
     {
         let executionTime = Date().timeIntervalSince(startTime)
-        let message = "\(AgentDisplayTokens.Status.success) \(context.verb) in \(Self.formattedDuration(executionTime))"
+        let prefix = if outcome.effect == .unverifiable {
+            AgentDisplayTokens.Status.warning
+        } else {
+            AgentDisplayTokens.Status.success
+        }
+        let suffix = outcome.effect == .unverifiable
+            ? "; effect is unverifiable, observe before retrying"
+            : ""
+        let message = "\(prefix) \(context.verb) in \(Self.formattedDuration(executionTime))\(suffix)"
 
         let baseMeta: [String: Value] = [
             "action": .string(result.action.rawValue),
@@ -27,7 +37,7 @@ extension DialogTool {
         ]
         let meta = try? MCPToolResponseMetadataProjector.metadata(
             merging: baseMeta,
-            outcome: result.outcome)
+            outcome: outcome)
 
         let summary = ToolEventSummary(
             targetApp: context.appHint,

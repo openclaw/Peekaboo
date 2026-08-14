@@ -50,6 +50,8 @@ extension DialogError: LocalizedError {
 /// Default implementation of dialog management operations
 @MainActor
 public final class DialogService: DialogServiceProtocol {
+    public let supportsExactProcessIdentifierAppHint = true
+
     let logger = Logger(subsystem: "boo.peekaboo.core", category: "DialogService")
     let dialogTitleHints = DialogElementClassifier.titleHints
     let activeDialogSearchTimeout: Float = 0.25

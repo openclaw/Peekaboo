@@ -410,11 +410,33 @@ extension DialogService {
     }
 
     func revalidatePreparedAction(_ entry: DialogPreparedActionStore.Entry) async throws {
-        let expected = entry.receipt.target
+        try await self.revalidateDialogTarget(
+            target: entry.receipt.target,
+            retainedWindow: entry.window,
+            retainedDialog: entry.dialog,
+            operation: "AXPress")
+
+        let buttons = self.semanticButtons(in: entry.dialog, request: entry.request)
+        guard buttons.count == 1,
+              let button = buttons.first,
+              Self.sameElement(button, entry.button),
+              Self.isEligiblePreparedButton(button)
+        else {
+            throw self.targetUnavailable("Prepared dialog button changed or became ambiguous before AXPress.")
+        }
+        try Task.checkCancellation()
+    }
+
+    func revalidateDialogTarget(
+        target expected: UIAutomationTarget.ExactWindow,
+        retainedWindow: Element,
+        retainedDialog: Element,
+        operation: String) async throws
+    {
         let application = try await self.applicationService.findApplication(
             identifier: "PID:\(expected.identity.ownerProcessIdentifier)")
         guard application.processIdentity == expected.identity.processIdentity else {
-            throw self.targetUnavailable("Dialog owner changed process generation before AXPress.")
+            throw self.targetUnavailable("Dialog owner changed process generation before \(operation).")
         }
 
         let response = try await self.applicationService.listWindows(
@@ -427,26 +449,18 @@ extension DialogService {
               let currentWindow = self.windowIdentityService.findWindow(
                   byID: CGWindowID(expected.identity.windowID),
                   messagingTimeout: self.targetedDialogSearchTimeout),
-              Self.sameElement(currentWindow.element, entry.window)
+              Self.sameElement(currentWindow.element, retainedWindow)
         else {
-            throw self.targetUnavailable("Dialog window receipt changed before AXPress.")
+            throw self.targetUnavailable("Dialog window receipt changed before \(operation).")
         }
 
         let freshDialogs = self.freshDialogElements(in: currentWindow.element)
         guard freshDialogs.readable,
               freshDialogs.structural.count == 1,
               let dialog = freshDialogs.structural.first,
-              Self.sameElement(dialog, entry.dialog)
+              Self.sameElement(dialog, retainedDialog)
         else {
-            throw self.targetUnavailable("Prepared dialog or sheet changed before AXPress.")
-        }
-        let buttons = self.semanticButtons(in: dialog, request: entry.request)
-        guard buttons.count == 1,
-              let button = buttons.first,
-              Self.sameElement(button, entry.button),
-              Self.isEligiblePreparedButton(button)
-        else {
-            throw self.targetUnavailable("Prepared dialog button changed or became ambiguous before AXPress.")
+            throw self.targetUnavailable("Prepared dialog or sheet changed before \(operation).")
         }
         try Task.checkCancellation()
     }
@@ -487,7 +501,13 @@ extension DialogService {
     }
 
     func preparedDialogPresence(_ entry: DialogPreparedActionStore.Entry) -> DialogPresence {
-        let expected = entry.receipt.target
+        self.dialogPresence(target: entry.receipt.target, retainedDialog: entry.dialog)
+    }
+
+    func dialogPresence(
+        target expected: UIAutomationTarget.ExactWindow,
+        retainedDialog: Element) -> DialogPresence
+    {
         switch Self.windowServerPresence(expected.identity) {
         case .absent:
             return .absent
@@ -500,19 +520,28 @@ extension DialogService {
             byID: CGWindowID(expected.identity.windowID),
             messagingTimeout: self.targetedDialogSearchTimeout)
         else { return .unreadable }
-        return Self.rawElementPresence(entry.dialog, in: currentWindow.element)
+        return Self.rawElementPresence(retainedDialog, in: currentWindow.element)
     }
 
     func preparedActionDetails(_ entry: DialogPreparedActionStore.Entry) -> [String: String] {
-        var details = [
+        var details = Self.dialogTargetDetails(entry.receipt.target)
+        details.merge([
             "button": entry.resolvedButtonTitle,
-            "window_id": String(entry.receipt.target.identity.windowID),
             "method": "button",
-        ]
+        ]) { _, new in new }
         if let identifier = entry.resolvedButtonIdentifier, !identifier.isEmpty {
             details["button_identifier"] = identifier
         }
         return details
+    }
+
+    static func dialogTargetDetails(_ target: UIAutomationTarget.ExactWindow) -> [String: String] {
+        [
+            "pid": String(target.identity.ownerProcessIdentifier),
+            "process_start_identity": String(target.identity.ownerProcessStartIdentity),
+            "process_start_identity_decimal": String(target.identity.ownerProcessStartIdentity),
+            "window_id": String(target.identity.windowID),
+        ]
     }
 
     func dialogElements(for dialog: Element) -> DialogElements {

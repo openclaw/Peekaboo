@@ -141,6 +141,69 @@ struct MCPDialogPreparedActionTests {
         #expect(dialogs.inputCount == 1)
         #expect(dialogs.fileCount == 1)
     }
+
+    @Test
+    func `foreground input and forced dismiss expose unverified outcome warnings`() async throws {
+        let dialogs = PreparedDialogService()
+        dialogs.foregroundOutcome = .dispatchedUnverified(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let context = await MCPToolTestHelpers.makeContext(dialogs: dialogs)
+
+        let input = try await context.execute(
+            tool: DialogTool(context: context),
+            arguments: ToolArguments(raw: [
+                "action": "input",
+                "text": "value",
+                "foreground": true,
+            ]))
+        let dismiss = try await context.execute(
+            tool: DialogTool(context: context),
+            arguments: ToolArguments(raw: [
+                "action": "dismiss",
+                "force": true,
+                "foreground": true,
+            ]))
+
+        for response in [input, dismiss] {
+            #expect(!response.isError)
+            let meta = try #require(response.meta?.objectValue)
+            #expect(meta["state"] == .string("dispatched_unverified"))
+            #expect(meta["retry_safe"] == .bool(false))
+            guard case let .text(text, _, _)? = response.content.first else {
+                Issue.record("Expected dialog response text")
+                continue
+            }
+            #expect(text.contains(AgentDisplayTokens.Status.warning))
+            #expect(text.contains("effect is unverifiable"))
+        }
+
+        dialogs.omitForegroundOutcome = true
+        let legacyInput = try await context.execute(
+            tool: DialogTool(context: context),
+            arguments: ToolArguments(raw: [
+                "action": "input",
+                "text": "legacy",
+                "foreground": true,
+            ]))
+        let legacyDismiss = try await context.execute(
+            tool: DialogTool(context: context),
+            arguments: ToolArguments(raw: [
+                "action": "dismiss",
+                "force": true,
+                "foreground": true,
+            ]))
+        for response in [legacyInput, legacyDismiss] {
+            let meta = try #require(response.meta?.objectValue)
+            #expect(meta["state"] == .string("dispatched_unverified"))
+            guard case let .text(text, _, _)? = response.content.first else {
+                Issue.record("Expected legacy dialog response text")
+                continue
+            }
+            #expect(text.contains(AgentDisplayTokens.Status.warning))
+        }
+    }
 }
 
 @MainActor
@@ -154,6 +217,8 @@ private final class PreparedDialogService: DialogServiceProtocol {
     var fileCount = 0
     var lastPreparation: DialogActionPreparationRequest?
     var preparationFailure: DesktopActionFailure?
+    var foregroundOutcome: DesktopActionOutcome?
+    var omitForegroundOutcome = false
 
     func prepareDialogAction(_ request: DialogActionPreparationRequest) throws -> PreparedDialogActionReceipt {
         self.prepareCount += 1
@@ -204,7 +269,7 @@ private final class PreparedDialogService: DialogServiceProtocol {
             success: true,
             action: .enterText,
             details: ["field": "Text Field", "text_length": "5"],
-            outcome: self.outcome)
+            outcome: self.omitForegroundOutcome ? nil : (self.foregroundOutcome ?? self.outcome))
     }
 
     func handleFileDialog(
@@ -222,8 +287,13 @@ private final class PreparedDialogService: DialogServiceProtocol {
             outcome: self.outcome)
     }
 
-    func dismissDialog(force _: Bool, windowTitle _: String?, appName _: String?) async throws -> DialogActionResult {
-        throw DialogError.noActiveDialog
+    func dismissDialog(force: Bool, windowTitle _: String?, appName _: String?) async throws -> DialogActionResult {
+        guard force else { throw DialogError.noActiveDialog }
+        return DialogActionResult(
+            success: true,
+            action: .dismiss,
+            details: ["method": "escape"],
+            outcome: self.omitForegroundOutcome ? nil : (self.foregroundOutcome ?? self.outcome))
     }
 
     func listDialogElements(windowTitle _: String?, appName _: String?) async throws -> DialogElements {

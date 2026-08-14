@@ -55,11 +55,15 @@ extension DialogCommand {
                 },
                 operation: { context in
                     let result: DialogActionResult
+                    let outcome: DesktopActionOutcome
                     if self.force {
                         result = try await context.services.dialogs.dismissDialog(
                             force: true,
                             windowTitle: context.windowTitle,
                             appName: context.appHint
+                        )
+                        outcome = result.foregroundOutcomeOrUnverified(
+                            route: context.services.dialogs.foregroundOutcomeRoute
                         )
                     } else {
                         let receipt: PreparedDialogActionReceipt
@@ -76,27 +80,26 @@ extension DialogCommand {
                             receipt = try await context.services.dialogs.prepareDialogAction(request)
                         }
                         result = try await context.services.dialogs.performPreparedDialogAction(receipt)
-                        _ = try result.requiredPreparedOutcome(kind: .dismiss)
+                        outcome = try result.requiredPreparedOutcome(kind: .dismiss)
                     }
 
                     if self.jsonOutput {
                         let outputData = DialogDismissResult(
                             action: "dialog_dismiss",
                             method: result.details["method"] ?? "unknown",
-                            button: result.details["button"]
+                            button: result.details["button"],
+                            pid: result.details["pid"].flatMap(Int32.init),
+                            process_start_identity: result.details["process_start_identity"].flatMap(UInt64.init),
+                            process_start_identity_decimal: result.details["process_start_identity_decimal"],
+                            window_id: result.details["window_id"].flatMap(Int.init)
                         )
                         outputSuccessCodable(
                             data: outputData,
-                            effect: result.outcome == nil ? .confirmed : nil,
-                            outcome: result.outcome,
+                            outcome: outcome,
                             logger: self.outputLogger
                         )
-                    } else if result.details["method"] == "escape" {
-                        print("✓ Dismissed dialog with Escape")
-                    } else if let button = result.details["button"] {
-                        print("✓ Dismissed dialog by clicking '\(button)'")
                     } else {
-                        print("✓ Dismissed dialog")
+                        print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Dialog dismissal"))
                     }
                     let method = result.details["method"] ?? (self.force ? "escape" : "button")
                     let dismissedButton = result.details["button"] ?? "none"
@@ -204,6 +207,10 @@ private struct DialogDismissResult: Codable {
     let action: String
     let method: String
     let button: String?
+    let pid: Int32?
+    let process_start_identity: UInt64?
+    let process_start_identity_decimal: String?
+    let window_id: Int?
 }
 
 private struct DialogListResult: Codable {

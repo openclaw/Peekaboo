@@ -69,55 +69,13 @@ extension DialogService {
         }
     }
 
-    public func enterText(
-        text: String,
-        fieldIdentifier: String?,
-        clearExisting: Bool,
-        windowTitle: String?,
-        appName: String?) async throws -> DialogActionResult
-    {
-        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
-            self.logger.info("Entering text into dialog field")
-            self.logger.debug("Text length: \(text.count) chars, clear existing: \(clearExisting)")
-            if let identifier = fieldIdentifier {
-                self.logger.debug("Target field: \(identifier)")
-            }
-
-            let dialog = try await self.resolveDialogElement(windowTitle: windowTitle, appName: appName)
-            let targetField = try self.textField(in: dialog, identifier: fieldIdentifier)
-
-            self.focusTextField(targetField)
-            try self.clearFieldIfNeeded(targetField, shouldClear: clearExisting)
-            try self.typeTextValue(text, delay: 10000)
-
-            let result = DialogActionResult(
-                success: true,
-                action: .enterText,
-                details: [
-                    "field": targetField.title() ?? "Text Field",
-                    "text_length": String(text.count),
-                    "cleared": String(clearExisting),
-                ])
-
-            self.logger.info("\(AgentDisplayTokens.Status.success) Successfully entered text into field")
-            return result
-        }
-    }
-
     public func dismissDialog(force: Bool, windowTitle: String?, appName: String?) async throws -> DialogActionResult {
-        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+        if force {
+            return try await self.forceDismissDialog(windowTitle: windowTitle, appName: appName)
+        }
+
+        return try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
             self.logger.info("Dismissing dialog (force: \(force))")
-
-            if force {
-                self.logger.debug("Force dismissing with Escape key")
-                try? InputDriver.tapKey(.escape)
-
-                self.logger.info("\(AgentDisplayTokens.Status.success) Dialog dismissed with Escape key")
-                return DialogActionResult(
-                    success: true,
-                    action: .dismiss,
-                    details: ["method": "escape"])
-            }
 
             self.logger.debug("Looking for dismiss button")
             let dialog = try await self.resolveDialogElement(windowTitle: windowTitle, appName: appName)
@@ -176,7 +134,7 @@ extension DialogService {
         }
     }
 
-    private func textField(in dialog: Element, identifier: String?) throws -> Element {
+    func textField(in dialog: Element, identifier: String?) throws -> Element {
         let textFields = self.collectTextFields(from: dialog)
         self.logger.debug("Found \(textFields.count) text fields")
 

@@ -29,6 +29,8 @@ public struct RemoteDialogCapabilities: Sendable {
 
 @MainActor
 public final class RemoteDialogService: DialogServiceProtocol {
+    public let foregroundOutcomeRoute = DesktopActionOutcome.Route.bridge
+
     private let client: PeekabooBridgeClient
     private let supportsBackgroundButtonClick: Bool
     private let supportsTargetedList: Bool

@@ -218,7 +218,7 @@ public struct DialogTool: MCPTool {
                     hint: "Prepare the dialog action again before retrying.")
             }
             let result = try await self.context.dialogs.performPreparedDialogAction(receipt)
-            _ = try result.requiredPreparedOutcome(kind: .clickButton)
+            let outcome = try result.requiredPreparedOutcome(kind: .clickButton)
             return self.formatActionResult(
                 context: ActionResultContext(
                     verb: "Clicked",
@@ -226,6 +226,7 @@ public struct DialogTool: MCPTool {
                     windowTitle: windowTitle,
                     appHint: appHint),
                 result: result,
+                outcome: outcome,
                 startTime: startTime)
 
         case .input:
@@ -236,6 +237,8 @@ public struct DialogTool: MCPTool {
                 clearExisting: request.clearExisting,
                 windowTitle: windowTitle,
                 appName: appHint)
+            let outcome = await result.foregroundOutcomeOrUnverified(
+                route: self.context.dialogs.foregroundOutcomeRoute)
             let notes = request.fieldIdentifier ?? "field"
             return self.formatActionResult(
                 context: ActionResultContext(
@@ -244,6 +247,7 @@ public struct DialogTool: MCPTool {
                     windowTitle: windowTitle,
                     appHint: appHint),
                 result: result,
+                outcome: outcome,
                 startTime: startTime)
 
         case .file:
@@ -298,11 +302,14 @@ public struct DialogTool: MCPTool {
         case .dismiss:
             let force = inputs.force ?? false
             let result: DialogActionResult
+            let outcome: DesktopActionOutcome
             if force {
                 result = try await self.context.dialogs.dismissDialog(
                     force: true,
                     windowTitle: windowTitle,
                     appName: appHint)
+                outcome = await result.foregroundOutcomeOrUnverified(
+                    route: self.context.dialogs.foregroundOutcomeRoute)
             } else {
                 guard let receipt = target.preparedReceipt else {
                     throw DesktopActionFailure.preDispatchRefusal(
@@ -311,7 +318,7 @@ public struct DialogTool: MCPTool {
                         hint: "Prepare the dialog action again before retrying.")
                 }
                 result = try await self.context.dialogs.performPreparedDialogAction(receipt)
-                _ = try result.requiredPreparedOutcome(kind: .dismiss)
+                outcome = try result.requiredPreparedOutcome(kind: .dismiss)
             }
             let verb = force ? "Dismissed (forced)" : "Dismissed"
             return self.formatActionResult(
@@ -321,6 +328,7 @@ public struct DialogTool: MCPTool {
                     windowTitle: windowTitle,
                     appHint: appHint),
                 result: result,
+                outcome: outcome,
                 startTime: startTime)
         }
     }
