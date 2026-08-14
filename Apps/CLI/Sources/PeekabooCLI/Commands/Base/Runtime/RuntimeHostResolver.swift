@@ -86,13 +86,15 @@ enum RuntimeHostResolver {
                 // discovered old host therefore blocks every later SCK leaf even if another old
                 // host appears, disappears, or reuses the same socket before the runtime restarts.
                 dependencies.recordScreenCaptureKitSafetyBlocker(oldHost)
-                let dynamicLocalDeferral = options.usesPerToolSnapshotInvalidation &&
-                    !options.requiresScreenCapturePermission &&
-                    plan.explicitSocket == nil
-                guard dynamicLocalDeferral else {
-                    throw self.ownerCapabilityRefusal(host: oldHost, selectedSocket: plan.explicitSocket)
+                switch self.screenCaptureKitSafetyDisposition(
+                    for: oldHost, plan: plan, options: options, environment: environment
+                ) {
+                case .refuse: throw self.ownerCapabilityRefusal(host: oldHost, selectedSocket: plan.explicitSocket)
+                case .deferLocalRuntime: deferredScreenCaptureKitSafetyBlocker = true
+                case .routeAutomaticCapture:
+                    // Auto is classic-first. The selected host still refuses any later SCK fallback.
+                    break
                 }
-                deferredScreenCaptureKitSafetyBlocker = true
             }
         } else {
             safetyPlan = nil

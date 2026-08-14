@@ -265,6 +265,99 @@ struct ScreenCaptureKitOwnerRuntimeTests {
     }
 
     @Test
+    func `automatic capture routes to an owner-aware host around an auxiliary legacy SCK blocker`() async throws {
+        let selectedSocket = "/tmp/peekaboo-auto-classic-first-\(UUID().uuidString).sock"
+        let ownerAwareHost = try await Self.startHost(
+            socketPath: selectedSocket,
+            processIdentifier: 3131,
+            processStartIdentity: 4141,
+            codeSignatureHash: "current-build"
+        )
+        defer { Task { await ownerAwareHost.stop() } }
+
+        var options = Self.captureOptions(engine: "auto")
+        options.bridgeSocketPath = selectedSocket
+        options.autoStartDaemon = false
+        let auxiliaryBlocker = RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
+            socketPath: PeekabooBridgeConstants.claudeSocketPath,
+            processIdentifier: 5151,
+            processStartIdentity: 6161,
+            buildIdentity: "legacy-build"
+        )
+        var recordedBlockers: [RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost] = []
+        var localFactoryCalls = 0
+
+        let resolution = try await RuntimeHostResolver.resolveServices(
+            options: options,
+            environment: [:],
+            configurationInput: nil,
+            dependencies: .init(
+                makeLocalServices: { _ in
+                    localFactoryCalls += 1
+                    return PeekabooServices()
+                },
+                claimScreenCaptureKitOwner: { Self.ownerReceipt() },
+                inspectScreenCaptureKitOwner: { nil },
+                inspectScreenCaptureKitSafety: { _, _, _ in auxiliaryBlocker },
+                recordScreenCaptureKitSafetyBlocker: { recordedBlockers.append($0) }
+            )
+        )
+
+        #expect(resolution.selectedRemoteSocketPath == selectedSocket)
+        #expect(recordedBlockers == [auxiliaryBlocker])
+        #expect(localFactoryCalls == 0)
+        await ownerAwareHost.stop()
+    }
+
+    @Test
+    func `explicit modern capture still refuses an auxiliary legacy SCK blocker`() async throws {
+        let selectedSocket = "/tmp/peekaboo-modern-auxiliary-blocker-\(UUID().uuidString).sock"
+        let ownerAwareHost = try await Self.startHost(
+            socketPath: selectedSocket,
+            processIdentifier: 3131,
+            processStartIdentity: 4141,
+            codeSignatureHash: "current-build"
+        )
+        defer { Task { await ownerAwareHost.stop() } }
+
+        var options = Self.captureOptions(engine: "modern")
+        options.bridgeSocketPath = selectedSocket
+        options.autoStartDaemon = false
+        let auxiliaryBlocker = RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
+            socketPath: PeekabooBridgeConstants.claudeSocketPath,
+            processIdentifier: 5151,
+            processStartIdentity: 6161,
+            buildIdentity: "legacy-build"
+        )
+        var recordedBlockers: [RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost] = []
+        var localFactoryCalls = 0
+
+        let error = await #expect(throws: PreDispatchActionError.self) {
+            _ = try await RuntimeHostResolver.resolveServices(
+                options: options,
+                environment: [:],
+                configurationInput: nil,
+                dependencies: .init(
+                    makeLocalServices: { _ in
+                        localFactoryCalls += 1
+                        return PeekabooServices()
+                    },
+                    claimScreenCaptureKitOwner: { Self.ownerReceipt() },
+                    inspectScreenCaptureKitOwner: { nil },
+                    inspectScreenCaptureKitSafety: { _, _, _ in auxiliaryBlocker },
+                    recordScreenCaptureKitSafetyBlocker: { recordedBlockers.append($0) }
+                )
+            )
+        }
+
+        #expect(error?.code == .CAPTURE_FAILED)
+        #expect(error?.localizedDescription.contains("legacy-build") == true)
+        #expect(recordedBlockers == [auxiliaryBlocker])
+        #expect(localFactoryCalls == 0)
+        await ownerAwareHost.stop()
+    }
+
+    @Test
     func `known legacy owner diagnostics distinguish selected and owner sockets`() {
         let ownerSocket = "/tmp/legacy-owner.sock"
         let selectedSocket = "/tmp/selected-current.sock"

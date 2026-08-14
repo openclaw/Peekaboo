@@ -149,6 +149,12 @@ extension RuntimeHostResolver {
         let buildIdentity: String?
     }
 
+    enum ScreenCaptureKitSafetyDisposition {
+        case refuse
+        case deferLocalRuntime
+        case routeAutomaticCapture
+    }
+
     static func requiresCallerLocalModernOwnerClaim(
         options: CommandRuntimeOptions,
         environment: [String: String]
@@ -183,6 +189,48 @@ extension RuntimeHostResolver {
         return options.requiresScreenCapturePermission &&
             options.transportsCaptureEnginePreference &&
             preference != .legacy
+    }
+
+    static func canRouteAutomaticCaptureAroundAuxiliaryOwnerUnawareHost(
+        _ host: ScreenCaptureKitOwnerUnawareHost,
+        plan: RemoteCandidatePlan,
+        options: CommandRuntimeOptions,
+        environment: [String: String]
+    ) -> Bool {
+        guard self.captureEnginePreferenceForOwnership(options: options, environment: environment) == .auto,
+              options.requiresScreenCapturePermission,
+              options.transportsCaptureEnginePreference,
+              options.requiresScreenCaptureKitOwnerCapability
+        else {
+            return false
+        }
+
+        let hostPath = NSString(string: host.socketPath).standardizingPath
+        return !plan.candidates.contains {
+            NSString(string: $0.socketPath).standardizingPath == hostPath
+        }
+    }
+
+    static func screenCaptureKitSafetyDisposition(
+        for host: ScreenCaptureKitOwnerUnawareHost,
+        plan: RemoteCandidatePlan,
+        options: CommandRuntimeOptions,
+        environment: [String: String]
+    ) -> ScreenCaptureKitSafetyDisposition {
+        if options.usesPerToolSnapshotInvalidation,
+           !options.requiresScreenCapturePermission,
+           plan.explicitSocket == nil {
+            return .deferLocalRuntime
+        }
+        if self.canRouteAutomaticCaptureAroundAuxiliaryOwnerUnawareHost(
+            host,
+            plan: plan,
+            options: options,
+            environment: environment
+        ) {
+            return .routeAutomaticCapture
+        }
+        return .refuse
     }
 
     static func screenCaptureKitHostMatchesOwner(
