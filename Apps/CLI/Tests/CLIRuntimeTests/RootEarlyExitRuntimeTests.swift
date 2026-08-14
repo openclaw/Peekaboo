@@ -64,6 +64,7 @@ struct RootEarlyExitRuntimeTests {
 
     @Test(arguments: [
         ["--junk", "click", "--help"],
+        ["--junk", "app", "--help"],
         ["--unknown=1", "app", "list", "--help"],
     ])
     func `option-leading command help stays command scoped`(arguments: [String]) async throws {
@@ -76,8 +77,49 @@ struct RootEarlyExitRuntimeTests {
 
         #expect(result.status == .exited(0))
         #expect(result.standardError.isEmpty)
-        #expect(result.standardOutput
-            .contains("Usage\n  peekaboo \(arguments.contains("click") ? "click" : "app list")"))
+        let expectedPath = if arguments.contains("click") {
+            "click"
+        } else if arguments.contains("list") {
+            "app list"
+        } else {
+            "app"
+        }
+        #expect(result.standardOutput.contains("Usage\n  peekaboo \(expectedPath)"))
         #expect(!result.standardOutput.contains("Core Commands"))
+    }
+
+    @Test(arguments: [
+        ["--log-level", "--help"],
+        ["--logLevel", "--help"],
+        ["--bridge-socket", "--help"],
+        ["--bridgeSocket", "--help"],
+        ["--input-strategy", "--help"],
+        ["--inputStrategy", "--help"],
+    ])
+    func `missing runtime option value does not become root help`(arguments: [String]) async throws {
+        guard TestChildProcess.canLocatePeekabooBinary() else {
+            Issue.record("Build peekaboo before running CLI runtime tests.")
+            return
+        }
+
+        let result = try await TestChildProcess.runPeekaboo(arguments, isolateFromRemoteHosts: false)
+
+        #expect(result.status == .exited(1))
+        #expect(result.standardOutput.isEmpty)
+        #expect(result.standardError.contains("Runtime flags must follow the leaf command"))
+    }
+
+    @Test(arguments: ["--log-level=--help", "--logLevel=--help"])
+    func `attached help token remains a runtime option value`(argument: String) async throws {
+        guard TestChildProcess.canLocatePeekabooBinary() else {
+            Issue.record("Build peekaboo before running CLI runtime tests.")
+            return
+        }
+
+        let result = try await TestChildProcess.runPeekaboo([argument], isolateFromRemoteHosts: false)
+
+        #expect(result.status == .exited(1))
+        #expect(result.standardOutput.isEmpty)
+        #expect(result.standardError.contains("Unknown command '\(argument)'"))
     }
 }

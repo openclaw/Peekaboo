@@ -42,6 +42,7 @@ struct CommanderRuntimeRouterHelpPathTests {
 
     @Test(arguments: [
         ["peekaboo", "--junk", "click", "--help"],
+        ["peekaboo", "--junk", "app", "--help"],
         ["peekaboo", "--unknown=1", "app", "list", "--help"],
     ])
     func `option-leading command help retains the command path`(arguments: [String]) {
@@ -62,12 +63,41 @@ struct CommanderRuntimeRouterHelpPathTests {
         #expect(resolved.parsedValues.options["command"] == nil)
     }
 
-    @Test
-    func `unknown positional help target remains an error`() {
+    @Test(arguments: [
+        ["peekaboo", "does-not-exist", "--help"],
+        ["peekaboo", "--junk", "does-not-exist", "--help"],
+    ])
+    func `unknown positional help target remains an error`(arguments: [String]) {
         let error = #expect(throws: CommanderProgramError.self) {
-            _ = try CommanderRuntimeRouter.resolve(argv: ["peekaboo", "does-not-exist", "--help"])
+            _ = try CommanderRuntimeRouter.resolve(argv: arguments)
         }
         #expect(error == .unknownCommand("does-not-exist"))
+    }
+
+    @Test(arguments: [
+        ["peekaboo", "--log-level", "--help"],
+        ["peekaboo", "--logLevel", "--help"],
+        ["peekaboo", "--bridge-socket", "--help"],
+        ["peekaboo", "--bridgeSocket", "--help"],
+        ["peekaboo", "--input-strategy", "--help"],
+        ["peekaboo", "--inputStrategy", "--help"],
+    ])
+    func `missing runtime option value does not become root help`(arguments: [String]) {
+        let error = #expect(throws: CommanderUsageError.self) {
+            _ = try CommanderRuntimeRouter.resolve(argv: arguments)
+        }
+        #expect(error?.message.contains("Runtime flags must follow the leaf command") == true)
+    }
+
+    @Test(arguments: [
+        ["peekaboo", "--log-level=--help"],
+        ["peekaboo", "--logLevel=--help"],
+    ])
+    func `attached help token remains a runtime option value`(arguments: [String]) {
+        let error = #expect(throws: CommanderProgramError.self) {
+            _ = try CommanderRuntimeRouter.resolve(argv: arguments)
+        }
+        #expect(error == .unknownCommand(arguments[1]))
     }
 
     @Test

@@ -168,18 +168,9 @@ enum CommanderRuntimeRouter {
     private static let runtimeValueOptionNames: Set<String> = {
         let signature = CommandSignature().withPeekabooRuntimeFlags().flattened()
         return Set(signature.options.flatMap { option in
-            option.names.map { Self.commandLineToken(for: $0) }
+            option.names.map(\.commandLineToken)
         })
     }()
-
-    private static func commandLineToken(for name: CommanderName) -> String {
-        switch name {
-        case let .short(value), let .aliasShort(value):
-            "-\(value)"
-        case let .long(value), let .aliasLong(value):
-            "--\(value)"
-        }
-    }
 
     private static func runtimeOptionConsumesFollowingValue(_ token: String) -> Bool {
         !token.contains("=") && self.runtimeValueOptionNames.contains(token)

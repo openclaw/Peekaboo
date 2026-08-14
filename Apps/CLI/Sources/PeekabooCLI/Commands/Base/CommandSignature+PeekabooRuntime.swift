@@ -41,3 +41,14 @@ extension CommandSignature {
         )
     }
 }
+
+extension CommanderName {
+    var commandLineToken: String {
+        switch self {
+        case let .short(value), let .aliasShort(value):
+            "-\(value)"
+        case let .long(value), let .aliasLong(value):
+            "--\(value)"
+        }
+    }
+}

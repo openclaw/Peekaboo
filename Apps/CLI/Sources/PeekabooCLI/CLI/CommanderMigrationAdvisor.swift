@@ -10,10 +10,13 @@ struct CommanderUsageError: LocalizedError, Equatable {
 }
 
 enum CommanderMigrationAdvisor {
-    private static let runtimeFlags = Set([
-        "--json", "-j", "--json-output", "--jsonOutput",
-        "--verbose", "-v", "--log-level", "--no-remote", "--bridge-socket", "--input-strategy",
-    ])
+    private static let runtimeFlags: Set<String> = {
+        let signature = CommandSignature().withPeekabooRuntimeFlags().flattened()
+        return Set(
+            signature.options.flatMap { $0.names.map(\.commandLineToken) } +
+                signature.flags.flatMap { $0.names.map(\.commandLineToken) }
+        )
+    }()
 
     private static let removedRootReplacements: [String: String] = [
         "hotkey": "peekaboo press",

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add capability-gated exact-window background wheel delivery for opaque WKWebView/Tauri scroll targets, with retry-unsafe unverifiable outcomes and no activation or shared-cursor fallback.
 
 ### Fixed
+- Keep root help and version order-independent across canonical kebab- and camel-case runtime-option aliases while preserving correct missing-value errors.
 - Treat `capture video` as caller-local media ingestion so valid files and typed media failures bypass Screen Recording and ScreenCaptureKit-owner preflight while live capture remains gated.
 - Keep normal exact-window Finder `see` usable when the window exposes no semantic AX value, without weakening hard Accessibility-read failures or the typed incomplete-evidence refusal.
 - Project dialog input and forced Escape through canonical unverified outcomes and exact PID/generation/window receipts so retained-value evidence, driver cancellation, legacy Bridge PID targets, and concurrent-controller races cannot be reported as confirmed effects.

@@ -12,6 +12,7 @@
 - Build branded release disk images from pinned direct Finder-metadata tooling, preserving the signed and notarized drag-to-Applications layout without GUI automation.
 
 ### Fixed
+- Keep root help and version order-independent across canonical kebab- and camel-case runtime-option aliases while preserving correct missing-value errors.
 - Treat `capture video` as caller-local media ingestion so valid files and typed media failures bypass Screen Recording and ScreenCaptureKit-owner preflight while live capture remains gated.
 - Refuse exact-window and dialog Accessibility reads when macOS cannot arm their per-element messaging deadline, and surface timeout reset failures instead of continuing unbounded.
 - Treat Finder's role-inapplicable `AXWindow` value failure as sparse descriptor data so normal exact-window combined observations retain usable Accessibility elements, while every other hard AX read and genuinely incomplete window remains fail-closed.
