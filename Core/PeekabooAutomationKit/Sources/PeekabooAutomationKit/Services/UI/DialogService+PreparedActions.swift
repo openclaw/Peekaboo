@@ -158,7 +158,7 @@ extension DialogService {
 
 @MainActor
 extension DialogService {
-    enum DialogCandidateMembership {
+    enum DialogCandidateMembership: Equatable {
         case structuralMutation
         case readOnlyCompatible
     }
@@ -336,7 +336,8 @@ extension DialogService {
         in window: Element,
         membership: DialogCandidateMembership = .structuralMutation) -> (elements: [Element], readable: Bool)
     {
-        var dialogs: [Element] = []
+        var structuralDialogs: [Element] = []
+        var legacyDialogs: [Element] = []
         var visited: Set<Element> = []
         var stack = [window]
         var readable = true
@@ -344,19 +345,25 @@ extension DialogService {
         while let element = stack.popLast() {
             guard visited.insert(element).inserted else { continue }
             let evidence = DialogElementClassifier.evidence(for: element)
-            let isDialog = switch membership {
-            case .structuralMutation:
-                DialogElementClassifier.isStructuralDialog(evidence)
-            case .readOnlyCompatible:
-                DialogElementClassifier.permitsLegacyReadHeuristics(evidence) &&
-                    self.isDialogElement(element, matching: nil)
-            }
-            if isDialog {
-                dialogs.append(element)
+            if DialogElementClassifier.isStructuralDialog(evidence) {
+                structuralDialogs.append(element)
+            } else if membership == .readOnlyCompatible,
+                      DialogElementClassifier.permitsLegacyReadHeuristics(evidence),
+                      self.isDialogElement(element, matching: nil)
+            {
+                legacyDialogs.append(element)
             }
             let traversal = Self.traversalChildren(of: element)
             readable = readable && traversal.readable
             stack.append(contentsOf: traversal.elements.reversed())
+        }
+        let dialogs = switch membership {
+        case .structuralMutation:
+            structuralDialogs
+        case .readOnlyCompatible:
+            DialogElementClassifier.preferredReadCandidates(
+                structural: structuralDialogs,
+                legacy: legacyDialogs)
         }
         return (dialogs, readable)
     }

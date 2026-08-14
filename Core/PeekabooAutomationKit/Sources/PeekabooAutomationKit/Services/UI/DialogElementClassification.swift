@@ -68,6 +68,13 @@ enum DialogElementClassifier {
             ["AXWindow", "AXUnknown"].contains(evidence.role)
     }
 
+    static func preferredReadCandidates<Candidate>(
+        structural: [Candidate],
+        legacy: [Candidate]) -> [Candidate]
+    {
+        structural.isEmpty ? legacy : structural
+    }
+
     static func containsDialog(in elements: [DetectedElement]) -> Bool {
         elements.contains { element in
             let role = element.attributes["role"] ?? ""

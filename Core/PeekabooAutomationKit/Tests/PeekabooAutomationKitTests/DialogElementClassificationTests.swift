@@ -126,6 +126,16 @@ struct DialogElementClassificationTests {
         #expect(!DialogElementClassifier.permitsLegacyReadHeuristics(unknownButton))
     }
 
+    @Test
+    func `structural read candidates dominate heuristic fallback candidates`() {
+        #expect(DialogElementClassifier.preferredReadCandidates(
+            structural: ["sheet"],
+            legacy: ["parent window"]) == ["sheet"])
+        #expect(DialogElementClassifier.preferredReadCandidates(
+            structural: [String](),
+            legacy: ["unknown window"]) == ["unknown window"])
+    }
+
     @Test(arguments: ["Open Questions", "Saved Draft", "Choose Theme", "Replacement Parts"])
     func `ordinary substring titles are not observation dialogs`(title: String) {
         let evidence = DialogElementEvidence(
