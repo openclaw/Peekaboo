@@ -42,7 +42,7 @@ peekaboo scroll --direction up --amount 2 --on table_orders
 
 # Under capture-owner contention, create an exact classic receipt once and scroll without another capture
 SNAPSHOT_ID=$(peekaboo see --pid 123 --window-id 456 --capture-engine classic --json | jq -r '.data.snapshot_id')
-peekaboo scroll --direction down --on table_orders --snapshot "$SNAPSHOT_ID" --pid 123 --window-id 456
+peekaboo scroll --direction down --on table_orders --snapshot "$SNAPSHOT_ID"
 
 # Smooth horizontal pan after intentionally focusing Keynote
 peekaboo scroll --direction right --smooth --app Keynote --foreground --space-switch
