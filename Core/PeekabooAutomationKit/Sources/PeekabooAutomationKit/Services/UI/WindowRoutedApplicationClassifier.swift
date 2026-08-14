@@ -45,11 +45,20 @@ enum WindowRoutedApplicationClassifier {
     }
 
     static func supportsBackgroundWheelScroll(processIdentifier: pid_t) -> Bool {
-        guard let application = NSRunningApplication(processIdentifier: processIdentifier) else { return false }
+        guard let application = NSRunningApplication(processIdentifier: processIdentifier),
+              self.applicationIsVisible(application)
+        else {
+            return false
+        }
         return self.supportsBackgroundWheelScroll(
-            isHidden: application.isHidden,
-            isTerminated: application.isTerminated,
+            isHidden: false,
+            isTerminated: false,
             kind: self.kind(processIdentifier: processIdentifier))
+    }
+
+    static func applicationIsVisible(processIdentifier: pid_t) -> Bool {
+        guard let application = NSRunningApplication(processIdentifier: processIdentifier) else { return false }
+        return self.applicationIsVisible(application)
     }
 
     static func supportsBackgroundWheelScroll(
@@ -87,5 +96,9 @@ enum WindowRoutedApplicationClassifier {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         return try? handle.read(upToCount: self.executableProbeLimit)
+    }
+
+    private static func applicationIsVisible(_ application: NSRunningApplication) -> Bool {
+        !application.isHidden && !application.isTerminated
     }
 }

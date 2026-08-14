@@ -49,6 +49,8 @@ struct WindowRoutedPointerDriverTests {
             postSkyLight: { _, _ in true },
             postPublic: { event, _ in publicEvents.append(event) },
             resolveTransport: { _ in .publicCGEvent },
+            applicationIsVisible: { _ in true },
+            windowIsVisible: { _ in true },
             sleep: { _ in },
             clickGroupIdentifier: { 992 })
 
@@ -100,6 +102,8 @@ struct WindowRoutedPointerDriverTests {
             postSkyLight: { _, _ in true },
             postPublic: { _, _ in posts += 1 },
             resolveTransport: { _ in .publicCGEvent },
+            applicationIsVisible: { _ in true },
+            windowIsVisible: { _ in true },
             sleep: { _ in })
 
         do {
@@ -121,6 +125,96 @@ struct WindowRoutedPointerDriverTests {
         }
         #expect(posts == 1)
         #expect(validations == 2)
+    }
+
+    @Test
+    @MainActor
+    func `background wheel refuses an initially hidden app before dispatch`() async {
+        var posts = 0
+        let receipt = Self.receipt()
+        let driver = WindowRoutedPointerDriver(
+            hasPostEventAccess: { true },
+            resolveRoute: { _, _, _ in receipt },
+            routeIsCurrent: { _ in true },
+            makeScrollEvent: { _, _ in
+                CGEvent(
+                    scrollWheelEvent2Source: nil,
+                    units: .line,
+                    wheelCount: 1,
+                    wheel1: -1,
+                    wheel2: 0,
+                    wheel3: 0)
+            },
+            stampWindowLocation: { _, _ in true },
+            postSkyLight: { _, _ in true },
+            postPublic: { _, _ in posts += 1 },
+            resolveTransport: { _ in .publicCGEvent },
+            applicationIsVisible: { _ in false },
+            windowIsVisible: { _ in true },
+            sleep: { _ in })
+
+        await #expect(throws: PeekabooError.self) {
+            _ = try await driver.scroll(
+                at: receipt.screenPoint,
+                direction: .down,
+                ticks: 2,
+                targetProcessIdentifier: receipt.identity.ownerProcessIdentifier,
+                targetWindowID: CGWindowID(receipt.identity.windowID),
+                expectedWindowIdentity: receipt.identity,
+                expectedWindowBounds: receipt.bounds)
+        }
+        #expect(posts == 0)
+    }
+
+    @Test
+    @MainActor
+    func `background wheel visibility loss after one tick is retry unsafe`() async {
+        var visibilityChecks = 0
+        var posts = 0
+        let receipt = Self.receipt()
+        let driver = WindowRoutedPointerDriver(
+            hasPostEventAccess: { true },
+            resolveRoute: { _, _, _ in receipt },
+            routeIsCurrent: { _ in true },
+            makeScrollEvent: { _, _ in
+                CGEvent(
+                    scrollWheelEvent2Source: nil,
+                    units: .line,
+                    wheelCount: 1,
+                    wheel1: -1,
+                    wheel2: 0,
+                    wheel3: 0)
+            },
+            stampWindowLocation: { _, _ in true },
+            postSkyLight: { _, _ in true },
+            postPublic: { _, _ in posts += 1 },
+            resolveTransport: { _ in .publicCGEvent },
+            applicationIsVisible: { _ in true },
+            windowIsVisible: { _ in
+                visibilityChecks += 1
+                return visibilityChecks <= 2
+            },
+            sleep: { _ in })
+
+        do {
+            _ = try await driver.scroll(
+                at: receipt.screenPoint,
+                direction: .down,
+                ticks: 3,
+                targetProcessIdentifier: receipt.identity.ownerProcessIdentifier,
+                targetWindowID: CGWindowID(receipt.identity.windowID),
+                expectedWindowIdentity: receipt.identity,
+                expectedWindowBounds: receipt.bounds)
+            Issue.record("Expected post-dispatch visibility loss")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.dispatchState.unitCount?.rawValue == 1)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.projection.requiresFreshObservation)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(posts == 1)
+        #expect(visibilityChecks == 3)
     }
 
     @Test

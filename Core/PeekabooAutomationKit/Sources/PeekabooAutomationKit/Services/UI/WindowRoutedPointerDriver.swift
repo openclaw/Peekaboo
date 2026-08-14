@@ -58,6 +58,8 @@ struct WindowRoutedPointerDriver {
     typealias EventPoster = @MainActor (_ event: CGEvent, _ pid: pid_t) -> Void
     typealias SkyLightEventPoster = @MainActor (_ event: CGEvent, _ pid: pid_t) -> Bool
     typealias TransportResolver = @MainActor (_ pid: pid_t) -> WindowRoutedPointerTransport
+    typealias ApplicationVisibilityValidator = @MainActor (_ pid: pid_t) -> Bool
+    typealias WindowVisibilityValidator = @MainActor (_ receipt: RouteReceipt) -> Bool
     typealias Sleeper = @MainActor (_ duration: Duration) async -> Void
 
     private let hasPostEventAccess: () -> Bool
@@ -70,6 +72,8 @@ struct WindowRoutedPointerDriver {
     private let postSkyLight: SkyLightEventPoster
     private let postPublic: EventPoster
     private let resolveTransport: TransportResolver
+    private let applicationIsVisible: ApplicationVisibilityValidator
+    private let windowIsVisible: WindowVisibilityValidator
     private let sleep: Sleeper
     private let clickGroupIdentifier: () -> Int64
 
@@ -84,6 +88,9 @@ struct WindowRoutedPointerDriver {
         postSkyLight: @escaping SkyLightEventPoster = WindowRoutedPointerSPI.postToPid,
         postPublic: @escaping EventPoster = { event, pid in event.postToPid(pid) },
         resolveTransport: @escaping TransportResolver = Self.resolveLiveTransport,
+        applicationIsVisible: @escaping ApplicationVisibilityValidator =
+            WindowRoutedApplicationClassifier.applicationIsVisible,
+        windowIsVisible: @escaping WindowVisibilityValidator = Self.validateLiveWindowVisibility,
         sleep: @escaping Sleeper = { duration in
             // A mouse-down must always be paired with its mouse-up. Detached sleeping makes the
             // short down/up interval non-cancellable; cancellation is observed immediately after
@@ -106,6 +113,8 @@ struct WindowRoutedPointerDriver {
         self.postSkyLight = postSkyLight
         self.postPublic = postPublic
         self.resolveTransport = resolveTransport
+        self.applicationIsVisible = applicationIsVisible
+        self.windowIsVisible = windowIsVisible
         self.sleep = sleep
         self.clickGroupIdentifier = clickGroupIdentifier
     }
@@ -248,10 +257,11 @@ struct WindowRoutedPointerDriver {
         let receipt = try self.resolveRoute(targetProcessIdentifier, targetWindowID, point)
         guard receipt.identity == expectedWindowIdentity,
               receipt.bounds == expectedWindowBounds,
-              receipt.bounds.contains(point)
+              receipt.bounds.contains(point),
+              self.scrollTargetIsVisible(receipt)
         else {
             throw PeekabooError.snapshotStale(
-                "Resolved background wheel route does not match the captured PID, window, bounds, or point")
+                "Resolved background wheel route does not match the visible captured PID, window, bounds, or point")
         }
 
         let transport = self.resolveTransport(targetProcessIdentifier)
@@ -265,10 +275,10 @@ struct WindowRoutedPointerDriver {
                     eventCount: postedEventCount,
                     cause: "The request was cancelled after routed wheel events were emitted")
             }
-            guard self.routeIsCurrent(receipt) else {
+            guard self.scrollRouteIsCurrent(receipt) else {
                 if postedEventCount == 0 {
                     throw PeekabooError.snapshotStale(
-                        "Background wheel target changed owner, process generation, window identity, or bounds")
+                        "Background wheel target changed visibility, owner, process generation, window, or bounds")
                 }
                 throw Self.scrollDispatchFailure(
                     eventCount: postedEventCount,
@@ -306,7 +316,7 @@ struct WindowRoutedPointerDriver {
             }
         }
 
-        guard self.routeIsCurrent(receipt) else {
+        guard self.scrollRouteIsCurrent(receipt) else {
             throw Self.scrollDispatchFailure(
                 eventCount: postedEventCount,
                 cause: "Window-routed wheel events were posted, but final target validation failed")
@@ -319,6 +329,14 @@ struct WindowRoutedPointerDriver {
             delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
             evidence: .deliveryAccepted,
             unitCount: unitCount)
+    }
+
+    private func scrollRouteIsCurrent(_ receipt: RouteReceipt) -> Bool {
+        self.routeIsCurrent(receipt) && self.scrollTargetIsVisible(receipt)
+    }
+
+    private func scrollTargetIsVisible(_ receipt: RouteReceipt) -> Bool {
+        self.applicationIsVisible(receipt.identity.ownerProcessIdentifier) && self.windowIsVisible(receipt)
     }
 
     private func postScrollEvent(
@@ -613,6 +631,22 @@ struct WindowRoutedPointerDriver {
     private static func validateLiveProcessGeneration(_ receipt: RouteReceipt) -> Bool {
         SystemIdentityResolver.processStartIdentity(receipt.identity.ownerProcessIdentifier) ==
             receipt.identity.ownerProcessStartIdentity
+    }
+
+    private static func validateLiveWindowVisibility(_ receipt: RouteReceipt) -> Bool {
+        guard let windowID = CGWindowID(exactly: receipt.identity.windowID),
+              let window = SystemIdentityResolver.windowIdentity(windowID),
+              window.windowID == windowID,
+              window.ownerProcessIdentifier == receipt.identity.ownerProcessIdentifier,
+              window.bounds == receipt.bounds,
+              window.layer == 0,
+              window.isOnScreen,
+              window.alpha > 0,
+              window.bounds.contains(receipt.screenPoint)
+        else {
+            return false
+        }
+        return true
     }
 
     private static func resolveLiveTransport(_ processIdentifier: pid_t) -> WindowRoutedPointerTransport {
