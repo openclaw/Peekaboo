@@ -737,6 +737,60 @@ struct ActionOutcomeCommandTests {
     }
 
     @Test
+    func `quit batch cancellation between targets preserves a pre-dispatch refusal`() async throws {
+        let applications = [
+            AutomationTestFixtures.application(
+                processIdentifier: 42,
+                processStartIdentity: 7,
+                bundleIdentifier: "com.example.first",
+                name: "First Fixture",
+                isHiddenKnown: true,
+                activationPolicy: .regular
+            ),
+            AutomationTestFixtures.application(
+                processIdentifier: 43,
+                processStartIdentity: 8,
+                bundleIdentifier: "com.example.second",
+                name: "Second Fixture",
+                isHiddenKnown: true,
+                activationPolicy: .regular
+            ),
+        ]
+        let refusal = DesktopActionFailure.preDispatchRefusal(
+            route: .bridge,
+            reason: .targetUnavailable,
+            message: "Target unavailable"
+        )
+        let service = OutcomeStubApplicationService(applications: applications)
+        service.quitActionSteps = [.failureAndCancel(refusal)]
+        let services = TestServicesFactory.makePeekabooServices(applications: service)
+
+        let result = try await Task {
+            try await InProcessCommandRunner.run(
+                ["app", "quit", "--all", "--json", "--no-remote"],
+                services: services
+            )
+        }.value
+        let object = try Self.jsonObject(result.stdout)
+        let data = try #require(object["data"] as? [String: Any])
+        let results = try #require(data["results"] as? [[String: Any]])
+        let outcome = try #require(object["outcome"] as? [String: Any])
+        let error = try #require(object["error"] as? [String: Any])
+
+        #expect(result.exitStatus == 1)
+        #expect(service.quitActionResultCallCount == 1)
+        #expect(results.count == 1)
+        #expect(results.first?["success"] as? Bool == false)
+        #expect(object["effect"] as? String == "refused")
+        #expect(outcome["state"] as? String == "refused")
+        #expect(outcome["refusal_reason"] as? String == "target_unavailable")
+        #expect(outcome["dispatch_state"] as? String == "none")
+        #expect(outcome["retry_safe"] as? Bool == true)
+        #expect(error["retry_safe"] as? Bool == true)
+        #expect(error["mutation_dispatched"] as? Bool == false)
+    }
+
+    @Test
     func `explicit snapshot refuses a second mutation after observe before retry outcome`() async throws {
         let automation = OutcomeStubAutomationService()
         automation.actionOutcome = .dispatchedUnverified(

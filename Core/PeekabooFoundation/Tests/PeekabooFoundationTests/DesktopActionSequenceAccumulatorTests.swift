@@ -439,10 +439,12 @@ struct DesktopActionSequenceAccumulatorTests {
             attemptedCount: 1,
             plannedCount: 2,
             inFlightAttemptMayHaveDispatched: false))
-        #expect(betweenTargets.state == .partial)
-        #expect(betweenTargets.route == .bridge)
-        #expect(betweenTargets.delivery == self.localBackground)
-        #expect(betweenTargets.dispatchState == .dispatched(unitCount: .one))
+        let betweenTargetsOutcome = try #require(betweenTargets.outcome)
+        #expect(betweenTargets.effect == .partial)
+        #expect(betweenTargetsOutcome.state == .partial)
+        #expect(betweenTargetsOutcome.route == .bridge)
+        #expect(betweenTargetsOutcome.delivery == self.localBackground)
+        #expect(betweenTargetsOutcome.dispatchState == .dispatched(unitCount: .one))
 
         let duringTarget = try #require(DesktopActionSequenceAccumulator.interruptedBatch(
             completedOutcomes: [confirmed],
@@ -450,44 +452,84 @@ struct DesktopActionSequenceAccumulatorTests {
             attemptedCount: 1,
             plannedCount: 2,
             inFlightAttemptMayHaveDispatched: true))
-        #expect(duringTarget.state == .indeterminate)
-        #expect(duringTarget.route == .bridge)
-        #expect(duringTarget.delivery == nil)
-        #expect(try duringTarget.dispatchState == .mayHaveDispatched(unitCount: self.units(2)))
-        #expect(duringTarget.retrySafety == .unsafe)
-        #expect(duringTarget.projection.requiresFreshObservation)
+        let duringTargetOutcome = try #require(duringTarget.outcome)
+        #expect(duringTarget.effect == .unverifiable)
+        #expect(duringTargetOutcome.state == .indeterminate)
+        #expect(duringTargetOutcome.route == .bridge)
+        #expect(duringTargetOutcome.delivery == nil)
+        #expect(try duringTargetOutcome.dispatchState == .mayHaveDispatched(unitCount: self.units(2)))
+        #expect(duringTargetOutcome.retrySafety == .unsafe)
+        #expect(duringTargetOutcome.projection.requiresFreshObservation)
 
-        #expect(DesktopActionSequenceAccumulator.interruptedBatch(
+        let noChange = try #require(DesktopActionSequenceAccumulator.interruptedBatch(
             completedOutcomes: [.confirmedNoChange(route: .bridge)],
             succeededCount: 1,
             attemptedCount: 1,
             plannedCount: 2,
-            inFlightAttemptMayHaveDispatched: false) == nil)
+            inFlightAttemptMayHaveDispatched: false))
+        #expect(noChange.outcome == nil)
+        #expect(noChange.effect == .suspectedNoop)
+        let refusal = try #require(DesktopActionSequenceAccumulator.interruptedBatch(
+            completedOutcomes: [.refused(route: .bridge, reason: .targetUnavailable)],
+            succeededCount: 0,
+            attemptedCount: 1,
+            plannedCount: 2,
+            inFlightAttemptMayHaveDispatched: false))
+        #expect(refusal.outcome?.state == .refused)
+        #expect(refusal.effect == .refused)
+        let mixedRefusals = try #require(DesktopActionSequenceAccumulator.interruptedBatch(
+            completedOutcomes: [
+                .refused(route: .bridge, reason: .targetUnavailable),
+                .refused(route: .bridge, reason: .permissionDenied),
+            ],
+            succeededCount: 0,
+            attemptedCount: 2,
+            plannedCount: 3,
+            inFlightAttemptMayHaveDispatched: false))
+        #expect(mixedRefusals.outcome == nil)
+        #expect(mixedRefusals.effect == .refused)
+        let missingRefusalReceipt = try #require(DesktopActionSequenceAccumulator.interruptedBatch(
+            completedOutcomes: [
+                .refused(route: .bridge, reason: .targetUnavailable),
+                nil,
+            ],
+            succeededCount: 0,
+            attemptedCount: 2,
+            plannedCount: 3,
+            inFlightAttemptMayHaveDispatched: false))
+        #expect(missingRefusalReceipt.outcome?.state == .indeterminate)
+        #expect(missingRefusalReceipt.effect == .unverifiable)
         let receiptlessInFlight = try #require(DesktopActionSequenceAccumulator.interruptedBatch(
             completedOutcomes: [nil],
             succeededCount: 1,
             attemptedCount: 1,
             plannedCount: 2,
             inFlightAttemptMayHaveDispatched: true))
-        #expect(receiptlessInFlight.state == .indeterminate)
-        #expect(receiptlessInFlight.delivery == nil)
-        #expect(try receiptlessInFlight.dispatchState == .mayHaveDispatched(unitCount: self.units(2)))
-        #expect(receiptlessInFlight.retrySafety == .unsafe)
+        let receiptlessInFlightOutcome = try #require(receiptlessInFlight.outcome)
+        #expect(receiptlessInFlight.effect == .unverifiable)
+        #expect(receiptlessInFlightOutcome.state == .indeterminate)
+        #expect(receiptlessInFlightOutcome.delivery == nil)
+        #expect(try receiptlessInFlightOutcome.dispatchState == .mayHaveDispatched(unitCount: self.units(2)))
+        #expect(receiptlessInFlightOutcome.retrySafety == .unsafe)
         let firstInFlight = try #require(DesktopActionSequenceAccumulator.interruptedBatch(
             completedOutcomes: [],
             succeededCount: 0,
             attemptedCount: 0,
             plannedCount: 1,
             inFlightAttemptMayHaveDispatched: true))
-        #expect(firstInFlight.state == .indeterminate)
-        #expect(firstInFlight.dispatchState == .mayHaveDispatched(unitCount: .one))
-        #expect(firstInFlight.retrySafety == .unsafe)
-        #expect(DesktopActionSequenceAccumulator.interruptedBatch(
+        let firstInFlightOutcome = try #require(firstInFlight.outcome)
+        #expect(firstInFlight.effect == .unverifiable)
+        #expect(firstInFlightOutcome.state == .indeterminate)
+        #expect(firstInFlightOutcome.dispatchState == .mayHaveDispatched(unitCount: .one))
+        #expect(firstInFlightOutcome.retrySafety == .unsafe)
+        let receiptlessBetweenTargets = try #require(DesktopActionSequenceAccumulator.interruptedBatch(
             completedOutcomes: [nil],
             succeededCount: 1,
             attemptedCount: 1,
             plannedCount: 2,
-            inFlightAttemptMayHaveDispatched: false) == nil)
+            inFlightAttemptMayHaveDispatched: false))
+        #expect(receiptlessBetweenTargets.outcome == nil)
+        #expect(receiptlessBetweenTargets.effect == .partial)
         #expect(DesktopActionSequenceAccumulator.interruptedBatch(
             completedOutcomes: [confirmed],
             succeededCount: 2,

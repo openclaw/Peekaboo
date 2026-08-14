@@ -8,6 +8,7 @@ final class OutcomeStubApplicationService: StubApplicationService, ApplicationSe
     enum QuitActionStep {
         case result(payload: Bool, outcome: DesktopActionOutcome?)
         case failure(any Error)
+        case failureAndCancel(any Error)
     }
 
     var actionOutcome: DesktopActionOutcome? = .confirmedChange(
@@ -47,6 +48,9 @@ final class OutcomeStubApplicationService: StubApplicationService, ApplicationSe
                 _ = try await self.quitApplication(request: request)
                 return DesktopActionResult(payload: payload, outcome: outcome)
             case let .failure(error):
+                throw error
+            case let .failureAndCancel(error):
+                withUnsafeCurrentTask { $0?.cancel() }
                 throw error
             }
         }

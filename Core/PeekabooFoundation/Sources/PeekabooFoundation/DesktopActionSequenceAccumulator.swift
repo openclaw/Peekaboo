@@ -39,6 +39,19 @@ public enum DesktopActionMutationDisposition: Equatable, Sendable {
 /// a successfully returned legacy action is `.dispatched`, while an interrupted or otherwise uncertain
 /// phase is `.mayHaveDispatched`.
 public struct DesktopActionSequenceAccumulator: Sendable {
+    public struct InterruptedBatchResult: Sendable {
+        public let outcome: DesktopActionOutcome?
+        public let effect: DesktopActionOutcome.Effect
+
+        fileprivate init(
+            outcome: DesktopActionOutcome?,
+            fallbackEffect: DesktopActionOutcome.Effect)
+        {
+            self.outcome = outcome
+            self.effect = outcome?.effect ?? fallbackEffect
+        }
+    }
+
     public enum Step: Sendable {
         case outcome(DesktopActionOutcome)
         case reportedOutcome(
@@ -217,16 +230,13 @@ public struct DesktopActionSequenceAccumulator: Sendable {
         attemptedCount: Int,
         plannedCount: Int,
         inFlightAttemptMayHaveDispatched: Bool,
-        fallbackRoute: DesktopActionOutcome.Route = .local) -> DesktopActionOutcome?
+        fallbackRoute: DesktopActionOutcome.Route = .local) -> InterruptedBatchResult?
     {
         guard plannedCount > attemptedCount,
               attemptedCount >= 0,
               (0...attemptedCount).contains(succeededCount),
               outcomes.count == attemptedCount
         else { return nil }
-
-        let hasReportedOutcome = outcomes.contains(where: { $0 != nil })
-        guard hasReportedOutcome || inFlightAttemptMayHaveDispatched else { return nil }
 
         let completedOutcome = self.completedBatch(
             outcomes: outcomes,
@@ -244,25 +254,50 @@ public struct DesktopActionSequenceAccumulator: Sendable {
                 }
             }
             sequence.record(.mayHaveDispatched(route: nil, delivery: nil, unitCount: .one))
-            return .indeterminate(
-                route: completedOutcome?.route ?? fallbackRoute,
-                delivery: nil,
-                evidence: .completionUnknown,
-                unitCount: sequence.mutationDisposition.unitCount)
+            return InterruptedBatchResult(
+                outcome: .indeterminate(
+                    route: completedOutcome?.route ?? fallbackRoute,
+                    delivery: nil,
+                    evidence: .completionUnknown,
+                    unitCount: sequence.mutationDisposition.unitCount),
+                fallbackEffect: .unverifiable)
         }
 
-        guard let completedOutcome else { return nil }
+        guard let completedOutcome else {
+            let reportedOutcomes = outcomes.compactMap(\.self)
+            let allReportedOutcomesAvoidedDispatch = reportedOutcomes.count == attemptedCount &&
+                !reportedOutcomes.isEmpty &&
+                reportedOutcomes.allSatisfy { !$0.dispatchState.mutationDispatched }
+            let fallbackEffect: DesktopActionOutcome.Effect = if allReportedOutcomesAvoidedDispatch {
+                reportedOutcomes.contains(where: { $0.state == .refused }) ? .refused : .suspectedNoop
+            } else if reportedOutcomes.contains(where: {
+                $0.state == .dispatchedUnverified || $0.state == .indeterminate
+            }) {
+                .unverifiable
+            } else if reportedOutcomes.contains(where: \.dispatchState.mutationDispatched) ||
+                attemptedCount > 0
+            {
+                .partial
+            } else {
+                .suspectedNoop
+            }
+            return InterruptedBatchResult(outcome: nil, fallbackEffect: fallbackEffect)
+        }
         switch completedOutcome.state {
         case .confirmedChange, .suspectedNoop:
             guard let delivery = completedOutcome.delivery else { return nil }
-            return .partial(
-                route: completedOutcome.route,
-                delivery: delivery,
-                unitCount: completedOutcome.dispatchState.unitCount)
-        case .confirmedNoChange, .refused:
-            return nil
+            return InterruptedBatchResult(
+                outcome: .partial(
+                    route: completedOutcome.route,
+                    delivery: delivery,
+                    unitCount: completedOutcome.dispatchState.unitCount),
+                fallbackEffect: .partial)
+        case .confirmedNoChange:
+            return InterruptedBatchResult(outcome: nil, fallbackEffect: .suspectedNoop)
+        case .refused:
+            return InterruptedBatchResult(outcome: completedOutcome, fallbackEffect: .refused)
         case .partial, .dispatchedUnverified, .indeterminate:
-            return completedOutcome
+            return InterruptedBatchResult(outcome: completedOutcome, fallbackEffect: completedOutcome.effect)
         }
     }
 

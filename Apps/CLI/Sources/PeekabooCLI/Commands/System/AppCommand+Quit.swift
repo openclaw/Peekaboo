@@ -117,21 +117,15 @@ extension AppCommand {
                 )
                 let allSucceeded = !wasCancelled && results.allSatisfy(\.success)
                 let succeededCount = results.count(where: \.success)
-                let aggregateOutcome = if wasCancelled {
-                    DesktopActionSequenceAccumulator.interruptedBatch(
-                        completedOutcomes: actionOutcomes,
-                        succeededCount: succeededCount,
-                        attemptedCount: results.count,
-                        plannedCount: quitApps.count,
-                        inFlightAttemptMayHaveDispatched: cancellationInterruptedAttempt
-                    )
-                } else {
-                    DesktopActionSequenceAccumulator.completedBatch(
-                        outcomes: actionOutcomes,
-                        succeededCount: succeededCount,
-                        attemptedCount: results.count
-                    )
-                }
+                let batchOutcome = Self.resolveBatchOutcome(
+                    actionOutcomes: actionOutcomes,
+                    succeededCount: succeededCount,
+                    attemptedCount: results.count,
+                    plannedCount: quitApps.count,
+                    wasCancelled: wasCancelled,
+                    cancellationInterruptedAttempt: cancellationInterruptedAttempt
+                )
+                let aggregateOutcome = batchOutcome.outcome
                 let singleFailureHint = results.count == 1 ? caughtFailureHints[0] : nil
                 let failureHint: String? = if wasCancelled {
                     "The quit batch was cancelled; inspect completed targets before retrying."
@@ -154,7 +148,7 @@ extension AppCommand {
                 if self.jsonOutput {
                     let response = ResultEnvelope(
                         success: allSucceeded,
-                        effect: aggregateOutcome?.effect ??
+                        effect: batchOutcome.interruptionEffect ?? aggregateOutcome?.effect ??
                             (allSucceeded ? .confirmed :
                                 (wasCancelled || succeededCount > 0 ? .partial : .suspectedNoop)),
                         outcome: aggregateOutcome?.projection,
@@ -203,6 +197,39 @@ extension AppCommand {
                 handleError(error)
                 throw ExitCode(1)
             }
+        }
+
+        private struct BatchOutcome {
+            let outcome: DesktopActionOutcome?
+            let interruptionEffect: DesktopActionOutcome.Effect?
+        }
+
+        private static func resolveBatchOutcome(
+            actionOutcomes: [DesktopActionOutcome?],
+            succeededCount: Int,
+            attemptedCount: Int,
+            plannedCount: Int,
+            wasCancelled: Bool,
+            cancellationInterruptedAttempt: Bool
+        ) -> BatchOutcome {
+            if wasCancelled,
+               let interruption = DesktopActionSequenceAccumulator.interruptedBatch(
+                   completedOutcomes: actionOutcomes,
+                   succeededCount: succeededCount,
+                   attemptedCount: attemptedCount,
+                   plannedCount: plannedCount,
+                   inFlightAttemptMayHaveDispatched: cancellationInterruptedAttempt
+               ) {
+                return BatchOutcome(outcome: interruption.outcome, interruptionEffect: interruption.effect)
+            }
+            return BatchOutcome(
+                outcome: DesktopActionSequenceAccumulator.completedBatch(
+                    outcomes: actionOutcomes,
+                    succeededCount: succeededCount,
+                    attemptedCount: attemptedCount
+                ),
+                interruptionEffect: nil
+            )
         }
 
         private func validateArguments() throws {
