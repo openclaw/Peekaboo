@@ -15,7 +15,6 @@
 - Treat `capture video` as caller-local media ingestion so valid files and typed media failures bypass Screen Recording and ScreenCaptureKit-owner preflight while live capture remains gated.
 - Refuse exact-window and dialog Accessibility reads when macOS cannot arm their per-element messaging deadline, and surface timeout reset failures instead of continuing unbounded.
 - Treat Finder's role-inapplicable `AXWindow` value failure as sparse descriptor data so normal exact-window combined observations retain usable Accessibility elements, while every other hard AX read and genuinely incomplete window remains fail-closed.
-- Report missing, empty, and malformed MCP `press` key shapes directly instead of inventing a chord named `keys`, while preserving retry-safe zero-dispatch metadata.
 - Refuse exact-window combined observations when Accessibility returns no usable elements, preserving the requested raster and retry-safe `ACCESSIBILITY_INCOMPLETE` semantics across current and legacy Bridge hosts while explicit screenshot-only capture remains successful.
 - Validate request-only `click`, `move`, `type`, and `drag` arguments before runtime-host selection so malformed requests cannot be masked by Bridge availability or trigger unnecessary host startup.
 - Keep concrete interaction snapshots out of ScreenCaptureKit-owner preflight because they cannot refresh or capture, and give omitted/latest snapshot flows an actionable `see --capture-engine classic` recovery.
