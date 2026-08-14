@@ -37,6 +37,13 @@ struct CommanderRegistryDefinitionTests {
                      .duplicateArgumentLabel,
                      .duplicateOptionLabel,
                      .duplicateFlagLabel,
+                     .optionHasNoNames,
+                     .emptyOptionName,
+                     .unreachableOptionName,
+                     .undeclaredJoinedShortName,
+                     .flagHasNoNames,
+                     .emptyFlagName,
+                     .unreachableFlagName,
                      .duplicateOptionName,
                      .duplicateFlagName,
                      .conflictingName:
