@@ -191,27 +191,12 @@ extension DialogService {
         // AX wrappers can retain the pre-input value after global keyboard delivery. Re-select the
         // exact retained field before sampling the postcondition, then validate it again after the
         // bounded read so a replacement field can never supply confirmation evidence.
-        do {
-            let refreshedTarget = try await self.revalidateDialogTarget(
-                target: plan.target,
-                retainedWindow: plan.window,
-                retainedDialog: plan.dialog,
-                operation: "input retained-value read")
-            targetField = try self.revalidateDialogInputField(
-                targetField,
-                in: refreshedTarget.dialog,
-                identifier: fieldIdentifier,
-                exactSelection: exactFieldSelection)
-        } catch {
-            guard let dispatchedUnitCount else { throw error }
-            throw DesktopActionFailure.dispatchedUnverified(
-                delivery: Self.foregroundKeyboardDelivery,
-                evidence: .deliveryAccepted,
-                unitCount: dispatchedUnitCount,
-                message: "Dialog input was dispatched, but the exact field could not be refreshed for verification.",
-                hint: "Observe the exact dialog and field before retrying.",
-                causeDescription: error.localizedDescription)
-        }
+        targetField = try await self.refreshedDialogInputField(
+            targetField,
+            execution: execution,
+            operation: "input retained-value read",
+            dispatchedUnitCount: dispatchedUnitCount,
+            failureMessage: "Dialog input was dispatched, but the exact field could not be refreshed for verification.")
         let expectedValue = clearExisting ? text : nil
         let observedValue: String?
         do {
@@ -221,27 +206,12 @@ extension DialogService {
         } catch is CancellationError {
             try Self.rethrowDialogInputReadCancellation(dispatchedUnitCount: dispatchedUnitCount)
         }
-        do {
-            let refreshedTarget = try await self.revalidateDialogTarget(
-                target: plan.target,
-                retainedWindow: plan.window,
-                retainedDialog: plan.dialog,
-                operation: "input postcondition")
-            targetField = try self.revalidateDialogInputField(
-                targetField,
-                in: refreshedTarget.dialog,
-                identifier: fieldIdentifier,
-                exactSelection: exactFieldSelection)
-        } catch {
-            guard let dispatchedUnitCount else { throw error }
-            throw DesktopActionFailure.dispatchedUnverified(
-                delivery: Self.foregroundKeyboardDelivery,
-                evidence: .deliveryAccepted,
-                unitCount: dispatchedUnitCount,
-                message: "Dialog input was dispatched, but the exact dialog field receipt changed.",
-                hint: "Observe the exact dialog and field before retrying.",
-                causeDescription: error.localizedDescription)
-        }
+        targetField = try await self.refreshedDialogInputField(
+            targetField,
+            execution: execution,
+            operation: "input postcondition",
+            dispatchedUnitCount: dispatchedUnitCount,
+            failureMessage: "Dialog input was dispatched, but the exact dialog field receipt changed.")
         let outcome = try Self.dialogInputOutcome(
             expectedValue: expectedValue,
             observedValue: observedValue,
@@ -267,6 +237,36 @@ extension DialogService {
             targetReceipt: execution.publishTargetReceipt ? Self.desktopActionTargetReceipt(plan.target) : nil)
         self.logger.info("\(AgentDisplayTokens.Status.success) Dialog input delivery completed")
         return result
+    }
+
+    private func refreshedDialogInputField(
+        _ retainedField: Element,
+        execution: RetainedDialogInputPlan,
+        operation: String,
+        dispatchedUnitCount: DesktopActionOutcome.DispatchUnitCount?,
+        failureMessage: String) async throws -> Element
+    {
+        do {
+            let refreshedTarget = try await self.revalidateDialogTarget(
+                target: execution.dialog.target,
+                retainedWindow: execution.dialog.window,
+                retainedDialog: execution.dialog.dialog,
+                operation: operation)
+            return try self.revalidateDialogInputField(
+                retainedField,
+                in: refreshedTarget.dialog,
+                identifier: execution.fieldIdentifier,
+                exactSelection: execution.exactFieldSelection)
+        } catch {
+            guard let dispatchedUnitCount else { throw error }
+            throw DesktopActionFailure.dispatchedUnverified(
+                delivery: Self.foregroundKeyboardDelivery,
+                evidence: .deliveryAccepted,
+                unitCount: dispatchedUnitCount,
+                message: failureMessage,
+                hint: "Observe the exact dialog and field before retrying.",
+                causeDescription: error.localizedDescription)
+        }
     }
 
     private func dispatchValidatedDialogInput(
