@@ -410,6 +410,17 @@ freeze_and_register_controller_children() {
     done < <(ps -axo pid=,ppid= | awk -v parent="$controller_pid" '$2 == parent {print $1}')
 }
 
+read_pending_focus_state() {
+    local heartbeat_path="${1:?Heartbeat path required}"
+    jq -r '
+        if has("pendingFocusedWindowChange") and
+            (.pendingFocusedWindowChange | type) == "boolean"
+        then .pendingFocusedWindowChange
+        else true
+        end
+    ' "$heartbeat_path"
+}
+
 finish_monitoring() {
     local pre_cleanup_sequence="$1"
     local final_sample_path="$2"
@@ -439,7 +450,7 @@ finish_monitoring() {
         heartbeat_timestamp="$(jq -r '.timestamp // 0' "$ARTIFACT_ROOT/monitor-heartbeat.json" 2>/dev/null || printf 0)"
         pending_activations="$(jq -r '.pendingActivationCount // -1' \
             "$ARTIFACT_ROOT/monitor-heartbeat.json" 2>/dev/null || printf -- -1)"
-        pending_focus="$(jq -r '.pendingFocusedWindowChange // true' \
+        pending_focus="$(read_pending_focus_state \
             "$ARTIFACT_ROOT/monitor-heartbeat.json" 2>/dev/null || printf true)"
         final_sample_timestamp="$(jq -r '.timestamp // 0' "$final_sample_path" 2>/dev/null || printf 0)"
         if [[ "$current_sequence" =~ ^[0-9]+$ && "$current_sequence" -gt "$pre_cleanup_sequence" ]] && \
@@ -842,6 +853,24 @@ run_client_lifecycle_self_test() {
     local timeout_exit=0 fast_exit=0 bounded_exit=0 mismatch_exit=0 direct_cleanup_exit=0
     local timeout_pid timeout_identity timeout_inflight timeout_started timeout_finished timeout_elapsed
     local timeout_deadline timeout_kill_at timeout_kill_overrun timeout_completion_overrun
+    local settled_focus_preserved=false missing_focus_blocks=false null_focus_blocks=false
+    jq -n '{pendingFocusedWindowChange: false}' \
+        > "$ARTIFACT_ROOT/results/lifecycle-settled-heartbeat.json"
+    if [[ "$(read_pending_focus_state \
+        "$ARTIFACT_ROOT/results/lifecycle-settled-heartbeat.json")" == false ]]; then
+        settled_focus_preserved=true
+    fi
+    jq -n '{}' > "$ARTIFACT_ROOT/results/lifecycle-missing-focus-heartbeat.json"
+    if [[ "$(read_pending_focus_state \
+        "$ARTIFACT_ROOT/results/lifecycle-missing-focus-heartbeat.json")" == true ]]; then
+        missing_focus_blocks=true
+    fi
+    jq -n '{pendingFocusedWindowChange: null}' \
+        > "$ARTIFACT_ROOT/results/lifecycle-null-focus-heartbeat.json"
+    if [[ "$(read_pending_focus_state \
+        "$ARTIFACT_ROOT/results/lifecycle-null-focus-heartbeat.json")" == true ]]; then
+        null_focus_blocks=true
+    fi
     PEEKABOO_BIN="$PROBE_BIN"
     OPERATION_TIMEOUT_SECONDS=1
     spawn_controlled_cli "$ARTIFACT_ROOT/results/lifecycle-timeout" "$PROBE_BIN" ignore-term
@@ -945,7 +974,10 @@ run_client_lifecycle_self_test() {
         --arg fastPath "$fast_path" --argjson boundedExit "$bounded_exit" \
         --argjson fastZombieRejected "$fast_zombie_rejected" \
         --argjson mismatchExit "$mismatch_exit" \
-        --argjson mismatchGone "$mismatch_gone" '
+        --argjson mismatchGone "$mismatch_gone" \
+        --argjson settledFocusPreserved "$settled_focus_preserved" \
+        --argjson missingFocusBlocks "$missing_focus_blocks" \
+        --argjson nullFocusBlocks "$null_focus_blocks" '
         {
             success: (
                 $timeoutExit == 124 and $timeoutElapsed >= 0.8 and
@@ -955,7 +987,8 @@ run_client_lifecycle_self_test() {
                 $unknownState == 2 and $unknownCleanupGone and
                 $fastExit == 0 and $fastPath == "/usr/bin/true" and
                 $fastZombieRejected and $boundedExit == 0 and
-                $mismatchExit != 0 and $mismatchGone
+                $mismatchExit != 0 and $mismatchGone and
+                $settledFocusPreserved and $missingFocusBlocks and $nullFocusBlocks
             ),
             timeout_exit: $timeoutExit,
             timeout_elapsed_seconds: $timeoutElapsed,
@@ -970,7 +1003,10 @@ run_client_lifecycle_self_test() {
             fast_zombie_rejected: $fastZombieRejected,
             bounded_runner_exit: $boundedExit,
             mismatch_exit: $mismatchExit,
-            mismatch_generation_gone: $mismatchGone
+            mismatch_generation_gone: $mismatchGone,
+            settled_focus_preserved: $settledFocusPreserved,
+            missing_focus_blocks: $missingFocusBlocks,
+            null_focus_blocks: $nullFocusBlocks
         }
     '
 }
