@@ -163,9 +163,14 @@ public struct DesktopActionSequenceAccumulator: Sendable {
                 evidence: responseLost == nil ? .completionUnknown : .responseLost,
                 unitCount: resolution.mutationDisposition.unitCount)
         }
-        guard succeededCount > 0, succeededCount < attemptedCount else {
+        let hasReportedPartial = reportedOutcomes.contains { $0.state == .partial }
+        guard hasReportedPartial || (succeededCount > 0 && succeededCount < attemptedCount) else {
             return aggregateOutcome
         }
+        let hasStrongerUncertainty = reportedOutcomes.contains {
+            $0.state == .dispatchedUnverified || $0.state == .indeterminate
+        }
+        guard !hasStrongerUncertainty else { return aggregateOutcome }
 
         let dispatched = reportedOutcomes.filter(\.dispatchState.mutationDispatched)
         guard !dispatched.isEmpty,

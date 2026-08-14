@@ -358,6 +358,50 @@ struct DesktopActionSequenceAccumulatorTests {
         let twoUnits = try self.units(2)
         #expect(partial.dispatchState.unitCount == twoUnits)
 
+        let reportedPartial = DesktopActionOutcome.partial(
+            delivery: self.localBackground,
+            unitCount: .one)
+        let allFailedPartial = try #require(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [reportedPartial, reportedPartial],
+            succeededCount: 0,
+            attemptedCount: 2))
+        #expect(allFailedPartial.state == .partial)
+        #expect(allFailedPartial.dispatchState.unitCount == twoUnits)
+
+        let partialAndNoChange = try #require(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [reportedPartial, .confirmedNoChange()],
+            succeededCount: 0,
+            attemptedCount: 2))
+        #expect(partialAndNoChange.state == .partial)
+        #expect(partialAndNoChange.dispatchState.unitCount == .one)
+
+        let partialAndResponseLoss = try #require(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [
+                reportedPartial,
+                .indeterminate(
+                    delivery: self.localBackground,
+                    evidence: .responseLost,
+                    unitCount: .one),
+            ],
+            succeededCount: 0,
+            attemptedCount: 2))
+        #expect(partialAndResponseLoss.state == .indeterminate)
+        #expect(partialAndResponseLoss.evidence == .responseLost)
+        #expect(partialAndResponseLoss.dispatchState == .mayHaveDispatched(unitCount: twoUnits))
+
+        let partialAndUnverified = try #require(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [
+                reportedPartial,
+                .dispatchedUnverified(
+                    delivery: self.localBackground,
+                    evidence: .deliveryAccepted,
+                    unitCount: .one),
+            ],
+            succeededCount: 0,
+            attemptedCount: 2))
+        #expect(partialAndUnverified.state == .dispatchedUnverified)
+        #expect(partialAndUnverified.dispatchState == .dispatched(unitCount: twoUnits))
+
         let foreground = DesktopActionOutcome.suspectedNoop(
             delivery: .init(mechanism: .processTargetedEvents, mode: .foreground),
             unitCount: .one)
