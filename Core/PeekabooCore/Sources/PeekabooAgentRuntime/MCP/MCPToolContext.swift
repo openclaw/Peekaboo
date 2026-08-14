@@ -5,6 +5,20 @@ import PeekabooAutomationKit
 import PeekabooFoundation
 import TachikomaMCP
 
+public struct MCPToolCapturePreflightRefusal: Sendable, Equatable {
+    public let message: String
+    public let hint: String?
+
+    public init(message: String, hint: String? = nil) {
+        self.message = message
+        self.hint = hint
+    }
+
+    var diagnostic: String {
+        self.hint.map { "\(self.message) Hint: \($0)" } ?? self.message
+    }
+}
+
 /// Lightweight dependency container for MCP tools so they no longer reach for
 /// global singletons directly. Each tool can receive the subset of
 /// services it needs, which keeps tests deterministic and unlocks DI.
@@ -27,6 +41,7 @@ public struct MCPToolContext: @unchecked Sendable {
     public let snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?
     public let snapshotExecutionGate: MCPToolSnapshotExecutionGate
     public let executionPolicy: MCPToolExecutionPolicy
+    let capturePreflightRefusal: MCPToolCapturePreflightRefusal?
     let uiSnapshots: MCPToolUISnapshotStore
 
     @TaskLocal
@@ -141,7 +156,8 @@ public struct MCPToolContext: @unchecked Sendable {
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
         snapshotExecutionGate: MCPToolSnapshotExecutionGate? = nil,
         snapshotOwner: MCPToolSnapshotOwner = .legacyProcess,
-        executionPolicy: MCPToolExecutionPolicy = .unrestricted)
+        executionPolicy: MCPToolExecutionPolicy = .unrestricted,
+        capturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil)
     {
         self.automation = automation
         self.menu = menu
@@ -164,6 +180,7 @@ public struct MCPToolContext: @unchecked Sendable {
             ?? MCPToolSnapshotExecutionGate()
         self.uiSnapshots = MCPToolUISnapshotStore(owner: snapshotOwner)
         self.executionPolicy = executionPolicy
+        self.capturePreflightRefusal = capturePreflightRefusal
     }
 
     @MainActor
@@ -172,7 +189,8 @@ public struct MCPToolContext: @unchecked Sendable {
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
         snapshotExecutionGate: MCPToolSnapshotExecutionGate? = nil,
         snapshotOwner: MCPToolSnapshotOwner = .legacyProcess,
-        executionPolicy: MCPToolExecutionPolicy = .unrestricted)
+        executionPolicy: MCPToolExecutionPolicy = .unrestricted,
+        capturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil)
     {
         let resolvedSnapshotExecutionGate = snapshotExecutionGate
             ?? (services.agent as? PeekabooAgentService)?.snapshotExecutionGate
@@ -196,7 +214,8 @@ public struct MCPToolContext: @unchecked Sendable {
             snapshotMutationCoordinator: snapshotMutationCoordinator,
             snapshotExecutionGate: resolvedSnapshotExecutionGate,
             snapshotOwner: snapshotOwner,
-            executionPolicy: executionPolicy)
+            executionPolicy: executionPolicy,
+            capturePreflightRefusal: capturePreflightRefusal)
     }
 
     @MainActor
@@ -214,6 +233,9 @@ public struct MCPToolContext: @unchecked Sendable {
             snapshotEffect: effect)
         {
             return rejection
+        }
+        if let capturePreflightResponse = self.capturePreflightResponse(tool: tool, arguments: arguments) {
+            return capturePreflightResponse
         }
         await self.uiSnapshots.synchronizeImplicitLatestInvalidationWatermark(
             self.snapshots.effectiveImplicitLatestInvalidationWatermark)
@@ -348,6 +370,31 @@ public struct MCPToolContext: @unchecked Sendable {
         }
     }
 
+    private func capturePreflightResponse(
+        tool: any MCPTool,
+        arguments: ToolArguments) -> ToolResponse?
+    {
+        guard let capturePreflightRefusal else { return nil }
+        guard let requiresPixels = MCPToolCaptureRequirement.requiresPixels(
+            toolName: tool.name,
+            arguments: arguments)
+        else {
+            return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+                message: "Tool '\(tool.name)' has no capture-safety classification and is refused while " +
+                    "ScreenCaptureKit ownership is unavailable.",
+                reason: .runtimeIncompatible,
+                additionalFields: ["error_code": .string("CAPTURE_POLICY_UNCLASSIFIED")])
+        }
+        guard requiresPixels else { return nil }
+        return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+            message: capturePreflightRefusal.diagnostic,
+            reason: .runtimeIncompatible,
+            additionalFields: [
+                "error_code": .string("CAPTURE_FAILED"),
+                "hint": capturePreflightRefusal.hint.map(Value.string) ?? .null,
+            ])
+    }
+
     func releaseSnapshotOwner() async {
         await self.uiSnapshots.removeOwner()
     }
@@ -372,7 +419,8 @@ public struct MCPToolContext: @unchecked Sendable {
             snapshotMutationCoordinator: self.snapshotMutationCoordinator,
             snapshotExecutionGate: self.snapshotExecutionGate,
             snapshotOwner: owner,
-            executionPolicy: self.executionPolicy)
+            executionPolicy: self.executionPolicy,
+            capturePreflightRefusal: self.capturePreflightRefusal)
     }
 
     private struct BackgroundTargetAuthorization {

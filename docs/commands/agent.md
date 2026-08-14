@@ -47,6 +47,9 @@ read_when:
   operate terminal or scripting apps through their UI, so grant `--allow-foreground` only to trusted prompts. Use
   Peekaboo's native app/window/Accessibility/browser tools for UI automation.
 - Agent execution stays in the caller process by default. Pass the global `--bridge-socket <path>` option to route its tools through one specific Bridge host; `--no-remote` keeps the run strictly caller-local.
+- An unrelated legacy ScreenCaptureKit owner does not block Agent startup or non-capturing app/window/Accessibility
+  tools through an explicitly selected current Bridge. Pixel-producing calls remain refused before dispatch for that
+  process lifetime; after fixing the owner, start a fresh Agent process before retrying capture.
 - All agent executions run under `CommandRuntime.makeDefault()`, so environment variables, credentials, and logging levels match the top-level CLI state.
 - New configurations select GPT-5.6 and Opus 5. Credential-only Anthropic discovery uses Opus 4.8 for zero-retention compatibility, while saved configuration and session model pins remain unchanged.
 - `--dry-run` is a zero-provider text-task preview: it echoes the normalized instruction with explicit zero

@@ -162,6 +162,7 @@ struct CommandRuntime {
     let selectedRemoteSocketPath: String?
     let selectedRemoteHostProcessIdentifier: pid_t?
     let captureEngineSafetyOverride: CaptureEnginePreference?
+    let toolCapturePreflightRefusal: MCPToolCapturePreflightRefusal?
     let snapshotInvalidationRemoteSocketPaths: [String]
     let applicationRelaunchAllowed: Bool
     let requiredHostFailure: String?
@@ -185,6 +186,7 @@ struct CommandRuntime {
         selectedRemoteSocketPath: String? = nil,
         selectedRemoteHostProcessIdentifier: pid_t? = nil,
         captureEngineSafetyOverride: CaptureEnginePreference? = nil,
+        toolCapturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil,
         snapshotInvalidationRemoteSocketPaths: [String] = [],
         applicationRelaunchAllowed: Bool = true,
         requiredHostFailure: String? = nil,
@@ -199,12 +201,16 @@ struct CommandRuntime {
         self.selectedRemoteSocketPath = selectedRemoteSocketPath
         self.selectedRemoteHostProcessIdentifier = selectedRemoteHostProcessIdentifier
         self.captureEngineSafetyOverride = captureEngineSafetyOverride
+        self.toolCapturePreflightRefusal = toolCapturePreflightRefusal
         self.snapshotInvalidationRemoteSocketPaths = snapshotInvalidationRemoteSocketPaths
         self.applicationRelaunchAllowed = applicationRelaunchAllowed
         self.requiredHostFailure = requiredHostFailure
         self.interactionMutationTracker = interactionMutationTracker
         self.logger = Logger.shared
 
+        if let agent = services.agent as? PeekabooAgentService {
+            agent.configureCapturePreflightRefusal(toolCapturePreflightRefusal)
+        }
         services.installAgentRuntimeDefaults()
 
         self.logger.setJsonOutputMode(configuration.jsonOutput)
@@ -278,6 +284,7 @@ extension CommandRuntime {
             selectedRemoteSocketPath: resolution.selectedRemoteSocketPath,
             selectedRemoteHostProcessIdentifier: resolution.selectedRemoteHostProcessIdentifier,
             captureEngineSafetyOverride: resolution.captureEngineSafetyOverride,
+            toolCapturePreflightRefusal: resolution.toolCapturePreflightRefusal,
             snapshotInvalidationRemoteSocketPaths: resolution.snapshotInvalidationRemoteSocketPaths,
             applicationRelaunchAllowed: resolution.applicationRelaunchAllowed,
             requiredHostFailure: resolution.requiredHostFailure

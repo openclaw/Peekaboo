@@ -53,7 +53,8 @@ extension PeekabooAgentService {
             snapshotMutationCoordinator: self.snapshotMutationCoordinator,
             snapshotExecutionGate: self.snapshotExecutionGate,
             snapshotOwner: Self.toolConstructionSnapshotOwner,
-            executionPolicy: Self.toolConstructionExecutionPolicy)
+            executionPolicy: Self.toolConstructionExecutionPolicy,
+            capturePreflightRefusal: self.capturePreflightRefusal)
     }
 
     func makeAgentTool(

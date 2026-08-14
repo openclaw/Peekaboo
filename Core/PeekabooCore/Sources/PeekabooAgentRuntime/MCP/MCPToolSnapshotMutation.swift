@@ -8,6 +8,47 @@ public enum MCPToolSnapshotEffect: Sendable, Equatable {
     case mutationProducingFreshObservation
 }
 
+enum MCPToolCaptureRequirement: Sendable, Equatable {
+    case never
+    case always
+    case liveCaptureSource
+    case requestedFinalScreenshot
+
+    static func profile(toolName: String) -> MCPToolCaptureRequirement? {
+        switch toolName {
+        case "see", "image":
+            .always
+        case "capture":
+            .liveCaptureSource
+        case "verify_state":
+            .requestedFinalScreenshot
+        case "analyze", "browser", "permissions", "sleep", "inspect_ui", "click", "type", "set_value",
+             "action", "scroll", "press", "drag", "move", "app", "window", "menu", "clipboard", "paste",
+             "agent", "dock", "dialog", "space":
+            .never
+        default:
+            nil
+        }
+    }
+
+    static func requiresPixels(toolName: String, arguments: ToolArguments) -> Bool? {
+        switch self.profile(toolName: toolName) {
+        case .never:
+            false
+        case .always:
+            true
+        case .liveCaptureSource:
+            arguments.getString("source")?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() != "video"
+        case .requestedFinalScreenshot:
+            arguments.getBool("final_screenshot") == true
+        case nil:
+            nil
+        }
+    }
+}
+
 struct MCPToolPendingSnapshotInvalidation: Sendable, Equatable {
     let scope: MCPToolSnapshotMutationScope
     let owner: MCPToolSnapshotOwner

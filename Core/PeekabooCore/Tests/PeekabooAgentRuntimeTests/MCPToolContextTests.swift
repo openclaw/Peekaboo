@@ -1,5 +1,7 @@
 import Foundation
+import MCP
 import Tachikoma
+import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
 @testable import PeekabooCore
@@ -57,6 +59,82 @@ struct MCPToolContextTests {
         #expect(foreground.executionPolicy == .foregroundAllowed)
         #expect(foreground.uiSnapshots.owner != owner)
         #expect(agent.makeToolContext().executionPolicy == .unrestricted)
+    }
+
+    @Test
+    @MainActor
+    func `capture preflight blocks pixel tools but permits AX and video ingest`() async throws {
+        let services = PeekabooServices()
+        let refusal = MCPToolCapturePreflightRefusal(
+            message: "Legacy ScreenCaptureKit owner is live. No capture was dispatched.",
+            hint: "Relaunch that exact owner before retrying.")
+        let context = MCPToolContext(services: services, capturePreflightRefusal: refusal)
+        let serverContext = context.replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        #expect(serverContext.capturePreflightRefusal == refusal)
+
+        for (name, arguments) in [
+            ("see", ToolArguments(value: .object([:]))),
+            ("see", ToolArguments(value: .object(["app_target": .string("TextEdit")]))),
+            ("image", ToolArguments(value: .object(["capture_focus": .string("background")]))),
+            ("capture", ToolArguments(value: .object([:]))),
+            ("capture", ToolArguments(value: .object(["source": .string("live")]))),
+            ("verify_state", ToolArguments(value: .object(["final_screenshot": .bool(true)]))),
+        ] {
+            let counter = MCPToolInvocationCounter()
+            let response = try await serverContext.execute(
+                tool: MCPToolInvocationProbe(name: name, counter: counter),
+                arguments: arguments)
+
+            #expect(response.isError)
+            #expect(await !counter.wasInvoked)
+            let metadata = try #require(response.meta?.objectValue)
+            #expect(metadata["error_code"] == .string("CAPTURE_FAILED"))
+            #expect(metadata["effect"] == .string("refused"))
+            #expect(metadata["mutation_dispatched"] == .bool(false))
+            #expect(metadata["retry_safe"] == .bool(true))
+            guard case let .text(text, _, _)? = response.content.first else {
+                Issue.record("Expected a textual capture refusal for \(name)")
+                continue
+            }
+            #expect(text.contains(refusal.message))
+            #expect(try text.contains(#require(refusal.hint)))
+        }
+
+        for (name, arguments) in [
+            ("inspect_ui", ToolArguments(value: .object([:]))),
+            ("capture", ToolArguments(value: .object(["source": .string(" VIDEO ")]))),
+            ("verify_state", ToolArguments(value: .object(["final_screenshot": .bool(false)]))),
+        ] {
+            let counter = MCPToolInvocationCounter()
+            let response = try await serverContext.execute(
+                tool: MCPToolInvocationProbe(name: name, counter: counter),
+                arguments: arguments)
+
+            #expect(!response.isError)
+            #expect(await counter.wasInvoked)
+        }
+
+        let unknownCounter = MCPToolInvocationCounter()
+        let unknown = try await serverContext.execute(
+            tool: MCPToolInvocationProbe(name: "future_pixel_tool", counter: unknownCounter),
+            arguments: ToolArguments(value: .object([:])))
+        #expect(unknown.isError)
+        #expect(await !unknownCounter.wasInvoked)
+        #expect(unknown.meta?.objectValue?["error_code"] == .string("CAPTURE_POLICY_UNCLASSIFIED"))
+    }
+
+    @Test
+    @MainActor
+    func `Agent contexts inherit immutable capture preflight`() throws {
+        let agent = try PeekabooAgentService(services: PeekabooServices())
+        let refusal = MCPToolCapturePreflightRefusal(message: "fixture capture refusal")
+
+        agent.configureCapturePreflightRefusal(refusal)
+        let refusedContext = agent.makeToolContext()
+        agent.configureCapturePreflightRefusal(nil)
+
+        #expect(refusedContext.capturePreflightRefusal == refusal)
+        #expect(agent.makeToolContext().capturePreflightRefusal == nil)
     }
 
     @Test
@@ -142,5 +220,39 @@ struct MCPToolContextTests {
             #expect(ObjectIdentifier(context.menu as AnyObject) ==
                 ObjectIdentifier(services.menu as AnyObject))
         }
+    }
+}
+
+private actor MCPToolInvocationCounter {
+    private var invoked = false
+
+    var wasInvoked: Bool {
+        self.invoked
+    }
+
+    func record() {
+        self.invoked = true
+    }
+}
+
+private struct MCPToolInvocationProbe: MCPTool {
+    let name: String
+    let counter: MCPToolInvocationCounter
+    let description = "MCP tool invocation probe"
+
+    var inputSchema: Value {
+        SchemaBuilder.object(
+            properties: [
+                "app_target": SchemaBuilder.string(),
+                "capture_focus": SchemaBuilder.string(),
+                "final_screenshot": SchemaBuilder.boolean(),
+                "source": SchemaBuilder.string(),
+            ],
+            required: [])
+    }
+
+    func execute(arguments _: ToolArguments) async throws -> ToolResponse {
+        await self.counter.record()
+        return ToolResponse.text("invoked")
     }
 }

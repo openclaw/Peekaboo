@@ -51,4 +51,14 @@ struct ToolRegistryContractTests {
         #expect(ObjectIdentifier(context.automation as AnyObject) ==
             ObjectIdentifier(services.automation as AnyObject))
     }
+
+    @Test
+    func `Every native MCP tool has an explicit capture profile`() {
+        let services = PeekabooServices()
+        let context = MCPToolContext(services: services)
+        let names = MCPToolCatalog.unfilteredTools(context: context).map(\.name)
+        let unclassified = names.filter { MCPToolCaptureRequirement.profile(toolName: $0) == nil }
+
+        #expect(unclassified.isEmpty, "MCP tools missing capture profiles: \(unclassified.sorted())")
+    }
 }

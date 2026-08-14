@@ -95,7 +95,6 @@ enum CommanderCLIBinder {
         if servesDynamicTools {
             options.requiresSafeBackgroundApplicationLaunchNoOp = true
             options.requiresProcessGenerationPinnedApplicationActivation = true
-            options.requiresScreenCaptureKitOwnerCapability = true
             options.requiresProcessGenerationPinnedHotkeys = true
             options.requiresProcessGenerationPinnedTypeActions = true
             options.requiresProcessGenerationPinnedClicks = true

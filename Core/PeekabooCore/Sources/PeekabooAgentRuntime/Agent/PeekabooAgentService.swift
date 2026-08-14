@@ -47,6 +47,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
     var currentModel: LanguageModel?
     var cachedSmartCaptureService: SmartCaptureService?
     var snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?
+    var capturePreflightRefusal: MCPToolCapturePreflightRefusal?
     public let snapshotExecutionGate: MCPToolSnapshotExecutionGate
     let logger = os.Logger(subsystem: "boo.peekaboo", category: "agent")
     var isVerbose: Bool = false
@@ -198,6 +199,10 @@ public final class PeekabooAgentService: AgentServiceProtocol {
         _ coordinator: (any MCPToolSnapshotMutationCoordinating)?)
     {
         self.snapshotMutationCoordinator = coordinator
+    }
+
+    public func configureCapturePreflightRefusal(_ refusal: MCPToolCapturePreflightRefusal?) {
+        self.capturePreflightRefusal = refusal
     }
 
     // MARK: - AgentServiceProtocol Conformance

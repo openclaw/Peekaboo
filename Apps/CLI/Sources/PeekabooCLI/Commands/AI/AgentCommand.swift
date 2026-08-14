@@ -309,6 +309,7 @@ extension AgentCommand {
         guard let peekabooAgent = agentService as? PeekabooAgentService else {
             throw PeekabooError.commandFailed("Agent service not properly initialized")
         }
+        peekabooAgent.configureCapturePreflightRefusal(runtime.toolCapturePreflightRefusal)
 
         if !usesPersistedSessionModel {
             try self.requireAgentCredentials(selectedModel: serviceDefaultModel)

@@ -52,6 +52,7 @@ enum RuntimeHostResolver {
     ) async throws -> Resolution {
         var deferredScreenCaptureKitSafetyBlocker = false
         var captureEngineSafetyOverride: CaptureEnginePreference?
+        var toolCapturePreflightRefusal: MCPToolCapturePreflightRefusal?
         if self.requiresCallerLocalModernOwnerClaim(options: options, environment: environment) {
             do {
                 if let owner = try dependencies.inspectScreenCaptureKitOwner(),
@@ -81,7 +82,17 @@ enum RuntimeHostResolver {
                     for: oldHost, plan: plan, options: options, environment: environment
                 ) {
                 case .refuse: throw self.ownerCapabilityRefusal(host: oldHost, selectedSocket: plan.explicitSocket)
-                case .deferLocalRuntime: deferredScreenCaptureKitSafetyBlocker = true
+                case .deferLocalRuntime:
+                    toolCapturePreflightRefusal = self.dynamicToolCapturePreflightRefusal(
+                        host: oldHost,
+                        selectedSocket: plan.explicitSocket
+                    )
+                    deferredScreenCaptureKitSafetyBlocker = true
+                case .deferToolCapture:
+                    toolCapturePreflightRefusal = self.dynamicToolCapturePreflightRefusal(
+                        host: oldHost,
+                        selectedSocket: plan.explicitSocket
+                    )
                 case .routeAutomaticCapture:
                     // The blocker tombstone belongs to this caller process. Clamp the transported
                     // request so a different Bridge process cannot fall back from classic to SCK.
@@ -113,7 +124,8 @@ enum RuntimeHostResolver {
                 snapshotInvalidationRemoteSocketPaths: [],
                 applicationRelaunchAllowed: true,
                 requiredHostFailure: nil,
-                captureEngineSafetyOverride: captureEngineSafetyOverride
+                captureEngineSafetyOverride: captureEngineSafetyOverride,
+                toolCapturePreflightRefusal: toolCapturePreflightRefusal
             )
         }
 
@@ -142,7 +154,8 @@ enum RuntimeHostResolver {
                 snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
                 applicationRelaunchAllowed: true,
                 requiredHostFailure: nil,
-                captureEngineSafetyOverride: captureEngineSafetyOverride
+                captureEngineSafetyOverride: captureEngineSafetyOverride,
+                toolCapturePreflightRefusal: toolCapturePreflightRefusal
             )
         }
 
@@ -173,7 +186,8 @@ enum RuntimeHostResolver {
                 snapshotInvalidationRemoteSocketPaths: localSnapshotInvalidationPaths,
                 applicationRelaunchAllowed: true,
                 requiredHostFailure: nil,
-                captureEngineSafetyOverride: captureEngineSafetyOverride
+                captureEngineSafetyOverride: captureEngineSafetyOverride,
+                toolCapturePreflightRefusal: toolCapturePreflightRefusal
             )
         }
 
@@ -196,6 +210,7 @@ enum RuntimeHostResolver {
             recordScreenCaptureKitSafetyBlocker: dependencies.recordScreenCaptureKitSafetyBlocker
         ))
         resolution.captureEngineSafetyOverride = captureEngineSafetyOverride
+        resolution.toolCapturePreflightRefusal = toolCapturePreflightRefusal
         return resolution
     }
 

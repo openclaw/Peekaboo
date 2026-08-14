@@ -152,6 +152,7 @@ extension RuntimeHostResolver {
     enum ScreenCaptureKitSafetyDisposition {
         case refuse
         case deferLocalRuntime
+        case deferToolCapture
         case routeAutomaticCapture
     }
 
@@ -218,9 +219,8 @@ extension RuntimeHostResolver {
         environment: [String: String]
     ) -> ScreenCaptureKitSafetyDisposition {
         if options.usesPerToolSnapshotInvalidation,
-           !options.requiresScreenCapturePermission,
-           plan.explicitSocket == nil {
-            return .deferLocalRuntime
+           !options.requiresScreenCapturePermission {
+            return plan.explicitSocket == nil ? .deferLocalRuntime : .deferToolCapture
         }
         if self.canRouteAutomaticCaptureAroundAuxiliaryOwnerUnawareHost(
             host,
@@ -386,6 +386,19 @@ extension RuntimeHostResolver {
             code: .CAPTURE_FAILED,
             hint: hint,
             reason: .runtimeIncompatible
+        )
+    }
+
+    static func dynamicToolCapturePreflightRefusal(
+        host: ScreenCaptureKitOwnerUnawareHost,
+        selectedSocket: String?
+    ) -> MCPToolCapturePreflightRefusal {
+        let refusal = self.ownerCapabilityRefusal(host: host, selectedSocket: selectedSocket)
+        let sessionGuidance = "This capture refusal is fixed for the lifetime of this MCP or Agent session; " +
+            "after the owner is updated or stopped, start a fresh session before retrying capture."
+        return MCPToolCapturePreflightRefusal(
+            message: refusal.localizedDescription,
+            hint: [refusal.hint, sessionGuidance].compactMap(\.self).joined(separator: " ")
         )
     }
 

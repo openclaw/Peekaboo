@@ -1272,6 +1272,7 @@ extension CommanderBinderTests {
         for commandType in [AgentRunSubcommand.self, MCPCommand.Serve.self] as [any ParsableCommand.Type] {
             let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
             #expect(options.usesPerToolSnapshotInvalidation)
+            #expect(!options.requiresScreenCaptureKitOwnerCapability)
             #expect(!options.preferRemote)
             #expect(RuntimeHostResolver.shouldResolveKnownRemoteEndpoints(
                 options: options,

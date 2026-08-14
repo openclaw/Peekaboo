@@ -12,5 +12,6 @@ extension RuntimeHostResolver {
         let applicationRelaunchAllowed: Bool
         let requiredHostFailure: String?
         var captureEngineSafetyOverride: CaptureEnginePreference?
+        var toolCapturePreflightRefusal: MCPToolCapturePreflightRefusal?
     }
 }
