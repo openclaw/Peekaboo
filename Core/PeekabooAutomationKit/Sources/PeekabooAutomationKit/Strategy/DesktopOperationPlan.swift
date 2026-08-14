@@ -62,6 +62,15 @@ struct DesktopOperationPlan {
             self.target = target
             self.coordinateContext = coordinateContext
         }
+
+        init(snapshotReceipt: SnapshotTargetReceipt) throws {
+            let identity = try snapshotReceipt.requireIdentity()
+            self.init(
+                snapshotID: snapshotReceipt.snapshotID,
+                bundleIdentifier: snapshotReceipt.applicationBundleIdentifier,
+                target: identity.target,
+                coordinateContext: snapshotReceipt.coordinateContext)
+        }
     }
 
     enum DeliveryIntent: Equatable, Sendable {

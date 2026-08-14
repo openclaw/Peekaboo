@@ -607,39 +607,35 @@ public struct TypeTool: MCPTool {
     private func snapshotExactWindow(_ snapshot: UISnapshot?) throws -> UIAutomationTarget.ExactWindow? {
         guard let snapshot else { return nil }
         guard snapshot.windowMutationIdentity != nil else { return nil }
-        guard let processIdentifier = snapshot.applicationProcessId,
-              processIdentifier > 0,
-              let windowID = snapshot.windowID,
-              let bounds = snapshot.windowBounds,
-              let identity = snapshot.windowMutationIdentity,
-              identity.ownerProcessIdentifier == processIdentifier,
-              identity.windowID == windowID,
-              identity.capturedBounds == bounds
-        else {
+        do {
+            guard let exactWindow = try snapshot.targetReceipt().requireIdentity().exactWindow else {
+                throw DesktopTargetIdentityError.incompleteExactWindow
+            }
+            return exactWindow
+        } catch {
             throw TypeToolValidationError(
                 "The selected snapshot has inconsistent process/window metadata.",
                 refusalReason: .targetUnavailable)
         }
-        return try UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds)
     }
 
     private func snapshotProcessIdentity(_ snapshot: UISnapshot?) async throws -> ApplicationProcessIdentity? {
         guard let snapshot, let processIdentifier = snapshot.applicationProcessId, processIdentifier > 0 else {
             return nil
         }
-        if let windowIdentity = snapshot.windowMutationIdentity,
-           windowIdentity.ownerProcessIdentifier != processIdentifier
+        do {
+            return try snapshot.targetReceipt().requireIdentity().processIdentity
+        } catch DesktopTargetIdentityError.missingProcessGeneration,
+            DesktopTargetIdentityError.incompleteExactWindow
         {
+            throw TypeToolValidationError(
+                "The selected snapshot has no capture-time process-generation receipt. Capture fresh UI state.",
+                refusalReason: .targetUnavailable)
+        } catch {
             throw TypeToolValidationError(
                 "The selected snapshot has inconsistent process metadata.",
                 refusalReason: .targetUnavailable)
         }
-        if let identity = snapshot.applicationProcessIdentity {
-            return identity
-        }
-        throw TypeToolValidationError(
-            "The selected snapshot has no capture-time process-generation receipt. Capture fresh UI state.",
-            refusalReason: .targetUnavailable)
     }
 
     @MainActor

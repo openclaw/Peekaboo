@@ -242,6 +242,43 @@ actor UISnapshot {
     nonisolated var windowMutationIdentity: WindowMutationIdentity? {
         self.targetCache.withLock { $0.targetReceiptInvalidated ? nil : $0.windowMutationIdentity }
     }
+
+    nonisolated var targetReceiptInvalidated: Bool {
+        self.targetCache.withLock { $0.targetReceiptInvalidated }
+    }
+
+    /// Atomically projects the store's sticky receipt state into the canonical snapshot adapter.
+    nonisolated func targetReceipt() throws -> SnapshotTargetReceipt {
+        let cached = self.targetCache.withLock { cache in
+            (
+                applicationName: cache.applicationName,
+                processIdentifier: cache.applicationProcessId,
+                processStartIdentity: cache.applicationProcessStartIdentity,
+                windowID: cache.windowID,
+                windowBounds: cache.windowBounds,
+                windowIdentity: cache.windowMutationIdentity,
+                invalidated: cache.targetReceiptInvalidated)
+        }
+        let processIdentity: ApplicationProcessIdentity? = if let processIdentifier = cached.processIdentifier,
+                                                              let processStartIdentity = cached.processStartIdentity
+        {
+            ApplicationProcessIdentity(
+                processIdentifier: processIdentifier,
+                processStartIdentity: processStartIdentity)
+        } else {
+            nil
+        }
+        return try SnapshotTargetReceipt(
+            snapshotID: self.id,
+            evidence: [.init(
+                processIdentifier: cached.processIdentifier,
+                processIdentity: processIdentity,
+                windowID: cached.windowIdentity == nil ? nil : cached.windowID,
+                windowIdentity: cached.windowIdentity,
+                windowBounds: cached.windowIdentity == nil ? nil : cached.windowBounds)],
+            targetReceiptInvalidated: cached.invalidated,
+            applicationName: cached.applicationName)
+    }
 }
 
 /// Logical owner of one MCP/Agent snapshot history inside this process.

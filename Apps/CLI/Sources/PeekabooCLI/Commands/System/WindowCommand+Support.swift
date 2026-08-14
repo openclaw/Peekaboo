@@ -43,18 +43,42 @@ struct WindowIdentificationOptions: CommanderParsable, ApplicationResolvable {
         self.windowIndex = try container.decodeIfPresent(Int.self, forKey: .windowIndex)
     }
 
+    var selector: InteractionTargetSelector {
+        InteractionTargetSelector(
+            applicationIdentifier: self.app,
+            processIdentifier: self.pid.map(Int.init),
+            windowID: self.windowId,
+            windowTitle: self.windowTitle,
+            windowIndex: self.windowIndex
+        )
+    }
+
     func validate(allowMissingTarget: Bool = false) throws {
-        if let windowId = self.windowId, windowId <= 0 {
-            throw ValidationError("--window-id must be greater than 0")
-        }
-
-        // Ensure we have some way to identify the window
-        if self.app == nil, self.pid == nil, self.windowId == nil, !allowMissingTarget {
-            throw ValidationError("Either --app, --pid, or --window-id must be specified")
-        }
-
-        if let index = self.windowIndex, index < 0 {
-            throw ValidationError("--window-index must be 0 or greater")
+        do {
+            try self.selector.validate(policy: .windowCLI(allowMissingTarget: allowMissingTarget))
+        } catch let error as InteractionTargetSelector.ValidationError {
+            switch error {
+            case .invalidWindowID:
+                throw ValidationError("--window-id must be greater than 0")
+            case .missingTarget:
+                throw ValidationError("Either --app, --pid, or --window-id must be specified")
+            case .invalidWindowIndex:
+                throw ValidationError("--window-index must be 0 or greater")
+            case let .conflictingProcessIdentifiers(applicationPID, explicitPID):
+                throw PeekabooError.invalidInput(
+                    "Conflicting PIDs: --app specifies PID \(applicationPID) but --pid is \(explicitPID)"
+                )
+            case .invalidApplicationProcessIdentifier:
+                throw PeekabooError.invalidInput("Invalid PID format in --app: '\(self.app ?? "")'")
+            case .applicationAndProcessIdentifier:
+                throw PeekabooError.invalidInput("Provide the application either with --app or --pid, not both")
+            case .multipleWindowSelectors,
+                 .windowSelectorRequiresApplication,
+                 .invalidProcessIdentifier,
+                 .emptyApplication,
+                 .emptyWindowTitle:
+                preconditionFailure("Window CLI policy does not emit \(error)")
+            }
         }
     }
 

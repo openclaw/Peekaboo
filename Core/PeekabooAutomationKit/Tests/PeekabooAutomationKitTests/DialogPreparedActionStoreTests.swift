@@ -4,12 +4,47 @@ import CoreGraphics
 import Darwin
 import Foundation
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooAutomationKit
 
 @MainActor
 @Suite("Prepared dialog action receipts")
 struct DialogPreparedActionStoreTests {
+    @Test(arguments: InteractionTargetSelectorFixtures.validCases)
+    func `dialog adapter accepts the canonical valid selector matrix`(
+        _ selectors: InteractionTargetSelectorCase) throws
+    {
+        _ = try Self.selector(selectors)
+    }
+
+    @Test(arguments: InteractionTargetSelectorFixtures.applicationAndProcessIdentifierCases)
+    func `dialog adapter refuses canonical app and PID conflicts`(
+        _ selectors: InteractionTargetSelectorCase)
+    {
+        #expect(throws: (any Error).self) {
+            _ = try Self.selector(selectors)
+        }
+    }
+
+    @Test(arguments: InteractionTargetSelectorFixtures.multipleWindowSelectorCases)
+    func `dialog adapter refuses the canonical multiple-window matrix`(
+        _ selectors: InteractionTargetSelectorCase)
+    {
+        #expect(throws: (any Error).self) {
+            _ = try Self.selector(selectors)
+        }
+    }
+
+    @Test(arguments: InteractionTargetSelectorFixtures.windowSelectorRequiresApplicationCases)
+    func `dialog adapter refuses ownerless relative-window syntax`(
+        _ selectors: InteractionTargetSelectorCase)
+    {
+        #expect(throws: (any Error).self) {
+            _ = try Self.selector(selectors)
+        }
+    }
+
     @Test
     func `selector preserves owner and window constraints and rejects conflicts`() throws {
         let selector = try DialogTargetSelector(
@@ -29,6 +64,29 @@ struct DialogPreparedActionStoreTests {
         #expect(throws: (any Error).self) {
             try DialogTargetSelector(processIdentifier: 42, windowID: 700, windowIndex: 0)
         }
+    }
+
+    @Test
+    func `selector manual coding preserves existing keys and normalized values`() throws {
+        let selector = try DialogTargetSelector(
+            applicationIdentifier: "  TextEdit  ",
+            windowTitle: "  Save  ")
+        let data = try JSONEncoder().encode(selector)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        #expect(Set(object.keys) == ["applicationIdentifier", "windowTitle"])
+        #expect(object["applicationIdentifier"] as? String == "TextEdit")
+        #expect(object["windowTitle"] as? String == "Save")
+        #expect(try JSONDecoder().decode(DialogTargetSelector.self, from: data) == selector)
+    }
+
+    private static func selector(_ selectors: InteractionTargetSelectorCase) throws -> DialogTargetSelector {
+        try DialogTargetSelector(
+            applicationIdentifier: selectors.hasApplication ? "TextEdit" : nil,
+            processIdentifier: selectors.hasProcessIdentifier ? 42 : nil,
+            windowID: selectors.hasWindowID ? 700 : nil,
+            windowTitle: selectors.hasWindowTitle ? "Save" : nil,
+            windowIndex: selectors.hasWindowIndex ? 2 : nil)
     }
 
     @Test

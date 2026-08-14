@@ -29,17 +29,25 @@ struct InteractionTargetOptions: CommanderParsable, ApplicationResolvable {
     init() {}
 
     var hasAnyTarget: Bool {
-        self.app != nil || self.pid != nil || self.windowTitle != nil || self.windowIndex != nil || self.windowId != nil
+        self.selector.hasAnyInput
+    }
+
+    var selector: InteractionTargetSelector {
+        InteractionTargetSelector(
+            applicationIdentifier: self.app,
+            processIdentifier: self.pid.map(Int.init),
+            windowID: self.windowId,
+            windowTitle: self.windowTitle,
+            windowIndex: self.windowIndex
+        )
     }
 
     func validateSelectorCombination() throws {
-        try InteractionTargetSelectorValidator.validateCLI(
-            hasApplication: self.app != nil,
-            hasProcessIdentifier: self.pid != nil,
-            hasWindowID: self.windowId != nil,
-            hasWindowTitle: self.windowTitle != nil,
-            hasWindowIndex: self.windowIndex != nil
-        )
+        do {
+            try self.selector.validate(policy: .interaction)
+        } catch let error as InteractionTargetSelector.ValidationError {
+            throw Self.validationError(for: error)
+        }
     }
 
     func validate() throws {
@@ -109,24 +117,18 @@ struct InteractionTargetOptions: CommanderParsable, ApplicationResolvable {
 
     func toWindowTarget() throws -> WindowTarget? {
         try self.validate()
-        if let windowId {
-            return .windowId(windowId)
+        switch try self.selector.normalizedWindowSelector(policy: .interaction) {
+        case let .id(windowID):
+            return .windowId(windowID)
+        case let .title(title):
+            guard let appIdentifier = try self.resolveApplicationIdentifierOptional() else { return nil }
+            return .applicationAndTitle(app: appIdentifier, title: title)
+        case let .index(index):
+            guard let appIdentifier = try self.resolveApplicationIdentifierOptional() else { return nil }
+            return .index(app: appIdentifier, index: index)
+        case nil:
+            return try self.resolveApplicationIdentifierOptional().map(WindowTarget.application)
         }
-
-        guard let appIdentifier = try self.resolveApplicationIdentifierOptional() else {
-            return nil
-        }
-
-        if let windowTitle = self.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !windowTitle.isEmpty {
-            return .applicationAndTitle(app: appIdentifier, title: windowTitle)
-        }
-
-        if let windowIndex {
-            return .index(app: appIdentifier, index: windowIndex)
-        }
-
-        return .application(appIdentifier)
     }
 
     func dialogTargetSelector() throws -> DialogTargetSelector {
@@ -139,34 +141,32 @@ struct InteractionTargetOptions: CommanderParsable, ApplicationResolvable {
             windowIndex: self.windowIndex
         )
     }
-}
 
-extension InteractionTargetSelectorValidator {
-    static func validateCLI(
-        hasApplication: Bool,
-        hasProcessIdentifier: Bool,
-        hasWindowID: Bool,
-        hasWindowTitle: Bool,
-        hasWindowIndex: Bool
-    ) throws {
-        do {
-            try self.validate(
-                hasApplication: hasApplication,
-                hasProcessIdentifier: hasProcessIdentifier,
-                hasWindowID: hasWindowID,
-                hasWindowTitle: hasWindowTitle,
-                hasWindowIndex: hasWindowIndex
-            )
-        } catch let error as InteractionTargetSelectorValidationError {
-            let message = switch error {
-            case .applicationAndProcessIdentifier:
-                "Use either --app or --pid, not both."
-            case .multipleWindowSelectors:
-                "Use only one of --window-id, --window-title, or --window-index."
-            case .windowSelectorRequiresApplication:
-                "--window-title and --window-index require --app or --pid."
-            }
-            throw ValidationError(message)
+    static func validationError(
+        for error: InteractionTargetSelector.ValidationError
+    ) -> Commander.ValidationError {
+        let message = switch error {
+        case .applicationAndProcessIdentifier,
+             .conflictingProcessIdentifiers,
+             .invalidApplicationProcessIdentifier:
+            "Use either --app or --pid, not both."
+        case .multipleWindowSelectors:
+            "Use only one of --window-id, --window-title, or --window-index."
+        case .windowSelectorRequiresApplication:
+            "--window-title and --window-index require --app or --pid."
+        case .invalidProcessIdentifier:
+            "--pid must be greater than 0"
+        case .invalidWindowID:
+            "--window-id must be between 1 and \(UInt32.max)"
+        case .invalidWindowIndex:
+            "--window-index must be 0 or greater"
+        case .missingTarget:
+            "Target is required"
+        case .emptyApplication:
+            "--app must not be empty"
+        case .emptyWindowTitle:
+            "--window-title must not be empty"
         }
+        return Commander.ValidationError(message)
     }
 }

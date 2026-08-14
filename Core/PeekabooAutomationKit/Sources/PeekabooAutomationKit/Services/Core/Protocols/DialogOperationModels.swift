@@ -19,12 +19,23 @@ public struct DialogTargetSelector: Sendable, Codable, Equatable {
         windowTitle: String? = nil,
         windowIndex: Int? = nil) throws
     {
-        self.applicationIdentifier = Self.normalized(applicationIdentifier)
+        let selector = InteractionTargetSelector(
+            applicationIdentifier: applicationIdentifier,
+            processIdentifier: processIdentifier.map(Int.init),
+            windowID: windowID,
+            windowTitle: windowTitle,
+            windowIndex: windowIndex)
+        do {
+            try selector.validate(policy: .dialogOwnerRequired)
+        } catch let error as InteractionTargetSelector.ValidationError {
+            throw PeekabooError.invalidInput(Self.validationMessage(for: error))
+        }
+
+        self.applicationIdentifier = selector.normalizedApplicationIdentifier
         self.processIdentifier = processIdentifier
         self.windowID = windowID
-        self.windowTitle = Self.normalized(windowTitle)
+        self.windowTitle = selector.normalizedWindowTitle
         self.windowIndex = windowIndex
-        try self.validate(originalApplication: applicationIdentifier, originalWindowTitle: windowTitle)
     }
 
     public var hasTarget: Bool {
@@ -54,45 +65,40 @@ public struct DialogTargetSelector: Sendable, Codable, Equatable {
             windowIndex: container.decodeIfPresent(Int.self, forKey: .windowIndex))
     }
 
-    private func validate(originalApplication: String?, originalWindowTitle: String?) throws {
-        if originalApplication != nil, self.applicationIdentifier == nil {
-            throw PeekabooError.invalidInput("Dialog target application must not be empty")
-        }
-        if originalWindowTitle != nil, self.windowTitle == nil {
-            throw PeekabooError.invalidInput("Dialog target window title must not be empty")
-        }
-        do {
-            try InteractionTargetSelectorValidator.validate(
-                hasApplication: self.applicationIdentifier != nil,
-                hasProcessIdentifier: self.processIdentifier != nil,
-                hasWindowID: self.windowID != nil,
-                hasWindowTitle: self.windowTitle != nil,
-                hasWindowIndex: self.windowIndex != nil)
-        } catch let error as InteractionTargetSelectorValidationError {
-            let reason = switch error {
-            case .applicationAndProcessIdentifier:
-                "Dialog app and PID selectors are mutually exclusive"
-            case .multipleWindowSelectors:
-                "Dialog window ID, title, and index selectors are mutually exclusive"
-            case .windowSelectorRequiresApplication:
-                "Dialog window title and index selectors require an app or PID"
-            }
-            throw PeekabooError.invalidInput(reason)
-        }
-        if let processIdentifier, processIdentifier <= 0 {
-            throw PeekabooError.invalidInput("Dialog target PID must be positive")
-        }
-        if let windowID, windowID <= 0 || UInt32(exactly: windowID) == nil {
-            throw PeekabooError.invalidInput("Dialog target window ID must be between 1 and \(UInt32.max)")
-        }
-        if let windowIndex, windowIndex < 0 {
-            throw PeekabooError.invalidInput("Dialog target window index must be 0 or greater")
-        }
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(self.applicationIdentifier, forKey: .applicationIdentifier)
+        try container.encodeIfPresent(self.processIdentifier, forKey: .processIdentifier)
+        try container.encodeIfPresent(self.windowID, forKey: .windowID)
+        try container.encodeIfPresent(self.windowTitle, forKey: .windowTitle)
+        try container.encodeIfPresent(self.windowIndex, forKey: .windowIndex)
     }
 
-    private static func normalized(_ value: String?) -> String? {
-        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
-        return value
+    private static func validationMessage(
+        for error: InteractionTargetSelector.ValidationError) -> String
+    {
+        switch error {
+        case .emptyApplication:
+            "Dialog target application must not be empty"
+        case .emptyWindowTitle:
+            "Dialog target window title must not be empty"
+        case .applicationAndProcessIdentifier,
+             .conflictingProcessIdentifiers,
+             .invalidApplicationProcessIdentifier:
+            "Dialog app and PID selectors are mutually exclusive"
+        case .multipleWindowSelectors:
+            "Dialog window ID, title, and index selectors are mutually exclusive"
+        case .windowSelectorRequiresApplication:
+            "Dialog window title and index selectors require an app or PID"
+        case .invalidProcessIdentifier:
+            "Dialog target PID must be positive"
+        case .invalidWindowID:
+            "Dialog target window ID must be between 1 and \(UInt32.max)"
+        case .invalidWindowIndex:
+            "Dialog target window index must be 0 or greater"
+        case .missingTarget:
+            "Dialog target is required"
+        }
     }
 }
 

@@ -100,6 +100,36 @@ public enum AutomationTestFixtures {
                 : nil)
     }
 
+    public static func focusedElement(
+        processIdentity: ApplicationProcessIdentity = Self.processIdentity(),
+        windowID: Int = 201,
+        role: String = "AXTextField",
+        identifier: String? = "editor",
+        frame: CGRect = CGRect(x: 30, y: 40, width: 200, height: 32)) -> FocusedElementIdentity
+    {
+        FocusedElementIdentity(
+            processIdentifier: processIdentity.processIdentifier,
+            windowID: windowID,
+            role: role,
+            identifier: identifier,
+            frame: frame)
+    }
+
+    public static func captureCoordinateContext(
+        snapshotID: String = "snapshot-1",
+        window: ServiceWindowInfo = Self.window(),
+        deliveredImageSize: CGSize? = nil,
+        viewport: CaptureViewport? = nil) -> CaptureCoordinateContext
+    {
+        CaptureCoordinateContext(
+            metadata: CaptureMetadata(
+                size: deliveredImageSize ?? window.bounds.size,
+                mode: .window,
+                windowInfo: window,
+                viewport: viewport),
+            referenceID: snapshotID)
+    }
+
     public static func detectedElement(
         id: String = "element-1",
         type: ElementType = .textField,

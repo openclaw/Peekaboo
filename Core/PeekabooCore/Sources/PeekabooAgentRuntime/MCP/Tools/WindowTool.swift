@@ -278,23 +278,30 @@ public struct WindowTool: MCPTool {
     // MARK: - Helper Methods
 
     private func createWindowTarget(app: String?, title: String?, index: Int?, windowId: Int?) throws -> WindowTarget {
-        if let windowId {
+        let selector = InteractionTargetSelector(
+            applicationIdentifier: app,
+            windowID: windowId,
+            windowTitle: title,
+            windowIndex: index)
+        try selector.validate(policy: .windowGlobalTitleAllowed)
+
+        if let windowId = selector.windowID {
             return .windowId(windowId)
         }
 
-        if let app, let title {
+        if let app = selector.applicationIdentifier, let title = selector.windowTitle {
             return .applicationAndTitle(app: app, title: title)
         }
 
-        if let app, let index {
+        if let app = selector.applicationIdentifier, let index = selector.windowIndex {
             return .index(app: app, index: index)
         }
 
-        if let app {
+        if let app = selector.applicationIdentifier {
             return .application(app)
         }
 
-        if let title {
+        if let title = selector.windowTitle {
             return .title(title)
         }
 

@@ -997,54 +997,42 @@ extension ClickCommand {
     private func backgroundClickSnapshotProcessIdentity(snapshotId: String?) async throws
     -> ApplicationProcessIdentity? {
         guard let snapshotId else { return nil }
-        var snapshotProcessIdentifier: Int32?
-        var snapshotProcessIdentity: ApplicationProcessIdentity?
+        var evidence: [DesktopTargetIdentity.Evidence] = []
+        var hasProcessIdentifier = false
         if let snapshot = try? await self.services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId),
            let processIdentifier = snapshot.applicationProcessId {
-            snapshotProcessIdentifier = processIdentifier
-            if let identity = snapshot.windowMutationIdentity {
-                guard identity.ownerProcessIdentifier == processIdentifier else {
-                    throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
-                }
-                snapshotProcessIdentity = ApplicationProcessIdentity(
-                    processIdentifier: identity.ownerProcessIdentifier,
-                    processStartIdentity: identity.ownerProcessStartIdentity
-                )
-            }
+            hasProcessIdentifier = true
+            evidence.append(.init(
+                processIdentifier: processIdentifier,
+                processIdentity: snapshot.windowMutationIdentity?.processIdentity
+            ))
         }
         if let detection = try? await self.services.snapshots.getDetectionResult(snapshotId: snapshotId),
            let context = detection.metadata.windowContext,
            let processIdentifier = context.applicationProcessId {
-            if let snapshotProcessIdentifier, snapshotProcessIdentifier != processIdentifier {
-                throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
-            }
-            snapshotProcessIdentifier = processIdentifier
-            if let identity = context.windowMutationIdentity {
-                guard identity.ownerProcessIdentifier == processIdentifier else {
-                    throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
-                }
-                let detectionIdentity = ApplicationProcessIdentity(
-                    processIdentifier: identity.ownerProcessIdentifier,
-                    processStartIdentity: identity.ownerProcessStartIdentity
-                )
-                if let existingIdentity = snapshotProcessIdentity, existingIdentity != detectionIdentity {
-                    throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
-                }
-                snapshotProcessIdentity = detectionIdentity
-            }
+            hasProcessIdentifier = true
+            evidence.append(.init(
+                processIdentifier: processIdentifier,
+                processIdentity: context.windowMutationIdentity?.processIdentity
+            ))
         }
-        guard snapshotProcessIdentifier != nil else {
+        guard hasProcessIdentifier else {
             throw ValidationError(
                 "Snapshot '\(snapshotId)' does not identify a target process. Run see again before clicking."
             )
         }
-        guard let snapshotProcessIdentity else {
+        do {
+            return try SnapshotTargetReceipt(snapshotID: snapshotId, evidence: evidence)
+                .requireIdentity().processIdentity
+        } catch DesktopTargetIdentityError.missingProcessGeneration,
+            DesktopTargetIdentityError.incompleteExactWindow {
             throw ValidationError(
                 "Snapshot '\(snapshotId)' has no capture-time process-generation receipt. " +
                     "Run see again before clicking."
             )
+        } catch {
+            throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
         }
-        return snapshotProcessIdentity
     }
 
     private func currentProcessIdentity(identifier: String) async throws -> ApplicationProcessIdentity {
@@ -1063,16 +1051,32 @@ extension ClickCommand {
     ) async throws -> InteractionCoordinateResolution {
         guard let detection = try await self.services.snapshots.getDetectionResult(snapshotId: snapshotId),
               !detection.screenshotPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let captured = detection.metadata.windowContext,
-              let processIdentifier = captured.applicationProcessId,
-              let windowID = captured.windowID,
-              let capturedBounds = captured.windowBounds,
-              let capturedIdentity = captured.windowMutationIdentity,
-              capturedIdentity.windowID == windowID,
-              capturedIdentity.ownerProcessIdentifier == processIdentifier
+              let captured = detection.metadata.windowContext
         else {
             throw ValidationError(Self.backgroundCoordinateReferenceMessage)
         }
+        let coordinateAuthority: SnapshotTargetReceipt.CoordinateAuthority
+        do {
+            coordinateAuthority = try SnapshotTargetReceipt(
+                snapshotID: snapshotId,
+                evidence: [.init(
+                    processIdentifier: captured.applicationProcessId,
+                    windowID: captured.windowID,
+                    windowIdentity: captured.windowMutationIdentity,
+                    windowBounds: captured.windowBounds
+                )],
+                applicationBundleIdentifier: captured.applicationBundleId,
+                applicationName: captured.applicationName,
+                coordinateContext: detection.metadata.captureCoordinateContext
+            )
+            .requireCoordinateAuthority()
+        } catch {
+            throw ValidationError(Self.backgroundCoordinateReferenceMessage)
+        }
+        let capturedIdentity = coordinateAuthority.target.identity
+        let processIdentifier = capturedIdentity.ownerProcessIdentifier
+        let windowID = capturedIdentity.windowID
+        let capturedBounds = coordinateAuthority.target.bounds
 
         if let requestedPID = self.target.pid, requestedPID != processIdentifier {
             throw ValidationError(
@@ -1145,12 +1149,33 @@ extension ClickCommand {
               let expectedIdentity = window.mutationIdentity,
               expectedIdentity.windowID == window.windowID,
               expectedIdentity.ownerProcessIdentifier == resolution.targetProcessIdentifier,
-              window.bounds.contains(resolution.screenPoint),
-              let detection = try await self.services.snapshots.getDetectionResult(snapshotId: snapshotId),
-              let captured = detection.metadata.windowContext,
-              captured.windowID == window.windowID,
-              captured.windowBounds == window.bounds,
-              captured.windowMutationIdentity == expectedIdentity
+              window.bounds.contains(resolution.screenPoint)
+        else {
+            throw ValidationError(Self.backgroundCoordinateReferenceMessage)
+        }
+        guard let detection = try await self.services.snapshots.getDetectionResult(snapshotId: snapshotId),
+              let captured = detection.metadata.windowContext
+        else {
+            throw ValidationError(Self.backgroundCoordinateReferenceMessage)
+        }
+        let authority: SnapshotTargetReceipt.CoordinateAuthority
+        do {
+            authority = try SnapshotTargetReceipt(
+                snapshotID: snapshotId,
+                evidence: [.init(
+                    processIdentifier: captured.applicationProcessId,
+                    windowID: captured.windowID,
+                    windowIdentity: captured.windowMutationIdentity,
+                    windowBounds: captured.windowBounds
+                )],
+                coordinateContext: detection.metadata.captureCoordinateContext
+            )
+            .requireCoordinateAuthority()
+        } catch {
+            throw ValidationError(Self.backgroundCoordinateReferenceMessage)
+        }
+        guard authority.target.identity.hasSameStableReceipt(as: expectedIdentity),
+              authority.target.bounds == window.bounds
         else {
             throw ValidationError(Self.backgroundCoordinateReferenceMessage)
         }

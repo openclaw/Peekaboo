@@ -457,21 +457,21 @@ public struct PressTool: MCPTool {
 
     private func snapshotExactWindow(id: String?) async throws -> UIAutomationTarget.ExactWindow? {
         guard let id, !id.isEmpty else { return nil }
-        guard let snapshot = await self.context.uiSnapshots.getSnapshot(id: id),
-              let processIdentifier = snapshot.applicationProcessId,
-              processIdentifier > 0,
-              let windowID = snapshot.windowID,
-              let bounds = snapshot.windowBounds,
-              let identity = snapshot.windowMutationIdentity,
-              identity.ownerProcessIdentifier == processIdentifier,
-              identity.windowID == windowID,
-              identity.capturedBounds == bounds
-        else {
+        guard let snapshot = await self.context.uiSnapshots.getSnapshot(id: id) else {
             throw PressToolValidationError(
                 message: "The selected snapshot has no exact process-generation, window, and bounds receipt.",
                 refusalReason: .targetUnavailable)
         }
-        return try UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds)
+        do {
+            guard let exactWindow = try snapshot.targetReceipt().requireIdentity().exactWindow else {
+                throw DesktopTargetIdentityError.incompleteExactWindow
+            }
+            return exactWindow
+        } catch {
+            throw PressToolValidationError(
+                message: "The selected snapshot has no exact process-generation, window, and bounds receipt.",
+                refusalReason: .targetUnavailable)
+        }
     }
 
     private static func delivery(for target: UIAutomationTarget) -> DesktopActionOutcome.Delivery {

@@ -101,64 +101,40 @@ enum KeyboardDeliverySupport {
         snapshotId: String,
         services: any PeekabooServiceProviding
     ) async throws -> UIAutomationTarget.ExactWindow {
-        var processIdentifier: Int32?
-        var windowIdentity: WindowMutationIdentity?
-        var windowBounds: CGRect?
-
-        func merge(
-            process incomingProcess: Int32?,
-            identity incomingIdentity: WindowMutationIdentity?,
-            bounds incomingBounds: CGRect?
-        ) throws {
-            if let incomingProcess {
-                guard processIdentifier.map({ $0 == incomingProcess }) ?? true else {
-                    throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
-                }
-                processIdentifier = incomingProcess
-            }
-            if let incomingIdentity {
-                guard windowIdentity.map({ $0 == incomingIdentity }) ?? true else {
-                    throw ValidationError("Snapshot '\(snapshotId)' has inconsistent window metadata.")
-                }
-                windowIdentity = incomingIdentity
-            }
-            if let incomingBounds {
-                guard windowBounds.map({ $0 == incomingBounds }) ?? true else {
-                    throw ValidationError("Snapshot '\(snapshotId)' has inconsistent window bounds.")
-                }
-                windowBounds = incomingBounds
-            }
-        }
-
+        var evidence: [DesktopTargetIdentity.Evidence] = []
         if let snapshot = try await services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId) {
-            try merge(
-                process: snapshot.applicationProcessId,
-                identity: snapshot.windowMutationIdentity,
-                bounds: snapshot.windowBounds
-            )
+            evidence.append(.init(
+                processIdentifier: snapshot.applicationProcessId,
+                windowID: snapshot.windowID.map(Int.init),
+                windowIdentity: snapshot.windowMutationIdentity,
+                windowBounds: snapshot.windowBounds
+            ))
         }
         if let detectionResult = try await services.snapshots.getDetectionResult(snapshotId: snapshotId),
            let context = detectionResult.metadata.windowContext {
-            try merge(
-                process: context.applicationProcessId,
-                identity: context.windowMutationIdentity,
-                bounds: context.windowBounds
-            )
+            evidence.append(.init(
+                processIdentifier: context.applicationProcessId,
+                windowID: context.windowID,
+                windowIdentity: context.windowMutationIdentity,
+                windowBounds: context.windowBounds
+            ))
         }
 
-        guard let processIdentifier, processIdentifier > 0,
-              let windowIdentity,
-              let windowBounds,
-              windowIdentity.ownerProcessIdentifier == processIdentifier,
-              windowIdentity.windowID > 0,
-              windowIdentity.capturedBounds == windowBounds
-        else {
+        do {
+            let receipt = try SnapshotTargetReceipt(snapshotID: snapshotId, evidence: evidence)
+            guard let exactWindow = try receipt.requireIdentity().exactWindow else {
+                throw DesktopTargetIdentityError.incompleteExactWindow
+            }
+            return exactWindow
+        } catch DesktopTargetIdentityError.missingProcessGeneration,
+            DesktopTargetIdentityError.incompleteExactWindow {
             throw ValidationError(
                 "Snapshot '\(snapshotId)' has no exact process-generation, window, and bounds receipt. " +
                     "Capture fresh UI state."
             )
+        } catch {
+            throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process/window metadata.")
         }
-        return try UIAutomationTarget.ExactWindow(identity: windowIdentity, bounds: windowBounds)
     }
 
     private static func resolveSelectedWindow(
@@ -202,19 +178,25 @@ enum KeyboardDeliverySupport {
         snapshot: ApplicationProcessIdentity?,
         window: ApplicationProcessIdentity?
     ) throws -> ApplicationProcessIdentity {
-        let identities = [selected, snapshot, window].compactMap(\.self)
-        guard let identity = identities.first else {
+        let identities = try [selected, snapshot, window].map { identity throws -> DesktopTargetIdentity? in
+            guard let identity else { return nil }
+            return try DesktopTargetIdentity(processIdentity: identity)
+        }
+        let targetIdentity: DesktopTargetIdentity?
+        do {
+            targetIdentity = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.coalesce(identities)
+        } catch {
+            throw ValidationError(
+                "The selected app, window, and snapshot do not identify the same process generation. " +
+                    "Capture fresh UI state."
+            )
+        }
+        guard let identity = targetIdentity?.processIdentity else {
             throw PreDispatchActionError(
                 message: "Keyboard input requires --app, --pid, --window-id, or --snapshot for background delivery.",
                 code: .VALIDATION_ERROR,
                 hint: "Use --foreground for intentional global input.",
                 reason: .invalidRequest
-            )
-        }
-        guard identities.allSatisfy({ $0 == identity }) else {
-            throw ValidationError(
-                "The selected app, window, and snapshot do not identify the same process generation. " +
-                    "Capture fresh UI state."
             )
         }
         return identity

@@ -184,7 +184,7 @@ struct UISnapshotStoreConcurrencyTests {
     }
 
     @Test
-    func `conflicting detection generation permanently invalidates snapshot receipt`() async {
+    func `conflicting detection generation permanently invalidates snapshot receipt`() async throws {
         let snapshot = UISnapshot()
         await snapshot.setScreenshot(
             path: "/tmp/screenshot.png",
@@ -210,6 +210,8 @@ struct UISnapshotStoreConcurrencyTests {
         await snapshot.setTargetMetadata(from: conflictingContext)
         #expect(snapshot.applicationProcessIdentity == nil)
         #expect(snapshot.windowMutationIdentity == nil)
+        #expect(snapshot.targetReceiptInvalidated)
+        #expect(try snapshot.targetReceipt().targetEvidence == .invalidated)
 
         await snapshot.setTargetMetadata(from: conflictingContext)
         #expect(snapshot.applicationProcessIdentity == nil)
@@ -227,6 +229,7 @@ struct UISnapshotStoreConcurrencyTests {
                     name: "Editor")))
         #expect(snapshot.applicationProcessIdentity == nil)
         #expect(snapshot.windowMutationIdentity == nil)
+        #expect(try snapshot.targetReceipt().targetEvidence == .invalidated)
     }
 
     @Test

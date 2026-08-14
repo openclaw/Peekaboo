@@ -665,17 +665,17 @@ public struct MCPToolContext: @unchecked Sendable {
     }
 
     private static func sameTarget(_ snapshot: UISnapshot, _ context: WindowContext) -> Bool {
-        guard let processIdentifier = context.applicationProcessId,
-              snapshot.applicationProcessId == processIdentifier,
-              let windowID = context.windowID,
-              snapshot.windowID == windowID,
-              let bounds = context.windowBounds,
-              snapshot.windowBounds == bounds,
-              let identity = context.windowMutationIdentity,
-              snapshot.windowMutationIdentity == identity,
-              identity.windowID == windowID,
-              identity.ownerProcessIdentifier == processIdentifier,
-              identity.capturedBounds == bounds
+        guard let snapshotIdentity = try? snapshot.targetReceipt().requireIdentity(),
+              let snapshotExactWindow = snapshotIdentity.exactWindow,
+              let contextIdentity = try? DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
+                  .init(
+                      processIdentifier: context.applicationProcessId,
+                      windowID: context.windowID,
+                      windowIdentity: context.windowMutationIdentity,
+                      windowBounds: context.windowBounds),
+              ]),
+              let contextExactWindow = contextIdentity.exactWindow,
+              snapshotExactWindow == contextExactWindow
         else {
             return false
         }

@@ -5,6 +5,32 @@ import Testing
 
 struct WindowTargetCreationTests {
     @Test
+    func `window CLI syntax preserves matching redundant PID channels`() throws {
+        var options = WindowIdentificationOptions()
+        options.app = "PID:12345"
+        options.pid = 12345
+
+        try options.validate()
+        #expect(try options.selector.normalizedApplicationTarget(policy: .windowCLI()) == "PID:12345")
+    }
+
+    @Test
+    func `window CLI syntax preserves conflicting PID error`() {
+        var options = WindowIdentificationOptions()
+        options.app = "PID:12345"
+        options.pid = 54321
+
+        do {
+            try options.validate()
+            Issue.record("Expected conflicting PID validation error")
+        } catch {
+            #expect(error.localizedDescription.contains("Conflicting PIDs"))
+            #expect(error.localizedDescription.contains("12345"))
+            #expect(error.localizedDescription.contains("54321"))
+        }
+    }
+
+    @Test
     func `app + windowTitle creates .applicationAndTitle`() throws {
         var options = WindowIdentificationOptions()
         options.app = "Safari"

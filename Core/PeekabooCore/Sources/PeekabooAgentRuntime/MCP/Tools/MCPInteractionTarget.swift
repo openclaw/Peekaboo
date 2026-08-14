@@ -106,15 +106,19 @@ struct MCPInteractionTarget {
         return self.app
     }
 
+    var selector: InteractionTargetSelector {
+        InteractionTargetSelector(
+            applicationIdentifier: self.app,
+            processIdentifier: self.pid,
+            windowID: self.windowId,
+            windowTitle: self.windowTitle,
+            windowIndex: self.windowIndex)
+    }
+
     func validate() throws {
         do {
-            try InteractionTargetSelectorValidator.validate(
-                hasApplication: self.app != nil,
-                hasProcessIdentifier: self.pid != nil,
-                hasWindowID: self.windowId != nil,
-                hasWindowTitle: self.windowTitle != nil,
-                hasWindowIndex: self.windowIndex != nil)
-        } catch let error as InteractionTargetSelectorValidationError {
+            try self.selector.validate(policy: .interaction)
+        } catch let error as InteractionTargetSelector.ValidationError {
             switch error {
             case .applicationAndProcessIdentifier:
                 throw MCPInteractionTargetError.applicationAndProcessIdentifier
@@ -122,6 +126,18 @@ struct MCPInteractionTarget {
                 throw MCPInteractionTargetError.multipleWindowSelectors
             case .windowSelectorRequiresApplication:
                 throw MCPInteractionTargetError.windowSelectorRequiresApp
+            case .invalidProcessIdentifier:
+                throw MCPInteractionTargetError.invalidProcessIdentifier
+            case .invalidWindowID:
+                throw MCPInteractionTargetError.invalidWindowId
+            case .invalidWindowIndex:
+                throw MCPInteractionTargetError.invalidWindowIndex
+            case .conflictingProcessIdentifiers,
+                 .invalidApplicationProcessIdentifier,
+                 .missingTarget,
+                 .emptyApplication,
+                 .emptyWindowTitle:
+                preconditionFailure("Interaction policy does not emit \(error)")
             }
         }
 
@@ -140,27 +156,19 @@ struct MCPInteractionTarget {
 
     func toWindowTarget() throws -> WindowTarget? {
         try self.validate()
-
-        if let windowId {
-            return .windowId(windowId)
-        }
-
-        if let title = self.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+        switch try self.selector.normalizedWindowSelector(policy: .interaction) {
+        case let .id(windowID):
+            return .windowId(windowID)
+        case let .title(title):
             if let appId = self.appIdentifier, !appId.isEmpty {
                 return .applicationAndTitle(app: appId, title: title)
             }
             return .title(title)
+        case let .index(index):
+            return .index(app: self.appIdentifier ?? "", index: index)
+        case nil:
+            return self.appIdentifier.flatMap { $0.isEmpty ? nil : .application($0) }
         }
-
-        if let windowIndex {
-            return .index(app: self.appIdentifier ?? "", index: windowIndex)
-        }
-
-        if let appId = self.appIdentifier, !appId.isEmpty {
-            return .application(appId)
-        }
-
-        return nil
     }
 
     func focusIfRequested(windows: any WindowManagementServiceProtocol) async throws -> WindowTarget? {
@@ -243,16 +251,12 @@ struct MCPInteractionTarget {
     }
 
     var hasTarget: Bool {
-        self.pid != nil ||
-            !(self.app?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) ||
-            self.windowId != nil ||
-            self.windowIndex != nil ||
-            !(self.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        self.pid != nil || self.selector.normalizedApplicationIdentifier != nil || self.windowId != nil ||
+            self.windowIndex != nil || self.selector.normalizedWindowTitle != nil
     }
 
     var hasWindowSelector: Bool {
-        self.windowId != nil || self.windowIndex != nil ||
-            !(self.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        self.windowId != nil || self.windowIndex != nil || self.selector.normalizedWindowTitle != nil
     }
 
     func requireBackgroundProcessIdentifier(
@@ -328,17 +332,26 @@ struct MCPInteractionTarget {
         }
 
         let selectedProcessIdentity = try await self.selectedProcessIdentity(applications: applications)
-        let identities = [
-            selectedProcessIdentity,
-            snapshotProcessIdentity,
-            snapshotExactWindow?.identity.processIdentity,
-            selectedWindow?.identity.processIdentity,
-        ].compactMap(\.self)
-        guard let processIdentity = identities.first else {
-            throw MCPInteractionTargetError.backgroundTargetRequired
-        }
-        guard identities.allSatisfy({ $0 == processIdentity }) else {
+        let stableIdentities: [DesktopTargetIdentity?]
+        do {
+            stableIdentities = try [selectedProcessIdentity, snapshotProcessIdentity].map { identity in
+                guard let identity else { return nil }
+                return try DesktopTargetIdentity(processIdentity: identity)
+            } + [
+                snapshotExactWindow.map(DesktopTargetIdentity.init(exactWindow:)),
+                selectedWindow.map(DesktopTargetIdentity.init(exactWindow:)),
+            ]
+        } catch {
             throw MCPInteractionTargetError.backgroundWindowTargetMismatch
+        }
+        let stableIdentity: DesktopTargetIdentity?
+        do {
+            stableIdentity = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.coalesce(stableIdentities)
+        } catch {
+            throw MCPInteractionTargetError.backgroundWindowTargetMismatch
+        }
+        guard let processIdentity = stableIdentity?.processIdentity else {
+            throw MCPInteractionTargetError.backgroundTargetRequired
         }
 
         let listedApplications = try await applications.listApplications().data.applications

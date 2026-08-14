@@ -439,13 +439,18 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
     }
 
     func validateInteractionTargetSelectors() throws {
-        try InteractionTargetSelectorValidator.validateCLI(
-            hasApplication: self.app != nil,
-            hasProcessIdentifier: self.pid != nil,
-            hasWindowID: self.windowId != nil,
-            hasWindowTitle: self.windowTitle != nil,
-            hasWindowIndex: self.windowIndex != nil
-        )
+        do {
+            try InteractionTargetSelector(
+                applicationIdentifier: self.app,
+                processIdentifier: self.pid.map(Int.init),
+                windowID: self.windowId,
+                windowTitle: self.windowTitle,
+                windowIndex: self.windowIndex
+            )
+            .validate(policy: .interaction)
+        } catch let error as InteractionTargetSelector.ValidationError {
+            throw InteractionTargetOptions.validationError(for: error)
+        }
     }
 
     private func runPixelOnlyCapture() async throws {

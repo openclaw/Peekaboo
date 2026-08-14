@@ -56,11 +56,16 @@ enum DesktopOperationSnapshotReceiptValidator {
             throw PeekabooError.snapshotStale(
                 "target window owner, process generation, or bounds changed before desktop mutation")
         }
-        return try DesktopOperationPlan.CaptureReceipt(
+        return try DesktopOperationPlan.CaptureReceipt(snapshotReceipt: SnapshotTargetReceipt(
             snapshotID: snapshotID,
-            bundleIdentifier: context.applicationBundleId,
-            target: .exactWindow(UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds)),
-            coordinateContext: detectionResult.metadata.captureCoordinateContext)
+            evidence: [.init(
+                processIdentifier: context.applicationProcessId,
+                windowID: context.windowID,
+                windowIdentity: identity,
+                windowBounds: bounds)],
+            applicationBundleIdentifier: context.applicationBundleId,
+            applicationName: context.applicationName,
+            coordinateContext: detectionResult.metadata.captureCoordinateContext))
     }
 
     static func validate(
