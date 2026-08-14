@@ -437,11 +437,12 @@ extension DialogService {
         try Task.checkCancellation()
     }
 
+    @discardableResult
     func revalidateDialogTarget(
         target expected: UIAutomationTarget.ExactWindow,
         retainedWindow: Element,
         retainedDialog: Element,
-        operation: String) async throws
+        operation: String) async throws -> TargetedDialogCandidate
     {
         let application = try await self.applicationService.findApplication(
             identifier: "PID:\(expected.identity.ownerProcessIdentifier)")
@@ -477,6 +478,10 @@ extension DialogService {
             throw self.targetUnavailable("Prepared dialog or sheet changed before \(operation).")
         }
         try Task.checkCancellation()
+        return TargetedDialogCandidate(
+            target: expected,
+            window: currentWindow.element,
+            dialog: freshDialogs.structural[0])
     }
 
     static func isValidDialogTargetRevalidation(

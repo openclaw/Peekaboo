@@ -192,14 +192,14 @@ extension DialogService {
         // exact retained field before sampling the postcondition, then validate it again after the
         // bounded read so a replacement field can never supply confirmation evidence.
         do {
-            try await self.revalidateDialogTarget(
+            let refreshedTarget = try await self.revalidateDialogTarget(
                 target: plan.target,
                 retainedWindow: plan.window,
                 retainedDialog: plan.dialog,
                 operation: "input retained-value read")
             targetField = try self.revalidateDialogInputField(
                 targetField,
-                in: plan.dialog,
+                in: refreshedTarget.dialog,
                 identifier: fieldIdentifier,
                 exactSelection: exactFieldSelection)
         } catch {
@@ -222,14 +222,14 @@ extension DialogService {
             try Self.rethrowDialogInputReadCancellation(dispatchedUnitCount: dispatchedUnitCount)
         }
         do {
-            try await self.revalidateDialogTarget(
+            let refreshedTarget = try await self.revalidateDialogTarget(
                 target: plan.target,
                 retainedWindow: plan.window,
                 retainedDialog: plan.dialog,
                 operation: "input postcondition")
             targetField = try self.revalidateDialogInputField(
                 targetField,
-                in: plan.dialog,
+                in: refreshedTarget.dialog,
                 identifier: fieldIdentifier,
                 exactSelection: exactFieldSelection)
         } catch {
