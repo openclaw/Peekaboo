@@ -188,6 +188,16 @@ extension DialogService {
         let readable: Bool
     }
 
+    struct DialogTargetRevalidationObservation {
+        let applicationIdentity: ApplicationProcessIdentity?
+        let windowIdentity: WindowMutationIdentity?
+        let windowBounds: CGRect?
+        let retainedWindowMatches: Bool
+        let hierarchyReadable: Bool
+        let structuralDialogCount: Int
+        let retainedDialogMatches: Bool
+    }
+
     static let backgroundDialogDelivery = DesktopActionOutcome.Delivery(
         mechanism: .accessibilityAction,
         mode: .background)
@@ -442,27 +452,44 @@ extension DialogService {
         let response = try await self.applicationService.listWindows(
             for: "PID:\(expected.identity.ownerProcessIdentifier)",
             timeout: self.targetedDialogSearchTimeout)
-        guard let window = response.data.windows.first(where: { $0.windowID == expected.identity.windowID }),
-              let identity = window.mutationIdentity,
-              identity.hasSameStableReceipt(as: expected.identity),
-              window.bounds == expected.bounds,
-              let currentWindow = self.windowIdentityService.findWindow(
-                  byID: CGWindowID(expected.identity.windowID),
-                  messagingTimeout: self.targetedDialogSearchTimeout),
-              Self.sameElement(currentWindow.element, retainedWindow)
+        let window = response.data.windows.first(where: { $0.windowID == expected.identity.windowID })
+        guard let currentWindow = self.windowIdentityService.findWindow(
+            byID: CGWindowID(expected.identity.windowID),
+            messagingTimeout: self.targetedDialogSearchTimeout)
         else {
             throw self.targetUnavailable("Dialog window receipt changed before \(operation).")
         }
 
         let freshDialogs = self.freshDialogElements(in: currentWindow.element)
-        guard freshDialogs.readable,
-              freshDialogs.structural.count == 1,
-              let dialog = freshDialogs.structural.first,
-              Self.sameElement(dialog, retainedDialog)
+        guard Self.isValidDialogTargetRevalidation(
+            expected: expected,
+            observation: DialogTargetRevalidationObservation(
+                applicationIdentity: application.processIdentity,
+                windowIdentity: window?.mutationIdentity,
+                windowBounds: window?.bounds,
+                retainedWindowMatches: Self.sameElement(currentWindow.element, retainedWindow),
+                hierarchyReadable: freshDialogs.readable,
+                structuralDialogCount: freshDialogs.structural.count,
+                retainedDialogMatches: freshDialogs.structural.first.map {
+                    Self.sameElement($0, retainedDialog)
+                } ?? false))
         else {
             throw self.targetUnavailable("Prepared dialog or sheet changed before \(operation).")
         }
         try Task.checkCancellation()
+    }
+
+    static func isValidDialogTargetRevalidation(
+        expected: UIAutomationTarget.ExactWindow,
+        observation: DialogTargetRevalidationObservation) -> Bool
+    {
+        observation.applicationIdentity == expected.identity.processIdentity &&
+            observation.windowIdentity?.hasSameStableReceipt(as: expected.identity) == true &&
+            observation.windowBounds == expected.bounds &&
+            observation.retainedWindowMatches &&
+            observation.hierarchyReadable &&
+            observation.structuralDialogCount == 1 &&
+            observation.retainedDialogMatches
     }
 
     func verifyPreparedDialogPresence(_ entry: DialogPreparedActionStore.Entry) async -> DialogPresence {
@@ -542,6 +569,15 @@ extension DialogService {
             "process_start_identity_decimal": String(target.identity.ownerProcessStartIdentity),
             "window_id": String(target.identity.windowID),
         ]
+    }
+
+    static func desktopActionTargetReceipt(
+        _ target: UIAutomationTarget.ExactWindow) -> DesktopActionTargetReceipt
+    {
+        DesktopActionTargetReceipt(
+            processIdentifier: target.identity.ownerProcessIdentifier,
+            processStartIdentity: target.identity.ownerProcessStartIdentity,
+            windowID: target.identity.windowID)
     }
 
     func dialogElements(for dialog: Element) -> DialogElements {

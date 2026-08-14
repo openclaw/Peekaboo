@@ -899,5 +899,8 @@ private func protocolHostCapabilities(
     {
         capabilities.insert(PeekabooBridgeHostCapability.explicitSnapshotPublication)
     }
+    if supportedVersions.upperBound >= PeekabooBridgeConstants.exactDialogInputExecutionVersion {
+        capabilities.insert(PeekabooBridgeHostCapability.exactDialogInputExecution)
+    }
     return capabilities
 }

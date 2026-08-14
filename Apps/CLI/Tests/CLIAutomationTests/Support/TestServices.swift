@@ -1313,6 +1313,7 @@ final class StubDialogService: DialogServiceProtocol {
     var handleFileDialogDelay: TimeInterval?
     var dismissResult: DialogActionResult?
     var enterTextResult: DialogActionResult?
+    private(set) var exactInputRequests: [DialogInputExecutionRequest] = []
 
     private(set) var recordedButtonClicks: [(button: String, window: String?)] = []
     private(set) var clickFallbackRequests: [Bool] = []
@@ -1362,6 +1363,18 @@ final class StubDialogService: DialogServiceProtocol {
             throw DialogError.noActiveDialog
         }
         if let result = enterTextResult {
+            return result
+        }
+        throw DialogError.fieldNotFound
+    }
+
+    func enterText(_ request: DialogInputExecutionRequest) async throws -> DialogActionResult {
+        self.exactInputRequests.append(request)
+        self.enterTextCallCount += 1
+        guard self.dialogElements != nil else {
+            throw DialogError.noActiveDialog
+        }
+        if let result = self.enterTextResult {
             return result
         }
         throw DialogError.fieldNotFound

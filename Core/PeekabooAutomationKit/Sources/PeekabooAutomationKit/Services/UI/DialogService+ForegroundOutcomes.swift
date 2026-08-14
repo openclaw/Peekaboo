@@ -11,9 +11,27 @@ extension DialogService {
         let dialog: Element
     }
 
+    struct RetainedDialogInputPlan {
+        let text: String
+        let fieldIdentifier: String?
+        let clearExisting: Bool
+        let focusPolicy: DialogInputFocusPolicy
+        let dialog: ForegroundDialogPlan
+        let field: Element
+        let exactFieldSelection: Bool
+        let publishTargetReceipt: Bool
+    }
+
     static let foregroundKeyboardDelivery = DesktopActionOutcome.Delivery(
         mechanism: .globalEvents,
         mode: .foreground)
+
+    static func attributedDialogInputFailure(
+        _ failure: DesktopActionFailure,
+        target: UIAutomationTarget.ExactWindow) -> DesktopActionFailure
+    {
+        failure.attributed(to: self.desktopActionTargetReceipt(target))
+    }
 
     public func enterText(
         text: String,
@@ -23,76 +41,237 @@ extension DialogService {
         appName: String?) async throws -> DialogActionResult
     {
         try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
-            self.logger.info("Entering text into dialog field")
-            self.logger.debug("Text length: \(text.count) chars, clear existing: \(clearExisting)")
-            if let identifier = fieldIdentifier {
-                self.logger.debug("Target field: \(identifier)")
+            let plan = try await self.prepareForegroundDialogPlan(windowTitle: windowTitle, appName: appName)
+            let targetField = try self.textField(in: plan.dialog, identifier: fieldIdentifier)
+            return try await self.executeDialogInput(RetainedDialogInputPlan(
+                text: text,
+                fieldIdentifier: fieldIdentifier,
+                clearExisting: clearExisting,
+                focusPolicy: DialogInputFocusPolicy(),
+                dialog: plan,
+                field: targetField,
+                exactFieldSelection: false,
+                publishTargetReceipt: false))
+        }
+    }
+
+    public func enterText(_ request: DialogInputExecutionRequest) async throws -> DialogActionResult {
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            let candidates = try await self.targetedDialogCandidates(
+                target: request.target,
+                membership: .structuralMutation)
+            guard candidates.count == 1, let candidate = candidates.first else {
+                throw self.dialogCandidateRefusal(target: request.target, candidates: candidates)
             }
-
-            let dialog = try await self.resolveDialogElement(windowTitle: windowTitle, appName: appName)
-            let targetField = try self.textField(in: dialog, identifier: fieldIdentifier)
-            let isSecure = targetField.role() == "AXSecureTextField" ||
-                targetField.subrole() == "AXSecureTextField"
-
-            if text.isEmpty, !clearExisting {
-                return DialogActionResult(
-                    success: true,
-                    action: .enterText,
-                    details: [
-                        "field": targetField.title() ?? "Text Field",
-                        "text_length": "0",
-                        "cleared": "false",
-                        "value_verified": "false",
-                    ],
-                    outcome: .confirmedNoChange())
+            let plan = ForegroundDialogPlan(
+                target: candidate.target,
+                window: candidate.window,
+                dialog: candidate.dialog)
+            do {
+                let targetField = try self.exactDialogInputField(
+                    in: plan.dialog,
+                    identifier: request.fieldIdentifier)
+                return try await self.executeDialogInput(RetainedDialogInputPlan(
+                    text: request.text,
+                    fieldIdentifier: request.fieldIdentifier,
+                    clearExisting: request.clearExisting,
+                    focusPolicy: request.focus,
+                    dialog: plan,
+                    field: targetField,
+                    exactFieldSelection: true,
+                    publishTargetReceipt: true))
+            } catch let failure as DesktopActionFailure {
+                throw Self.attributedDialogInputFailure(failure, target: plan.target)
             }
+        }
+    }
 
+    private func executeDialogInput(_ execution: RetainedDialogInputPlan) async throws -> DialogActionResult {
+        let text = execution.text
+        let fieldIdentifier = execution.fieldIdentifier
+        let clearExisting = execution.clearExisting
+        let focusPolicy = execution.focusPolicy
+        let plan = execution.dialog
+        let exactFieldSelection = execution.exactFieldSelection
+        self.logDialogInput(execution)
+
+        var targetField = execution.field
+        let isSecure = targetField.role() == "AXSecureTextField" ||
+            targetField.subrole() == "AXSecureTextField"
+        if text.isEmpty, !clearExisting {
             try Task.checkCancellation()
-            let focusMutationDispatched = try self.focusTextFieldForInput(targetField)
-            let dispatchedUnitCount: DesktopActionOutcome.DispatchUnitCount?
-            do {
-                dispatchedUnitCount = try self.dispatchDialogInput(text: text, clearExisting: clearExisting)
-            } catch is CancellationError where focusMutationDispatched {
-                throw DesktopActionFailure.dispatchedUnverified(
-                    delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
-                    evidence: .deliveryAccepted,
-                    unitCount: .one,
-                    message: "Dialog input was cancelled after the field focus mutation was accepted.",
-                    hint: "Refresh the dialog and field focus before retrying.")
-            }
-            let expectedValue = clearExisting ? text : nil
-            let observedValue: String?
-            do {
-                observedValue = try await self.readDialogInputValue(
-                    from: targetField,
-                    expectedValue: expectedValue)
-            } catch is CancellationError {
-                try Self.rethrowDialogInputReadCancellation(dispatchedUnitCount: dispatchedUnitCount)
-            }
-            let outcome = try Self.dialogInputOutcome(
-                expectedValue: expectedValue,
-                observedValue: observedValue,
-                isSecure: isSecure,
-                dispatchedUnitCount: dispatchedUnitCount)
-            let retainedValueMatchesRequest = if let expectedValue, !isSecure {
-                observedValue == expectedValue
-            } else {
-                false
-            }
-
-            let result = DialogActionResult(
+            try await self.revalidateDialogTarget(
+                target: plan.target,
+                retainedWindow: plan.window,
+                retainedDialog: plan.dialog,
+                operation: "no-change input postcondition")
+            _ = try self.revalidateDialogInputField(
+                targetField,
+                in: plan.dialog,
+                identifier: fieldIdentifier,
+                exactSelection: exactFieldSelection)
+            return DialogActionResult(
                 success: true,
                 action: .enterText,
-                details: [
-                    "field": targetField.title() ?? "Text Field",
-                    "text_length": String(text.count),
-                    "cleared": String(clearExisting),
-                    "value_verified": String(retainedValueMatchesRequest),
-                ],
-                outcome: outcome)
+                details: self.dialogInputDetails(
+                    plan: plan,
+                    field: targetField,
+                    textLength: 0,
+                    cleared: false,
+                    valueVerified: false,
+                    focusPolicy: focusPolicy),
+                outcome: .confirmedNoChange(),
+                targetReceipt: execution.publishTargetReceipt ? Self.desktopActionTargetReceipt(plan.target) : nil)
+        }
 
-            self.logger.info("\(AgentDisplayTokens.Status.success) Dialog input delivery completed")
-            return result
+        try Task.checkCancellation()
+        try await self.revalidateDialogTarget(
+            target: plan.target,
+            retainedWindow: plan.window,
+            retainedDialog: plan.dialog,
+            operation: "dialog focus")
+        if focusPolicy.autoFocus {
+            try await self.focusService.focusDialogWindowWithOwnedLane(
+                target: plan.target,
+                dialog: plan.dialog,
+                options: Self.dialogInputFocusOptions(focusPolicy))
+        } else {
+            try await self.focusService.requireDialogWindowFocusWithOwnedLane(
+                target: plan.target,
+                dialog: plan.dialog,
+                timeout: focusPolicy.timeout)
+        }
+        try await self.revalidateDialogTarget(
+            target: plan.target,
+            retainedWindow: plan.window,
+            retainedDialog: plan.dialog,
+            operation: "dialog input")
+        targetField = try self.revalidateDialogInputField(
+            targetField,
+            in: plan.dialog,
+            identifier: fieldIdentifier,
+            exactSelection: exactFieldSelection)
+        let focusMutationDispatched = try self.focusTextFieldForInput(targetField)
+        do {
+            try await self.revalidateDialogTarget(
+                target: plan.target,
+                retainedWindow: plan.window,
+                retainedDialog: plan.dialog,
+                operation: "keyboard dispatch")
+            targetField = try self.revalidateDialogInputField(
+                targetField,
+                in: plan.dialog,
+                identifier: fieldIdentifier,
+                exactSelection: exactFieldSelection)
+        } catch where focusMutationDispatched {
+            throw DesktopActionFailure.dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .one,
+                message: "Dialog target changed after the field focus mutation was accepted.",
+                hint: "Observe the exact dialog and field before retrying.",
+                causeDescription: error.localizedDescription)
+        }
+        let dispatchedUnitCount: DesktopActionOutcome.DispatchUnitCount?
+        do {
+            dispatchedUnitCount = try self.dispatchValidatedDialogInput(
+                execution,
+                focusMutationDispatched: focusMutationDispatched)
+        } catch is CancellationError where focusMutationDispatched {
+            throw DesktopActionFailure.dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .one,
+                message: "Dialog input was cancelled after the field focus mutation was accepted.",
+                hint: "Refresh the dialog and field focus before retrying.")
+        }
+        let expectedValue = clearExisting ? text : nil
+        let observedValue: String?
+        do {
+            observedValue = try await self.readDialogInputValue(
+                from: targetField,
+                expectedValue: expectedValue)
+        } catch is CancellationError {
+            try Self.rethrowDialogInputReadCancellation(dispatchedUnitCount: dispatchedUnitCount)
+        }
+        do {
+            try await self.revalidateDialogTarget(
+                target: plan.target,
+                retainedWindow: plan.window,
+                retainedDialog: plan.dialog,
+                operation: "input postcondition")
+            _ = try self.revalidateDialogInputField(
+                targetField,
+                in: plan.dialog,
+                identifier: fieldIdentifier,
+                exactSelection: exactFieldSelection)
+        } catch {
+            guard let dispatchedUnitCount else { throw error }
+            throw DesktopActionFailure.dispatchedUnverified(
+                delivery: Self.foregroundKeyboardDelivery,
+                evidence: .deliveryAccepted,
+                unitCount: dispatchedUnitCount,
+                message: "Dialog input was dispatched, but the exact dialog field receipt changed.",
+                hint: "Observe the exact dialog and field before retrying.",
+                causeDescription: error.localizedDescription)
+        }
+        let outcome = try Self.dialogInputOutcome(
+            expectedValue: expectedValue,
+            observedValue: observedValue,
+            isSecure: isSecure,
+            dispatchedUnitCount: dispatchedUnitCount)
+        let retainedValueMatchesRequest = if let expectedValue, !isSecure {
+            observedValue == expectedValue
+        } else {
+            false
+        }
+
+        let result = DialogActionResult(
+            success: true,
+            action: .enterText,
+            details: self.dialogInputDetails(
+                plan: plan,
+                field: targetField,
+                textLength: text.count,
+                cleared: clearExisting,
+                valueVerified: retainedValueMatchesRequest,
+                focusPolicy: focusPolicy),
+            outcome: outcome,
+            targetReceipt: execution.publishTargetReceipt ? Self.desktopActionTargetReceipt(plan.target) : nil)
+        self.logger.info("\(AgentDisplayTokens.Status.success) Dialog input delivery completed")
+        return result
+    }
+
+    private func dispatchValidatedDialogInput(
+        _ execution: RetainedDialogInputPlan,
+        focusMutationDispatched: Bool) throws -> DesktopActionOutcome.DispatchUnitCount?
+    {
+        try self.dispatchDialogInput(
+            text: execution.text,
+            clearExisting: execution.clearExisting,
+            validateEachCharacter: true,
+            unitFocusValidation: { dispatchedKeyboardUnits in
+                do {
+                    try self.focusService.requireDialogDispatchFocus(
+                        target: execution.dialog.target,
+                        retainedWindow: execution.dialog.window,
+                        dialog: execution.dialog.dialog,
+                        field: execution.field)
+                } catch {
+                    throw Self.dialogDispatchFocusFailure(
+                        focusMutationDispatched: focusMutationDispatched,
+                        dispatchedKeyboardUnits: dispatchedKeyboardUnits,
+                        cause: error)
+                }
+            })
+    }
+
+    private func logDialogInput(_ execution: RetainedDialogInputPlan) {
+        self.logger.info("Entering text into dialog field")
+        self.logger.debug(
+            "Text length: \(execution.text.count) chars, clear existing: \(execution.clearExisting)")
+        if let fieldIdentifier = execution.fieldIdentifier {
+            self.logger.debug("Target field: \(fieldIdentifier)")
         }
     }
 
@@ -171,6 +350,99 @@ extension DialogService {
             hint: "Refresh the dialog and select one exact field before retrying.")
     }
 
+    func revalidateDialogInputField(
+        _ retainedField: Element,
+        in dialog: Element,
+        identifier: String?,
+        exactSelection: Bool = false) throws -> Element
+    {
+        let selected = if exactSelection {
+            try self.exactDialogInputField(in: dialog, identifier: identifier)
+        } else {
+            try self.textField(in: dialog, identifier: identifier)
+        }
+        guard Self.sameElement(selected, retainedField),
+              Self.rawElementPresence(retainedField, in: dialog) == .present
+        else {
+            throw self.targetUnavailable("Prepared dialog input field changed before keyboard delivery.")
+        }
+        return selected
+    }
+
+    func exactDialogInputField(in dialog: Element, identifier: String?) throws -> Element {
+        let textFields = self.collectTextFields(from: dialog)
+        guard !textFields.isEmpty else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The exact dialog contains no text fields.",
+                hint: "List the exact dialog again before retrying.")
+        }
+        if let identifier, let index = Int(identifier) {
+            guard textFields.indices.contains(index) else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "Dialog text field index \(index) is unavailable.",
+                    hint: "List the exact dialog and provide one current field index.")
+            }
+            return textFields[index]
+        }
+
+        let matches: [Element] = if let identifier {
+            textFields.filter { field in
+                field.title() == identifier ||
+                    field.attribute(Attribute<String>("AXPlaceholderValue")) == identifier ||
+                    field.descriptionText()?.contains(identifier) == true
+            }
+        } else {
+            textFields
+        }
+        guard matches.count == 1, let field = matches.first else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: matches.isEmpty
+                    ? "No dialog text field matched the exact input request."
+                    : "Dialog text field selection is ambiguous across \(matches.count) matches.",
+                hint: "List the exact dialog and provide one unique field label, placeholder, or index.")
+        }
+        return field
+    }
+
+    func dialogInputDetails(
+        plan: ForegroundDialogPlan,
+        field: Element,
+        textLength: Int,
+        cleared: Bool,
+        valueVerified: Bool,
+        focusPolicy: DialogInputFocusPolicy = DialogInputFocusPolicy()) -> [String: String]
+    {
+        var details = Self.dialogTargetDetails(plan.target)
+        details.merge([
+            "dialog_identifier": self.dialogIdentifier(for: plan.dialog),
+            "dialog_role": plan.dialog.role() ?? "Unknown",
+            "dialog_title": plan.dialog.title() ?? "Untitled Dialog",
+            "field": field.title() ?? "Text Field",
+            "text_length": String(textLength),
+            "cleared": String(cleared),
+            "value_verified": String(valueVerified),
+            "auto_focus": String(focusPolicy.autoFocus),
+            "focus_timeout_seconds": String(focusPolicy.timeout),
+            "focus_retry_count": String(focusPolicy.retryCount),
+            "switch_space": String(focusPolicy.switchSpace),
+            "bring_to_current_space": String(focusPolicy.bringToCurrentSpace),
+        ]) { _, new in new }
+        return details
+    }
+
+    static func dialogInputFocusOptions(
+        _ policy: DialogInputFocusPolicy) -> FocusManagementService.FocusOptions
+    {
+        FocusManagementService.FocusOptions(
+            timeout: policy.timeout,
+            retryCount: policy.retryCount,
+            switchSpace: policy.switchSpace,
+            bringToCurrentSpace: policy.bringToCurrentSpace)
+    }
+
     static func dialogFieldFocusUnverifiedFailure() -> DesktopActionFailure {
         .dispatchedUnverified(
             delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
@@ -180,28 +452,91 @@ extension DialogService {
             hint: "Refresh the dialog and select one exact field before retrying.")
     }
 
+    static func dialogDispatchFocusFailure(
+        focusMutationDispatched: Bool,
+        dispatchedKeyboardUnits: Int,
+        cause: any Error) -> DesktopActionFailure
+    {
+        if dispatchedKeyboardUnits > 0 {
+            return .dispatchedUnverified(
+                delivery: self.foregroundKeyboardDelivery,
+                evidence: .deliveryAccepted,
+                unitCount: self.dispatchUnitCount(dispatchedKeyboardUnits),
+                message: "Dialog field lost exact focus after keyboard delivery started.",
+                hint: "Observe the exact dialog field before any retry.",
+                causeDescription: cause.localizedDescription)
+        }
+        if focusMutationDispatched {
+            return .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .one,
+                message: "Dialog lost exact foreground focus after field focus was accepted.",
+                hint: "Observe the exact dialog and field before retrying.",
+                causeDescription: cause.localizedDescription)
+        }
+        return .preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "Dialog lost exact foreground focus before keyboard delivery.",
+            hint: "Focus the exact dialog or enable automatic focus before retrying.",
+            causeDescription: cause.localizedDescription)
+    }
+
     func dispatchDialogInput(text: String, clearExisting: Bool) throws
         -> DesktopActionOutcome.DispatchUnitCount?
+    {
+        try self.dispatchDialogInput(
+            text: text,
+            clearExisting: clearExisting,
+            unitFocusValidation: { _ in })
+    }
+
+    func dispatchDialogInput(
+        text: String,
+        clearExisting: Bool,
+        validateEachCharacter: Bool = false,
+        unitFocusValidation: (Int) throws -> Void) throws -> DesktopActionOutcome.DispatchUnitCount?
     {
         var dispatchedUnits = 0
         if clearExisting {
             try self.checkDialogInputCancellation(dispatchedUnits: dispatchedUnits)
+            try unitFocusValidation(dispatchedUnits)
             try self.dispatchDialogInputUnit(dispatchedUnits: dispatchedUnits) {
                 try self.syntheticInputDriver.hotkey(keys: ["cmd", "a"], holdDuration: 0.05)
             }
             dispatchedUnits += 1
             try self.checkDialogInputCancellation(dispatchedUnits: dispatchedUnits)
+            try unitFocusValidation(dispatchedUnits)
             try self.dispatchDialogInputUnit(dispatchedUnits: dispatchedUnits) {
                 try self.syntheticInputDriver.tapKey(.delete, modifiers: [])
             }
             dispatchedUnits += 1
         }
         if !text.isEmpty {
-            try self.checkDialogInputCancellation(dispatchedUnits: dispatchedUnits)
-            try self.dispatchDialogInputUnit(dispatchedUnits: dispatchedUnits) {
-                try self.syntheticInputDriver.type(text, delayPerCharacter: 0.01)
+            if validateEachCharacter {
+                var typeUnitStarted = false
+                for character in text {
+                    let effectiveUnits = dispatchedUnits + (typeUnitStarted ? 1 : 0)
+                    try self.checkDialogInputCancellation(dispatchedUnits: effectiveUnits)
+                    try unitFocusValidation(effectiveUnits)
+                    // Text entry is one logical dispatch unit even when emitted character by character.
+                    // The wrapper adds that possibly-started unit; passing effectiveUnits would double-count it.
+                    try self.dispatchDialogInputUnit(dispatchedUnits: dispatchedUnits) {
+                        try self.syntheticInputDriver.type(String(character), delayPerCharacter: 0.01)
+                    }
+                    typeUnitStarted = true
+                }
+                if typeUnitStarted {
+                    dispatchedUnits += 1
+                }
+            } else {
+                try self.checkDialogInputCancellation(dispatchedUnits: dispatchedUnits)
+                try unitFocusValidation(dispatchedUnits)
+                try self.dispatchDialogInputUnit(dispatchedUnits: dispatchedUnits) {
+                    try self.syntheticInputDriver.type(text, delayPerCharacter: 0.01)
+                }
+                dispatchedUnits += 1
             }
-            dispatchedUnits += 1
         }
         return dispatchedUnits == 0 ? nil : Self.dispatchUnitCount(dispatchedUnits)
     }

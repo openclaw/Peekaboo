@@ -541,24 +541,77 @@ public struct DesktopActionOutcome: Codable, Equatable, Sendable {
     }
 }
 
+/// Canonical generation-bound window attribution for desktop action results and failures.
+public struct DesktopActionTargetReceipt: Codable, Equatable, Sendable {
+    public let processIdentifier: Int32
+    public let processStartIdentity: UInt64
+    public let windowID: Int
+
+    public init(processIdentifier: Int32, processStartIdentity: UInt64, windowID: Int) {
+        self.processIdentifier = processIdentifier
+        self.processStartIdentity = processStartIdentity
+        self.windowID = windowID
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case processIdentifier = "pid"
+        case processStartIdentity = "process_start_identity"
+        case processStartIdentityDecimal = "process_start_identity_decimal"
+        case windowID = "window_id"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let processIdentifier = try container.decode(Int32.self, forKey: .processIdentifier)
+        let processStartIdentity = try container.decode(UInt64.self, forKey: .processStartIdentity)
+        let decimal = try container.decodeIfPresent(String.self, forKey: .processStartIdentityDecimal)
+        let windowID = try container.decode(Int.self, forKey: .windowID)
+        guard processIdentifier > 0,
+              processStartIdentity > 0,
+              decimal == nil || decimal == String(processStartIdentity),
+              windowID > 0
+        else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .processStartIdentityDecimal,
+                in: container,
+                debugDescription: "Desktop action target receipt fields are inconsistent")
+        }
+        self.init(
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity,
+            windowID: windowID)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.processIdentifier, forKey: .processIdentifier)
+        try container.encode(self.processStartIdentity, forKey: .processStartIdentity)
+        try container.encode(String(self.processStartIdentity), forKey: .processStartIdentityDecimal)
+        try container.encode(self.windowID, forKey: .windowID)
+    }
+}
+
 /// User-facing failure context paired with a non-confirmed desktop action outcome.
 public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable {
     public let outcome: DesktopActionOutcome
     public let message: String
     public let hint: String?
     public let causeDescription: String?
+    public let targetReceipt: DesktopActionTargetReceipt?
 
     public init?(
         outcome: DesktopActionOutcome,
         message: String,
         hint: String? = nil,
-        causeDescription: String? = nil)
+        causeDescription: String? = nil,
+        targetReceipt: DesktopActionTargetReceipt? = nil)
     {
         guard !outcome.isConfirmed else { return nil }
         self.outcome = outcome
         self.message = message
         self.hint = hint
         self.causeDescription = causeDescription
+        self.targetReceipt = targetReceipt
     }
 
     public static func partial(
@@ -681,12 +734,14 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
         validatedOutcome outcome: DesktopActionOutcome,
         message: String,
         hint: String?,
-        causeDescription: String?)
+        causeDescription: String?,
+        targetReceipt: DesktopActionTargetReceipt? = nil)
     {
         self.outcome = outcome
         self.message = message
         self.hint = hint
         self.causeDescription = causeDescription
+        self.targetReceipt = targetReceipt
     }
 
     public var errorDescription: String? {
@@ -707,7 +762,19 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
             validatedOutcome: self.outcome.routed(to: route),
             message: self.message,
             hint: self.hint,
-            causeDescription: self.causeDescription)
+            causeDescription: self.causeDescription,
+            targetReceipt: self.targetReceipt)
+    }
+
+    /// Attaches a resolved target only after the execution owner has established it.
+    public func attributed(to targetReceipt: DesktopActionTargetReceipt?) -> DesktopActionFailure {
+        guard let targetReceipt else { return self }
+        return Self(
+            validatedOutcome: self.outcome,
+            message: self.message,
+            hint: self.hint,
+            causeDescription: self.causeDescription,
+            targetReceipt: targetReceipt)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -715,6 +782,7 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
         case message
         case hint
         case causeDescription = "cause_description"
+        case targetReceipt = "target_receipt"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -730,5 +798,6 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
         self.message = try container.decode(String.self, forKey: .message)
         self.hint = try container.decodeIfPresent(String.self, forKey: .hint)
         self.causeDescription = try container.decodeIfPresent(String.self, forKey: .causeDescription)
+        self.targetReceipt = try container.decodeIfPresent(DesktopActionTargetReceipt.self, forKey: .targetReceipt)
     }
 }

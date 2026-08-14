@@ -143,6 +143,35 @@ struct MCPDialogPreparedActionTests {
     }
 
     @Test
+    func `exact-window input leaves sheet focus to dialog service without selector downgrade`() async throws {
+        let windows = EmptyRecordingWindowService()
+        let dialogs = PreparedDialogService()
+        let context = await MCPToolTestHelpers.makeContext(
+            windows: windows,
+            dialogs: dialogs)
+
+        let response = try await context.execute(
+            tool: DialogTool(context: context),
+            arguments: ToolArguments(raw: [
+                "action": "input",
+                "text": "value",
+                "pid": 89,
+                "window_id": 700,
+                "foreground": true,
+            ]))
+
+        #expect(!response.isError)
+        #expect(dialogs.inputCount == 1)
+        let request = try #require(dialogs.lastExactInputRequest)
+        #expect(request.target.applicationIdentifier == nil)
+        #expect(request.target.processIdentifier == 89)
+        #expect(request.target.windowID == 700)
+        #expect(request.text == "value")
+        #expect(request.focus == DialogInputFocusPolicy())
+        #expect(await windows.focusRequests.isEmpty)
+    }
+
+    @Test
     func `foreground input and forced dismiss expose unverified outcome warnings`() async throws {
         let dialogs = PreparedDialogService()
         dialogs.foregroundOutcome = .dispatchedUnverified(
@@ -219,6 +248,8 @@ private final class PreparedDialogService: DialogServiceProtocol {
     var preparationFailure: DesktopActionFailure?
     var foregroundOutcome: DesktopActionOutcome?
     var omitForegroundOutcome = false
+    var lastInputAppHint: String?
+    var lastExactInputRequest: DialogInputExecutionRequest?
 
     func prepareDialogAction(_ request: DialogActionPreparationRequest) throws -> PreparedDialogActionReceipt {
         self.prepareCount += 1
@@ -262,9 +293,20 @@ private final class PreparedDialogService: DialogServiceProtocol {
         fieldIdentifier _: String?,
         clearExisting _: Bool,
         windowTitle _: String?,
-        appName _: String?) async throws -> DialogActionResult
+        appName: String?) async throws -> DialogActionResult
     {
         self.inputCount += 1
+        self.lastInputAppHint = appName
+        return DialogActionResult(
+            success: true,
+            action: .enterText,
+            details: ["field": "Text Field", "text_length": "5"],
+            outcome: self.omitForegroundOutcome ? nil : (self.foregroundOutcome ?? self.outcome))
+    }
+
+    func enterText(_ request: DialogInputExecutionRequest) async throws -> DialogActionResult {
+        self.inputCount += 1
+        self.lastExactInputRequest = request
         return DialogActionResult(
             success: true,
             action: .enterText,

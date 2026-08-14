@@ -140,11 +140,24 @@ struct DesktopActionOutcomeTests {
         #expect(typedFailure.outcome.evidence == .operationStillRunning)
         #expect(typedFailure.outcome.effect == .unverifiable)
 
-        let routedFailure = typedFailure.routed(to: .bridge)
+        let receipt = DesktopActionTargetReceipt(
+            processIdentifier: 42,
+            processStartIdentity: 9_007_199_254_740_993,
+            windowID: 73)
+        let attributedFailure = typedFailure.attributed(to: receipt)
+        let attributedData = try JSONEncoder().encode(attributedFailure)
+        let attributedJSON = try #require(
+            JSONSerialization.jsonObject(with: attributedData) as? [String: Any])
+        let targetJSON = try #require(attributedJSON["target_receipt"] as? [String: Any])
+        #expect(targetJSON["process_start_identity_decimal"] as? String == "9007199254740993")
+        #expect(try JSONDecoder().decode(DesktopActionFailure.self, from: attributedData) == attributedFailure)
+
+        let routedFailure = attributedFailure.routed(to: .bridge)
         #expect(routedFailure.outcome.route == .bridge)
         #expect(routedFailure.message == typedFailure.message)
         #expect(routedFailure.hint == typedFailure.hint)
         #expect(routedFailure.causeDescription == typedFailure.causeDescription)
+        #expect(routedFailure.targetReceipt == receipt)
     }
 
     @Test

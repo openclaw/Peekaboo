@@ -238,6 +238,25 @@ extension PeekabooBridgeServer {
             let result = try await self.services.dialogs.performPreparedDialogAction(receipt)
             let outcome = try result.requiredPreparedOutcome(kind: .dismiss)
             return .init(response: .dialogResult(result), outcome: outcome)
+        case let .exactDialogEnterText(payload):
+            let result = try await self.services.dialogs.enterText(payload)
+            guard result.success,
+                  result.action == .enterText,
+                  let outcome = result.outcome,
+                  let targetReceipt = result.targetReceipt,
+                  payload.target.processIdentifier.map({
+                      $0 == targetReceipt.processIdentifier
+                  }) ?? true,
+                  payload.target.windowID.map({ $0 == targetReceipt.windowID }) ?? true
+            else {
+                throw DesktopActionFailure.indeterminate(
+                    delivery: result.outcome?.delivery,
+                    evidence: .completionUnknown,
+                    unitCount: result.outcome?.dispatchState.unitCount,
+                    message: "Exact dialog input did not return both its canonical outcome and target receipt.",
+                    hint: "Observe the dialog before retrying and update the execution host.")
+            }
+            return .init(response: .dialogResult(result), outcome: outcome)
         default:
             throw Self.invalidRequest(for: request)
         }

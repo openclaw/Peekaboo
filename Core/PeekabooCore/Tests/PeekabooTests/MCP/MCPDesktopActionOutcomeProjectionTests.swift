@@ -104,6 +104,34 @@ struct MCPDesktopActionOutcomeProjectionTests {
     }
 
     @Test
+    func `failure metadata carries canonical target receipt and safety filters preserve it`() throws {
+        let receipt = DesktopActionTargetReceipt(
+            processIdentifier: 42,
+            processStartIdentity: 9_007_199_254_740_993,
+            windowID: 73)
+        let failure = DesktopActionFailure.dispatchedUnverified(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one,
+            message: "Dialog input partially dispatched")
+            .attributed(to: receipt)
+
+        let response = try MCPToolResponseMetadataProjector.errorResponse(
+            for: failure,
+            invalidatedSnapshotID: nil)
+        let meta = try #require(response.meta?.objectValue)
+        let target = try #require(meta["target_receipt"]?.objectValue)
+        #expect(target["pid"] == .int(42))
+        #expect(target["process_start_identity_decimal"] == .string("9007199254740993"))
+        #expect(target["window_id"] == .int(73))
+
+        let external = MCPToolResponseMetadataProjector.externalFields(from: response.meta, toolName: "dialog")
+        let agent = MCPToolResponseMetadataProjector.agentFields(from: response.meta)
+        #expect(external["target_receipt"] == meta["target_receipt"])
+        #expect(agent["target_receipt"] == meta["target_receipt"])
+    }
+
+    @Test
     @MainActor
     func `action tool projects every native outcome state without inferring from invalidation`() async throws {
         let automation = StubAutomationService()

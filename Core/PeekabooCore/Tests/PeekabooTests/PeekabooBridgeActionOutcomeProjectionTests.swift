@@ -722,8 +722,8 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
     }
 
     @Test
-    func `current protocol 1 26 preserves projection capability introduced at 1 23`() {
-        let currentVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 26)
+    func `current protocol 1 27 preserves projection capability introduced at 1 23`() {
+        let currentVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 27)
         let projectionVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 23)
 
         #expect(PeekabooBridgeConstants.protocolVersion == currentVersion)

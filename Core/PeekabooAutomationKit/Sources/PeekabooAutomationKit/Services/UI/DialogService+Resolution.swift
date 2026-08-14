@@ -160,7 +160,7 @@ extension DialogService {
         }
     }
 
-    private func dialogIdentifier(for element: Element) -> String {
+    func dialogIdentifier(for element: Element) -> String {
         let role = element.role() ?? "unknown"
         let subrole = element.subrole() ?? ""
         let title = element.title() ?? "Untitled Dialog"

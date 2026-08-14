@@ -204,6 +204,10 @@ struct PeekabooBridgeClientTransportOutcomeTests {
             mechanism: .accessibilityAction,
             mode: .background)
         let twoUnits = try #require(DesktopActionOutcome.DispatchUnitCount(2))
+        let targetReceipt = DesktopActionTargetReceipt(
+            processIdentifier: 42,
+            processStartIdentity: 9_007_199_254_740_993,
+            windowID: 73)
         let failures = [
             DesktopActionFailure.refused(
                 route: .bridge,
@@ -218,7 +222,8 @@ struct PeekabooBridgeClientTransportOutcomeTests {
                 unitCount: twoUnits,
                 message: "Delivery was accepted but not verified",
                 hint: "Observe before retrying.",
-                causeDescription: "post-dispatch verification timed out"),
+                causeDescription: "post-dispatch verification timed out")
+                .attributed(to: targetReceipt),
             DesktopActionFailure.partial(
                 route: .bridge,
                 delivery: delivery,

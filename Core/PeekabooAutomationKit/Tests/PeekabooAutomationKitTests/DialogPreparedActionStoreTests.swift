@@ -168,6 +168,19 @@ struct DialogPreparedActionStoreTests {
             #expect(failure.outcome.dispatchState == .none)
             #expect(failure.outcome.retrySafety == .safe)
         }
+
+        let input = try DialogInputExecutionRequest(
+            target: DialogTargetSelector(processIdentifier: 42),
+            text: "hello")
+        do {
+            _ = try await LegacyDialogService().enterText(input)
+            Issue.record("Expected exact input to refuse on a legacy provider")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .runtimeIncompatible)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        }
     }
 
     private func receipt() throws -> PreparedDialogActionReceipt {

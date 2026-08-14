@@ -91,11 +91,76 @@ struct FocusUtilitiesTests {
     }
 
     @Test
+    func `focus verification accepts the retained structural sheet attached to the exact parent`() {
+        let parent = self.dialogParentIdentity()
+
+        #expect(FocusManagementService.isVerifiedAttachedDialogFocus(
+            expectedParent: parent,
+            observation: self.dialogFocusObservation(parent: parent)))
+    }
+
+    @Test
+    func `focus verification rejects an unrelated structural sheet in the same process`() {
+        let parent = self.dialogParentIdentity()
+
+        #expect(!FocusManagementService.isVerifiedAttachedDialogFocus(
+            expectedParent: parent,
+            observation: self.dialogFocusObservation(
+                parent: parent,
+                focusedWindowMatchesPreparedDialog: false)))
+    }
+
+    @Test
+    func `focus verification rejects the retained sheet under the wrong parent`() {
+        let parent = self.dialogParentIdentity()
+
+        #expect(!FocusManagementService.isVerifiedAttachedDialogFocus(
+            expectedParent: parent,
+            observation: self.dialogFocusObservation(
+                parent: parent,
+                preparedDialogAttachedToParent: false)))
+    }
+
+    @Test
+    func `focus verification rejects a stale parent process generation`() {
+        let parent = self.dialogParentIdentity()
+
+        #expect(!FocusManagementService.isVerifiedAttachedDialogFocus(
+            expectedParent: parent,
+            observation: self.dialogFocusObservation(
+                parent: parent,
+                currentProcessStartIdentity: parent.ownerProcessStartIdentity + 1)))
+    }
+
+    @Test
     func `focus verification reads owner pid through the AX element API`() {
         let processIdentifier = getpid()
         let applicationElement = AXUIElementCreateApplication(processIdentifier)
 
         #expect(FocusManagementService.processIdentifier(for: applicationElement) == processIdentifier)
+    }
+
+    private func dialogParentIdentity() -> WindowMutationIdentity {
+        WindowMutationIdentity(
+            windowID: 176,
+            ownerProcessIdentifier: 4242,
+            ownerProcessStartIdentity: 9_007_199_254_740_993,
+            capturedBounds: CGRect(x: 20, y: 30, width: 640, height: 480))
+    }
+
+    private func dialogFocusObservation(
+        parent: WindowMutationIdentity,
+        currentProcessStartIdentity: UInt64? = nil,
+        focusedWindowMatchesPreparedDialog: Bool = true,
+        preparedDialogAttachedToParent: Bool = true) -> AttachedDialogFocusObservation
+    {
+        AttachedDialogFocusObservation(
+            currentProcessStartIdentity: currentProcessStartIdentity ?? parent.ownerProcessStartIdentity,
+            focusedWindowPID: parent.ownerProcessIdentifier,
+            frontmostPID: parent.ownerProcessIdentifier,
+            focusedWindowMatchesPreparedDialog: focusedWindowMatchesPreparedDialog,
+            preparedDialogIsStructural: true,
+            preparedDialogAttachedToParent: preparedDialogAttachedToParent)
     }
 
     @Test

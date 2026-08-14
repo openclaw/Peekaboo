@@ -221,7 +221,7 @@ struct DialogForegroundOutcomeTests {
 }
 
 @MainActor
-private final class RecordingDialogSyntheticDriver: SyntheticInputDriving {
+final class RecordingDialogSyntheticDriver: SyntheticInputDriving {
     enum Failure: Equatable {
         case hotkey
         case cancellation
@@ -232,12 +232,14 @@ private final class RecordingDialogSyntheticDriver: SyntheticInputDriving {
     struct DriverFailure: Error {}
 
     let failure: Failure?
+    let failTypeAtCall: Int?
     private(set) var hotkeys: [[String]] = []
     private(set) var tappedKeys: [SpecialKey] = []
     private(set) var typedText: [String] = []
 
-    init(failure: Failure? = nil) {
+    init(failure: Failure? = nil, failTypeAtCall: Int? = nil) {
         self.failure = failure
+        self.failTypeAtCall = failTypeAtCall
     }
 
     func click(at _: CGPoint, button _: MouseButton, count _: Int) throws -> DesktopActionOutcome {
@@ -284,7 +286,7 @@ private final class RecordingDialogSyntheticDriver: SyntheticInputDriving {
         if self.failure == .cancellation {
             throw CancellationError()
         }
-        if self.failure == .type {
+        if self.failure == .type || self.failTypeAtCall == self.typedText.count + 1 {
             throw DriverFailure()
         }
         self.typedText.append(text)

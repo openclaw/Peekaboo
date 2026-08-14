@@ -62,6 +62,7 @@ extension PeekabooBridgeOperation {
              .prepareDialogAction,
              .exactDialogClickButton,
              .exactDialogDismiss,
+             .exactDialogEnterText,
              .desktopObservation:
             true
         case .permissionsStatus,
@@ -124,7 +125,7 @@ extension PeekabooBridgeOperation {
             [.screenRecording]
         case .targetedHotkey, .targetedTypeActions, .click, .scroll, .swipe, .drag, .moveMouse:
             [.postEvent]
-        case .exactWindowTargetedHotkey, .exactWindowTargetedTypeActions:
+        case .exactWindowTargetedHotkey, .exactWindowTargetedTypeActions, .exactDialogEnterText:
             [.postEvent, .accessibility]
         case .inspectAccessibilityTree,
              .getFocusedElement,
@@ -268,6 +269,7 @@ extension PeekabooBridgeOperation {
         .prepareDialogAction,
         .exactDialogClickButton,
         .exactDialogDismiss,
+        .exactDialogEnterText,
         .createSnapshot,
         .storeDetectionResult,
         .getDetectionResult,

@@ -92,6 +92,30 @@ struct ResultEnvelopeTests {
         }
     }
 
+    @Test func `canonical failure envelope carries resolved target receipt without inference`() {
+        let receipt = DesktopActionTargetReceipt(
+            processIdentifier: 42,
+            processStartIdentity: 9_007_199_254_740_993,
+            windowID: 73
+        )
+        let failure = DesktopActionFailure.dispatchedUnverified(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one,
+            message: "Dialog input partially dispatched"
+        )
+        .attributed(to: receipt)
+
+        let envelope = makeErrorEnvelope(
+            message: failure.message,
+            code: .INTERACTION_FAILED,
+            actionFailure: failure
+        )
+
+        #expect(envelope.target_receipt == receipt)
+        #expect(envelope.outcome == failure.outcome.projection)
+    }
+
     @Test func `action envelope includes effect`() throws {
         let envelope = ResultEnvelope(success: true, effect: .unverifiable, data: Payload(value: 1))
         let object = try #require(

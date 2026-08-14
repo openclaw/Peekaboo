@@ -53,6 +53,9 @@ public protocol DialogServiceProtocol: Sendable {
         windowTitle: String?,
         appName: String?) async throws -> DialogActionResult
 
+    /// Resolve and execute text entry against one exact dialog target on this runtime host.
+    func enterText(_ request: DialogInputExecutionRequest) async throws -> DialogActionResult
+
     /// Handle file save/open dialogs
     /// - Parameters:
     ///   - path: Full path to navigate to
@@ -137,6 +140,13 @@ extension DialogServiceProtocol {
             clearExisting: clearExisting,
             windowTitle: windowTitle,
             appName: nil)
+    }
+
+    public func enterText(_ request: DialogInputExecutionRequest) async throws -> DialogActionResult {
+        throw DesktopActionFailure.preDispatchRefusal(
+            reason: .runtimeIncompatible,
+            message: "This dialog service does not support exact host-executed dialog input.",
+            hint: "Update the selected runtime host before retrying.")
     }
 
     public func handleFileDialog(
@@ -231,16 +241,21 @@ public struct DialogActionResult: Sendable, Codable {
     /// Canonical action evidence. Legacy foreground paths may omit it; receipt-pinned actions may not.
     public let outcome: DesktopActionOutcome?
 
+    /// Exact generation-bound window receipt resolved by the execution host, when available.
+    public let targetReceipt: DesktopActionTargetReceipt?
+
     public init(
         success: Bool,
         action: DialogActionType,
         details: [String: String] = [:],
-        outcome: DesktopActionOutcome? = nil)
+        outcome: DesktopActionOutcome? = nil,
+        targetReceipt: DesktopActionTargetReceipt? = nil)
     {
         self.success = success
         self.action = action
         self.details = details
         self.outcome = outcome
+        self.targetReceipt = targetReceipt
     }
 }
 

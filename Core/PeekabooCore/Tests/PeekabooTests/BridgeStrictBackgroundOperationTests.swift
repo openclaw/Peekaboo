@@ -17,6 +17,7 @@ struct BridgeStrictBackgroundOperationTests {
             .prepareDialogAction,
             .exactDialogClickButton,
             .exactDialogDismiss,
+            .exactDialogEnterText,
         ]
 
         let legacy = PeekabooBridgeOperation.compatible(
@@ -38,7 +39,15 @@ struct BridgeStrictBackgroundOperationTests {
             [.backgroundCloseWindow, .backgroundDialogClickButton])
         #expect(PeekabooBridgeOperation.compatible(
             operations,
-            with: PeekabooBridgeProtocolVersion(major: 1, minor: 25)) == operations)
+            with: PeekabooBridgeProtocolVersion(major: 1, minor: 25)) ==
+            operations.subtracting([.exactDialogEnterText]))
+        #expect(PeekabooBridgeOperation.compatible(
+            operations,
+            with: PeekabooBridgeProtocolVersion(major: 1, minor: 26)) ==
+            operations.subtracting([.exactDialogEnterText]))
+        #expect(PeekabooBridgeOperation.compatible(
+            operations,
+            with: PeekabooBridgeProtocolVersion(major: 1, minor: 27)) == operations)
     }
 
     @Test
@@ -171,6 +180,31 @@ struct BridgeStrictBackgroundOperationTests {
     }
 
     @Test
+    func `remote exact dialog input refuses before transport when capability is missing`() async throws {
+        let client = PeekabooBridgeClient(socketPath: "/nonexistent/peekaboo-test.sock")
+        let service = RemoteDialogService(
+            client: client,
+            capabilities: RemoteDialogCapabilities(exactInput: false))
+        let request = try DialogInputExecutionRequest(
+            target: DialogTargetSelector(processIdentifier: 123),
+            text: "must not dispatch",
+            focus: DialogInputFocusPolicy(autoFocus: false))
+
+        do {
+            _ = try await service.enterText(request)
+            Issue.record("Expected exact dialog input capability refusal before transport")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.route == .bridge)
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .runtimeIncompatible)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.hint?.contains("1.27") == true)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test
     func `remote service initializer preserves legacy background dialog capability label`() {
         let client = PeekabooBridgeClient(socketPath: "/nonexistent/peekaboo-test.sock")
         _ = RemotePeekabooServices(
@@ -210,6 +244,22 @@ struct BridgeStrictBackgroundOperationTests {
         #expect(failure.outcome.retrySafety == .unsafe)
         #expect(failure.outcome.projection.requiresFreshObservation)
         #expect(failure.causeDescription == "response lost after AXPress")
+    }
+
+    @Test
+    func `remote exact input may-complete errors retain foreground global delivery semantics`() {
+        let envelope = PeekabooBridgeErrorEnvelope(
+            code: .internalError,
+            message: "Dialog input response was lost",
+            details: "response lost after keyboard delivery",
+            operationMayHaveCompleted: true)
+        let failure = RemoteDialogService.inputActionFailure(for: envelope)
+
+        #expect(failure.outcome.route == .bridge)
+        #expect(failure.outcome.state == .indeterminate)
+        #expect(failure.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
+        #expect(failure.outcome.retrySafety == .unsafe)
+        #expect(failure.causeDescription == "response lost after keyboard delivery")
     }
 
     @Test

@@ -131,6 +131,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case prepareDialogAction
     case exactDialogClickButton
     case exactDialogDismiss
+    case exactDialogEnterText
     // Snapshots/cache
     case createSnapshot
     case storeDetectionResult
@@ -231,6 +232,9 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
             compatible.remove(.exactDialogClickButton)
             compatible.remove(.exactDialogDismiss)
         }
+        if version < PeekabooBridgeConstants.exactDialogInputExecutionVersion {
+            compatible.remove(.exactDialogEnterText)
+        }
         return compatible
     }
 }
@@ -322,6 +326,7 @@ public enum PeekabooBridgeHostCapability {
     public static let desktopActionOutcomeProjection = "desktopActionOutcomeProjection"
     public static let explicitSnapshotPublication = "explicitSnapshotPublication"
     public static let browserConnectionReceipts = "browserConnectionReceipts"
+    public static let exactDialogInputExecution = "exactDialogInputExecution"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
@@ -448,6 +453,7 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
     public let actionOutcome: DesktopActionOutcome.Projection?
     public let actionFailureHint: String?
     public let actionFailureCauseDescription: String?
+    public let actionTargetReceipt: DesktopActionTargetReceipt?
 
     private enum CodingKeys: String, CodingKey {
         case code
@@ -460,6 +466,7 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         case actionOutcome
         case actionFailureHint
         case actionFailureCauseDescription
+        case actionTargetReceipt
     }
 
     public init(
@@ -481,6 +488,7 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         self.actionOutcome = nil
         self.actionFailureHint = nil
         self.actionFailureCauseDescription = nil
+        self.actionTargetReceipt = nil
     }
 
     public init(
@@ -501,6 +509,7 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         self.actionOutcome = actionFailure.outcome.projection
         self.actionFailureHint = actionFailure.hint
         self.actionFailureCauseDescription = actionFailure.causeDescription
+        self.actionTargetReceipt = actionFailure.targetReceipt
     }
 
     public init(from decoder: any Decoder) throws {
@@ -522,6 +531,9 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         self.actionFailureCauseDescription = try container.decodeIfPresent(
             String.self,
             forKey: .actionFailureCauseDescription)
+        self.actionTargetReceipt = try container.decodeIfPresent(
+            DesktopActionTargetReceipt.self,
+            forKey: .actionTargetReceipt)
         if let actionOutcome = self.actionOutcome {
             guard !actionOutcome.outcome.isConfirmed else {
                 throw DecodingError.dataCorruptedError(
@@ -541,7 +553,8 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
             self.operationMayHaveCompleted = expected
         } else {
             guard self.actionFailureHint == nil,
-                  self.actionFailureCauseDescription == nil
+                  self.actionFailureCauseDescription == nil,
+                  self.actionTargetReceipt == nil
             else {
                 throw DecodingError.dataCorruptedError(
                     forKey: .actionOutcome,
@@ -568,6 +581,7 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         try container.encodeIfPresent(
             self.actionFailureCauseDescription,
             forKey: .actionFailureCauseDescription)
+        try container.encodeIfPresent(self.actionTargetReceipt, forKey: .actionTargetReceipt)
     }
 
     public var errorDescription: String? {
@@ -587,7 +601,8 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
             outcome: actionOutcome.outcome,
             message: self.message,
             hint: self.actionFailureHint,
-            causeDescription: self.actionFailureCauseDescription)
+            causeDescription: self.actionFailureCauseDescription,
+            targetReceipt: self.actionTargetReceipt)
     }
 }
 

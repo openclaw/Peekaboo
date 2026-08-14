@@ -11,6 +11,7 @@ public actor PeekabooBridgeClient {
     let decoder: JSONDecoder
     let logger = Logger(subsystem: "boo.peekaboo.bridge", category: "client")
     var actionProjectionEnabled = false
+    var exactDialogInputExecutionEnabled = false
 
     public init(
         socketPath: String = PeekabooBridgeConstants.peekabooSocketPath,
@@ -35,6 +36,7 @@ public actor PeekabooBridgeClient {
         async throws -> PeekabooBridgeHandshakeResponse
     {
         self.actionProjectionEnabled = false
+        self.exactDialogInputExecutionEnabled = false
         let deadline: Date?
         if let overallTimeoutSec {
             guard overallTimeoutSec.isFinite, overallTimeoutSec > 0 else {
@@ -94,6 +96,13 @@ public actor PeekabooBridgeClient {
                 handshake.negotiatedVersion >= PeekabooBridgeConstants.desktopActionOutcomeProjectionVersion &&
                 handshake.hostCapabilities?.contains(
                     PeekabooBridgeHostCapability.desktopActionOutcomeProjection) == true
+            let exactInputAdvertised = handshake.supportedOperations.contains(.exactDialogEnterText)
+            self.exactDialogInputExecutionEnabled =
+                handshake.negotiatedVersion >= PeekabooBridgeConstants.exactDialogInputExecutionVersion &&
+                exactInputAdvertised &&
+                (handshake.enabledOperations?.contains(.exactDialogEnterText) ?? exactInputAdvertised) &&
+                handshake.hostCapabilities?.contains(
+                    PeekabooBridgeHostCapability.exactDialogInputExecution) == true
             return handshake
         case let .error(envelope):
             throw envelope

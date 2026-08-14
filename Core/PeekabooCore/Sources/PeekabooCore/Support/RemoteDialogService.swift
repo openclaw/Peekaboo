@@ -11,19 +11,22 @@ public struct RemoteDialogCapabilities: Sendable {
     public let prepareAction: Bool
     public let exactClick: Bool
     public let exactDismiss: Bool
+    public let exactInput: Bool
 
     public init(
         backgroundButtonClick: Bool = false,
         targetedList: Bool = false,
         prepareAction: Bool = false,
         exactClick: Bool = false,
-        exactDismiss: Bool = false)
+        exactDismiss: Bool = false,
+        exactInput: Bool = false)
     {
         self.backgroundButtonClick = backgroundButtonClick
         self.targetedList = targetedList
         self.prepareAction = prepareAction
         self.exactClick = exactClick
         self.exactDismiss = exactDismiss
+        self.exactInput = exactInput
     }
 }
 
@@ -37,6 +40,7 @@ public final class RemoteDialogService: DialogServiceProtocol {
     private let supportsPrepareAction: Bool
     private let supportsExactClick: Bool
     private let supportsExactDismiss: Bool
+    private let supportsExactInput: Bool
 
     public convenience init(client: PeekabooBridgeClient, supportsBackgroundButtonClick: Bool) {
         self.init(
@@ -54,6 +58,7 @@ public final class RemoteDialogService: DialogServiceProtocol {
         self.supportsPrepareAction = capabilities.prepareAction
         self.supportsExactClick = capabilities.exactClick
         self.supportsExactDismiss = capabilities.exactDismiss
+        self.supportsExactInput = capabilities.exactInput
     }
 
     public func findActiveDialog(windowTitle: String?, appName: String?) async throws -> DialogInfo {
@@ -98,6 +103,21 @@ public final class RemoteDialogService: DialogServiceProtocol {
             clearExisting: clearExisting,
             windowTitle: windowTitle,
             appName: appName)
+    }
+
+    public func enterText(_ request: DialogInputExecutionRequest) async throws -> DialogActionResult {
+        guard self.supportsExactInput else {
+            throw Self.capabilityRefusal(
+                "Remote host does not advertise atomic exact dialog input; no input was sent.",
+                minimumProtocol: "1.27")
+        }
+        do {
+            return try await self.client.exactDialogEnterText(request)
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.inputActionFailure(for: envelope)
+        }
     }
 
     public func handleFileDialog(
@@ -173,12 +193,15 @@ public final class RemoteDialogService: DialogServiceProtocol {
         }
     }
 
-    private static func capabilityRefusal(_ message: String) -> DesktopActionFailure {
+    private static func capabilityRefusal(
+        _ message: String,
+        minimumProtocol: String = "1.25") -> DesktopActionFailure
+    {
         .preDispatchRefusal(
             route: .bridge,
             reason: .runtimeIncompatible,
             message: message,
-            hint: "Select a protocol 1.25 host advertising the requested dialog operation.")
+            hint: "Select a protocol \(minimumProtocol) host advertising the requested dialog operation.")
     }
 
     static func preDispatchFailure(for envelope: PeekabooBridgeErrorEnvelope) -> DesktopActionFailure {
@@ -211,6 +234,20 @@ public final class RemoteDialogService: DialogServiceProtocol {
             unitCount: .one,
             message: envelope.message,
             hint: "Observe the dialog before retrying; the exact action may already have completed.",
+            causeDescription: envelope.details)
+    }
+
+    static func inputActionFailure(for envelope: PeekabooBridgeErrorEnvelope) -> DesktopActionFailure {
+        guard envelope.operationMayHaveCompleted else {
+            return self.preDispatchFailure(for: envelope)
+        }
+        return .indeterminate(
+            route: .bridge,
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .completionUnknown,
+            unitCount: nil,
+            message: envelope.message,
+            hint: "Observe the dialog before retrying; the exact input may already have been delivered.",
             causeDescription: envelope.details)
     }
 }

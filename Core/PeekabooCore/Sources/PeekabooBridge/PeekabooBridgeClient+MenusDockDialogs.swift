@@ -185,6 +185,83 @@ extension PeekabooBridgeClient {
         }
     }
 
+    /// Executes one exact dialog input request atomically in the selected Bridge host.
+    ///
+    /// This is intentionally separate from `dialogEnterText`: callers must capability-gate it and
+    /// must never degrade the exact target or focus policy into the legacy operation.
+    public func exactDialogEnterText(_ request: DialogInputExecutionRequest) async throws -> DialogActionResult {
+        guard self.exactDialogInputExecutionEnabled else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "Bridge host does not advertise atomic exact dialog input; no input was sent.",
+                hint: "Select a protocol 1.27 host advertising exact dialog input.")
+        }
+        let reply = try await self.sendCarryingActionOutcome(.exactDialogEnterText(request))
+        switch reply.response {
+        case let .dialogResult(result):
+            guard result.success,
+                  result.action == .enterText,
+                  let outcome = result.outcome,
+                  let targetReceipt = result.targetReceipt,
+                  request.target.processIdentifier.map({
+                      $0 == targetReceipt.processIdentifier
+                  }) ?? true,
+                  request.target.windowID.map({ $0 == targetReceipt.windowID }) ?? true
+            else {
+                throw DesktopActionFailure.indeterminate(
+                    route: .bridge,
+                    evidence: .completionUnknown,
+                    unitCount: reply.outcome?.outcome.dispatchState.unitCount,
+                    message: "Bridge exact dialog input did not return both its canonical outcome and target receipt.",
+                    hint: "Observe the dialog before retrying and update the runtime host.")
+            }
+            let routedOutcome = outcome.routed(to: .bridge)
+            if let projected = reply.outcome?.outcome, projected != routedOutcome {
+                throw DesktopActionFailure.indeterminate(
+                    route: .bridge,
+                    delivery: outcome.delivery,
+                    evidence: .completionUnknown,
+                    unitCount: outcome.dispatchState.unitCount,
+                    message: "Bridge exact dialog input carried contradictory canonical outcomes.",
+                    hint: "Observe the dialog before retrying and update the runtime host.")
+            }
+            return DialogActionResult(
+                success: result.success,
+                action: result.action,
+                details: result.details,
+                outcome: routedOutcome,
+                targetReceipt: targetReceipt)
+        case let .error(envelope):
+            if let failure = envelope.desktopActionFailure ?? reply.outcome.flatMap({ projection in
+                DesktopActionFailure(
+                    outcome: projection.outcome,
+                    message: envelope.message,
+                    hint: envelope.actionFailureHint,
+                    causeDescription: envelope.actionFailureCauseDescription ?? envelope.details)
+            }) {
+                throw failure.routed(to: .bridge)
+            }
+            if let outcome = reply.outcome?.outcome {
+                throw DesktopActionFailure.indeterminate(
+                    route: .bridge,
+                    delivery: outcome.delivery,
+                    evidence: .completionUnknown,
+                    unitCount: outcome.dispatchState.unitCount,
+                    message: "Bridge exact dialog input error carried an invalid confirmed outcome.",
+                    hint: "Observe the dialog before retrying and update the runtime host.")
+            }
+            throw envelope
+        default:
+            throw DesktopActionFailure.indeterminate(
+                route: .bridge,
+                evidence: .completionUnknown,
+                unitCount: reply.outcome?.outcome.dispatchState.unitCount,
+                message: "Bridge returned an unexpected exact dialog input response.",
+                hint: "Observe the dialog before retrying and update the runtime host.")
+        }
+    }
+
     public func dialogHandleFile(
         path: String?,
         filename: String?,

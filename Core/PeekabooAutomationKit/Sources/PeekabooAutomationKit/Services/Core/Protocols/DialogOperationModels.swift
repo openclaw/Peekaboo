@@ -96,6 +96,110 @@ public struct DialogTargetSelector: Sendable, Codable, Equatable {
     }
 }
 
+/// Foreground-focus behavior for one exact dialog input execution.
+///
+/// Dialog text entry ultimately uses global keyboard events, so disabling automatic focus does not
+/// weaken verification: the selected parent/dialog must already own foreground focus before dispatch.
+public struct DialogInputFocusPolicy: Sendable, Codable, Equatable {
+    public let autoFocus: Bool
+    public let timeout: TimeInterval
+    public let retryCount: Int
+    public let switchSpace: Bool
+    public let bringToCurrentSpace: Bool
+
+    public init(
+        autoFocus: Bool = true,
+        timeout: TimeInterval = 5,
+        retryCount: Int = 3,
+        switchSpace: Bool = false,
+        bringToCurrentSpace: Bool = false)
+    {
+        self.autoFocus = autoFocus
+        self.timeout = timeout
+        self.retryCount = retryCount
+        self.switchSpace = switchSpace
+        self.bringToCurrentSpace = bringToCurrentSpace
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case autoFocus
+        case timeout
+        case retryCount
+        case switchSpace
+        case bringToCurrentSpace
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            autoFocus: container.decode(Bool.self, forKey: .autoFocus),
+            timeout: container.decode(TimeInterval.self, forKey: .timeout),
+            retryCount: container.decode(Int.self, forKey: .retryCount),
+            switchSpace: container.decode(Bool.self, forKey: .switchSpace),
+            bringToCurrentSpace: container.decode(Bool.self, forKey: .bringToCurrentSpace))
+    }
+}
+
+/// Complete, host-executed request for exact dialog text entry.
+///
+/// The selector is intentionally unresolved on the wire. The execution host must resolve and retain
+/// the parent window, structural dialog, field, and process-generation receipt in one operation lane.
+public struct DialogInputExecutionRequest: Sendable, Codable, Equatable {
+    public let target: DialogTargetSelector
+    public let text: String
+    public let fieldIdentifier: String?
+    public let clearExisting: Bool
+    public let focus: DialogInputFocusPolicy
+
+    public init(
+        target: DialogTargetSelector,
+        text: String,
+        fieldIdentifier: String? = nil,
+        clearExisting: Bool = false,
+        focus: DialogInputFocusPolicy = DialogInputFocusPolicy()) throws
+    {
+        guard target.hasTarget else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "Dialog input requires an explicit app, PID, or window target.",
+                hint: "Add --app, --pid, or --window-id after listing the dialog.")
+        }
+        let normalizedFieldIdentifier = fieldIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if fieldIdentifier != nil, normalizedFieldIdentifier?.isEmpty != false {
+            throw PeekabooError.invalidInput("Dialog input field identifier must not be empty")
+        }
+        guard focus.timeout.isFinite, focus.timeout > 0 else {
+            throw PeekabooError.invalidInput("Dialog input focus timeout must be greater than zero")
+        }
+        guard focus.retryCount > 0 else {
+            throw PeekabooError.invalidInput("Dialog input focus retry count must be greater than zero")
+        }
+        self.target = target
+        self.text = text
+        self.fieldIdentifier = normalizedFieldIdentifier
+        self.clearExisting = clearExisting
+        self.focus = focus
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case target
+        case text
+        case fieldIdentifier
+        case clearExisting
+        case focus
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            target: container.decode(DialogTargetSelector.self, forKey: .target),
+            text: container.decode(String.self, forKey: .text),
+            fieldIdentifier: container.decodeIfPresent(String.self, forKey: .fieldIdentifier),
+            clearExisting: container.decode(Bool.self, forKey: .clearExisting),
+            focus: container.decode(DialogInputFocusPolicy.self, forKey: .focus))
+    }
+}
+
 public enum DialogPreparedActionKind: String, Sendable, Codable, Equatable {
     case clickButton = "click_button"
     case dismiss

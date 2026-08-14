@@ -135,6 +135,7 @@ struct ResultEnvelope<Payload> {
     var effect: ActionEffect?
     var outcome: DesktopActionOutcome.Projection?
     let data: Payload
+    var target_receipt: DesktopActionTargetReceipt?
     var messages: [String]?
     var debug_logs: [String] = []
     var error: ErrorInfo?
@@ -332,6 +333,7 @@ func makeErrorEnvelope(
         effect: resolvedOutcome?.effect ?? resolvedEffect,
         outcome: resolvedOutcome,
         data: nil,
+        target_receipt: actionFailure?.targetReceipt,
         debug_logs: debugLogs,
         error: ErrorInfo(
             message: message,

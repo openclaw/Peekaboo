@@ -37,6 +37,7 @@ enum MCPToolResponseMetadataProjector {
     private static let safetyKeys = Self.actionOutcomeKeys.union([
         "error_code",
         "execution_policy",
+        "target_receipt",
     ])
 
     private static let captureErrorKeys: Set<String> = [
@@ -128,6 +129,9 @@ enum MCPToolResponseMetadataProjector {
         try fields.merge(self.fields(for: failure.outcome.projection)) { _, canonical in canonical }
         if let invalidatedSnapshotID {
             fields["invalidated_snapshot"] = .string(invalidatedSnapshotID)
+        }
+        if let targetReceipt = failure.targetReceipt {
+            fields["target_receipt"] = try Value(targetReceipt)
         }
 
         return ToolResponse.error(

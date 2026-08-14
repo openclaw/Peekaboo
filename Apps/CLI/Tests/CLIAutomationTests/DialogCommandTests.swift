@@ -342,6 +342,73 @@ struct DialogCommandTests {
     }
 
     @Test
+    func `dialog input preserves exact selector and focus policy for host execution`() async throws {
+        let elements = DialogElements(
+            dialogInfo: DialogInfo(
+                title: "Alert",
+                role: "AXSheet",
+                bounds: .init(x: 0, y: 0, width: 400, height: 300)
+            ),
+            textFields: [DialogTextField(index: 0)]
+        )
+        let dialogService = StubDialogService(elements: elements)
+        let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
+        let identity = WindowMutationIdentity(
+            windowID: 73,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: 9001,
+            capturedBounds: bounds
+        )
+        dialogService.enterTextResult = DialogActionResult(
+            success: true,
+            action: .enterText,
+            details: ["field": "Name", "text_length": "5"],
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .one
+            ),
+            targetReceipt: DesktopActionTargetReceipt(
+                processIdentifier: identity.ownerProcessIdentifier,
+                processStartIdentity: identity.ownerProcessStartIdentity,
+                windowID: identity.windowID
+            )
+        )
+        let services = self.makeTestServices(dialogs: dialogService)
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "dialog", "input", "--text", "hello", "--field", "Name", "--foreground",
+                "--pid", "42", "--window-id", "73", "--focus-timeout", "2s",
+                "--focus-retry-count", "4", "--space-switch", "--json",
+            ],
+            services: services
+        )
+
+        #expect(result.exitStatus == 0)
+        #expect(dialogService.exactInputRequests.count == 1)
+        let request = try #require(dialogService.exactInputRequests.first)
+        #expect(request.target.processIdentifier == 42)
+        #expect(request.target.windowID == 73)
+        #expect(request.target.windowTitle == nil)
+        #expect(request.text == "hello")
+        #expect(request.fieldIdentifier == "Name")
+        #expect(request.focus.autoFocus)
+        #expect(request.focus.timeout == 2)
+        #expect(request.focus.retryCount == 4)
+        #expect(request.focus.switchSpace)
+        #expect(!request.focus.bringToCurrentSpace)
+
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+        )
+        let data = try #require(object["data"] as? [String: Any])
+        #expect(data["pid"] as? Int == 42)
+        #expect(data["window_id"] as? Int == 73)
+        #expect(data["process_start_identity_decimal"] as? String == "9001")
+    }
+
+    @Test
     func `dialog PID app hint uses exact local capability and preserves legacy provider names`() async throws {
         var target = InteractionTargetOptions()
         target.pid = 42

@@ -143,21 +143,27 @@ public struct DialogTool: MCPTool {
                 preparedReceipt = try await self.context.dialogs.prepareDialogAction(preparationRequest)
             }
 
-            if inputs.foreground, inputs.hasAnyTargeting {
+            // Input focus is owned by DialogService after it has retained one exact
+            // parent/dialog tuple. Generic window focus cannot safely recognize sheets.
+            if inputs.foreground, inputs.hasAnyTargeting, action != .input {
                 _ = try await target.focusIfRequested(windows: self.context.windows)
             }
             if inputs.foreground, let preparationRequest {
                 preparedReceipt = try await self.context.dialogs.prepareDialogAction(preparationRequest)
             }
 
-            let usesLegacyDialogResolution = action == .input || action == .file ||
+            let usesLegacyDialogResolution = (action == .input && !dialogTarget.hasTarget) || action == .file ||
                 (action == .dismiss && inputs.force == true)
             let resolvedWindowTitle: String? = if usesLegacyDialogResolution {
                 try await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
             } else {
                 nil
             }
-            let appHint = target.appIdentifier
+            let appHint: String? = if let identifier = target.appIdentifier {
+                identifier
+            } else {
+                nil
+            }
 
             return try await self.perform(
                 action: action,
@@ -231,12 +237,28 @@ public struct DialogTool: MCPTool {
 
         case .input:
             let request = try inputs.requireInputRequest()
-            let result = try await self.context.dialogs.enterText(
-                text: request.text,
-                fieldIdentifier: request.fieldIdentifier,
-                clearExisting: request.clearExisting,
-                windowTitle: windowTitle,
-                appName: appHint)
+            let result: DialogActionResult
+            if target.selector.hasTarget {
+                let exactRequest = try DialogInputExecutionRequest(
+                    target: target.selector,
+                    text: request.text,
+                    fieldIdentifier: request.fieldIdentifier,
+                    clearExisting: request.clearExisting,
+                    focus: DialogInputFocusPolicy(
+                        autoFocus: true,
+                        timeout: 5,
+                        retryCount: 3,
+                        switchSpace: false,
+                        bringToCurrentSpace: false))
+                result = try await self.context.dialogs.enterText(exactRequest)
+            } else {
+                result = try await self.context.dialogs.enterText(
+                    text: request.text,
+                    fieldIdentifier: request.fieldIdentifier,
+                    clearExisting: request.clearExisting,
+                    windowTitle: nil,
+                    appName: nil)
+            }
             let outcome = await result.foregroundOutcomeOrUnverified(
                 route: self.context.dialogs.foregroundOutcomeRoute)
             let notes = request.fieldIdentifier ?? "field"

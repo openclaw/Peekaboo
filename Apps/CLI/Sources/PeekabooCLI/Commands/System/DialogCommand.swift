@@ -94,11 +94,27 @@ struct DialogCommand: ParsableCommand {
         return name
     }
 
+    @MainActor
+    static func resolveDialogAppHintIfRequested(
+        _ requested: Bool,
+        target: InteractionTargetOptions,
+        services: any PeekabooServiceProviding,
+        refusalRoute: DesktopActionOutcome.Route
+    ) async throws -> String? {
+        guard requested else { return nil }
+        return try await self.resolveDialogAppHint(
+            target: target,
+            services: services,
+            refusalRoute: refusalRoute
+        )
+    }
+
     static func execute(
         runtime: CommandRuntime,
         target: InteractionTargetOptions,
         focus: ExecutionFocus,
         resolveWindowTitle: Bool = true,
+        resolveAppHint: Bool = true,
         beginsInteractionMutation: Bool = true,
         handlesValidationError: Bool = true,
         handlesPeekabooError: Bool = false,
@@ -154,7 +170,8 @@ struct DialogCommand: ParsableCommand {
             } else {
                 nil
             }
-            let appHint = try await self.resolveDialogAppHint(
+            let appHint = try await self.resolveDialogAppHintIfRequested(
+                resolveAppHint,
                 target: target,
                 services: runtime.services,
                 refusalRoute: runtime.selectedRemoteSocketPath == nil ? .local : .bridge
