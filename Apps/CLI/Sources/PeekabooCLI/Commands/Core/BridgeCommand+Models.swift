@@ -147,8 +147,7 @@ struct BridgeCandidateErrorReport: Codable, Sendable {
     nonisolated static func bridgeEnvelope(_ envelope: PeekabooBridgeErrorEnvelope) -> BridgeCandidateErrorReport {
         let hint: String? = switch envelope.code {
         case .unauthorizedClient:
-            "Client not signed by an allowed TeamID. For local dev, set " +
-                "PEEKABOO_ALLOW_UNSIGNED_SOCKET_CLIENTS=1 in the host."
+            self.authorizationHint(for: envelope)
         case .decodingFailed:
             "Host returned a non-Bridge response. This commonly means you hit a different socket protocol " +
                 "or the host closed early due to code-sign checks."
@@ -167,6 +166,16 @@ struct BridgeCandidateErrorReport: Codable, Sendable {
             details: envelope.details,
             hint: hint
         )
+    }
+
+    private nonisolated static func authorizationHint(for envelope: PeekabooBridgeErrorEnvelope) -> String {
+        if envelope.message.hasPrefix("Bundle ") {
+            return "Client bundle/signing identifier is not allowlisted for this host. Use the intended signed " +
+                "client or explicitly add its identifier to the host's bundle allowlist; the unsigned-client " +
+                "development override does not bypass bundle authorization."
+        }
+        return "Client is not signed by an allowed TeamID. Use the intended signed client. For local development " +
+            "with a DEBUG host only, set PEEKABOO_ALLOW_UNSIGNED_SOCKET_CLIENTS=1 in the host."
     }
 
     nonisolated static func other(_ error: any Error) -> BridgeCandidateErrorReport {

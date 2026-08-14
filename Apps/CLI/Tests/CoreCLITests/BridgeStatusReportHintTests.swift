@@ -101,6 +101,40 @@ struct BridgeStatusReportHintTests {
     }
 
     @Test
+    func `bundle authorization refusal names the bundle allowlist instead of the team`() throws {
+        let refusal = PeekabooBridgeErrorEnvelope(
+            code: .unauthorizedClient,
+            message: "Bundle boo.peekaboo.boundary-denied is not authorized"
+        )
+
+        let report = BridgeCandidateErrorReport
+            .bridgeEnvelope(refusal)
+        let hint = try #require(report.hint)
+
+        #expect(report.message == refusal.message)
+        #expect(hint.contains("bundle/signing identifier"))
+        #expect(hint.contains("bundle allowlist"))
+        #expect(hint.contains("TeamID") == false)
+        #expect(hint.contains("PEEKABOO_ALLOW_UNSIGNED_SOCKET_CLIENTS") == false)
+    }
+
+    @Test
+    func `team authorization refusal retains the signed-client remediation`() throws {
+        let refusal = PeekabooBridgeErrorEnvelope(
+            code: .unauthorizedClient,
+            message: "Team NOT_ALLOWED is not authorized"
+        )
+
+        let hint = try #require(
+            BridgeCandidateErrorReport.bridgeEnvelope(refusal).hint
+        )
+
+        #expect(hint.contains("allowed TeamID"))
+        #expect(hint.contains("intended signed client"))
+        #expect(hint.contains("DEBUG host only"))
+    }
+
+    @Test
     func `Bridge report preserves host generation build and launch capabilities`() throws {
         let identity = PeekabooBridgeHostIdentity(
             processIdentifier: 4242,
