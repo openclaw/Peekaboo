@@ -132,7 +132,33 @@ struct DialogForegroundOutcomeTests {
     }
 
     @Test
+    func `dialog window focus failures distinguish read only verification from possible focus mutation`() {
+        let verification = DialogService.dialogWindowFocusFailure(
+            autoFocus: false,
+            cause: FocusError.focusVerificationFailed(700))
+        #expect(verification.outcome.state == .refused)
+        #expect(verification.outcome.refusalReason == .targetUnavailable)
+        #expect(verification.outcome.dispatchState == .none)
+        #expect(verification.outcome.retrySafety == .safe)
+
+        let automatic = DialogService.dialogWindowFocusFailure(
+            autoFocus: true,
+            cause: FocusError.focusVerificationTimeout(700))
+        #expect(automatic.outcome.state == .indeterminate)
+        #expect(automatic.outcome.delivery == nil)
+        #expect(automatic.outcome.dispatchState.unitCount == nil)
+        #expect(automatic.outcome.retrySafety == .unsafe)
+        #expect(automatic.outcome.escalation == .observeBeforeRetry)
+
+        let cancelledAutomatic = DialogService.dialogWindowFocusFailure(
+            autoFocus: true,
+            cause: CancellationError())
+        #expect(cancelledAutomatic.outcome == automatic.outcome)
+    }
+
+    @Test
     func `external forced-dismiss race never upgrades global Escape to confirmed`() {
+        #expect(DialogService.forcedDismissMutationScope == .global)
         for presence in [
             DialogService.DialogPresence.present,
             .absent,

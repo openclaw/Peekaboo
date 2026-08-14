@@ -353,15 +353,17 @@ struct DialogExactInputContractTests {
     }
 
     @Test
-    func `resolved unsafe input failure retains exact target while pre-resolution refusal does not`() throws {
+    func `resolved unsafe dialog failure retains exact target while pre-resolution refusal does not`() throws {
         let target = try self.target()
-        let partial = DesktopActionFailure.dispatchedUnverified(
+        let unsafeFailure = DesktopActionFailure.indeterminate(
             delivery: DialogService.foregroundKeyboardDelivery,
-            evidence: .deliveryAccepted,
+            evidence: .completionUnknown,
             unitCount: .one,
-            message: "Input focus changed after one character")
-        let attributed = DialogService.attributedDialogInputFailure(partial, target: target)
+            message: "Forced Escape may have started")
+        let attributed = DialogService.attributedDialogActionFailure(unsafeFailure, target: target)
 
+        #expect(attributed.outcome.state == .indeterminate)
+        #expect(attributed.outcome.retrySafety == .unsafe)
         #expect(attributed.targetReceipt == DesktopActionTargetReceipt(
             processIdentifier: target.identity.ownerProcessIdentifier,
             processStartIdentity: target.identity.ownerProcessStartIdentity,
