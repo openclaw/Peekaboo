@@ -21,8 +21,10 @@ extension DialogCommand {
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
+            var preparationRequest: DialogActionPreparationRequest?
             var preparedReceipt: PreparedDialogActionReceipt?
             let buttonText = self.button
+            let foreground = self.foreground
             try await DialogCommand.execute(
                 runtime: runtime,
                 target: self.target,
@@ -39,15 +41,23 @@ extension DialogCommand {
                         kind: .clickButton,
                         buttonText: buttonText
                     )
+                    preparationRequest = request
+                    guard !foreground else { return }
                     preparedReceipt = try await context.services.dialogs.prepareDialogAction(request)
                 },
                 operation: { context in
-                    guard let receipt = preparedReceipt else {
-                        throw DesktopActionFailure.preDispatchRefusal(
-                            reason: .runtimeIncompatible,
-                            message: "Dialog click lost its prepared action receipt before execution.",
-                            hint: "Prepare the dialog action again before retrying."
-                        )
+                    let receipt: PreparedDialogActionReceipt
+                    if let preparedReceipt {
+                        receipt = preparedReceipt
+                    } else {
+                        guard let request = preparationRequest else {
+                            throw DesktopActionFailure.preDispatchRefusal(
+                                reason: .invalidRequest,
+                                message: "Dialog click lost its validated preparation request.",
+                                hint: "Validate and prepare the dialog action again before retrying."
+                            )
+                        }
+                        receipt = try await context.services.dialogs.prepareDialogAction(request)
                     }
                     let result = try await context.services.dialogs.performPreparedDialogAction(receipt)
                     _ = try result.requiredPreparedOutcome(kind: .clickButton)

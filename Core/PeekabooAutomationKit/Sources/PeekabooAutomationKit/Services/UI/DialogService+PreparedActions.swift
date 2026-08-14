@@ -106,7 +106,7 @@ extension DialogService {
                     causeDescription: error.localizedDescription)
             }
 
-            let dialogDisappeared = await self.verifyPreparedDialogDisappeared(entry)
+            let dialogPresence = await self.verifyPreparedDialogPresence(entry)
             if Task.isCancelled,
                let failure = sequence.cancellationFailure(
                    fallbackRoute: .local,
@@ -116,7 +116,7 @@ extension DialogService {
             {
                 throw failure
             }
-            if dialogDisappeared {
+            if dialogPresence == .absent {
                 let outcome = DesktopActionOutcome.confirmedChange(
                     delivery: Self.backgroundDialogDelivery,
                     unitCount: .one)
@@ -127,17 +127,19 @@ extension DialogService {
                     outcome: outcome)
             }
 
-            let outcome = sequence.successResolution().outcome ?? leafOutcome
-            throw DesktopActionFailure(
-                outcome: outcome,
-                message: "Dialog AXPress was accepted, but dialog disappearance was not verified.",
-                hint: "Capture fresh dialog state before deciding whether to retry.") ??
-                DesktopActionFailure.indeterminate(
+            let fallbackOutcome = sequence.successResolution().outcome ?? leafOutcome
+            guard let failure = Self.postconditionFailure(
+                presence: dialogPresence,
+                fallbackOutcome: fallbackOutcome)
+            else {
+                throw DesktopActionFailure.indeterminate(
                     delivery: Self.backgroundDialogDelivery,
                     evidence: .completionUnknown,
                     unitCount: .one,
                     message: "Dialog action returned contradictory confirmation evidence.",
                     hint: "Observe the dialog before any retry.")
+            }
+            throw failure
         }
     }
 
@@ -406,19 +408,40 @@ extension DialogService {
         try Task.checkCancellation()
     }
 
-    func verifyPreparedDialogDisappeared(_ entry: DialogPreparedActionStore.Entry) async -> Bool {
+    func verifyPreparedDialogPresence(_ entry: DialogPreparedActionStore.Entry) async -> DialogPresence {
         let deadline = Date().addingTimeInterval(0.75)
         var lastPresence = DialogPresence.unreadable
         repeat {
             lastPresence = self.preparedDialogPresence(entry)
             if lastPresence == .absent {
-                return true
+                return .absent
             }
             if Date() < deadline {
                 try? await Task.sleep(for: .milliseconds(25))
             }
         } while Date() < deadline && !Task.isCancelled
-        return lastPresence == .absent
+        return lastPresence
+    }
+
+    static func postconditionFailure(
+        presence: DialogPresence,
+        fallbackOutcome: DesktopActionOutcome) -> DesktopActionFailure?
+    {
+        switch presence {
+        case .absent:
+            nil
+        case .present:
+            .suspectedNoop(
+                delivery: self.backgroundDialogDelivery,
+                unitCount: .one,
+                message: "Dialog AXPress was accepted, but the same dialog remained present.",
+                hint: "Capture fresh dialog state and refresh the target before retrying.")
+        case .unreadable:
+            DesktopActionFailure(
+                outcome: fallbackOutcome,
+                message: "Dialog AXPress was accepted, but dialog disappearance was unreadable.",
+                hint: "Capture fresh dialog state before deciding whether to retry.")
+        }
     }
 
     func preparedDialogPresence(_ entry: DialogPreparedActionStore.Entry) -> DialogPresence {

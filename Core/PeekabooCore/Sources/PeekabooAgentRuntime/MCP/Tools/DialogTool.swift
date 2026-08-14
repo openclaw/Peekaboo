@@ -125,22 +125,29 @@ public struct DialogTool: MCPTool {
                 throw DialogToolInputError.missingForAction(action: action, field: "app, pid, or window_id target")
             }
 
-            let preparedReceipt: PreparedDialogActionReceipt? = switch action {
+            let preparationRequest: DialogActionPreparationRequest? = switch action {
             case .click:
-                try await self.context.dialogs.prepareDialogAction(DialogActionPreparationRequest(
+                try DialogActionPreparationRequest(
                     target: dialogTarget,
                     kind: .clickButton,
-                    buttonText: inputs.requireButton()))
+                    buttonText: inputs.requireButton())
             case .dismiss where inputs.force != true:
-                try await self.context.dialogs.prepareDialogAction(DialogActionPreparationRequest(
+                try DialogActionPreparationRequest(
                     target: dialogTarget,
-                    kind: .dismiss))
+                    kind: .dismiss)
             case .list, .input, .file, .dismiss:
                 nil
+            }
+            var preparedReceipt: PreparedDialogActionReceipt?
+            if !inputs.foreground, let preparationRequest {
+                preparedReceipt = try await self.context.dialogs.prepareDialogAction(preparationRequest)
             }
 
             if inputs.foreground, inputs.hasAnyTargeting {
                 _ = try await target.focusIfRequested(windows: self.context.windows)
+            }
+            if inputs.foreground, let preparationRequest {
+                preparedReceipt = try await self.context.dialogs.prepareDialogAction(preparationRequest)
             }
 
             let usesLegacyDialogResolution = action == .input || action == .file ||

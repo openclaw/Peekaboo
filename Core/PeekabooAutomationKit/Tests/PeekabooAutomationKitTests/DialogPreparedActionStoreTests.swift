@@ -136,6 +136,25 @@ struct DialogPreparedActionStoreTests {
     }
 
     @Test
+    func `dialog postcondition presence preserves suspected noop and unreadable semantics`() {
+        let fallback = DesktopActionOutcome.dispatchedUnverified(
+            delivery: DialogService.backgroundDialogDelivery,
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+
+        #expect(DialogService.postconditionFailure(presence: .absent, fallbackOutcome: fallback) == nil)
+
+        let present = DialogService.postconditionFailure(presence: .present, fallbackOutcome: fallback)
+        #expect(present?.outcome.state == .suspectedNoop)
+        #expect(present?.outcome.retrySafety == .safe)
+        #expect(present?.outcome.evidence == .observedNoChange)
+
+        let unreadable = DialogService.postconditionFailure(presence: .unreadable, fallbackOutcome: fallback)
+        #expect(unreadable?.outcome == fallback)
+        #expect(unreadable?.outcome.retrySafety == .unsafe)
+    }
+
+    @Test
     func `legacy dialog service defaults return canonical runtime refusals`() async throws {
         let request = try DialogActionPreparationRequest(
             target: DialogTargetSelector(processIdentifier: 42),

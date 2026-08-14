@@ -26,8 +26,10 @@ extension DialogCommand {
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
+            var preparationRequest: DialogActionPreparationRequest?
             var preparedReceipt: PreparedDialogActionReceipt?
             let force = self.force
+            let foreground = self.foreground
             try await DialogCommand.execute(
                 runtime: runtime,
                 target: self.target,
@@ -47,6 +49,8 @@ extension DialogCommand {
                         target: context.target,
                         kind: .dismiss
                     )
+                    preparationRequest = request
+                    guard !foreground else { return }
                     preparedReceipt = try await context.services.dialogs.prepareDialogAction(request)
                 },
                 operation: { context in
@@ -58,12 +62,18 @@ extension DialogCommand {
                             appName: context.appHint
                         )
                     } else {
-                        guard let receipt = preparedReceipt else {
-                            throw DesktopActionFailure.preDispatchRefusal(
-                                reason: .runtimeIncompatible,
-                                message: "Dialog dismiss lost its prepared action receipt before execution.",
-                                hint: "Prepare the dialog action again before retrying."
-                            )
+                        let receipt: PreparedDialogActionReceipt
+                        if let preparedReceipt {
+                            receipt = preparedReceipt
+                        } else {
+                            guard let request = preparationRequest else {
+                                throw DesktopActionFailure.preDispatchRefusal(
+                                    reason: .invalidRequest,
+                                    message: "Dialog dismiss lost its validated preparation request.",
+                                    hint: "Validate and prepare the dialog action again before retrying."
+                                )
+                            }
+                            receipt = try await context.services.dialogs.prepareDialogAction(request)
                         }
                         result = try await context.services.dialogs.performPreparedDialogAction(receipt)
                         _ = try result.requiredPreparedOutcome(kind: .dismiss)

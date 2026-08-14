@@ -83,7 +83,7 @@ struct MCPDialogPreparedActionTests {
     }
 
     @Test
-    func `foreground dialog focus does not run before preparation succeeds`() async throws {
+    func `foreground dialog prepares after focus so the receipt is fresh`() async throws {
         let application = ServiceApplicationInfo(
             processIdentifier: 89,
             processStartIdentity: 890,
@@ -112,7 +112,7 @@ struct MCPDialogPreparedActionTests {
         #expect(response.isError)
         #expect(dialogs.prepareCount == 1)
         #expect(dialogs.executeCount == 0)
-        #expect(await windows.focusRequests.isEmpty)
+        #expect(await windows.focusRequests.count == 1)
     }
 
     @Test
