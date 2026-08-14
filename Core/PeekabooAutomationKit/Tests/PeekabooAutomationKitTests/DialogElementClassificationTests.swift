@@ -32,6 +32,15 @@ struct DialogElementClassificationTests {
                 "role": "AXHeading",
                 "title": "Save Panel",
             ])
+        let panelAccessory = DetectedElement(
+            id: "accessory",
+            type: .group,
+            label: "Accessory",
+            bounds: .zero,
+            attributes: [
+                "role": "AXGroup",
+                "identifier": "NSOpenPanelAccessory",
+            ])
         let windowEvidence = DialogElementEvidence(
             role: "AXWindow",
             subrole: "AXStandardWindow",
@@ -40,7 +49,7 @@ struct DialogElementClassificationTests {
             title: "Playground")
 
         #expect(!DialogElementClassifier.isDialog(windowEvidence))
-        #expect(!DialogElementClassifier.containsDialog(in: [window, savePanelHeading]))
+        #expect(!DialogElementClassifier.containsDialog(in: [window, savePanelHeading, panelAccessory]))
         #expect(DialogElementClassifier.containsDialog(in: [window, sheet]))
     }
 
@@ -62,6 +71,7 @@ struct DialogElementClassificationTests {
         ("AXWindow", "AXDialog"),
         ("AXWindow", "AXSystemDialog"),
         ("AXWindow", "AXAlert"),
+        ("AXWindow", "AXSheet"),
     ])
     func `native dialog roles remain dialog active`(role: String, subrole: String) {
         let evidence = DialogElementEvidence(
@@ -72,6 +82,28 @@ struct DialogElementClassificationTests {
             title: "")
 
         #expect(DialogElementClassifier.isDialog(evidence))
+        #expect(DialogElementClassifier.isStructuralDialog(evidence))
+    }
+
+    @Test
+    func `legacy title and identifier heuristics never become prepared action identities`() {
+        let titleOnly = DialogElementEvidence(
+            role: "AXButton",
+            subrole: "",
+            roleDescription: "button",
+            identifier: "",
+            title: "Save")
+        let identifierOnly = DialogElementEvidence(
+            role: "AXGroup",
+            subrole: "",
+            roleDescription: "group",
+            identifier: "NSOpenPanelAccessory",
+            title: "")
+
+        #expect(DialogElementClassifier.isDialog(titleOnly))
+        #expect(DialogElementClassifier.isDialog(identifierOnly))
+        #expect(!DialogElementClassifier.isStructuralDialog(titleOnly))
+        #expect(!DialogElementClassifier.isStructuralDialog(identifierOnly))
     }
 
     @Test(arguments: ["Open Questions", "Saved Draft", "Choose Theme", "Replacement Parts"])

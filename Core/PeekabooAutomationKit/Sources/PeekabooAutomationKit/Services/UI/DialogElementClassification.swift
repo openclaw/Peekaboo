@@ -59,20 +59,21 @@ enum DialogElementClassifier {
             self.isObservationFileDialogTitle(evidence.title)
     }
 
+    static func isStructuralDialog(_ evidence: DialogElementEvidence) -> Bool {
+        self.hasIntrinsicDialogRole(role: evidence.role, subrole: evidence.subrole)
+    }
+
     static func containsDialog(in elements: [DetectedElement]) -> Bool {
         elements.contains { element in
             let role = element.attributes["role"] ?? ""
             let subrole = element.attributes["subrole"] ?? ""
-            let identifier = element.attributes["identifier"] ?? ""
-            return self.hasIntrinsicDialogRole(role: role, subrole: subrole) ||
-                identifier.contains("NSOpenPanel") ||
-                identifier.contains("NSSavePanel")
+            return self.hasIntrinsicDialogRole(role: role, subrole: subrole)
         }
     }
 
     private static func hasIntrinsicDialogRole(role: String, subrole: String) -> Bool {
         ["AXSheet", "AXDialog"].contains(role) ||
-            ["AXDialog", "AXSystemDialog", "AXAlert"].contains(subrole)
+            ["AXSheet", "AXDialog", "AXSystemDialog", "AXAlert"].contains(subrole)
     }
 
     private static func isObservationFileDialogTitle(_ title: String) -> Bool {

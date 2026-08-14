@@ -325,7 +325,7 @@ extension DialogService {
 
         while let element = stack.popLast() {
             guard visited.insert(element).inserted else { continue }
-            if self.isDialogElement(element, matching: nil) {
+            if DialogElementClassifier.isStructuralDialog(DialogElementClassifier.evidence(for: element)) {
                 dialogs.append(element)
             }
             let traversal = Self.traversalChildren(of: element)
