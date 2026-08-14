@@ -206,6 +206,37 @@ struct ActionOutcomeCommandTests {
     }
 
     @Test
+    func `legacy background launch keeps truthful no-op wording without inventing an outcome`() async throws {
+        let application = AutomationTestFixtures.application(
+            processIdentifier: 42,
+            processStartIdentity: 7,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture"
+        )
+        let applications = OutcomeStubApplicationService(applications: [application])
+        applications.actionOutcome = nil
+        let services = TestServicesFactory.makePeekabooServices(applications: applications)
+
+        let humanResult = try await InProcessCommandRunner.run(
+            ["app", "launch", "Fixture", "--no-remote"],
+            services: services
+        )
+        let jsonResult = try await InProcessCommandRunner.run(
+            ["app", "launch", "Fixture", "--no-remote", "--json"],
+            services: services
+        )
+        let object = try Self.jsonObject(jsonResult.stdout)
+
+        #expect(humanResult.exitStatus == 0)
+        #expect(humanResult.stdout.contains("Already running: Fixture"))
+        #expect(humanResult.stdout.contains("no launch dispatched"))
+        #expect(!humanResult.stdout.contains("✓ Launched"))
+        #expect(jsonResult.exitStatus == 0)
+        #expect(object["effect"] as? String == "confirmed")
+        #expect(object["outcome"] == nil)
+    }
+
+    @Test
     func `single app quit preserves a suspected no-op receipt`() async throws {
         let application = AutomationTestFixtures.application(
             processIdentifier: 42,

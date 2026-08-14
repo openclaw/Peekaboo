@@ -5,6 +5,24 @@ import Testing
 
 struct ApplicationServiceProtocolTests {
     @Test
+    func `safe background launch shape excludes every dispatching option`() {
+        #expect(ApplicationLaunchRequest(applicationIdentifier: "Fixture").isSafeBackgroundNoOp)
+        #expect(ApplicationLaunchRequest(
+            applicationIdentifier: "Fixture",
+            waitUntilReady: true,
+            waitForWindow: true).isSafeBackgroundNoOp)
+        #expect(!ApplicationLaunchRequest(
+            applicationIdentifier: "Fixture",
+            activates: true).isSafeBackgroundNoOp)
+        #expect(!ApplicationLaunchRequest(
+            applicationIdentifier: "Fixture",
+            openURLs: [URL(fileURLWithPath: "/tmp/fixture")]).isSafeBackgroundNoOp)
+        #expect(!ApplicationLaunchRequest(
+            applicationIdentifier: "Fixture",
+            createsNewInstance: true).isSafeBackgroundNoOp)
+    }
+
+    @Test
     @MainActor
     func `result adapters dispatch explicit capability witnesses`() async throws {
         let provider = ApplicationActionResultProbe()

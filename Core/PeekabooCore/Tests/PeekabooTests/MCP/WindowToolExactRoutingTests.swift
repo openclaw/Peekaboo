@@ -143,6 +143,25 @@ struct WindowToolExactRoutingTests {
         #expect(service.maximizeTargets.map(\.description) == ["windowId(924)"])
     }
 
+    @Test
+    @MainActor
+    func `legacy restore readback failure does not fabricate action metadata`() async throws {
+        let service = ExactRoutingWindowService()
+        service.actionOutcome = nil
+        service.postMutationReadbackError = UnexpectedWindowCall()
+        let context = await MCPToolTestHelpers.makeContext(windows: service)
+
+        let response = try await WindowTool(context: context).execute(arguments: ToolArguments(raw: [
+            "action": "restore",
+            "app": "Safari",
+        ]))
+
+        #expect(response.isError)
+        let meta = response.meta?.objectValue ?? [:]
+        #expect(MCPToolResponseMetadataProjector.actionOutcomeKeys.allSatisfy { meta[$0] == nil })
+        #expect(service.restoreTargets.map(\.description) == ["windowId(924)"])
+    }
+
     @MainActor
     private static func makeTool() -> WindowTool {
         WindowTool(context: MCPToolContext(services: PeekabooServices()))
@@ -150,7 +169,7 @@ struct WindowToolExactRoutingTests {
 }
 
 private final class ExactRoutingWindowService: WindowManagementActionResultProviding, @unchecked Sendable {
-    private let outcome = DesktopActionOutcome.confirmedChange(
+    nonisolated(unsafe) var actionOutcome: DesktopActionOutcome? = .confirmedChange(
         delivery: .init(mechanism: .accessibilityValue, mode: .background),
         unitCount: .one)
     private let window = ServiceWindowInfo(
@@ -258,7 +277,7 @@ private final class ExactRoutingWindowService: WindowManagementActionResultProvi
             target: target,
             expectedIdentity: expectedIdentity,
             allowForegroundFallback: allowForegroundFallback)
-        return DesktopActionResult(outcome: self.outcome)
+        return DesktopActionResult(outcome: self.actionOutcome)
     }
 
     func minimizeWindowActionResult(
@@ -266,7 +285,7 @@ private final class ExactRoutingWindowService: WindowManagementActionResultProvi
         expectedIdentity _: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
     {
         try await self.minimizeWindow(target: target)
-        return DesktopActionResult(outcome: self.outcome)
+        return DesktopActionResult(outcome: self.actionOutcome)
     }
 
     func restoreWindowActionResult(
@@ -274,7 +293,7 @@ private final class ExactRoutingWindowService: WindowManagementActionResultProvi
         expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
     {
         try await self.restoreWindow(target: target, expectedIdentity: expectedIdentity)
-        return DesktopActionResult(outcome: self.outcome)
+        return DesktopActionResult(outcome: self.actionOutcome)
     }
 
     func maximizeWindowActionResult(
@@ -282,7 +301,7 @@ private final class ExactRoutingWindowService: WindowManagementActionResultProvi
         expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
     {
         try await self.maximizeWindow(target: target, expectedIdentity: expectedIdentity)
-        return DesktopActionResult(outcome: self.outcome)
+        return DesktopActionResult(outcome: self.actionOutcome)
     }
 
     func moveWindowActionResult(
@@ -291,7 +310,7 @@ private final class ExactRoutingWindowService: WindowManagementActionResultProvi
         to position: CGPoint) async throws -> DesktopActionResult<Void>
     {
         try await self.moveWindow(target: target, to: position)
-        return DesktopActionResult(outcome: self.outcome)
+        return DesktopActionResult(outcome: self.actionOutcome)
     }
 
     func resizeWindowActionResult(
@@ -300,7 +319,7 @@ private final class ExactRoutingWindowService: WindowManagementActionResultProvi
         to size: CGSize) async throws -> DesktopActionResult<Void>
     {
         try await self.resizeWindow(target: target, to: size)
-        return DesktopActionResult(outcome: self.outcome)
+        return DesktopActionResult(outcome: self.actionOutcome)
     }
 
     func setWindowBoundsActionResult(
@@ -309,7 +328,7 @@ private final class ExactRoutingWindowService: WindowManagementActionResultProvi
         bounds: CGRect) async throws -> DesktopActionResult<Void>
     {
         try await self.setWindowBounds(target: target, bounds: bounds)
-        return DesktopActionResult(outcome: self.outcome)
+        return DesktopActionResult(outcome: self.actionOutcome)
     }
 }
 

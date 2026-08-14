@@ -336,22 +336,23 @@ extension WindowTool {
             }
             return window
         } catch {
+            guard let outcome else {
+                throw PeekabooError.commandFailed(
+                    "\(action) completed without a canonical action receipt, and the exact window " +
+                        "could not be read back. Observe the exact window before deciding whether to retry.")
+            }
             let readbackFailure = if let failure = error as? DesktopActionFailure {
                 failure
             } else {
                 DesktopActionFailure.preDispatchRefusal(
-                    route: outcome?.route ?? .local,
+                    route: outcome.route,
                     reason: .targetUnavailable,
                     message: "\(action) post-action readback failed.",
                     hint: "Observe the exact window before deciding whether to retry.",
                     causeDescription: error.localizedDescription)
             }
             var sequence = DesktopActionSequenceAccumulator()
-            if let outcome {
-                sequence.record(.outcome(outcome))
-            } else {
-                sequence.record(.dispatched(route: nil, delivery: nil, unitCount: .one))
-            }
+            sequence.record(.outcome(outcome))
             throw sequence.failure(
                 combining: readbackFailure,
                 message: "\(action) was dispatched, but the exact window could not be read back.",

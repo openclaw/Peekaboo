@@ -29,6 +29,11 @@ public struct ApplicationLaunchRequest: Sendable, Codable, Equatable {
         self.createsNewInstance = createsNewInstance
     }
 
+    /// This request can only verify an existing process; it cannot dispatch a launch or target delivery.
+    public var isSafeBackgroundNoOp: Bool {
+        !self.activates && self.openURLs.isEmpty && !self.createsNewInstance
+    }
+
     private enum CodingKeys: String, CodingKey {
         case applicationIdentifier
         case applicationBundleIdentifier

@@ -34,7 +34,9 @@ extension AppToolActions {
         let app = actionResult.payload
 
         let timing = self.executionTimeString(since: request.startTime)
-        let message = if actionResult.outcome?.state == .confirmedNoChange {
+        let message = if launchRequest.isSafeBackgroundNoOp ||
+            actionResult.outcome?.state == .confirmedNoChange
+        {
             "\(AgentDisplayTokens.Status.success) \(app.name) was already running "
                 + "(PID: \(app.processIdentifier)); no launch was needed (\(timing))"
         } else {

@@ -85,11 +85,15 @@ extension AppCommand {
                 if self.foreground {
                     self.resolvedRuntime.beginInteractionMutation()
                 }
-                let actionResult = try await launchApplication()
+                let launch = try await launchApplication()
                 if self.foreground {
                     await self.invalidateSnapshotsAfterLaunch()
                 }
-                self.renderLaunchSuccess(app: actionResult.payload, outcome: actionResult.outcome)
+                self.renderLaunchSuccess(
+                    app: launch.result.payload,
+                    outcome: launch.result.outcome,
+                    isSafeBackgroundNoOp: launch.request.isSafeBackgroundNoOp
+                )
             } catch {
                 handleError(error, customCode: applicationLaunchErrorCode(for: error))
                 throw ExitCode(1)
@@ -138,7 +142,11 @@ extension AppCommand {
             )
         }
 
-        private func renderLaunchSuccess(app: ServiceApplicationInfo, outcome: DesktopActionOutcome?) {
+        private func renderLaunchSuccess(
+            app: ServiceApplicationInfo,
+            outcome: DesktopActionOutcome?,
+            isSafeBackgroundNoOp: Bool
+        ) {
             struct LaunchResult: Codable {
                 let action: String
                 let app_name: String
@@ -174,7 +182,7 @@ extension AppCommand {
             )
 
             output(data, outcome: outcome) {
-                if outcome?.state == .confirmedNoChange {
+                if isSafeBackgroundNoOp || outcome?.state == .confirmedNoChange {
                     print("✓ Already running: \(app.name) (PID: \(app.processIdentifier)); no launch dispatched")
                 } else {
                     print("✓ Launched \(app.name) (PID: \(app.processIdentifier))")
@@ -182,23 +190,28 @@ extension AppCommand {
             }
         }
 
-        private func launchApplication() async throws -> DesktopActionResult<ServiceApplicationInfo> {
+        private func launchApplication() async throws -> (
+            request: ApplicationLaunchRequest,
+            result: DesktopActionResult<ServiceApplicationInfo>
+        ) {
             let urls = try openTargets.map { try Self.resolveOpenTarget($0) }
             let applicationIdentifier = self.bundleId == nil
                 ? self.app.map { ApplicationIdentifierResolver.resolve($0) }
                 : nil
-            return try await ApplicationServiceBridge.launchApplication(
-                applications: self.services.applications,
-                request: ApplicationLaunchRequest(
-                    applicationIdentifier: applicationIdentifier,
-                    applicationBundleIdentifier: self.bundleId,
-                    openURLs: urls,
-                    activates: self.shouldFocusAfterLaunch,
-                    waitUntilReady: self.waitUntilReady,
-                    waitForWindow: self.waitForWindow,
-                    createsNewInstance: self.newInstance
-                )
+            let request = ApplicationLaunchRequest(
+                applicationIdentifier: applicationIdentifier,
+                applicationBundleIdentifier: self.bundleId,
+                openURLs: urls,
+                activates: self.shouldFocusAfterLaunch,
+                waitUntilReady: self.waitUntilReady,
+                waitForWindow: self.waitForWindow,
+                createsNewInstance: self.newInstance
             )
+            let result = try await ApplicationServiceBridge.launchApplication(
+                applications: self.services.applications,
+                request: request
+            )
+            return (request, result)
         }
 
         static func resolveOpenTarget(

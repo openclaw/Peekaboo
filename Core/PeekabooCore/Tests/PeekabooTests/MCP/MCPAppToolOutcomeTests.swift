@@ -250,6 +250,27 @@ struct MCPAppToolOutcomeTests {
 
     @Test
     @MainActor
+    func `legacy background launch keeps no-op wording without canonical metadata`() async throws {
+        let service = StubApplicationService()
+        service.actionOutcome = nil
+        let context = await MCPToolTestHelpers.makeContext(applications: service)
+
+        let response = try await AppTool(context: context).execute(arguments: ToolArguments(raw: [
+            "action": "launch",
+            "name": "StubApp",
+        ]))
+
+        #expect(!response.isError)
+        let text = Self.responseText(response)
+        #expect(text.contains("StubApp was already running"))
+        #expect(text.contains("no launch was needed"))
+        #expect(!text.contains("Launched StubApp"))
+        let meta = try #require(response.meta?.objectValue)
+        #expect(MCPToolResponseMetadataProjector.actionOutcomeKeys.allSatisfy { meta[$0] == nil })
+    }
+
+    @Test
+    @MainActor
     func `open with no dispatch does not claim targets were opened`() async throws {
         let service = StubApplicationService()
         let outcome = DesktopActionOutcome.confirmedNoChange(route: .local)
