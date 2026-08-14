@@ -32,6 +32,15 @@ if (JSON.stringify(actual) !== JSON.stringify([...expected].sort())) {
   console.error(`Public SwiftPM products drifted: expected ${expected.join(", ")}; received ${actual.join(", ")}`);
   process.exit(1);
 }
+
+const expectedAXVersion = "0.1.6";
+const sourceDependencies = manifest.dependencies.flatMap(dependency => dependency.sourceControl ?? []);
+const axorcist = sourceDependencies.find(dependency => dependency.identity === "axorcist");
+const actualAXVersion = axorcist?.requirement?.exact?.[0];
+if (actualAXVersion !== expectedAXVersion) {
+  console.error(`AXorcist version drifted: expected ${expectedAXVersion}; received ${actualAXVersion ?? "none"}`);
+  process.exit(1);
+}
 NODE
 
 package_repo="${fixture_dir}/Peekaboo"
@@ -61,10 +70,14 @@ git -C "${package_repo}" \
   -c user.name='Peekaboo Consumer Contract' \
   -c user.email='consumer-contract@invalid.example' \
   commit -qm 'fixture: exact public package revision'
+git -C "${package_repo}" \
+  -c user.name='Peekaboo Consumer Contract' \
+  -c user.email='consumer-contract@invalid.example' \
+  -c tag.gpgSign=false \
+  tag -am 'fixture: semantic package version' 4.1.1
 
 export PEEKABOO_CONSUMER_PACKAGE_URL="file://${package_repo}"
-export PEEKABOO_CONSUMER_PACKAGE_REVISION
-PEEKABOO_CONSUMER_PACKAGE_REVISION="$(git -C "${package_repo}" rev-parse HEAD)"
+export PEEKABOO_CONSUMER_PACKAGE_VERSION="4.1.1"
 
 consumer_dir="${fixture_dir}/Consumer"
 mkdir -p "${consumer_dir}/Sources/Consumer"
@@ -76,13 +89,13 @@ import Foundation
 import PackageDescription
 
 let packageURL = ProcessInfo.processInfo.environment["PEEKABOO_CONSUMER_PACKAGE_URL"]!
-let packageRevision = ProcessInfo.processInfo.environment["PEEKABOO_CONSUMER_PACKAGE_REVISION"]!
+let packageVersion = ProcessInfo.processInfo.environment["PEEKABOO_CONSUMER_PACKAGE_VERSION"]!
 
 let package = Package(
     name: "PeekabooConsumer",
     platforms: [.macOS(.v14)],
     dependencies: [
-        .package(url: packageURL, revision: packageRevision),
+        .package(url: packageURL, exact: Version(packageVersion)!),
     ],
     targets: [
         .executableTarget(

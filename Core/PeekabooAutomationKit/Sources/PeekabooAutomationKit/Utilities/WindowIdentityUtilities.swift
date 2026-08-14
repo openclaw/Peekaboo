@@ -127,7 +127,11 @@ public final class WindowIdentityService {
         messagingTimeout: Float) -> AXWindowHandle?
     {
         let appElement = Element(AXUIElementCreateApplication(app.processIdentifier))
-        guard let windows = try? appElement.withMessagingTimeout(messagingTimeout, operation: { $0.windows() }) else {
+        guard let windows = try? AXChildWindowMessagingTimeout.performChecked(
+            on: appElement,
+            timeout: messagingTimeout,
+            operation: { $0.windows() })
+        else {
             return nil
         }
         for window in windows {
@@ -151,8 +155,9 @@ public final class WindowIdentityService {
     func focusedWindowID(for app: NSRunningApplication, timeout: TimeInterval) -> CGWindowID? {
         guard timeout > 0 else { return nil }
         let axApp = AXApp(app)
-        guard let focusedWindow = try? axApp.element.withMessagingTimeout(
-            Float(timeout),
+        guard let focusedWindow = try? AXChildWindowMessagingTimeout.performChecked(
+            on: axApp.element,
+            timeout: Float(timeout),
             operation: { _ in axApp.focusedWindow() })
         else {
             return nil

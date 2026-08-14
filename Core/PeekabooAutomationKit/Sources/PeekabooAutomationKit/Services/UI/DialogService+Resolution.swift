@@ -93,8 +93,9 @@ extension DialogService {
         }
 
         if title != nil {
-            if let globalWindows = try systemWide.withMessagingTimeout(
-                windowSearchTimeout,
+            if let globalWindows = try AXChildWindowMessagingTimeout.performChecked(
+                on: systemWide,
+                timeout: windowSearchTimeout,
                 operation: { $0.windows() })
             {
                 for window in globalWindows {
@@ -108,8 +109,9 @@ extension DialogService {
         if self.scansAllApplicationsForDialogs {
             for app in NSWorkspace.shared.runningApplications {
                 let axApp = AXApp(app).element
-                let appWindows = try axApp.withMessagingTimeout(
-                    windowSearchTimeout,
+                let appWindows = try AXChildWindowMessagingTimeout.performChecked(
+                    on: axApp,
+                    timeout: windowSearchTimeout,
                     operation: { $0.windows() }) ?? []
                 for window in appWindows {
                     if let candidate = self.resolveDialogCandidate(in: window, matching: title) {
@@ -136,7 +138,7 @@ extension DialogService {
         // Without a title, an app-scoped command is still looking for the active dialog, not every dialog-like
         // subtree in the app. Checking focused/main windows keeps "no dialog" responses bounded for Electron/Tauri.
         if appName != nil, title == nil {
-            return try app.withMessagingTimeout(timeout) { boundedApp in
+            return try AXChildWindowMessagingTimeout.performChecked(on: app, timeout: timeout) { boundedApp in
                 [
                     boundedApp.focusedWindow(),
                     boundedApp.mainWindow(),
@@ -144,7 +146,10 @@ extension DialogService {
             }
         }
 
-        return try app.withMessagingTimeout(timeout, operation: { $0.windows() }) ?? []
+        return try AXChildWindowMessagingTimeout.performChecked(
+            on: app,
+            timeout: timeout,
+            operation: { $0.windows() }) ?? []
     }
 
     private func findDialogElementIfAvailable(withTitle title: String?, appName: String?) throws -> Element? {
