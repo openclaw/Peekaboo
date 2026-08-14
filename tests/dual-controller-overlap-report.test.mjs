@@ -151,6 +151,27 @@ test('independent readback and restoration are mandatory', () => {
   assert.ok(rules(validate(earlyRestore)).has('independent_readback'));
 });
 
+test('serialized restoration checkpoints prevent peer restoration from masking cross-target dispatch', () => {
+  const missingCheckpoint = makePassingOverlapReport(catalog);
+  missingCheckpoint.restoration_checkpoints.pop();
+  assert.ok(rules(validate(missingCheckpoint)).has('restoration_checkpoint_schema'));
+
+  const maskedCrossTargetClear = makePassingOverlapReport(catalog);
+  maskedCrossTargetClear.restoration_checkpoints[0].observations[1].token_present = false;
+  assert.ok(rules(validate(maskedCrossTargetClear)).has('restoration_checkpoint_contract'));
+
+  const maskedPeerCrossTargetClear = makePassingOverlapReport(catalog);
+  maskedPeerCrossTargetClear.restoration_checkpoints[1].observations[0].token_present = false;
+  assert.ok(rules(validate(maskedPeerCrossTargetClear)).has('restoration_checkpoint_contract'));
+
+  const concurrentPeerRestore = makePassingOverlapReport(catalog);
+  const firstCheckpoint = concurrentPeerRestore.restoration_checkpoints[0].observations[1];
+  const peerRestoration = concurrentPeerRestore.controllers[1].mutations.at(-1);
+  peerRestoration.started_at = firstCheckpoint.finished_at - 0.05;
+  peerRestoration.finished_at = peerRestoration.started_at + 0.2;
+  assert.ok(rules(validate(concurrentPeerRestore)).has('restoration_checkpoint_timing'));
+});
+
 test('workflow minima exclude restoration operations', () => {
   const report = makePassingOverlapReport(catalog);
   report.controllers[0].mutations.splice(1, 1);

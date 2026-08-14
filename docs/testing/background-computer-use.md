@@ -87,12 +87,14 @@ The overlap cell starts two owned TextEdit executable generations during setup, 
 receipts, and then restores an independently selected sentinel window. Two separate controller processes launch
 independently generation- and executable-attested CLI clients through one explicit signed current Bridge socket:
 controller A completes an observe/type/press/type/readback workflow while controller B continuously observes and updates
-its different exact window. Both restore their original text, cleanup uses the launch
-receipts, and the validator requires real bidirectional interval overlap plus independent readback with no cross-target
-token. The native monitor keeps focus, top-window, session-global Peekaboo input, clipboard change count, visible
-Peekaboo alpha windows, host generation, and heartbeat liveness fail-closed through cleanup. Physical cursor motion is
-recorded as observational evidence and never fails the cell because the user may be working concurrently. Every CLI
-generation is registered before it can run and has a 30-second deadline (bounded to 1–300 seconds with
+its different exact window. Restoration is serialized: after A restores, both targets are read before B may restore,
+then both targets are read again, so a cross-target mutation cannot be overwritten by the peer restoration. Cleanup uses
+the launch receipts, and the validator requires real bidirectional interval overlap plus independent readback with no
+cross-target token. The native monitor keeps focus, top-window, session-global Peekaboo input, clipboard change count,
+visible Peekaboo alpha windows, host generation, and heartbeat liveness fail-closed through cleanup.
+Physical cursor motion is recorded as observational evidence and never fails the cell because the user may be working
+concurrently. Every CLI generation is registered before it can run and has a 30-second deadline (bounded to 1–300
+seconds with
 `PEEKABOO_OVERLAP_OPERATION_TIMEOUT_SECONDS`); timeout and abort cleanup escalate from TERM to KILL while the invariant
 monitor remains active. Each target starts as a stopped direct child: its intended executable path and process generation
 are recorded durably before resume, then the live executable path is verified after `exec`; cleanup never infers ownership

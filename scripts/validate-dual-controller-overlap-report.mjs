@@ -310,12 +310,90 @@ function validateController(observed, expected, other, runID, cli, host, failure
   }
 }
 
+function validateRestorationCheckpoints(report, failures) {
+  const checkpoints = report.restoration_checkpoints;
+  const [controllerA, controllerB] = report.controllers ?? [];
+  if (!Array.isArray(checkpoints) || checkpoints.length !== 2
+      || checkpoints.map((entry) => entry?.after_controller).join(',') !== 'A,B'
+      || checkpoints.some((entry) => !exactKeys(entry, ['after_controller', 'observations'])
+        || !Array.isArray(entry.observations) || entry.observations.length !== 2)) {
+    failures.push(failure(
+      'restoration_checkpoint_schema',
+      'Restoration checkpoints must read both targets after exact ordered A and B restorations',
+    ));
+    return;
+  }
+
+  const restorationA = controllerA?.mutations?.at(-1);
+  const restorationB = controllerB?.mutations?.at(-1);
+  const expected = [
+    {
+      after: 'A',
+      tokens: [controllerA?.initial_token, controllerB?.final_token],
+      notBefore: restorationA?.finished_at,
+      notAfter: restorationB?.started_at,
+    },
+    {
+      after: 'B',
+      tokens: [controllerA?.initial_token, controllerB?.initial_token],
+      notBefore: restorationB?.finished_at,
+      notAfter: Math.min(controllerA?.finished_at ?? -Infinity, controllerB?.finished_at ?? -Infinity),
+    },
+  ];
+  if (restorationA?.phase !== 'restoration' || restorationB?.phase !== 'restoration'
+      || !finiteTimestamp(restorationA.finished_at) || !finiteTimestamp(restorationB.started_at)
+      || restorationA.finished_at > restorationB.started_at) {
+    failures.push(failure(
+      'restoration_checkpoint_timing',
+      'Controller A restoration must finish and be audited before controller B restoration starts',
+    ));
+  }
+
+  checkpoints.forEach((checkpoint, checkpointIndex) => {
+    const requirement = expected[checkpointIndex];
+    checkpoint.observations.forEach((observation, targetIndex) => {
+      const targetController = [controllerA, controllerB][targetIndex];
+      validateObservation(
+        observation,
+        `restoration-${requirement.after}`,
+        targetController?.target ?? {},
+        report.cli,
+        report.host,
+        targetIndex + 1,
+        failures,
+      );
+      if (observation?.expected_token !== requirement.tokens[targetIndex]
+          || observation?.token_present !== true || observation?.other_token_absent !== true) {
+        failures.push(failure(
+          'restoration_checkpoint_contract',
+          `Checkpoint after controller ${requirement.after} did not preserve both exact target states`,
+          requirement.after,
+        ));
+      }
+    });
+    const [first, second] = checkpoint.observations;
+    if (!finiteTimestamp(requirement.notBefore) || !finiteTimestamp(requirement.notAfter)
+        || requirement.notAfter < requirement.notBefore
+        || checkpoint.observations.some((observation) => (
+          !finiteTimestamp(observation?.started_at) || !finiteTimestamp(observation?.finished_at)
+            || observation.started_at < requirement.notBefore
+            || observation.finished_at > requirement.notAfter
+        )) || first.finished_at > second.started_at) {
+      failures.push(failure(
+        'restoration_checkpoint_timing',
+        `Checkpoint after controller ${requirement.after} was not durably captured before the next state change`,
+        requirement.after,
+      ));
+    }
+  });
+}
+
 export function validateOverlapCertification(catalog, report, expectedCatalogSHA256 = null) {
   const failures = validateCatalog(catalog);
   if (!exactKeys(report, [
     'version', 'catalog_sha256', 'run_id', 'source_commit', 'cli', 'host', 'sentinel',
     'controllers', 'overlap', 'invariants', 'cursor_observation', 'restoration',
-    'cleanup', 'evidence',
+    'restoration_checkpoints', 'cleanup', 'evidence',
   ]) || report?.version !== 1) {
     failures.push(failure('report_schema', 'Report must be one closed version-1 object'));
     return { success: false, failures };
@@ -360,7 +438,16 @@ export function validateOverlapCertification(catalog, report, expectedCatalogSHA
         `${operation.route_receipt?.client_pid}:${operation.route_receipt?.client_start_identity}`,
       ]),
     ]);
-    const allClientGenerations = [...wrapperGenerations, ...operationGenerations];
+    const checkpointGenerations = (Array.isArray(report.restoration_checkpoints)
+      ? report.restoration_checkpoints : []).flatMap((checkpoint) => (
+      Array.isArray(checkpoint?.observations) ? checkpoint.observations : []
+    )).flatMap((operation) => [
+      `${operation?.client_pid}:${operation?.client_start_identity}`,
+      `${operation?.route_receipt?.client_pid}:${operation?.route_receipt?.client_start_identity}`,
+    ]);
+    const allClientGenerations = [
+      ...wrapperGenerations, ...operationGenerations, ...checkpointGenerations,
+    ];
     if (new Set(allClientGenerations).size !== allClientGenerations.length) {
       failures.push(failure('client_isolation', 'Controllers and operations must use distinct process generations'));
     }
@@ -375,6 +462,7 @@ export function validateOverlapCertification(catalog, report, expectedCatalogSHA
   }
 
   const [controllerA, controllerB] = report.controllers ?? [];
+  validateRestorationCheckpoints(report, failures);
   const workflowMutationsA = (controllerA?.mutations ?? []).filter((entry) => entry?.phase === 'workflow');
   const workflowMutationsB = (controllerB?.mutations ?? []).filter((entry) => entry?.phase === 'workflow');
   const overlap = report.overlap;
@@ -557,6 +645,14 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
     token_present: true,
     other_token_absent: true,
   });
+  const checkpointObservation = (index, startedAt, token, targetReceipt, generationSeed) => {
+    const receipt = observation(index, startedAt, token, targetReceipt);
+    receipt.client_pid = 6000 + generationSeed;
+    receipt.client_start_identity = `${receipt.client_pid}00`;
+    receipt.route_receipt.client_pid = 7000 + generationSeed;
+    receipt.route_receipt.client_start_identity = `${receipt.route_receipt.client_pid}00`;
+    return receipt;
+  };
   const controller = (expected, clientPID, targetReceipt, startedAt, finishedAt, observationCount) => {
     const { id } = expected;
     const namespace = `${runID}-${id.toLowerCase()}-`;
@@ -613,6 +709,30 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
   };
   const controllerA = controller(catalog.controllers[0], 301, target(101, '10100', 201), 10, 15, 4);
   const controllerB = controller(catalog.controllers[1], 302, target(202, '20200', 302), 9, 16, 5);
+  const restorationA = controllerA.mutations.at(-1);
+  const restorationB = controllerB.mutations.at(-1);
+  restorationB.started_at = 12.5;
+  restorationB.finished_at = 12.7;
+  controllerA.observations.at(-1).started_at = 13.2;
+  controllerA.observations.at(-1).finished_at = 13.3;
+  controllerB.observations.at(-1).started_at = 13.35;
+  controllerB.observations.at(-1).finished_at = 13.45;
+  const restorationCheckpoints = [
+    {
+      after_controller: 'A',
+      observations: [
+        checkpointObservation(1, restorationA.finished_at + 0.2, controllerA.initial_token, controllerA.target, 1),
+        checkpointObservation(2, restorationA.finished_at + 0.35, controllerB.final_token, controllerB.target, 2),
+      ],
+    },
+    {
+      after_controller: 'B',
+      observations: [
+        checkpointObservation(1, restorationB.finished_at + 0.1, controllerA.initial_token, controllerA.target, 3),
+        checkpointObservation(2, restorationB.finished_at + 0.25, controllerB.initial_token, controllerB.target, 4),
+      ],
+    },
+  ];
   return {
     version: 1,
     catalog_sha256: catalogSHA256,
@@ -696,6 +816,7 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
       policy: 'observational', start_x: 20, start_y: 30, end_x: 40, end_y: 50, moved: true,
     },
     restoration: { controller_a: true, controller_b: true, sentinel: true },
+    restoration_checkpoints: restorationCheckpoints,
     cleanup: [
       { id: 'A', pid: 101, start_identity: '10100', gone: true },
       { id: 'B', pid: 202, start_identity: '20200', gone: true },
@@ -735,6 +856,21 @@ export function runOverlapContractSelfTest(catalog, catalogSHA256) {
     ['changed active marker', (report) => {
       report.overlap.simultaneous_liveness_witness.markers_unchanged = false;
     }, 'overlap'],
+    ['missing restoration checkpoint', (report) => {
+      report.restoration_checkpoints.pop();
+    }, 'restoration_checkpoint_schema'],
+    ['masked cross-target restoration', (report) => {
+      report.restoration_checkpoints[0].observations[1].token_present = false;
+    }, 'restoration_checkpoint_contract'],
+    ['masked peer cross-target restoration', (report) => {
+      report.restoration_checkpoints[1].observations[0].token_present = false;
+    }, 'restoration_checkpoint_contract'],
+    ['concurrent peer restoration', (report) => {
+      const checkpoint = report.restoration_checkpoints[0].observations[1];
+      const restoration = report.controllers[1].mutations.at(-1);
+      restoration.started_at = checkpoint.finished_at - 0.05;
+      restoration.finished_at = restoration.started_at + 0.2;
+    }, 'restoration_checkpoint_timing'],
     ['restoration counted as workflow', (report) => { report.controllers[0].mutations.splice(1, 1); }, 'mutation_count'],
     ['workflow command drift', (report) => { report.controllers[0].mutations[1].command = 'type'; }, 'mutation_sequence'],
   ];

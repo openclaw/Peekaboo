@@ -1419,13 +1419,13 @@ record_mutation() {
     [[ $command_exit -eq 0 ]]
 }
 
-record_observation() {
-    local controller="$1"
-    local index="$2"
-    local target_pid="$3"
-    local target_window="$4"
-    local expected_token="$5"
-    local prefix="$ARTIFACT_ROOT/results/${controller}-observation-${index}"
+capture_observation_receipt() {
+    local prefix="$1"
+    local receipt="$2"
+    local index="$3"
+    local target_pid="$4"
+    local target_window="$5"
+    local expected_token="$6"
     local started finished command_pid command_exit command_identity command_path target_identity_after inflight
     capture_host_receipt "$prefix-host-before.json"
     spawn_controlled_cli "$prefix" \
@@ -1479,13 +1479,49 @@ record_observation() {
             token_present: $present,
             other_token_absent: $otherAbsent
         }
-    ' >> "$ARTIFACT_ROOT/controllers/${controller}-observations.jsonl"
+    ' > "$receipt"
     jq -e --arg expected "$expected_token" --arg runID "$RUN_ID" '
         select(.success == true) |
         [.data.ui_elements[]? | .value? | select(type == "string")] as $values |
         ($values | any(. == $expected)) and
         ($values | all((contains($runID) | not) or . == $expected))
     ' "$prefix.json" >/dev/null
+}
+
+record_observation() {
+    local controller="$1"
+    local index="$2"
+    local target_pid="$3"
+    local target_window="$4"
+    local expected_token="$5"
+    local prefix="$ARTIFACT_ROOT/results/${controller}-observation-${index}"
+    local receipt="$prefix-receipt.json"
+    capture_observation_receipt \
+        "$prefix" "$receipt" "$index" "$target_pid" "$target_window" "$expected_token"
+    cat "$receipt" >> "$ARTIFACT_ROOT/controllers/${controller}-observations.jsonl"
+}
+
+record_restoration_checkpoint() {
+    local controller="$1"
+    local expected_a="$2"
+    local expected_b="$3"
+    local prefix_a="$ARTIFACT_ROOT/results/restoration-${controller}-target-A"
+    local prefix_b="$ARTIFACT_ROOT/results/restoration-${controller}-target-B"
+    local receipt_a="$prefix_a-receipt.json"
+    local receipt_b="$prefix_b-receipt.json"
+    local checkpoint="$ARTIFACT_ROOT/controllers/${controller}-restoration-checkpoint.json"
+    capture_observation_receipt \
+        "$prefix_a" "$receipt_a" 1 "$TARGET_A_PID" "$TARGET_A_WINDOW_ID" "$expected_a"
+    capture_observation_receipt \
+        "$prefix_b" "$receipt_b" 2 "$TARGET_B_PID" "$TARGET_B_WINDOW_ID" "$expected_b"
+    jq -n --arg controller "$controller" \
+        --slurpfile observationA "$receipt_a" --slurpfile observationB "$receipt_b" '
+        {
+            after_controller: $controller,
+            observations: [$observationA[0], $observationB[0]]
+        }
+    ' > "$checkpoint.tmp"
+    mv "$checkpoint.tmp" "$checkpoint"
 }
 
 first_mutation_barrier() {
@@ -1510,6 +1546,25 @@ phase_barrier() {
               -f "$ARTIFACT_ROOT/controllers/B-${phase}.ready" ]]; then
             return 0
         fi
+        sleep 0.01
+    done
+    return 1
+}
+
+wait_for_restoration_checkpoint() {
+    local controller="$1"
+    local checkpoint="$ARTIFACT_ROOT/controllers/${controller}-restoration-checkpoint.json"
+    local peer_pid peer_identity
+    if [[ "$controller" == A ]]; then
+        peer_pid="$CLIENT_A_PID"
+        peer_identity="$CLIENT_A_IDENTITY"
+    else
+        peer_pid="$CLIENT_B_PID"
+        peer_identity="$CLIENT_B_IDENTITY"
+    fi
+    for _ in $(seq 1 10000); do
+        [[ -s "$checkpoint" ]] && return 0
+        process_alive "$peer_pid" "$peer_identity" || return 1
         sleep 0.01
     done
     return 1
@@ -1605,8 +1660,10 @@ controller_a() {
         type "$TOKEN_A_SECOND" --pid "$TARGET_A_PID" --window-id "$TARGET_A_WINDOW_ID"
     phase_barrier workflow-complete A
     record_observation A 3 "$TARGET_A_PID" "$TARGET_A_WINDOW_ID" "$TOKEN_A_FINAL"
+    phase_barrier workflow-readback-complete A
     record_mutation A 4 type restoration "$TARGET_A_PID" "$TARGET_A_WINDOW_ID" \
         type "$TOKEN_A_INITIAL" --pid "$TARGET_A_PID" --window-id "$TARGET_A_WINDOW_ID" --clear
+    record_restoration_checkpoint A "$TOKEN_A_INITIAL" "$TOKEN_B_FINAL"
     phase_barrier restoration-complete A
     record_observation A 4 "$TARGET_A_PID" "$TARGET_A_WINDOW_ID" "$TOKEN_A_INITIAL"
     finished="$(clock_value)"
@@ -1642,8 +1699,11 @@ controller_b() {
     done
     phase_barrier workflow-complete B
     record_observation B 5 "$TARGET_B_PID" "$TARGET_B_WINDOW_ID" "$state"
+    phase_barrier workflow-readback-complete B
+    wait_for_restoration_checkpoint A
     record_mutation B 5 type restoration "$TARGET_B_PID" "$TARGET_B_WINDOW_ID" \
         type "$TOKEN_B_INITIAL" --pid "$TARGET_B_PID" --window-id "$TARGET_B_WINDOW_ID" --clear
+    record_restoration_checkpoint B "$TOKEN_A_INITIAL" "$TOKEN_B_INITIAL"
     phase_barrier restoration-complete B
     record_observation B 6 "$TARGET_B_PID" "$TARGET_B_WINDOW_ID" "$TOKEN_B_INITIAL"
     finished="$(clock_value)"
@@ -1788,6 +1848,11 @@ jq -n \
     }
 ' > "$ARTIFACT_ROOT/controllers/B-report.json"
 
+jq -s '.' \
+    "$ARTIFACT_ROOT/controllers/A-restoration-checkpoint.json" \
+    "$ARTIFACT_ROOT/controllers/B-restoration-checkpoint.json" \
+    > "$ARTIFACT_ROOT/restoration-checkpoints.json"
+
 jq -n \
     --argjson a "$(cat "$ARTIFACT_ROOT/controllers/A-report.json")" \
     --argjson b "$(cat "$ARTIFACT_ROOT/controllers/B-report.json")" \
@@ -1838,6 +1903,7 @@ jq -n \
     --slurpfile a "$ARTIFACT_ROOT/controllers/A-report.json" \
     --slurpfile b "$ARTIFACT_ROOT/controllers/B-report.json" \
     --slurpfile overlap "$ARTIFACT_ROOT/overlap.json" \
+    --slurpfile restorationCheckpoints "$ARTIFACT_ROOT/restoration-checkpoints.json" \
     --argjson monitorClean "$MONITOR_CLEAN" --argjson aGone "$A_GONE" --argjson bGone "$B_GONE" '
     {
         version: $version,
@@ -1869,7 +1935,11 @@ jq -n \
             {name: "signed_host_generation", passed: $hostStable, evidence: "bridge-before.json+bridge-after.json"},
             {name: "sentinel_frontmost_pid", passed: ($monitorClean and $final[0].frontmostPID == $sentinelPID), evidence: "monitor-violations.jsonl+final-sample.json"},
             {name: "sentinel_top_window", passed: ($monitorClean and $final[0].frontmostWindowID == $sentinelWindow), evidence: "monitor-violations.jsonl+final-sample.json"},
-            {name: "no_cross_target_dispatch", passed: ($a[0].cross_target_clear and $b[0].cross_target_clear), evidence: "controllers/*-observations.json"},
+            {name: "no_cross_target_dispatch", passed: (
+                $a[0].cross_target_clear and $b[0].cross_target_clear and
+                all($restorationCheckpoints[0][]?.observations[]?;
+                    .token_present == true and .other_token_absent == true)
+            ), evidence: "controllers/*-observations.json+restoration-checkpoints.json"},
             {name: "no_peekaboo_global_input", passed: $monitorClean, evidence: "monitor-violations.jsonl"},
             {name: "clipboard_change_count", passed: ($baseline[0].clipboardChangeCount == $final[0].clipboardChangeCount), evidence: "baseline.json+final-sample.json"},
             {name: "peekaboo_alpha_overlay", passed: $monitorClean, evidence: "monitor-violations.jsonl"},
@@ -1886,6 +1956,7 @@ jq -n \
             controller_b: ($b[0].restoration_readback == $b[0].initial_token),
             sentinel: ($final[0].frontmostPID == $sentinelPID and $final[0].frontmostWindowID == $sentinelWindow)
         },
+        restoration_checkpoints: $restorationCheckpoints[0],
         cleanup: [
             {id: "A", pid: $a[0].target.pid, start_identity: $a[0].target.start_identity, gone: $aGone},
             {id: "B", pid: $b[0].target.pid, start_identity: $b[0].target.start_identity, gone: $bGone}
