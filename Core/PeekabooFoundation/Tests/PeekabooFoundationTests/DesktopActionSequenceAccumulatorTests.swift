@@ -479,6 +479,12 @@ struct DesktopActionSequenceAccumulatorTests {
             outcomes: [noOp, differentRoute],
             succeededCount: 0,
             attemptedCount: 2) == nil)
+
+        let refusal = DesktopActionOutcome.refused(route: .bridge, reason: .targetUnavailable)
+        #expect(DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: [noOp, refusal],
+            succeededCount: 0,
+            attemptedCount: 2) == nil)
     }
 
     @Test

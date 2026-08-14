@@ -1000,12 +1000,30 @@ extension ApplicationService {
                 unitCount: .one))
         } catch {
             _ = error.asPeekabooError(context: "AX hide action failed")
+            // AX can fail after dispatch. Avoid a known duplicate when its effect is already visible;
+            // if native fallback is still needed, an unknown count preserves both possible attempts.
+            do {
+                if try self.applicationHiddenProvider(application) {
+                    return .accepted(ApplicationActionDispatch(
+                        delivery: DesktopActionOutcome.Delivery(
+                            mechanism: .accessibilityAction,
+                            mode: .background),
+                        unitCount: .one))
+                }
+            } catch {
+                return .mayHaveDispatched(
+                    delivery: DesktopActionOutcome.Delivery(
+                        mechanism: .accessibilityAction,
+                        mode: .background),
+                    unitCount: .one,
+                    causeDescription: String(describing: error))
+            }
             if self.applicationNativeVisibilityHandler(application, true) {
                 return .accepted(ApplicationActionDispatch(
                     delivery: DesktopActionOutcome.Delivery(
                         mechanism: .nativeFramework,
                         mode: .background),
-                    unitCount: .one))
+                    unitCount: nil))
             }
             return .mayHaveDispatched(
                 delivery: DesktopActionOutcome.Delivery(

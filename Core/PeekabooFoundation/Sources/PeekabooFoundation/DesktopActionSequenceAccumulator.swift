@@ -97,8 +97,8 @@ public struct DesktopActionSequenceAccumulator: Sendable {
     /// Once any receipt is present, each missing receipt is treated as a possible one-unit dispatch,
     /// never as proof that nothing happened. A one-item batch preserves its exact reported receipt.
     /// Multi-item partial completion is representable only when every receipt is present and every
-    /// dispatched item is definite with one route and delivery mechanism; otherwise normal sequence
-    /// resolution retains the stronger uncertainty evidence.
+    /// dispatched item is definite with one route and delivery mechanism. An unrepresentable mix of
+    /// complete, more-specific receipts omits the aggregate rather than inventing weaker evidence.
     public static func completedBatch(
         outcomes: [DesktopActionOutcome?],
         succeededCount: Int,
@@ -138,6 +138,17 @@ public struct DesktopActionSequenceAccumulator: Sendable {
             }
         }
         let resolution = sequence.successResolution()
+        // Complete leaf receipts remain authoritative; composition must not replace their known
+        // states with an unverified aggregate that none of the leaves reported.
+        let aggregateOutcome: DesktopActionOutcome? = if resolution.outcome?.state == .dispatchedUnverified,
+                                                         reportedOutcomes.allSatisfy({
+                                                             $0.state != .dispatchedUnverified
+                                                         })
+        {
+            nil
+        } else {
+            resolution.outcome
+        }
         let hasMissingReceipt = reportedOutcomes.count != outcomes.count
         if hasMissingReceipt {
             guard attemptedCount > 0 else { return nil }
@@ -153,7 +164,7 @@ public struct DesktopActionSequenceAccumulator: Sendable {
                 unitCount: resolution.mutationDisposition.unitCount)
         }
         guard succeededCount > 0, succeededCount < attemptedCount else {
-            return resolution.outcome
+            return aggregateOutcome
         }
 
         let dispatched = reportedOutcomes.filter(\.dispatchState.mutationDispatched)
@@ -168,7 +179,7 @@ public struct DesktopActionSequenceAccumulator: Sendable {
                   }
               })
         else {
-            return resolution.outcome
+            return aggregateOutcome
         }
         return .partial(
             route: route,

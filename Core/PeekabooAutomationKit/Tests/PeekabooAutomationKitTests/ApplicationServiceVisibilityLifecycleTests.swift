@@ -55,6 +55,34 @@ struct ApplicationServiceVisibilityLifecycleTests {
         #expect(result.outcome?.state == .confirmedChange)
         #expect(result.outcome?.delivery == .init(mechanism: .accessibilityAction, mode: .background))
         #expect(result.outcome?.dispatchState == .dispatched(unitCount: .one))
+        #expect(nativeFallbackCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `native hide fallback preserves unknown count after an ambiguous AX attempt`() async throws {
+        let runningApplication = try self.runningApplication()
+        var isHidden = false
+        var nativeFallbackCount = 0
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            applicationHiddenProvider: { _ in isHidden },
+            applicationAccessibilityHideHandler: { _ in
+                throw VisibilityFixtureError.dispatchFailed
+            },
+            applicationNativeVisibilityHandler: { _, _ in
+                nativeFallbackCount += 1
+                isHidden = true
+                return true
+            },
+            applicationVisibilityTimeout: 0)
+
+        let result = try await service.hideApplicationResult(
+            identifier: "PID:\(runningApplication.processIdentifier)")
+
+        #expect(result.outcome?.state == .confirmedChange)
+        #expect(result.outcome?.delivery == .init(mechanism: .nativeFramework, mode: .background))
+        #expect(result.outcome?.dispatchState == .dispatched(unitCount: nil))
         #expect(nativeFallbackCount == 1)
     }
 
@@ -88,7 +116,7 @@ struct ApplicationServiceVisibilityLifecycleTests {
             #expect(failure.outcome.delivery == .init(mechanism: .accessibilityAction, mode: .background))
             #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: .one))
             #expect(failure.outcome.retrySafety == .unsafe)
-            #expect(visibilityReadCount == 2)
+            #expect(visibilityReadCount == 3)
             #expect(nativeFallbackCount == 1)
         }
     }
