@@ -354,6 +354,13 @@ public final actor PeekabooBridgeHost {
         let status: UInt32
     }
 
+    struct PeerSigningIdentity {
+        let bundleIdentifier: String?
+        let teamIdentifier: String?
+    }
+
+    typealias PeerSigningInformationProvider = (_ processIdentifier: pid_t) -> [String: Any]?
+
     private enum LegacySocketOwnerState {
         case held
         case unheld
@@ -1524,24 +1531,23 @@ public final actor PeekabooBridgeHost {
         let r = getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &pidSize)
         guard r == 0, pid > 0 else { return nil }
 
+        let signingIdentity = self.signingIdentity(pid: pid)
+
         if allowedTeamIDs.isEmpty, let callerUID = self.uid(for: pid), callerUID == getuid() {
-            let bundleID = self.bundleIdentifier(pid: pid)
-            let teamID = self.teamID(pid: pid)
             return PeekabooBridgePeer(
                 processIdentifier: pid,
                 userIdentifier: callerUID,
-                bundleIdentifier: bundleID,
-                teamIdentifier: teamID)
+                bundleIdentifier: signingIdentity?.bundleIdentifier,
+                teamIdentifier: signingIdentity?.teamIdentifier)
         }
 
-        let teamID = self.teamID(pid: pid)
+        let teamID = signingIdentity?.teamIdentifier
         if let teamID, allowedTeamIDs.contains(teamID) {
-            let bundleID = self.bundleIdentifier(pid: pid)
             let uid = self.uid(for: pid)
             return PeekabooBridgePeer(
                 processIdentifier: pid,
                 userIdentifier: uid,
-                bundleIdentifier: bundleID,
+                bundleIdentifier: signingIdentity?.bundleIdentifier,
                 teamIdentifier: teamID)
         }
 
@@ -1550,11 +1556,10 @@ public final actor PeekabooBridgeHost {
         if env == "1", let callerUID = self.uid(for: pid), callerUID == getuid() {
             self.logger.warning(
                 "allowing unsigned bridge client pid=\(pid, privacy: .public) (debug override)")
-            let bundleID = self.bundleIdentifier(pid: pid)
             return PeekabooBridgePeer(
                 processIdentifier: pid,
                 userIdentifier: callerUID,
-                bundleIdentifier: bundleID,
+                bundleIdentifier: signingIdentity?.bundleIdentifier,
                 teamIdentifier: nil)
         }
         #endif
@@ -1577,28 +1582,28 @@ public final actor PeekabooBridgeHost {
         return ok ? info.kp_eproc.e_ucred.cr_uid : nil
     }
 
-    private nonisolated static func bundleIdentifier(pid: pid_t) -> String? {
-        let attrs: NSDictionary = [kSecGuestAttributePid: pid]
-        var secCode: SecCode?
-        guard SecCodeCopyGuestWithAttributes(nil, attrs, SecCSFlags(), &secCode) == errSecSuccess,
-              let code = secCode
-        else { return nil }
+    nonisolated static func signingIdentity(
+        pid: pid_t,
+        signingInformationProvider: PeerSigningInformationProvider = signingInformation) -> PeerSigningIdentity?
+    {
+        guard let info = signingInformationProvider(pid) else { return nil }
 
-        var staticCode: SecStaticCode?
-        guard SecCodeCopyStaticCode(code, SecCSFlags(), &staticCode) == errSecSuccess,
-              let sCode = staticCode
-        else { return nil }
-
-        var infoCF: CFDictionary?
-        let flags = SecCSFlags(rawValue: UInt32(kSecCSSigningInformation))
-        guard SecCodeCopySigningInformation(sCode, flags, &infoCF) == errSecSuccess,
-              let info = infoCF as? [String: Any]
-        else { return nil }
-
-        return info[kSecCodeInfoIdentifier as String] as? String
+        let teamIdentifier: String? = if let teamID = info[kSecCodeInfoTeamIdentifier as String] as? String {
+            teamID
+        } else if let entitlements = info[kSecCodeInfoEntitlementsDict as String] as? [String: Any],
+                  let appIdentifier = entitlements["application-identifier"] as? String,
+                  let prefix = appIdentifier.split(separator: ".").first
+        {
+            String(prefix)
+        } else {
+            nil
+        }
+        return PeerSigningIdentity(
+            bundleIdentifier: info[kSecCodeInfoIdentifier as String] as? String,
+            teamIdentifier: teamIdentifier)
     }
 
-    private nonisolated static func teamID(pid: pid_t) -> String? {
+    private nonisolated static func signingInformation(pid: pid_t) -> [String: Any]? {
         let attrs: NSDictionary = [kSecGuestAttributePid: pid]
         var secCode: SecCode?
         guard SecCodeCopyGuestWithAttributes(nil, attrs, SecCSFlags(), &secCode) == errSecSuccess,
@@ -1611,23 +1616,10 @@ public final actor PeekabooBridgeHost {
         else { return nil }
 
         var infoCF: CFDictionary?
-        // `kSecCodeInfoTeamIdentifier` is only included when requesting signing information.
         let flags = SecCSFlags(rawValue: UInt32(kSecCSSigningInformation))
         guard SecCodeCopySigningInformation(sCode, flags, &infoCF) == errSecSuccess,
               let info = infoCF as? [String: Any]
         else { return nil }
-
-        if let teamID = info[kSecCodeInfoTeamIdentifier as String] as? String {
-            return teamID
-        }
-
-        if let entitlements = info[kSecCodeInfoEntitlementsDict as String] as? [String: Any],
-           let appIdentifier = entitlements["application-identifier"] as? String,
-           let prefix = appIdentifier.split(separator: ".").first
-        {
-            return String(prefix)
-        }
-
-        return nil
+        return info
     }
 }
