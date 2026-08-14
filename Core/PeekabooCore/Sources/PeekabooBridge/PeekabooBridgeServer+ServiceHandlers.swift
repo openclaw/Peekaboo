@@ -20,7 +20,9 @@ extension PeekabooBridgeServer {
             let running = try await self.services.applications.isApplicationRunning(identifier: payload.identifier)
             return .init(response: .bool(running))
         case let .launchApplication(payload):
-            let request = ApplicationLaunchRequest(applicationIdentifier: payload.identifier)
+            let request = ApplicationLaunchRequest(
+                applicationIdentifier: payload.identifier,
+                activates: true)
             let result: DesktopActionResult<ServiceApplicationInfo> = if let results = self.services
                 .applications as? any ApplicationServiceActionResultProviding
             {

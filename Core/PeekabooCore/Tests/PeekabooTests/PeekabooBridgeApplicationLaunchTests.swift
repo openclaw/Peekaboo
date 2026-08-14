@@ -162,6 +162,32 @@ struct PeekabooBridgeApplicationLaunchTests {
     }
 
     @Test
+    func `legacy application launch preserves foreground dispatch semantics`() async throws {
+        let applicationService = await MainActor.run { LaunchRecordingApplicationService() }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: StubServices(applications: applicationService),
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [])
+        }
+        let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(
+            PeekabooBridgeRequest.launchApplication(
+                PeekabooBridgeAppIdentifierRequest(identifier: "com.example.LegacyApp")))
+
+        let response = try await self.decode(server.decodeAndHandle(requestData, peer: nil))
+
+        guard case .application = response else {
+            Issue.record("Expected legacy application response, got \(response)")
+            return
+        }
+        let requests = await MainActor.run { applicationService.launchRequests }
+        #expect(requests == [ApplicationLaunchRequest(
+            applicationIdentifier: "com.example.LegacyApp",
+            activates: true)])
+    }
+
+    @Test
     func `application launch options round trip through bridge host`() async throws {
         let applicationService = await MainActor.run { LaunchRecordingApplicationService() }
         let stub = await MainActor.run { StubServices(applications: applicationService) }
