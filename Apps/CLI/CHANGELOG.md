@@ -14,7 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add capability-gated exact-window background wheel delivery for opaque WKWebView/Tauri scroll targets, with retry-unsafe unverifiable outcomes and no activation or shared-cursor fallback.
 
 ### Fixed
-- Let MCP and Agent sessions start and keep using non-capturing tools through an explicit current Bridge when an unrelated legacy ScreenCaptureKit owner is live, while pixel-producing calls retain exact per-session fail-closed capture refusals.
 - Treat `capture video` as caller-local media ingestion so valid files and typed media failures bypass Screen Recording and ScreenCaptureKit-owner preflight while live capture remains gated.
 - Keep normal exact-window Finder `see` usable when the window exposes no semantic AX value, without weakening hard Accessibility-read failures or the typed incomplete-evidence refusal.
 - Project dialog input and forced Escape through canonical unverified outcomes and exact PID/generation/window receipts so retained-value evidence, driver cancellation, legacy Bridge PID targets, and concurrent-controller races cannot be reported as confirmed effects.

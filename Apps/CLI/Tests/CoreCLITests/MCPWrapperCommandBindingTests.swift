@@ -100,9 +100,13 @@ struct MCPWrapperCommandBindingTests {
 
     @Test
     @MainActor
-    func `MCP server context shares the nested agent execution gate`() throws {
+    func `MCP server context shares capture refusal and execution gate with nested agent`() throws {
         let services = PeekabooServices()
         let gate = MCPToolSnapshotExecutionGate()
+        let refusal = MCPToolCapturePreflightRefusal(
+            message: "fixture capture refusal",
+            hint: "start a fresh MCP session"
+        )
         let agent = try PeekabooAgentService(
             services: services,
             snapshotExecutionGate: gate
@@ -111,10 +115,14 @@ struct MCPWrapperCommandBindingTests {
 
         let context = MCPCommand.Serve.makeToolContext(
             services: services,
-            snapshotMutationCoordinator: nil
+            snapshotMutationCoordinator: nil,
+            capturePreflightRefusal: refusal
         )
+        let nestedAgentContext = agent.makeToolContext()
 
         #expect(context.snapshotExecutionGate === gate)
         #expect(context.snapshotExecutionGate === agent.snapshotExecutionGate)
+        #expect(context.capturePreflightRefusal == refusal)
+        #expect(nestedAgentContext.capturePreflightRefusal == refusal)
     }
 }

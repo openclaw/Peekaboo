@@ -100,6 +100,7 @@ extension MCPCommand {
             let snapshotExecutionGate: MCPToolSnapshotExecutionGate
             if let agent = services.agent as? PeekabooAgentService {
                 agent.configureSnapshotMutationCoordinator(snapshotMutationCoordinator)
+                agent.configureCapturePreflightRefusal(capturePreflightRefusal)
                 snapshotExecutionGate = agent.snapshotExecutionGate
             } else {
                 snapshotExecutionGate = MCPToolSnapshotExecutionGate()
