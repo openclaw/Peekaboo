@@ -11,7 +11,8 @@ extension AppCommand {
     struct QuitSubcommand: InjectedRuntimeBackedCommand {
         static let commandDescription = CommandDescription(
             commandName: "quit",
-            abstract: "Quit one or more applications")
+            abstract: "Quit one or more applications"
+        )
 
         @Option(help: "Application to quit")
         var app: String?
@@ -21,7 +22,8 @@ extension AppCommand {
 
         @Option(
             name: .long,
-            help: "Require this process-start identity (cleanup safety; requires --pid)")
+            help: "Require this process-start identity (cleanup safety; requires --pid)"
+        )
         var expectedProcessStartIdentity: Int64?
 
         @Flag(help: "Quit all applications")
@@ -57,7 +59,8 @@ extension AppCommand {
                 for target in quitApps {
                     if target.pid == self.resolvedRuntime.selectedRemoteHostProcessIdentifier {
                         throw PeekabooError.invalidInput(
-                            "Cannot quit the daemon host executing this command; use a different runtime host")
+                            "Cannot quit the daemon host executing this command; use a different runtime host"
+                        )
                     }
                     self.resolvedRuntime.beginInteractionMutation()
                     let success: Bool
@@ -68,7 +71,9 @@ extension AppCommand {
                             request: ApplicationQuitRequest(
                                 identifier: target.identifier,
                                 force: self.force,
-                                expectedIdentity: target.expectedIdentity))
+                                expectedIdentity: target.expectedIdentity
+                            )
+                        )
                         success = actionResult.payload
                         actionOutcomes.append(actionResult.outcome)
                     } catch let failure as DesktopActionFailure {
@@ -83,7 +88,8 @@ extension AppCommand {
                     results.append(AppQuitInfo(
                         app_name: target.name,
                         pid: target.pid,
-                        success: success))
+                        success: success
+                    ))
                     caughtFailureHints.append(caughtFailureHint)
                 }
 
@@ -96,18 +102,21 @@ extension AppCommand {
                 let data = QuitResult(
                     action: "quit",
                     force: force,
-                    results: results)
+                    results: results
+                )
                 let allSucceeded = results.allSatisfy(\.success)
                 let succeededCount = results.count(where: \.success)
                 let aggregateOutcome = DesktopActionSequenceAccumulator.completedBatch(
                     outcomes: actionOutcomes,
                     succeededCount: succeededCount,
-                    attemptedCount: results.count)
+                    attemptedCount: results.count
+                )
                 let singleFailureHint = results.count == 1 ? caughtFailureHints[0] : nil
                 let failureHint = allSucceeded ? nil : Self.failureHint(
                     force: self.force,
                     aggregateOutcome: aggregateOutcome,
-                    singleFailureHint: singleFailureHint)
+                    singleFailureHint: singleFailureHint
+                )
 
                 for result in results where !result.success {
                     let action = self.force ? "Force quit" : "Quit"
@@ -129,7 +138,9 @@ extension AppCommand {
                             code: .INTERACTION_FAILED,
                             hint: failureHint,
                             retrySafe: aggregateOutcome.map { $0.retrySafety == .safe },
-                            mutationDispatched: aggregateOutcome.map(\.dispatchState.mutationDispatched)))
+                            mutationDispatched: aggregateOutcome.map(\.dispatchState.mutationDispatched)
+                        )
+                    )
                     outputJSONCodable(response, logger: self.outputLogger)
                 } else {
                     for result in results {
@@ -146,7 +157,8 @@ extension AppCommand {
                 for result in results {
                     AutomationEventLogger.log(
                         .app,
-                        "quit app=\(result.app_name) pid=\(result.pid) success=\(result.success) force=\(self.force)")
+                        "quit app=\(result.app_name) pid=\(result.pid) success=\(result.success) force=\(self.force)"
+                    )
                 }
                 if !allSucceeded {
                     throw ExitCode.failure
@@ -164,13 +176,13 @@ extension AppCommand {
             if self.all {
                 guard self.app == nil, self.pid == nil, self.expectedProcessStartIdentity == nil else {
                     throw ValidationError(
-                        "Cannot combine --all with --app, --pid, or --expected-process-start-identity")
+                        "Cannot combine --all with --app, --pid, or --expected-process-start-identity"
+                    )
                 }
                 return
             }
             if let except = self.except,
-               !except.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            {
+               !except.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 throw ValidationError("--except requires --all")
             }
             if self.app != nil, self.pid != nil {
@@ -180,8 +192,7 @@ extension AppCommand {
                 throw ValidationError("--expected-process-start-identity requires --pid")
             }
             if let expectedProcessStartIdentity = self.expectedProcessStartIdentity,
-               expectedProcessStartIdentity <= 0
-            {
+               expectedProcessStartIdentity <= 0 {
                 throw ValidationError("--expected-process-start-identity must be greater than zero")
             }
             if self.app == nil, self.pid == nil {
@@ -192,11 +203,10 @@ extension AppCommand {
         private static func failureHint(
             force: Bool,
             aggregateOutcome: DesktopActionOutcome?,
-            singleFailureHint: String?) -> String?
-        {
+            singleFailureHint: String?
+        ) -> String? {
             if let singleFailureHint,
-               !singleFailureHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            {
+               !singleFailureHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return singleFailureHint
             }
             guard let aggregateOutcome else {
@@ -252,7 +262,8 @@ extension AppCommand {
             if let processStartIdentity = self.expectedProcessStartIdentity {
                 return [AppQuitTarget(
                     processIdentifier: pid,
-                    processStartIdentity: UInt64(processStartIdentity))]
+                    processStartIdentity: UInt64(processStartIdentity)
+                )]
             }
             let appInfo = try await self.services.applications.findApplication(identifier: "PID:\(pid)")
             return try [AppQuitTarget(appInfo: appInfo)]
@@ -269,7 +280,8 @@ private struct AppQuitTarget {
     init(appInfo: ServiceApplicationInfo) throws {
         guard let processIdentity = appInfo.processIdentity else {
             throw PeekabooError.commandFailed(
-                "Application selection did not include a stable process-generation identity for \(appInfo.name)")
+                "Application selection did not include a stable process-generation identity for \(appInfo.name)"
+            )
         }
         self.name = appInfo.name
         self.pid = appInfo.processIdentifier
@@ -283,7 +295,8 @@ private struct AppQuitTarget {
         self.identifier = "PID:\(processIdentifier)"
         self.expectedIdentity = ApplicationProcessIdentity(
             processIdentifier: processIdentifier,
-            processStartIdentity: processStartIdentity)
+            processStartIdentity: processStartIdentity
+        )
     }
 }
 
@@ -299,7 +312,8 @@ extension AppCommand.QuitSubcommand: CommanderBindableCommand {
         self.pid = try values.decodeOption("pid", as: Int32.self)
         self.expectedProcessStartIdentity = try values.decodeOption(
             "expectedProcessStartIdentity",
-            as: Int64.self)
+            as: Int64.self
+        )
         self.all = values.flag("all")
         self.except = values.singleOption("except")
         self.force = values.flag("force")
