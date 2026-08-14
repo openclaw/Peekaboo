@@ -8,13 +8,13 @@ extension DialogService {
         if let appName, !appName.isEmpty {
             self.logger.debug("Resolving dialog with app hint: \(appName)")
         }
-        if let element = try? self.findDialogElement(withTitle: windowTitle, appName: appName) {
+        if let element = try self.findDialogElementIfAvailable(withTitle: windowTitle, appName: appName) {
             return element
         }
 
         if windowTitle != nil {
             await self.ensureDialogVisibility(windowTitle: windowTitle, appName: appName)
-            if let element = try? self.findDialogElement(withTitle: windowTitle, appName: appName) {
+            if let element = try self.findDialogElementIfAvailable(withTitle: windowTitle, appName: appName) {
                 return element
             }
 
@@ -83,7 +83,7 @@ extension DialogService {
         }
 
         let windowSearchTimeout = self.dialogWindowSearchTimeout(title: title, appName: appName)
-        let windows = self.dialogWindowCandidates(in: focusedApp, title: title, appName: appName)
+        let windows = try self.dialogWindowCandidates(in: focusedApp, title: title, appName: appName)
         self.logger.debug("Checking \(windows.count) windows for dialogs")
 
         for window in windows {
@@ -93,7 +93,10 @@ extension DialogService {
         }
 
         if title != nil {
-            if let globalWindows = systemWide.windows() {
+            if let globalWindows = try systemWide.withMessagingTimeout(
+                windowSearchTimeout,
+                operation: { $0.windows() })
+            {
                 for window in globalWindows {
                     if let candidate = self.resolveDialogCandidate(in: window, matching: title) {
                         return candidate
@@ -105,7 +108,9 @@ extension DialogService {
         if self.scansAllApplicationsForDialogs {
             for app in NSWorkspace.shared.runningApplications {
                 let axApp = AXApp(app).element
-                let appWindows = axApp.windowsWithTimeout(timeout: windowSearchTimeout) ?? []
+                let appWindows = try axApp.withMessagingTimeout(
+                    windowSearchTimeout,
+                    operation: { $0.windows() }) ?? []
                 for window in appWindows {
                     if let candidate = self.resolveDialogCandidate(in: window, matching: title) {
                         return candidate
@@ -125,21 +130,29 @@ extension DialogService {
         title != nil || appName != nil ? self.targetedDialogSearchTimeout : self.activeDialogSearchTimeout
     }
 
-    private func dialogWindowCandidates(in app: Element, title: String?, appName: String?) -> [Element] {
+    private func dialogWindowCandidates(in app: Element, title: String?, appName: String?) throws -> [Element] {
         let timeout = self.dialogWindowSearchTimeout(title: title, appName: appName)
 
         // Without a title, an app-scoped command is still looking for the active dialog, not every dialog-like
         // subtree in the app. Checking focused/main windows keeps "no dialog" responses bounded for Electron/Tauri.
         if appName != nil, title == nil {
-            app.setMessagingTimeout(timeout)
-            defer { app.setMessagingTimeout(0) }
-            return [
-                app.focusedWindow(),
-                app.mainWindow(),
-            ].compactMap(\.self)
+            return try app.withMessagingTimeout(timeout) { boundedApp in
+                [
+                    boundedApp.focusedWindow(),
+                    boundedApp.mainWindow(),
+                ].compactMap(\.self)
+            }
         }
 
-        return app.windowsWithTimeout(timeout: timeout) ?? []
+        return try app.withMessagingTimeout(timeout, operation: { $0.windows() }) ?? []
+    }
+
+    private func findDialogElementIfAvailable(withTitle title: String?, appName: String?) throws -> Element? {
+        do {
+            return try self.findDialogElement(withTitle: title, appName: appName)
+        } catch DialogError.noActiveDialog {
+            return nil
+        }
     }
 
     private func dialogIdentifier(for element: Element) -> String {
@@ -162,7 +175,7 @@ extension DialogService {
             self.logger.debug("Resolving dialog with app hint: \(appName)")
         }
 
-        if let element = try? self.findDialogElement(withTitle: windowTitle, appName: appName) {
+        if let element = try self.findDialogElementIfAvailable(withTitle: windowTitle, appName: appName) {
             return (
                 element: element,
                 dialogIdentifier: self.dialogIdentifier(for: element),
@@ -171,7 +184,7 @@ extension DialogService {
 
         if windowTitle != nil {
             await self.ensureDialogVisibility(windowTitle: windowTitle, appName: appName)
-            if let element = try? self.findDialogElement(withTitle: windowTitle, appName: appName) {
+            if let element = try self.findDialogElementIfAvailable(withTitle: windowTitle, appName: appName) {
                 return (
                     element: element,
                     dialogIdentifier: self.dialogIdentifier(for: element),

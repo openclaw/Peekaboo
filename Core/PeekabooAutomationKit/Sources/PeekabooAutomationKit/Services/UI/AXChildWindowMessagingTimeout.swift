@@ -5,6 +5,19 @@ import AXorcist
 /// AX messaging timeouts are per element; setting only the owning application does not bound calls
 /// such as `_AXUIElementGetWindow`, attribute reads, or actions on a returned window element.
 enum AXChildWindowMessagingTimeout {
+    /// Runs a child-window operation only after macOS accepts the per-element deadline.
+    ///
+    /// Unlike the compatibility overloads below, this checked path reports timeout setup
+    /// and reset failures so exact-target callers can refuse instead of running unbounded.
+    @MainActor
+    static func performChecked<Result>(
+        on window: Element,
+        timeout: Float,
+        operation: (Element) throws -> Result) throws -> Result
+    {
+        try window.withMessagingTimeout(timeout, operation: operation)
+    }
+
     @MainActor
     static func perform<Result>(
         on window: Element,
