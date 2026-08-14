@@ -97,6 +97,16 @@ extension SetValueCommand: ParsableCommand {
 
 extension SetValueCommand: AsyncRuntimeCommand {}
 
+extension SetValueCommand: PreRuntimeValidatingCommand {
+    func validateBeforeRuntime() throws {
+        _ = try ElementActionCommandExecutor.validateRequest(
+            snapshot: self.snapshot,
+            target: self.target,
+            prepare: { try (self.requireTarget(), self.requireValue()) }
+        )
+    }
+}
+
 @MainActor
 extension SetValueCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
@@ -173,8 +183,11 @@ enum ElementActionCommandExecutor {
 
         do {
             let target = context.target
-            try target.validate()
-            let prepared = try prepare()
+            let prepared = try self.validateRequest(
+                snapshot: context.snapshot,
+                target: target,
+                prepare: prepare
+            )
             var observation = await InteractionObservationContext.resolve(
                 explicitSnapshot: context.snapshot,
                 fallbackToLatest: true,
@@ -241,6 +254,20 @@ enum ElementActionCommandExecutor {
             handleError(error)
             throw ExitCode.failure
         }
+    }
+
+    static func validateRequest<Prepared>(
+        snapshot: String?,
+        target: InteractionTargetOptions,
+        prepare: () throws -> (target: String, value: Prepared)
+    ) throws -> (target: String, value: Prepared) {
+        try target.validate()
+        let prepared = try prepare()
+        try InteractionObservationRefresher.validateSnapshotTargetCombination(
+            snapshot: snapshot,
+            target: target
+        )
+        return prepared
     }
 
     static func shouldFocus(

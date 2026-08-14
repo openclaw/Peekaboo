@@ -353,6 +353,13 @@ enum CommanderCLIBinder {
                 values.singleOption("on") != nil
             )
         }
+        if commandType == SetValueCommand.self || commandType == ActionCommand.self {
+            let hasElementReference = values.singleOption("on")?
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            let hasExplicitTarget = ["app", "pid", "windowId", "windowTitle", "windowIndex"]
+                .contains { values.singleOption($0) != nil }
+            return mayRefreshObservation && hasElementReference && hasExplicitTarget
+        }
         return false
     }
 

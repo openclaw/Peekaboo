@@ -189,6 +189,17 @@ struct TargetedElementObservationRefreshOptions {
 
 @MainActor
 enum InteractionObservationRefresher {
+    static func validateSnapshotTargetCombination(
+        snapshot: String?,
+        target: InteractionTargetOptions
+    ) throws {
+        guard target.hasAnyTarget, InteractionSnapshotReference.isConcrete(snapshot) else { return }
+        throw PeekabooError.invalidInput(
+            "Do not combine an explicit --snapshot with --app, --pid, or window targeting options. " +
+                "The snapshot already identifies the element's application and window."
+        )
+    }
+
     static func refreshForTargetIfNeeded(
         _ observation: InteractionObservationContext,
         options: TargetedElementObservationRefreshOptions,
@@ -220,12 +231,10 @@ enum InteractionObservationRefresher {
         guard target.hasAnyTarget else {
             return observation
         }
-        guard observation.source != .explicit else {
-            throw PeekabooError.invalidInput(
-                "Do not combine an explicit --snapshot with --app, --pid, or window targeting options. " +
-                    "The snapshot already identifies the element's application and window."
-            )
-        }
+        try self.validateSnapshotTargetCombination(
+            snapshot: observation.explicitSnapshotId,
+            target: target
+        )
 
         return try await self.refreshObservation(
             observation,

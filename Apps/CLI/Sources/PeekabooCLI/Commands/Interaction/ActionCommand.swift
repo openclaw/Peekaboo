@@ -104,6 +104,16 @@ extension ActionCommand: ParsableCommand {
 
 extension ActionCommand: AsyncRuntimeCommand {}
 
+extension ActionCommand: PreRuntimeValidatingCommand {
+    func validateBeforeRuntime() throws {
+        _ = try ElementActionCommandExecutor.validateRequest(
+            snapshot: self.snapshot,
+            target: self.target,
+            prepare: { try (self.requireTarget(), self.requireAction()) }
+        )
+    }
+}
+
 @MainActor
 extension ActionCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {

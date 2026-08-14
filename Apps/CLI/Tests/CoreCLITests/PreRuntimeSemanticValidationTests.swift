@@ -1,4 +1,5 @@
 import Commander
+import PeekabooFoundation
 import Testing
 @testable import PeekabooCLI
 
@@ -50,6 +51,22 @@ struct PreRuntimeSemanticValidationTests {
             ],
             expectedMessage: "--button must be either 'left' or 'right'"
         ),
+        Case(
+            arguments: ["peekaboo", "action", "AXPress", "--json"],
+            expectedMessage: "--on is required"
+        ),
+        Case(
+            arguments: ["peekaboo", "action", "--on", "B1", "--json"],
+            expectedMessage: "Action name is required"
+        ),
+        Case(
+            arguments: ["peekaboo", "set-value", "hello", "--json"],
+            expectedMessage: "--on is required"
+        ),
+        Case(
+            arguments: ["peekaboo", "set-value", "--on", "T1", "--json"],
+            expectedMessage: "Value is required"
+        ),
     ])
     func `request semantics validate through the pre-runtime hook`(_ testCase: Case) throws {
         let resolved = try CommanderRuntimeRouter.resolve(argv: testCase.arguments)
@@ -95,6 +112,67 @@ struct PreRuntimeSemanticValidationTests {
 
         #expect(throws: Never.self) {
             try validator.validateBeforeRuntime()
+        }
+    }
+
+    @Test
+    func `direct element actions reject concrete snapshots with explicit targets before runtime selection`() throws {
+        let cases = [
+            ["action", "AXPress", "--on", "B1", "--snapshot", "receipt-1", "--window-id", "42"],
+            [
+                "set-value", "hello", "--on", "T1", "--snapshot", "receipt-1", "--app", "TextEdit",
+                "--window-title", "Document",
+            ],
+            [
+                "action", "AXPress", "--on", "B1", "--snapshot", "receipt-1", "--pid", "123",
+                "--window-index", "0",
+            ],
+        ]
+
+        for arguments in cases {
+            let resolved = try CommanderRuntimeRouter.resolve(argv: ["peekaboo"] + arguments + ["--json"])
+            let command = try CommanderCLIBinder.instantiateCommand(
+                type: resolved.type,
+                parsedValues: resolved.parsedValues
+            )
+            let validator = try #require(command as? any PreRuntimeValidatingCommand)
+
+            let error = #expect(throws: PeekabooError.self) {
+                try validator.validateBeforeRuntime()
+            }
+            #expect(error?.localizedDescription.contains("Do not combine an explicit --snapshot") == true)
+        }
+    }
+
+    @Test
+    func `direct element actions accept refreshable snapshots with every valid target selector`() throws {
+        let selectors = [
+            ["--window-id", "42"],
+            ["--app", "TextEdit", "--window-title", "Document"],
+            ["--pid", "123", "--window-index", "0"],
+        ]
+        let commands = [
+            ["action", "AXPress", "--on", "B1"],
+            ["set-value", "hello", "--on", "T1"],
+        ]
+
+        for commandArguments in commands {
+            for selector in selectors {
+                for snapshot in [[], ["--snapshot", "latest"]] {
+                    let resolved = try CommanderRuntimeRouter.resolve(
+                        argv: ["peekaboo"] + commandArguments + selector + snapshot + ["--json"]
+                    )
+                    let command = try CommanderCLIBinder.instantiateCommand(
+                        type: resolved.type,
+                        parsedValues: resolved.parsedValues
+                    )
+                    let validator = try #require(command as? any PreRuntimeValidatingCommand)
+
+                    #expect(throws: Never.self) {
+                        try validator.validateBeforeRuntime()
+                    }
+                }
+            }
         }
     }
 
