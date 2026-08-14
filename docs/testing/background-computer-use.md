@@ -96,9 +96,12 @@ Physical cursor motion is recorded as observational evidence and never fails the
 concurrently. Every CLI generation is registered before it can run and has a 30-second deadline (bounded to 1–300
 seconds with
 `PEEKABOO_OVERLAP_OPERATION_TIMEOUT_SECONDS`); timeout and abort cleanup escalate from TERM to KILL while the invariant
-monitor remains active. Each target starts as a stopped direct child: its intended executable path and process generation
-are recorded durably before resume, then the live executable path is verified after `exec`; cleanup never infers ownership
-from an ambient application-inventory delta or a response that can be interrupted.
+monitor remains active. Peer synchronization uses one monotonic deadline derived from that timeout plus the bounded
+registration/attestation handoff for each maximum remaining operation: 6 for initial/final readback, 8 to establish the
+overlap witness, 30 for the longer controller workflow, and 15 for restoration plus its two-target checkpoint. A peer
+generation exit still refuses immediately. Each target starts as a stopped direct child: its intended executable path
+and process generation are recorded durably before resume, then the live executable path is verified after `exec`;
+cleanup never infers ownership from an ambient application-inventory delta or a response that can be interrupted.
 
 Live execution is deliberately reserved until the CLI exposes an opaque host receipt from `bridge status` and validates
 that receipt on the same authenticated connection that performs every operation. The current command refuses before UI

@@ -31,6 +31,16 @@ CLEANUP_COMPLETE=false
 CLEANUP_STARTED=false
 PENDING_LAUNCHER_PID=""
 OPERATION_TIMEOUT_SECONDS="${PEEKABOO_OVERLAP_OPERATION_TIMEOUT_SECONDS:-30}"
+CONTROLLED_OPERATION_HANDOFF_SECONDS=1
+MUTATION_BOUNDED_OPERATION_COUNT=3
+OBSERVATION_BOUNDED_OPERATION_COUNT=6
+INITIAL_READBACK_REMAINING_OPERATION_COUNT="$OBSERVATION_BOUNDED_OPERATION_COUNT"
+OVERLAP_WITNESS_REMAINING_OPERATION_COUNT=$((OBSERVATION_BOUNDED_OPERATION_COUNT + 2))
+WORKFLOW_REMAINING_OPERATION_COUNT=$((4 * MUTATION_BOUNDED_OPERATION_COUNT + \
+    3 * OBSERVATION_BOUNDED_OPERATION_COUNT))
+FINAL_READBACK_REMAINING_OPERATION_COUNT="$OBSERVATION_BOUNDED_OPERATION_COUNT"
+RESTORATION_REMAINING_OPERATION_COUNT=$((MUTATION_BOUNDED_OPERATION_COUNT + \
+    2 * OBSERVATION_BOUNDED_OPERATION_COUNT))
 
 usage() {
     cat <<'EOF'
@@ -581,6 +591,73 @@ clock_value() {
     "$PROBE_BIN" clock | jq -er '.monotonicSeconds'
 }
 
+synchronization_budget_seconds() {
+    local maximum_remaining_operations="$1"
+    [[ "$maximum_remaining_operations" =~ ^[1-9][0-9]*$ ]] || return 1
+    # Two 50 x 5 ms registration/attestation probes plus deadline completion polling fit one handoff second.
+    awk -v operations="$maximum_remaining_operations" \
+        -v timeout="$OPERATION_TIMEOUT_SECONDS" \
+        -v handoff="$CONTROLLED_OPERATION_HANDOFF_SECONDS" '
+        BEGIN { printf "%.9f", operations * (timeout + handoff) }
+    '
+}
+
+synchronization_deadline() {
+    local maximum_remaining_operations="$1"
+    local started_at="${2:-}"
+    local budget
+    [[ -n "$started_at" ]] || started_at="$(clock_value)"
+    budget="$(synchronization_budget_seconds "$maximum_remaining_operations")" || return 1
+    awk -v started="$started_at" -v budget="$budget" '
+        BEGIN { printf "%.9f", started + budget }
+    '
+}
+
+synchronization_deadline_reached() {
+    local deadline="$1"
+    local now="${2:-}"
+    [[ -n "$now" ]] || now="$(clock_value)"
+    awk -v now="$now" -v deadline="$deadline" 'BEGIN { exit !(now >= deadline) }'
+}
+
+synchronization_marker_ready() {
+    local marker="$1"
+    local readiness="$2"
+    case "$readiness" in
+        exists) [[ -e "$marker" ]] ;;
+        nonempty) [[ -s "$marker" ]] ;;
+        *) return 1 ;;
+    esac
+}
+
+wait_for_synchronization_until() {
+    local marker="$1"
+    local peer_pid="$2"
+    local peer_identity="$3"
+    local deadline="$4"
+    local readiness="${5:-exists}"
+    while true; do
+        synchronization_deadline_reached "$deadline" && return 1
+        process_alive "$peer_pid" "$peer_identity" || return 1
+        synchronization_deadline_reached "$deadline" && return 1
+        synchronization_marker_ready "$marker" "$readiness" && return 0
+        sleep 0.01
+    done
+}
+
+wait_for_controller_marker() {
+    local marker="$1"
+    local peer_controller="$2"
+    local maximum_remaining_operations="$3"
+    local readiness="${4:-exists}"
+    local receipt="$ARTIFACT_ROOT/controllers/${peer_controller}-client.json"
+    local peer_pid peer_identity deadline
+    peer_pid="$(jq -er '.pid' "$receipt")" || return 1
+    peer_identity="$(jq -er '.startIdentity' "$receipt")" || return 1
+    deadline="$(synchronization_deadline "$maximum_remaining_operations")" || return 1
+    wait_for_synchronization_until "$marker" "$peer_pid" "$peer_identity" "$deadline" "$readiness"
+}
+
 tracked_input_matches_commit() {
     local file="$1"
     local relative="${file#"$ROOT_DIR"/}"
@@ -854,6 +931,12 @@ run_client_lifecycle_self_test() {
     local timeout_pid timeout_identity timeout_inflight timeout_started timeout_finished timeout_elapsed
     local timeout_deadline timeout_kill_at timeout_kill_overrun timeout_completion_overrun
     local settled_focus_preserved=false missing_focus_blocks=false null_focus_blocks=false
+    local initial_budget overlap_budget workflow_budget restoration_budget max_restoration_budget
+    local initial_deadline restoration_deadline
+    local slow_phase_budget_accepted=false slow_restoration_budget_accepted=false
+    local synchronization_wait_accepted=false synchronization_deadline_refused=false
+    local late_marker_refused=false empty_checkpoint_waited_for_nonempty=false
+    local synchronization_peer_exit_refused=false synchronization_peer_exit_elapsed=999
     jq -n '{pendingFocusedWindowChange: false}' \
         > "$ARTIFACT_ROOT/results/lifecycle-settled-heartbeat.json"
     if [[ "$(read_pending_focus_state \
@@ -893,6 +976,111 @@ run_client_lifecycle_self_test() {
     timeout_completion_overrun="$(awk -v deadline="$timeout_deadline" -v finished="$timeout_finished" \
         'BEGIN { printf "%.6f", finished - deadline }')"
     rm -f "$timeout_inflight"
+
+    OPERATION_TIMEOUT_SECONDS=30
+    initial_budget="$(synchronization_budget_seconds "$INITIAL_READBACK_REMAINING_OPERATION_COUNT")"
+    overlap_budget="$(synchronization_budget_seconds "$OVERLAP_WITNESS_REMAINING_OPERATION_COUNT")"
+    workflow_budget="$(synchronization_budget_seconds "$WORKFLOW_REMAINING_OPERATION_COUNT")"
+    restoration_budget="$(synchronization_budget_seconds "$RESTORATION_REMAINING_OPERATION_COUNT")"
+    initial_deadline="$(synchronization_deadline "$INITIAL_READBACK_REMAINING_OPERATION_COUNT" 1000)"
+    restoration_deadline="$(synchronization_deadline "$RESTORATION_REMAINING_OPERATION_COUNT" 1000)"
+    if ! synchronization_deadline_reached "$initial_deadline" 1006; then
+        slow_phase_budget_accepted=true
+    fi
+    if ! synchronization_deadline_reached "$restoration_deadline" 1101; then
+        slow_restoration_budget_accepted=true
+    fi
+    OPERATION_TIMEOUT_SECONDS=300
+    max_restoration_budget="$(synchronization_budget_seconds "$RESTORATION_REMAINING_OPERATION_COUNT")"
+
+    OPERATION_TIMEOUT_SECONDS=1
+    spawn_controlled_process "$ARTIFACT_ROOT/results/synchronization-peer" /bin/sleep /bin/sleep 5
+    local synchronization_pid="$SPAWNED_PID"
+    local synchronization_identity="$SPAWNED_IDENTITY"
+    local synchronization_inflight="$SPAWNED_INFLIGHT"
+    local synchronization_marker="$ARTIFACT_ROOT/results/synchronization-peer.ready"
+    local synchronization_writer_pid synchronization_wait_exit=0
+    (
+        sleep 0.05
+        : > "$synchronization_marker.tmp"
+        mv "$synchronization_marker.tmp" "$synchronization_marker"
+    ) &
+    synchronization_writer_pid=$!
+    local synchronization_wait_deadline
+    synchronization_wait_deadline="$(synchronization_deadline 1)"
+    set +e
+    wait_for_synchronization_until "$synchronization_marker" \
+        "$synchronization_pid" "$synchronization_identity" "$synchronization_wait_deadline"
+    synchronization_wait_exit=$?
+    set -e
+    wait "$synchronization_writer_pid"
+    [[ $synchronization_wait_exit -eq 0 ]] && synchronization_wait_accepted=true
+
+    rm -f "$synchronization_marker"
+    local expired_deadline synchronization_deadline_exit=0
+    expired_deadline="$(awk -v now="$(clock_value)" 'BEGIN { printf "%.9f", now - 0.001 }')"
+    set +e
+    wait_for_synchronization_until "$synchronization_marker" \
+        "$synchronization_pid" "$synchronization_identity" "$expired_deadline"
+    synchronization_deadline_exit=$?
+    set -e
+    [[ $synchronization_deadline_exit -ne 0 ]] && synchronization_deadline_refused=true
+
+    local late_marker="$ARTIFACT_ROOT/results/synchronization-late.ready"
+    local late_marker_deadline late_marker_exit=0
+    late_marker_deadline="$(awk -v now="$(clock_value)" 'BEGIN { printf "%.9f", now - 0.001 }')"
+    : > "$late_marker"
+    set +e
+    wait_for_synchronization_until "$late_marker" \
+        "$synchronization_pid" "$synchronization_identity" "$late_marker_deadline"
+    late_marker_exit=$?
+    set -e
+    [[ $late_marker_exit -ne 0 ]] && late_marker_refused=true
+
+    local checkpoint_marker="$ARTIFACT_ROOT/results/synchronization-checkpoint.json"
+    local checkpoint_writer_pid checkpoint_wait_exit=0 checkpoint_started checkpoint_finished checkpoint_elapsed
+    : > "$checkpoint_marker"
+    (
+        sleep 0.05
+        printf '%s\n' '{"complete":true}' > "$checkpoint_marker.tmp"
+        mv "$checkpoint_marker.tmp" "$checkpoint_marker"
+    ) &
+    checkpoint_writer_pid=$!
+    checkpoint_started="$(clock_value)"
+    synchronization_wait_deadline="$(synchronization_deadline 1 "$checkpoint_started")"
+    set +e
+    wait_for_synchronization_until "$checkpoint_marker" \
+        "$synchronization_pid" "$synchronization_identity" "$synchronization_wait_deadline" nonempty
+    checkpoint_wait_exit=$?
+    set -e
+    checkpoint_finished="$(clock_value)"
+    wait "$checkpoint_writer_pid"
+    checkpoint_elapsed="$(awk -v started="$checkpoint_started" -v finished="$checkpoint_finished" \
+        'BEGIN { printf "%.6f", finished - started }')"
+    if [[ $checkpoint_wait_exit -eq 0 && -s "$checkpoint_marker" ]] && \
+       awk -v elapsed="$checkpoint_elapsed" 'BEGIN { exit !(elapsed >= 0.02) }'; then
+        empty_checkpoint_waited_for_nonempty=true
+    fi
+    rm -f "$late_marker" "$checkpoint_marker"
+
+    terminate_owned_generation_directly synchronization-self-test \
+        "$synchronization_pid" "$synchronization_identity" forced_self_test
+    rm -f "$synchronization_inflight"
+    local peer_exit_started peer_exit_finished peer_exit_deadline peer_exit_result=0
+    peer_exit_started="$(clock_value)"
+    peer_exit_deadline="$(synchronization_deadline 1 "$peer_exit_started")"
+    set +e
+    wait_for_synchronization_until "$synchronization_marker" \
+        "$synchronization_pid" "$synchronization_identity" "$peer_exit_deadline"
+    peer_exit_result=$?
+    set -e
+    peer_exit_finished="$(clock_value)"
+    synchronization_peer_exit_elapsed="$(awk -v started="$peer_exit_started" -v finished="$peer_exit_finished" \
+        'BEGIN { printf "%.6f", finished - started }')"
+    if [[ $peer_exit_result -ne 0 ]] && \
+       awk -v elapsed="$synchronization_peer_exit_elapsed" 'BEGIN { exit !(elapsed < 0.5) }'; then
+        synchronization_peer_exit_refused=true
+    fi
 
     spawn_controlled_process "$ARTIFACT_ROOT/results/lifecycle-direct-cleanup" /bin/sleep /bin/sleep 60
     local direct_pid="$SPAWNED_PID"
@@ -977,7 +1165,25 @@ run_client_lifecycle_self_test() {
         --argjson mismatchGone "$mismatch_gone" \
         --argjson settledFocusPreserved "$settled_focus_preserved" \
         --argjson missingFocusBlocks "$missing_focus_blocks" \
-        --argjson nullFocusBlocks "$null_focus_blocks" '
+        --argjson nullFocusBlocks "$null_focus_blocks" \
+        --argjson initialBudget "$initial_budget" \
+        --argjson overlapBudget "$overlap_budget" \
+        --argjson workflowBudget "$workflow_budget" \
+        --argjson restorationBudget "$restoration_budget" \
+        --argjson maxRestorationBudget "$max_restoration_budget" \
+        --argjson slowPhaseBudgetAccepted "$slow_phase_budget_accepted" \
+        --argjson slowRestorationBudgetAccepted "$slow_restoration_budget_accepted" \
+        --argjson synchronizationWaitAccepted "$synchronization_wait_accepted" \
+        --argjson synchronizationDeadlineRefused "$synchronization_deadline_refused" \
+        --argjson lateMarkerRefused "$late_marker_refused" \
+        --argjson emptyCheckpointWaitedForNonempty "$empty_checkpoint_waited_for_nonempty" \
+        --argjson synchronizationPeerExitRefused "$synchronization_peer_exit_refused" \
+        --argjson synchronizationPeerExitElapsed "$synchronization_peer_exit_elapsed" \
+        --argjson mutationCount "$MUTATION_BOUNDED_OPERATION_COUNT" \
+        --argjson observationCount "$OBSERVATION_BOUNDED_OPERATION_COUNT" \
+        --argjson overlapCount "$OVERLAP_WITNESS_REMAINING_OPERATION_COUNT" \
+        --argjson workflowCount "$WORKFLOW_REMAINING_OPERATION_COUNT" \
+        --argjson restorationCount "$RESTORATION_REMAINING_OPERATION_COUNT" '
         {
             success: (
                 $timeoutExit == 124 and $timeoutElapsed >= 0.8 and
@@ -988,7 +1194,16 @@ run_client_lifecycle_self_test() {
                 $fastExit == 0 and $fastPath == "/usr/bin/true" and
                 $fastZombieRejected and $boundedExit == 0 and
                 $mismatchExit != 0 and $mismatchGone and
-                $settledFocusPreserved and $missingFocusBlocks and $nullFocusBlocks
+                $settledFocusPreserved and $missingFocusBlocks and $nullFocusBlocks and
+                $mutationCount == 3 and $observationCount == 6 and $overlapCount == 8 and
+                $workflowCount == 30 and $restorationCount == 15 and
+                $initialBudget == 186 and $overlapBudget == 248 and
+                $workflowBudget == 930 and $restorationBudget == 465 and
+                $maxRestorationBudget == 4515 and
+                $slowPhaseBudgetAccepted and $slowRestorationBudgetAccepted and
+                $synchronizationWaitAccepted and $synchronizationDeadlineRefused and
+                $lateMarkerRefused and $emptyCheckpointWaitedForNonempty and
+                $synchronizationPeerExitRefused and $synchronizationPeerExitElapsed < 0.5
             ),
             timeout_exit: $timeoutExit,
             timeout_elapsed_seconds: $timeoutElapsed,
@@ -1006,7 +1221,27 @@ run_client_lifecycle_self_test() {
             mismatch_generation_gone: $mismatchGone,
             settled_focus_preserved: $settledFocusPreserved,
             missing_focus_blocks: $missingFocusBlocks,
-            null_focus_blocks: $nullFocusBlocks
+            null_focus_blocks: $nullFocusBlocks,
+            synchronization: {
+                mutation_operation_count: $mutationCount,
+                observation_operation_count: $observationCount,
+                overlap_witness_remaining_operation_count: $overlapCount,
+                workflow_remaining_operation_count: $workflowCount,
+                restoration_remaining_operation_count: $restorationCount,
+                initial_readback_budget_seconds: $initialBudget,
+                overlap_witness_budget_seconds: $overlapBudget,
+                workflow_budget_seconds: $workflowBudget,
+                restoration_budget_seconds: $restorationBudget,
+                maximum_timeout_restoration_budget_seconds: $maxRestorationBudget,
+                slow_phase_budget_accepted: $slowPhaseBudgetAccepted,
+                slow_restoration_budget_accepted: $slowRestorationBudgetAccepted,
+                marker_wait_accepted: $synchronizationWaitAccepted,
+                exceeded_deadline_refused: $synchronizationDeadlineRefused,
+                late_marker_refused: $lateMarkerRefused,
+                empty_checkpoint_waited_for_nonempty: $emptyCheckpointWaitedForNonempty,
+                peer_exit_refused: $synchronizationPeerExitRefused,
+                peer_exit_elapsed_seconds: $synchronizationPeerExitElapsed
+            }
         }
     '
 }
@@ -1526,48 +1761,42 @@ record_restoration_checkpoint() {
 
 first_mutation_barrier() {
     local controller="$1"
+    local peer_controller=A
+    [[ "$controller" == A ]] && peer_controller=B
     : > "$ARTIFACT_ROOT/controllers/${controller}-first-mutation.ready"
-    for _ in $(seq 1 500); do
-        if [[ -f "$ARTIFACT_ROOT/controllers/A-first-mutation.ready" && \
-              -f "$ARTIFACT_ROOT/controllers/B-first-mutation.ready" ]]; then
-            return 0
-        fi
-        sleep 0.01
-    done
-    return 1
+    wait_for_controller_marker \
+        "$ARTIFACT_ROOT/controllers/${peer_controller}-first-mutation.ready" \
+        "$peer_controller" "$INITIAL_READBACK_REMAINING_OPERATION_COUNT"
 }
 
 phase_barrier() {
     local phase="$1"
     local controller="$2"
+    local peer_controller=A maximum_remaining_operations
+    [[ "$controller" == A ]] && peer_controller=B
+    case "$phase" in
+        workflow-complete)
+            maximum_remaining_operations="$WORKFLOW_REMAINING_OPERATION_COUNT"
+            ;;
+        workflow-readback-complete)
+            maximum_remaining_operations="$FINAL_READBACK_REMAINING_OPERATION_COUNT"
+            ;;
+        restoration-complete)
+            maximum_remaining_operations="$RESTORATION_REMAINING_OPERATION_COUNT"
+            ;;
+        *) return 1 ;;
+    esac
     : > "$ARTIFACT_ROOT/controllers/${controller}-${phase}.ready"
-    for _ in $(seq 1 500); do
-        if [[ -f "$ARTIFACT_ROOT/controllers/A-${phase}.ready" && \
-              -f "$ARTIFACT_ROOT/controllers/B-${phase}.ready" ]]; then
-            return 0
-        fi
-        sleep 0.01
-    done
-    return 1
+    wait_for_controller_marker \
+        "$ARTIFACT_ROOT/controllers/${peer_controller}-${phase}.ready" \
+        "$peer_controller" "$maximum_remaining_operations"
 }
 
 wait_for_restoration_checkpoint() {
     local controller="$1"
     local checkpoint="$ARTIFACT_ROOT/controllers/${controller}-restoration-checkpoint.json"
-    local peer_pid peer_identity
-    if [[ "$controller" == A ]]; then
-        peer_pid="$CLIENT_A_PID"
-        peer_identity="$CLIENT_A_IDENTITY"
-    else
-        peer_pid="$CLIENT_B_PID"
-        peer_identity="$CLIENT_B_IDENTITY"
-    fi
-    for _ in $(seq 1 10000); do
-        [[ -s "$checkpoint" ]] && return 0
-        process_alive "$peer_pid" "$peer_identity" || return 1
-        sleep 0.01
-    done
-    return 1
+    wait_for_controller_marker \
+        "$checkpoint" "$controller" "$RESTORATION_REMAINING_OPERATION_COUNT" nonempty
 }
 
 overlap_witness() {
@@ -1575,7 +1804,16 @@ overlap_witness() {
     local b_marker="$ARTIFACT_ROOT/controllers/B-active.json"
     local a_snapshot="$ARTIFACT_ROOT/controllers/witness-A-active.json"
     local b_snapshot="$ARTIFACT_ROOT/controllers/witness-B-active.json"
-    for _ in $(seq 1 1000); do
+    local a_controller_pid a_controller_identity b_controller_pid b_controller_identity deadline
+    a_controller_pid="$(jq -er '.pid' "$ARTIFACT_ROOT/controllers/A-client.json")"
+    a_controller_identity="$(jq -er '.startIdentity' "$ARTIFACT_ROOT/controllers/A-client.json")"
+    b_controller_pid="$(jq -er '.pid' "$ARTIFACT_ROOT/controllers/B-client.json")"
+    b_controller_identity="$(jq -er '.startIdentity' "$ARTIFACT_ROOT/controllers/B-client.json")"
+    deadline="$(synchronization_deadline "$OVERLAP_WITNESS_REMAINING_OPERATION_COUNT")"
+    while true; do
+        synchronization_deadline_reached "$deadline" && return 1
+        process_alive "$a_controller_pid" "$a_controller_identity" || return 1
+        process_alive "$b_controller_pid" "$b_controller_identity" || return 1
         if [[ -s "$a_marker" && -s "$b_marker" ]]; then
             local a_pid a_identity b_pid b_identity
             local a_checked_before_at b_checked_at a_checked_after_at
@@ -1618,6 +1856,7 @@ overlap_witness() {
                     sleep 0.01
                     continue
                 fi
+                synchronization_deadline_reached "$deadline" && return 1
                 jq -n --argjson aPID "$a_pid" --arg aIdentity "$a_identity" \
                     --argjson bPID "$b_pid" --arg bIdentity "$b_identity" \
                     --argjson aCheckedBeforeAt "$a_checked_before_at" \
@@ -1641,7 +1880,6 @@ overlap_witness() {
         fi
         sleep 0.01
     done
-    return 1
 }
 
 controller_a() {
