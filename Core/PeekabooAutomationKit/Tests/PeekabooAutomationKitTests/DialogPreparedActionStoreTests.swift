@@ -136,7 +136,7 @@ struct DialogPreparedActionStoreTests {
     }
 
     @Test
-    func `dialog postcondition presence preserves suspected noop and unreadable semantics`() {
+    func `dialog postcondition presence remains dispatched and retry unsafe`() {
         let fallback = DesktopActionOutcome.dispatchedUnverified(
             delivery: DialogService.backgroundDialogDelivery,
             evidence: .deliveryAccepted,
@@ -145,9 +145,8 @@ struct DialogPreparedActionStoreTests {
         #expect(DialogService.postconditionFailure(presence: .absent, fallbackOutcome: fallback) == nil)
 
         let present = DialogService.postconditionFailure(presence: .present, fallbackOutcome: fallback)
-        #expect(present?.outcome.state == .suspectedNoop)
-        #expect(present?.outcome.retrySafety == .safe)
-        #expect(present?.outcome.evidence == .observedNoChange)
+        #expect(present?.outcome == fallback)
+        #expect(present?.outcome.retrySafety == .unsafe)
 
         let unreadable = DialogService.postconditionFailure(presence: .unreadable, fallbackOutcome: fallback)
         #expect(unreadable?.outcome == fallback)

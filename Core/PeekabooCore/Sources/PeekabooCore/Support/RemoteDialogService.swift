@@ -148,6 +148,8 @@ public final class RemoteDialogService: DialogServiceProtocol {
         do {
             return try await self.client.performPreparedDialogAction(receipt)
         } catch let failure as DesktopActionFailure {
+            // The shared transport converts every failure after request dispatch into a typed action failure.
+            // Remaining raw transport errors prove the request was not fully written and stay retry-safe.
             throw failure
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             throw Self.actionFailure(for: envelope)

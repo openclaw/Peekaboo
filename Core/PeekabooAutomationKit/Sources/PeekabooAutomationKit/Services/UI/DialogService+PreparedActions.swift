@@ -182,6 +182,12 @@ extension DialogService {
         case unreadable
     }
 
+    struct FreshDialogElements {
+        let structural: [Element]
+        let legacy: [Element]
+        let readable: Bool
+    }
+
     static let backgroundDialogDelivery = DesktopActionOutcome.Delivery(
         mechanism: .accessibilityAction,
         mode: .background)
@@ -252,7 +258,8 @@ extension DialogService {
                     : "The dialog window selector is ambiguous across \(windows.count) windows.",
                 hint: "Candidate window IDs: \(candidateIDs). Use one exact --window-id.")
         }
-        var candidates: [TargetedDialogCandidate] = []
+        var structuralCandidates: [TargetedDialogCandidate] = []
+        var legacyCandidates: [TargetedDialogCandidate] = []
         for window in windows {
             guard let identity = window.mutationIdentity,
                   identity.processIdentity == processIdentity,
@@ -265,19 +272,26 @@ extension DialogService {
             else { continue }
 
             let exactWindow = try UIAutomationTarget.ExactWindow(window: window)
-            let freshDialogs = self.freshDialogElements(
-                in: handle.element,
-                membership: membership)
+            let freshDialogs = self.freshDialogElements(in: handle.element)
             guard freshDialogs.readable else {
                 throw self.targetUnavailable(
                     "Dialog hierarchy became unreadable while preparing the exact target.")
             }
-            for dialog in freshDialogs.elements {
+            for dialog in freshDialogs.structural {
                 guard dialog.pid() == processIdentity.processIdentifier else { continue }
-                candidates.append(TargetedDialogCandidate(
+                structuralCandidates.append(TargetedDialogCandidate(
                     target: exactWindow,
                     window: handle.element,
                     dialog: dialog))
+            }
+            if membership == .readOnlyCompatible {
+                for dialog in freshDialogs.legacy {
+                    guard dialog.pid() == processIdentity.processIdentifier else { continue }
+                    legacyCandidates.append(TargetedDialogCandidate(
+                        target: exactWindow,
+                        window: handle.element,
+                        dialog: dialog))
+                }
             }
         }
 
@@ -289,7 +303,14 @@ extension DialogService {
                 message: "Dialog owner changed process generation during planning.",
                 hint: "List the application and dialog again before retrying.")
         }
-        return candidates
+        return switch membership {
+        case .structuralMutation:
+            structuralCandidates
+        case .readOnlyCompatible:
+            DialogElementClassifier.preferredReadCandidates(
+                structural: structuralCandidates,
+                legacy: legacyCandidates)
+        }
     }
 
     func targetApplication(for selector: DialogTargetSelector) async throws -> ServiceApplicationInfo {
@@ -332,10 +353,7 @@ extension DialogService {
         return windows
     }
 
-    func freshDialogElements(
-        in window: Element,
-        membership: DialogCandidateMembership = .structuralMutation) -> (elements: [Element], readable: Bool)
-    {
+    func freshDialogElements(in window: Element) -> FreshDialogElements {
         var structuralDialogs: [Element] = []
         var legacyDialogs: [Element] = []
         var visited: Set<Element> = []
@@ -347,8 +365,7 @@ extension DialogService {
             let evidence = DialogElementClassifier.evidence(for: element)
             if DialogElementClassifier.isStructuralDialog(evidence) {
                 structuralDialogs.append(element)
-            } else if membership == .readOnlyCompatible,
-                      DialogElementClassifier.permitsLegacyReadHeuristics(evidence),
+            } else if DialogElementClassifier.permitsLegacyReadHeuristics(evidence),
                       self.isDialogElement(element, matching: nil)
             {
                 legacyDialogs.append(element)
@@ -357,15 +374,10 @@ extension DialogService {
             readable = readable && traversal.readable
             stack.append(contentsOf: traversal.elements.reversed())
         }
-        let dialogs = switch membership {
-        case .structuralMutation:
-            structuralDialogs
-        case .readOnlyCompatible:
-            DialogElementClassifier.preferredReadCandidates(
-                structural: structuralDialogs,
-                legacy: legacyDialogs)
-        }
-        return (dialogs, readable)
+        return FreshDialogElements(
+            structural: structuralDialogs,
+            legacy: legacyDialogs,
+            readable: readable)
     }
 
     func semanticButtons(in dialog: Element, request: DialogActionPreparationRequest) -> [Element] {
@@ -420,12 +432,10 @@ extension DialogService {
             throw self.targetUnavailable("Dialog window receipt changed before AXPress.")
         }
 
-        let freshDialogs = self.freshDialogElements(
-            in: currentWindow.element,
-            membership: .structuralMutation)
+        let freshDialogs = self.freshDialogElements(in: currentWindow.element)
         guard freshDialogs.readable,
-              freshDialogs.elements.count == 1,
-              let dialog = freshDialogs.elements.first,
+              freshDialogs.structural.count == 1,
+              let dialog = freshDialogs.structural.first,
               Self.sameElement(dialog, entry.dialog)
         else {
             throw self.targetUnavailable("Prepared dialog or sheet changed before AXPress.")
@@ -464,11 +474,10 @@ extension DialogService {
         case .absent:
             nil
         case .present:
-            .suspectedNoop(
-                delivery: self.backgroundDialogDelivery,
-                unitCount: .one,
+            DesktopActionFailure(
+                outcome: fallbackOutcome,
                 message: "Dialog AXPress was accepted, but the same dialog remained present.",
-                hint: "Capture fresh dialog state and refresh the target before retrying.")
+                hint: "Capture fresh dialog state before deciding whether to retry.")
         case .unreadable:
             DesktopActionFailure(
                 outcome: fallbackOutcome,
