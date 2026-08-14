@@ -139,6 +139,10 @@ enum BridgeCapabilityPolicy {
         if options.requiresExactWindowROIObservation, !capabilities.exactWindowROIObservation {
             return false
         }
+        if options.requiresExplicitSnapshotPublication,
+           !self.supportsExplicitSnapshotPublication(for: handshake) {
+            return false
+        }
         return true
     }
 
@@ -420,6 +424,11 @@ enum BridgeCapabilityPolicy {
         let enabledOperations = handshake.enabledOperations ?? handshake.supportedOperations
         return enabledOperations.contains(.beginSnapshotMutation) &&
             enabledOperations.contains(.finishSnapshotMutation)
+    }
+
+    static func supportsExplicitSnapshotPublication(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeConstants.explicitSnapshotPublicationVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.explicitSnapshotPublication) == true
     }
 
     static func supportsElementActions(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

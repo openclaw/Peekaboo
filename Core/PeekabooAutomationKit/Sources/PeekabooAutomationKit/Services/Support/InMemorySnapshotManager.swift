@@ -11,6 +11,7 @@ import PeekabooFoundation
 public final class InMemorySnapshotManager: SnapshotManagerProtocol {
     public let supportsImplicitLatestSnapshotInvalidation = true
     public let supportsSnapshotMutationLeases = true
+    public let supportsExplicitSnapshotPublication = true
     public var copiesScreenshotArtifactsIntoStorage: Bool {
         self.options.copyArtifactsOnStore
     }
@@ -55,6 +56,7 @@ public final class InMemorySnapshotManager: SnapshotManagerProtocol {
         var lastAccessedAt: Date
         var processId: Int32
         var isPending: Bool
+        var isImplicitLatestEligible: Bool
         var detectionResult: ElementDetectionResult?
         var snapshotData: UIAutomationSnapshot
     }
@@ -100,6 +102,7 @@ public final class InMemorySnapshotManager: SnapshotManagerProtocol {
                 lastAccessedAt: now,
                 processId: getpid(),
                 isPending: false,
+                isImplicitLatestEligible: true,
                 detectionResult: detectionResult,
                 snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
             self.applyDetectionResult(detectionResult, to: &entry.snapshotData)

@@ -401,6 +401,9 @@ enum RuntimeHostResolver {
             return "The explicitly selected Bridge host does not support exact-window ROI observation; " +
                 "protocol 1.21 with enabled observation and atomic snapshot publication is required."
         }
+        if let failure = explicitSnapshotPublicationFailure(explicitSocket: explicitSocket, options: options) {
+            return failure
+        }
         if options.requiresCaptureEnginePreferenceHost {
             let engine = options.captureEnginePreference ?? "requested"
             return "Capture engine '\(engine)' could not be delivered to a compatible Bridge host. " +
@@ -843,6 +846,9 @@ enum RuntimeHostResolver {
                 for: handshake
             ),
             supportsSnapshotMutationLeases: BridgeCapabilityPolicy.supportsSnapshotMutationLeases(for: handshake),
+            supportsExplicitSnapshotPublication: BridgeCapabilityPolicy.supportsExplicitSnapshotPublication(
+                for: handshake
+            ),
             supportsApplicationLaunchOptions: BridgeCapabilityPolicy.supportsApplicationLaunchOptions(for: handshake),
             supportsSafeBackgroundApplicationLaunchNoOp:
             BridgeCapabilityPolicy.supportsSafeBackgroundApplicationLaunchNoOp(for: handshake),
@@ -869,4 +875,14 @@ enum RuntimeHostResolver {
         "remote \(handshake.hostKind.rawValue) via \(socketPath)" +
             (handshake.build.map { " (build \($0))" } ?? "")
     }
+}
+
+private func explicitSnapshotPublicationFailure(
+    explicitSocket: String?,
+    options: CommandRuntimeOptions
+) -> String? {
+    guard explicitSocket != nil, options.requiresExplicitSnapshotPublication else { return nil }
+    return "The explicitly selected Bridge host cannot publish an explicit-reference-only coordinate " +
+        "receipt; protocol 1.26 is required. Update and relaunch Peekaboo on that host, or remove " +
+        "--bridge-socket so Peekaboo can select a current host."
 }

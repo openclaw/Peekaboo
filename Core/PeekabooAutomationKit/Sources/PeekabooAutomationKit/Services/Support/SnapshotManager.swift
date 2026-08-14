@@ -9,6 +9,7 @@ import PeekabooFoundation
 public final class SnapshotManager: SnapshotManagerProtocol {
     public let supportsImplicitLatestSnapshotInvalidation = true
     public let supportsSnapshotMutationLeases = true
+    public let supportsExplicitSnapshotPublication = true
     public let copiesScreenshotArtifactsIntoStorage = true
 
     public var effectiveImplicitLatestInvalidationWatermark: Date? {
@@ -69,6 +70,18 @@ public final class SnapshotManager: SnapshotManagerProtocol {
         let snapshotData = UIAutomationSnapshot(creatorProcessId: getpid())
         try await self.snapshotActor.saveSnapshot(snapshotId: snapshotId, data: snapshotData, at: stagingPath)
         try FileManager.default.moveItem(at: stagingPath, to: snapshotPath)
+        return snapshotId
+    }
+
+    public func createExplicitSnapshot() async throws -> String {
+        let snapshotId = self.makeSnapshotID()
+        let snapshotPath = self.getSnapshotPath(for: snapshotId)
+
+        self.logger.debug("Creating explicit-only snapshot: \(snapshotId)")
+        try FileManager.default.createDirectory(at: snapshotPath, withIntermediateDirectories: true)
+        try self.markSnapshotExplicitOnly(at: snapshotPath)
+        let snapshotData = UIAutomationSnapshot(creatorProcessId: getpid())
+        try await self.snapshotActor.saveSnapshot(snapshotId: snapshotId, data: snapshotData, at: snapshotPath)
         return snapshotId
     }
 

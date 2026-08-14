@@ -81,6 +81,9 @@ public protocol SnapshotManagerProtocol: Sendable {
     /// Whether this manager atomically blocks replay of snapshot-backed mutations.
     var supportsSnapshotMutationLeases: Bool { get }
 
+    /// Whether this manager can publish snapshots that remain excluded from implicit latest lookup.
+    var supportsExplicitSnapshotPublication: Bool { get }
+
     /// Effective desktop-wide cutoff applied to implicit latest-snapshot lookup.
     /// Managers without a shared watermark can rely on the default `nil` implementation.
     var effectiveImplicitLatestInvalidationWatermark: Date? { get }
@@ -91,6 +94,12 @@ public protocol SnapshotManagerProtocol: Sendable {
 
     /// Reserve a snapshot hidden from implicit lookup until a successful observation publishes it.
     func createSnapshot(pendingAt observationStartedAt: Date) async throws -> String
+
+    /// Create a published snapshot that is addressable only by its explicit ID.
+    ///
+    /// Explicit-only snapshots participate in normal retention, cleanup, and mutation leasing, but never replace
+    /// the element-producing snapshot returned by implicit latest lookup.
+    func createExplicitSnapshot() async throws -> String
 
     /// Store element detection results in a snapshot
     /// - Parameters:
@@ -215,6 +224,10 @@ extension SnapshotManagerProtocol {
         false
     }
 
+    public var supportsExplicitSnapshotPublication: Bool {
+        false
+    }
+
     public var effectiveImplicitLatestInvalidationWatermark: Date? {
         nil
     }
@@ -222,6 +235,11 @@ extension SnapshotManagerProtocol {
     public func createSnapshot(pendingAt observationStartedAt: Date) async throws -> String {
         _ = observationStartedAt
         return try await self.createSnapshot()
+    }
+
+    public func createExplicitSnapshot() async throws -> String {
+        throw SnapshotError.storageError(
+            "This snapshot manager does not support explicit-reference-only snapshots")
     }
 
     public func storeObservationSnapshot(_ request: SnapshotObservationPublicationRequest) async throws {

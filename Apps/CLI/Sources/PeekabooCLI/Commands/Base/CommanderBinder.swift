@@ -72,10 +72,7 @@ enum CommanderCLIBinder {
             options.requiresProcessGenerationPinnedHotkeys = true
         }
         options.requiresHostApplicationInventory = Self.requiresHostApplicationInventory(commandType)
-        let seeSkipsPixels = commandType == SeeCommand.self &&
-            commandValues.flag("noScreenshot")
-        options.requiresDesktopObservation = commandType == SeeCommand.self && !seeSkipsPixels
-        options.requiresDesktopObservationOCR = commandType == SeeCommand.self && commandValues.flag("ocr")
+        let seeSkipsPixels = Self.applySeeRuntimeOptions(&options, commandType, values: commandValues)
         options.transportsCaptureEnginePreference = options.requiresDesktopObservation
         options.requiresScreenCaptureKitOwnerCapability = options.transportsCaptureEnginePreference
         options.ignoresCaptureEnginePreference = seeSkipsPixels
@@ -198,6 +195,21 @@ enum CommanderCLIBinder {
             options.requiresBrowserMCP = true
         }
         return options
+    }
+
+    private static func applySeeRuntimeOptions(
+        _ options: inout CommandRuntimeOptions,
+        _ commandType: (any ParsableCommand.Type)?,
+        values: CommanderBindableValues
+    ) -> Bool {
+        let seeSkipsPixels = commandType == SeeCommand.self && values.flag("noScreenshot")
+        options.requiresDesktopObservation = commandType == SeeCommand.self && !seeSkipsPixels
+        options.requiresDesktopObservationOCR = commandType == SeeCommand.self && values.flag("ocr")
+        options.requiresExplicitSnapshotPublication = commandType == SeeCommand.self &&
+            values.flag("noElements") &&
+            values.singleOption("windowId") != nil &&
+            values.singleOption("path")?.trimmingCharacters(in: .whitespacesAndNewlines) != "-"
+        return seeSkipsPixels
     }
 
     private static func applyCaptureEnginePreference(

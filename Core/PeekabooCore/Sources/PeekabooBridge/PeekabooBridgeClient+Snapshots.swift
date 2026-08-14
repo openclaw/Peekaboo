@@ -8,7 +8,17 @@ extension PeekabooBridgeClient {
     }
 
     public func createSnapshot(pendingAt: Date?) async throws -> String {
-        let response = try await self.send(.createSnapshot(.init(pendingAt: pendingAt)))
+        try await self.createSnapshot(pendingAt: pendingAt, explicitOnly: nil)
+    }
+
+    package func createExplicitSnapshot() async throws -> String {
+        try await self.createSnapshot(pendingAt: nil, explicitOnly: true)
+    }
+
+    private func createSnapshot(pendingAt: Date?, explicitOnly: Bool?) async throws -> String {
+        let response = try await self.send(.createSnapshot(.init(
+            pendingAt: pendingAt,
+            explicitOnly: explicitOnly)))
         switch response {
         case let .snapshotId(id): return id
         case let .error(envelope): throw envelope

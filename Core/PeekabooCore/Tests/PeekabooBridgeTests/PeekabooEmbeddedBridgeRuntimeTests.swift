@@ -19,7 +19,7 @@ struct PeekabooEmbeddedBridgeRuntimeTests {
         #expect(PeekabooBridgeOperation.exactWindowTargetedClick.nativeServiceOwnsDesktopOperationLane)
         #expect(PeekabooBridgeOperation.nativeDesktopOperationLaneOperations == Set(
             PeekabooBridgeOperation.allCases.filter(\.nativeServiceOwnsDesktopOperationLane)))
-        #expect(PeekabooBridgeOperation.nativeDesktopOperationLaneOperations.count == 52)
+        #expect(PeekabooBridgeOperation.nativeDesktopOperationLaneOperations.count == 56)
 
         for operation in PeekabooBridgeOperation.allCases {
             #expect(services.ownsDesktopOperationLane(for: operation) ==
@@ -139,6 +139,7 @@ struct PeekabooEmbeddedBridgeRuntimeTests {
         #expect(firstSnapshot.hostCapabilities.isSuperset(of: [
             PeekabooBridgeHostCapability.backgroundBridgeHost,
             PeekabooBridgeHostCapability.desktopActionOutcomeProjection,
+            PeekabooBridgeHostCapability.explicitSnapshotPublication,
             PeekabooBridgeHostCapability.desktopObservationOCR,
             PeekabooBridgeHostCapability.desktopObservationCaptureEngine,
             PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,

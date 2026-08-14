@@ -1,6 +1,7 @@
 import Darwin
 import Dispatch
 import Foundation
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -80,6 +81,16 @@ struct InMemorySnapshotManagerTests {
             .appendingPathComponent("peekaboo-pending-snapshot-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: storageURL) }
         try await Self.verifyPendingSnapshotPublication(SnapshotManager(snapshotStorageURL: storageURL))
+    }
+
+    @Test
+    func `explicit-only snapshots preserve implicit elements and mutation scope`() async throws {
+        try await Self.verifyExplicitOnlySnapshot(InMemorySnapshotManager())
+
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-explicit-only-snapshot-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+        try await Self.verifyExplicitOnlySnapshot(SnapshotManager(snapshotStorageURL: storageURL))
     }
 
     @Test
@@ -549,6 +560,67 @@ struct InMemorySnapshotManagerTests {
         #expect(await manager.getMostRecentSnapshot() == snapshotId)
         #expect(await manager.getMostRecentSnapshot(applicationBundleId: "com.example.pending") == snapshotId)
         #expect(try await manager.listSnapshots().map(\.id) == [snapshotId])
+    }
+
+    private static func verifyExplicitOnlySnapshot(
+        _ manager: any SnapshotManagerProtocol) async throws
+    {
+        let priorSnapshotID = try await manager.createSnapshot()
+        let priorElement = DetectedElement(
+            id: "B1",
+            type: .button,
+            label: "Save",
+            bounds: CGRect(x: 20, y: 30, width: 80, height: 30))
+        try await manager.storeDetectionResult(
+            snapshotId: priorSnapshotID,
+            result: ElementDetectionResult(
+                snapshotId: priorSnapshotID,
+                screenshotPath: "/tmp/prior.png",
+                elements: DetectedElements(buttons: [priorElement]),
+                metadata: DetectionMetadata(
+                    detectionTime: 0,
+                    elementCount: 1,
+                    method: "test",
+                    windowContext: WindowContext(applicationBundleId: "com.example.prior"))))
+
+        let artifact = try self.createTemporaryArtifact(named: "explicit-only.png")
+        defer { try? FileManager.default.removeItem(at: artifact.deletingLastPathComponent()) }
+        let explicitSnapshotID = try await manager.createExplicitSnapshot()
+        let bounds = CGRect(x: 10, y: 20, width: 300, height: 200)
+        let identity = WindowMutationIdentity(
+            windowID: 456,
+            ownerProcessIdentifier: 123,
+            ownerProcessStartIdentity: 789,
+            capturedBounds: bounds)
+        try await manager.storeScreenshot(SnapshotScreenshotRequest(
+            snapshotId: explicitSnapshotID,
+            screenshotPath: artifact.path,
+            applicationBundleId: "com.example.explicit",
+            applicationProcessId: 123,
+            applicationName: "Explicit",
+            windowTitle: "Explicit Window",
+            windowBounds: bounds,
+            windowID: 456,
+            windowMutationIdentity: identity))
+
+        #expect(await manager.getMostRecentSnapshot() == priorSnapshotID)
+        #expect(await manager.getMostRecentSnapshot(applicationBundleId: "com.example.prior") == priorSnapshotID)
+        #expect(await manager.getMostRecentSnapshot(applicationBundleId: "com.example.explicit") == nil)
+        #expect(try await Set(manager.listSnapshots().map(\.id)) == [priorSnapshotID, explicitSnapshotID])
+        let explicit = try #require(try await manager.getDetectionResult(snapshotId: explicitSnapshotID))
+        #expect(explicit.elements.all.isEmpty)
+        #expect(explicit.metadata.windowContext?.windowMutationIdentity == identity)
+
+        let lease = try await manager.beginSnapshotMutation(snapshotId: explicitSnapshotID)
+        try await manager.finishSnapshotMutation(lease, requiresFreshObservation: true)
+        await #expect(throws: PeekabooError.self) {
+            _ = try await manager.beginSnapshotMutation(snapshotId: explicitSnapshotID)
+        }
+        #expect(await manager.getMostRecentSnapshot() == priorSnapshotID)
+
+        #expect(try await manager.invalidateImplicitLatestSnapshot(through: Date()) == priorSnapshotID)
+        #expect(await manager.getMostRecentSnapshot() == nil)
+        #expect(try await manager.getDetectionResult(snapshotId: explicitSnapshotID)?.snapshotId == explicitSnapshotID)
     }
 
     private static func verifyNewerMutationWinsOverPendingSnapshot(

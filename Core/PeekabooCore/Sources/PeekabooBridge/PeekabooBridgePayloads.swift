@@ -499,13 +499,16 @@ public struct PeekabooBridgeDialogDismissRequest: Codable, Sendable {
 
 public struct PeekabooBridgeCreateSnapshotRequest: Codable, Sendable {
     public let pendingAt: Date?
+    public let explicitOnly: Bool?
 
-    public init(pendingAt: Date? = nil) {
+    public init(pendingAt: Date? = nil, explicitOnly: Bool? = nil) {
         self.pendingAt = pendingAt
+        self.explicitOnly = explicitOnly
     }
 
     private enum CodingKeys: String, CodingKey {
         case pendingAtReferenceDateSeconds
+        case explicitOnly
     }
 
     public init(from decoder: any Decoder) throws {
@@ -513,6 +516,7 @@ public struct PeekabooBridgeCreateSnapshotRequest: Codable, Sendable {
         self.pendingAt = try container.decodeIfPresent(
             TimeInterval.self,
             forKey: .pendingAtReferenceDateSeconds).map(Date.init(timeIntervalSinceReferenceDate:))
+        self.explicitOnly = try container.decodeIfPresent(Bool.self, forKey: .explicitOnly)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -520,6 +524,7 @@ public struct PeekabooBridgeCreateSnapshotRequest: Codable, Sendable {
         try container.encodeIfPresent(
             self.pendingAt?.timeIntervalSinceReferenceDate,
             forKey: .pendingAtReferenceDateSeconds)
+        try container.encodeIfPresent(self.explicitOnly, forKey: .explicitOnly)
     }
 }
 

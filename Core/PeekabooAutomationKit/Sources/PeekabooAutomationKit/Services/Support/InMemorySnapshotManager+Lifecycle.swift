@@ -11,7 +11,14 @@ extension InMemorySnapshotManager {
         try await self.createSnapshotImpl(pendingAt: observationStartedAt)
     }
 
-    private func createSnapshotImpl(pendingAt observationStartedAt: Date?) async throws -> String {
+    public func createExplicitSnapshot() async throws -> String {
+        try await self.createSnapshotImpl(pendingAt: nil, implicitLatestEligible: false)
+    }
+
+    private func createSnapshotImpl(
+        pendingAt observationStartedAt: Date?,
+        implicitLatestEligible: Bool = true) async throws -> String
+    {
         self.pruneIfNeeded()
 
         let timestamp = Int(Date().timeIntervalSince1970 * 1000) // milliseconds
@@ -24,6 +31,7 @@ extension InMemorySnapshotManager {
             lastAccessedAt: now,
             processId: getpid(),
             isPending: observationStartedAt != nil,
+            isImplicitLatestEligible: implicitLatestEligible,
             detectionResult: nil,
             snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
         self.pruneIfNeeded()
@@ -39,6 +47,7 @@ extension InMemorySnapshotManager {
             lastAccessedAt: Date(),
             processId: getpid(),
             isPending: false,
+            isImplicitLatestEligible: true,
             detectionResult: nil,
             snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
 
@@ -74,12 +83,14 @@ extension InMemorySnapshotManager {
         let normalLatest = self.entries
             .filter { _, entry in
                 !entry.isPending
+                    && entry.isImplicitLatestEligible
                     && entry.createdAt >= cutoff
                     && (effectiveWatermark.map { entry.createdAt > $0 } ?? true)
             }
             .max(by: { $0.value.createdAt < $1.value.createdAt })
         if let preservation = self.implicitLatestPreservation,
            self.entries[preservation.snapshotId]?.isPending == false,
+           self.entries[preservation.snapshotId]?.isImplicitLatestEligible == true,
            preservation.preservedAt >= cutoff,
            effectiveWatermark.map({ $0 <= preservation.invalidatedThrough }) ?? true,
            normalLatest.map({ $0.value.createdAt <= preservation.preservedAt }) ?? true
@@ -97,6 +108,7 @@ extension InMemorySnapshotManager {
         let normalLatest = self.entries
             .filter { _, entry in
                 !entry.isPending
+                    && entry.isImplicitLatestEligible
                     && entry.createdAt >= cutoff
                     && (effectiveWatermark.map { entry.createdAt > $0 } ?? true)
                     && entry.snapshotData.applicationBundleId == applicationBundleId
@@ -105,6 +117,7 @@ extension InMemorySnapshotManager {
         if let preservation = self.implicitLatestPreservation,
            let preservedEntry = self.entries[preservation.snapshotId],
            !preservedEntry.isPending,
+           preservedEntry.isImplicitLatestEligible,
            preservation.preservedAt >= cutoff,
            effectiveWatermark.map({ $0 <= preservation.invalidatedThrough }) ?? true,
            preservedEntry.snapshotData.applicationBundleId == applicationBundleId,
@@ -140,6 +153,7 @@ extension InMemorySnapshotManager {
         let normalLatest = self.entries
             .filter { _, entry in
                 !entry.isPending
+                    && entry.isImplicitLatestEligible
                     && entry.createdAt >= validityCutoff
                     && entry.createdAt <= cutoff
                     && (previousEffectiveWatermark.map { entry.createdAt > $0 } ?? true)
@@ -147,6 +161,7 @@ extension InMemorySnapshotManager {
             .max(by: { $0.value.createdAt < $1.value.createdAt })
         let latestSnapshotId: String? = if let preservation = self.implicitLatestPreservation,
                                            self.entries[preservation.snapshotId]?.isPending == false,
+                                           self.entries[preservation.snapshotId]?.isImplicitLatestEligible == true,
                                            preservation.preservedAt >= validityCutoff,
                                            preservation.preservedAt <= cutoff,
                                            previousEffectiveWatermark.map({
@@ -171,7 +186,7 @@ extension InMemorySnapshotManager {
         }
         if let snapshotId,
            let preservedAt,
-           self.entries[snapshotId] != nil,
+           self.entries[snapshotId]?.isImplicitLatestEligible == true,
            effectiveWatermark <= cutoff
         {
             self.implicitLatestPreservation = .init(

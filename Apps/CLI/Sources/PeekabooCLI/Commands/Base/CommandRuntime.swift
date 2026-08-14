@@ -65,6 +65,8 @@ struct CommandRuntimeOptions {
     var requiresProcessGenerationPinnedClicks = false
     var requiresHostApplicationInventory = false
     var requiresImplicitSnapshotInvalidation = false
+    /// Protocol 1.26 publishes a receipt that is addressable by ID without replacing implicit latest elements.
+    var requiresExplicitSnapshotPublication = false
     var requiresCallerDesktopMutationBarrier = false
     var usesPerToolSnapshotInvalidation = false
     var requiresExactWindowTargetedClicks = false

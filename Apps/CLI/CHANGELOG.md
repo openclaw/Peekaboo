@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [4.1.1] - Unreleased
 
 ### Added
+- Add protocol 1.26 explicit-reference-only snapshot publication so exact-window `see --no-elements` can return coordinate receipts without replacing implicit latest element maps, while older hosts fail before allocation.
 - Add protocol 1.25 exact dialog click/dismiss receipts with unique target planning, raw AX identity revalidation, verified disappearance outcomes, and read-only targeted listing.
 
 ### Fixed

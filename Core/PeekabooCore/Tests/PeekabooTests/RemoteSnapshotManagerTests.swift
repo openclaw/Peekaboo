@@ -21,6 +21,18 @@ struct RemoteSnapshotManagerTests {
     }
 
     @Test
+    @MainActor
+    func `new client refuses explicit-only publication on an old host before transport`() async {
+        let oldHost = RemoteSnapshotManager(
+            client: PeekabooBridgeClient(socketPath: "/tmp/unused.sock", requestTimeoutSec: 1),
+            supportsExplicitSnapshotPublication: false)
+
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try await oldHost.createExplicitSnapshot()
+        }
+    }
+
+    @Test
     func `bridge invalidation payload preserves subsecond cutoff`() throws {
         let cutoff = Date(timeIntervalSinceReferenceDate: 123_456_789.123_456)
         let preservedAt = Date(timeIntervalSinceReferenceDate: 123_456_790.654_321)
@@ -50,6 +62,19 @@ struct RemoteSnapshotManagerTests {
             from: data)
 
         #expect(decoded.pendingAt == pendingAt)
+    }
+
+    @Test
+    func `bridge explicit-only snapshot payload round trips additive fields`() throws {
+        let payload = PeekabooBridgeCreateSnapshotRequest(explicitOnly: true)
+
+        let data = try JSONEncoder.peekabooBridgeEncoder().encode(payload)
+        let decoded = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeCreateSnapshotRequest.self,
+            from: data)
+
+        #expect(decoded.pendingAt == nil)
+        #expect(decoded.explicitOnly == true)
     }
 
     @Test
@@ -225,6 +250,73 @@ struct RemoteSnapshotManagerTests {
 
         #expect(try await remote.listSnapshots().map(\.id) == [snapshotId])
         #expect(await remote.getMostRecentSnapshot() == snapshotId)
+    }
+
+    @Test
+    @MainActor
+    func `bridge explicit-only snapshot remains listed but never implicit latest`() async throws {
+        let snapshots = InMemorySnapshotManager()
+        let server = PeekabooBridgeServer(
+            services: PeekabooServices(snapshotManager: snapshots),
+            hostKind: .gui,
+            allowlistedTeams: [],
+            allowlistedBundles: [])
+        let socketPath = "/tmp/peekaboo-explicit-only-snapshot-\(UUID().uuidString).sock"
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let clientIdentity = PeekabooBridgeClientIdentity(
+            bundleIdentifier: "boo.peekaboo.tests",
+            teamIdentifier: nil,
+            processIdentifier: getpid())
+        let oldClient = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        let oldHandshake = try await oldClient.handshake(
+            client: clientIdentity,
+            protocolVersion: .init(major: 1, minor: 25))
+        #expect(oldHandshake.negotiatedVersion == .init(major: 1, minor: 25))
+        let priorSnapshotID = try await oldClient.createSnapshot()
+
+        let currentClient = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        let remote = RemoteSnapshotManager(
+            client: currentClient,
+            supportsImplicitLatestSnapshotInvalidation: true,
+            supportsSnapshotMutationLeases: true,
+            supportsExplicitSnapshotPublication: true)
+
+        let handshake = try await currentClient.handshake(client: clientIdentity)
+        #expect(handshake.negotiatedVersion == PeekabooBridgeConstants.protocolVersion)
+        #expect(handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.explicitSnapshotPublication) == true)
+
+        let explicitSnapshotID = try await remote.createExplicitSnapshot()
+        try await remote.storeDetectionResult(
+            snapshotId: explicitSnapshotID,
+            result: ElementDetectionResult(
+                snapshotId: explicitSnapshotID,
+                screenshotPath: "",
+                elements: DetectedElements(),
+                metadata: DetectionMetadata(
+                    detectionTime: 0,
+                    elementCount: 0,
+                    method: "test")))
+
+        #expect(await remote.getMostRecentSnapshot() == priorSnapshotID)
+        #expect(try await Set(remote.listSnapshots().map(\.id)) == [priorSnapshotID, explicitSnapshotID])
+        #expect(try await remote.getDetectionResult(snapshotId: explicitSnapshotID)?.snapshotId == explicitSnapshotID)
+
+        let lease = try await remote.beginSnapshotMutation(snapshotId: explicitSnapshotID)
+        try await remote.finishSnapshotMutation(lease, requiresFreshObservation: true)
+        await #expect(throws: PeekabooError.self) {
+            _ = try await remote.beginSnapshotMutation(snapshotId: explicitSnapshotID)
+        }
+        #expect(await remote.getMostRecentSnapshot() == priorSnapshotID)
+        #expect(try await remote.invalidateImplicitLatestSnapshot(through: Date()) == priorSnapshotID)
+        #expect(await remote.getMostRecentSnapshot() == nil)
+        #expect(try await remote.getDetectionResult(snapshotId: explicitSnapshotID)?.snapshotId == explicitSnapshotID)
     }
 
     @Test

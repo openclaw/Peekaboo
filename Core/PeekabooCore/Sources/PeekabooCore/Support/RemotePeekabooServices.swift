@@ -62,6 +62,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         supportsExactWindowROIObservation: Bool = false,
         supportsImplicitLatestSnapshotInvalidation: Bool = false,
         supportsSnapshotMutationLeases: Bool = false,
+        supportsExplicitSnapshotPublication: Bool = false,
         supportsApplicationLaunchOptions: Bool = false,
         supportsSafeBackgroundApplicationLaunchNoOp: Bool = false,
         supportsNewApplicationInstanceLaunch: Bool = false,
@@ -146,6 +147,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
             client: client,
             supportsImplicitLatestSnapshotInvalidation: supportsImplicitLatestSnapshotInvalidation,
             supportsSnapshotMutationLeases: supportsSnapshotMutationLeases,
+            supportsExplicitSnapshotPublication: supportsExplicitSnapshotPublication,
             desktopMutationWatermarkStore: desktopMutationWatermarkStore)
         let menuService = RemoteMenuService(client: client)
         let screenService = ScreenService()

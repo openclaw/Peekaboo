@@ -10,6 +10,7 @@ public final class RemoteSnapshotManager: SnapshotManagerProtocol {
     public let copiesScreenshotArtifactsIntoStorage = true
     public let supportsImplicitLatestSnapshotInvalidation: Bool
     public let supportsSnapshotMutationLeases: Bool
+    public let supportsExplicitSnapshotPublication: Bool
 
     public var effectiveImplicitLatestInvalidationWatermark: Date? {
         self.desktopMutationWatermarkStore?.effectiveWatermark()
@@ -22,11 +23,13 @@ public final class RemoteSnapshotManager: SnapshotManagerProtocol {
         client: PeekabooBridgeClient,
         supportsImplicitLatestSnapshotInvalidation: Bool = false,
         supportsSnapshotMutationLeases: Bool = false,
+        supportsExplicitSnapshotPublication: Bool = false,
         desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil)
     {
         self.client = client
         self.supportsImplicitLatestSnapshotInvalidation = supportsImplicitLatestSnapshotInvalidation
         self.supportsSnapshotMutationLeases = supportsSnapshotMutationLeases
+        self.supportsExplicitSnapshotPublication = supportsExplicitSnapshotPublication
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
     }
 
@@ -36,6 +39,16 @@ public final class RemoteSnapshotManager: SnapshotManagerProtocol {
 
     public func createSnapshot(pendingAt observationStartedAt: Date) async throws -> String {
         try await self.client.createSnapshot(pendingAt: observationStartedAt)
+    }
+
+    public func createExplicitSnapshot() async throws -> String {
+        guard self.supportsExplicitSnapshotPublication else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge protocol 1.26 is required for explicit-reference-only snapshot publication. " +
+                    "Update and relaunch the selected Peekaboo host.")
+        }
+        return try await self.client.createExplicitSnapshot()
     }
 
     public func storeDetectionResult(snapshotId: String, result: ElementDetectionResult) async throws {

@@ -36,6 +36,7 @@ extension SnapshotManager {
     // MARK: - Helpers
 
     private static let pendingSnapshotMarkerName = ".pending"
+    private static let explicitOnlySnapshotMarkerName = ".explicit-only"
     private static let snapshotObservationStartName = ".observation-start"
 
     static func latestWatermark(_ lhs: Date?, _ rhs: Date?) -> Date? {
@@ -80,6 +81,17 @@ extension SnapshotManager {
     func isPendingSnapshot(at snapshotURL: URL) -> Bool {
         FileManager.default.fileExists(
             atPath: snapshotURL.appendingPathComponent(Self.pendingSnapshotMarkerName).path)
+    }
+
+    func markSnapshotExplicitOnly(at snapshotURL: URL) throws {
+        try Data().write(
+            to: snapshotURL.appendingPathComponent(Self.explicitOnlySnapshotMarkerName),
+            options: .atomic)
+    }
+
+    func isExplicitOnlySnapshot(at snapshotURL: URL) -> Bool {
+        FileManager.default.fileExists(
+            atPath: snapshotURL.appendingPathComponent(Self.explicitOnlySnapshotMarkerName).path)
     }
 
     func snapshotCreationDate(at snapshotURL: URL, fallback: Date? = nil) -> Date? {
@@ -253,6 +265,7 @@ extension SnapshotManager {
 
     private func validPreservationSnapshotURL(for snapshotId: String) -> URL? {
         guard let candidate = self.safeSnapshotURL(for: snapshotId) else { return nil }
+        guard !self.isExplicitOnlySnapshot(at: candidate) else { return nil }
         guard FileManager.default.fileExists(atPath: candidate.appendingPathComponent("snapshot.json").path)
         else { return nil }
         return candidate
@@ -420,6 +433,7 @@ extension SnapshotManager {
                   latestCreationDate.map({ createdAt <= $0 }) ?? true,
                   url.hasDirectoryPath,
                   !self.isPendingSnapshot(at: url),
+                  !self.isExplicitOnlySnapshot(at: url),
                   FileManager.default.fileExists(atPath: url.appendingPathComponent("snapshot.json").path)
             else {
                 return nil

@@ -80,10 +80,10 @@ public final class PeekabooBridgeServer {
         self.supportedVersions = supportedVersions
         self.allowedOperations = allowedOperations.subtracting([._appleScriptProbe])
         self.hostIdentity = hostIdentity
-        var resolvedHostCapabilities = hostCapabilities
-        if supportedVersions.upperBound >= PeekabooBridgeConstants.desktopActionOutcomeProjectionVersion {
-            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.desktopActionOutcomeProjection)
-        }
+        var resolvedHostCapabilities = protocolHostCapabilities(
+            hostCapabilities,
+            supportedVersions: supportedVersions,
+            supportsExplicitSnapshotPublication: services.snapshots.supportsExplicitSnapshotPublication)
         let registeredScreenCaptureKitOwnership = services.supportsScreenCaptureKitProcessOwnership &&
             (try? ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()) != nil
         if hostIdentity?.processStartIdentity != nil {
@@ -873,4 +873,21 @@ public final class PeekabooBridgeServer {
                 permission: .accessibility)
         }
     }
+}
+
+private func protocolHostCapabilities(
+    _ declaredCapabilities: Set<String>,
+    supportedVersions: ClosedRange<PeekabooBridgeProtocolVersion>,
+    supportsExplicitSnapshotPublication: Bool) -> Set<String>
+{
+    var capabilities = declaredCapabilities
+    if supportedVersions.upperBound >= PeekabooBridgeConstants.desktopActionOutcomeProjectionVersion {
+        capabilities.insert(PeekabooBridgeHostCapability.desktopActionOutcomeProjection)
+    }
+    if supportedVersions.upperBound >= PeekabooBridgeConstants.explicitSnapshotPublicationVersion,
+       supportsExplicitSnapshotPublication
+    {
+        capabilities.insert(PeekabooBridgeHostCapability.explicitSnapshotPublication)
+    }
+    return capabilities
 }

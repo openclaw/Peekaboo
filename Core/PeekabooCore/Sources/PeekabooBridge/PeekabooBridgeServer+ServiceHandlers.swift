@@ -220,7 +220,9 @@ extension PeekabooBridgeServer {
     func handleSnapshotRequest(_ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeResponse {
         switch request {
         case let .createSnapshot(payload):
-            let id = if let pendingAt = payload.pendingAt {
+            let id = if payload.explicitOnly == true {
+                try await self.services.snapshots.createExplicitSnapshot()
+            } else if let pendingAt = payload.pendingAt {
                 try await self.services.snapshots.createSnapshot(pendingAt: pendingAt)
             } else {
                 try await self.services.snapshots.createSnapshot()

@@ -451,7 +451,7 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
     private func runPixelOnlyCapture() async throws {
         try self.validateStdoutStreamingOptions()
         let coordinateReceiptID: String? = if self.publishesPixelCoordinateReceipt {
-            try await self.services.snapshots.createSnapshot()
+            try await self.services.snapshots.createExplicitSnapshot()
         } else {
             nil
         }

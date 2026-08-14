@@ -16,6 +16,7 @@ extension InMemorySnapshotManager {
             lastAccessedAt: Date(),
             processId: getpid(),
             isPending: false,
+            isImplicitLatestEligible: true,
             detectionResult: nil,
             snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
         if self.options.copyArtifactsOnStore {
@@ -61,6 +62,7 @@ extension InMemorySnapshotManager {
             lastAccessedAt: Date(),
             processId: getpid(),
             isPending: false,
+            isImplicitLatestEligible: true,
             detectionResult: nil,
             snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
         // Pending visibility belongs to the outer mutation coordinator. Ordinary reservations are already visible;
@@ -109,6 +111,7 @@ extension InMemorySnapshotManager {
             lastAccessedAt: Date(),
             processId: getpid(),
             isPending: false,
+            isImplicitLatestEligible: true,
             detectionResult: nil,
             snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
 

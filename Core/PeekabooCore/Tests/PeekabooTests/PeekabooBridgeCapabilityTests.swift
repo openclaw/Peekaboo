@@ -165,6 +165,12 @@ struct PeekabooBridgeCapabilityTests {
         #expect(!handshake.supportedOperations.contains(.finishSnapshotMutation))
         #expect(handshake.enabledOperations?.contains(.beginSnapshotMutation) != true)
         #expect(handshake.enabledOperations?.contains(.finishSnapshotMutation) != true)
+        #expect(handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.explicitSnapshotPublication) != true)
+
+        await #expect(throws: SnapshotError.self) {
+            _ = try await snapshots.createExplicitSnapshot()
+        }
 
         await #expect(throws: SnapshotError.self) {
             try await snapshots.storeObservationSnapshot(SnapshotObservationPublicationRequest(
