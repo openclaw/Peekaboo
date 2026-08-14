@@ -151,6 +151,59 @@ struct ScreenCaptureKitOwnerRuntimeTests {
         #expect(localFactoryCalls == 1)
     }
 
+    @Test
+    func `caller-local explicit snapshot scroll skips capture ownership and old-host discovery`() async throws {
+        var options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(
+                positional: [],
+                options: ["on": ["elem_3"], "snapshot": ["explicit-receipt"]],
+                flags: ["no-remote"]
+            ),
+            commandType: ScrollCommand.self
+        )
+        options.preferRemote = false
+        options.remoteIsolationRequested = true
+        var claimCalls = 0
+        var inspectOwnerCalls = 0
+        var inspectSafetyCalls = 0
+        var localFactoryCalls = 0
+
+        let resolution = try await RuntimeHostResolver.resolveServices(
+            options: options,
+            environment: [:],
+            configurationInput: nil,
+            dependencies: .init(
+                makeLocalServices: { _ in
+                    localFactoryCalls += 1
+                    return PeekabooServices()
+                },
+                claimScreenCaptureKitOwner: {
+                    claimCalls += 1
+                    return Self.ownerReceipt()
+                },
+                inspectScreenCaptureKitOwner: {
+                    inspectOwnerCalls += 1
+                    return Self.ownerReceipt()
+                },
+                inspectScreenCaptureKitSafety: { _, _, _ in
+                    inspectSafetyCalls += 1
+                    return RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
+                        socketPath: "/tmp/old-host.sock",
+                        processIdentifier: 3131,
+                        processStartIdentity: 4141
+                    )
+                }
+            )
+        )
+
+        #expect(resolution.selectedRemoteSocketPath == nil)
+        #expect(!options.requiresSilentCapture)
+        #expect(claimCalls == 0)
+        #expect(inspectOwnerCalls == 0)
+        #expect(inspectSafetyCalls == 0)
+        #expect(localFactoryCalls == 1)
+    }
+
     @Test(arguments: ["modern", "auto"])
     func `implicit remote SCK-capable engine with an unmatched owner refuses without factory or auto-start`(
         engine: String
@@ -380,6 +433,9 @@ struct ScreenCaptureKitOwnerRuntimeTests {
         #expect(error.localizedDescription.contains("Selected socket: \(selectedSocket)") == true)
         #expect(error.hint?.contains("stop exactly PID 3131, generation 4141") == true)
         #expect(error.hint?.contains("never use the socket path alone") == true)
+        #expect(error.hint?.contains("peekaboo see --capture-engine classic") == true)
+        #expect(error.hint?.contains("retry with its --snapshot") == true)
+        #expect(error.hint?.contains("explicitly choose --capture-engine classic") == false)
     }
 
     @Test

@@ -9,6 +9,27 @@ enum InteractionSnapshotSource: String {
     case none
 }
 
+enum InteractionSnapshotReference {
+    static func normalized(_ snapshotId: String?) -> String? {
+        let trimmed = snapshotId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
+    static func isConcrete(_ snapshotId: String?) -> Bool {
+        guard let normalized = self.normalized(snapshotId) else { return false }
+        return !self.isLatestAlias(normalized)
+    }
+
+    static func isLatestAlias(_ snapshotId: String) -> Bool {
+        switch snapshotId.lowercased() {
+        case "latest", "most-recent", "most_recent":
+            true
+        default:
+            false
+        }
+    }
+}
+
 /// Why implicit "latest snapshot" resolution came back empty.
 enum InteractionSnapshotUnavailability {
     /// No usable snapshot exists at all (never captured, expired, or cleaned).
@@ -89,8 +110,8 @@ struct InteractionObservationContext {
         fallbackToLatest: Bool,
         snapshots: any SnapshotManagerProtocol
     ) async -> InteractionObservationContext {
-        if let explicitSnapshotId = normalizedSnapshotId(rawSnapshot) {
-            guard self.isLatestAlias(explicitSnapshotId) else {
+        if let explicitSnapshotId = InteractionSnapshotReference.normalized(rawSnapshot) {
+            guard InteractionSnapshotReference.isLatestAlias(explicitSnapshotId) else {
                 return InteractionObservationContext(
                     explicitSnapshotId: explicitSnapshotId,
                     snapshotId: explicitSnapshotId,
@@ -141,20 +162,6 @@ struct InteractionObservationContext {
             return .noSnapshotCaptured
         }
         return .invalidatedByMutation
-    }
-
-    private static func normalizedSnapshotId(_ snapshotId: String?) -> String? {
-        let trimmed = snapshotId?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed?.isEmpty == false ? trimmed : nil
-    }
-
-    private static func isLatestAlias(_ snapshotId: String) -> Bool {
-        switch snapshotId.lowercased() {
-        case "latest", "most-recent", "most_recent":
-            true
-        default:
-            false
-        }
     }
 }
 

@@ -371,13 +371,14 @@ extension RuntimeHostResolver {
                 "ScreenCaptureKit ownership, but its exact PID and process-start identity are unavailable" +
                 "\(buildText). Selected socket: \(selectedSocketText). No capture was dispatched."
         }
+        let classicRecovery = self.classicCaptureRecoveryGuidance
         let hint = if hasExactProcessIdentity {
             "Update or relaunch the host at owner socket \(ownerSocket). If stopping it is necessary, first " +
                 "revalidate and stop exactly \(identityText); never use the socket path alone. Alternatively, " +
-                "explicitly choose --capture-engine classic."
+                classicRecovery
         } else {
-            "Update or relaunch the app configured for owner socket \(ownerSocket), or explicitly choose " +
-                "--capture-engine classic. Do not stop any process based on this refusal: the exact PID and " +
+            "Update or relaunch the app configured for owner socket \(ownerSocket), or " +
+                classicRecovery + " Do not stop any process based on this refusal: the exact PID and " +
                 "process-start identity are unavailable."
         }
         return PreDispatchActionError(
@@ -574,12 +575,13 @@ extension RuntimeHostResolver {
                 "Bridge host for that exact process generation is available. Selected socket: automatic " +
                 "resolution; owner socket: unavailable in the process ownership receipt. No capture was dispatched."
         }
+        let classicRecovery = self.classicCaptureRecoveryGuidance
         let hint = if callerLocal {
             "Retry without --no-remote to use the selected owner host; otherwise verify and stop exactly " +
-                "\(ownerText), or explicitly choose --capture-engine classic."
+                "\(ownerText), or " + classicRecovery
         } else {
             "Use a Bridge socket served by exactly \(ownerText); otherwise verify and stop that exact owner, " +
-                "or explicitly choose --capture-engine classic."
+                "or " + classicRecovery
         }
         return PreDispatchActionError(
             message: message,
@@ -600,10 +602,14 @@ extension RuntimeHostResolver {
                 "owner socket is unavailable in the process ownership receipt. No capture was dispatched.",
             code: .CAPTURE_FAILED,
             hint: "Change or remove --bridge-socket to select the exact owner host; otherwise verify and stop " +
-                "\(ownerText), or explicitly choose --capture-engine classic.",
+                "\(ownerText), or " + self.classicCaptureRecoveryGuidance,
             reason: .runtimeIncompatible
         )
     }
+
+    private static let classicCaptureRecoveryGuidance =
+        "use classic capture through a command that exposes it. For an interaction, first run " +
+        "'peekaboo see --capture-engine classic' for the exact target and retry with its --snapshot."
 
     static func ownerExactBuildConflict(
         owner: ScreenCaptureKitOwnerLease.OwnerReceipt,

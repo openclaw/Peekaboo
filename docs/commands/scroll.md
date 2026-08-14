@@ -24,6 +24,7 @@ read_when:
 
 ## Implementation notes
 - If you pass `--on` without a snapshot, the command automatically looks up `services.snapshots.getMostRecentSnapshot()` so you rarely need to wire IDs manually.
+- A concrete `--snapshot <id>` is authoritative and never triggers an observation refresh or a new capture. Omitted, blank, `latest`, `most-recent`, and `most_recent` references may refresh missing elements and therefore can require a capture-capable host.
 - If a canonical scroll result requires fresh observation, or no canonical outcome is available, the used snapshot remains readable but cannot drive another mutation. Re-run `peekaboo see`; replaying the old ID returns `SNAPSHOT_STALE` before dispatch.
 - Background scrolling first invokes a directional Accessibility action, then tries a settable descendant `AXScrollBar` used by standard AppKit scroll areas. If an opaque group still cannot scroll, a pixel-backed exact-window snapshot may use native PID-routed wheel events only for a visible, WebKit-linked, non-Electron app. Peekaboo revalidates the captured process generation, window ID, bounds, and point around every tick; it never activates the app, moves the cursor, or falls back to a desktop-global event.
 - macOS does not acknowledge receiver consumption for PID-routed wheel events. A successful routed dispatch therefore reports `effect: "unverifiable"`, `retry_safe: false`, and requires a fresh observation before another scroll. Hidden apps, AX-only snapshots, Electron/Chromium/Catalyst apps, stale receipts, and changed bounds keep the existing pre-dispatch refusal.
@@ -39,11 +40,16 @@ peekaboo scroll --direction down --amount 5 --foreground
 # Scroll the element labeled "table_orders" using the latest snapshot
 peekaboo scroll --direction up --amount 2 --on table_orders
 
+# Under capture-owner contention, create an exact classic receipt once and scroll without another capture
+SNAPSHOT_ID=$(peekaboo see --pid 123 --window-id 456 --capture-engine classic --json | jq -r '.data.snapshot_id')
+peekaboo scroll --direction down --on table_orders --snapshot "$SNAPSHOT_ID" --pid 123 --window-id 456
+
 # Smooth horizontal pan after intentionally focusing Keynote
 peekaboo scroll --direction right --smooth --app Keynote --foreground --space-switch
 ```
 
 ## Troubleshooting
 - Background element scroll needs Accessibility. The exact-window WebKit wheel route and foreground wheel input also need Event Synthesizing on the selected execution host (`peekaboo permissions status`).
+- If an omitted/latest snapshot needs refresh while another process owns ScreenCaptureKit, run an exact `peekaboo see --capture-engine classic`, then retry `scroll` with the returned concrete `--snapshot` ID. `scroll` itself does not accept `--capture-engine` because an explicit receipt performs no capture.
 - Confirm your process with `peekaboo app list`, its exact window with `peekaboo window list`, and current UI with `peekaboo see` before rerunning.
 - Re-run with `--json` or `--verbose` to surface detailed errors.
