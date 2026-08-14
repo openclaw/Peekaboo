@@ -232,7 +232,8 @@ struct ScreenCaptureKitOwnerRuntimeTests {
                         RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
                             socketPath: explicitSocket,
                             processIdentifier: 3131,
-                            processStartIdentity: 4141
+                            processStartIdentity: 4141,
+                            buildIdentity: "4.0.0 (4000099)"
                         )
                     },
                     recordScreenCaptureKitSafetyBlocker: { blocker in
@@ -247,16 +248,106 @@ struct ScreenCaptureKitOwnerRuntimeTests {
         #expect(error?.envelopeRetrySafe == true)
         #expect(error?.envelopeMutationDispatched == false)
         #expect(error?.localizedDescription.contains("PID 3131, generation 4141") == true)
+        #expect(error?.localizedDescription.contains("build 4.0.0 (4000099)") == true)
         #expect(error?.localizedDescription.contains(explicitSocket) == true)
-        #expect(error?.hint?.contains("will not start a second ScreenCaptureKit owner") == true)
+        #expect(error?.localizedDescription.contains("Selected socket: \(explicitSocket)") == true)
+        #expect(error?.hint?.contains("revalidate and stop exactly PID 3131, generation 4141") == true)
+        #expect(error?.hint?.contains("never use the socket path alone") == true)
         #expect(inspectCalls == 0)
         #expect(recordedBlockers == [RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
             socketPath: explicitSocket,
             processIdentifier: 3131,
-            processStartIdentity: 4141
+            processStartIdentity: 4141,
+            buildIdentity: "4.0.0 (4000099)"
         )])
         #expect(localFactoryCalls == 0)
         await oldHost.stop()
+    }
+
+    @Test
+    func `known legacy owner diagnostics distinguish selected and owner sockets`() {
+        let ownerSocket = "/tmp/legacy-owner.sock"
+        let selectedSocket = "/tmp/selected-current.sock"
+        let error = RuntimeHostResolver.ownerCapabilityRefusal(
+            host: .init(
+                socketPath: ownerSocket,
+                processIdentifier: 3131,
+                processStartIdentity: 4141,
+                buildIdentity: "4.0.0 (4000099)"
+            ),
+            selectedSocket: selectedSocket
+        )
+
+        #expect(error.code == .CAPTURE_FAILED)
+        #expect(error.envelopeMutationDispatched == false)
+        #expect(error.localizedDescription.contains("PID 3131, generation 4141") == true)
+        #expect(error.localizedDescription.contains("build 4.0.0 (4000099)") == true)
+        #expect(error.localizedDescription.contains("owner socket \(ownerSocket)") == true)
+        #expect(error.localizedDescription.contains("Selected socket: \(selectedSocket)") == true)
+        #expect(error.hint?.contains("stop exactly PID 3131, generation 4141") == true)
+        #expect(error.hint?.contains("never use the socket path alone") == true)
+    }
+
+    @Test
+    func `unknown legacy owner diagnostics refuse unsafe stop guidance and redact hostile build`() {
+        let ownerSocket = "/tmp/legacy-unknown.sock"
+        let selectedSocket = "/tmp/selected-current.sock"
+        let hostileBuild = "4.0.0\n/private/user/$TOKEN"
+        let error = RuntimeHostResolver.ownerCapabilityRefusal(
+            host: .init(
+                socketPath: ownerSocket,
+                processIdentifier: nil,
+                processStartIdentity: nil,
+                buildIdentity: hostileBuild
+            ),
+            selectedSocket: selectedSocket
+        )
+
+        #expect(error.localizedDescription.contains("exact PID and process-start identity are unavailable") == true)
+        #expect(error.localizedDescription.contains("owner socket \(ownerSocket)") == true)
+        #expect(error.localizedDescription.contains("Selected socket: \(selectedSocket)") == true)
+        #expect(!error.localizedDescription.contains(hostileBuild))
+        #expect(!error.localizedDescription.contains("/private/user"))
+        #expect(error.hint?.contains("Do not stop any process") == true)
+        #expect(error.hint?.contains("stop exactly") == false)
+    }
+
+    @Test
+    func `PID-only legacy owner remains ambiguous and non-actionable`() {
+        let error = RuntimeHostResolver.ownerCapabilityRefusal(
+            host: .init(
+                socketPath: "/tmp/legacy-partial.sock",
+                processIdentifier: 3131,
+                processStartIdentity: nil,
+                buildIdentity: "4.0.0"
+            ),
+            selectedSocket: nil
+        )
+
+        #expect(error.localizedDescription.contains("PID 3131, build 4.0.0") == true)
+        #expect(error.localizedDescription.contains("exact process-start identity is unavailable") == true)
+        #expect(error.localizedDescription.contains("Selected socket: automatic resolution") == true)
+        #expect(error.hint?.contains("Do not stop any process") == true)
+    }
+
+    @Test
+    func `deferred legacy owner record retains build and safe socket diagnostics`() {
+        let host = ScreenCaptureKitOwnerLease.UncoordinatedHost(
+            socketPath: "/tmp/deferred-owner.sock",
+            processIdentifier: 3131,
+            processStartIdentity: 4141,
+            buildIdentity: "4.0.0 (4000099)"
+        )
+        let error = RuntimeHostResolver.ownerRefusal(
+            error: ScreenCaptureKitOwnerLease.LeaseError.uncoordinatedHosts([host]),
+            callerLocal: true,
+            selectedSocket: "/tmp/selected-current.sock"
+        )
+
+        #expect(error.localizedDescription.contains("PID 3131, generation 4141") == true)
+        #expect(error.localizedDescription.contains("build 4.0.0 (4000099)") == true)
+        #expect(error.localizedDescription.contains("owner socket /tmp/deferred-owner.sock") == true)
+        #expect(error.localizedDescription.contains("Selected socket: /tmp/selected-current.sock") == true)
     }
 
     @Test
@@ -707,6 +798,68 @@ extension ScreenCaptureKitOwnerRuntimeTests {
     }
 
     @Test
+    func `external host diagnostics attribute only one exact main application`() {
+        let exactClaude = RuntimeHostResolver.ScreenCaptureKitExternalApplication(
+            bundleIdentifier: "com.anthropic.claudefordesktop",
+            bundleName: "Claude",
+            localizedName: "Claude",
+            processIdentifier: 3131,
+            isTerminated: false,
+            buildIdentity: "4.0.0 (4000099)"
+        )
+        let helper = RuntimeHostResolver.ScreenCaptureKitExternalApplication(
+            bundleIdentifier: "com.anthropic.claudefordesktop.helper",
+            bundleName: "Claude Helper",
+            localizedName: "Claude Helper",
+            processIdentifier: 3232,
+            isTerminated: false,
+            buildIdentity: "4.0.0 (4000099)"
+        )
+        let similarlyNamed = RuntimeHostResolver.ScreenCaptureKitExternalApplication(
+            bundleIdentifier: "com.example.claude.integration",
+            bundleName: "Claude Integration",
+            localizedName: "Claude Integration",
+            processIdentifier: 3333,
+            isTerminated: false,
+            buildIdentity: "fixture"
+        )
+        let generation: (pid_t) -> UInt64? = { processIdentifier in
+            processIdentifier == 3131 ? 4141 : 5151
+        }
+
+        let exact = RuntimeHostResolver.knownExternalHostPresence(
+            socketPath: PeekabooBridgeConstants.claudeSocketPath,
+            applications: [exactClaude, helper],
+            processStartIdentity: generation
+        )
+        #expect(exact == .present(
+            processIdentifier: 3131,
+            processStartIdentity: 4141,
+            buildIdentity: "4.0.0 (4000099)"
+        ))
+
+        for ambiguousApplications in [[helper], [similarlyNamed], [exactClaude, exactClaude]] {
+            let ambiguous = RuntimeHostResolver.knownExternalHostPresence(
+                socketPath: PeekabooBridgeConstants.claudeSocketPath,
+                applications: ambiguousApplications,
+                processStartIdentity: generation
+            )
+            #expect(ambiguous == .present(
+                processIdentifier: nil,
+                processStartIdentity: nil,
+                buildIdentity: nil
+            ))
+        }
+
+        let absent = RuntimeHostResolver.knownExternalHostPresence(
+            socketPath: PeekabooBridgeConstants.claudeSocketPath,
+            applications: [],
+            processStartIdentity: generation
+        )
+        #expect(absent == .absent)
+    }
+
+    @Test
     func `old-host safety skips only definitive socket and process absence`() async throws {
         let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
             socketPath: "/tmp/fixture.sock",
@@ -725,7 +878,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                 candidates: [candidate],
                 identity: identity,
                 handshake: { _, _ in throw POSIXError(code) },
-                externalHostIsRunning: { _ in false }
+                externalHostPresence: { _ in .absent }
             )
             #expect(result == nil)
         }
@@ -734,7 +887,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             candidates: [candidate],
             identity: identity,
             handshake: { _, _ in throw POSIXError(.ETIMEDOUT) },
-            externalHostIsRunning: { _ in false }
+            externalHostPresence: { _ in .absent }
         )
         #expect(timeout == RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
             socketPath: candidate.socketPath,
@@ -748,7 +901,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             handshake: { _, _ in
                 throw PeekabooBridgeErrorEnvelope(code: .unauthorizedClient, message: "fixture")
             },
-            externalHostIsRunning: { _ in false }
+            externalHostPresence: { _ in .absent }
         )
         #expect(unauthorized == timeout)
 
@@ -756,7 +909,9 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             candidates: [candidate],
             identity: identity,
             handshake: { _, _ in throw POSIXError(.ENOENT) },
-            externalHostIsRunning: { _ in true }
+            externalHostPresence: { _ in
+                .present(processIdentifier: nil, processStartIdentity: nil, buildIdentity: nil)
+            }
         )
         #expect(liveExternalProcess == timeout)
 
@@ -764,7 +919,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             candidates: [candidate],
             identity: identity,
             handshake: { _, _ in throw POSIXError(.ECONNREFUSED) },
-            externalHostIsRunning: { _ in false }
+            externalHostPresence: { _ in .absent }
         )
         #expect(explicitUnknownSocket == nil)
 
@@ -787,7 +942,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                         processStartIdentity: 9001
                     )
                 },
-                externalHostIsRunning: { _ in false }
+                externalHostPresence: { _ in .absent }
             )
         #expect(validExplicitWithAbsentAuxiliary == nil)
 
@@ -796,7 +951,9 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                 candidates: [candidate],
                 identity: identity,
                 handshake: { _, _ in throw CancellationError() },
-                externalHostIsRunning: { _ in true }
+                externalHostPresence: { _ in
+                    .present(processIdentifier: nil, processStartIdentity: nil, buildIdentity: nil)
+                }
             )
         }
 
@@ -812,7 +969,9 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                         hostCapabilities: []
                     )
                 },
-                externalHostIsRunning: { _ in true }
+                externalHostPresence: { _ in
+                    .present(processIdentifier: nil, processStartIdentity: nil, buildIdentity: nil)
+                }
             )
         }
         try await Task.sleep(for: .milliseconds(1))
@@ -820,6 +979,121 @@ extension ScreenCaptureKitOwnerRuntimeTests {
         await #expect(throws: CancellationError.self) {
             _ = try await uncooperativeHandshake.value
         }
+    }
+
+    @Test
+    func `old-host safety retains handshake and exact external owner diagnostics`() async throws {
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/fixture-owner.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let identity = PeekabooBridgeClientIdentity(
+            bundleIdentifier: "boo.peekaboo.test.client",
+            teamIdentifier: nil,
+            processIdentifier: getpid()
+        )
+
+        let handshakeOwner = try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
+            candidates: [candidate],
+            identity: identity,
+            handshake: { _, _ in
+                Self.handshake(
+                    processIdentifier: 3131,
+                    processStartIdentity: 4141,
+                    hostCapabilities: [],
+                    build: "4.0.0 (4000099)"
+                )
+            },
+            externalHostPresence: { _ in .absent }
+        )
+        #expect(handshakeOwner == .init(
+            socketPath: candidate.socketPath,
+            processIdentifier: 3131,
+            processStartIdentity: 4141,
+            buildIdentity: "4.0.0 (4000099)"
+        ))
+
+        let unreachableOwner = try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
+            candidates: [candidate],
+            identity: identity,
+            handshake: { _, _ in throw POSIXError(.ETIMEDOUT) },
+            externalHostPresence: { _ in
+                .present(
+                    processIdentifier: 5151,
+                    processStartIdentity: 6161,
+                    buildIdentity: "3.9.2 (3920)"
+                )
+            }
+        )
+        #expect(unreachableOwner == .init(
+            socketPath: candidate.socketPath,
+            processIdentifier: 5151,
+            processStartIdentity: 6161,
+            buildIdentity: "3.9.2 (3920)"
+        ))
+    }
+
+    @Test
+    func `legacy handshake enriches only a matching external PID`() async throws {
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/fixture-owner.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let identity = PeekabooBridgeClientIdentity(
+            bundleIdentifier: "boo.peekaboo.test.client",
+            teamIdentifier: nil,
+            processIdentifier: getpid()
+        )
+        let partialHandshake: RuntimeHostResolver.ScreenCaptureKitHandshake = { _, _ in
+            Self.handshake(
+                processIdentifier: 3131,
+                processStartIdentity: nil,
+                hostCapabilities: [],
+                build: nil
+            )
+        }
+
+        let matching = try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
+            candidates: [candidate],
+            identity: identity,
+            handshake: partialHandshake,
+            externalHostPresence: { _ in
+                .present(
+                    processIdentifier: 3131,
+                    processStartIdentity: 4141,
+                    buildIdentity: "4.0.0"
+                )
+            }
+        )
+        #expect(matching == .init(
+            socketPath: candidate.socketPath,
+            processIdentifier: 3131,
+            processStartIdentity: 4141,
+            buildIdentity: "4.0.0"
+        ))
+
+        let mismatched = try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
+            candidates: [candidate],
+            identity: identity,
+            handshake: partialHandshake,
+            externalHostPresence: { _ in
+                .present(
+                    processIdentifier: 9191,
+                    processStartIdentity: 9292,
+                    buildIdentity: "unrelated-build"
+                )
+            }
+        )
+        #expect(mismatched == .init(
+            socketPath: candidate.socketPath,
+            processIdentifier: 3131,
+            processStartIdentity: nil,
+            buildIdentity: nil
+        ))
     }
 
     @Test
@@ -970,18 +1244,19 @@ extension ScreenCaptureKitOwnerRuntimeTests {
 
     private static func handshake(
         processIdentifier: pid_t,
-        processStartIdentity: UInt64,
+        processStartIdentity: UInt64?,
         hostCapabilities: [String] = [
             PeekabooBridgeHostCapability.hostGenerationIdentity,
             PeekabooBridgeHostCapability.codeSignatureBuildIdentity,
             PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
         ],
-        codeSignatureHash: String = "owner-build"
+        codeSignatureHash: String = "owner-build",
+        build: String? = nil
     ) -> PeekabooBridgeHandshakeResponse {
         BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
-            build: nil,
+            build: build,
             supportedOperations: [.captureScreen, .desktopObservation],
             permissions: PermissionsStatus(
                 screenRecording: true,

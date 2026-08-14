@@ -101,15 +101,18 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
         public let socketPath: String
         public let processIdentifier: pid_t?
         public let processStartIdentity: UInt64?
+        public let buildIdentity: String?
 
         public init(
             socketPath: String,
             processIdentifier: pid_t?,
-            processStartIdentity: UInt64?)
+            processStartIdentity: UInt64?,
+            buildIdentity: String? = nil)
         {
             self.socketPath = socketPath
             self.processIdentifier = processIdentifier
             self.processStartIdentity = processStartIdentity
+            self.buildIdentity = buildIdentity
         }
     }
 
@@ -172,7 +175,8 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
                     }
                     return $0.socketPath
                 }.joined(separator: ", ") +
-                    ". Update or stop those hosts, then restart this process before retrying SCK"
+                    ". Update or relaunch those hosts, then restart this process before retrying SCK. " +
+                    "Do not stop a process unless its exact PID and process generation are known and revalidated"
             }
         }
     }
@@ -304,14 +308,16 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
     public static func registerPotentialUncoordinatedHost(
         socketPath: String,
         processIdentifier: pid_t?,
-        processStartIdentity: UInt64?)
+        processStartIdentity: UInt64?,
+        buildIdentity: String? = nil)
     {
         let standardizedPath = NSString(string: socketPath).standardizingPath
         guard !standardizedPath.isEmpty else { return }
         let host = UncoordinatedHost(
             socketPath: standardizedPath,
             processIdentifier: processIdentifier,
-            processStartIdentity: processStartIdentity)
+            processStartIdentity: processStartIdentity,
+            buildIdentity: buildIdentity)
         self.registryLock.withLock {
             self.registeredUncoordinatedHostsBySocket[standardizedPath] = host
         }

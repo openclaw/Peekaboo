@@ -5,6 +5,9 @@
 ### Changed
 - Build branded release disk images from pinned direct Finder-metadata tooling, preserving the signed and notarized drag-to-Applications layout without GUI automation.
 
+### Fixed
+- Report exact ScreenCaptureKit owner PID, process generation, safe build identity, and selected-versus-owner Bridge sockets when available, while keeping ambiguous legacy owners fail-closed without unsafe process-stop guidance.
+
 ## [4.1.0] - 2026-08-13
 
 ### Highlights
