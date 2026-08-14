@@ -481,6 +481,7 @@ public struct PeekabooBridgeDialogEnterTextRequest: Codable, Sendable {
     public let clearExisting: Bool
     public let windowTitle: String?
     public let appName: String?
+    public let focus: DialogForegroundFocusPolicy?
 }
 
 public struct PeekabooBridgeDialogHandleFileRequest: Codable, Sendable {

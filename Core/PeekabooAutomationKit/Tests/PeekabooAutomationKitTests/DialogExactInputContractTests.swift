@@ -15,7 +15,7 @@ struct DialogExactInputContractTests {
             text: "hello",
             fieldIdentifier: "Name",
             clearExisting: true,
-            focus: DialogInputFocusPolicy(
+            focus: DialogForegroundFocusPolicy(
                 autoFocus: false,
                 timeout: 1.75,
                 retryCount: 7,
@@ -33,7 +33,7 @@ struct DialogExactInputContractTests {
             try DialogInputExecutionRequest(
                 target: DialogTargetSelector(processIdentifier: 42),
                 text: "hello",
-                focus: DialogInputFocusPolicy(timeout: 0))
+                focus: DialogForegroundFocusPolicy(timeout: 0))
         }
     }
 
@@ -121,7 +121,7 @@ struct DialogExactInputContractTests {
 
     @Test
     func `focus timeout retry and Space policy map without changing intent`() {
-        let policy = DialogInputFocusPolicy(
+        let policy = DialogForegroundFocusPolicy(
             autoFocus: true,
             timeout: 2.25,
             retryCount: 5,

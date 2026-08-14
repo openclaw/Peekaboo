@@ -902,5 +902,9 @@ private func protocolHostCapabilities(
     if supportedVersions.upperBound >= PeekabooBridgeConstants.exactDialogInputExecutionVersion {
         capabilities.insert(PeekabooBridgeHostCapability.exactDialogInputExecution)
     }
+    if supportedVersions.upperBound >= PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion {
+        capabilities.insert(PeekabooBridgeHostCapability.exactForcedDialogDismissExecution)
+        capabilities.insert(PeekabooBridgeHostCapability.dialogInputFocusPolicy)
+    }
     return capabilities
 }

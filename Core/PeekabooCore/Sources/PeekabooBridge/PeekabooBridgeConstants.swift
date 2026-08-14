@@ -28,11 +28,19 @@ public enum PeekabooBridgeConstants {
     }
 
     /// Current protocol version supported by this build.
-    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 27)
+    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 28)
 
     /// First protocol with atomic host-side execution of an exact dialog input request.
     public static let exactDialogInputExecutionVersion =
         PeekabooBridgeProtocolVersion(major: 1, minor: 27)
+
+    /// First protocol with selector-preserving, host-atomic forced dialog dismissal.
+    public static let exactForcedDialogDismissExecutionVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 28)
+
+    /// First protocol whose legacy current-dialog input payload carries an explicit focus policy.
+    public static let dialogInputFocusPolicyVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 28)
 
     /// First protocol with published snapshots that remain explicit-reference-only.
     public static let explicitSnapshotPublicationVersion =

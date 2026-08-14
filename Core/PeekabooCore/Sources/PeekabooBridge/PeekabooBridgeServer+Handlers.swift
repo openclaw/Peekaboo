@@ -44,7 +44,8 @@ extension PeekabooBridgeServer {
         case .dialogFindActive, .dialogClickButton, .backgroundDialogClickButton, .dialogEnterText,
              .dialogHandleFile, .dialogDismiss,
              .dialogListElements, .targetedDialogListElements, .prepareDialogAction,
-             .exactDialogClickButton, .exactDialogDismiss, .exactDialogEnterText:
+             .exactDialogClickButton, .exactDialogDismiss, .exactDialogEnterText,
+             .exactDialogForceDismiss:
             return try await self.handleDialogRequest(request)
         case .createSnapshot, .storeDetectionResult, .getDetectionResult, .storeScreenshot,
              .storeObservationSnapshot, .storeAnnotatedScreenshot, .listSnapshots, .getMostRecentSnapshot,

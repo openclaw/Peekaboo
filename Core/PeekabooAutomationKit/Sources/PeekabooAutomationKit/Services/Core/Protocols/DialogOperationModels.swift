@@ -100,7 +100,7 @@ public struct DialogTargetSelector: Sendable, Codable, Equatable {
 ///
 /// Dialog text entry ultimately uses global keyboard events, so disabling automatic focus does not
 /// weaken verification: the selected parent/dialog must already own foreground focus before dispatch.
-public struct DialogInputFocusPolicy: Sendable, Codable, Equatable {
+public struct DialogForegroundFocusPolicy: Sendable, Codable, Equatable {
     public let autoFocus: Bool
     public let timeout: TimeInterval
     public let retryCount: Int
@@ -138,6 +138,62 @@ public struct DialogInputFocusPolicy: Sendable, Codable, Equatable {
             switchSpace: container.decode(Bool.self, forKey: .switchSpace),
             bringToCurrentSpace: container.decode(Bool.self, forKey: .bringToCurrentSpace))
     }
+
+    fileprivate func validate(operation: String) throws {
+        guard self.timeout.isFinite, self.timeout > 0 else {
+            throw PeekabooError.invalidInput("\(operation) focus timeout must be greater than zero")
+        }
+        guard self.retryCount > 0 else {
+            throw PeekabooError.invalidInput("\(operation) focus retry count must be greater than zero")
+        }
+    }
+}
+
+/// Focus-aware request for the compatibility path that resolves the current foreground dialog.
+public struct DialogLegacyInputExecutionRequest: Sendable, Codable, Equatable {
+    public let text: String
+    public let fieldIdentifier: String?
+    public let clearExisting: Bool
+    public let windowTitle: String?
+    public let appName: String?
+    public let focus: DialogForegroundFocusPolicy
+
+    public init(
+        text: String,
+        fieldIdentifier: String? = nil,
+        clearExisting: Bool = false,
+        windowTitle: String? = nil,
+        appName: String? = nil,
+        focus: DialogForegroundFocusPolicy = DialogForegroundFocusPolicy()) throws
+    {
+        try focus.validate(operation: "Dialog input")
+        self.text = text
+        self.fieldIdentifier = fieldIdentifier
+        self.clearExisting = clearExisting
+        self.windowTitle = windowTitle
+        self.appName = appName
+        self.focus = focus
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case text
+        case fieldIdentifier
+        case clearExisting
+        case windowTitle
+        case appName
+        case focus
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            text: container.decode(String.self, forKey: .text),
+            fieldIdentifier: container.decodeIfPresent(String.self, forKey: .fieldIdentifier),
+            clearExisting: container.decode(Bool.self, forKey: .clearExisting),
+            windowTitle: container.decodeIfPresent(String.self, forKey: .windowTitle),
+            appName: container.decodeIfPresent(String.self, forKey: .appName),
+            focus: container.decode(DialogForegroundFocusPolicy.self, forKey: .focus))
+    }
 }
 
 /// Complete, host-executed request for exact dialog text entry.
@@ -149,31 +205,26 @@ public struct DialogInputExecutionRequest: Sendable, Codable, Equatable {
     public let text: String
     public let fieldIdentifier: String?
     public let clearExisting: Bool
-    public let focus: DialogInputFocusPolicy
+    public let focus: DialogForegroundFocusPolicy
 
     public init(
         target: DialogTargetSelector,
         text: String,
         fieldIdentifier: String? = nil,
         clearExisting: Bool = false,
-        focus: DialogInputFocusPolicy = DialogInputFocusPolicy()) throws
+        focus: DialogForegroundFocusPolicy = DialogForegroundFocusPolicy()) throws
     {
         guard target.hasTarget else {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .invalidRequest,
-                message: "Dialog input requires an explicit app, PID, or window target.",
+                message: "Exact dialog input requires an explicit app, PID, or window target.",
                 hint: "Add --app, --pid, or --window-id after listing the dialog.")
         }
         let normalizedFieldIdentifier = fieldIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines)
         if fieldIdentifier != nil, normalizedFieldIdentifier?.isEmpty != false {
             throw PeekabooError.invalidInput("Dialog input field identifier must not be empty")
         }
-        guard focus.timeout.isFinite, focus.timeout > 0 else {
-            throw PeekabooError.invalidInput("Dialog input focus timeout must be greater than zero")
-        }
-        guard focus.retryCount > 0 else {
-            throw PeekabooError.invalidInput("Dialog input focus retry count must be greater than zero")
-        }
+        try focus.validate(operation: "Dialog input")
         self.target = target
         self.text = text
         self.fieldIdentifier = normalizedFieldIdentifier
@@ -196,7 +247,43 @@ public struct DialogInputExecutionRequest: Sendable, Codable, Equatable {
             text: container.decode(String.self, forKey: .text),
             fieldIdentifier: container.decodeIfPresent(String.self, forKey: .fieldIdentifier),
             clearExisting: container.decode(Bool.self, forKey: .clearExisting),
-            focus: container.decode(DialogInputFocusPolicy.self, forKey: .focus))
+            focus: container.decode(DialogForegroundFocusPolicy.self, forKey: .focus))
+    }
+}
+
+/// Complete, host-executed request for a foreground forced dialog dismissal.
+///
+/// The execution host resolves and retains one exact dialog, establishes the requested focus policy,
+/// proves that retained dialog still owns foreground focus, and only then posts Escape.
+public struct DialogForcedDismissExecutionRequest: Sendable, Codable, Equatable {
+    public let target: DialogTargetSelector
+    public let focus: DialogForegroundFocusPolicy
+
+    public init(
+        target: DialogTargetSelector,
+        focus: DialogForegroundFocusPolicy = DialogForegroundFocusPolicy()) throws
+    {
+        guard target.hasTarget else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "Exact forced dialog dismissal requires an explicit app, PID, or window target.",
+                hint: "Add --app, --pid, or --window-id after listing the dialog.")
+        }
+        try focus.validate(operation: "Dialog dismissal")
+        self.target = target
+        self.focus = focus
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case target
+        case focus
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            target: container.decode(DialogTargetSelector.self, forKey: .target),
+            focus: container.decode(DialogForegroundFocusPolicy.self, forKey: .focus))
     }
 }
 

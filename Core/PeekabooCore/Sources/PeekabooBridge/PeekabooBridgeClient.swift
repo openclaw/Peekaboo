@@ -12,6 +12,8 @@ public actor PeekabooBridgeClient {
     let logger = Logger(subsystem: "boo.peekaboo.bridge", category: "client")
     var actionProjectionEnabled = false
     var exactDialogInputExecutionEnabled = false
+    var exactDialogForceDismissExecutionEnabled = false
+    var dialogInputFocusPolicyEnabled = false
 
     public init(
         socketPath: String = PeekabooBridgeConstants.peekabooSocketPath,
@@ -37,6 +39,8 @@ public actor PeekabooBridgeClient {
     {
         self.actionProjectionEnabled = false
         self.exactDialogInputExecutionEnabled = false
+        self.exactDialogForceDismissExecutionEnabled = false
+        self.dialogInputFocusPolicyEnabled = false
         let deadline: Date?
         if let overallTimeoutSec {
             guard overallTimeoutSec.isFinite, overallTimeoutSec > 0 else {
@@ -97,12 +101,26 @@ public actor PeekabooBridgeClient {
                 handshake.hostCapabilities?.contains(
                     PeekabooBridgeHostCapability.desktopActionOutcomeProjection) == true
             let exactInputAdvertised = handshake.supportedOperations.contains(.exactDialogEnterText)
+            let exactForceDismissAdvertised = handshake.supportedOperations.contains(.exactDialogForceDismiss)
             self.exactDialogInputExecutionEnabled =
                 handshake.negotiatedVersion >= PeekabooBridgeConstants.exactDialogInputExecutionVersion &&
                 exactInputAdvertised &&
                 (handshake.enabledOperations?.contains(.exactDialogEnterText) ?? exactInputAdvertised) &&
                 handshake.hostCapabilities?.contains(
                     PeekabooBridgeHostCapability.exactDialogInputExecution) == true
+            self.exactDialogForceDismissExecutionEnabled =
+                handshake.negotiatedVersion >= PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion &&
+                exactForceDismissAdvertised &&
+                (handshake.enabledOperations?.contains(.exactDialogForceDismiss) ?? exactForceDismissAdvertised) &&
+                handshake.hostCapabilities?.contains(
+                    PeekabooBridgeHostCapability.exactForcedDialogDismissExecution) == true
+            let legacyInputAdvertised = handshake.supportedOperations.contains(.dialogEnterText)
+            self.dialogInputFocusPolicyEnabled =
+                handshake.negotiatedVersion >= PeekabooBridgeConstants.dialogInputFocusPolicyVersion &&
+                legacyInputAdvertised &&
+                (handshake.enabledOperations?.contains(.dialogEnterText) ?? legacyInputAdvertised) &&
+                handshake.hostCapabilities?.contains(
+                    PeekabooBridgeHostCapability.dialogInputFocusPolicy) == true
             return handshake
         case let .error(envelope):
             throw envelope

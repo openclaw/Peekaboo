@@ -145,7 +145,9 @@ public struct DialogTool: MCPTool {
 
             // Input focus is owned by DialogService after it has retained one exact
             // parent/dialog tuple. Generic window focus cannot safely recognize sheets.
-            if inputs.foreground, inputs.hasAnyTargeting, action != .input {
+            let hostOwnsForegroundDialogFocus = action == .input ||
+                (action == .dismiss && inputs.force == true && dialogTarget.hasTarget)
+            if inputs.foreground, inputs.hasAnyTargeting, !hostOwnsForegroundDialogFocus {
                 _ = try await target.focusIfRequested(windows: self.context.windows)
             }
             if inputs.foreground, let preparationRequest {
@@ -153,7 +155,7 @@ public struct DialogTool: MCPTool {
             }
 
             let usesLegacyDialogResolution = (action == .input && !dialogTarget.hasTarget) || action == .file ||
-                (action == .dismiss && inputs.force == true)
+                (action == .dismiss && inputs.force == true && !dialogTarget.hasTarget)
             let resolvedWindowTitle: String? = if usesLegacyDialogResolution {
                 try await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
             } else {
@@ -244,7 +246,7 @@ public struct DialogTool: MCPTool {
                     text: request.text,
                     fieldIdentifier: request.fieldIdentifier,
                     clearExisting: request.clearExisting,
-                    focus: DialogInputFocusPolicy(
+                    focus: DialogForegroundFocusPolicy(
                         autoFocus: true,
                         timeout: 5,
                         retryCount: 3,
@@ -326,10 +328,15 @@ public struct DialogTool: MCPTool {
             let result: DialogActionResult
             let outcome: DesktopActionOutcome
             if force {
-                result = try await self.context.dialogs.dismissDialog(
-                    force: true,
-                    windowTitle: windowTitle,
-                    appName: appHint)
+                if target.selector.hasTarget {
+                    result = try await self.context.dialogs.forceDismissDialog(
+                        DialogForcedDismissExecutionRequest(target: target.selector))
+                } else {
+                    result = try await self.context.dialogs.dismissDialog(
+                        force: true,
+                        windowTitle: windowTitle,
+                        appName: appHint)
+                }
                 outcome = await result.foregroundOutcomeOrUnverified(
                     route: self.context.dialogs.foregroundOutcomeRoute)
             } else {

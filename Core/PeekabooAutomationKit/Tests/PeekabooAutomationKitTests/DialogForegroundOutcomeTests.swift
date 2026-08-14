@@ -125,6 +125,17 @@ struct DialogForegroundOutcomeTests {
         #expect(legacy.delivery == .init(mechanism: .globalEvents, mode: .foreground))
         #expect(legacy.retrySafety == .unsafe)
 
+        let supplied = DialogActionResult(
+            success: true,
+            action: .dismiss,
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .one))
+            .foregroundOutcomeOrUnverified(route: .bridge)
+        #expect(supplied.route == .bridge)
+        #expect(supplied.state == .dispatchedUnverified)
+
         let focusFailure = DialogService.dialogFieldFocusUnverifiedFailure()
         #expect(focusFailure.outcome.state == .dispatchedUnverified)
         #expect(focusFailure.outcome.delivery == .init(mechanism: .accessibilityAction, mode: .foreground))

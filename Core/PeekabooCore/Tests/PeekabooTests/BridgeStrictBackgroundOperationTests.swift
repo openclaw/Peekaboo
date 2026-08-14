@@ -18,6 +18,7 @@ struct BridgeStrictBackgroundOperationTests {
             .exactDialogClickButton,
             .exactDialogDismiss,
             .exactDialogEnterText,
+            .exactDialogForceDismiss,
         ]
 
         let legacy = PeekabooBridgeOperation.compatible(
@@ -40,14 +41,18 @@ struct BridgeStrictBackgroundOperationTests {
         #expect(PeekabooBridgeOperation.compatible(
             operations,
             with: PeekabooBridgeProtocolVersion(major: 1, minor: 25)) ==
-            operations.subtracting([.exactDialogEnterText]))
+            operations.subtracting([.exactDialogEnterText, .exactDialogForceDismiss]))
         #expect(PeekabooBridgeOperation.compatible(
             operations,
             with: PeekabooBridgeProtocolVersion(major: 1, minor: 26)) ==
-            operations.subtracting([.exactDialogEnterText]))
+            operations.subtracting([.exactDialogEnterText, .exactDialogForceDismiss]))
         #expect(PeekabooBridgeOperation.compatible(
             operations,
-            with: PeekabooBridgeProtocolVersion(major: 1, minor: 27)) == operations)
+            with: PeekabooBridgeProtocolVersion(major: 1, minor: 27)) ==
+            operations.subtracting([.exactDialogForceDismiss]))
+        #expect(PeekabooBridgeOperation.compatible(
+            operations,
+            with: PeekabooBridgeProtocolVersion(major: 1, minor: 28)) == operations)
     }
 
     @Test
@@ -188,7 +193,7 @@ struct BridgeStrictBackgroundOperationTests {
         let request = try DialogInputExecutionRequest(
             target: DialogTargetSelector(processIdentifier: 123),
             text: "must not dispatch",
-            focus: DialogInputFocusPolicy(autoFocus: false))
+            focus: DialogForegroundFocusPolicy(autoFocus: false))
 
         do {
             _ = try await service.enterText(request)
@@ -201,6 +206,38 @@ struct BridgeStrictBackgroundOperationTests {
             #expect(failure.hint?.contains("1.27") == true)
         } catch {
             Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test
+    func `remote foreground dialog additions refuse before transport when capability is missing`() async throws {
+        let client = PeekabooBridgeClient(socketPath: "/nonexistent/peekaboo-test.sock")
+        let service = RemoteDialogService(client: client)
+        let dismissRequest = try DialogForcedDismissExecutionRequest(
+            target: DialogTargetSelector(processIdentifier: 123, windowID: 700))
+
+        do {
+            _ = try await service.forceDismissDialog(dismissRequest)
+            Issue.record("Expected exact forced-dismiss capability refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.route == .bridge)
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.dispatchState == .none)
+        }
+
+        do {
+            _ = try await service.enterText(DialogLegacyInputExecutionRequest(
+                text: "must not dispatch",
+                fieldIdentifier: nil,
+                clearExisting: false,
+                windowTitle: nil,
+                appName: nil,
+                focus: DialogForegroundFocusPolicy(autoFocus: false)))
+            Issue.record("Expected legacy focus-policy capability refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.route == .bridge)
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.dispatchState == .none)
         }
     }
 

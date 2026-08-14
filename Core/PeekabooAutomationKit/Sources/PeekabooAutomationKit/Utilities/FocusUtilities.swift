@@ -297,6 +297,46 @@ public final class FocusManagementService {
         }
     }
 
+    /// Perform the final synchronous focus proof immediately before a global dialog key event.
+    /// Callers must not suspend between this check and dispatch.
+    func requireDialogGlobalKeyboardFocus(
+        target: UIAutomationTarget.ExactWindow,
+        retainedWindow: Element,
+        dialog: Element) throws
+    {
+        let windowID = CGWindowID(target.identity.windowID)
+        guard SystemIdentityResolver.validateWindowMutationIdentity(
+            target.identity,
+            expectedBounds: target.bounds),
+            let currentWindow = self.windowIdentityService.findWindow(
+                byID: windowID,
+                messagingTimeout: 0.1),
+            DialogService.sameElement(currentWindow.element, retainedWindow),
+            let ownerPID = currentWindow.element.pid(),
+            ownerPID == target.identity.ownerProcessIdentifier,
+            let runningApp = NSRunningApplication(processIdentifier: ownerPID),
+            let focusedWindow = self.focusedWindow(for: runningApp, timeout: 0.1)
+        else {
+            throw FocusError.focusVerificationFailed(windowID)
+        }
+        let observation = AttachedDialogFocusObservation(
+            currentProcessStartIdentity: SystemIdentityResolver.processStartIdentity(ownerPID),
+            focusedWindowPID: focusedWindow.pid(),
+            frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            focusedWindowMatchesPreparedDialog: DialogService.sameElement(focusedWindow, dialog),
+            preparedDialogIsStructural: DialogElementClassifier.isStructuralDialog(
+                DialogElementClassifier.evidence(for: dialog)),
+            preparedDialogAttachedToParent: DialogService.rawElementPresence(
+                dialog,
+                in: currentWindow.element) == .present)
+        guard Self.isVerifiedAttachedDialogFocus(
+            expectedParent: target.identity,
+            observation: observation)
+        else {
+            throw FocusError.focusVerificationFailed(windowID)
+        }
+    }
+
     private func focusWindowWithOwnedLane(
         windowID: CGWindowID,
         options: FocusOptions,

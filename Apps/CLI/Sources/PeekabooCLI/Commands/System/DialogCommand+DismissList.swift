@@ -26,6 +26,7 @@ extension DialogCommand {
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
+            let dialogTarget = try self.target.dialogTargetSelector()
             var preparationRequest: DialogActionPreparationRequest?
             var preparedReceipt: PreparedDialogActionReceipt?
             let force = self.force
@@ -33,8 +34,11 @@ extension DialogCommand {
             try await DialogCommand.execute(
                 runtime: runtime,
                 target: self.target,
-                focus: .whenRequested(self.foreground, self.focusOptions),
-                resolveWindowTitle: self.force,
+                focus: self.force && dialogTarget.hasTarget
+                    ? .none
+                    : .whenRequested(self.foreground, self.focusOptions),
+                resolveWindowTitle: self.force && !dialogTarget.hasTarget,
+                resolveAppHint: !(self.force && dialogTarget.hasTarget),
                 validate: {
                     guard !self.force || self.foreground else {
                         throw ValidationError("dialog dismiss --force sends global Escape and requires --foreground")
@@ -57,11 +61,26 @@ extension DialogCommand {
                     let result: DialogActionResult
                     let outcome: DesktopActionOutcome
                     if self.force {
-                        result = try await context.services.dialogs.dismissDialog(
-                            force: true,
-                            windowTitle: context.windowTitle,
-                            appName: context.appHint
-                        )
+                        if context.target.hasTarget {
+                            result = try await context.services.dialogs.forceDismissDialog(
+                                DialogForcedDismissExecutionRequest(
+                                    target: context.target,
+                                    focus: DialogForegroundFocusPolicy(
+                                        autoFocus: self.focusOptions.autoFocus,
+                                        timeout: self.focusOptions.focusTimeout ?? 5,
+                                        retryCount: self.focusOptions.focusRetryCount ?? 3,
+                                        switchSpace: self.focusOptions.spaceSwitch,
+                                        bringToCurrentSpace: self.focusOptions.bringToCurrentSpace
+                                    )
+                                )
+                            )
+                        } else {
+                            result = try await context.services.dialogs.dismissDialog(
+                                force: true,
+                                windowTitle: context.windowTitle,
+                                appName: context.appHint
+                            )
+                        }
                         outcome = result.foregroundOutcomeOrUnverified(
                             route: context.services.dialogs.foregroundOutcomeRoute
                         )

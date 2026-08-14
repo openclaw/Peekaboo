@@ -409,6 +409,73 @@ struct DialogCommandTests {
     }
 
     @Test
+    func `targetless dialog input preserves no auto focus inside the execution service`() async throws {
+        let dialogService = StubDialogService(elements: DialogElements(
+            dialogInfo: DialogInfo(
+                title: "Alert",
+                role: "AXSheet",
+                bounds: .init(x: 0, y: 0, width: 400, height: 300)
+            )
+        ))
+        dialogService.enterTextResult = DialogActionResult(success: true, action: .enterText)
+        let services = self.makeTestServices(dialogs: dialogService)
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "dialog", "input", "--text", "hello", "--foreground", "--no-auto-focus",
+                "--focus-timeout", "1750ms", "--focus-retry-count", "7", "--json",
+            ],
+            services: services
+        )
+
+        #expect(result.exitStatus == 0)
+        let focus = try #require(dialogService.legacyInputFocusPolicies.first)
+        #expect(!focus.autoFocus)
+        #expect(focus.timeout == 1.75)
+        #expect(focus.retryCount == 7)
+    }
+
+    @Test
+    func `forced dialog dismiss preserves exact selector and host owned focus policy`() async throws {
+        let dialogService = StubDialogService(elements: DialogElements(
+            dialogInfo: DialogInfo(
+                title: "Alert",
+                role: "AXSheet",
+                bounds: .init(x: 0, y: 0, width: 400, height: 300)
+            )
+        ))
+        dialogService.dismissResult = DialogActionResult(
+            success: true,
+            action: .dismiss,
+            details: ["method": "escape"],
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .one
+            )
+        )
+        let services = self.makeTestServices(dialogs: dialogService)
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "dialog", "dismiss", "--force", "--foreground", "--no-auto-focus",
+                "--pid", "42", "--window-id", "73", "--focus-timeout", "2s",
+                "--focus-retry-count", "4", "--bring-to-current-space", "--json",
+            ],
+            services: services
+        )
+
+        #expect(result.exitStatus == 0)
+        let request = try #require(dialogService.exactForcedDismissRequests.first)
+        #expect(request.target.processIdentifier == 42)
+        #expect(request.target.windowID == 73)
+        #expect(!request.focus.autoFocus)
+        #expect(request.focus.timeout == 2)
+        #expect(request.focus.retryCount == 4)
+        #expect(request.focus.bringToCurrentSpace)
+    }
+
+    @Test
     func `dialog PID app hint uses exact local capability and preserves legacy provider names`() async throws {
         var target = InteractionTargetOptions()
         target.pid = 42

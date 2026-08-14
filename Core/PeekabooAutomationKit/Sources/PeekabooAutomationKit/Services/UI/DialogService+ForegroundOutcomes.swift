@@ -15,7 +15,7 @@ extension DialogService {
         let text: String
         let fieldIdentifier: String?
         let clearExisting: Bool
-        let focusPolicy: DialogInputFocusPolicy
+        let focusPolicy: DialogForegroundFocusPolicy
         let dialog: ForegroundDialogPlan
         let field: Element
         let exactFieldSelection: Bool
@@ -41,14 +41,26 @@ extension DialogService {
         windowTitle: String?,
         appName: String?) async throws -> DialogActionResult
     {
-        try await self.operationLaneCoordinator.run(scope: Self.forcedDismissMutationScope, access: .write) {
-            let plan = try await self.prepareForegroundDialogPlan(windowTitle: windowTitle, appName: appName)
-            let targetField = try self.textField(in: plan.dialog, identifier: fieldIdentifier)
+        try await self.enterText(DialogLegacyInputExecutionRequest(
+            text: text,
+            fieldIdentifier: fieldIdentifier,
+            clearExisting: clearExisting,
+            windowTitle: windowTitle,
+            appName: appName,
+            focus: DialogForegroundFocusPolicy()))
+    }
+
+    public func enterText(_ request: DialogLegacyInputExecutionRequest) async throws -> DialogActionResult {
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            let plan = try await self.prepareForegroundDialogPlan(
+                windowTitle: request.windowTitle,
+                appName: request.appName)
+            let targetField = try self.textField(in: plan.dialog, identifier: request.fieldIdentifier)
             return try await self.executeDialogInput(RetainedDialogInputPlan(
-                text: text,
-                fieldIdentifier: fieldIdentifier,
-                clearExisting: clearExisting,
-                focusPolicy: DialogInputFocusPolicy(),
+                text: request.text,
+                fieldIdentifier: request.fieldIdentifier,
+                clearExisting: request.clearExisting,
+                focusPolicy: request.focus,
                 dialog: plan,
                 field: targetField,
                 exactFieldSelection: false,
@@ -267,33 +279,72 @@ extension DialogService {
     }
 
     func forceDismissDialog(windowTitle: String?, appName: String?) async throws -> DialogActionResult {
-        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+        try await self.operationLaneCoordinator.run(scope: Self.forcedDismissMutationScope, access: .write) {
             let plan = try await self.prepareForegroundDialogPlan(windowTitle: windowTitle, appName: appName)
+            return try await self.executeForcedDialogDismiss(
+                plan: plan,
+                focus: DialogForegroundFocusPolicy(autoFocus: false))
+        }
+    }
+
+    public func forceDismissDialog(_ request: DialogForcedDismissExecutionRequest) async throws -> DialogActionResult {
+        try await self.operationLaneCoordinator.run(scope: Self.forcedDismissMutationScope, access: .write) {
+            let candidates = try await self.targetedDialogCandidates(
+                target: request.target,
+                membership: .structuralMutation)
+            guard candidates.count == 1, let candidate = candidates.first else {
+                throw self.dialogCandidateRefusal(target: request.target, candidates: candidates)
+            }
+            let plan = ForegroundDialogPlan(
+                target: candidate.target,
+                window: candidate.window,
+                dialog: candidate.dialog)
+            return try await self.executeForcedDialogDismiss(plan: plan, focus: request.focus)
+        }
+    }
+
+    private func executeForcedDialogDismiss(
+        plan: ForegroundDialogPlan,
+        focus: DialogForegroundFocusPolicy) async throws -> DialogActionResult
+    {
+        do {
+            try await self.revalidateDialogTarget(
+                target: plan.target,
+                retainedWindow: plan.window,
+                retainedDialog: plan.dialog,
+                operation: "forced Escape")
+            try Task.checkCancellation()
+            try await self.establishDialogWindowFocus(plan: plan, policy: focus)
             do {
-                try await self.revalidateDialogTarget(
+                try Task.checkCancellation()
+                try self.focusService.requireDialogGlobalKeyboardFocus(
                     target: plan.target,
                     retainedWindow: plan.window,
-                    retainedDialog: plan.dialog,
-                    operation: "forced Escape")
-                try Task.checkCancellation()
-
-                try self.dispatchForcedDialogEscape()
-
-                let presence = self.dialogPresence(target: plan.target, retainedDialog: plan.dialog)
-                let outcome = Self.forcedDismissOutcome(dialogPresence: presence)
-                var details = Self.dialogTargetDetails(plan.target)
-                details.merge([
-                    "method": "escape",
-                    "dialog_presence_after_dispatch": Self.dialogPresenceDescription(presence),
-                ]) { _, new in new }
-                return DialogActionResult(
-                    success: true,
-                    action: .dismiss,
-                    details: details,
-                    outcome: outcome)
-            } catch let failure as DesktopActionFailure {
-                throw Self.attributedDialogActionFailure(failure, target: plan.target)
+                    dialog: plan.dialog)
+            } catch is CancellationError where !focus.autoFocus {
+                throw CancellationError()
+            } catch {
+                // Automatic focus may already have activated or raised the retained window.
+                // Preserve that possible side effect instead of erasing it as bare cancellation.
+                throw Self.dialogWindowFocusFailure(autoFocus: focus.autoFocus, cause: error)
             }
+            try self.dispatchForcedDialogEscape()
+
+            let presence = self.dialogPresence(target: plan.target, retainedDialog: plan.dialog)
+            let outcome = Self.forcedDismissOutcome(dialogPresence: presence)
+            var details = Self.dialogTargetDetails(plan.target)
+            details.merge([
+                "method": "escape",
+                "dialog_presence_after_dispatch": Self.dialogPresenceDescription(presence),
+            ]) { _, new in new }
+            return DialogActionResult(
+                success: true,
+                action: .dismiss,
+                details: details,
+                outcome: outcome,
+                targetReceipt: Self.desktopActionTargetReceipt(plan.target))
+        } catch let failure as DesktopActionFailure {
+            throw Self.attributedDialogActionFailure(failure, target: plan.target)
         }
     }
 
@@ -405,7 +456,7 @@ extension DialogService {
         textLength: Int,
         cleared: Bool,
         valueVerified: Bool,
-        focusPolicy: DialogInputFocusPolicy = DialogInputFocusPolicy()) -> [String: String]
+        focusPolicy: DialogForegroundFocusPolicy = DialogForegroundFocusPolicy()) -> [String: String]
     {
         var details = Self.dialogTargetDetails(plan.target)
         details.merge([
@@ -426,7 +477,7 @@ extension DialogService {
     }
 
     static func dialogInputFocusOptions(
-        _ policy: DialogInputFocusPolicy) -> FocusManagementService.FocusOptions
+        _ policy: DialogForegroundFocusPolicy) -> FocusManagementService.FocusOptions
     {
         FocusManagementService.FocusOptions(
             timeout: policy.timeout,
@@ -464,7 +515,7 @@ extension DialogService {
 
     private func establishDialogWindowFocus(
         plan: ForegroundDialogPlan,
-        policy: DialogInputFocusPolicy) async throws
+        policy: DialogForegroundFocusPolicy) async throws
     {
         do {
             if policy.autoFocus {

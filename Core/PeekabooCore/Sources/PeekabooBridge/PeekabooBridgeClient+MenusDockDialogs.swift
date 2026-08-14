@@ -170,19 +170,38 @@ extension PeekabooBridgeClient {
         fieldIdentifier: String?,
         clearExisting: Bool,
         windowTitle: String?,
-        appName: String?) async throws -> DialogActionResult
+        appName: String?,
+        focus: DialogForegroundFocusPolicy? = nil) async throws -> DialogActionResult
     {
+        if focus != nil, !self.dialogInputFocusPolicyEnabled {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "Bridge host cannot preserve the dialog focus policy; no input was sent.",
+                hint: "Select a protocol 1.28 host advertising dialog input focus policy support.")
+        }
         let response = try await self.send(.dialogEnterText(PeekabooBridgeDialogEnterTextRequest(
             text: text,
             fieldIdentifier: fieldIdentifier,
             clearExisting: clearExisting,
             windowTitle: windowTitle,
-            appName: appName)))
+            appName: appName,
+            focus: focus)))
         switch response {
         case let .dialogResult(result): return result
         case let .error(envelope): throw envelope
         default: throw PeekabooBridgeErrorEnvelope(code: .invalidRequest, message: "Unexpected dialog result")
         }
+    }
+
+    public func dialogEnterText(_ request: DialogLegacyInputExecutionRequest) async throws -> DialogActionResult {
+        try await self.dialogEnterText(
+            text: request.text,
+            fieldIdentifier: request.fieldIdentifier,
+            clearExisting: request.clearExisting,
+            windowTitle: request.windowTitle,
+            appName: request.appName,
+            focus: request.focus)
     }
 
     /// Executes one exact dialog input request atomically in the selected Bridge host.
@@ -258,6 +277,76 @@ extension PeekabooBridgeClient {
                 evidence: .completionUnknown,
                 unitCount: reply.outcome?.outcome.dispatchState.unitCount,
                 message: "Bridge returned an unexpected exact dialog input response.",
+                hint: "Observe the dialog before retrying and update the runtime host.")
+        }
+    }
+
+    /// Executes one selector-preserving forced dialog dismissal atomically in the Bridge host.
+    public func exactDialogForceDismiss(
+        _ request: DialogForcedDismissExecutionRequest) async throws -> DialogActionResult
+    {
+        guard self.exactDialogForceDismissExecutionEnabled else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "Bridge host does not advertise atomic exact forced dismissal; no Escape was sent.",
+                hint: "Select a protocol 1.28 host advertising exact forced dialog dismissal.")
+        }
+        let reply = try await self.sendCarryingActionOutcome(.exactDialogForceDismiss(request))
+        switch reply.response {
+        case let .dialogResult(result):
+            guard result.success,
+                  result.action == .dismiss,
+                  let outcome = result.outcome,
+                  outcome.state == .dispatchedUnverified,
+                  outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground),
+                  outcome.dispatchState.unitCount == .one,
+                  let targetReceipt = result.targetReceipt,
+                  // The selector carries caller constraints, not a process-generation claim.
+                  // The execution host publishes the resolved generation in this canonical receipt.
+                  request.target.processIdentifier.map({ $0 == targetReceipt.processIdentifier }) ?? true,
+                  request.target.windowID.map({ $0 == targetReceipt.windowID }) ?? true
+            else {
+                throw DesktopActionFailure.indeterminate(
+                    route: .bridge,
+                    evidence: .completionUnknown,
+                    unitCount: reply.outcome?.outcome.dispatchState.unitCount,
+                    message: "Bridge exact forced dismissal returned invalid outcome or target evidence.",
+                    hint: "Observe the dialog before retrying and update the runtime host.")
+            }
+            let routedOutcome = outcome.routed(to: .bridge)
+            if let projected = reply.outcome?.outcome, projected != routedOutcome {
+                throw DesktopActionFailure.indeterminate(
+                    route: .bridge,
+                    delivery: outcome.delivery,
+                    evidence: .completionUnknown,
+                    unitCount: outcome.dispatchState.unitCount,
+                    message: "Bridge exact forced dismissal carried contradictory canonical outcomes.",
+                    hint: "Observe the dialog before retrying and update the runtime host.")
+            }
+            return DialogActionResult(
+                success: result.success,
+                action: result.action,
+                details: result.details,
+                outcome: routedOutcome,
+                targetReceipt: targetReceipt)
+        case let .error(envelope):
+            if let failure = envelope.desktopActionFailure ?? reply.outcome.flatMap({ projection in
+                DesktopActionFailure(
+                    outcome: projection.outcome,
+                    message: envelope.message,
+                    hint: envelope.actionFailureHint,
+                    causeDescription: envelope.actionFailureCauseDescription ?? envelope.details)
+            }) {
+                throw failure.routed(to: .bridge)
+            }
+            throw envelope
+        default:
+            throw DesktopActionFailure.indeterminate(
+                route: .bridge,
+                evidence: .completionUnknown,
+                unitCount: reply.outcome?.outcome.dispatchState.unitCount,
+                message: "Bridge returned an unexpected exact forced-dismiss response.",
                 hint: "Observe the dialog before retrying and update the runtime host.")
         }
     }

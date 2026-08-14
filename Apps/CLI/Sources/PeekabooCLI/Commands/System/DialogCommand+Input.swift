@@ -57,7 +57,7 @@ extension DialogCommand {
                             text: self.text,
                             fieldIdentifier: fieldIdentifier,
                             clearExisting: self.clear,
-                            focus: DialogInputFocusPolicy(
+                            focus: DialogForegroundFocusPolicy(
                                 autoFocus: self.focusOptions.autoFocus,
                                 timeout: self.focusOptions.focusTimeout ?? 5,
                                 retryCount: self.focusOptions.focusRetryCount ?? 3,
@@ -67,13 +67,20 @@ extension DialogCommand {
                         )
                         result = try await context.services.dialogs.enterText(request)
                     } else {
-                        result = try await context.services.dialogs.enterText(
+                        result = try await context.services.dialogs.enterText(DialogLegacyInputExecutionRequest(
                             text: self.text,
                             fieldIdentifier: fieldIdentifier,
                             clearExisting: self.clear,
                             windowTitle: nil,
-                            appName: nil
-                        )
+                            appName: nil,
+                            focus: DialogForegroundFocusPolicy(
+                                autoFocus: self.focusOptions.autoFocus,
+                                timeout: self.focusOptions.focusTimeout ?? 5,
+                                retryCount: self.focusOptions.focusRetryCount ?? 3,
+                                switchSpace: self.focusOptions.spaceSwitch,
+                                bringToCurrentSpace: self.focusOptions.bringToCurrentSpace
+                            )
+                        ))
                     }
                     let outcome = result.foregroundOutcomeOrUnverified(
                         route: context.services.dialogs.foregroundOutcomeRoute

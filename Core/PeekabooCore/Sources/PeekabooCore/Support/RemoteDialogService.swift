@@ -12,6 +12,8 @@ public struct RemoteDialogCapabilities: Sendable {
     public let exactClick: Bool
     public let exactDismiss: Bool
     public let exactInput: Bool
+    public let exactForceDismiss: Bool
+    public let legacyInputFocusPolicy: Bool
 
     public init(
         backgroundButtonClick: Bool = false,
@@ -19,7 +21,9 @@ public struct RemoteDialogCapabilities: Sendable {
         prepareAction: Bool = false,
         exactClick: Bool = false,
         exactDismiss: Bool = false,
-        exactInput: Bool = false)
+        exactInput: Bool = false,
+        exactForceDismiss: Bool = false,
+        legacyInputFocusPolicy: Bool = false)
     {
         self.backgroundButtonClick = backgroundButtonClick
         self.targetedList = targetedList
@@ -27,6 +31,8 @@ public struct RemoteDialogCapabilities: Sendable {
         self.exactClick = exactClick
         self.exactDismiss = exactDismiss
         self.exactInput = exactInput
+        self.exactForceDismiss = exactForceDismiss
+        self.legacyInputFocusPolicy = legacyInputFocusPolicy
     }
 }
 
@@ -41,6 +47,8 @@ public final class RemoteDialogService: DialogServiceProtocol {
     private let supportsExactClick: Bool
     private let supportsExactDismiss: Bool
     private let supportsExactInput: Bool
+    private let supportsExactForceDismiss: Bool
+    private let supportsLegacyInputFocusPolicy: Bool
 
     public convenience init(client: PeekabooBridgeClient, supportsBackgroundButtonClick: Bool) {
         self.init(
@@ -59,6 +67,8 @@ public final class RemoteDialogService: DialogServiceProtocol {
         self.supportsExactClick = capabilities.exactClick
         self.supportsExactDismiss = capabilities.exactDismiss
         self.supportsExactInput = capabilities.exactInput
+        self.supportsExactForceDismiss = capabilities.exactForceDismiss
+        self.supportsLegacyInputFocusPolicy = capabilities.legacyInputFocusPolicy
     }
 
     public func findActiveDialog(windowTitle: String?, appName: String?) async throws -> DialogInfo {
@@ -120,6 +130,23 @@ public final class RemoteDialogService: DialogServiceProtocol {
         }
     }
 
+    public func enterText(_ request: DialogLegacyInputExecutionRequest) async throws -> DialogActionResult {
+        guard self.supportsLegacyInputFocusPolicy else {
+            if request.focus == DialogForegroundFocusPolicy() {
+                return try await self.client.dialogEnterText(
+                    text: request.text,
+                    fieldIdentifier: request.fieldIdentifier,
+                    clearExisting: request.clearExisting,
+                    windowTitle: request.windowTitle,
+                    appName: request.appName)
+            }
+            throw Self.capabilityRefusal(
+                "Remote host cannot preserve the targetless dialog focus policy; no input was sent.",
+                minimumProtocol: "1.28")
+        }
+        return try await self.client.dialogEnterText(request)
+    }
+
     public func handleFileDialog(
         path: String?,
         filename: String?,
@@ -138,6 +165,21 @@ public final class RemoteDialogService: DialogServiceProtocol {
 
     public func dismissDialog(force: Bool, windowTitle: String?, appName: String?) async throws -> DialogActionResult {
         try await self.client.dialogDismiss(force: force, windowTitle: windowTitle, appName: appName)
+    }
+
+    public func forceDismissDialog(_ request: DialogForcedDismissExecutionRequest) async throws -> DialogActionResult {
+        guard self.supportsExactForceDismiss else {
+            throw Self.capabilityRefusal(
+                "Remote host does not advertise atomic exact forced dialog dismissal; no Escape was sent.",
+                minimumProtocol: "1.28")
+        }
+        do {
+            return try await self.client.exactDialogForceDismiss(request)
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.inputActionFailure(for: envelope)
+        }
     }
 
     public func listDialogElements(windowTitle: String?, appName: String?) async throws -> DialogElements {

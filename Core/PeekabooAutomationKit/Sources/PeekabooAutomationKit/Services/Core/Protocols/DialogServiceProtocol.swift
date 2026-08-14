@@ -53,8 +53,14 @@ public protocol DialogServiceProtocol: Sendable {
         windowTitle: String?,
         appName: String?) async throws -> DialogActionResult
 
+    /// Enter text through the legacy foreground target while preserving the caller's focus policy.
+    func enterText(_ request: DialogLegacyInputExecutionRequest) async throws -> DialogActionResult
+
     /// Resolve and execute text entry against one exact dialog target on this runtime host.
     func enterText(_ request: DialogInputExecutionRequest) async throws -> DialogActionResult
+
+    /// Resolve, focus, verify, and force-dismiss one retained dialog on this runtime host.
+    func forceDismissDialog(_ request: DialogForcedDismissExecutionRequest) async throws -> DialogActionResult
 
     /// Handle file save/open dialogs
     /// - Parameters:
@@ -142,10 +148,32 @@ extension DialogServiceProtocol {
             appName: nil)
     }
 
+    public func enterText(_ request: DialogLegacyInputExecutionRequest) async throws -> DialogActionResult {
+        guard request.focus == DialogForegroundFocusPolicy() else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .runtimeIncompatible,
+                message: "This dialog service cannot preserve a custom foreground focus policy.",
+                hint: "Update the selected runtime host before retrying.")
+        }
+        return try await self.enterText(
+            text: request.text,
+            fieldIdentifier: request.fieldIdentifier,
+            clearExisting: request.clearExisting,
+            windowTitle: request.windowTitle,
+            appName: request.appName)
+    }
+
     public func enterText(_ request: DialogInputExecutionRequest) async throws -> DialogActionResult {
         throw DesktopActionFailure.preDispatchRefusal(
             reason: .runtimeIncompatible,
             message: "This dialog service does not support exact host-executed dialog input.",
+            hint: "Update the selected runtime host before retrying.")
+    }
+
+    public func forceDismissDialog(_ request: DialogForcedDismissExecutionRequest) async throws -> DialogActionResult {
+        throw DesktopActionFailure.preDispatchRefusal(
+            reason: .runtimeIncompatible,
+            message: "This dialog service does not support exact host-executed forced dismissal.",
             hint: "Update the selected runtime host before retrying.")
     }
 
@@ -263,7 +291,7 @@ extension DialogActionResult {
     /// Legacy foreground dialog providers may omit canonical outcomes. A successful return proves
     /// only that shared global input was accepted, never which controller caused the visible effect.
     public func foregroundOutcomeOrUnverified(route: DesktopActionOutcome.Route) -> DesktopActionOutcome {
-        self.outcome ?? .dispatchedUnverified(
+        self.outcome?.routed(to: route) ?? .dispatchedUnverified(
             route: route,
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
             evidence: .deliveryAccepted,

@@ -192,12 +192,22 @@ extension PeekabooBridgeServer {
                 allowGlobalFallback: false)
             return .init(response: .dialogResult(result), outcome: result.outcome)
         case let .dialogEnterText(payload):
-            let result = try await self.services.dialogs.enterText(
-                text: payload.text,
-                fieldIdentifier: payload.fieldIdentifier,
-                clearExisting: payload.clearExisting,
-                windowTitle: payload.windowTitle,
-                appName: payload.appName)
+            let result = if let focus = payload.focus {
+                try await self.services.dialogs.enterText(DialogLegacyInputExecutionRequest(
+                    text: payload.text,
+                    fieldIdentifier: payload.fieldIdentifier,
+                    clearExisting: payload.clearExisting,
+                    windowTitle: payload.windowTitle,
+                    appName: payload.appName,
+                    focus: focus))
+            } else {
+                try await self.services.dialogs.enterText(
+                    text: payload.text,
+                    fieldIdentifier: payload.fieldIdentifier,
+                    clearExisting: payload.clearExisting,
+                    windowTitle: payload.windowTitle,
+                    appName: payload.appName)
+            }
             return .init(response: .dialogResult(result), outcome: result.outcome)
         case let .dialogHandleFile(payload):
             let result = try await self.services.dialogs.handleFileDialog(
@@ -254,6 +264,28 @@ extension PeekabooBridgeServer {
                     evidence: .completionUnknown,
                     unitCount: result.outcome?.dispatchState.unitCount,
                     message: "Exact dialog input did not return both its canonical outcome and target receipt.",
+                    hint: "Observe the dialog before retrying and update the execution host.")
+            }
+            return .init(response: .dialogResult(result), outcome: outcome)
+        case let .exactDialogForceDismiss(payload):
+            let result = try await self.services.dialogs.forceDismissDialog(payload)
+            guard result.success,
+                  result.action == .dismiss,
+                  let outcome = result.outcome,
+                  outcome.state == .dispatchedUnverified,
+                  outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground),
+                  outcome.dispatchState.unitCount == .one,
+                  let targetReceipt = result.targetReceipt,
+                  // The unresolved selector has no process-generation claim to compare here;
+                  // targetReceipt is the host's canonical resolved generation.
+                  payload.target.processIdentifier.map({ $0 == targetReceipt.processIdentifier }) ?? true,
+                  payload.target.windowID.map({ $0 == targetReceipt.windowID }) ?? true
+            else {
+                throw DesktopActionFailure.indeterminate(
+                    delivery: result.outcome?.delivery,
+                    evidence: .completionUnknown,
+                    unitCount: result.outcome?.dispatchState.unitCount,
+                    message: "Exact forced dialog dismissal returned invalid outcome or target evidence.",
                     hint: "Observe the dialog before retrying and update the execution host.")
             }
             return .init(response: .dialogResult(result), outcome: outcome)

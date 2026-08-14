@@ -5,7 +5,18 @@ extension RuntimeHostResolver {
     static func remoteDialogCapabilities(
         for handshake: PeekabooBridgeHandshakeResponse
     ) -> RemoteDialogCapabilities {
-        RemoteDialogCapabilities(
+        let exactInput =
+            handshake.negotiatedVersion >= PeekabooBridgeConstants.exactDialogInputExecutionVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.exactDialogInputExecution) == true
+        let exactForceDismiss =
+            handshake.negotiatedVersion >= PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.exactForcedDialogDismissExecution
+            ) == true
+        let legacyInputFocusPolicy =
+            handshake.negotiatedVersion >= PeekabooBridgeConstants.dialogInputFocusPolicyVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.dialogInputFocusPolicy) == true
+        return RemoteDialogCapabilities(
             backgroundButtonClick: BridgeCapabilityPolicy.supportsOperation(
                 .backgroundDialogClickButton,
                 for: handshake
@@ -14,11 +25,12 @@ extension RuntimeHostResolver {
             prepareAction: BridgeCapabilityPolicy.supportsOperation(.prepareDialogAction, for: handshake),
             exactClick: BridgeCapabilityPolicy.supportsOperation(.exactDialogClickButton, for: handshake),
             exactDismiss: BridgeCapabilityPolicy.supportsOperation(.exactDialogDismiss, for: handshake),
-            exactInput: handshake.negotiatedVersion >= PeekabooBridgeConstants.exactDialogInputExecutionVersion &&
-                BridgeCapabilityPolicy.supportsOperation(.exactDialogEnterText, for: handshake) &&
-                handshake.hostCapabilities?.contains(
-                    PeekabooBridgeHostCapability.exactDialogInputExecution
-                ) == true
+            exactInput: exactInput &&
+                BridgeCapabilityPolicy.supportsOperation(.exactDialogEnterText, for: handshake),
+            exactForceDismiss: exactForceDismiss &&
+                BridgeCapabilityPolicy.supportsOperation(.exactDialogForceDismiss, for: handshake),
+            legacyInputFocusPolicy: legacyInputFocusPolicy &&
+                BridgeCapabilityPolicy.supportsOperation(.dialogEnterText, for: handshake)
         )
     }
 }

@@ -167,7 +167,37 @@ struct MCPDialogPreparedActionTests {
         #expect(request.target.processIdentifier == 89)
         #expect(request.target.windowID == 700)
         #expect(request.text == "value")
-        #expect(request.focus == DialogInputFocusPolicy())
+        #expect(request.focus == DialogForegroundFocusPolicy())
+        #expect(await windows.focusRequests.isEmpty)
+    }
+
+    @Test
+    func `exact forced dismiss leaves focus and selector ownership to dialog service`() async throws {
+        let windows = EmptyRecordingWindowService()
+        let dialogs = PreparedDialogService()
+        dialogs.foregroundOutcome = .dispatchedUnverified(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let context = await MCPToolTestHelpers.makeContext(
+            windows: windows,
+            dialogs: dialogs)
+
+        let response = try await context.execute(
+            tool: DialogTool(context: context),
+            arguments: ToolArguments(raw: [
+                "action": "dismiss",
+                "force": true,
+                "pid": 89,
+                "window_id": 700,
+                "foreground": true,
+            ]))
+
+        #expect(!response.isError)
+        let request = try #require(dialogs.lastExactForcedDismissRequest)
+        #expect(request.target.processIdentifier == 89)
+        #expect(request.target.windowID == 700)
+        #expect(request.focus == DialogForegroundFocusPolicy())
         #expect(await windows.focusRequests.isEmpty)
     }
 
@@ -250,6 +280,7 @@ private final class PreparedDialogService: DialogServiceProtocol {
     var omitForegroundOutcome = false
     var lastInputAppHint: String?
     var lastExactInputRequest: DialogInputExecutionRequest?
+    var lastExactForcedDismissRequest: DialogForcedDismissExecutionRequest?
 
     func prepareDialogAction(_ request: DialogActionPreparationRequest) throws -> PreparedDialogActionReceipt {
         self.prepareCount += 1
@@ -336,6 +367,20 @@ private final class PreparedDialogService: DialogServiceProtocol {
             action: .dismiss,
             details: ["method": "escape"],
             outcome: self.omitForegroundOutcome ? nil : (self.foregroundOutcome ?? self.outcome))
+    }
+
+    func forceDismissDialog(_ request: DialogForcedDismissExecutionRequest) async throws -> DialogActionResult {
+        self.lastExactForcedDismissRequest = request
+        let targetReceipt = DesktopActionTargetReceipt(
+            processIdentifier: request.target.processIdentifier ?? 89,
+            processStartIdentity: 890,
+            windowID: request.target.windowID ?? 700)
+        return DialogActionResult(
+            success: true,
+            action: .dismiss,
+            details: ["method": "escape"],
+            outcome: self.omitForegroundOutcome ? nil : (self.foregroundOutcome ?? self.outcome),
+            targetReceipt: targetReceipt)
     }
 
     func listDialogElements(windowTitle _: String?, appName _: String?) async throws -> DialogElements {

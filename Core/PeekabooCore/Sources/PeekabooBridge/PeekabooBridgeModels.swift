@@ -132,6 +132,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case exactDialogClickButton
     case exactDialogDismiss
     case exactDialogEnterText
+    case exactDialogForceDismiss
     // Snapshots/cache
     case createSnapshot
     case storeDetectionResult
@@ -235,6 +236,9 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
         if version < PeekabooBridgeConstants.exactDialogInputExecutionVersion {
             compatible.remove(.exactDialogEnterText)
         }
+        if version < PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion {
+            compatible.remove(.exactDialogForceDismiss)
+        }
         return compatible
     }
 }
@@ -327,6 +331,8 @@ public enum PeekabooBridgeHostCapability {
     public static let explicitSnapshotPublication = "explicitSnapshotPublication"
     public static let browserConnectionReceipts = "browserConnectionReceipts"
     public static let exactDialogInputExecution = "exactDialogInputExecution"
+    public static let exactForcedDialogDismissExecution = "exactForcedDialogDismissExecution"
+    public static let dialogInputFocusPolicy = "dialogInputFocusPolicy"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {

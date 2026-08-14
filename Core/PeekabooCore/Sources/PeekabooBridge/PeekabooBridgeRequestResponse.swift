@@ -92,6 +92,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case exactDialogClickButton(PreparedDialogActionReceipt)
     case exactDialogDismiss(PreparedDialogActionReceipt)
     case exactDialogEnterText(DialogInputExecutionRequest)
+    case exactDialogForceDismiss(DialogForcedDismissExecutionRequest)
     case createSnapshot(PeekabooBridgeCreateSnapshotRequest)
     case storeDetectionResult(PeekabooBridgeStoreDetectionRequest)
     case getDetectionResult(PeekabooBridgeGetDetectionRequest)
@@ -202,6 +203,7 @@ extension PeekabooBridgeRequest {
         case .exactDialogClickButton: .exactDialogClickButton
         case .exactDialogDismiss: .exactDialogDismiss
         case .exactDialogEnterText: .exactDialogEnterText
+        case .exactDialogForceDismiss: .exactDialogForceDismiss
         case .createSnapshot: .createSnapshot
         case .storeDetectionResult: .storeDetectionResult
         case .getDetectionResult: .getDetectionResult

@@ -1314,6 +1314,8 @@ final class StubDialogService: DialogServiceProtocol {
     var dismissResult: DialogActionResult?
     var enterTextResult: DialogActionResult?
     private(set) var exactInputRequests: [DialogInputExecutionRequest] = []
+    var exactForcedDismissRequests: [DialogForcedDismissExecutionRequest] = []
+    var legacyInputFocusPolicies: [DialogForegroundFocusPolicy] = []
 
     private(set) var recordedButtonClicks: [(button: String, window: String?)] = []
     private(set) var clickFallbackRequests: [Bool] = []
