@@ -91,6 +91,22 @@ struct FocusUtilitiesTests {
     }
 
     @Test
+    func `parent focus cannot satisfy an attached dialog request`() {
+        #expect(FocusManagementService.isVerifiedParentWindowFocus(
+            targetWindowID: 541,
+            ownerPID: 65819,
+            focusedWindowID: 541,
+            frontmostPID: 65819,
+            hasAttachedDialog: false))
+        #expect(!FocusManagementService.isVerifiedParentWindowFocus(
+            targetWindowID: 541,
+            ownerPID: 65819,
+            focusedWindowID: 541,
+            frontmostPID: 65819,
+            hasAttachedDialog: true))
+    }
+
+    @Test
     func `focus verification accepts the retained structural sheet attached to the exact parent`() {
         let parent = self.dialogParentIdentity()
 

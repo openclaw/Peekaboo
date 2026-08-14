@@ -494,11 +494,12 @@ public final class FocusManagementService {
                 SystemIdentityResolver.processStartIdentity(ownerPID) == $0.parentIdentity.ownerProcessStartIdentity
             } ?? true
 
-            if !isMinimized, preparedGenerationMatches, Self.isVerifiedFocus(
+            if !isMinimized, preparedGenerationMatches, Self.isVerifiedParentWindowFocus(
                 targetWindowID: windowID,
                 ownerPID: ownerPID,
                 focusedWindowID: focusedWindowID,
-                frontmostPID: frontmostPID)
+                frontmostPID: frontmostPID,
+                hasAttachedDialog: attachedDialog != nil)
             {
                 return
             }
@@ -537,6 +538,20 @@ public final class FocusManagementService {
         frontmostPID: pid_t?) -> Bool
     {
         focusedWindowID == targetWindowID && frontmostPID == ownerPID
+    }
+
+    nonisolated static func isVerifiedParentWindowFocus(
+        targetWindowID: CGWindowID,
+        ownerPID: pid_t,
+        focusedWindowID: CGWindowID?,
+        frontmostPID: pid_t?,
+        hasAttachedDialog: Bool) -> Bool
+    {
+        !hasAttachedDialog && self.isVerifiedFocus(
+            targetWindowID: targetWindowID,
+            ownerPID: ownerPID,
+            focusedWindowID: focusedWindowID,
+            frontmostPID: frontmostPID)
     }
 
     nonisolated static func isVerifiedAttachedDialogFocus(
