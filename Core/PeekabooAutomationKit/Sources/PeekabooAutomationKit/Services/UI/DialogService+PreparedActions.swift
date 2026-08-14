@@ -324,27 +324,38 @@ extension DialogService {
     }
 
     func targetApplication(for selector: DialogTargetSelector) async throws -> ServiceApplicationInfo {
-        let application: ServiceApplicationInfo
-        if let processIdentifier = selector.processIdentifier {
-            application = try await self.applicationService.findApplication(
-                identifier: "PID:\(processIdentifier)")
-            guard application.processIdentifier == processIdentifier else {
-                throw self.targetUnavailable("The selected PID no longer identifies the same application.")
+        do {
+            let application: ServiceApplicationInfo
+            if let processIdentifier = selector.processIdentifier {
+                application = try await self.applicationService.findApplication(
+                    identifier: "PID:\(processIdentifier)")
+                guard application.processIdentifier == processIdentifier else {
+                    throw self.targetUnavailable("The selected PID no longer identifies the same application.")
+                }
+            } else if let identifier = selector.applicationIdentifier {
+                application = try await self.applicationService.findApplication(identifier: identifier)
+            } else if let windowID = selector.windowID,
+                      let handle = self.windowIdentityService.findWindow(
+                          byID: CGWindowID(windowID),
+                          messagingTimeout: self.targetedDialogSearchTimeout),
+                      let ownerPID = handle.element.pid()
+            {
+                application = try await self.applicationService.findApplication(
+                    identifier: "PID:\(ownerPID)")
+            } else {
+                throw self.targetUnavailable("The selected dialog window could not be resolved to one owner.")
             }
-        } else if let identifier = selector.applicationIdentifier {
-            application = try await self.applicationService.findApplication(identifier: identifier)
-        } else if let windowID = selector.windowID,
-                  let handle = self.windowIdentityService.findWindow(
-                      byID: CGWindowID(windowID),
-                      messagingTimeout: self.targetedDialogSearchTimeout),
-                  let ownerPID = handle.element.pid()
-        {
-            application = try await self.applicationService.findApplication(
-                identifier: "PID:\(ownerPID)")
-        } else {
-            throw self.targetUnavailable("The selected dialog window could not be resolved to one owner.")
+            return application
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch let error as PeekabooError {
+            switch error {
+            case .appNotFound, .ambiguousAppIdentifier, .windowNotFound:
+                throw self.targetUnavailable("Dialog target owner is unavailable: \(error.localizedDescription)")
+            default:
+                throw error
+            }
         }
-        return application
     }
 
     func filteredDialogWindows(

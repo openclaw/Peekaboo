@@ -9,6 +9,23 @@ import Testing
 @Suite("Exact dialog input contract")
 struct DialogExactInputContractTests {
     @Test
+    func `missing stale PID is a canonical target refusal before dispatch`() async throws {
+        let service = DialogService(applicationService: MissingDialogApplicationService())
+
+        do {
+            _ = try await service.targetedDialogCandidates(
+                target: DialogTargetSelector(processIdentifier: 42, windowID: 700))
+            Issue.record("Expected stale PID lookup to refuse")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+            #expect(failure.message.contains("Application 'PID:42' not found"))
+        }
+    }
+
+    @Test
     func `execution request round trips the exact selector and focus policy`() throws {
         let request = try DialogInputExecutionRequest(
             target: DialogTargetSelector(processIdentifier: 42, windowID: 700),
@@ -397,5 +414,56 @@ struct DialogExactInputContractTests {
                 ownerProcessIdentifier: 42,
                 ownerProcessStartIdentity: generation,
                 capturedBounds: bounds))
+    }
+}
+
+@MainActor
+private final class MissingDialogApplicationService: ApplicationServiceProtocol {
+    func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
+        fatalError("unused")
+    }
+
+    func findApplication(identifier: String) async throws -> ServiceApplicationInfo {
+        throw PeekabooError.appNotFound(identifier)
+    }
+
+    func listWindows(for _: String, timeout _: Float?) async throws -> UnifiedToolOutput<ServiceWindowListData> {
+        fatalError("unused")
+    }
+
+    func getFrontmostApplication() async throws -> ServiceApplicationInfo {
+        fatalError("unused")
+    }
+
+    func isApplicationRunning(identifier _: String) async -> Bool {
+        fatalError("unused")
+    }
+
+    func launchApplication(identifier _: String) async throws -> ServiceApplicationInfo {
+        fatalError("unused")
+    }
+
+    func activateApplication(identifier _: String) async throws {
+        fatalError("unused")
+    }
+
+    func quitApplication(identifier _: String, force _: Bool) async throws -> Bool {
+        fatalError("unused")
+    }
+
+    func hideApplication(identifier _: String) async throws {
+        fatalError("unused")
+    }
+
+    func unhideApplication(identifier _: String) async throws {
+        fatalError("unused")
+    }
+
+    func hideOtherApplications(identifier _: String) async throws {
+        fatalError("unused")
+    }
+
+    func showAllApplications() async throws {
+        fatalError("unused")
     }
 }
