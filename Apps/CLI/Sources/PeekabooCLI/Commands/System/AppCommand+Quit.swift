@@ -57,6 +57,7 @@ extension AppCommand {
                 var actionOutcomes: [DesktopActionOutcome?] = []
                 var caughtFailureHints: [String?] = []
                 for target in quitApps {
+                    try Task.checkCancellation()
                     if target.pid == self.resolvedRuntime.selectedRemoteHostProcessIdentifier {
                         throw PeekabooError.invalidInput(
                             "Cannot quit the daemon host executing this command; use a different runtime host"
@@ -76,6 +77,8 @@ extension AppCommand {
                         )
                         success = actionResult.payload
                         actionOutcomes.append(actionResult.outcome)
+                    } catch let cancellation as CancellationError {
+                        throw cancellation
                     } catch let failure as DesktopActionFailure {
                         success = false
                         actionOutcomes.append(failure.outcome)

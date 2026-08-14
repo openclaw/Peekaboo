@@ -10,6 +10,7 @@ final class OutcomeStubApplicationService: StubApplicationService, ApplicationSe
         unitCount: .one
     )
     var quitError: (any Error)?
+    private(set) var quitActionResultCallCount = 0
 
     func launchApplicationActionResult(
         request: ApplicationLaunchRequest
@@ -33,6 +34,7 @@ final class OutcomeStubApplicationService: StubApplicationService, ApplicationSe
     func quitApplicationActionResult(
         request: ApplicationQuitRequest
     ) async throws -> DesktopActionResult<Bool> {
+        self.quitActionResultCallCount += 1
         if let quitError {
             throw quitError
         }

@@ -580,6 +580,42 @@ struct ActionOutcomeCommandTests {
     }
 
     @Test
+    func `quit batch stops immediately when a legacy service cancels`() async throws {
+        let applications = [
+            AutomationTestFixtures.application(
+                processIdentifier: 42,
+                processStartIdentity: 7,
+                bundleIdentifier: "com.example.first",
+                name: "First Fixture",
+                isHiddenKnown: true,
+                activationPolicy: .regular
+            ),
+            AutomationTestFixtures.application(
+                processIdentifier: 43,
+                processStartIdentity: 8,
+                bundleIdentifier: "com.example.second",
+                name: "Second Fixture",
+                isHiddenKnown: true,
+                activationPolicy: .regular
+            ),
+        ]
+        let service = ReceiptlessBatchQuitApplicationService(
+            applications: applications,
+            errors: [CancellationError(), PeekabooError.commandFailed("must not run")]
+        )
+        let services = TestServicesFactory.makePeekabooServices(applications: service)
+
+        let result = try await InProcessCommandRunner.run(
+            ["app", "quit", "--all", "--json", "--no-remote"],
+            services: services
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(service.quitCallCount == 1)
+        #expect(!result.stdout.contains("results"))
+    }
+
+    @Test
     func `explicit snapshot refuses a second mutation after observe before retry outcome`() async throws {
         let automation = OutcomeStubAutomationService()
         automation.actionOutcome = .dispatchedUnverified(
@@ -1090,6 +1126,7 @@ struct ActionOutcomeCommandTests {
 @MainActor
 private final class ReceiptlessBatchQuitApplicationService: StubApplicationService {
     private var errors: [any Error]
+    private(set) var quitCallCount = 0
 
     init(applications: [ServiceApplicationInfo], errors: [any Error]) {
         self.errors = errors
@@ -1097,6 +1134,7 @@ private final class ReceiptlessBatchQuitApplicationService: StubApplicationServi
     }
 
     override func quitApplication(request _: ApplicationQuitRequest) async throws -> Bool {
+        self.quitCallCount += 1
         guard !self.errors.isEmpty else {
             Issue.record("Received more quit attempts than scripted errors")
             return false

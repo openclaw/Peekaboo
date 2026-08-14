@@ -226,6 +226,25 @@ struct MCPAppToolOutcomeTests {
 
     @Test
     @MainActor
+    func `quit all stops immediately when a legacy attempt cancels`() async throws {
+        let service = ScriptedQuitAllApplicationService(attempts: [
+            .cancellation,
+            .receiptlessFailure,
+        ])
+        let context = await MCPToolTestHelpers.makeContext(applications: service)
+
+        let response = try await AppTool(context: context).execute(arguments: ToolArguments(raw: [
+            "action": "quit",
+            "all": true,
+        ]))
+
+        #expect(response.isError)
+        #expect(service.attemptCount == 1)
+        #expect(!Self.responseText(response).contains("Quit 0 applications"))
+    }
+
+    @Test
+    @MainActor
     func `background launch confirmed no-change reports the app was already running`() async throws {
         let service = StubApplicationService()
         let outcome = DesktopActionOutcome.confirmedNoChange(route: .local)
@@ -377,6 +396,7 @@ private final class ScriptedQuitAllApplicationService: StubApplicationService {
     enum Attempt {
         case canonicalFailure(DesktopActionFailure)
         case receiptlessFailure
+        case cancellation
     }
 
     private let targets = [
@@ -398,6 +418,7 @@ private final class ScriptedQuitAllApplicationService: StubApplicationService {
             activationPolicy: .regular),
     ]
     private var attempts: [Attempt]
+    private(set) var attemptCount = 0
 
     init(attempts: [Attempt]) {
         self.attempts = attempts
@@ -413,6 +434,7 @@ private final class ScriptedQuitAllApplicationService: StubApplicationService {
     override func quitApplicationActionResult(
         request _: ApplicationQuitRequest) async throws -> DesktopActionResult<Bool>
     {
+        self.attemptCount += 1
         guard !self.attempts.isEmpty else {
             Issue.record("Received more quit attempts than scripted results")
             return DesktopActionResult(payload: false, outcome: nil)
@@ -422,6 +444,8 @@ private final class ScriptedQuitAllApplicationService: StubApplicationService {
             throw failure
         case .receiptlessFailure:
             throw PeekabooError.commandFailed("Legacy quit failed without a canonical receipt")
+        case .cancellation:
+            throw CancellationError()
         }
     }
 }

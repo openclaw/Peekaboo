@@ -259,6 +259,7 @@ extension AppToolActions {
         var failed = [String]()
         var outcomes = [DesktopActionOutcome?]()
         for app in targets {
+            try Task.checkCancellation()
             do {
                 let quitRequest = try Self.pinnedQuitRequest(for: app, force: request.force)
                 let result = try await self.service.quitApplicationResult(request: quitRequest)
@@ -269,6 +270,8 @@ extension AppToolActions {
                 } else {
                     failed.append(app.name)
                 }
+            } catch let cancellation as CancellationError {
+                throw cancellation
             } catch let failure as DesktopActionFailure {
                 outcomes.append(failure.outcome)
                 self.logger.error("Failed to quit \(app.name, privacy: .public): \(failure, privacy: .public)")
