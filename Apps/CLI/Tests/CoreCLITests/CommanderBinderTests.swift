@@ -1503,7 +1503,6 @@ extension CommanderBinderTests {
         let captureCommands: [any ParsableCommand.Type] = [
             SeeCommand.self,
             CaptureLiveCommand.self,
-            CaptureVideoCommand.self,
             CaptureActionCommand.self,
         ]
         for commandType in captureCommands {
@@ -1512,6 +1511,7 @@ extension CommanderBinderTests {
         }
 
         let nonCaptureCommands: [any ParsableCommand.Type] = [
+            CaptureVideoCommand.self,
             ClickCommand.self,
             ScrollCommand.self,
             TypeCommand.self,

@@ -116,7 +116,8 @@ peekaboo capture video /path/to/demo.mov --every 500ms --no-diff
   - `peekaboo capture video /path/demo.mov --sample-fps 2 --start 5s --video-out /tmp/demo.mp4` → ≥2 kept frames and MP4 written.
 
 ## Troubleshooting
-- Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`).
+- `capture video` reads local media and does not require Screen Recording, Accessibility, a Bridge host, or ScreenCaptureKit ownership. Permission and host troubleshooting below applies only to `capture live` and `capture action`.
+- For live/action capture, verify Screen Recording + Accessibility permissions (`peekaboo permissions status`).
 - In SSH, LaunchAgent, Codex, and other background launchd sessions, prefer a Bridge host with Screen Recording.
   Legacy screen/area capture now rejects wallpaper-only or redacted false-success frames instead of writing them as
   valid output. Use `--no-remote --capture-engine cg` only when the caller is in the active Aqua session and has TCC.

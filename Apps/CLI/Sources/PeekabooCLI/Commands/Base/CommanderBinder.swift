@@ -310,7 +310,6 @@ enum CommanderCLIBinder {
         }
         return
             commandType == CaptureLiveCommand.self ||
-            commandType == CaptureVideoCommand.self ||
             commandType == CaptureActionCommand.self
     }
 
