@@ -81,15 +81,19 @@ verify_release_binary_apple_events_policy() {
 verify_binary_artifact() {
     local binary_path="$1"
     local label="$2"
+    local require_online_notarization="${3:-$MAC_APP_NOTARIZE}"
+    local expected_source_commit="${4:-}"
     local version_output
     local provenance_json
     local source_commit
+    local provenance_status=0
     local binary_size
     local lipo_output
     local authority
     local team_id
 
     [ -x "$binary_path" ] || fail "$label binary missing or not executable: $binary_path"
+    require_command lipo
     binary_size=$(stat -f%z "$binary_path")
     (( binary_size > 1000000 )) || fail "$label binary is unexpectedly small: $binary_size bytes"
     file "$binary_path" | grep -q 'Mach-O' || fail "$label binary is not Mach-O: $binary_path"
@@ -106,18 +110,16 @@ verify_binary_artifact() {
         fail "$label signer mismatch: expected '$CLI_SIGN_IDENTITY', got '$authority'"
     [ "$team_id" = "$CLI_SIGN_TEAM_ID" ] ||
         fail "$label TeamIdentifier mismatch: expected '$CLI_SIGN_TEAM_ID', got '$team_id'"
-    if [ "$MAC_APP_NOTARIZE" = true ]; then
+    if [ "$require_online_notarization" = true ]; then
         codesign --verify --strict --check-notarization -R=notarized --verbose=2 "$binary_path"
     fi
 
-    if command -v lipo >/dev/null 2>&1; then
-        lipo_output=$(lipo -info "$binary_path")
-        if [ "$UNIVERSAL" = true ]; then
-            printf '%s\n' "$lipo_output" | grep -q 'x86_64' || fail "$label binary is missing x86_64 slice"
-            printf '%s\n' "$lipo_output" | grep -q 'arm64' || fail "$label binary is missing arm64 slice"
-        else
-            printf '%s\n' "$lipo_output" | grep -q 'arm64' || fail "$label binary is missing arm64 slice"
-        fi
+    lipo_output=$(lipo -archs "$binary_path")
+    if [ "$UNIVERSAL" = true ]; then
+        case " $lipo_output " in *" x86_64 "*) ;; *) fail "$label binary is missing x86_64 slice" ;; esac
+        case " $lipo_output " in *" arm64 "*) ;; *) fail "$label binary is missing arm64 slice" ;; esac
+    else
+        case " $lipo_output " in *" arm64 "*) ;; *) fail "$label binary is missing arm64 slice" ;; esac
     fi
 
     version_output=$("$binary_path" --version)
@@ -136,6 +138,16 @@ verify_binary_artifact() {
     ')
     peekaboo_is_exact_source_commit "$source_commit" ||
         fail "$label has no exact source commit in version JSON"
+    if [ -n "$expected_source_commit" ]; then
+        peekaboo_validate_artifact_source_commit \
+            "$PROJECT_ROOT" "$source_commit" "$expected_source_commit" || provenance_status=$?
+        case "$provenance_status" in
+            0) ;;
+            4) fail "$label release checkout changed or became dirty during verification" ;;
+            5) fail "$label source mismatch: expected $expected_source_commit, got $source_commit" ;;
+            *) fail "$label source provenance validation failed (status $provenance_status)" ;;
+        esac
+    fi
 }
 
 notarize_cli_binary() {
@@ -386,6 +398,8 @@ UNIVERSAL=true
 INCLUDE_MAC_APP=true
 MAC_APP_NOTARIZE=true
 MAC_APP_APPCAST=true
+REUSE_BUILT_CLI=false
+EXPECTED_REUSE_SOURCE_COMMIT=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -399,6 +413,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --publish-npm)
             PUBLISH_NPM=true
+            shift
+            ;;
+        --reuse-built-cli)
+            REUSE_BUILT_CLI=true
             shift
             ;;
         --arm64-only)
@@ -427,6 +445,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --skip-checks          Skip pre-release checks"
             echo "  --create-github-release Create draft GitHub release"
             echo "  --publish-npm          Publish to npm after building"
+            echo "  --reuse-built-cli      Reuse an exact-HEAD signed/notarized CLI after full verification"
             echo "  --arm64-only           Build arm64-only binary"
             echo "  --universal            Build universal (arm64+x86_64) binary (default)"
             echo "  --skip-mac-app         Skip Peekaboo.app zip/DMG, Sparkle appcast, and app checksums"
@@ -441,6 +460,12 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [ "$REUSE_BUILT_CLI" = true ]; then
+    require_command git
+    EXPECTED_REUSE_SOURCE_COMMIT=$(peekaboo_require_source_commit "$PROJECT_ROOT") ||
+        fail "Cannot reuse a CLI unless the full release checkout is clean"
+fi
 
 # Step 1: Run pre-release checks (unless skipped)
 if [ "$SKIP_CHECKS" = false ]; then
@@ -486,23 +511,34 @@ else
     CLI_TARBALL_NAME="peekaboo-macos-arm64.tar.gz"
 fi
 
-# Keep CLI signing inside the same managed Foundation keychain lane as the app and DMG.
-# A full release can already be inside codesign-run; avoid taking its release lock twice.
-if [ -n "${CODESIGN_KEYCHAIN:-}" ]; then
-    BUILD_COMMAND=(pnpm run "$BUILD_SCRIPT")
+if [ "$REUSE_BUILT_CLI" = true ]; then
+    echo -e "\n${BLUE}Reusing a fully verified CLI from exact HEAD...${NC}"
+    peekaboo_verify_source_commit "$PROJECT_ROOT" "$EXPECTED_REUSE_SOURCE_COMMIT" ||
+        fail "Release checkout changed before reusable CLI verification"
+    # All non-executing safety gates run inside verify_binary_artifact before
+    # the first --version invocation. Reuse always requires online notarization,
+    # even when the app build itself was explicitly configured not to notarize.
+    verify_binary_artifact \
+        "$PROJECT_ROOT/peekaboo" "Reused CLI" true "$EXPECTED_REUSE_SOURCE_COMMIT"
 else
-    BUILD_COMMAND=("$PROJECT_ROOT/scripts/mac-release" codesign-run -- pnpm run "$BUILD_SCRIPT")
+    # Keep CLI signing inside the same managed Foundation keychain lane as the app and DMG.
+    # A full release can already be inside codesign-run; avoid taking its release lock twice.
+    if [ -n "${CODESIGN_KEYCHAIN:-}" ]; then
+        BUILD_COMMAND=(pnpm run "$BUILD_SCRIPT")
+    else
+        BUILD_COMMAND=("$PROJECT_ROOT/scripts/mac-release" codesign-run -- pnpm run "$BUILD_SCRIPT")
+    fi
+    if ! MAC_RELEASE_CODESIGN_IDENTITY="$CLI_SIGN_IDENTITY" "${BUILD_COMMAND[@]}"; then
+        echo -e "${RED}❌ Swift build failed!${NC}"
+        exit 1
+    fi
+    verify_release_binary_entitlements "$PROJECT_ROOT/peekaboo" "Built CLI"
+    if [ "$MAC_APP_NOTARIZE" = true ]; then
+        echo -e "\n${BLUE}Submitting standalone CLI to Apple notarization...${NC}"
+        notarize_cli_binary "$PROJECT_ROOT/peekaboo"
+    fi
+    verify_binary_artifact "$PROJECT_ROOT/peekaboo" "Built CLI"
 fi
-if ! MAC_RELEASE_CODESIGN_IDENTITY="$CLI_SIGN_IDENTITY" "${BUILD_COMMAND[@]}"; then
-    echo -e "${RED}❌ Swift build failed!${NC}"
-    exit 1
-fi
-verify_release_binary_entitlements "$PROJECT_ROOT/peekaboo" "Built CLI"
-if [ "$MAC_APP_NOTARIZE" = true ]; then
-    echo -e "\n${BLUE}Submitting standalone CLI to Apple notarization...${NC}"
-    notarize_cli_binary "$PROJECT_ROOT/peekaboo"
-fi
-verify_binary_artifact "$PROJECT_ROOT/peekaboo" "Built CLI"
 
 # Step 5: Create release artifacts
 echo -e "\n${BLUE}Creating release artifacts...${NC}"

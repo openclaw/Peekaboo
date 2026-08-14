@@ -56,10 +56,20 @@ rg -Fq 'native_only_verify_macho' "$ROOT_DIR/scripts/verify-native-only-app.sh"
 rg -Fq 'verify-native-only-app.sh' "$ROOT_DIR/scripts/release-macos-app.sh"
 rg -Fq 'verify-swift-runtime-libraries.sh' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq "grep -Fq 'unknown'" "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq -- '--reuse-built-cli' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'peekaboo_validate_artifact_source_commit' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq "verify_binary_artifact \\" "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq 'libswiftCompatibility*.dylib' "$ROOT_DIR/package.json"
 rg -Fq 'libswiftCompatibility*.dylib' "$ROOT_DIR/homebrew/peekaboo.rb"
 rg -Fq -- '--options runtime' "$ROOT_DIR/scripts/copy-swift-runtime-libraries.sh"
 rg -Fq 'MAC_RELEASE_CODESIGN_TEAM_ID' "$ROOT_DIR/scripts/verify-swift-runtime-libraries.sh"
+rg -Fq "MAC_RELEASE_SPARKLE_OP_REF='op://Molty/Peekaboo Sparkle EdDSA/private key'" \
+  "$ROOT_DIR/.mac-release.env"
+rg -Fq 'MAC_RELEASE_SPARKLE_OP_USE_SERVICE_ACCOUNT=1' "$ROOT_DIR/.mac-release.env"
+if rg -n 'Dropbox|MAC_RELEASE_SIGNING_KEY_FILE' "$ROOT_DIR/.mac-release.env"; then
+  printf 'Stale Sparkle file fallback remains in the release manifest\n' >&2
+  exit 1
+fi
 
 for timestamp_surface in \
   "$ROOT_DIR/scripts/build-swift-arm.sh" \

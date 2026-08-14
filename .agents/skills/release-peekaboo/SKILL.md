@@ -19,8 +19,9 @@ Use `$one-password`, `$browser-use`, `$npm`, `$autoreview`, and repo `AGENTS.md`
 
 Sparkle key:
 
-- Repo `.mac-release.env` has the current fallback.
-- Do not set `SPARKLE_PRIVATE_KEY_FILE` for normal releases.
+- Repo `.mac-release.env` points at `op://Molty/Peekaboo Sparkle EdDSA/private key`.
+- The shared release helper resolves that exact item with the prompt-free service account, verifies the public key,
+  and owns its mode-0600 temporary file cleanup. Do not set `SPARKLE_PRIVATE_KEY_FILE` for normal releases.
 
 Developer ID release keychain:
 
@@ -104,6 +105,11 @@ op run --env-file "$ENVFILE" -- \
 
 The script builds universal CLI, npm package, signed/notarized app zip and branded DMG, appcast, checksums, draft GitHub release, and npm publish.
 Use a non-login shell: profile exports can replace current 1Password ASC IDs with stale values while leaving the current `.p8`, producing a misleading `401`.
+
+When resuming after a release interruption with a CLI already built from the same clean `HEAD`, add
+`--reuse-built-cli`. The script verifies the full signer, entitlement, native-only, runtime-library, architecture,
+online-notarization, version, and exact-source contract before packaging; it never executes the candidate before the
+non-executing safety checks finish.
 
 Every notarized release payload must sign with `Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)`, not a personal or development identity. This includes Peekaboo.app, nested helpers and frameworks, the standalone and npm CLIs, and the DMG. The tracked release manifest resolves the shared passwordless signing keychain from the `OpenClaw-Core` vault; never copy the keychain path or signing material into the repository. Peekaboo 3.8+ bridge hosts keep accepting transition-era personal-team clients for staged upgrades, but Foundation-signed 3.9.6+ CLIs require a 3.8+ host.
 

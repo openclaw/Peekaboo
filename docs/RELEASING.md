@@ -31,6 +31,9 @@ when it is left to choose its own endpoint, even while the canonical TSA is reac
 Notarization resolves the three App Store Connect API fields from the canonical Molty release item, validates them
 with `notarytool history`, and submits with S3 acceleration disabled. The tracked manifest clears both supported
 keychain-profile variables so a stale value inherited from the caller cannot override the current release item.
+Sparkle signing resolves `Peekaboo Sparkle EdDSA` from Molty through the shared release helper's prompt-free service
+account path. The helper writes a mode-0600 temporary key, verifies its public key against the tracked
+`SUPublicEDKey`, and removes it on success or failure; releases do not use login-keychain or Dropbox fallbacks.
 
 ## 1. Prepare
 
@@ -97,6 +100,12 @@ publish npm. The signing identity must be:
 ```text
 Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)
 ```
+
+If a fully signed and notarized CLI was already built from the current clean checkout, pass `--reuse-built-cli` to
+avoid rebuilding it. Reuse fails closed unless the full Git porcelain status is clean, the candidate has the expected
+Foundation signer, safe entitlements, native-only surface, complete runtime libraries and architectures, online
+notarization, and an embedded source commit exactly equal to `HEAD`. All non-executing checks complete before the
+candidate's first `--version` invocation.
 
 The app, every nested Mach-O payload, standalone CLI archive, npm CLI archive, and DMG must report the Foundation authority and Team ID `FWJYW4S8P8`. Online verification must pass `codesign --verify --strict --check-notarization -R=notarized` for the CLI, extracted app, and DMG.
 
