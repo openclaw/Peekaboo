@@ -294,7 +294,14 @@ mkdir -p "$(dirname "$DMG_PATH")"
 rm -f "$DMG_PATH"
 
 log "Creating branded DMG"
-uv --no-config run --locked "$DMGBUILD_RUNNER" \
+env \
+  -u APP_STORE_CONNECT_API_KEY_P8 \
+  -u APP_STORE_CONNECT_KEY_ID \
+  -u APP_STORE_CONNECT_ISSUER_ID \
+  -u NPM_TOKEN \
+  -u OP_SERVICE_ACCOUNT_TOKEN \
+  -u MOLTY_OP_SERVICE_ACCOUNT_TOKEN \
+  uv --no-config run --locked "$DMGBUILD_RUNNER" \
   --no-hidpi \
   --detach-retries 5 \
   --settings "$DMGBUILD_SETTINGS" \

@@ -121,6 +121,16 @@ cat >"$FAKE_BIN/uv" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+for secret_name in \
+  APP_STORE_CONNECT_API_KEY_P8 \
+  APP_STORE_CONNECT_KEY_ID \
+  APP_STORE_CONNECT_ISSUER_ID \
+  NPM_TOKEN \
+  OP_SERVICE_ACCOUNT_TOKEN \
+  MOLTY_OP_SERVICE_ACCOUNT_TOKEN; do
+  [[ -z "${!secret_name+x}" ]] || exit 89
+done
+
 [[ "$1" == "--no-config" ]]
 [[ "$2" == "run" ]]
 [[ "$3" == "--locked" ]]
@@ -166,6 +176,12 @@ PEEKABOO_TEST_DETACH_COUNTER="$COUNTER_FILE" \
 
 PEEKABOO_TEST_DETACH_COUNTER="$COUNTER_FILE" \
 PEEKABOO_TEST_UV_ARGS="$UV_ARGS_FILE" \
+APP_STORE_CONNECT_API_KEY_P8=fixture-p8 \
+APP_STORE_CONNECT_KEY_ID=fixture-key-id \
+APP_STORE_CONNECT_ISSUER_ID=fixture-issuer \
+NPM_TOKEN=fixture-npm-token \
+OP_SERVICE_ACCOUNT_TOKEN=fixture-op-token \
+MOLTY_OP_SERVICE_ACCOUNT_TOKEN=fixture-old-op-token \
   PATH="$FAKE_BIN:$PATH" \
   "$ROOT_DIR/scripts/create-release-dmg.sh" \
   --version 3.9.5 \
