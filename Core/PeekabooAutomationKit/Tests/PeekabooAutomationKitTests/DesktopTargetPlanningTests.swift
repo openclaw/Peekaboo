@@ -23,6 +23,58 @@ struct DesktopTargetPlanningTests {
     }
 
     @Test
+    func `exact-window evidence requires immutable captured bounds`() {
+        let bounds = CGRect(x: 10, y: 20, width: 640, height: 480)
+        let missingCapturedBounds = AutomationTestFixtures.windowIdentity(bounds: nil)
+
+        #expect(throws: DesktopTargetIdentityError.incompleteExactWindow) {
+            _ = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
+                .init(
+                    windowID: missingCapturedBounds.windowID,
+                    windowIdentity: missingCapturedBounds,
+                    windowBounds: bounds),
+            ])
+        }
+    }
+
+    @Test
+    func `exact-window evidence requires external bounds to equal immutable captured bounds`() {
+        let bounds = CGRect(x: 10, y: 20, width: 640, height: 480)
+        let window = AutomationTestFixtures.windowIdentity(bounds: bounds)
+
+        #expect(throws: DesktopTargetIdentityError.contradictoryWindowBounds) {
+            _ = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
+                .init(
+                    windowID: window.windowID,
+                    windowIdentity: window,
+                    windowBounds: bounds.offsetBy(dx: 1, dy: 0)),
+            ])
+        }
+    }
+
+    @Test(arguments: [0, -1, Int(UInt32.max) + 1])
+    func `exact-window evidence rejects invalid window identifiers`(_ windowID: Int) {
+        let bounds = CGRect(x: 10, y: 20, width: 640, height: 480)
+        let window = AutomationTestFixtures.windowIdentity(windowID: windowID, bounds: bounds)
+
+        #expect(throws: DesktopTargetIdentityError.invalidWindowIdentifier) {
+            _ = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
+                .init(windowID: windowID, windowIdentity: window, windowBounds: bounds),
+            ])
+        }
+    }
+
+    @Test
+    func `service-window adapter accepts only a complete valid exact-window receipt`() throws {
+        let window = AutomationTestFixtures.window()
+
+        let exactWindow = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.exactWindow(from: window)
+
+        #expect(exactWindow.identity == window.mutationIdentity)
+        #expect(exactWindow.bounds == window.bounds)
+    }
+
+    @Test
     func `stable window coalescing ignores minimized state`() throws {
         let bounds = CGRect(x: 10, y: 20, width: 640, height: 480)
         let visible = AutomationTestFixtures.windowIdentity(bounds: bounds, isMinimized: false)

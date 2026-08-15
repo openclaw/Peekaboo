@@ -152,7 +152,14 @@ enum KeyboardDeliverySupport {
             let detail = matches.isEmpty ? "no matching window" : "multiple matching windows"
             throw ValidationError("Could not resolve one exact background keyboard target: \(detail).")
         }
-        return try UIAutomationTarget.ExactWindow(window: window)
+        do {
+            return try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.exactWindow(from: window)
+        } catch {
+            throw ValidationError(
+                "The selected window has no valid process-generation, window ID, and capture-bounds receipt. " +
+                    "Capture fresh UI state."
+            )
+        }
     }
 
     private static func resolveSelectedProcessIdentity(

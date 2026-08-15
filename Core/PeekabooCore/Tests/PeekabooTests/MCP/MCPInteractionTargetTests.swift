@@ -1,4 +1,7 @@
+import CoreGraphics
 import PeekabooAutomation
+import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundationTestSupport
 import TachikomaMCP
 import Testing
@@ -50,6 +53,67 @@ struct MCPInteractionTargetTests {
                 applications: context.applications,
                 windows: context.windows)
         }
+    }
+
+    @MainActor
+    @Test
+    func `background keyboard window adapter enforces complete immutable receipts`() async throws {
+        let processIdentity = AutomationTestFixtures.processIdentity(
+            processIdentifier: 4242,
+            processStartIdentity: 71)
+        let bounds = CGRect(x: 10, y: 20, width: 640, height: 480)
+        let applications = MockApplicationService(applications: [AutomationTestFixtures.application(
+            processIdentifier: processIdentity.processIdentifier,
+            processStartIdentity: processIdentity.processStartIdentity,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")])
+        let target = try Self.makeTarget(Selectors(
+            app: "Editor",
+            pid: nil,
+            windowTitle: nil,
+            windowIndex: nil,
+            windowID: 42))
+        let malformedWindows = [
+            Self.window(
+                windowID: 42,
+                processIdentity: processIdentity,
+                bounds: bounds,
+                capturedBounds: nil),
+            Self.window(
+                windowID: 42,
+                processIdentity: processIdentity,
+                bounds: bounds,
+                capturedBounds: bounds.offsetBy(dx: 1, dy: 0)),
+            Self.window(
+                windowID: 0,
+                processIdentity: processIdentity,
+                bounds: bounds,
+                capturedBounds: bounds),
+            Self.window(
+                windowID: Int(UInt32.max) + 1,
+                processIdentity: processIdentity,
+                bounds: bounds,
+                capturedBounds: bounds),
+        ]
+
+        for window in malformedWindows {
+            await #expect(throws: MCPInteractionTargetError.backgroundWindowTargetMismatch) {
+                _ = try await target.requireBackgroundKeyboardTarget(
+                    applications: applications,
+                    windows: ReceiptWindowService(window: window))
+            }
+        }
+
+        let valid = Self.window(
+            windowID: 42,
+            processIdentity: processIdentity,
+            bounds: bounds,
+            capturedBounds: bounds)
+        let resolved = try await target.requireBackgroundKeyboardTarget(
+            applications: applications,
+            windows: ReceiptWindowService(window: valid))
+        #expect(resolved.exactWindow?.identity == valid.mutationIdentity)
+        #expect(resolved.exactWindow?.bounds == bounds)
     }
 
     enum InvalidConsumerFixture: CaseIterable, Sendable {
@@ -232,5 +296,45 @@ struct MCPInteractionTargetTests {
             windowTitle: selectors.hasWindowTitle ? "Main" : nil,
             windowIndex: selectors.hasWindowIndex ? 2 : nil,
             windowID: selectors.hasWindowID ? 7 : nil))
+    }
+
+    private static func window(
+        windowID: Int,
+        processIdentity: ApplicationProcessIdentity,
+        bounds: CGRect,
+        capturedBounds: CGRect?) -> ServiceWindowInfo
+    {
+        ServiceWindowInfo(
+            windowID: windowID,
+            title: "Document",
+            bounds: bounds,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: windowID,
+                ownerProcessIdentifier: processIdentity.processIdentifier,
+                ownerProcessStartIdentity: processIdentity.processStartIdentity,
+                capturedBounds: capturedBounds))
+    }
+}
+
+private actor ReceiptWindowService: WindowManagementServiceProtocol {
+    let window: ServiceWindowInfo
+
+    init(window: ServiceWindowInfo) {
+        self.window = window
+    }
+
+    func closeWindow(target _: WindowTarget) async throws {}
+    func minimizeWindow(target _: WindowTarget) async throws {}
+    func maximizeWindow(target _: WindowTarget) async throws {}
+    func moveWindow(target _: WindowTarget, to _: CGPoint) async throws {}
+    func resizeWindow(target _: WindowTarget, to _: CGSize) async throws {}
+    func setWindowBounds(target _: WindowTarget, bounds _: CGRect) async throws {}
+    func focusWindow(target _: WindowTarget) async throws {}
+    func listWindows(target _: WindowTarget) async throws -> [ServiceWindowInfo] {
+        [self.window]
+    }
+
+    func getFocusedWindow() async throws -> ServiceWindowInfo? {
+        nil
     }
 }

@@ -1,3 +1,4 @@
+import Commander
 import CoreGraphics
 import Foundation
 import PeekabooCore
@@ -115,7 +116,7 @@ struct TargetedInteractionDefaultDeliveryTests {
     }
 
     @Test
-    func `background keyboard delivery rejects window selectors instead of collapsing to pid`() async throws {
+    func `unresolved background window selectors refuse instead of collapsing to pid`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
             bundleIdentifier: "com.apple.TextEdit",
@@ -134,7 +135,7 @@ struct TargetedInteractionDefaultDeliveryTests {
         ] {
             let result = try await InProcessCommandRunner.run(arguments + ["--no-remote"], services: services)
             #expect(result.exitStatus != 0, "Expected unsafe window targeting to fail: \(arguments)")
-            #expect(result.combinedOutput.contains("cannot safely target a specific window"))
+            #expect(result.combinedOutput.contains("no matching window"))
         }
         let press = try await InProcessCommandRunner.run(
             [
@@ -143,7 +144,7 @@ struct TargetedInteractionDefaultDeliveryTests {
             services: services
         )
         #expect(press.exitStatus != 0)
-        #expect(press.combinedOutput.contains("require explicit foreground consent"))
+        #expect(press.combinedOutput.contains("no matching window"))
 
         #expect(automation.targetedTypeActionsCalls.isEmpty)
         #expect(automation.targetedHotkeyCalls.isEmpty)
@@ -152,7 +153,7 @@ struct TargetedInteractionDefaultDeliveryTests {
     }
 
     @Test
-    func `snapshot process receipt keeps type pid routed while raw press refuses`() async throws {
+    func `snapshot exact-window evidence without captured bounds refuses keyboard delivery`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
             processStartIdentity: 7,
@@ -193,18 +194,75 @@ struct TargetedInteractionDefaultDeliveryTests {
             ["type", "hello", "--snapshot", snapshotId, "--no-auto-focus", "--no-remote"],
             services: context.services
         )
-        #expect(type.exitStatus == 0)
+        #expect(type.exitStatus != 0)
         let press = try await InProcessCommandRunner.run(
             ["press", "return", "--snapshot", snapshotId, "--no-auto-focus", "--no-remote"],
             services: context.services
         )
         #expect(press.exitStatus != 0)
-        #expect(press.combinedOutput.contains("require explicit foreground consent"))
+        #expect(press.combinedOutput.contains("no exact process-generation, window, and bounds receipt"))
 
-        #expect(context.automation.targetedTypeActionsCalls.count == 1)
-        #expect(context.automation.targetedTypeActionsCalls.allSatisfy { $0.targetProcessIdentifier == 2468 })
+        #expect(context.automation.targetedTypeActionsCalls.isEmpty)
         #expect(context.automation.targetedHotkeyCalls.isEmpty)
         #expect(context.automation.hotkeyCalls.isEmpty)
+    }
+
+    @Test
+    func `CLI keyboard receipt adapter accepts only complete immutable exact-window evidence`() async throws {
+        let processIdentifier: pid_t = 2468
+        let processStartIdentity: UInt64 = 7
+        let bounds = CGRect(x: 10, y: 20, width: 640, height: 480)
+        let application = ServiceApplicationInfo(
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit"
+        )
+        let context = TestServicesFactory.makeAutomationTestContext(
+            applications: StubApplicationService(applications: [application])
+        )
+        let malformedReceipts: [(windowID: Int, capturedBounds: CGRect?)] = [
+            (42, nil),
+            (42, bounds.offsetBy(dx: 1, dy: 0)),
+            (0, bounds),
+            (Int(UInt32.max) + 1, bounds),
+        ]
+
+        for malformed in malformedReceipts {
+            let snapshotID = try await self.storeKeyboardSnapshot(
+                in: context.services,
+                processIdentifier: processIdentifier,
+                processStartIdentity: processStartIdentity,
+                windowID: malformed.windowID,
+                windowBounds: bounds,
+                capturedBounds: malformed.capturedBounds
+            )
+
+            await #expect(throws: ValidationError.self) {
+                _ = try await KeyboardDeliverySupport.requireBackgroundKeyboardTarget(
+                    target: InteractionTargetOptions(),
+                    snapshotId: snapshotID,
+                    services: context.services
+                )
+            }
+        }
+
+        let validSnapshotID = try await self.storeKeyboardSnapshot(
+            in: context.services,
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity,
+            windowID: 42,
+            windowBounds: bounds,
+            capturedBounds: bounds
+        )
+        let target = try await KeyboardDeliverySupport.requireBackgroundKeyboardTarget(
+            target: InteractionTargetOptions(),
+            snapshotId: validSnapshotID,
+            services: context.services
+        )
+        #expect(target.exactWindow?.identity.windowID == 42)
+        #expect(target.exactWindow?.identity.capturedBounds == bounds)
+        #expect(target.exactWindow?.bounds == bounds)
     }
 
     @Test
@@ -219,6 +277,7 @@ struct TargetedInteractionDefaultDeliveryTests {
             applications: StubApplicationService(applications: [app])
         )
         let snapshotId = try await context.snapshots.createSnapshot()
+        let bounds = CGRect(x: 10, y: 20, width: 640, height: 480)
         try await context.snapshots.storeDetectionResult(
             snapshotId: snapshotId,
             result: ElementDetectionResult(
@@ -234,10 +293,12 @@ struct TargetedInteractionDefaultDeliveryTests {
                         applicationBundleId: "com.apple.TextEdit",
                         applicationProcessId: 2468,
                         windowID: 42,
+                        windowBounds: bounds,
                         windowMutationIdentity: WindowMutationIdentity(
                             windowID: 42,
                             ownerProcessIdentifier: 2468,
-                            ownerProcessStartIdentity: 7
+                            ownerProcessStartIdentity: 7,
+                            capturedBounds: bounds
                         )
                     )
                 )
@@ -253,7 +314,7 @@ struct TargetedInteractionDefaultDeliveryTests {
         )
 
         #expect(result.exitStatus != 0)
-        #expect(result.combinedOutput.contains("changed process generation"))
+        #expect(result.combinedOutput.contains("do not identify the same process generation"))
         #expect(context.automation.targetedTypeActionsCalls.isEmpty)
     }
 
@@ -285,13 +346,13 @@ struct TargetedInteractionDefaultDeliveryTests {
             services: context.services
         )
         #expect(type.exitStatus != 0)
-        #expect(type.combinedOutput.contains("no capture-time process-generation receipt"))
+        #expect(type.combinedOutput.contains("no exact process-generation, window, and bounds receipt"))
         let press = try await InProcessCommandRunner.run(
             ["press", "return", "--snapshot", snapshotId, "--no-auto-focus", "--no-remote"],
             services: context.services
         )
         #expect(press.exitStatus != 0)
-        #expect(press.combinedOutput.contains("require explicit foreground consent"))
+        #expect(press.combinedOutput.contains("no exact process-generation, window, and bounds receipt"))
 
         #expect(context.automation.targetedTypeActionsCalls.isEmpty)
         #expect(context.automation.targetedHotkeyCalls.isEmpty)
@@ -319,7 +380,7 @@ struct TargetedInteractionDefaultDeliveryTests {
         )
 
         #expect(result.exitStatus != 0)
-        #expect(result.combinedOutput.contains("does not identify a target process"))
+        #expect(result.combinedOutput.contains("no exact process-generation, window, and bounds receipt"))
         #expect(context.automation.typeActionsCalls.isEmpty)
         #expect(context.automation.targetedTypeActionsCalls.isEmpty)
     }
@@ -350,6 +411,11 @@ struct TargetedInteractionDefaultDeliveryTests {
         )
         let services = TestServicesFactory.makePeekabooServices(
             applications: applications,
+            clipboard: clipboard,
+            automation: automation
+        )
+        let clickServices = TestServicesFactory.makePeekabooServices(
+            applications: applications,
             windows: StubWindowService(windowsByApp: [app.name: [window]]),
             clipboard: clipboard,
             automation: automation
@@ -359,7 +425,7 @@ struct TargetedInteractionDefaultDeliveryTests {
         try await self.assertPressDefaultsToRefusal(services: services, automation: automation)
         try await self.assertPasteDefaultsToBackground(services: services, automation: automation)
         try await self.assertClickDefaultsToBackground(
-            services: services,
+            services: clickServices,
             automation: automation,
             targetWindow: window
         )
@@ -456,6 +522,15 @@ struct TargetedInteractionDefaultDeliveryTests {
                         windowID: targetWindow.windowID,
                         windowBounds: targetWindow.bounds,
                         windowMutationIdentity: targetWindow.mutationIdentity
+                    ),
+                    truncationInfo: nil,
+                    captureCoordinateContext: CaptureCoordinateContext(
+                        metadata: CaptureMetadata(
+                            size: targetWindow.bounds.size,
+                            mode: .window,
+                            windowInfo: targetWindow
+                        ),
+                        referenceID: snapshotId
                     )
                 )
             )
@@ -468,7 +543,7 @@ struct TargetedInteractionDefaultDeliveryTests {
             services: services
         )
 
-        #expect(result.exitStatus == 0)
+        #expect(result.exitStatus == 0, "Unexpected click refusal: \(result.combinedOutput)")
         let call = try #require(automation.targetedClickCalls.last)
         #expect(call.targetProcessIdentifier == 2468)
         #expect(call.targetWindowID == targetWindow.windowID)
@@ -483,6 +558,46 @@ struct TargetedInteractionDefaultDeliveryTests {
             as: CodableJSONResponse<ClickDeliveryPayload>.self
         )
         #expect(payload.data.deliveryMode == "background")
+    }
+
+    private func storeKeyboardSnapshot(
+        in services: PeekabooServices,
+        processIdentifier: pid_t,
+        processStartIdentity: UInt64,
+        windowID: Int,
+        windowBounds: CGRect,
+        capturedBounds: CGRect?
+    ) async throws -> String {
+        let snapshotID = try await services.snapshots.createSnapshot()
+        let identity = WindowMutationIdentity(
+            windowID: windowID,
+            ownerProcessIdentifier: processIdentifier,
+            ownerProcessStartIdentity: processStartIdentity,
+            capturedBounds: capturedBounds
+        )
+        try await services.snapshots.storeDetectionResult(
+            snapshotId: snapshotID,
+            result: ElementDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: "/tmp/keyboard-receipt.png",
+                elements: DetectedElements(),
+                metadata: DetectionMetadata(
+                    detectionTime: 0,
+                    elementCount: 0,
+                    method: "stub",
+                    windowContext: WindowContext(
+                        applicationName: "TextEdit",
+                        applicationBundleId: "com.apple.TextEdit",
+                        applicationProcessId: processIdentifier,
+                        windowTitle: "Document",
+                        windowID: windowID,
+                        windowBounds: windowBounds,
+                        windowMutationIdentity: identity
+                    )
+                )
+            )
+        )
+        return snapshotID
     }
 }
 

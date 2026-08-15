@@ -422,7 +422,11 @@ struct MCPInteractionTarget {
         guard matches.count == 1, let window = matches.first else {
             throw MCPInteractionTargetError.backgroundWindowTargetAmbiguous
         }
-        return try UIAutomationTarget.ExactWindow(window: window)
+        do {
+            return try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.exactWindow(from: window)
+        } catch {
+            throw MCPInteractionTargetError.backgroundWindowTargetMismatch
+        }
     }
 
     func focusIfRequested(windows: any WindowManagementServiceProtocol, onlyWhenTargeted: Bool) async throws

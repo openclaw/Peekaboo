@@ -89,6 +89,7 @@ public struct DesktopTargetIdentity: Equatable, Sendable {
 
 public enum DesktopTargetIdentityError: LocalizedError, Equatable, Sendable {
     case invalidProcessIdentifier
+    case invalidWindowIdentifier
     case contradictoryProcessIdentifier
     case contradictoryProcessGeneration
     case contradictoryWindowIdentifier
@@ -107,6 +108,8 @@ public enum DesktopTargetIdentityError: LocalizedError, Equatable, Sendable {
         switch self {
         case .invalidProcessIdentifier:
             "Target PID must be positive."
+        case .invalidWindowIdentifier:
+            "Target window ID must be between 1 and \(UInt32.max)."
         case .contradictoryProcessIdentifier:
             "Target receipt sources identify different processes."
         case .contradictoryProcessGeneration:
@@ -241,6 +244,22 @@ public struct SnapshotTargetReceipt: Equatable, Sendable {
 /// Namespace for pure target-planning components. Mutation planners are added by the follow-up slice.
 public enum DesktopTargetPlanning {
     public enum DesktopTargetIdentityCoalescer {
+        public static func exactWindow(
+            from window: ServiceWindowInfo) throws -> UIAutomationTarget.ExactWindow
+        {
+            guard let identity = try self.resolve([
+                .init(
+                    windowID: window.windowID,
+                    windowIdentity: window.mutationIdentity,
+                    windowBounds: window.bounds),
+            ]),
+                let exactWindow = identity.exactWindow
+            else {
+                throw DesktopTargetIdentityError.incompleteExactWindow
+            }
+            return exactWindow
+        }
+
         public static func coalesce(
             _ identities: [DesktopTargetIdentity?]) throws -> DesktopTargetIdentity?
         {
@@ -269,6 +288,9 @@ public enum DesktopTargetPlanning {
                 try self.merge(fragment.processIdentity, into: &processIdentity) {
                     .contradictoryProcessGeneration
                 }
+                if let incomingWindowID = fragment.windowID {
+                    try self.requireValidWindowIdentifier(incomingWindowID)
+                }
                 try self.merge(fragment.windowID, into: &windowID) {
                     .contradictoryWindowIdentifier
                 }
@@ -279,6 +301,7 @@ public enum DesktopTargetPlanning {
                     .contradictoryFocusedElement
                 }
                 if let incomingWindowIdentity = fragment.windowIdentity {
+                    try self.requireValidWindowIdentifier(incomingWindowIdentity.windowID)
                     if let currentWindowIdentity = windowIdentity,
                        !currentWindowIdentity.hasSameStableReceipt(as: incomingWindowIdentity)
                     {
@@ -310,12 +333,6 @@ public enum DesktopTargetPlanning {
                 if let windowID, windowID != windowIdentity.windowID {
                     throw DesktopTargetIdentityError.contradictoryWindowIdentifier
                 }
-                if let capturedBounds = windowIdentity.capturedBounds,
-                   let windowBounds,
-                   capturedBounds != windowBounds
-                {
-                    throw DesktopTargetIdentityError.contradictoryWindowBounds
-                }
                 processIdentifier = windowIdentity.ownerProcessIdentifier
                 processIdentity = windowIdentity.processIdentity
                 windowID = windowIdentity.windowID
@@ -333,11 +350,18 @@ public enum DesktopTargetPlanning {
             guard hasWindowEvidence else {
                 return try DesktopTargetIdentity(processIdentity: resolvedProcessIdentity)
             }
-            guard let windowIdentity, let windowID, let windowBounds else {
+            guard let windowIdentity,
+                  let windowID,
+                  let windowBounds,
+                  let capturedBounds = windowIdentity.capturedBounds
+            else {
                 throw DesktopTargetIdentityError.incompleteExactWindow
             }
             guard windowIdentity.windowID == windowID else {
                 throw DesktopTargetIdentityError.contradictoryWindowIdentifier
+            }
+            guard capturedBounds == windowBounds else {
+                throw DesktopTargetIdentityError.contradictoryWindowBounds
             }
             let exactWindow = try UIAutomationTarget.ExactWindow(
                 processIdentifier: resolvedProcessIdentity.processIdentifier,
@@ -365,6 +389,12 @@ public enum DesktopTargetPlanning {
                 throw conflict()
             }
             current = current ?? incoming
+        }
+
+        private static func requireValidWindowIdentifier(_ windowID: Int) throws {
+            guard windowID > 0, UInt32(exactly: windowID) != nil else {
+                throw DesktopTargetIdentityError.invalidWindowIdentifier
+            }
         }
     }
 }
