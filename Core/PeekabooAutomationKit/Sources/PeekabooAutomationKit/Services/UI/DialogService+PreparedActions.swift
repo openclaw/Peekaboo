@@ -124,7 +124,11 @@ extension DialogService {
                     success: true,
                     action: receipt.kind == .clickButton ? .clickButton : .dismiss,
                     details: self.preparedActionDetails(entry),
-                    outcome: outcome)
+                    outcome: outcome,
+                    targetReceipt: nil,
+                    targetWindowIdentity: receipt.target.identity,
+                    targetWindowBounds: receipt.target.bounds,
+                    focusedElement: receipt.target.focusedElement)
             }
 
             let fallbackOutcome = sequence.successResolution().outcome ?? leafOutcome

@@ -356,16 +356,25 @@ struct DialogExactInputContractTests {
             action: .enterText,
             details: ["window_id": "700"],
             outcome: .confirmedNoChange(),
-            targetReceipt: DialogService.desktopActionTargetReceipt(target))
+            targetReceipt: DialogService.desktopActionTargetReceipt(target),
+            targetWindowIdentity: target.identity,
+            targetWindowBounds: target.bounds,
+            focusedElement: target.focusedElement)
         let roundTrip = try JSONDecoder().decode(
             DialogActionResult.self,
             from: JSONEncoder().encode(result))
         #expect(roundTrip.targetReceipt == DialogService.desktopActionTargetReceipt(target))
+        #expect(roundTrip.targetWindowIdentity == target.identity)
+        #expect(roundTrip.targetWindowBounds == target.bounds)
+        #expect(roundTrip.focusedElement == target.focusedElement)
 
         let legacy = try JSONDecoder().decode(
             DialogActionResult.self,
             from: Data(#"{"success":true,"action":"enter_text","details":{}}"#.utf8))
         #expect(legacy.targetReceipt == nil)
+        #expect(legacy.targetWindowIdentity == nil)
+        #expect(legacy.targetWindowBounds == nil)
+        #expect(legacy.focusedElement == nil)
         #expect(legacy.outcome == nil)
     }
 

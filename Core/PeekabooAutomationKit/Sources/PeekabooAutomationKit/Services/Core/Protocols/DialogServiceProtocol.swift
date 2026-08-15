@@ -272,6 +272,11 @@ public struct DialogActionResult: Sendable, Codable {
     /// Exact generation-bound window receipt resolved by the execution host, when available.
     public let targetReceipt: DesktopActionTargetReceipt?
 
+    /// Full stable target retained by exact execution paths for operation-level attestation.
+    public let targetWindowIdentity: WindowMutationIdentity?
+    public let targetWindowBounds: CGRect?
+    public let focusedElement: FocusedElementIdentity?
+
     public init(
         success: Bool,
         action: DialogActionType,
@@ -279,11 +284,35 @@ public struct DialogActionResult: Sendable, Codable {
         outcome: DesktopActionOutcome? = nil,
         targetReceipt: DesktopActionTargetReceipt? = nil)
     {
+        self.init(
+            success: success,
+            action: action,
+            details: details,
+            outcome: outcome,
+            targetReceipt: targetReceipt,
+            targetWindowIdentity: nil,
+            targetWindowBounds: nil,
+            focusedElement: nil)
+    }
+
+    public init(
+        success: Bool,
+        action: DialogActionType,
+        details: [String: String],
+        outcome: DesktopActionOutcome?,
+        targetReceipt: DesktopActionTargetReceipt?,
+        targetWindowIdentity: WindowMutationIdentity?,
+        targetWindowBounds: CGRect?,
+        focusedElement: FocusedElementIdentity?)
+    {
         self.success = success
         self.action = action
         self.details = details
         self.outcome = outcome
         self.targetReceipt = targetReceipt
+        self.targetWindowIdentity = targetWindowIdentity
+        self.targetWindowBounds = targetWindowBounds
+        self.focusedElement = focusedElement
     }
 }
 

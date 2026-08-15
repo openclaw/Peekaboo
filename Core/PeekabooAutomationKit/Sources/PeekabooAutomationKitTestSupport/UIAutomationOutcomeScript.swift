@@ -105,9 +105,14 @@ public final class UIAutomationOutcomeScript {
 @MainActor
 public protocol ScriptedUIAutomationActionOutcomeProviding: UIAutomationActionOutcomeProviding {
     var uiAutomationOutcomeScript: UIAutomationOutcomeScript { get }
+    var uiAutomationOutcomeTargetIdentity: DesktopTargetIdentity? { get }
 }
 
 extension ScriptedUIAutomationActionOutcomeProviding {
+    public var uiAutomationOutcomeTargetIdentity: DesktopTargetIdentity? {
+        nil
+    }
+
     public func clickWithOutcome(
         target: ClickTarget,
         clickType: ClickType,
@@ -115,7 +120,10 @@ extension ScriptedUIAutomationActionOutcomeProviding {
     {
         let outcome = try self.uiAutomationOutcomeScript.nextOutcome(for: .click)
         try await self.click(target: target, clickType: clickType, snapshotId: snapshotId)
-        return UIAutomationActionResult(payload: (), outcome: outcome)
+        return UIAutomationActionResult(
+            payload: (),
+            outcome: outcome,
+            targetIdentity: self.uiAutomationOutcomeTargetIdentity)
     }
 
     public func clickWithOutcome(
@@ -138,7 +146,10 @@ extension ScriptedUIAutomationActionOutcomeProviding {
             clickType: clickType,
             snapshotId: snapshotId,
             targetProcessIdentifier: targetProcessIdentifier)
-        return UIAutomationActionResult(payload: (), outcome: outcome)
+        return UIAutomationActionResult(
+            payload: (),
+            outcome: outcome,
+            targetIdentity: self.uiAutomationOutcomeTargetIdentity)
     }
 
     public func clickWithOutcome(
@@ -162,7 +173,10 @@ extension ScriptedUIAutomationActionOutcomeProviding {
             clickType: clickType,
             snapshotId: snapshotId,
             expectedProcessIdentity: expectedProcessIdentity)
-        return UIAutomationActionResult(payload: (), outcome: outcome)
+        return UIAutomationActionResult(
+            payload: (),
+            outcome: outcome,
+            targetIdentity: self.uiAutomationOutcomeTargetIdentity)
     }
 
     public func clickWithOutcome(
@@ -301,7 +315,10 @@ extension ScriptedUIAutomationActionOutcomeProviding {
     public func scrollWithOutcome(_ request: ScrollRequest) async throws -> UIAutomationActionResult<Void> {
         let outcome = try self.uiAutomationOutcomeScript.nextOutcome(for: .scroll)
         try await self.scroll(request)
-        return UIAutomationActionResult(payload: (), outcome: outcome)
+        return UIAutomationActionResult(
+            payload: (),
+            outcome: outcome,
+            targetIdentity: self.uiAutomationOutcomeTargetIdentity)
     }
 
     public func hotkeyWithOutcome(

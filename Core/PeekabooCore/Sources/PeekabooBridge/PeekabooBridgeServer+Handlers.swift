@@ -196,14 +196,7 @@ extension PeekabooBridgeServer {
                 windowContext: payload.windowContext)
             return .init(response: .elementDetection(result))
         case let .getFocusedElement(payload):
-            guard let automation = self.services.automation as? any TargetedFocusedElementServiceProtocol else {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .operationNotSupported,
-                    message: "PID-scoped focused-element queries are not supported by this bridge host")
-            }
-            let focusedElement = await automation.getFocusedElement(
-                targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
-            return .init(response: .focusedElement(focusedElement))
+            return try await self.handleFocusedElementRequest(payload)
         case let .click(payload):
             return try await self.handleAutomationAction(
                 withOutcome: { service in
@@ -305,6 +298,48 @@ extension PeekabooBridgeServer {
         }
     }
 
+    private func handleFocusedElementRequest(
+        _ payload: PeekabooBridgeFocusedElementRequest) async throws -> PeekabooBridgeHandledResponse
+    {
+        guard let automation = self.services.automation as? any TargetedFocusedElementServiceProtocol else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "PID-scoped focused-element queries are not supported by this bridge host")
+        }
+        guard let expectedIdentity = payload.expectedProcessIdentity else {
+            let focusedElement = await automation.getFocusedElement(
+                targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
+            return .init(response: .focusedElement(focusedElement))
+        }
+        guard expectedIdentity.processIdentifier == payload.targetProcessIdentifier,
+              self.processStartIdentityProvider(payload.targetProcessIdentifier) ==
+              expectedIdentity.processStartIdentity
+        else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Focused-element target process generation changed before inspection")
+        }
+        let focusedElement = await automation.getFocusedElement(
+            targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
+        guard self.processStartIdentityProvider(payload.targetProcessIdentifier) ==
+            expectedIdentity.processStartIdentity
+        else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Focused-element target process generation changed during inspection")
+        }
+        if let focusedElement,
+           focusedElement.processId != Int(payload.targetProcessIdentifier)
+        {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Focused-element result belongs to a different process")
+        }
+        return try .init(
+            response: .focusedElement(focusedElement),
+            targetIdentity: DesktopTargetIdentity(processIdentity: expectedIdentity))
+    }
+
     private func handleScroll(_ request: ScrollRequest) async throws -> PeekabooBridgeHandledResponse {
         try await self.handleAutomationAction(
             withOutcome: { service in
@@ -327,7 +362,10 @@ extension PeekabooBridgeServer {
             return .init(response: response(payload))
         }
         let result = try await withOutcome(service)
-        return .init(response: response(result.payload), outcome: result.outcome)
+        return .init(
+            response: response(result.payload),
+            outcome: result.outcome,
+            targetIdentity: result.targetIdentity)
     }
 
     private func handleElementActionRequest(_ request: PeekabooBridgeRequest) async throws
@@ -433,7 +471,10 @@ extension PeekabooBridgeServer {
                     expectedWindowIdentity: payload.expectedWindowIdentity,
                     expectedWindowBounds: payload.expectedWindowBounds)
             }
-            return .init(response: .typeResult(result.payload), outcome: result.outcome)
+            return .init(
+                response: .typeResult(result.payload),
+                outcome: result.outcome,
+                targetIdentity: result.targetIdentity)
         }
         let result = if let expectedFocusedElement = payload.expectedFocusedElement {
             try await service.typeActions(
@@ -483,7 +524,10 @@ extension PeekabooBridgeServer {
                     expectedWindowIdentity: payload.expectedWindowIdentity,
                     expectedWindowBounds: payload.expectedWindowBounds)
             }
-            return .init(response: .ok, outcome: result.outcome)
+            return .init(
+                response: .ok,
+                outcome: result.outcome,
+                targetIdentity: result.targetIdentity)
         }
         if let expectedFocusedElement = payload.expectedFocusedElement {
             try await service.hotkey(
@@ -521,8 +565,7 @@ extension PeekabooBridgeServer {
                     "PID-only coordinates are refused")
         }
         guard let targetWindowID = payload.targetWindowID else {
-            let outcome = try await self.handleProcessTargetedClick(payload, service: targetedClickService)
-            return .init(response: .ok, outcome: outcome)
+            return try await self.handleProcessTargetedClick(payload, service: targetedClickService)
         }
         return try await self.handleExactWindowTargetedClick(
             payload,
@@ -570,7 +613,10 @@ extension PeekabooBridgeServer {
             snapshotId: payload.snapshotId,
             expectedWindowIdentity: expectedIdentity,
             expectedWindowBounds: expectedBounds)
-        return .init(response: .ok, outcome: result.outcome)
+        return .init(
+            response: .ok,
+            outcome: result.outcome,
+            targetIdentity: result.targetIdentity)
     }
 
     private func handleTargetedTypeActions(
@@ -585,7 +631,10 @@ extension PeekabooBridgeServer {
                     cadence: payload.cadence,
                     snapshotId: payload.snapshotId,
                     targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
-                return .init(response: .typeResult(result.payload), outcome: result.outcome)
+                return .init(
+                    response: .typeResult(result.payload),
+                    outcome: result.outcome,
+                    targetIdentity: result.targetIdentity)
             }
             let result = try await service.typeActions(
                 payload.actions,
@@ -610,7 +659,10 @@ extension PeekabooBridgeServer {
                 cadence: payload.cadence,
                 snapshotId: payload.snapshotId,
                 expectedProcessIdentity: expectedIdentity)
-            return .init(response: .typeResult(result.payload), outcome: result.outcome)
+            return .init(
+                response: .typeResult(result.payload),
+                outcome: result.outcome,
+                targetIdentity: result.targetIdentity)
         }
         let result = try await service.typeActions(
             payload.actions,
@@ -622,7 +674,7 @@ extension PeekabooBridgeServer {
 
     private func handleProcessTargetedClick(
         _ payload: PeekabooBridgeTargetedClickRequest,
-        service: any TargetedClickServiceProtocol) async throws -> DesktopActionOutcome?
+        service: any TargetedClickServiceProtocol) async throws -> PeekabooBridgeHandledResponse
     {
         self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
         guard let expectedIdentity = payload.expectedProcessIdentity else {
@@ -632,14 +684,17 @@ extension PeekabooBridgeServer {
                     clickType: payload.clickType,
                     snapshotId: payload.snapshotId,
                     targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
-                return result.outcome
+                return .init(
+                    response: .ok,
+                    outcome: result.outcome,
+                    targetIdentity: result.targetIdentity)
             }
             try await service.click(
                 target: payload.target,
                 clickType: payload.clickType,
                 snapshotId: payload.snapshotId,
                 targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
-            return nil
+            return .init(response: .ok)
         }
         guard expectedIdentity.processIdentifier == payload.targetProcessIdentifier else {
             throw PeekabooBridgeErrorEnvelope(
@@ -657,14 +712,17 @@ extension PeekabooBridgeServer {
                 clickType: payload.clickType,
                 snapshotId: payload.snapshotId,
                 expectedProcessIdentity: expectedIdentity)
-            return result.outcome
+            return .init(
+                response: .ok,
+                outcome: result.outcome,
+                targetIdentity: result.targetIdentity)
         }
         try await service.click(
             target: payload.target,
             clickType: payload.clickType,
             snapshotId: payload.snapshotId,
             expectedProcessIdentity: expectedIdentity)
-        return nil
+        return .init(response: .ok)
     }
 
     private func handleTargetedHotkey(
@@ -696,7 +754,10 @@ extension PeekabooBridgeServer {
                     keys: payload.keys,
                     holdDuration: payload.holdDuration,
                     expectedProcessIdentity: expectedIdentity)
-                return .init(response: .ok, outcome: result.outcome)
+                return .init(
+                    response: .ok,
+                    outcome: result.outcome,
+                    targetIdentity: result.targetIdentity)
             }
             try await service.hotkey(
                 keys: payload.keys,
@@ -708,7 +769,10 @@ extension PeekabooBridgeServer {
                     keys: payload.keys,
                     holdDuration: payload.holdDuration,
                     targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
-                return .init(response: .ok, outcome: result.outcome)
+                return .init(
+                    response: .ok,
+                    outcome: result.outcome,
+                    targetIdentity: result.targetIdentity)
             }
             try await service.hotkey(
                 keys: payload.keys,
@@ -724,8 +788,48 @@ extension PeekabooBridgeServer {
             let result = try await self.services.windows.listWindows(target: payload.target)
             return .init(response: .windows(result))
         case let .focusWindow(payload):
+            guard let expectedIdentity = payload.expectedIdentity else {
+                try await self.services.windows.focusWindow(target: payload.target)
+                return .init(response: .ok)
+            }
+            let identity = try Self.requireWindowMutationReceipt(
+                expectedIdentity,
+                operation: .focusWindow)
+            guard case let .windowId(targetWindowID) = payload.target,
+                  targetWindowID == identity.windowID
+            else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    route: .local,
+                    reason: .invalidRequest,
+                    message: "Window focus selector contradicts its exact target receipt.",
+                    hint: "List windows again and retry with one exact window ID.")
+            }
+            guard self.validatesCurrentWindowMutationIdentity(identity) else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    route: .local,
+                    reason: .targetUnavailable,
+                    message: "Window focus target changed before dispatch.",
+                    hint: "List windows again and retry with the fresh exact target receipt.")
+            }
             try await self.services.windows.focusWindow(target: payload.target)
-            return .init(response: .ok)
+            guard self.validatesCurrentWindowMutationIdentity(identity) else {
+                throw DesktopActionFailure.indeterminate(
+                    route: .local,
+                    delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                    evidence: .completionUnknown,
+                    unitCount: .one,
+                    message: "Window focus completed without a stable target receipt.",
+                    hint: "Observe the intended window before retrying.")
+            }
+            guard let bounds = identity.capturedBounds else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .invalidRequest,
+                    message: "Window focus target has no immutable bounds receipt")
+            }
+            let exactWindow = try UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds)
+            return .init(
+                response: .ok,
+                targetIdentity: DesktopTargetIdentity(exactWindow: exactWindow))
         case let .moveWindow(payload):
             let identity = try Self.requireWindowMutationReceipt(payload.expectedIdentity, operation: .moveWindow)
             let result = try await self.services.windows.moveWindowResult(
@@ -802,5 +906,15 @@ extension PeekabooBridgeServer {
                     "receipt with capture-time bounds")
         }
         return identity
+    }
+
+    private func validatesCurrentWindowMutationIdentity(_ identity: WindowMutationIdentity) -> Bool {
+        guard let windowID = CGWindowID(exactly: identity.windowID),
+              let capturedBounds = identity.capturedBounds
+        else { return false }
+        return self.windowOwnerProcessIdentifierProvider(windowID) == identity.ownerProcessIdentifier &&
+            self.processStartIdentityProvider(identity.ownerProcessIdentifier) ==
+            identity.ownerProcessStartIdentity &&
+            self.windowBoundsProvider(windowID) == capturedBounds
     }
 }

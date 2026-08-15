@@ -1259,6 +1259,9 @@ struct PeekabooBridgeTests {
 extension PeekabooBridgeTests {
     @Test
     func `remote automation queries focus inside target PID`() async throws {
+        let targetProcessIdentifier = getpid()
+        let targetProcessGeneration = try #require(
+            SystemIdentityResolver.processStartIdentity(targetProcessIdentifier))
         let socketPath = "/tmp/peekaboo-focused-element-\(UUID().uuidString).sock"
         let server = await MainActor.run {
             PeekabooBridgeServer(
@@ -1288,8 +1291,9 @@ extension PeekabooBridgeTests {
                 supportsExactWindowTargetedKeyboard: true)
         }
 
-        let focused = await remote.getFocusedElement(targetProcessIdentifier: 4242)
+        let focused = await remote.getFocusedElement(targetProcessIdentifier: targetProcessIdentifier)
         let focusedIdentity = try #require(focused.flatMap(FocusedElementIdentity.init))
+        let targetBounds = CGRect(x: 0, y: 0, width: 800, height: 600)
         _ = try await remote.typeActions(
             [.text("atomic")],
             cadence: .fixed(milliseconds: 0),
@@ -1297,12 +1301,13 @@ extension PeekabooBridgeTests {
             target: ExactWindowKeyboardTarget(
                 windowIdentity: WindowMutationIdentity(
                     windowID: 999_999,
-                    ownerProcessIdentifier: 4242,
-                    ownerProcessStartIdentity: 1),
-                windowBounds: CGRect(x: 0, y: 0, width: 800, height: 600),
+                    ownerProcessIdentifier: targetProcessIdentifier,
+                    ownerProcessStartIdentity: targetProcessGeneration,
+                    capturedBounds: targetBounds),
+                windowBounds: targetBounds,
                 focusedElement: focusedIdentity))
 
-        #expect(focused?.processId == 4242)
+        #expect(focused?.processId == Int(targetProcessIdentifier))
         #expect(focused?.applicationName == "Editor")
     }
 
@@ -1408,7 +1413,7 @@ extension PeekabooBridgeTests {
         }
 
         do {
-            try await remote.hotkey(keys: "cmd,l", holdDuration: 50, targetProcessIdentifier: 9001)
+            try await remote.hotkey(keys: "cmd,l", holdDuration: 50, targetProcessIdentifier: getpid())
             Issue.record("Expected Event Synthesizing permission error")
         } catch PeekabooError.permissionDeniedEventSynthesizing {
             // Expected.
@@ -2108,6 +2113,7 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
         evidence: .deliveryAccepted)
     let uiAutomationOutcomeScript = UIAutomationOutcomeScript(
         defaultResponse: .outcome(StubAutomationService.defaultActionOutcome))
+    var uiAutomationOutcomeTargetIdentity: DesktopTargetIdentity?
     var actionOutcome = StubAutomationService.defaultActionOutcome {
         didSet {
             self.uiAutomationOutcomeScript.setDefaultOutcome(self.actionOutcome)

@@ -60,9 +60,14 @@ public struct PeekabooBridgeInspectAccessibilityTreeRequest: Codable, Sendable {
 
 public struct PeekabooBridgeFocusedElementRequest: Codable, Sendable {
     public let targetProcessIdentifier: Int32
+    public let expectedProcessIdentity: ApplicationProcessIdentity?
 
-    public init(targetProcessIdentifier: Int32) {
+    public init(
+        targetProcessIdentifier: Int32,
+        expectedProcessIdentity: ApplicationProcessIdentity? = nil)
+    {
         self.targetProcessIdentifier = targetProcessIdentifier
+        self.expectedProcessIdentity = expectedProcessIdentity
     }
 }
 

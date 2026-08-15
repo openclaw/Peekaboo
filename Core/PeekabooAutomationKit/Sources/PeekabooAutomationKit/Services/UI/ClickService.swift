@@ -998,7 +998,14 @@ extension ClickService {
         guard let focusedElement = focusedElementReceipt else {
             throw FocusedElementReceiptError.focusNotConfirmed
         }
-        return UIAutomationActionResult(payload: focusedElement, outcome: result.outcome)
+        let focusedTarget = try UIAutomationTarget.ExactWindow(
+            identity: exactWindow.identity,
+            bounds: exactWindow.bounds,
+            focusedElement: focusedElement)
+        return UIAutomationActionResult(
+            payload: focusedElement,
+            outcome: result.outcome,
+            targetIdentity: DesktopTargetIdentity(exactWindow: focusedTarget))
     }
 
     fileprivate static func automationTarget(

@@ -222,7 +222,10 @@ struct RemoteWindowManagementServiceTests {
             services: StubServices(windows: windows),
             allowlistedTeams: [],
             allowlistedBundles: [],
-            allowedOperations: [.listWindows, .focusWindow])
+            allowedOperations: [.listWindows, .focusWindow],
+            windowOwnerProcessIdentifierProvider: { _ in 420 },
+            windowBoundsProvider: { _ in CGRect(x: 0, y: 0, width: 100, height: 100) },
+            processStartIdentityProvider: { _ in 9001 })
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -238,6 +241,42 @@ struct RemoteWindowManagementServiceTests {
         try await remote.focusWindow(target: .windowId(77))
 
         #expect(result.map(\.windowID) == [77])
+        #expect(await windows.focusedTargets == ["windowId(77)"])
+        await host.stop()
+    }
+
+    @Test
+    func `protocol 1 28 focus-only host does not require window enumeration`() async throws {
+        let socketPath = "/tmp/peekaboo-remote-window-focus-only-\(UUID().uuidString).sock"
+        let windows = RemoteWindowMutationFixture(identity: self.identity)
+        let server = PeekabooBridgeServer(
+            services: StubServices(windows: windows),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            supportedVersions: ClosedRange(uncheckedBounds: (
+                lower: PeekabooBridgeConstants.supportedProtocolRange.lowerBound,
+                upper: PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion)),
+            allowedOperations: [.focusWindow])
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(
+            client: PeekabooBridgeClientIdentity(
+                bundleIdentifier: "dev.peekaboo.focus-only-tests",
+                teamIdentifier: nil,
+                processIdentifier: getpid()))
+        let remote = RemoteWindowManagementService(
+            client: client,
+            supportsPinnedWindowMutations: false)
+        try await remote.focusWindow(target: .windowId(77))
+
+        #expect(await windows.listCount == 0)
         #expect(await windows.focusedTargets == ["windowId(77)"])
         await host.stop()
     }

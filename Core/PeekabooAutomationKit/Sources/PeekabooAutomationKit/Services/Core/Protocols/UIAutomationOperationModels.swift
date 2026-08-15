@@ -300,14 +300,24 @@ public struct TypeResult: Sendable, Codable {
 public struct UIAutomationActionResult<Payload: Sendable>: Sendable {
     public let payload: Payload
     public let outcome: DesktopActionOutcome?
+    public let targetIdentity: DesktopTargetIdentity?
 
     public init(payload: Payload, outcome: DesktopActionOutcome?) {
+        self.init(payload: payload, outcome: outcome, targetIdentity: nil)
+    }
+
+    public init(
+        payload: Payload,
+        outcome: DesktopActionOutcome?,
+        targetIdentity: DesktopTargetIdentity?)
+    {
         self.payload = payload
         self.outcome = outcome
+        self.targetIdentity = targetIdentity
     }
 
     public init(_ result: DesktopActionResult<Payload>) {
-        self.init(payload: result.payload, outcome: result.outcome)
+        self.init(payload: result.payload, outcome: result.outcome, targetIdentity: nil)
     }
 
     public var desktopActionResult: DesktopActionResult<Payload> {

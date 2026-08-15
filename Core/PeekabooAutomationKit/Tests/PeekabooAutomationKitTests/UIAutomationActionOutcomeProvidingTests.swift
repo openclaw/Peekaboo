@@ -190,6 +190,7 @@ struct UIAutomationActionOutcomeProvidingTests {
         #expect(result.payload == legacy)
         #expect(result.payload.oldValue == "old")
         #expect(result.payload.newValue == "new")
+        #expect(result.targetIdentity?.exactWindow != nil)
         #expect(resultDriver.setValueCount == 1)
         #expect(legacyDriver.setValueCount == 1)
     }
@@ -213,6 +214,7 @@ struct UIAutomationActionOutcomeProvidingTests {
 
         #expect(result.outcome == expected)
         #expect(result.payload == legacy)
+        #expect(result.targetIdentity?.exactWindow != nil)
         #expect(resultDriver.performActionCount == 1)
         #expect(legacyDriver.performActionCount == 1)
     }
@@ -365,16 +367,26 @@ struct UIAutomationActionOutcomeProvidingTests {
             id: "E1",
             type: .textField,
             label: "Value")
+        let processIdentity = AutomationTestFixtures.processIdentity(processIdentifier: getpid())
+        let window = AutomationTestFixtures.window(processIdentity: processIdentity)
         let detection = AutomationTestFixtures.detectionResult(
             snapshotID: "snapshot",
             elements: DetectedElements(textFields: [detected]),
-            windowContext: WindowContext(applicationProcessId: getpid()))
+            windowContext: WindowContext(
+                applicationProcessId: getpid(),
+                windowID: window.windowID,
+                windowBounds: window.bounds,
+                windowMutationIdentity: window.mutationIdentity))
         return UIAutomationService(
             snapshotManager: InMemorySnapshotManager(detectionResult: detection),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
             actionInputDriver: actionDriver,
             automationElementResolver: FixedOutcomeAutomationElementResolver(),
-            elementMutationValueReader: { _ in actionDriver.storedValue })
+            elementMutationValueReader: { _ in actionDriver.storedValue },
+            exactWindowIdentityValidator: { identity, bounds in
+                identity == window.mutationIdentity && bounds == window.bounds
+            },
+            processStartIdentityProvider: { _ in processIdentity.processStartIdentity })
     }
 
     private func makeTargetedService(

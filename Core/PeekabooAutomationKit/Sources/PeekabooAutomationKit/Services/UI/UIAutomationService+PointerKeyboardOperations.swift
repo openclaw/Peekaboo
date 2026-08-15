@@ -38,7 +38,10 @@ extension UIAutomationService {
                         visualizerTarget: visualizerTarget)
                 })
         }
-        return UIAutomationActionResult(payload: (), outcome: result.outcome)
+        return UIAutomationActionResult(
+            payload: (),
+            outcome: result.outcome,
+            targetIdentity: result.targetIdentity)
     }
 
     /// Background scrolls are AX actions scoped to a snapshot element and never emit foreground feedback.

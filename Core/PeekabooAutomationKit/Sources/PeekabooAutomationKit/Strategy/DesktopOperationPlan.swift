@@ -122,6 +122,18 @@ struct DesktopOperationPlan {
     let success: @MainActor (UIInputExecutionResult) async -> Void
     let finalize: @MainActor () async -> Void
 
+    func targetIdentity() throws -> DesktopTargetIdentity? {
+        switch self.captureReceipt.target {
+        case .foreground:
+            return nil
+        case let .process(process):
+            guard let identity = process.identity else { return nil }
+            return try DesktopTargetIdentity(processIdentity: identity)
+        case let .exactWindow(window):
+            return DesktopTargetIdentity(exactWindow: window)
+        }
+    }
+
     init(
         verb: UIInputVerb,
         selector: Selector,

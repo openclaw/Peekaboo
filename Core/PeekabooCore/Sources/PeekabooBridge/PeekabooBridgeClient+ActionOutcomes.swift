@@ -23,7 +23,14 @@ extension PeekabooBridgeClient {
         snapshotId: String?,
         targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<Void>
     {
-        try await self.actionResult(
+        if let expectedIdentity = Self.currentProcessIdentity(targetProcessIdentifier) {
+            return try await self.clickWithOutcome(
+                target: target,
+                clickType: clickType,
+                snapshotId: snapshotId,
+                expectedProcessIdentity: expectedIdentity)
+        }
+        return try await self.actionResult(
             for: .targetedClick(.init(
                 target: target,
                 clickType: clickType,
@@ -117,7 +124,14 @@ extension PeekabooBridgeClient {
         snapshotId: String?,
         targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<TypeResult>
     {
-        try await self.typeActionResult(for: .targetedTypeActions(.init(
+        if let expectedIdentity = Self.currentProcessIdentity(targetProcessIdentifier) {
+            return try await self.typeActionsWithOutcome(
+                actions,
+                cadence: cadence,
+                snapshotId: snapshotId,
+                expectedProcessIdentity: expectedIdentity)
+        }
+        return try await self.typeActionResult(for: .targetedTypeActions(.init(
             actions: actions,
             cadence: cadence,
             snapshotId: snapshotId,
@@ -196,12 +210,28 @@ extension PeekabooBridgeClient {
         holdDuration: Int,
         targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<Void>
     {
-        try await self.voidActionResult(
+        if let expectedIdentity = Self.currentProcessIdentity(targetProcessIdentifier) {
+            return try await self.hotkeyWithOutcome(
+                keys: keys,
+                holdDuration: holdDuration,
+                expectedProcessIdentity: expectedIdentity)
+        }
+        return try await self.voidActionResult(
             for: .targetedHotkey(.init(
                 keys: keys,
                 holdDuration: holdDuration,
                 targetProcessIdentifier: Int32(targetProcessIdentifier))),
             expectedResponse: "targeted hotkey")
+    }
+
+    nonisolated static func currentProcessIdentity(
+        _ processIdentifier: pid_t) -> ApplicationProcessIdentity?
+    {
+        SystemIdentityResolver.processStartIdentity(processIdentifier).map {
+            ApplicationProcessIdentity(
+                processIdentifier: processIdentifier,
+                processStartIdentity: $0)
+        }
     }
 
     public func hotkeyWithOutcome(

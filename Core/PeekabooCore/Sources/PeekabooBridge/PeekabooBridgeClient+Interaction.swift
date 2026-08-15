@@ -74,8 +74,10 @@ extension PeekabooBridgeClient {
     }
 
     public func getFocusedElement(targetProcessIdentifier: pid_t) async throws -> UIFocusInfo? {
+        let expectedIdentity = Self.currentProcessIdentity(targetProcessIdentifier)
         let response = try await self.send(.getFocusedElement(.init(
-            targetProcessIdentifier: Int32(targetProcessIdentifier))))
+            targetProcessIdentifier: Int32(targetProcessIdentifier),
+            expectedProcessIdentity: expectedIdentity)))
         switch response {
         case let .focusedElement(info):
             return info

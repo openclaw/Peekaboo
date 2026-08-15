@@ -81,9 +81,10 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             },
             finalize: { self.elementDetectionService.invalidateCache() })
         self.logger.debug("Set value requested - target: \(target, privacy: .public)")
-        let result = try await self.normalizingSnapshotErrors {
-            try await self.desktopOperationExecutor.execute(plan)
+        let execution = try await self.normalizingSnapshotErrors {
+            try await self.desktopOperationExecutor.executeWithTargetIdentity(plan)
         }
+        let result = execution.payload
         guard let resolved, let newValue else {
             throw PeekabooError.operationError(message: "Element value result was not captured")
         }
@@ -95,7 +96,8 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 anchorPoint: result.anchorPoint,
                 oldValue: oldValue,
                 newValue: newValue),
-            outcome: result.outcome)
+            outcome: result.outcome,
+            targetIdentity: execution.targetIdentity)
     }
 
     public func performAction(
@@ -160,9 +162,10 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             finalize: { self.elementDetectionService.invalidateCache() })
         let requestDescription = "Perform action requested - target: \(target), action: \(actionName)"
         self.logger.debug("\(requestDescription, privacy: .public)")
-        let result = try await self.normalizingSnapshotErrors {
-            try await self.desktopOperationExecutor.execute(plan)
+        let execution = try await self.normalizingSnapshotErrors {
+            try await self.desktopOperationExecutor.executeWithTargetIdentity(plan)
         }
+        let result = execution.payload
         guard let resolved else {
             throw PeekabooError.operationError(message: "Element action target was not prepared")
         }
@@ -172,7 +175,8 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 target: resolved.description,
                 actionName: result.actionName,
                 anchorPoint: result.anchorPoint),
-            outcome: result.outcome)
+            outcome: result.outcome,
+            targetIdentity: execution.targetIdentity)
     }
 
     private func resolveActionTarget(_ target: String, snapshotId: String) async throws

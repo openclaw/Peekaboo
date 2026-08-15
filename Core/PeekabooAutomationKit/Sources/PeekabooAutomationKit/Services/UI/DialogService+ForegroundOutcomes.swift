@@ -134,7 +134,10 @@ extension DialogService {
                     valueVerified: false,
                     focusPolicy: focusPolicy),
                 outcome: .confirmedNoChange(),
-                targetReceipt: execution.publishTargetReceipt ? Self.desktopActionTargetReceipt(plan.target) : nil)
+                targetReceipt: execution.publishTargetReceipt ? Self.desktopActionTargetReceipt(plan.target) : nil,
+                targetWindowIdentity: plan.target.identity,
+                targetWindowBounds: plan.target.bounds,
+                focusedElement: plan.target.focusedElement)
         }
 
         try Task.checkCancellation()
@@ -234,7 +237,10 @@ extension DialogService {
                 valueVerified: retainedValueMatchesRequest,
                 focusPolicy: focusPolicy),
             outcome: outcome,
-            targetReceipt: execution.publishTargetReceipt ? Self.desktopActionTargetReceipt(plan.target) : nil)
+            targetReceipt: execution.publishTargetReceipt ? Self.desktopActionTargetReceipt(plan.target) : nil,
+            targetWindowIdentity: plan.target.identity,
+            targetWindowBounds: plan.target.bounds,
+            focusedElement: plan.target.focusedElement)
         self.logger.info("\(AgentDisplayTokens.Status.success) Dialog input delivery completed")
         return result
     }
@@ -366,7 +372,10 @@ extension DialogService {
                 action: .dismiss,
                 details: details,
                 outcome: outcome,
-                targetReceipt: Self.desktopActionTargetReceipt(plan.target))
+                targetReceipt: Self.desktopActionTargetReceipt(plan.target),
+                targetWindowIdentity: plan.target.identity,
+                targetWindowBounds: plan.target.bounds,
+                focusedElement: plan.target.focusedElement)
         } catch let failure as DesktopActionFailure {
             throw Self.attributedDialogActionFailure(failure, target: plan.target)
         }

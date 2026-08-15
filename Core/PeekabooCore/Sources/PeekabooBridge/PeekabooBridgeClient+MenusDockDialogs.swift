@@ -250,7 +250,10 @@ extension PeekabooBridgeClient {
                 action: result.action,
                 details: result.details,
                 outcome: routedOutcome,
-                targetReceipt: targetReceipt)
+                targetReceipt: targetReceipt,
+                targetWindowIdentity: result.targetWindowIdentity,
+                targetWindowBounds: result.targetWindowBounds,
+                focusedElement: result.focusedElement)
         case let .error(envelope):
             if let failure = envelope.desktopActionFailure ?? reply.outcome.flatMap({ projection in
                 DesktopActionFailure(
@@ -329,7 +332,10 @@ extension PeekabooBridgeClient {
                 action: result.action,
                 details: result.details,
                 outcome: routedOutcome,
-                targetReceipt: targetReceipt)
+                targetReceipt: targetReceipt,
+                targetWindowIdentity: result.targetWindowIdentity,
+                targetWindowBounds: result.targetWindowBounds,
+                focusedElement: result.focusedElement)
         case let .error(envelope):
             if let failure = envelope.desktopActionFailure ?? reply.outcome.flatMap({ projection in
                 DesktopActionFailure(
@@ -448,7 +454,11 @@ extension PeekabooBridgeClient {
                 success: result.success,
                 action: result.action,
                 details: result.details,
-                outcome: routedOutcome)
+                outcome: routedOutcome,
+                targetReceipt: result.targetReceipt,
+                targetWindowIdentity: result.targetWindowIdentity,
+                targetWindowBounds: result.targetWindowBounds,
+                focusedElement: result.focusedElement)
         case let .error(envelope):
             if let failure = envelope.desktopActionFailure ?? reply.outcome.flatMap({ projection in
                 DesktopActionFailure(

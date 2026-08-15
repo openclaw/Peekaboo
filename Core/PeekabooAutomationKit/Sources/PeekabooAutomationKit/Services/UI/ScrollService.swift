@@ -96,19 +96,16 @@ public final class ScrollService {
     @discardableResult
     @MainActor
     public func scroll(_ request: ScrollRequest) async throws -> UIInputExecutionResult {
-        try await self.scrollWithLanePreparation(request)
+        try await self.scrollWithLanePreparation(request).payload
     }
 
     func scrollWithLanePreparation(
         _ request: ScrollRequest,
         lanePreparation: @escaping @MainActor () async -> Void = {},
         laneCompletion: @escaping @MainActor (UIInputExecutionResult) async -> Void = { _ in }) async throws
-        -> UIInputExecutionResult
+        -> UIAutomationActionResult<UIInputExecutionResult>
     {
-        let description =
-            "Scroll requested - direction: \(request.direction), amount: \(request.amount), " +
-            "smooth: \(request.smooth)"
-        self.logger.debug("\(description, privacy: .public)")
+        self.logRequest(request)
         var bundleIdentifier: String?
         var preparedElement: AutomationElement?
         var preparedDetectedElement: DetectedElement?
@@ -247,8 +244,8 @@ public final class ScrollService {
                 },
                 success: laneCompletion,
                 finalize: self.operationFinalizer)
-            let result = try await self.desktopOperationExecutor.execute(plan)
-            self.logger.debug("Scroll completed via \(result.path.rawValue, privacy: .public)")
+            let result = try await self.desktopOperationExecutor.executeWithTargetIdentity(plan)
+            self.logger.debug("Scroll completed via \(result.payload.path.rawValue, privacy: .public)")
             return result
         } catch let error as ActionInputError
             where !request.foreground && error.allowsSynthesisFallback
@@ -257,6 +254,13 @@ public final class ScrollService {
         } catch {
             throw error
         }
+    }
+
+    private func logRequest(_ request: ScrollRequest) {
+        let description =
+            "Scroll requested - direction: \(request.direction), amount: \(request.amount), " +
+            "smooth: \(request.smooth)"
+        self.logger.debug("\(description, privacy: .public)")
     }
 
     nonisolated static func requiresSyntheticScrollSemantics(_ request: ScrollRequest) -> Bool {

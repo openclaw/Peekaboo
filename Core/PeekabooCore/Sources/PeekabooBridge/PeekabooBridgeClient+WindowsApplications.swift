@@ -17,7 +17,14 @@ extension PeekabooBridgeClient {
     }
 
     public func focusWindow(target: WindowTarget) async throws {
-        try await self.sendExpectOK(.focusWindow(PeekabooBridgeWindowTargetRequest(target: target)))
+        guard self.operationAttestation != nil else {
+            try await self.sendExpectOK(.focusWindow(PeekabooBridgeWindowTargetRequest(target: target)))
+            return
+        }
+        let pinned = try await self.resolvedPinnedWindowMutation(target: target)
+        try await self.sendExpectOK(.focusWindow(PeekabooBridgeWindowTargetRequest(
+            target: pinned.target,
+            expectedIdentity: pinned.identity)))
     }
 
     public func moveWindow(target: WindowTarget, to position: CGPoint) async throws {
