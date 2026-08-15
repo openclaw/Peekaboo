@@ -105,9 +105,9 @@ cleanup never infers ownership from an ambient application-inventory delta or a 
 
 Protocol 1.29 now validates a stable listener identity, a peer-bound logical operation session, and a signed terminal
 receipt on the same authenticated request connection. Bounded sessions roll over without restarting the listener:
-each request uses a decimal-string session sequence and deterministic request UUID, while the only automatic retry is
-one request backed by a fully verified signed refusal proving `mutation_dispatched=false` and `retry_safe=true` and
-carrying the successor session. Protocol 1.28 remains receiptless.
+each request uses a decimal-string session sequence and deterministic RFC 9562 version-8 request UUID, while the only
+automatic retry is one request backed by a fully verified signed refusal proving `mutation_dispatched=false` and
+`retry_safe=true` and carrying the successor session. Protocol 1.28 remains receiptless.
 
 Live overlap execution is still deliberately reserved because the CLI does not yet expose a public first-party
 `bridge receipt validate` command that the shell harness can use for every exported verification bundle, including
@@ -147,7 +147,9 @@ The run-specific contract pins the exact audited protocol source, including its 
 effective-UID, and CDHash peer-binding owners. It also pins the signed listener instance and public key, Bridge and client
 process generations and CDHashes, exact socket device/inode, Peekaboo's exact window-generation target, a distinct
 foreground-controller target, the overlap interval, and every expected request/response digest and enum case. The
-validator verifies the listener self-signature and every Ed25519 receipt, requires protocol 1.29 or newer, rejects
+validator verifies the listener self-signature, listener-signed logical session, full signed-session digest, deterministic
+request UUID, sequence capacity and replay tuple, predecessor chain, and every Ed25519 terminal receipt. It requires
+protocol 1.29 or newer, rejects
 global/process-only or cross-target routing, validates optional focused-element identity, and requires every mutation to
 carry the exact background outcome returned by the canonical response. Signed attribution failures retain their
 pre-dispatch or post-execution stage and evidence digest for diagnosis, but cannot certify the protected lane. A missing,
@@ -155,14 +157,18 @@ duplicate, undecodable, or unsigned response is indeterminate and fails certific
 replayable operation.
 
 At consumption time the socket must still be a non-symlink socket at the run-pinned device/inode. The private export
-must contain exactly one stable file per expected request. The host archive must independently contain the same signed
-receipts plus `attestation.json`, all mode `0600`, below
-`$TMPDIR/PeekabooOperationReceipts/<sha256(socket-path)>/<listener-instance>`. Every directory is owner-only and
-non-symlink, and the bounded namespace may retain no more than 16 listener generations.
+must contain exactly one stable terminal bundle per expected request and is the durable certification corpus. The host
+archive stores `attestation.json` plus session attestations and decimal-sequence receipt files below
+`$TMPDIR/PeekabooOperationReceipts/<sha256(socket-path)>/<listener-instance>/sessions/<session-id>/`. Every retained
+file must exactly match its exported signed bytes, but an absent session directory is not a lost response: the host
+intentionally retains only a bounded number of dead-client sessions and quarantines older directories under
+`retired-sessions/` before deletion. Every directory is owner-only and non-symlink, and the outer namespace retains no
+more than 16 listener generations.
 
 `scripts/receipt-adapters/peekaboo-bridge-operation-receipt-bundle-1-29.mjs` decodes the real opt-in verification
-bundle. Every bundle contains the exact same-connection listener attestation and signed receipt, the canonical signature
-payload bytes, and the canonical request and response bytes. The validator therefore never reconstructs signed bytes or
+bundle. Every bundle contains the exact same-connection listener and logical-session attestations, signed terminal
+receipt, all three canonical signature payloads, and the canonical request and response bytes. The validator therefore
+never reconstructs signed bytes or
 substitutes a status probe made over another connection. Those bytes can contain typed text and other sensitive command
 payloads: use a new private artifact directory, do not publish it, and remove it after the certification evidence has
 been reduced to non-sensitive hashes and verdicts. The validator takes the attestation from the first bundle

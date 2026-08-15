@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 
 import { canonicalBytes } from '../validate-attested-operation-receipts.mjs';
 
-export const adapterAPIVersion = 2;
-export const adapterID = 'peekaboo-bridge-operation-receipt-bundle-1.29-final';
+export const adapterAPIVersion = 3;
+export const adapterID = 'peekaboo-bridge-operation-receipt-bundle-1.29-logical-session-v1';
 export const embedsAttestation = true;
 
 function object(value, context) {
@@ -25,6 +25,15 @@ function uuid(value, context) {
   return value.toLowerCase();
 }
 
+function decimal(value, context) {
+  if (typeof value !== 'string' || !/^(0|[1-9][0-9]*)$/.test(value)) {
+    throw new Error(`${context} must be a canonical decimal string`);
+  }
+  const parsed = BigInt(value);
+  if (parsed > 0xffff_ffff_ffff_ffffn) throw new Error(`${context} exceeds UInt64`);
+  return value;
+}
+
 function processIdentity(value, context) {
   const identity = object(value, context);
   if (typeof identity.processStartIdentity !== 'string'
@@ -41,6 +50,11 @@ function processIdentity(value, context) {
 function listenerAttestation(document) {
   const root = object(document, 'verification bundle');
   return object(root.operationAttestation, 'same-connection operation attestation');
+}
+
+function sessionAttestation(document) {
+  const root = object(document, 'verification bundle');
+  return object(root.operationSessionAttestation, 'same-connection operation session attestation');
 }
 
 function normalizeAttestation(value) {
@@ -65,6 +79,43 @@ function unsignedAttestation(value) {
     host: value.host,
     createdAtUnixMilliseconds: value.createdAtUnixMilliseconds,
     receiptArchiveDirectory: value.receiptArchiveDirectory,
+  };
+}
+
+function normalizeSessionAttestation(value) {
+  const client = processIdentity(value.client, 'session client identity');
+  return {
+    schemaVersion: value.schemaVersion,
+    sessionID: uuid(value.sessionID, 'operation session ID'),
+    listenerInstanceID: uuid(value.listenerInstanceID, 'session listener instance'),
+    listenerKeySHA256: value.listenerPublicKeySHA256,
+    clientInstanceID: uuid(value.clientInstanceID, 'session client instance'),
+    clientPID: client.pid,
+    clientStartIdentity: client.startIdentity,
+    clientCodeSignatureHash: client.codeSignatureHash,
+    maximumRequestCount: value.maximumRequestCount,
+    remainingClaimCount: value.remainingClaimCount,
+    predecessorSessionID: value.predecessorSessionID === undefined
+      ? null
+      : uuid(value.predecessorSessionID, 'predecessor session ID'),
+    createdAtMilliseconds: value.createdAtUnixMilliseconds,
+  };
+}
+
+function unsignedSessionAttestation(value) {
+  return {
+    schemaVersion: value.schemaVersion,
+    sessionID: value.sessionID,
+    listenerInstanceID: value.listenerInstanceID,
+    listenerPublicKeySHA256: value.listenerPublicKeySHA256,
+    clientInstanceID: value.clientInstanceID,
+    client: value.client,
+    maximumRequestCount: value.maximumRequestCount,
+    remainingClaimCount: value.remainingClaimCount,
+    ...(value.predecessorSessionID === undefined
+      ? {}
+      : { predecessorSessionID: value.predecessorSessionID }),
+    createdAtUnixMilliseconds: value.createdAtUnixMilliseconds,
   };
 }
 
@@ -236,8 +287,12 @@ function normalizeReceiptPayload(value, facts) {
   return {
     schemaVersion: value.schemaVersion,
     requestID: uuid(value.requestID, 'request ID'),
+    sessionID: uuid(value.sessionID, 'receipt session ID'),
+    sessionSequence: decimal(value.sessionSequence, 'receipt session sequence'),
+    sessionAttestationSHA256: value.sessionAttestationSHA256,
     listenerInstanceID: uuid(value.listenerInstanceID, 'receipt listener instance'),
     listenerKeySHA256: value.listenerPublicKeySHA256,
+    clientInstanceID: uuid(value.clientInstanceID, 'receipt client instance'),
     bridgePID: host.pid,
     bridgeStartIdentity: host.startIdentity,
     bridgeCodeSignatureHash: host.codeSignatureHash,
@@ -254,6 +309,7 @@ function normalizeReceiptPayload(value, facts) {
       value.targetAttributionEvidence,
     ),
     outcome: normalizeOutcome(value.outcome),
+    remainingClaimCount: value.remainingClaimCount,
     requestEnvelopeCase: facts.requestEnvelopeCase,
     requestCase: facts.requestCase,
     responseEnvelopeCase: facts.responseEnvelopeCase,
@@ -285,6 +341,21 @@ export function decodeAttestation(document) {
   };
 }
 
+export function decodeSessionAttestation(document) {
+  const bundle = object(document, 'verification bundle');
+  const attestation = sessionAttestation(document);
+  return {
+    normalized: normalizeSessionAttestation(attestation),
+    documentBytes: canonicalBytes(attestation),
+    signedBytes: canonicalPayload(
+      bundle.canonicalSessionAttestationPayload,
+      unsignedSessionAttestation(attestation),
+      'canonical session attestation payload',
+    ),
+    signature: signature(attestation.signature, 'operation session signature'),
+  };
+}
+
 export function decodeReceipt(document) {
   const bundle = object(document, 'verification bundle');
   const receipt = object(bundle.receipt, 'signed operation receipt');
@@ -294,6 +365,7 @@ export function decodeReceipt(document) {
   const facts = wireFacts(requestCanonicalBytes, responseCanonicalBytes);
   return {
     attestation: decodeAttestation(bundle),
+    session: decodeSessionAttestation(bundle),
     normalized: normalizeReceiptPayload(payload, facts),
     signedBytes: canonicalPayload(
       bundle.canonicalReceiptPayload,
@@ -312,4 +384,8 @@ export function hostAttestationBytes(document) {
 
 export function hostReceiptBytes(document) {
   return canonicalBytes(object(object(document, 'verification bundle').receipt, 'signed operation receipt'));
+}
+
+export function hostSessionAttestationBytes(document) {
+  return canonicalBytes(sessionAttestation(document));
 }

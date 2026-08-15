@@ -12,13 +12,17 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const UUID_V8 = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const HEX40 = /^[0-9a-f]{40}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 const DECIMAL_IDENTITY = /^[1-9][0-9]*$/;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 const RETAINED_LISTENER_DIRECTORY_LIMIT = 16;
+const OPERATION_SESSION_DIRECTORY_LIMIT = 64;
+const UINT64_MAX = 0xffff_ffff_ffff_ffffn;
+const REQUEST_ID_DOMAIN = Buffer.from('peekaboo.bridge.operation-request.v1\0', 'utf8');
 
 function failure(rule, message, requestID = null) {
   return { rule, message, request_id: requestID };
@@ -68,6 +72,33 @@ function safeMilliseconds(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
 
+function canonicalUInt64(value) {
+  if (typeof value !== 'string' || !/^(0|[1-9][0-9]*)$/.test(value)) return null;
+  const parsed = BigInt(value);
+  return parsed <= UINT64_MAX ? parsed : null;
+}
+
+function uuidBytes(value) {
+  return Buffer.from(value.replaceAll('-', ''), 'hex');
+}
+
+export function deterministicRequestID(sessionID, sequence) {
+  const parsed = canonicalUInt64(sequence);
+  if (!UUID_V4.test(sessionID) || parsed === null) return null;
+  const sequenceBytes = Buffer.alloc(8);
+  sequenceBytes.writeBigUInt64BE(parsed);
+  const bytes = Buffer.from(createHash('sha256')
+    .update(REQUEST_ID_DOMAIN)
+    .update(uuidBytes(sessionID))
+    .update(sequenceBytes)
+    .digest()
+    .subarray(0, 16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x80;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function validProcess(value) {
   return exactKeys(value, ['pid', 'startIdentity', 'codeSignatureHash'])
     && positiveInteger(value.pid)
@@ -75,6 +106,34 @@ function validProcess(value) {
     && DECIMAL_IDENTITY.test(value.startIdentity)
     && typeof value.codeSignatureHash === 'string'
     && HEX40.test(value.codeSignatureHash);
+}
+
+function validSession(value) {
+  return exactKeys(value, [
+    'schemaVersion', 'sessionID', 'listenerInstanceID', 'listenerKeySHA256',
+    'clientInstanceID', 'clientPID', 'clientStartIdentity', 'clientCodeSignatureHash',
+    'maximumRequestCount', 'remainingClaimCount', 'predecessorSessionID',
+    'createdAtMilliseconds',
+  ])
+    && value.schemaVersion === 1
+    && typeof value.sessionID === 'string' && UUID_V4.test(value.sessionID)
+    && typeof value.listenerInstanceID === 'string' && UUID_V4.test(value.listenerInstanceID)
+    && typeof value.listenerKeySHA256 === 'string' && HEX64.test(value.listenerKeySHA256)
+    && typeof value.clientInstanceID === 'string' && UUID_V4.test(value.clientInstanceID)
+    && validProcess({
+      pid: value.clientPID,
+      startIdentity: value.clientStartIdentity,
+      codeSignatureHash: value.clientCodeSignatureHash,
+    })
+    && positiveInteger(value.maximumRequestCount)
+    && value.maximumRequestCount <= 16384
+    && Number.isSafeInteger(value.remainingClaimCount)
+    && value.remainingClaimCount === value.maximumRequestCount
+    && (value.predecessorSessionID === null
+      || (typeof value.predecessorSessionID === 'string'
+        && UUID_V4.test(value.predecessorSessionID)
+        && value.predecessorSessionID !== value.sessionID))
+    && safeMilliseconds(value.createdAtMilliseconds);
 }
 
 function validBounds(value) {
@@ -187,8 +246,8 @@ function validateContract(contract) {
     'version', 'certificationRunID', 'adapter', 'protocolImplementation', 'protocol',
     'socketEndpoint', 'listener', 'hostArchive', 'ownedTarget', 'foregroundTarget',
     'interval', 'expectedOperations',
-  ]) || contract.version !== 2) {
-    return [failure('contract_schema', 'Contract must be one closed version-2 object')];
+  ]) || contract.version !== 3) {
+    return [failure('contract_schema', 'Contract must be one closed version-3 object')];
   }
   if (typeof contract.certificationRunID !== 'string' || contract.certificationRunID.length === 0) {
     failures.push(failure('contract_run', 'Certification run ID must be nonempty'));
@@ -231,7 +290,7 @@ function validateContract(contract) {
   if (!exactKeys(listener, [
     'instanceID', 'signingPublicKeyBase64', 'signingPublicKeySHA256', 'bridgePID',
     'bridgeStartIdentity', 'bridgeCodeSignatureHash', 'createdAtMilliseconds', 'receiptArchiveDirectory',
-  ]) || typeof listener.instanceID !== 'string' || !UUID.test(listener.instanceID)
+  ]) || typeof listener.instanceID !== 'string' || !UUID_V4.test(listener.instanceID)
       || typeof listener.signingPublicKeyBase64 !== 'string'
       || !BASE64.test(listener.signingPublicKeyBase64)
       || Buffer.from(listener.signingPublicKeyBase64, 'base64').length !== 32
@@ -254,7 +313,7 @@ function validateContract(contract) {
   const hostArchive = contract.hostArchive;
   if (!exactKeys(hostArchive, [
     'temporaryRoot', 'rootDirectory', 'socketNamespaceSHA256', 'listenerDirectoryLimit',
-    'attestationFileSHA256',
+    'sessionDirectoryLimit', 'attestationFileSHA256',
   ]) || typeof hostArchive.temporaryRoot !== 'string' || !path.isAbsolute(hostArchive.temporaryRoot)
       || typeof hostArchive.rootDirectory !== 'string' || !path.isAbsolute(hostArchive.rootDirectory)
       || hostArchive.socketNamespaceSHA256 !== expectedSocketNamespace
@@ -262,6 +321,7 @@ function validateContract(contract) {
       || path.basename(path.dirname(hostArchive.rootDirectory)) !== 'PeekabooOperationReceipts'
       || path.dirname(path.dirname(hostArchive.rootDirectory)) !== hostArchive.temporaryRoot
       || hostArchive.listenerDirectoryLimit !== RETAINED_LISTENER_DIRECTORY_LIMIT
+      || hostArchive.sessionDirectoryLimit !== OPERATION_SESSION_DIRECTORY_LIMIT
       || typeof hostArchive.attestationFileSHA256 !== 'string'
       || !HEX64.test(hostArchive.attestationFileSHA256)) {
     failures.push(failure(
@@ -307,7 +367,7 @@ function validateContract(contract) {
         'responseSHA256', 'target', 'focusedElement', 'attributionFailure', 'outcome',
       ]) || typeof entry.operationID !== 'string' || entry.operationID.length === 0
           || (entry.requestID !== null
-            && (typeof entry.requestID !== 'string' || !UUID.test(entry.requestID)))
+            && (typeof entry.requestID !== 'string' || !UUID_V8.test(entry.requestID)))
           || !['observation', 'mutation'].includes(entry.kind)
           || typeof entry.operation !== 'string' || entry.operation.length === 0
           || typeof entry.requestEnvelopeCase !== 'string' || entry.requestEnvelopeCase.length === 0
@@ -387,20 +447,77 @@ function validateSourceEvidence(evidence, contract, failures) {
   }
 }
 
+function validateSession(session, receiptValue, contract, rawKey, failures) {
+  const value = session?.normalized;
+  const requestID = receiptValue?.requestID ?? null;
+  if (!validSession(value)
+      || value.listenerInstanceID !== contract.listener.instanceID
+      || value.listenerKeySHA256 !== contract.listener.signingPublicKeySHA256
+      || value.clientInstanceID !== receiptValue?.clientInstanceID
+      || value.clientPID !== receiptValue?.clientPID
+      || value.clientStartIdentity !== receiptValue?.clientStartIdentity
+      || value.clientCodeSignatureHash !== receiptValue?.clientCodeSignatureHash
+      || value.createdAtMilliseconds > receiptValue?.startedAtMilliseconds) {
+    failures.push(failure(
+      'session_attestation',
+      'Logical operation session is malformed or does not bind the listener, client, and receipt',
+      requestID,
+    ));
+    return;
+  }
+  try {
+    if (!verifyEd25519(session.signedBytes, session.signature, rawKey)) {
+      failures.push(failure('session_signature', 'Operation session signature is invalid', requestID));
+    }
+  } catch (error) {
+    failures.push(failure(
+      'session_signature',
+      `Operation session signature could not be verified: ${error.message}`,
+      requestID,
+    ));
+  }
+  if (!Buffer.isBuffer(session.documentBytes)
+      || sha256(session.documentBytes) !== receiptValue.sessionAttestationSHA256) {
+    failures.push(failure(
+      'session_digest',
+      'Signed receipt does not bind the complete operation session attestation',
+      requestID,
+    ));
+  }
+  const sequence = canonicalUInt64(receiptValue.sessionSequence);
+  if (receiptValue.sessionID !== value.sessionID
+      || sequence === null || sequence >= BigInt(value.maximumRequestCount)
+      || receiptValue.remainingClaimCount < 0
+      || receiptValue.remainingClaimCount >= value.remainingClaimCount) {
+    failures.push(failure(
+      'session_claim',
+      'Receipt does not prove one unused claim inside the signed logical session capacity',
+      requestID,
+    ));
+  }
+}
+
 function validateReceipt(receipt, expected, contract, rawKey, failures) {
   const value = receipt?.normalized;
   const requestID = value?.requestID ?? expected?.requestID ?? null;
   if (!exactKeys(value, [
-    'schemaVersion', 'requestID', 'listenerInstanceID', 'listenerKeySHA256',
+    'schemaVersion', 'requestID', 'sessionID', 'sessionSequence', 'sessionAttestationSHA256',
+    'listenerInstanceID', 'listenerKeySHA256', 'clientInstanceID',
     'bridgePID', 'bridgeStartIdentity', 'bridgeCodeSignatureHash',
     'clientPID', 'clientStartIdentity', 'clientCodeSignatureHash',
     'operation', 'requestSHA256', 'responseSHA256', 'target', 'focusedElement',
-    'attributionFailure', 'outcome', 'requestEnvelopeCase', 'requestCase',
+    'attributionFailure', 'outcome', 'remainingClaimCount', 'requestEnvelopeCase', 'requestCase',
     'responseEnvelopeCase', 'responseCase', 'responseOutcome',
     'startedAtMilliseconds', 'completedAtMilliseconds',
-  ]) || value.schemaVersion !== 1 || typeof value.requestID !== 'string' || !UUID.test(value.requestID)
+  ]) || value.schemaVersion !== 1 || typeof value.requestID !== 'string' || !UUID_V8.test(value.requestID)
+      || typeof value.sessionID !== 'string' || !UUID_V4.test(value.sessionID)
+      || canonicalUInt64(value.sessionSequence) === null
+      || value.requestID !== deterministicRequestID(value.sessionID, value.sessionSequence)
+      || typeof value.sessionAttestationSHA256 !== 'string'
+      || !HEX64.test(value.sessionAttestationSHA256)
       || value.listenerInstanceID !== contract.listener.instanceID
       || value.listenerKeySHA256 !== contract.listener.signingPublicKeySHA256
+      || typeof value.clientInstanceID !== 'string' || !UUID_V4.test(value.clientInstanceID)
       || value.bridgePID !== contract.listener.bridgePID
       || value.bridgeStartIdentity !== contract.listener.bridgeStartIdentity
       || value.bridgeCodeSignatureHash !== contract.listener.bridgeCodeSignatureHash
@@ -420,6 +537,7 @@ function validateReceipt(receipt, expected, contract, rawKey, failures) {
         && (value.target === null || value.focusedElement.pid !== value.target.pid
           || value.focusedElement.windowID !== value.target.windowID))
       || (value.outcome !== null && !validOutcomeShape(value.outcome))
+      || !Number.isSafeInteger(value.remainingClaimCount) || value.remainingClaimCount < 0
       || typeof value.requestEnvelopeCase !== 'string' || value.requestEnvelopeCase.length === 0
       || typeof value.requestCase !== 'string' || value.requestCase.length === 0
       || typeof value.responseEnvelopeCase !== 'string' || value.responseEnvelopeCase.length === 0
@@ -431,6 +549,7 @@ function validateReceipt(receipt, expected, contract, rawKey, failures) {
     failures.push(failure('receipt_schema', 'Attested operation receipt is malformed', requestID));
     return;
   }
+  validateSession(receipt.session, value, contract, rawKey, failures);
   try {
     if (!verifyEd25519(receipt.signedBytes, receipt.signature, rawKey)) {
       failures.push(failure('receipt_signature', 'Operation receipt signature is invalid', requestID));
@@ -545,7 +664,13 @@ function validatePrivateDirectory(directory, expectedCount, failures) {
   return documents;
 }
 
-function validateHostArchive(contract, attestationBytes, receiptBytesByID, failures) {
+function validateHostArchive(
+  contract,
+  attestationBytes,
+  sessionAttestationBytesByID,
+  receiptBytesBySession,
+  failures,
+) {
   const root = contract.hostArchive.rootDirectory;
   const listenerDirectory = contract.listener.receiptArchiveDirectory;
   const namespaceDirectory = path.dirname(root);
@@ -561,11 +686,15 @@ function validateHostArchive(contract, attestationBytes, receiptBytesByID, failu
     failures.push(failure('host_archive_namespace', `Host temporary root is unavailable: ${error.message}`));
     return;
   }
+  const sessionDirectory = path.join(listenerDirectory, 'sessions');
+  const retiredSessionDirectory = path.join(listenerDirectory, 'retired-sessions');
   for (const [directory, label] of [
     [contract.hostArchive.temporaryRoot, 'temporary root'],
     [namespaceDirectory, 'namespace'],
     [root, 'root'],
     [listenerDirectory, 'listener'],
+    [sessionDirectory, 'sessions'],
+    [retiredSessionDirectory, 'retired sessions'],
   ]) {
     let info;
     try {
@@ -582,20 +711,14 @@ function validateHostArchive(contract, attestationBytes, receiptBytesByID, failu
   }
   const listenerNames = fs.readdirSync(root).sort();
   if (listenerNames.length > contract.hostArchive.listenerDirectoryLimit
-      || listenerNames.some((name) => !UUID.test(name))) {
+      || listenerNames.some((name) => !UUID_V4.test(name))) {
     failures.push(failure('host_archive_retention', 'Hashed archive exceeds or escapes bounded listener retention'));
   }
-  const expectedFiles = new Map([['attestation.json', attestationBytes]]);
-  for (const [requestID, bytes] of receiptBytesByID) {
-    expectedFiles.set(`${requestID}.json`, bytes);
+  const listenerEntries = fs.readdirSync(listenerDirectory).sort();
+  if (!sameJSON(listenerEntries, ['attestation.json', 'retired-sessions', 'sessions'])) {
+    failures.push(failure('host_archive_layout', 'Listener archive contains an unknown top-level entry'));
   }
-  const actualFiles = fs.readdirSync(listenerDirectory).sort();
-  if (actualFiles.length !== expectedFiles.size
-      || actualFiles.some((name) => !expectedFiles.has(name))) {
-    failures.push(failure('host_archive_completeness', 'Listener archive differs from the certified operation set'));
-  }
-  for (const [name, expectedBytes] of expectedFiles) {
-    const filePath = path.join(listenerDirectory, name);
+  const validateFile = (filePath, expectedBytes, label) => {
     try {
       const before = fs.lstatSync(filePath);
       const bytes = fs.readFileSync(filePath);
@@ -604,14 +727,65 @@ function validateHostArchive(contract, attestationBytes, receiptBytesByID, failu
           || (typeof process.geteuid === 'function' && before.uid !== process.geteuid())
           || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
           || before.mtimeMs !== after.mtimeMs || !bytes.equals(expectedBytes)) {
-        failures.push(failure('host_archive_file', `Host archive file is unsafe or mismatched: ${name}`));
+        failures.push(failure('host_archive_file', `Host archive file is unsafe or mismatched: ${label}`));
       }
-      if (name === 'attestation.json'
-          && sha256(bytes) !== contract.hostArchive.attestationFileSHA256) {
-        failures.push(failure('host_archive_attestation', 'Archived listener attestation hash is wrong'));
-      }
+      return bytes;
     } catch (error) {
-      failures.push(failure('host_archive_file', `Host archive file is unavailable: ${name}: ${error.message}`));
+      failures.push(failure('host_archive_file', `Host archive file is unavailable: ${label}: ${error.message}`));
+      return null;
+    }
+  };
+  const archivedAttestation = validateFile(
+    path.join(listenerDirectory, 'attestation.json'),
+    attestationBytes,
+    'attestation.json',
+  );
+  if (archivedAttestation
+      && sha256(archivedAttestation) !== contract.hostArchive.attestationFileSHA256) {
+    failures.push(failure('host_archive_attestation', 'Archived listener attestation hash is wrong'));
+  }
+
+  const activeSessionIDs = fs.readdirSync(sessionDirectory).sort();
+  if (activeSessionIDs.length > contract.hostArchive.sessionDirectoryLimit
+      || activeSessionIDs.some((name) => !UUID_V4.test(name))) {
+    failures.push(failure('host_archive_session_retention', 'Active session archive exceeds or escapes bounded retention'));
+  }
+  const retiredSessionIDs = fs.readdirSync(retiredSessionDirectory).sort();
+  if (retiredSessionIDs.length > contract.hostArchive.sessionDirectoryLimit
+      || retiredSessionIDs.some((name) => !UUID_V4.test(name))) {
+    failures.push(failure('host_archive_session_retention', 'Retired session quarantine exceeds or escapes bounds'));
+  }
+  for (const sessionID of activeSessionIDs) {
+    const expectedAttestation = sessionAttestationBytesByID.get(sessionID);
+    const expectedReceipts = receiptBytesBySession.get(sessionID);
+    const directory = path.join(sessionDirectory, sessionID);
+    let info;
+    try {
+      info = fs.lstatSync(directory);
+    } catch (error) {
+      failures.push(failure('host_archive_directory', `Session archive is unavailable: ${error.message}`));
+      continue;
+    }
+    if (!info.isDirectory() || info.isSymbolicLink() || (info.mode & 0o077) !== 0
+        || (typeof process.geteuid === 'function' && info.uid !== process.geteuid())) {
+      failures.push(failure('host_archive_permissions', `Session archive is not private: ${sessionID}`));
+      continue;
+    }
+    const names = fs.readdirSync(directory).sort();
+    if (!expectedAttestation || !expectedReceipts) {
+      if (!names.includes('attestation.json')
+          || names.some((name) => name !== 'attestation.json' && !/^(0|[1-9][0-9]*)\.json$/.test(name))) {
+        failures.push(failure('host_archive_layout', `Unexported session has unsafe layout: ${sessionID}`));
+      }
+      continue;
+    }
+    const expectedNames = ['attestation.json', ...[...expectedReceipts.keys()].map((value) => `${value}.json`)].sort();
+    if (!sameJSON(names, expectedNames)) {
+      failures.push(failure('host_archive_completeness', `Retained session archive is incomplete: ${sessionID}`));
+    }
+    validateFile(path.join(directory, 'attestation.json'), expectedAttestation, `${sessionID}/attestation.json`);
+    for (const [sequence, bytes] of expectedReceipts) {
+      validateFile(path.join(directory, `${sequence}.json`), bytes, `${sessionID}/${sequence}.json`);
     }
   }
 }
@@ -637,12 +811,13 @@ export async function validateAttestedOperationReceipts({
   if (failures.some((entry) => entry.rule === 'contract_schema')) {
     return { success: false, adapter: null, receipts: [], failures };
   }
-  if (!adapter || adapter.adapterAPIVersion !== 2 || typeof adapter.adapterID !== 'string'
+  if (!adapter || adapter.adapterAPIVersion !== 3 || typeof adapter.adapterID !== 'string'
       || typeof adapter.embedsAttestation !== 'boolean'
       || typeof adapter.decodeAttestation !== 'function' || typeof adapter.decodeReceipt !== 'function'
       || typeof adapter.hostAttestationBytes !== 'function'
-      || typeof adapter.hostReceiptBytes !== 'function') {
-    failures.push(failure('adapter_contract', 'Receipt adapter does not implement API version 2'));
+      || typeof adapter.hostReceiptBytes !== 'function'
+      || typeof adapter.hostSessionAttestationBytes !== 'function') {
+    failures.push(failure('adapter_contract', 'Receipt adapter does not implement API version 3'));
     return { success: false, adapter: null, receipts: [], failures };
   }
   if (adapter.adapterID !== contract.adapter?.id
@@ -675,8 +850,12 @@ export async function validateAttestedOperationReceipts({
     .map((entry) => [entry.requestID, entry]));
   const unclaimedOperationIDs = new Set(expectedOperations.map((entry) => entry.operationID));
   const decodedReceipts = [];
-  const hostReceiptBytesByID = new Map();
+  const hostSessionAttestationBytesByID = new Map();
+  const hostReceiptBytesBySession = new Map();
   const seenRequestIDs = new Set();
+  const seenSessionClaims = new Set();
+  const seenRemainingClaims = new Set();
+  const sessionsByID = new Map();
   const rawKey = Buffer.from(contract.listener?.signingPublicKeyBase64 ?? '', 'base64');
   for (const file of files) {
     let decoded;
@@ -684,6 +863,7 @@ export async function validateAttestedOperationReceipts({
       const document = loadJSON(file.bytes, file.name);
       decoded = await adapter.decodeReceipt(document, { fileName: file.name, fileSHA256: file.sha256 });
       const hostReceiptBytes = await adapter.hostReceiptBytes(document);
+      const hostSessionAttestationBytes = await adapter.hostSessionAttestationBytes(document);
       if (adapter.embedsAttestation) {
         if (!decoded?.attestation) {
           failures.push(failure('listener_decode', 'Receipt bundle omitted its same-connection attestation'));
@@ -699,8 +879,44 @@ export async function validateAttestedOperationReceipts({
         failures.push(failure('receipt_replay', 'Request ID appears more than once', requestID ?? null));
       }
       seenRequestIDs.add(requestID);
-      if (typeof requestID === 'string' && Buffer.isBuffer(hostReceiptBytes)) {
-        hostReceiptBytesByID.set(requestID, hostReceiptBytes);
+      const sessionID = decoded?.normalized?.sessionID;
+      const sessionSequence = decoded?.normalized?.sessionSequence;
+      const sessionClaim = `${sessionID}:${sessionSequence}`;
+      if (seenSessionClaims.has(sessionClaim)) {
+        failures.push(failure(
+          'session_replay',
+          'Logical operation session sequence appears more than once',
+          requestID ?? null,
+        ));
+      }
+      seenSessionClaims.add(sessionClaim);
+      const remainingClaim = `${sessionID}:${decoded?.normalized?.remainingClaimCount}`;
+      if (seenRemainingClaims.has(remainingClaim)) {
+        failures.push(failure(
+          'session_claim_replay',
+          'Logical operation session claim budget appears more than once',
+          requestID ?? null,
+        ));
+      }
+      seenRemainingClaims.add(remainingClaim);
+      const priorSession = sessionsByID.get(sessionID);
+      if (priorSession && !sameJSON(priorSession.normalized, decoded?.session?.normalized)) {
+        failures.push(failure('session_fork', 'One logical session has conflicting signed attestations', requestID));
+      } else if (!priorSession && decoded?.session) {
+        sessionsByID.set(sessionID, decoded.session);
+      }
+      if (typeof sessionID === 'string' && Buffer.isBuffer(hostSessionAttestationBytes)) {
+        const priorBytes = hostSessionAttestationBytesByID.get(sessionID);
+        if (priorBytes && !priorBytes.equals(hostSessionAttestationBytes)) {
+          failures.push(failure('session_fork', 'One logical session has conflicting archived bytes', requestID));
+        } else {
+          hostSessionAttestationBytesByID.set(sessionID, hostSessionAttestationBytes);
+        }
+      }
+      if (typeof sessionID === 'string' && canonicalUInt64(sessionSequence) !== null
+          && Buffer.isBuffer(hostReceiptBytes)) {
+        if (!hostReceiptBytesBySession.has(sessionID)) hostReceiptBytesBySession.set(sessionID, new Map());
+        hostReceiptBytesBySession.get(sessionID).set(sessionSequence, hostReceiptBytes);
       }
       let expected = expectedByRequestID.get(requestID);
       if (!expected) {
@@ -735,10 +951,51 @@ export async function validateAttestedOperationReceipts({
       ));
     }
   }
+  const successorCountByPredecessor = new Map();
+  for (const [sessionID, session] of sessionsByID) {
+    const predecessorID = session.normalized?.predecessorSessionID;
+    if (predecessorID === null) continue;
+    successorCountByPredecessor.set(
+      predecessorID,
+      (successorCountByPredecessor.get(predecessorID) ?? 0) + 1,
+    );
+    const predecessor = sessionsByID.get(predecessorID);
+    if (!predecessor
+        || predecessor.normalized?.listenerInstanceID !== session.normalized.listenerInstanceID
+        || predecessor.normalized?.clientInstanceID !== session.normalized.clientInstanceID
+        || predecessor.normalized?.clientPID !== session.normalized.clientPID
+        || predecessor.normalized?.clientStartIdentity !== session.normalized.clientStartIdentity
+        || predecessor.normalized?.clientCodeSignatureHash !== session.normalized.clientCodeSignatureHash
+        || predecessor.normalized?.createdAtMilliseconds > session.normalized.createdAtMilliseconds) {
+      failures.push(failure(
+        'session_predecessor',
+        `Successor session ${sessionID} has no exact signed predecessor in the certification corpus`,
+      ));
+    }
+    const visited = new Set([sessionID]);
+    let cursor = predecessorID;
+    while (cursor !== null) {
+      if (visited.has(cursor)) {
+        failures.push(failure('session_fork', `Logical session chain contains a cycle at ${cursor}`));
+        break;
+      }
+      visited.add(cursor);
+      cursor = sessionsByID.get(cursor)?.normalized?.predecessorSessionID ?? null;
+    }
+  }
+  for (const [predecessorID, successorCount] of successorCountByPredecessor) {
+    if (successorCount > 1) {
+      failures.push(failure(
+        'session_fork',
+        `Logical session ${predecessorID} has more than one signed successor`,
+      ));
+    }
+  }
   validateHostArchive(
     contract,
     hostAttestationBytes,
-    hostReceiptBytesByID,
+    hostSessionAttestationBytesByID,
+    hostReceiptBytesBySession,
     failures,
   );
   return {

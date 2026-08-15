@@ -1,7 +1,7 @@
 import { canonicalBytes } from '../validate-attested-operation-receipts.mjs';
 
-export const adapterAPIVersion = 2;
-export const adapterID = 'canonical-attested-operation-receipts-v2';
+export const adapterAPIVersion = 3;
+export const adapterID = 'canonical-attested-operation-receipts-v3';
 export const embedsAttestation = false;
 
 function decodeSignature(value, context) {
@@ -23,12 +23,23 @@ export function decodeAttestation(document) {
   };
 }
 
+export function decodeSessionAttestation(document) {
+  const session = document?.session;
+  return {
+    normalized: session?.payload,
+    documentBytes: canonicalBytes(session),
+    signedBytes: canonicalBytes(session?.payload),
+    signature: decodeSignature(session?.signature, 'operation session attestation'),
+  };
+}
+
 export function decodeReceipt(document) {
   if (typeof document?.requestCanonicalBase64 !== 'string'
       || typeof document?.responseCanonicalBase64 !== 'string') {
     throw new Error('operation receipt is missing canonical request or response bytes');
   }
   return {
+    session: decodeSessionAttestation(document),
     normalized: document?.payload,
     signedBytes: canonicalBytes(document?.payload),
     signature: decodeSignature(document?.signature, 'operation receipt'),
@@ -43,4 +54,8 @@ export function hostAttestationBytes(document) {
 
 export function hostReceiptBytes(document) {
   return canonicalBytes(document);
+}
+
+export function hostSessionAttestationBytes(document) {
+  return canonicalBytes(document?.session);
 }

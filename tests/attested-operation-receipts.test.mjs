@@ -15,6 +15,7 @@ import * as adapter from '../scripts/receipt-adapters/canonical-attested-operati
 import * as bridgeBundleAdapter from '../scripts/receipt-adapters/peekaboo-bridge-operation-receipt-bundle-1-29.mjs';
 import {
   canonicalBytes,
+  deterministicRequestID,
   validateAttestedOperationReceipts,
 } from '../scripts/validate-attested-operation-receipts.mjs';
 
@@ -163,7 +164,9 @@ function makeFixture() {
   const foregroundTarget = target(502, '50200123', 602, 700);
   const requests = [
     {
-      requestID: '11111111-1111-4111-8111-111111111111',
+      sessionID: '33333333-3333-4333-8333-333333333333',
+      sessionSequence: '0',
+      clientInstanceID: '55555555-5555-4555-8555-555555555555',
       kind: 'observation',
       operation: 'desktopObservation',
       requestEnvelopeCase: 'desktopObservation',
@@ -179,7 +182,9 @@ function makeFixture() {
       completedAtMilliseconds: 2_200,
     },
     {
-      requestID: '22222222-2222-4222-8222-222222222222',
+      sessionID: '44444444-4444-4444-8444-444444444444',
+      sessionSequence: '0',
+      clientInstanceID: '66666666-6666-4666-8666-666666666666',
       kind: 'mutation',
       operation: 'exactWindowTargetedTypeActions',
       requestEnvelopeCase: 'projectedAction',
@@ -206,8 +211,11 @@ function makeFixture() {
       completedAtMilliseconds: 2_400,
     },
   ];
+  requests.forEach((request) => {
+    request.requestID = deterministicRequestID(request.sessionID, request.sessionSequence);
+  });
   const contract = {
-    version: 2,
+    version: 3,
     certificationRunID: 'coexistence-fixture',
     adapter: {
       id: adapter.adapterID,
@@ -230,6 +238,7 @@ function makeFixture() {
       rootDirectory: hostArchiveRoot,
       socketNamespaceSHA256: sha256(Buffer.from(socketPath, 'utf8')),
       listenerDirectoryLimit: 16,
+      sessionDirectoryLimit: 64,
       attestationFileSHA256: '0'.repeat(64),
     },
     ownedTarget,
@@ -283,11 +292,33 @@ function makeFixture() {
   const receiptDocuments = requests.map((request) => {
     const requestBytes = canonicalBytes(request.request);
     const responseBytes = canonicalBytes(request.response);
+    const sessionPayload = {
+      schemaVersion: 1,
+      sessionID: request.sessionID,
+      listenerInstanceID,
+      listenerKeySHA256: listener.signingPublicKeySHA256,
+      clientInstanceID: request.clientInstanceID,
+      clientPID: request.client.pid,
+      clientStartIdentity: request.client.startIdentity,
+      clientCodeSignatureHash: request.client.codeSignatureHash,
+      maximumRequestCount: 16,
+      remainingClaimCount: 16,
+      predecessorSessionID: null,
+      createdAtMilliseconds: 1_100,
+    };
+    const sessionDocument = {
+      payload: sessionPayload,
+      signature: signature(sessionPayload),
+    };
     const payload = {
       schemaVersion: 1,
       requestID: request.requestID,
+      sessionID: request.sessionID,
+      sessionSequence: request.sessionSequence,
+      sessionAttestationSHA256: sha256(canonicalBytes(sessionDocument)),
       listenerInstanceID,
       listenerKeySHA256: listener.signingPublicKeySHA256,
+      clientInstanceID: request.clientInstanceID,
       bridgePID: listener.bridgePID,
       bridgeStartIdentity: listener.bridgeStartIdentity,
       bridgeCodeSignatureHash: listener.bridgeCodeSignatureHash,
@@ -301,6 +332,7 @@ function makeFixture() {
       focusedElement: request.focusedElement,
       attributionFailure: null,
       outcome: request.outcome,
+      remainingClaimCount: 15,
       requestEnvelopeCase: request.requestEnvelopeCase,
       requestCase: request.requestCase,
       responseEnvelopeCase: request.responseEnvelopeCase,
@@ -310,6 +342,7 @@ function makeFixture() {
       completedAtMilliseconds: request.completedAtMilliseconds,
     };
     return {
+      session: sessionDocument,
       payload,
       requestCanonicalBase64: requestBytes.toString('base64'),
       responseCanonicalBase64: responseBytes.toString('base64'),
@@ -321,7 +354,17 @@ function makeFixture() {
     const bytes = canonicalBytes(document);
     fs.writeFileSync(receiptPath, bytes, { mode: 0o600 });
     fs.chmodSync(receiptPath, 0o600);
-    const hostReceiptPath = path.join(listenerArchive, `${document.payload.requestID}.json`);
+    const hostSessionDirectory = path.join(listenerArchive, 'sessions', document.payload.sessionID);
+    fs.mkdirSync(hostSessionDirectory, { recursive: true, mode: 0o700 });
+    fs.chmodSync(path.join(listenerArchive, 'sessions'), 0o700);
+    fs.chmodSync(hostSessionDirectory, 0o700);
+    fs.mkdirSync(path.join(listenerArchive, 'retired-sessions'), { recursive: true, mode: 0o700 });
+    fs.chmodSync(path.join(listenerArchive, 'retired-sessions'), 0o700);
+    const hostSessionPath = path.join(hostSessionDirectory, 'attestation.json');
+    const hostSessionBytes = canonicalBytes(document.session);
+    fs.writeFileSync(hostSessionPath, hostSessionBytes, { mode: 0o600 });
+    fs.chmodSync(hostSessionPath, 0o600);
+    const hostReceiptPath = path.join(hostSessionDirectory, `${document.payload.sessionSequence}.json`);
     fs.writeFileSync(hostReceiptPath, bytes, { mode: 0o600 });
     fs.chmodSync(hostReceiptPath, 0o600);
   }
@@ -360,6 +403,7 @@ function convertToBridgeBundles(fixture) {
   };
   fixture.receiptDocuments = fixture.receiptDocuments.map((document, index) => {
     const normalized = document.payload;
+    const normalizedSession = document.session.payload;
     const targetReceipt = {
       kind: 'window',
       processIdentifier: normalized.target.pid,
@@ -400,8 +444,11 @@ function convertToBridgeBundles(fixture) {
     const rawPayload = {
       schemaVersion: 1,
       requestID: normalized.requestID.toUpperCase(),
+      sessionID: normalized.sessionID.toUpperCase(),
+      sessionSequence: normalized.sessionSequence,
       listenerInstanceID: normalized.listenerInstanceID.toUpperCase(),
       listenerPublicKeySHA256: normalized.listenerKeySHA256,
+      clientInstanceID: normalized.clientInstanceID.toUpperCase(),
       host: {
         processIdentifier: normalized.bridgePID,
         processStartIdentity: normalized.bridgeStartIdentity,
@@ -418,16 +465,42 @@ function convertToBridgeBundles(fixture) {
       target: targetReceipt,
       ...(rawFocusedElement === undefined ? {} : { focusedElement: rawFocusedElement }),
       outcome,
+      remainingClaimCount: normalized.remainingClaimCount,
       startedAtUnixMilliseconds: normalized.startedAtMilliseconds,
       completedAtUnixMilliseconds: normalized.completedAtMilliseconds,
     };
+    const rawSessionPayload = {
+      schemaVersion: 1,
+      sessionID: normalizedSession.sessionID.toUpperCase(),
+      listenerInstanceID: normalizedSession.listenerInstanceID.toUpperCase(),
+      listenerPublicKeySHA256: normalizedSession.listenerKeySHA256,
+      clientInstanceID: normalizedSession.clientInstanceID.toUpperCase(),
+      client: {
+        processIdentifier: normalizedSession.clientPID,
+        processStartIdentity: normalizedSession.clientStartIdentity,
+        codeSignatureHash: normalizedSession.clientCodeSignatureHash,
+      },
+      maximumRequestCount: normalizedSession.maximumRequestCount,
+      remainingClaimCount: normalizedSession.remainingClaimCount,
+      ...(normalizedSession.predecessorSessionID === null
+        ? {}
+        : { predecessorSessionID: normalizedSession.predecessorSessionID.toUpperCase() }),
+      createdAtUnixMilliseconds: normalizedSession.createdAtMilliseconds,
+    };
+    const signedSessionAttestation = {
+      ...rawSessionPayload,
+      signature: signature(rawSessionPayload).value,
+    };
+    rawPayload.sessionAttestationSHA256 = sha256(canonicalBytes(signedSessionAttestation));
     const bundle = {
       operationAttestation: signedAttestation,
+      operationSessionAttestation: signedSessionAttestation,
       receipt: {
         payload: rawPayload,
         signature: signature(rawPayload).value,
       },
       canonicalListenerAttestationPayload: canonicalBytes(rawAttestation).toString('base64'),
+      canonicalSessionAttestationPayload: canonicalBytes(rawSessionPayload).toString('base64'),
       canonicalReceiptPayload: canonicalBytes(rawPayload).toString('base64'),
       canonicalRequest: document.requestCanonicalBase64,
       canonicalResponse: document.responseCanonicalBase64,
@@ -467,6 +540,20 @@ function rules(result) {
   return new Set(result.failures.map((entry) => entry.rule));
 }
 
+function hostSessionDirectory(fixture, document) {
+  const payload = document.receipt?.payload ?? document.payload;
+  return path.join(
+    fixture.contract.listener.receiptArchiveDirectory,
+    'sessions',
+    payload.sessionID.toLowerCase(),
+  );
+}
+
+function hostReceiptPath(fixture, document) {
+  const payload = document.receipt?.payload ?? document.payload;
+  return path.join(hostSessionDirectory(fixture, document), `${payload.sessionSequence}.json`);
+}
+
 function writeReceipt(fixture, index, { resign = true } = {}) {
   const document = fixture.receiptDocuments[index];
   if (resign) document.signature = signature(document.payload);
@@ -475,9 +562,72 @@ function writeReceipt(fixture, index, { resign = true } = {}) {
   const bytes = canonicalBytes(document);
   fs.writeFileSync(receiptPath, bytes, { mode: 0o600 });
   fs.chmodSync(receiptPath, 0o600);
-  const hostReceiptPath = path.join(fixture.contract.listener.receiptArchiveDirectory, `${requestID}.json`);
-  fs.writeFileSync(hostReceiptPath, bytes, { mode: 0o600 });
-  fs.chmodSync(hostReceiptPath, 0o600);
+  const archivedReceipt = hostReceiptPath(fixture, document);
+  const sessionDirectory = hostSessionDirectory(fixture, document);
+  fs.mkdirSync(sessionDirectory, { recursive: true, mode: 0o700 });
+  const sessionPath = path.join(sessionDirectory, 'attestation.json');
+  const sessionBytes = canonicalBytes(document.session);
+  fs.writeFileSync(sessionPath, sessionBytes, { mode: 0o600 });
+  fs.chmodSync(sessionPath, 0o600);
+  fs.writeFileSync(archivedReceipt, bytes, { mode: 0o600 });
+  fs.chmodSync(archivedReceipt, 0o600);
+}
+
+function rewriteCanonicalSession(fixture, index, {
+  sessionID,
+  sessionSequence,
+  clientInstanceID,
+  client,
+  predecessorSessionID = null,
+  remainingClaimCount,
+  createdAtMilliseconds,
+}) {
+  const document = fixture.receiptDocuments[index];
+  const oldRequestID = document.payload.requestID;
+  const oldSessionID = document.payload.sessionID;
+  const oldSequence = document.payload.sessionSequence;
+  const sessionPayload = document.session.payload;
+  sessionPayload.sessionID = sessionID;
+  sessionPayload.clientInstanceID = clientInstanceID;
+  sessionPayload.clientPID = client.pid;
+  sessionPayload.clientStartIdentity = client.startIdentity;
+  sessionPayload.clientCodeSignatureHash = client.codeSignatureHash;
+  sessionPayload.predecessorSessionID = predecessorSessionID;
+  sessionPayload.createdAtMilliseconds = createdAtMilliseconds;
+  document.session.signature = signature(sessionPayload);
+
+  const requestID = deterministicRequestID(sessionID, sessionSequence);
+  document.payload.requestID = requestID;
+  document.payload.sessionID = sessionID;
+  document.payload.sessionSequence = sessionSequence;
+  document.payload.sessionAttestationSHA256 = sha256(canonicalBytes(document.session));
+  document.payload.clientInstanceID = clientInstanceID;
+  document.payload.clientPID = client.pid;
+  document.payload.clientStartIdentity = client.startIdentity;
+  document.payload.clientCodeSignatureHash = client.codeSignatureHash;
+  document.payload.remainingClaimCount = remainingClaimCount;
+  const expected = fixture.contract.expectedOperations[index];
+  expected.requestID = requestID;
+  expected.client = structuredClone(client);
+
+  fs.rmSync(path.join(fixture.receiptDirectory, `${oldRequestID}.json`), { force: true });
+  fs.rmSync(path.join(
+    fixture.contract.listener.receiptArchiveDirectory,
+    'sessions',
+    oldSessionID,
+    `${oldSequence}.json`,
+  ), { force: true });
+  if (oldSessionID !== sessionID
+      && !fixture.receiptDocuments.some((candidate, candidateIndex) => (
+        candidateIndex !== index && candidate.payload.sessionID === oldSessionID
+      ))) {
+    fs.rmSync(path.join(
+      fixture.contract.listener.receiptArchiveDirectory,
+      'sessions',
+      oldSessionID,
+    ), { recursive: true, force: true });
+  }
+  writeReceipt(fixture, index);
 }
 
 function writeBridgeBundle(fixture, index) {
@@ -486,9 +636,15 @@ function writeBridgeBundle(fixture, index) {
   const receiptPath = path.join(fixture.receiptDirectory, `${requestID}.json`);
   fs.writeFileSync(receiptPath, canonicalBytes(bundle), { mode: 0o600 });
   fs.chmodSync(receiptPath, 0o600);
-  const hostReceiptPath = path.join(fixture.contract.listener.receiptArchiveDirectory, `${requestID}.json`);
-  fs.writeFileSync(hostReceiptPath, canonicalBytes(bundle.receipt), { mode: 0o600 });
-  fs.chmodSync(hostReceiptPath, 0o600);
+  const sessionDirectory = hostSessionDirectory(fixture, bundle);
+  fs.mkdirSync(sessionDirectory, { recursive: true, mode: 0o700 });
+  const sessionBytes = canonicalBytes(bundle.operationSessionAttestation);
+  const sessionPath = path.join(sessionDirectory, 'attestation.json');
+  fs.writeFileSync(sessionPath, sessionBytes, { mode: 0o600 });
+  fs.chmodSync(sessionPath, 0o600);
+  const archivedReceipt = hostReceiptPath(fixture, bundle);
+  fs.writeFileSync(archivedReceipt, canonicalBytes(bundle.receipt), { mode: 0o600 });
+  fs.chmodSync(archivedReceipt, 0o600);
 }
 
 function resignBridgeReceipt(fixture, index) {
@@ -496,6 +652,18 @@ function resignBridgeReceipt(fixture, index) {
   bundle.receipt.signature = signature(bundle.receipt.payload).value;
   bundle.canonicalReceiptPayload = canonicalBytes(bundle.receipt.payload).toString('base64');
   writeBridgeBundle(fixture, index);
+}
+
+function resignBridgeSession(fixture, index) {
+  const bundle = fixture.receiptDocuments[index];
+  const unsigned = { ...bundle.operationSessionAttestation };
+  delete unsigned.signature;
+  bundle.operationSessionAttestation.signature = signature(unsigned).value;
+  bundle.canonicalSessionAttestationPayload = canonicalBytes(unsigned).toString('base64');
+  bundle.receipt.payload.sessionAttestationSHA256 = sha256(canonicalBytes(
+    bundle.operationSessionAttestation,
+  ));
+  resignBridgeReceipt(fixture, index);
 }
 
 function replaceBridgeResponse(fixture, index, response) {
@@ -524,10 +692,10 @@ test('accepts exact signed receipts for one isolated background target', async (
   const result = await validate(fixture);
   assert.equal(result.success, true);
   assert.deepEqual(result.failures, []);
-  assert.deepEqual(result.receipts.map((entry) => entry.request_id), [
-    '11111111-1111-4111-8111-111111111111',
-    '22222222-2222-4222-8222-222222222222',
-  ]);
+  assert.deepEqual(
+    result.receipts.map((entry) => entry.request_id),
+    fixture.contract.expectedOperations.map((entry) => entry.requestID).sort(),
+  );
 });
 
 test('protocol 1.29 adapter verifies the real same-connection bundle shape', async (t) => {
@@ -547,12 +715,9 @@ test('protocol 1.29 adapter verifies the real same-connection bundle shape', asy
   t.after(largeIdentity.cleanup);
   largeIdentity.contract.expectedOperations[0].client.startIdentity = '9007199254740993';
   largeIdentity.receiptDocuments[0].receipt.payload.client.processStartIdentity = '9007199254740993';
-  largeIdentity.receiptDocuments[0].receipt.signature =
-    signature(largeIdentity.receiptDocuments[0].receipt.payload).value;
-  largeIdentity.receiptDocuments[0].canonicalReceiptPayload = canonicalBytes(
-    largeIdentity.receiptDocuments[0].receipt.payload,
-  ).toString('base64');
-  writeBridgeBundle(largeIdentity, 0);
+  largeIdentity.receiptDocuments[0].operationSessionAttestation.client.processStartIdentity =
+    '9007199254740993';
+  resignBridgeSession(largeIdentity, 0);
   assert.equal(
     (await validate(largeIdentity, bridgeBundleAdapter, bridgeBundleAdapterPath)).success,
     true,
@@ -582,6 +747,154 @@ test('protocol 1.29 adapter verifies the real same-connection bundle shape', asy
   writeBridgeBundle(globalTarget, 0);
   assert.ok(rules(await validate(globalTarget, bridgeBundleAdapter, bridgeBundleAdapterPath))
     .has('receipt_schema'));
+});
+
+test('logical session request IDs and decimal sequences are canonical and deterministic', async (t) => {
+  assert.equal(
+    deterministicRequestID('33333333-3333-4333-8333-333333333333', '0'),
+    '1d16724c-2cb5-8441-853f-549bc677faa9',
+  );
+  assert.equal(
+    deterministicRequestID('44444444-4444-4444-8444-444444444444', '0'),
+    '0aca3ce7-caf2-8c63-b4ca-39ab6dcc6784',
+  );
+
+  const wrongID = convertToBridgeBundles(makeFixture());
+  t.after(wrongID.cleanup);
+  wrongID.receiptDocuments[0].receipt.payload.requestID =
+    'aaaaaaaa-aaaa-8aaa-8aaa-aaaaaaaaaaaa';
+  resignBridgeReceipt(wrongID, 0);
+  assert.ok(rules(await validate(wrongID, bridgeBundleAdapter, bridgeBundleAdapterPath))
+    .has('receipt_schema'));
+
+  for (const sequence of ['01', '18446744073709551616', 0]) {
+    const malformed = convertToBridgeBundles(makeFixture());
+    t.after(malformed.cleanup);
+    malformed.receiptDocuments[0].receipt.payload.sessionSequence = sequence;
+    resignBridgeReceipt(malformed, 0);
+    assert.ok(rules(await validate(malformed, bridgeBundleAdapter, bridgeBundleAdapterPath))
+      .has('receipt_decode'));
+  }
+});
+
+test('logical session signatures canonical payloads and receipt digests fail closed', async (t) => {
+  const canonical = convertToBridgeBundles(makeFixture());
+  t.after(canonical.cleanup);
+  canonical.receiptDocuments[0].canonicalSessionAttestationPayload =
+    Buffer.from('{}').toString('base64');
+  writeBridgeBundle(canonical, 0);
+  assert.ok(rules(await validate(canonical, bridgeBundleAdapter, bridgeBundleAdapterPath))
+    .has('receipt_decode'));
+
+  const signatureFixture = convertToBridgeBundles(makeFixture());
+  t.after(signatureFixture.cleanup);
+  signatureFixture.receiptDocuments[0].operationSessionAttestation.signature =
+    Buffer.alloc(64, 7).toString('base64');
+  writeBridgeBundle(signatureFixture, 0);
+  assert.ok(rules(await validate(signatureFixture, bridgeBundleAdapter, bridgeBundleAdapterPath))
+    .has('session_signature'));
+
+  const digestFixture = convertToBridgeBundles(makeFixture());
+  t.after(digestFixture.cleanup);
+  digestFixture.receiptDocuments[0].receipt.payload.sessionAttestationSHA256 = '0'.repeat(64);
+  resignBridgeReceipt(digestFixture, 0);
+  assert.ok(rules(await validate(digestFixture, bridgeBundleAdapter, bridgeBundleAdapterPath))
+    .has('session_digest'));
+
+  const clientFixture = convertToBridgeBundles(makeFixture());
+  t.after(clientFixture.cleanup);
+  clientFixture.receiptDocuments[0].receipt.payload.clientInstanceID =
+    '77777777-7777-4777-8777-777777777777';
+  resignBridgeReceipt(clientFixture, 0);
+  assert.ok(rules(await validate(clientFixture, bridgeBundleAdapter, bridgeBundleAdapterPath))
+    .has('session_attestation'));
+
+  const capacityFixture = convertToBridgeBundles(makeFixture());
+  t.after(capacityFixture.cleanup);
+  capacityFixture.receiptDocuments[0].operationSessionAttestation.maximumRequestCount = 16385;
+  capacityFixture.receiptDocuments[0].operationSessionAttestation.remainingClaimCount = 16385;
+  resignBridgeSession(capacityFixture, 0);
+  assert.ok(rules(await validate(capacityFixture, bridgeBundleAdapter, bridgeBundleAdapterPath))
+    .has('session_attestation'));
+});
+
+test('session claims reject out-of-range and duplicate tuple or budget evidence', async (t) => {
+  const outOfRange = makeFixture();
+  t.after(outOfRange.cleanup);
+  const original = outOfRange.receiptDocuments[0];
+  rewriteCanonicalSession(outOfRange, 0, {
+    sessionID: original.payload.sessionID,
+    sessionSequence: '16',
+    clientInstanceID: original.payload.clientInstanceID,
+    client: outOfRange.contract.expectedOperations[0].client,
+    remainingClaimCount: 15,
+    createdAtMilliseconds: 1_100,
+  });
+  assert.ok(rules(await validate(outOfRange)).has('session_claim'));
+
+  const duplicateTuple = makeFixture();
+  t.after(duplicateTuple.cleanup);
+  duplicateTuple.receiptDocuments[1] = structuredClone(duplicateTuple.receiptDocuments[0]);
+  writeReceipt(duplicateTuple, 1);
+  assert.ok(rules(await validate(duplicateTuple)).has('session_replay'));
+
+  const duplicateBudget = makeFixture();
+  t.after(duplicateBudget.cleanup);
+  const first = duplicateBudget.receiptDocuments[0];
+  rewriteCanonicalSession(duplicateBudget, 1, {
+    sessionID: first.payload.sessionID,
+    sessionSequence: '1',
+    clientInstanceID: first.payload.clientInstanceID,
+    client: duplicateBudget.contract.expectedOperations[0].client,
+    remainingClaimCount: first.payload.remainingClaimCount,
+    createdAtMilliseconds: 1_100,
+  });
+  assert.ok(rules(await validate(duplicateBudget)).has('session_claim_replay'));
+});
+
+test('successor sessions require an exact same-client signed predecessor chain', async (t) => {
+  const valid = makeFixture();
+  t.after(valid.cleanup);
+  const predecessor = valid.receiptDocuments[0];
+  const successor = valid.receiptDocuments[1];
+  rewriteCanonicalSession(valid, 1, {
+    sessionID: successor.payload.sessionID,
+    sessionSequence: successor.payload.sessionSequence,
+    clientInstanceID: predecessor.payload.clientInstanceID,
+    client: valid.contract.expectedOperations[0].client,
+    predecessorSessionID: predecessor.payload.sessionID,
+    remainingClaimCount: 15,
+    createdAtMilliseconds: 1_200,
+  });
+  assert.equal((await validate(valid)).success, true);
+
+  const orphan = makeFixture();
+  t.after(orphan.cleanup);
+  const orphanDocument = orphan.receiptDocuments[1];
+  rewriteCanonicalSession(orphan, 1, {
+    sessionID: orphanDocument.payload.sessionID,
+    sessionSequence: orphanDocument.payload.sessionSequence,
+    clientInstanceID: orphanDocument.payload.clientInstanceID,
+    client: orphan.contract.expectedOperations[1].client,
+    predecessorSessionID: '77777777-7777-4777-8777-777777777777',
+    remainingClaimCount: 15,
+    createdAtMilliseconds: 1_200,
+  });
+  assert.ok(rules(await validate(orphan)).has('session_predecessor'));
+
+  const crossClient = makeFixture();
+  t.after(crossClient.cleanup);
+  const crossClientDocument = crossClient.receiptDocuments[1];
+  rewriteCanonicalSession(crossClient, 1, {
+    sessionID: crossClientDocument.payload.sessionID,
+    sessionSequence: crossClientDocument.payload.sessionSequence,
+    clientInstanceID: crossClientDocument.payload.clientInstanceID,
+    client: crossClient.contract.expectedOperations[1].client,
+    predecessorSessionID: crossClient.receiptDocuments[0].payload.sessionID,
+    remainingClaimCount: 15,
+    createdAtMilliseconds: 1_200,
+  });
+  assert.ok(rules(await validate(crossClient)).has('session_predecessor'));
 });
 
 test('listener identity and self-signature are pinned', async (t) => {
@@ -709,7 +1022,10 @@ test('attribution failures retain stage evidence and retry semantics but cannot 
 test('missing receipt is an indeterminate retry-unsafe lost response', async (t) => {
   const fixture = makeFixture();
   t.after(fixture.cleanup);
-  fs.unlinkSync(path.join(fixture.receiptDirectory, '22222222-2222-4222-8222-222222222222.json'));
+  fs.unlinkSync(path.join(
+    fixture.receiptDirectory,
+    `${fixture.contract.expectedOperations[1].requestID}.json`,
+  ));
   const result = await validate(fixture);
   assert.equal(result.success, false);
   assert.ok(rules(result).has('archive_completeness'));
@@ -733,15 +1049,18 @@ test('unknown request IDs bind to one exact client generation and operation', as
   fixture.contract.expectedOperations.forEach((entry) => { entry.requestID = null; });
   const result = await validate(fixture);
   assert.equal(result.success, true);
-  assert.deepEqual(result.receipts.map((entry) => entry.operation_id), [
-    'observation-desktopObservation',
+  assert.deepEqual(result.receipts.map((entry) => entry.operation_id).sort(), [
     'mutation-exactWindowTargetedTypeActions',
+    'observation-desktopObservation',
   ]);
 
   const missing = makeFixture();
   t.after(missing.cleanup);
   missing.contract.expectedOperations.forEach((entry) => { entry.requestID = null; });
-  fs.unlinkSync(path.join(missing.receiptDirectory, '22222222-2222-4222-8222-222222222222.json'));
+  fs.unlinkSync(path.join(
+    missing.receiptDirectory,
+    `${missing.receiptDocuments[1].payload.requestID}.json`,
+  ));
   assert.ok(rules(await validate(missing)).has('lost_response'));
 });
 
@@ -813,7 +1132,7 @@ test('export directory and files must remain private and exact', async (t) => {
   t.after(fileFixture.cleanup);
   fs.chmodSync(path.join(
     fileFixture.receiptDirectory,
-    '11111111-1111-4111-8111-111111111111.json',
+    `${fileFixture.receiptDocuments[0].payload.requestID}.json`,
   ), 0o644);
   assert.ok(rules(await validate(fileFixture)).has('archive_permissions'));
 
@@ -826,10 +1145,7 @@ test('export directory and files must remain private and exact', async (t) => {
 test('host archive namespace retention and archived bytes are mandatory', async (t) => {
   const missing = makeFixture();
   t.after(missing.cleanup);
-  fs.unlinkSync(path.join(
-    missing.contract.listener.receiptArchiveDirectory,
-    '11111111-1111-4111-8111-111111111111.json',
-  ));
+  fs.unlinkSync(hostReceiptPath(missing, missing.receiptDocuments[0]));
   const missingResult = await validate(missing);
   assert.ok(rules(missingResult).has('host_archive_completeness'));
   assert.ok(rules(missingResult).has('host_archive_file'));
@@ -852,6 +1168,32 @@ test('host archive namespace retention and archived bytes are mandatory', async 
     fs.mkdirSync(path.join(retention.contract.hostArchive.rootDirectory, name), { mode: 0o700 });
   }
   assert.ok(rules(await validate(retention)).has('host_archive_retention'));
+});
+
+test('export bundles remain authoritative when bounded session retention prunes host copies', async (t) => {
+  const pruned = makeFixture();
+  t.after(pruned.cleanup);
+  fs.rmSync(hostSessionDirectory(pruned, pruned.receiptDocuments[0]), {
+    recursive: true,
+    force: true,
+  });
+  const prunedResult = await validate(pruned);
+  assert.equal(prunedResult.success, true);
+  assert.deepEqual(prunedResult.failures, []);
+
+  const concurrent = makeFixture();
+  t.after(concurrent.cleanup);
+  const concurrentSession = path.join(
+    concurrent.contract.listener.receiptArchiveDirectory,
+    'sessions',
+    '77777777-7777-4777-8777-777777777777',
+  );
+  fs.mkdirSync(concurrentSession, { mode: 0o700 });
+  fs.writeFileSync(path.join(concurrentSession, 'attestation.json'), '{}', { mode: 0o600 });
+  assert.equal((await validate(concurrent)).success, true);
+
+  fs.writeFileSync(path.join(concurrentSession, 'latest.json'), '{}', { mode: 0o600 });
+  assert.ok(rules(await validate(concurrent)).has('host_archive_layout'));
 });
 
 test('contract pins protocol socket listener archive and distinct targets', async (t) => {

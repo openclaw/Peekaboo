@@ -15,7 +15,7 @@
       "interaction_mode": "background",
       "producer_policy": "forbid-session-global-input",
       "target_policy": "owned-exact-window",
-      "operation_evidence": "protocol-1.29-signed-bundle"
+      "operation_evidence": "protocol-1.29-logical-session-signed-bundle"
     },
     {
       "id": "integrated-computer-use",
@@ -34,6 +34,9 @@
   "invariants": [
     "protocol-source-pinned",
     "listener-same-connection-attested",
+    "logical-session-same-connection-attested",
+    "deterministic-session-sequence-request-id",
+    "session-claim-replay-absent",
     "socket-device-inode-stable",
     "peekaboo-exact-window-background-only",
     "peekaboo-no-session-global-input",
@@ -49,6 +52,13 @@
   ],
   "receipt_requirements": [
     "canonical-listener-payload",
+    "canonical-session-payload",
+    "listener-signed-session-attestation",
+    "receipt-bound-session-attestation-digest",
+    "deterministic-v8-request-id",
+    "canonical-decimal-session-sequence",
+    "unique-session-sequence-claim",
+    "exact-predecessor-session-chain",
     "canonical-receipt-payload",
     "canonical-request-digest",
     "canonical-response-digest",
@@ -59,7 +69,8 @@
     "focused-identity-consistent",
     "attribution-failure-absent",
     "private-export-complete",
-    "private-hashed-host-archive-complete"
+    "private-export-complete-across-retention",
+    "private-hashed-host-archive-retention-consistent"
   ],
   "foreground_attribution_requirements": {
     "minimum_event_count": 1,
