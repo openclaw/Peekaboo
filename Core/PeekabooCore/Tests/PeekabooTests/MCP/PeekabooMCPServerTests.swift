@@ -303,6 +303,53 @@ struct PeekabooMCPServerTests {
 
     @Test
     @MainActor
+    func `press wire rejects non-string primary keys without dispatch`() async throws {
+        let automation = MockAutomationService(accessibilityGranted: true)
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let session = try await MCPWireSession.connect(context: context)
+        let cases: [Value] = [
+            .int(7),
+            .double(7),
+            .bool(true),
+            .array([.string("c")]),
+            .object(["value": .string("c")]),
+            .null,
+        ]
+
+        do {
+            for key in cases {
+                let request: RequestContext<CallTool.Result> = try await session.client.callTool(
+                    name: "press",
+                    arguments: [
+                        "key": key,
+                        "foreground": .bool(true),
+                    ])
+                let result = try await request.value
+                #expect(result.isError == true)
+                #expect(result.content.contains { content in
+                    guard case let .text(text, _, _) = content else { return false }
+                    return text.contains("key must be a primary key string")
+                })
+
+                let encoded = try JSONEncoder().encode(result)
+                let json = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+                let metadata = try #require(json["_meta"] as? [String: Any])
+                #expect(metadata["refusal_reason"] as? String == "invalid_request")
+                #expect(metadata["mutation_dispatched"] as? Bool == false)
+                #expect(metadata["retry_safe"] as? Bool == true)
+                #expect(automation.lastHotkeyKeys == nil)
+                #expect(automation.targetedHotkeyCalls.isEmpty)
+            }
+        } catch {
+            await session.stop()
+            throw error
+        }
+
+        await session.stop()
+    }
+
+    @Test
+    @MainActor
     func `every advertised closed schema rejects unknown properties as invalid params`() async throws {
         let context = await MCPToolTestHelpers.makeContext()
         let session = try await MCPWireSession.connect(context: context)

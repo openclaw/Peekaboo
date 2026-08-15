@@ -342,7 +342,7 @@ public struct PressTool: MCPTool {
             return try sequence.map(KeyboardChord.init(parsing:))
         }
 
-        let key = arguments.getString("key")
+        let key = try self.validatedPrimaryKey(arguments: arguments)
         let modifiers = try self.validatedModifiers(arguments: arguments) ?? []
         guard let key, !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw PressToolValidationError(
@@ -383,6 +383,14 @@ public struct PressTool: MCPTool {
             }
             return modifier
         }
+    }
+
+    private static func validatedPrimaryKey(arguments: ToolArguments) throws -> String? {
+        guard let value = arguments.getValue(for: "key") else { return nil }
+        guard case let .string(key) = value else {
+            throw PressToolValidationError(message: "key must be a primary key string")
+        }
+        return key
     }
 
     @MainActor
