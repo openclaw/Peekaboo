@@ -135,6 +135,56 @@ scripts/test-dual-controller-overlap.sh --self-test \
   --artifacts /absolute/new/self-test-directory
 ```
 
+Protocol 1.29 adds the operation-level evidence needed to remove that live reservation safely. The coexistence harness
+must set `PEEKABOO_OPERATION_RECEIPT_DIRECTORY` to a new private directory and retain the request ID returned by every
+command. It then validates the exported receipts with
+`scripts/validate-attested-operation-receipts.mjs`. The validator deliberately consumes receipts through a versioned
+adapter: the protocol decoder owns the producer's wire spelling, while the certification policy owns the normalized
+identity, target, timing, and outcome checks. A producer format change therefore cannot silently weaken certification.
+
+The run-specific contract pins the signed listener instance and public key from the verified handshake, Bridge and
+client process generations and code-signature hashes, exact socket device/inode, the window-generation receipt owned by
+Peekaboo, a distinct foreground-controller target, the overlap interval, and every expected request/response digest.
+The validator verifies
+the listener self-signature and every Ed25519 receipt, requires protocol 1.29 or newer, rejects global/process-only or
+cross-target routing, and requires every mutation to carry a retry-unsafe background outcome. A missing, duplicate,
+undecodable, or unsigned response is indeterminate and fails certification; it is never converted into a replayable
+operation. The export directory must be a non-symlink private directory containing exactly one stable private file per
+expected request. The Bridge's signed archive remains bound to `<socket>.receipts/<listener-instance>`.
+
+`scripts/receipt-adapters/peekaboo-bridge-operation-receipt-bundle-1-29.mjs` decodes the real opt-in verification
+bundle. Every bundle contains the exact same-connection listener attestation, signed receipt, and canonical request and
+response bytes, so the validator never substitutes a status probe made over another connection. Those bytes can contain
+typed text and other sensitive command payloads: use a new private artifact directory, do not publish it, and remove it
+after the certification evidence has been reduced to non-sensitive hashes and verdicts. The validator can take the
+attestation from the first bundle automatically:
+
+```bash
+node scripts/validate-attested-operation-receipts.mjs \
+  --contract /private/path/coexistence-receipt-contract.json \
+  --receipts /private/path/verified-receipts \
+  --adapter scripts/receipt-adapters/peekaboo-bridge-operation-receipt-bundle-1-29.mjs \
+  --output /private/path/receipt-verdict.json
+```
+
+The separate canonical adapter is a deterministic fixture/reference adapter. The adapter boundary owns producer wire
+spelling while the validator keeps the normalized policy closed; each run contract pins both the adapter ID and its
+source SHA-256 so a different decoder cannot reinterpret signed bytes after the fact. The safe gate exercises both
+adapters and a fixed-key signed fixture corpus:
+
+```bash
+pnpm run test:background-certification
+```
+
+The native invariant monitor has a matching opt-in foreground-attribution seam. Existing producer entries remain Bridge
+producers and any session-global event from them is a failure. A coexistence coordinator may additionally register exact
+`foreground-controller` PID/process-generation entries and atomically advance the producer-set revision with one active
+foreground target `{pid,startIdentity,windowID}`. While that grant is active, only the original sentinel or that exact
+target may become frontmost; unrelated activation is still a violation. Clipboard, visible Peekaboo overlays, producer
+generation, and unattributed input stay strict throughout. The heartbeat records the attributed producer generations and
+event count. The coordinator must revoke the grant and restore the sentinel before the monitor can emit another clean
+sample. Cursor motion stays observational, so a person using the machine does not create a false Peekaboo failure.
+
 For the interaction commands exercised here, background is the omission contract: `--foreground` is the only consent
 for focus/activation, global keyboard input, physical cursor movement, or synthetic pointer/wheel events. Explicit app
 switching and other inherently foreground commands are outside that statement. The optional physical phase is separate:

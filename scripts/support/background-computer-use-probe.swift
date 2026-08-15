@@ -47,6 +47,12 @@ private struct WatchHeartbeat: Codable {
     let cursorMovementObserved: Bool
     let pendingActivationCount: Int
     let pendingFocusedWindowChange: Bool
+    let attributedForegroundEventCount: Int
+    let attributedForegroundSourcePIDs: [Int32]
+    let foregroundActivityObserved: Bool
+    let foregroundActive: Bool
+    let foregroundTargetPID: Int32?
+    let foregroundTargetWindowID: UInt32?
 }
 
 private struct ContaminationRecord: Codable {
@@ -155,6 +161,9 @@ private struct InputEventBatch {
     let producerEventCount: Int
     let producerSourcePIDs: [Int32]
     let producerEventTypes: [UInt32]
+    let foregroundEventCount: Int
+    let foregroundSourcePIDs: [Int32]
+    let foregroundEventTypes: [UInt32]
     let externalEventCount: Int
     let externalSourcePIDs: [Int32]
     let externalEventTypes: [UInt32]
@@ -166,14 +175,36 @@ private func physicalInputIsObservational(_ batch: InputEventBatch, enabled: Boo
         batch.externalEventTypes == [CGEventType.mouseMoved.rawValue]
 }
 
+private enum AllowedEventProducerRole: String, Codable {
+    case bridge
+    case foregroundController = "foreground-controller"
+}
+
 private struct AllowedEventProducer: Codable, Hashable {
     let pid: Int32
     let startIdentity: String
+    let role: AllowedEventProducerRole?
+
+    var effectiveRole: AllowedEventProducerRole {
+        self.role ?? .bridge
+    }
+}
+
+private struct AllowedForegroundTarget: Codable, Equatable {
+    let pid: Int32
+    let startIdentity: String
+    let windowID: UInt32
+}
+
+private struct AllowedForegroundActivity: Codable, Equatable {
+    let active: Bool
+    let target: AllowedForegroundTarget?
 }
 
 private struct AllowedEventProducerSet: Codable {
     let revision: UInt64
     let producers: [AllowedEventProducer]
+    let foreground: AllowedForegroundActivity?
 }
 
 private struct AttemptContaminationState {
@@ -203,10 +234,13 @@ private final class InputEventTracker {
         ~(CGEventMask(1) << CGEventType.null.rawValue)
 
     private let lock = NSLock()
-    private var allowedProducerPIDs = Set<Int32>()
+    private var allowedProducerRoles: [Int32: AllowedEventProducerRole] = [:]
     private var producerEventCount = 0
     private var producerSourcePIDs = Set<Int32>()
     private var producerEventTypes = Set<UInt32>()
+    private var foregroundEventCount = 0
+    private var foregroundSourcePIDs = Set<Int32>()
+    private var foregroundEventTypes = Set<UInt32>()
     private var externalEventCount = 0
     private var externalSourcePIDs = Set<Int32>()
     private var externalEventTypes = Set<UInt32>()
@@ -303,10 +337,17 @@ private final class InputEventTracker {
             ? Int32(sourcePIDValue)
             : 0
         self.lock.lock()
-        if self.allowedProducerPIDs.contains(sourcePID) {
+        if self.allowedProducerRoles[sourcePID] == .bridge {
             self.producerEventCount += 1
             self.producerSourcePIDs.insert(sourcePID)
             self.producerEventTypes.insert(type.rawValue)
+            self.lock.unlock()
+            return
+        }
+        if self.allowedProducerRoles[sourcePID] == .foregroundController {
+            self.foregroundEventCount += 1
+            self.foregroundSourcePIDs.insert(sourcePID)
+            self.foregroundEventTypes.insert(type.rawValue)
             self.lock.unlock()
             return
         }
@@ -321,9 +362,9 @@ private final class InputEventTracker {
         self.lock.unlock()
     }
 
-    func updateAllowedProducerPIDs(_ pids: Set<Int32>) {
+    func updateAllowedProducerRoles(_ roles: [Int32: AllowedEventProducerRole]) {
         self.lock.lock()
-        self.allowedProducerPIDs = pids
+        self.allowedProducerRoles = roles
         self.lock.unlock()
     }
 
@@ -332,6 +373,9 @@ private final class InputEventTracker {
         let producerEventCount = self.producerEventCount
         let producerSourcePIDs = self.producerSourcePIDs.sorted()
         let producerEventTypes = self.producerEventTypes.sorted()
+        let foregroundEventCount = self.foregroundEventCount
+        let foregroundSourcePIDs = self.foregroundSourcePIDs.sorted()
+        let foregroundEventTypes = self.foregroundEventTypes.sorted()
         let externalEventCount = self.externalEventCount
         let externalSourcePIDs = self.externalSourcePIDs.sorted()
         let externalEventTypes = self.externalEventTypes.sorted()
@@ -339,6 +383,9 @@ private final class InputEventTracker {
         self.producerEventCount = 0
         self.producerSourcePIDs.removeAll(keepingCapacity: true)
         self.producerEventTypes.removeAll(keepingCapacity: true)
+        self.foregroundEventCount = 0
+        self.foregroundSourcePIDs.removeAll(keepingCapacity: true)
+        self.foregroundEventTypes.removeAll(keepingCapacity: true)
         self.externalEventCount = 0
         self.externalSourcePIDs.removeAll(keepingCapacity: true)
         self.externalEventTypes.removeAll(keepingCapacity: true)
@@ -348,6 +395,9 @@ private final class InputEventTracker {
             producerEventCount: producerEventCount,
             producerSourcePIDs: producerSourcePIDs,
             producerEventTypes: producerEventTypes,
+            foregroundEventCount: foregroundEventCount,
+            foregroundSourcePIDs: foregroundSourcePIDs,
+            foregroundEventTypes: foregroundEventTypes,
             externalEventCount: externalEventCount,
             externalSourcePIDs: externalSourcePIDs,
             externalEventTypes: externalEventTypes,
@@ -663,10 +713,56 @@ private func producerEventsMatchReceipts(
     receipts: [Int32: String],
     processIdentity: (Int32) -> UInt64?) -> Bool
 {
-    batch.producerSourcePIDs.allSatisfy { pid in
+    Set(batch.producerSourcePIDs + batch.foregroundSourcePIDs).allSatisfy { pid in
         guard let expected = receipts[pid], let current = processIdentity(pid) else { return false }
         return expected == String(current)
     }
+}
+
+private func foregroundTargetIsLive(_ target: AllowedForegroundTarget) -> Bool {
+    guard target.pid > 0,
+          target.windowID > 0,
+          let startIdentity = processStartIdentity(pid: target.pid),
+          target.startIdentity == String(startIdentity)
+    else {
+        return false
+    }
+    return windowInfo().contains { window in
+        (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == target.pid &&
+            (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value == target.windowID
+    }
+}
+
+private func foregroundFocusViolations(
+    current: SystemSample,
+    unexpectedActivations: [Int32],
+    foreground: AllowedForegroundActivity,
+    baseline: InteractiveBaseline,
+    projection: InvariantProjection) -> Set<Violation>
+{
+    guard foreground.active, let target = foreground.target else { return [] }
+    var result = Set<Violation>()
+    let currentIsBaseline = current.frontmostPID == baseline.frontmostPID &&
+        current.frontmostWindowID == baseline.frontmostWindowID
+    let currentIsTarget = current.frontmostPID == target.pid && current.frontmostWindowID == target.windowID
+    if !currentIsBaseline, !currentIsTarget {
+        result.insert(Violation(
+            kind: projection[.frontmostPID],
+            expected: "baseline or attributed foreground PID \(target.pid)",
+            actual: current.frontmostPID.map(String.init) ?? "null"))
+        result.insert(Violation(
+            kind: projection[.frontmostWindow],
+            expected: "baseline or attributed foreground window \(target.windowID)",
+            actual: current.frontmostWindowID.map(String.init) ?? "null"))
+    }
+    let disallowedActivations = unexpectedActivations.filter { $0 != target.pid }
+    if !disallowedActivations.isEmpty {
+        result.insert(Violation(
+            kind: projection[.frontmostPID],
+            expected: "attributed foreground PID \(target.pid)",
+            actual: "transient activations: \(disallowedActivations.map(String.init).joined(separator: ","))"))
+    }
+    return result
 }
 
 private func transientFocusViolations(
@@ -710,15 +806,30 @@ private struct WatchState {
     private var inputAttributionAvailable = true
     private var allowedProducerRevision: UInt64?
     private var allowedProducerReceipts: [Int32: String] = [:]
+    private var allowedForeground = AllowedForegroundActivity(active: false, target: nil)
     private var pendingActivations: [Int32] = []
     private var pendingFocusedWindowChange = false
     private var cursorMovementObserved = false
+    private var attributedForegroundEventCount = 0
+    private var attributedForegroundSourcePIDs = Set<Int32>()
+    private var foregroundActivityObserved = false
 
     mutating func applyProducerSet(
         _ producerSet: AllowedEventProducerSet,
         to tracker: InputEventTracker) throws
     {
         guard self.allowedProducerRevision != producerSet.revision else { return }
+        if let currentRevision = self.allowedProducerRevision,
+           producerSet.revision <= currentRevision
+        {
+            try self.block(
+                reason: "blocked_producer_revision_replay",
+                sourcePIDs: producerSet.producers.map(\.pid).sorted(),
+                eventTypes: [],
+                attributionFailed: true,
+                countsRetry: false)
+            return
+        }
         let producerPIDs = producerSet.producers.map(\.pid)
         let validatedPIDs = Set(producerSet.producers.compactMap { producer -> Int32? in
             guard let currentStartIdentity = processStartIdentity(pid: producer.pid),
@@ -729,7 +840,9 @@ private struct WatchState {
             return producer.pid
         })
         guard validatedPIDs.count == producerSet.producers.count,
-              Set(producerPIDs).count == producerPIDs.count
+              Set(producerPIDs).count == producerPIDs.count,
+              producerSet.producers.isEmpty ||
+              producerSet.producers.contains(where: { $0.effectiveRole == .bridge })
         else {
             try self.block(
                 reason: "blocked_producer_identity",
@@ -739,10 +852,32 @@ private struct WatchState {
                 countsRetry: false)
             return
         }
-        tracker.updateAllowedProducerPIDs(validatedPIDs)
+        let foreground = producerSet.foreground ?? AllowedForegroundActivity(active: false, target: nil)
+        let foregroundProducers = producerSet.producers.filter {
+            $0.effectiveRole == .foregroundController
+        }
+        let foregroundContractValid: Bool = if foreground.active {
+            !foregroundProducers.isEmpty &&
+                foreground.target.map(foregroundTargetIsLive) == true
+        } else {
+            foreground.target == nil
+        }
+        guard foregroundContractValid else {
+            try self.block(
+                reason: "blocked_foreground_contract",
+                sourcePIDs: foregroundProducers.map(\.pid).sorted(),
+                eventTypes: [],
+                attributionFailed: true,
+                countsRetry: false)
+            return
+        }
+        tracker.updateAllowedProducerRoles(Dictionary(uniqueKeysWithValues: producerSet.producers.map {
+            ($0.pid, $0.effectiveRole)
+        }))
         self.allowedProducerReceipts = Dictionary(uniqueKeysWithValues: producerSet.producers.map {
             ($0.pid, $0.startIdentity)
         })
+        self.allowedForeground = foreground
         self.allowedProducerRevision = producerSet.revision
     }
 
@@ -783,6 +918,20 @@ private struct WatchState {
                 attributionFailed: true,
                 countsRetry: false)
         }
+        if inputBatch.foregroundEventCount > 0 {
+            if !self.allowedForeground.active {
+                try self.block(
+                    reason: "blocked_unpermitted_foreground_input",
+                    sourcePIDs: inputBatch.foregroundSourcePIDs,
+                    eventTypes: inputBatch.foregroundEventTypes,
+                    attributionFailed: true,
+                    countsRetry: false)
+            } else {
+                self.attributedForegroundEventCount += inputBatch.foregroundEventCount
+                self.attributedForegroundSourcePIDs.formUnion(inputBatch.foregroundSourcePIDs)
+                self.foregroundActivityObserved = true
+            }
+        }
         let observesPhysicalInput = physicalInputIsObservational(
             inputBatch,
             enabled: self.physicalInputObservational)
@@ -795,7 +944,7 @@ private struct WatchState {
                 countsRetry: true)
         }
         let externalInputPermitsEvaluation = observesPhysicalInput || inputBatch.externalEventCount == 0
-        let evaluateInteractive = externalInputPermitsEvaluation &&
+        let evaluateInteractive = externalInputPermitsEvaluation && !self.allowedForeground.active &&
             unexpectedActivations.isEmpty && !focusedWindowChanged && self.inputAttributionAvailable &&
             self.contaminationState.permitsInteractiveEvaluation
         let context = InvariantEvaluationContext(
@@ -806,13 +955,25 @@ private struct WatchState {
             cursorObservational: self.cursorObservational,
             projection: self.projection)
         var currentViolations = violations(current: current, context: context)
-        if self.contaminationState.permitsInteractiveEvaluation {
-            currentViolations.formUnion(transientFocusViolations(
-                externalEventCount: observesPhysicalInput ? 0 : inputBatch.externalEventCount,
+        if self.contaminationState.permitsInteractiveEvaluation,
+           self.allowedForeground.active
+        {
+            currentViolations.formUnion(foregroundFocusViolations(
+                current: current,
                 unexpectedActivations: deferredActivations,
-                focusedWindowChanged: deferredFocusedWindowChange,
+                foreground: self.allowedForeground,
                 baseline: self.interactiveBaseline,
                 projection: self.projection))
+        }
+        if self.contaminationState.permitsInteractiveEvaluation {
+            if !self.allowedForeground.active {
+                currentViolations.formUnion(transientFocusViolations(
+                    externalEventCount: observesPhysicalInput ? 0 : inputBatch.externalEventCount,
+                    unexpectedActivations: deferredActivations,
+                    focusedWindowChanged: deferredFocusedWindowChange,
+                    baseline: self.interactiveBaseline,
+                    projection: self.projection))
+            }
         }
         if producerEventsValid,
            let inputViolation = producerInputViolation(batch: inputBatch, projection: self.projection)
@@ -839,7 +1000,13 @@ private struct WatchState {
             phase: phase,
             cursorMovementObserved: self.cursorMovementObserved,
             pendingActivationCount: self.pendingActivations.count,
-            pendingFocusedWindowChange: self.pendingFocusedWindowChange)
+            pendingFocusedWindowChange: self.pendingFocusedWindowChange,
+            attributedForegroundEventCount: self.attributedForegroundEventCount,
+            attributedForegroundSourcePIDs: self.attributedForegroundSourcePIDs.sorted(),
+            foregroundActivityObserved: self.foregroundActivityObserved,
+            foregroundActive: self.allowedForeground.active,
+            foregroundTargetPID: self.allowedForeground.target?.pid,
+            foregroundTargetWindowID: self.allowedForeground.target?.windowID)
     }
 
     private mutating func block(
@@ -996,11 +1163,26 @@ private func producerReceiptSchemaIsLossless() -> Bool {
         decoded.producers.first?.startIdentity == "987654321"
 }
 
+private func foregroundProducerSchemaIsLossless() -> Bool {
+    let data = Data(
+        #"{"revision":2,"producers":[{"pid":42,"startIdentity":"987654321","role":"bridge"},{"pid":43,"startIdentity":"987654322","role":"foreground-controller"}],"foreground":{"active":true,"target":{"pid":44,"startIdentity":"987654323","windowID":45}}}"#
+            .utf8)
+    guard let decoded = try? JSONDecoder().decode(AllowedEventProducerSet.self, from: data) else { return false }
+    return decoded.revision == 2 &&
+        decoded.producers.map(\.effectiveRole) == [.bridge, .foregroundController] &&
+        decoded.foreground == AllowedForegroundActivity(
+            active: true,
+            target: AllowedForegroundTarget(pid: 44, startIdentity: "987654323", windowID: 45))
+}
+
 private func physicalInputPolicyIsSafe() -> Bool {
     let physicalBatch = InputEventBatch(
         producerEventCount: 0,
         producerSourcePIDs: [],
         producerEventTypes: [],
+        foregroundEventCount: 0,
+        foregroundSourcePIDs: [],
+        foregroundEventTypes: [],
         externalEventCount: 1,
         externalSourcePIDs: [0],
         externalEventTypes: [CGEventType.mouseMoved.rawValue],
@@ -1009,6 +1191,9 @@ private func physicalInputPolicyIsSafe() -> Bool {
         producerEventCount: 0,
         producerSourcePIDs: [],
         producerEventTypes: [],
+        foregroundEventCount: 0,
+        foregroundSourcePIDs: [],
+        foregroundEventTypes: [],
         externalEventCount: 1,
         externalSourcePIDs: [4242],
         externalEventTypes: [CGEventType.keyDown.rawValue],
@@ -1017,6 +1202,9 @@ private func physicalInputPolicyIsSafe() -> Bool {
         producerEventCount: 0,
         producerSourcePIDs: [],
         producerEventTypes: [],
+        foregroundEventCount: 0,
+        foregroundSourcePIDs: [],
+        foregroundEventTypes: [],
         externalEventCount: 1,
         externalSourcePIDs: [0],
         externalEventTypes: [CGEventType.keyDown.rawValue],
@@ -1025,6 +1213,9 @@ private func physicalInputPolicyIsSafe() -> Bool {
         producerEventCount: 0,
         producerSourcePIDs: [],
         producerEventTypes: [],
+        foregroundEventCount: 0,
+        foregroundSourcePIDs: [],
+        foregroundEventTypes: [],
         externalEventCount: 1,
         externalSourcePIDs: [0],
         externalEventTypes: [CGEventType.leftMouseDown.rawValue],
@@ -1033,6 +1224,9 @@ private func physicalInputPolicyIsSafe() -> Bool {
         producerEventCount: 0,
         producerSourcePIDs: [],
         producerEventTypes: [],
+        foregroundEventCount: 0,
+        foregroundSourcePIDs: [],
+        foregroundEventTypes: [],
         externalEventCount: 1,
         externalSourcePIDs: [0],
         externalEventTypes: [CGEventType.scrollWheel.rawValue],
@@ -1041,6 +1235,9 @@ private func physicalInputPolicyIsSafe() -> Bool {
         producerEventCount: 0,
         producerSourcePIDs: [],
         producerEventTypes: [],
+        foregroundEventCount: 0,
+        foregroundSourcePIDs: [],
+        foregroundEventTypes: [],
         externalEventCount: 2,
         externalSourcePIDs: [0],
         externalEventTypes: [CGEventType.mouseMoved.rawValue, CGEventType.keyDown.rawValue],
@@ -1049,6 +1246,9 @@ private func physicalInputPolicyIsSafe() -> Bool {
         producerEventCount: 0,
         producerSourcePIDs: [],
         producerEventTypes: [],
+        foregroundEventCount: 0,
+        foregroundSourcePIDs: [],
+        foregroundEventTypes: [],
         externalEventCount: 1,
         externalSourcePIDs: [],
         externalEventTypes: [CGEventType.keyDown.rawValue],
@@ -1157,6 +1357,9 @@ private func runSelfTest() throws {
         producerEventCount: 1,
         producerSourcePIDs: [getpid()],
         producerEventTypes: [CGEventType.mouseMoved.rawValue],
+        foregroundEventCount: 0,
+        foregroundSourcePIDs: [],
+        foregroundEventTypes: [],
         externalEventCount: 0,
         externalSourcePIDs: [],
         externalEventTypes: [],
@@ -1181,11 +1384,37 @@ private func runSelfTest() throws {
     else {
         throw ProbeError.invalidArguments("producer event generation receipts did not fail closed")
     }
+    let foregroundBatch = InputEventBatch(
+        producerEventCount: 0,
+        producerSourcePIDs: [],
+        producerEventTypes: [],
+        foregroundEventCount: 1,
+        foregroundSourcePIDs: [getpid()],
+        foregroundEventTypes: [CGEventType.keyDown.rawValue],
+        externalEventCount: 0,
+        externalSourcePIDs: [],
+        externalEventTypes: [],
+        attributionFailed: false)
+    guard let selfIdentity = processStartIdentity(pid: getpid()),
+          producerEventsMatchReceipts(
+              batch: foregroundBatch,
+              receipts: [getpid(): String(selfIdentity)],
+              processIdentity: processStartIdentity(pid:)),
+          !producerEventsMatchReceipts(
+              batch: foregroundBatch,
+              receipts: [:],
+              processIdentity: processStartIdentity(pid:))
+    else {
+        throw ProbeError.invalidArguments("foreground producer generation receipts did not fail closed")
+    }
     guard InputEventTracker.validateMonitoredEventMask() else {
         throw ProbeError.invalidArguments("input event mask does not cover the complete public input family")
     }
     guard producerReceiptSchemaIsLossless() else {
         throw ProbeError.invalidArguments("producer start identities must decode as lossless decimal strings")
+    }
+    guard foregroundProducerSchemaIsLossless() else {
+        throw ProbeError.invalidArguments("foreground producer policy did not decode losslessly")
     }
     let transientKinds = Set(transientFocusViolations(
         externalEventCount: 0,
@@ -1220,7 +1449,39 @@ private func runSelfTest() throws {
         throw ProbeError.invalidArguments("observational cursor mode weakened focus invariants")
     }
 
-    try writeJSON(SelfTestResult(success: true, tests: 14), to: nil)
+    let allowedForeground = AllowedForegroundActivity(
+        active: true,
+        target: AllowedForegroundTarget(pid: 102, startIdentity: "10200", windowID: 202))
+    guard foregroundFocusViolations(
+        current: changed,
+        unexpectedActivations: [102],
+        foreground: allowedForeground,
+        baseline: interactiveBaseline,
+        projection: projection).isEmpty
+    else {
+        throw ProbeError.invalidArguments("exact attributed foreground focus was rejected")
+    }
+    let unrelatedForeground = SystemSample(
+        timestamp: changed.timestamp,
+        frontmostPID: 103,
+        frontmostBundleIdentifier: changed.frontmostBundleIdentifier,
+        frontmostWindowID: 203,
+        cursor: changed.cursor,
+        clipboardChangeCount: changed.clipboardChangeCount,
+        clipboardDigest: changed.clipboardDigest,
+        peekabooWindowIDs: changed.peekabooWindowIDs,
+        visibleScreenFramesTopLeft: changed.visibleScreenFramesTopLeft)
+    let unrelatedKinds = Set(foregroundFocusViolations(
+        current: unrelatedForeground,
+        unexpectedActivations: [103],
+        foreground: allowedForeground,
+        baseline: interactiveBaseline,
+        projection: projection).map(\.kind))
+    guard unrelatedKinds == Set([projection[.frontmostPID], projection[.frontmostWindow]]) else {
+        throw ProbeError.invalidArguments("unattributed foreground focus did not fail closed")
+    }
+
+    try writeJSON(SelfTestResult(success: true, tests: 18), to: nil)
 }
 
 private func findApp(arguments: [String]) throws {
