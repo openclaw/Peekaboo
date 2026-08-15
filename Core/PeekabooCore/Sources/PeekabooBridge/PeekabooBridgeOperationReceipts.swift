@@ -866,6 +866,14 @@ enum PeekabooBridgeOperationReceiptSemantics {
             if case .bool = response {
                 return true
             }
+        case .focusWindow, .moveWindow, .resizeWindow, .setWindowBounds, .closeWindow,
+             .backgroundCloseWindow, .minimizeWindow, .restoreWindow, .maximizeWindow:
+            if case .window = response {
+                return true
+            }
+            if case .ok = response {
+                return true
+            }
         case .clickMenuBarItemNamed, .clickMenuBarItemIndex:
             if case .clickResult = response {
                 return true

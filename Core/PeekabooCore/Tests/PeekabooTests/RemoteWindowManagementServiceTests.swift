@@ -79,10 +79,12 @@ struct RemoteWindowManagementServiceTests {
             #expect(carried.outcome == expectedOutcome.routed(to: .bridge))
         }
         await windows.setActionOutcome(nil)
-        #expect(try await remote.moveWindowResult(
-            target: target,
-            expectedIdentity: self.identity,
-            to: CGPoint(x: 56, y: 78)).outcome == nil)
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await remote.moveWindowResult(
+                target: target,
+                expectedIdentity: self.identity,
+                to: CGPoint(x: 56, y: 78))
+        }
         await host.stop()
     }
 
