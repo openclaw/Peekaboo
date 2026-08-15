@@ -135,11 +135,12 @@ public actor PeekabooBridgeClient {
                         details: error.localizedDescription)
                 }
                 guard handshake.hostIdentity?.processIdentifier == attestation.host.processIdentifier,
-                      handshake.hostIdentity?.processStartIdentity == attestation.host.processStartIdentity
+                      handshake.hostIdentity?.processStartIdentity == attestation.host.processStartIdentity,
+                      handshake.hostIdentity?.codeSignatureHash == attestation.host.codeSignatureHash
                 else {
                     throw PeekabooBridgeErrorEnvelope(
                         code: .unauthorizedClient,
-                        message: "Bridge listener attestation contradicts the advertised host process generation")
+                        message: "Bridge listener attestation contradicts the advertised host identity")
                 }
                 self.operationAttestation = attestation
             }

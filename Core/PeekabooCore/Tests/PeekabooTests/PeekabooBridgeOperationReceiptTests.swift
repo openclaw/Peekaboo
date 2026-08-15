@@ -113,6 +113,8 @@ struct PeekabooBridgeOperationReceiptTests {
             let fileName = receipt.payload.requestID.uuidString.lowercased() + ".json"
             let hostArchive = URL(fileURLWithPath: attestation.receiptArchiveDirectory)
                 .appendingPathComponent(fileName)
+            let hostAttestation = URL(fileURLWithPath: attestation.receiptArchiveDirectory)
+                .appendingPathComponent("attestation.json")
             let clientExport = exportDirectory.appendingPathComponent(fileName)
             let archivedReceipt = try JSONDecoder.peekabooBridgeDecoder().decode(
                 PeekabooBridgeOperationReceipt.self,
@@ -120,10 +122,17 @@ struct PeekabooBridgeOperationReceiptTests {
             let exportedBundle = try JSONDecoder.peekabooBridgeDecoder().decode(
                 PeekabooBridgeOperationReceiptBundle.self,
                 from: Data(contentsOf: clientExport))
+            let archivedAttestation = try JSONDecoder.peekabooBridgeDecoder().decode(
+                PeekabooBridgeListenerAttestation.self,
+                from: Data(contentsOf: hostAttestation))
             #expect(archivedReceipt == receipt)
+            #expect(archivedAttestation == attestation)
             #expect(exportedBundle == bundle)
+            try archivedAttestation.validateSignature()
             try exportedBundle.validate()
+            Self.expectPrivateDirectory(attestation.receiptArchiveDirectory)
             Self.expectPrivateFile(hostArchive.path)
+            Self.expectPrivateFile(hostAttestation.path)
             Self.expectPrivateFile(clientExport.path)
         } catch {
             await host.stop()
@@ -202,6 +211,164 @@ struct PeekabooBridgeOperationReceiptTests {
             #expect(receipt.payload.operation == .targetedClick)
             #expect(receipt.payload.target == .process(processIdentity))
             #expect(receipt.payload.outcome == expectedOutcome.routed(to: .bridge).projection)
+        } catch {
+            await host.stop()
+            throw error
+        }
+        await host.stop()
+    }
+
+    @Test
+    func `targeted scroll receipt carries the executor owned exact target`() async throws {
+        let root = URL(fileURLWithPath: "/tmp/pbor-\(UUID().uuidString)", isDirectory: true)
+        let socketPath = root.appendingPathComponent("bridge.sock").path
+        defer { try? FileManager.default.removeItem(at: root) }
+        let generation = try #require(SystemIdentityResolver.processStartIdentity(getpid()))
+        let bounds = CGRect(x: 10, y: 20, width: 600, height: 400)
+        let identity = WindowMutationIdentity(
+            windowID: 73,
+            ownerProcessIdentifier: getpid(),
+            ownerProcessStartIdentity: generation,
+            capturedBounds: bounds)
+        let exactWindow = try UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds)
+        let services = await MainActor.run {
+            let services = StubServices()
+            services.automationStub.actionOutcome = .confirmedChange(
+                delivery: .init(mechanism: .accessibilityAction, mode: .background))
+            services.automationStub.uiAutomationOutcomeTargetIdentity = DesktopTargetIdentity(
+                exactWindow: exactWindow)
+            return services
+        }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: services,
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                permissionStatusEvaluator: { _ in
+                    PermissionsStatus(screenRecording: true, accessibility: true, postEvent: true)
+                })
+        }
+        let host = PeekabooBridgeHost(socketPath: socketPath, server: server, allowedTeamIDs: [])
+        try await host.startChecked()
+
+        do {
+            let client = PeekabooBridgeClient(socketPath: socketPath)
+            _ = try await client.handshake(client: Self.clientIdentity)
+            _ = try await client.scrollWithOutcome(.init(
+                direction: .down,
+                amount: 1,
+                target: "S1",
+                snapshotId: "snapshot"))
+            let receipt = try #require(await client.lastOperationReceipt())
+            #expect(receipt.payload.operation == .targetedScroll)
+            #expect(receipt.payload.target == .window(identity))
+        } catch {
+            await host.stop()
+            throw error
+        }
+        await host.stop()
+    }
+
+    @Test
+    func `incomplete request attribution is archived as retry safe refusal before dispatch`() async throws {
+        let root = URL(fileURLWithPath: "/tmp/pbor-\(UUID().uuidString)", isDirectory: true)
+        let socketPath = root.appendingPathComponent("bridge.sock").path
+        defer { try? FileManager.default.removeItem(at: root) }
+        let services = await MainActor.run { StubServices() }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: services,
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                permissionStatusEvaluator: { _ in
+                    PermissionsStatus(screenRecording: true, accessibility: true, postEvent: true)
+                })
+        }
+        let host = PeekabooBridgeHost(socketPath: socketPath, server: server, allowedTeamIDs: [])
+        try await host.startChecked()
+
+        do {
+            let client = PeekabooBridgeClient(socketPath: socketPath)
+            _ = try await client.handshake(client: Self.clientIdentity)
+            do {
+                _ = try await client.clickWithOutcome(
+                    target: .elementId("B1"),
+                    clickType: .single,
+                    snapshotId: "snapshot",
+                    targetProcessIdentifier: 999_999)
+                Issue.record("Expected incomplete process attribution to be refused")
+            } catch let failure as DesktopActionFailure {
+                #expect(failure.outcome.state == .refused)
+                #expect(failure.outcome.retrySafety == .safe)
+                #expect(failure.outcome.dispatchState == .none)
+            }
+            let receipt = try #require(await client.lastOperationReceipt())
+            #expect(receipt.payload.target == nil)
+            #expect(receipt.payload.targetAttributionFailure?.code == .missingProcessGeneration)
+            #expect(receipt.payload.targetAttributionFailure?.stage == .preDispatch)
+            #expect(receipt.payload.targetAttributionEvidence?.count == 1)
+            #expect(receipt.payload.outcome?.state == .refused)
+            #expect(await MainActor.run { services.automationStub.lastProcessTargetedClick == nil })
+        } catch {
+            await host.stop()
+            throw error
+        }
+        await host.stop()
+    }
+
+    @Test
+    func `post dispatch target contradiction is archived as retry unsafe indeterminate`() async throws {
+        let root = URL(fileURLWithPath: "/tmp/pbor-\(UUID().uuidString)", isDirectory: true)
+        let socketPath = root.appendingPathComponent("bridge.sock").path
+        defer { try? FileManager.default.removeItem(at: root) }
+        let generation = try #require(SystemIdentityResolver.processStartIdentity(getpid()))
+        let expectedIdentity = ApplicationProcessIdentity(
+            processIdentifier: getpid(),
+            processStartIdentity: generation)
+        let services = await MainActor.run {
+            let services = StubServices()
+            services.automationStub.actionOutcome = .confirmedChange(
+                delivery: .init(mechanism: .accessibilityAction, mode: .background))
+            services.automationStub.uiAutomationOutcomeTargetIdentity = try? DesktopTargetIdentity(
+                processIdentity: .init(
+                    processIdentifier: getpid(),
+                    processStartIdentity: generation + 1))
+            return services
+        }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: services,
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                permissionStatusEvaluator: { _ in
+                    PermissionsStatus(screenRecording: true, accessibility: true, postEvent: true)
+                })
+        }
+        let host = PeekabooBridgeHost(socketPath: socketPath, server: server, allowedTeamIDs: [])
+        try await host.startChecked()
+
+        do {
+            let client = PeekabooBridgeClient(socketPath: socketPath)
+            _ = try await client.handshake(client: Self.clientIdentity)
+            do {
+                _ = try await client.clickWithOutcome(
+                    target: .elementId("B1"),
+                    clickType: .single,
+                    snapshotId: "snapshot",
+                    expectedProcessIdentity: expectedIdentity)
+                Issue.record("Expected contradictory result attribution to become indeterminate")
+            } catch let failure as DesktopActionFailure {
+                #expect(failure.outcome.state == .indeterminate)
+                #expect(failure.outcome.retrySafety == .unsafe)
+                #expect(failure.outcome.dispatchState.mutationDispatched)
+            }
+            let receipt = try #require(await client.lastOperationReceipt())
+            #expect(receipt.payload.target == nil)
+            #expect(receipt.payload.targetAttributionFailure?.code == .contradictoryProcessGeneration)
+            #expect(receipt.payload.targetAttributionFailure?.stage == .postExecution)
+            #expect(receipt.payload.targetAttributionEvidence?.count == 2)
+            #expect(receipt.payload.outcome?.state == .indeterminate)
+            #expect(await MainActor.run { services.automationStub.lastProcessTargetedClick != nil })
         } catch {
             await host.stop()
             throw error
@@ -388,7 +555,7 @@ struct PeekabooBridgeOperationReceiptTests {
     }
 
     @Test
-    func `observation and capture receipts use resolved stable targets without widening`() {
+    func `observation and capture receipts use resolved stable targets without widening`() throws {
         let bounds = CGRect(x: 20, y: 30, width: 640, height: 480)
         let identity = WindowMutationIdentity(
             windowID: 73,
@@ -420,7 +587,9 @@ struct PeekabooBridgeOperationReceiptTests {
         let observation = DesktopObservationResult(target: resolved, capture: capture, elements: nil)
         let request = PeekabooBridgeRequest.desktopObservation(.init(target: .windowID(73)))
 
-        #expect(request.operationTargetReceipt(resolvedFrom: .desktopObservation(observation)) == .window(identity))
+        #expect(try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+            request: request,
+            response: .desktopObservation(observation)).target == .window(identity))
 
         let windowInfo = ServiceWindowInfo(
             windowID: 73,
@@ -439,7 +608,9 @@ struct PeekabooBridgeOperationReceiptTests {
                 mode: .window,
                 applicationInfo: applicationInfo,
                 windowInfo: windowInfo))
-        #expect(request.operationTargetReceipt(resolvedFrom: .capture(exactCapture)) == .window(identity))
+        #expect(try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+            request: request,
+            response: .capture(exactCapture)).target == .window(identity))
 
         let contradictoryCapture = CaptureResult(
             imageData: Data(),
@@ -452,13 +623,19 @@ struct PeekabooBridgeOperationReceiptTests {
                     bundleIdentifier: "dev.peekaboo.fixture",
                     name: "Fixture"),
                 windowInfo: windowInfo))
-        #expect(request.operationTargetReceipt(resolvedFrom: .capture(contradictoryCapture)) == .global)
+        #expect(throws: DesktopTargetIdentityError.contradictoryProcessGeneration) {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+                request: request,
+                response: .capture(contradictoryCapture))
+        }
 
         let processOnly = DesktopObservationResult(
             target: .init(kind: .appWindow, app: app),
             capture: capture,
             elements: nil)
-        #expect(request.operationTargetReceipt(resolvedFrom: .desktopObservation(processOnly)) == .process(
+        #expect(try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+            request: request,
+            response: .desktopObservation(processOnly)).target == .process(
             .init(processIdentifier: 42, processStartIdentity: identity.ownerProcessStartIdentity)))
 
         let incompleteIdentity = WindowMutationIdentity(
@@ -482,7 +659,11 @@ struct PeekabooBridgeOperationReceiptTests {
                 detectionContext: incompleteContext),
             capture: capture,
             elements: nil)
-        #expect(request.operationTargetReceipt(resolvedFrom: .desktopObservation(unresolved)) == .global)
+        #expect(throws: DesktopTargetIdentityError.incompleteExactWindow) {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+                request: request,
+                response: .desktopObservation(unresolved))
+        }
 
         let detection = ElementDetectionResult(
             snapshotId: "snapshot",
@@ -497,9 +678,71 @@ struct PeekabooBridgeOperationReceiptTests {
             imageData: Data(),
             snapshotId: "snapshot",
             windowContext: context))
-        #expect(detectRequest.operationTargetReceipt(resolvedFrom: .elementDetection(detection)) == .global)
+        #expect(try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+            request: detectRequest,
+            response: .elementDetection(detection)).target == .global)
         let inspectRequest = PeekabooBridgeRequest.inspectAccessibilityTree(.init(windowContext: context))
-        #expect(inspectRequest.operationTargetReceipt(resolvedFrom: .elementDetection(detection)) == .window(identity))
+        #expect(try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+            request: inspectRequest,
+            response: .elementDetection(detection)).target == .window(identity))
+
+        try Self.expectWindowMutationAttributionFailures(
+            identity: identity,
+            incompleteIdentity: incompleteIdentity,
+            bounds: bounds)
+    }
+
+    @Test
+    func `focused exact target is retained and contradictory focus is rejected`() throws {
+        let bounds = CGRect(x: 10, y: 20, width: 600, height: 400)
+        let identity = WindowMutationIdentity(
+            windowID: 73,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: 9_007_199_254_740_993,
+            capturedBounds: bounds)
+        let focused = FocusedElementIdentity(
+            processIdentifier: 42,
+            windowID: 73,
+            role: "AXTextField",
+            title: "Editor",
+            identifier: "editor",
+            frame: CGRect(x: 30, y: 40, width: 200, height: 30))
+        let exact = try UIAutomationTarget.ExactWindow(
+            identity: identity,
+            bounds: bounds,
+            focusedElement: focused)
+        let request = PeekabooBridgeRequest.exactWindowTargetedTypeActions(.init(
+            actions: [.text("x")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: "snapshot",
+            expectedWindowIdentity: identity,
+            expectedWindowBounds: bounds,
+            expectedFocusedElement: focused))
+
+        let receipt = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+            request: request,
+            response: .ok,
+            handledTarget: DesktopTargetIdentity(exactWindow: exact))
+        #expect(receipt.target == .window(identity))
+        #expect(receipt.focusedElement == focused)
+
+        let contradictoryFocus = FocusedElementIdentity(
+            processIdentifier: 42,
+            windowID: 73,
+            role: "AXTextField",
+            title: "Other",
+            identifier: "other",
+            frame: CGRect(x: 30, y: 80, width: 200, height: 30))
+        let contradictory = try UIAutomationTarget.ExactWindow(
+            identity: identity,
+            bounds: bounds,
+            focusedElement: contradictoryFocus)
+        #expect(throws: DesktopTargetIdentityError.contradictoryFocusedElement) {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+                request: request,
+                response: .ok,
+                handledTarget: DesktopTargetIdentity(exactWindow: contradictory))
+        }
     }
 
     private static var clientIdentity: PeekabooBridgeClientIdentity {
@@ -516,6 +759,49 @@ struct PeekabooBridgeOperationReceiptTests {
         #expect((info.st_mode & S_IFMT) == S_IFREG)
         #expect(info.st_uid == geteuid())
         #expect(info.st_mode & 0o777 == 0o600)
+    }
+
+    private static func expectPrivateDirectory(_ path: String) {
+        var info = stat()
+        #expect(lstat(path, &info) == 0)
+        #expect((info.st_mode & S_IFMT) == S_IFDIR)
+        #expect(info.st_uid == geteuid())
+        #expect(info.st_mode & 0o777 == 0o700)
+    }
+
+    private static func expectWindowMutationAttributionFailures(
+        identity: WindowMutationIdentity,
+        incompleteIdentity: WindowMutationIdentity,
+        bounds: CGRect) throws
+    {
+        let moveRequest = PeekabooBridgeRequest.moveWindow(.init(
+            target: .windowId(identity.windowID),
+            expectedIdentity: identity,
+            position: .zero))
+        let replacementIdentity = WindowMutationIdentity(
+            windowID: identity.windowID,
+            ownerProcessIdentifier: identity.ownerProcessIdentifier,
+            ownerProcessStartIdentity: identity.ownerProcessStartIdentity + 1,
+            capturedBounds: bounds)
+        let replacementWindow = ServiceWindowInfo(
+            windowID: identity.windowID,
+            title: "Replacement",
+            bounds: bounds,
+            mutationIdentity: replacementIdentity)
+        let moveTarget = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+            request: moveRequest,
+            response: .window(replacementWindow))
+        #expect(moveTarget.target == .window(identity))
+
+        let incompleteMove = PeekabooBridgeRequest.moveWindow(.init(
+            target: .windowId(incompleteIdentity.windowID),
+            expectedIdentity: incompleteIdentity,
+            position: .zero))
+        #expect(throws: DesktopTargetIdentityError.incompleteExactWindow) {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+                request: incompleteMove,
+                response: .ok)
+        }
     }
 }
 

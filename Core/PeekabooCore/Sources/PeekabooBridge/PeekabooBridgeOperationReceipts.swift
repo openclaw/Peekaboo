@@ -52,10 +52,10 @@ public struct PeekabooBridgeOperationProcessIdentity: Codable, Equatable, Sendab
     }
 }
 
-/// The strongest target the Bridge caller supplied for one operation.
+/// The canonical stable target coalesced from request, response, and execution-owner evidence.
 ///
-/// The operation receipt never invents a more precise target than the request carried. Leaf
-/// services remain responsible for validating their native target immediately before dispatch.
+/// Leaf services remain responsible for validating their native target immediately before dispatch;
+/// the receipt layer rejects incomplete or contradictory attribution rather than widening it.
 public enum PeekabooBridgeOperationTargetReceipt: Codable, Equatable, Sendable {
     case global
     case process(ApplicationProcessIdentity)
@@ -156,6 +156,209 @@ public enum PeekabooBridgeOperationTargetReceipt: Codable, Equatable, Sendable {
     {
         try container.encode(identity.processIdentifier, forKey: .processIdentifier)
         try container.encode(String(identity.processStartIdentity), forKey: .processStartIdentity)
+    }
+
+    init(targetIdentity: DesktopTargetIdentity) {
+        if let exactWindow = targetIdentity.exactWindow {
+            self = .window(exactWindow.identity)
+        } else {
+            self = .process(targetIdentity.processIdentity)
+        }
+    }
+}
+
+/// Lossless signed input to canonical target-attribution coalescing.
+public struct PeekabooBridgeOperationTargetEvidence: Codable, Equatable, Sendable {
+    public let processIdentifier: Int32?
+    public let processIdentity: ApplicationProcessIdentity?
+    public let windowID: Int?
+    public let windowIdentity: WindowMutationIdentity?
+    public let windowBounds: CGRect?
+    public let focusedElement: FocusedElementIdentity?
+
+    init(_ evidence: DesktopTargetIdentity.Evidence) {
+        self.processIdentifier = evidence.processIdentifier
+        self.processIdentity = evidence.processIdentity
+        self.windowID = evidence.windowID
+        self.windowIdentity = evidence.windowIdentity
+        self.windowBounds = evidence.windowBounds
+        self.focusedElement = evidence.focusedElement
+    }
+
+    var desktopEvidence: DesktopTargetIdentity.Evidence {
+        .init(
+            processIdentifier: self.processIdentifier,
+            processIdentity: self.processIdentity,
+            windowID: self.windowID,
+            windowIdentity: self.windowIdentity,
+            windowBounds: self.windowBounds,
+            focusedElement: self.focusedElement)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case processIdentifier
+        case processIdentityProcessIdentifier
+        case processIdentityStartIdentity
+        case windowID
+        case windowIdentityWindowID
+        case windowIdentityOwnerProcessIdentifier
+        case windowIdentityOwnerProcessStartIdentity
+        case windowIdentityCapturedBounds
+        case windowIdentityIsMinimized
+        case windowBounds
+        case focusedElement
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.processIdentifier = try container.decodeIfPresent(Int32.self, forKey: .processIdentifier)
+        self.processIdentity = try Self.decodeProcessIdentity(
+            processIdentifierKey: .processIdentityProcessIdentifier,
+            processStartIdentityKey: .processIdentityStartIdentity,
+            from: container)
+        self.windowID = try container.decodeIfPresent(Int.self, forKey: .windowID)
+        let identityWindowID = try container.decodeIfPresent(Int.self, forKey: .windowIdentityWindowID)
+        let identityProcess = try Self.decodeProcessIdentity(
+            processIdentifierKey: .windowIdentityOwnerProcessIdentifier,
+            processStartIdentityKey: .windowIdentityOwnerProcessStartIdentity,
+            from: container)
+        if identityWindowID != nil || identityProcess != nil {
+            guard let identityWindowID, let identityProcess else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .windowIdentityWindowID,
+                    in: container,
+                    debugDescription: "Bridge operation window evidence is incomplete")
+            }
+            self.windowIdentity = try .init(
+                windowID: identityWindowID,
+                ownerProcessIdentifier: identityProcess.processIdentifier,
+                ownerProcessStartIdentity: identityProcess.processStartIdentity,
+                capturedBounds: container.decodeIfPresent(
+                    CGRect.self,
+                    forKey: .windowIdentityCapturedBounds),
+                isMinimized: container.decodeIfPresent(Bool.self, forKey: .windowIdentityIsMinimized))
+        } else {
+            self.windowIdentity = nil
+        }
+        self.windowBounds = try container.decodeIfPresent(CGRect.self, forKey: .windowBounds)
+        self.focusedElement = try container.decodeIfPresent(FocusedElementIdentity.self, forKey: .focusedElement)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(self.processIdentifier, forKey: .processIdentifier)
+        try Self.encodeProcessIdentity(
+            self.processIdentity,
+            processIdentifierKey: .processIdentityProcessIdentifier,
+            processStartIdentityKey: .processIdentityStartIdentity,
+            to: &container)
+        try container.encodeIfPresent(self.windowID, forKey: .windowID)
+        if let windowIdentity = self.windowIdentity {
+            try container.encode(windowIdentity.windowID, forKey: .windowIdentityWindowID)
+            try Self.encodeProcessIdentity(
+                windowIdentity.processIdentity,
+                processIdentifierKey: .windowIdentityOwnerProcessIdentifier,
+                processStartIdentityKey: .windowIdentityOwnerProcessStartIdentity,
+                to: &container)
+            try container.encodeIfPresent(
+                windowIdentity.capturedBounds,
+                forKey: .windowIdentityCapturedBounds)
+            try container.encodeIfPresent(windowIdentity.isMinimized, forKey: .windowIdentityIsMinimized)
+        }
+        try container.encodeIfPresent(self.windowBounds, forKey: .windowBounds)
+        try container.encodeIfPresent(self.focusedElement, forKey: .focusedElement)
+    }
+
+    private static func decodeProcessIdentity(
+        processIdentifierKey: CodingKeys,
+        processStartIdentityKey: CodingKeys,
+        from container: KeyedDecodingContainer<CodingKeys>) throws -> ApplicationProcessIdentity?
+    {
+        let processIdentifier = try container.decodeIfPresent(Int32.self, forKey: processIdentifierKey)
+        let decimal = try container.decodeIfPresent(String.self, forKey: processStartIdentityKey)
+        guard processIdentifier != nil || decimal != nil else { return nil }
+        guard let processIdentifier,
+              let decimal,
+              let processStartIdentity = PeekabooBridgeOperationReceiptCoding.uint64(decimal: decimal)
+        else {
+            throw DecodingError.dataCorruptedError(
+                forKey: processStartIdentityKey,
+                in: container,
+                debugDescription: "Bridge operation process evidence is incomplete or invalid")
+        }
+        return .init(
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity)
+    }
+
+    private static func encodeProcessIdentity(
+        _ identity: ApplicationProcessIdentity?,
+        processIdentifierKey: CodingKeys,
+        processStartIdentityKey: CodingKeys,
+        to container: inout KeyedEncodingContainer<CodingKeys>) throws
+    {
+        guard let identity else { return }
+        try container.encode(identity.processIdentifier, forKey: processIdentifierKey)
+        try container.encode(String(identity.processStartIdentity), forKey: processStartIdentityKey)
+    }
+}
+
+public struct PeekabooBridgeTargetAttributionFailure: Codable, Equatable, Sendable {
+    public enum Stage: String, Codable, Sendable {
+        case preDispatch = "pre_dispatch"
+        case postExecution = "post_execution"
+    }
+
+    public enum Code: String, Codable, Sendable {
+        case invalidProcessIdentifier = "invalid_process_identifier"
+        case invalidWindowIdentifier = "invalid_window_identifier"
+        case contradictoryProcessIdentifier = "contradictory_process_identifier"
+        case contradictoryProcessGeneration = "contradictory_process_generation"
+        case contradictoryWindowIdentifier = "contradictory_window_identifier"
+        case contradictoryWindowIdentity = "contradictory_window_identity"
+        case contradictoryWindowBounds = "contradictory_window_bounds"
+        case contradictoryFocusedElement = "contradictory_focused_element"
+        case invalidFocusedElement = "invalid_focused_element"
+        case missingProcessGeneration = "missing_process_generation"
+        case incompleteExactWindow = "incomplete_exact_window"
+        case invalidatedSnapshotReceipt = "invalidated_snapshot_receipt"
+        case invalidSnapshotIdentifier = "invalid_snapshot_identifier"
+        case coordinateReferenceMismatch = "coordinate_reference_mismatch"
+        case coordinateWindowMismatch = "coordinate_window_mismatch"
+        case coordinateBoundsMismatch = "coordinate_bounds_mismatch"
+    }
+
+    public let code: Code
+    public let message: String
+    public let stage: Stage
+
+    init(_ error: DesktopTargetIdentityError, stage: Stage) {
+        self.code = Code(error)
+        self.message = error.localizedDescription
+        self.stage = stage
+    }
+}
+
+extension PeekabooBridgeTargetAttributionFailure.Code {
+    init(_ error: DesktopTargetIdentityError) {
+        self = switch error {
+        case .invalidProcessIdentifier: .invalidProcessIdentifier
+        case .invalidWindowIdentifier: .invalidWindowIdentifier
+        case .contradictoryProcessIdentifier: .contradictoryProcessIdentifier
+        case .contradictoryProcessGeneration: .contradictoryProcessGeneration
+        case .contradictoryWindowIdentifier: .contradictoryWindowIdentifier
+        case .contradictoryWindowIdentity: .contradictoryWindowIdentity
+        case .contradictoryWindowBounds: .contradictoryWindowBounds
+        case .contradictoryFocusedElement: .contradictoryFocusedElement
+        case .invalidFocusedElement: .invalidFocusedElement
+        case .missingProcessGeneration: .missingProcessGeneration
+        case .incompleteExactWindow: .incompleteExactWindow
+        case .invalidatedSnapshotReceipt: .invalidatedSnapshotReceipt
+        case .invalidSnapshotIdentifier: .invalidSnapshotIdentifier
+        case .coordinateReferenceMismatch: .coordinateReferenceMismatch
+        case .coordinateWindowMismatch: .coordinateWindowMismatch
+        case .coordinateBoundsMismatch: .coordinateBoundsMismatch
+        }
     }
 }
 
@@ -283,7 +486,10 @@ public struct PeekabooBridgeOperationReceiptPayload: Codable, Equatable, Sendabl
     public let operation: PeekabooBridgeOperation
     public let requestSHA256: String
     public let responseSHA256: String
-    public let target: PeekabooBridgeOperationTargetReceipt
+    public let target: PeekabooBridgeOperationTargetReceipt?
+    public let focusedElement: FocusedElementIdentity?
+    public let targetAttributionFailure: PeekabooBridgeTargetAttributionFailure?
+    public let targetAttributionEvidence: [PeekabooBridgeOperationTargetEvidence]?
     public let outcome: DesktopActionOutcome.Projection?
     public let startedAtUnixMilliseconds: Int64
     public let completedAtUnixMilliseconds: Int64
@@ -297,11 +503,21 @@ public struct PeekabooBridgeOperationReceiptPayload: Codable, Equatable, Sendabl
         operation: PeekabooBridgeOperation,
         requestSHA256: String,
         responseSHA256: String,
-        target: PeekabooBridgeOperationTargetReceipt,
+        target: PeekabooBridgeOperationTargetReceipt?,
+        focusedElement: FocusedElementIdentity? = nil,
+        targetAttributionFailure: PeekabooBridgeTargetAttributionFailure? = nil,
+        targetAttributionEvidence: [PeekabooBridgeOperationTargetEvidence]? = nil,
         outcome: DesktopActionOutcome.Projection?,
         startedAtUnixMilliseconds: Int64,
         completedAtUnixMilliseconds: Int64)
     {
+        precondition((target == nil) != (targetAttributionFailure == nil))
+        precondition((targetAttributionFailure == nil) == (targetAttributionEvidence == nil))
+        if focusedElement != nil {
+            guard case .window = target else {
+                preconditionFailure("Focused operation receipt requires an exact-window target")
+            }
+        }
         self.schemaVersion = 1
         self.requestID = requestID
         self.listenerInstanceID = listenerInstanceID
@@ -312,9 +528,54 @@ public struct PeekabooBridgeOperationReceiptPayload: Codable, Equatable, Sendabl
         self.requestSHA256 = requestSHA256
         self.responseSHA256 = responseSHA256
         self.target = target
+        self.focusedElement = focusedElement
+        self.targetAttributionFailure = targetAttributionFailure
+        self.targetAttributionEvidence = targetAttributionEvidence
         self.outcome = outcome
         self.startedAtUnixMilliseconds = startedAtUnixMilliseconds
         self.completedAtUnixMilliseconds = completedAtUnixMilliseconds
+    }
+
+    func validateTargetState() throws {
+        guard (self.target == nil) != (self.targetAttributionFailure == nil) else {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution state")
+        }
+        guard (self.targetAttributionFailure == nil) == (self.targetAttributionEvidence == nil) else {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution evidence state")
+        }
+        guard let target = self.target else {
+            guard self.focusedElement == nil else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch("failed target focus")
+            }
+            return
+        }
+        let identity = try self.resolvedTargetIdentity()
+        if target != .global, identity == nil {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch("stable target identity")
+        }
+    }
+
+    func resolvedTargetIdentity() throws -> DesktopTargetIdentity? {
+        guard let target = self.target else { return nil }
+        switch target {
+        case .global:
+            guard self.focusedElement == nil else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch("global target focus")
+            }
+            return nil
+        case let .process(process):
+            guard self.focusedElement == nil else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch("process target focus")
+            }
+            return try DesktopTargetIdentity(processIdentity: process)
+        case let .window(window):
+            return try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
+                PeekabooBridgeOperationTargetEvidenceAdapter.exactWindow(
+                    identity: window,
+                    bounds: window.capturedBounds ?? .null,
+                    focusedElement: self.focusedElement),
+            ])
+        }
     }
 }
 
@@ -329,6 +590,7 @@ public struct PeekabooBridgeOperationReceipt: Codable, Equatable, Sendable {
     }
 
     public func validateSignature(publicKey: Data) throws {
+        try self.payload.validateTargetState()
         let key: Curve25519.Signing.PublicKey
         do {
             key = try Curve25519.Signing.PublicKey(rawRepresentation: publicKey)
@@ -382,16 +644,43 @@ public struct PeekabooBridgeOperationReceiptBundle: Codable, Equatable, Sendable
         }
         try self.operationAttestation.validateSignature()
         try self.receipt.validateSignature(publicKey: self.operationAttestation.publicKey)
-        guard self.receipt.payload.listenerInstanceID == self.operationAttestation.listenerInstanceID,
+        let request: PeekabooBridgeRequest
+        let response: PeekabooBridgeResponse
+        do {
+            request = try JSONDecoder.peekabooBridgeDecoder().decode(
+                PeekabooBridgeRequest.self,
+                from: self.canonicalRequest)
+            response = try JSONDecoder.peekabooBridgeDecoder().decode(
+                PeekabooBridgeResponse.self,
+                from: self.canonicalResponse)
+        } catch {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch("the exported request or response bytes")
+        }
+        let payload = self.receipt.payload
+        guard try self.canonicalRequest == PeekabooBridgeOperationReceiptCoding.canonicalData(request),
+              try self.canonicalResponse == PeekabooBridgeOperationReceiptCoding.canonicalData(response),
+              payload.schemaVersion == 1,
+              payload.listenerInstanceID == self.operationAttestation.listenerInstanceID,
               self.receipt.payload.listenerPublicKeySHA256 == PeekabooBridgeOperationReceiptCoding.sha256(
                   self.operationAttestation.publicKey),
-              self.receipt.payload.requestSHA256 == PeekabooBridgeOperationReceiptCoding.sha256(
+              payload.host == self.operationAttestation.host,
+              payload.client.processIdentifier > 0,
+              payload.client.processStartIdentity > 0,
+              !payload.client.codeSignatureHash.isEmpty,
+              payload.operation == request.operation,
+              payload.requestSHA256 == PeekabooBridgeOperationReceiptCoding.sha256(
                   self.canonicalRequest),
-              self.receipt.payload.responseSHA256 == PeekabooBridgeOperationReceiptCoding.sha256(
-                  self.canonicalResponse)
+              payload.responseSHA256 == PeekabooBridgeOperationReceiptCoding.sha256(self.canonicalResponse),
+              payload.outcome == PeekabooBridgeOperationReceiptSemantics.outcome(in: response),
+              payload.startedAtUnixMilliseconds > 0,
+              payload.completedAtUnixMilliseconds >= payload.startedAtUnixMilliseconds
         else {
             throw PeekabooBridgeOperationReceiptError.receiptMismatch("the exported verification bundle")
         }
+        try PeekabooBridgeOperationReceiptSemantics.validateTargetAttribution(
+            payload,
+            request: request,
+            response: response)
     }
 }
 
@@ -473,6 +762,195 @@ enum PeekabooBridgeOperationReceiptCoding {
     }
 }
 
+enum PeekabooBridgeOperationReceiptSemantics {
+    static func outcome(in response: PeekabooBridgeResponse) -> DesktopActionOutcome.Projection? {
+        switch response {
+        case let .projectedAction(payload): payload.outcome
+        case let .error(envelope): envelope.actionOutcome
+        default: nil
+        }
+    }
+
+    static func validateTargetAttribution(
+        _ payload: PeekabooBridgeOperationReceiptPayload,
+        request: PeekabooBridgeRequest,
+        response: PeekabooBridgeResponse) throws
+    {
+        try payload.validateTargetState()
+        try self.validateResponseOutcomeConsistency(response)
+        guard let failure = payload.targetAttributionFailure else {
+            try self.validateSuccessfulTargetAttribution(
+                payload,
+                request: request,
+                response: response)
+            return
+        }
+        try self.validateFailedTargetAttribution(
+            payload,
+            failure: failure,
+            request: request,
+            response: response)
+    }
+
+    private static func validateSuccessfulTargetAttribution(
+        _ payload: PeekabooBridgeOperationReceiptPayload,
+        request: PeekabooBridgeRequest,
+        response: PeekabooBridgeResponse) throws
+    {
+        do {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveRequest(request)
+        } catch {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                "successful request target contract")
+        }
+        let signedIdentity = try payload.resolvedTargetIdentity()
+        let resolvedIdentity: DesktopTargetIdentity?
+        do {
+            resolvedIdentity = try PeekabooBridgeOperationTargetAttribution.resolve(
+                request: request,
+                response: response,
+                handledTarget: signedIdentity)
+        } catch {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                "canonical target attribution evidence")
+        }
+        let resolvedTarget = PeekabooBridgeResolvedOperationTarget(resolvedIdentity)
+        guard payload.target == resolvedTarget.target,
+              payload.focusedElement == resolvedTarget.focusedElement
+        else {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                "canonical target attribution")
+        }
+    }
+
+    private static func validateFailedTargetAttribution(
+        _ payload: PeekabooBridgeOperationReceiptPayload,
+        failure: PeekabooBridgeTargetAttributionFailure,
+        request: PeekabooBridgeRequest,
+        response: PeekabooBridgeResponse) throws
+    {
+        let envelope: PeekabooBridgeErrorEnvelope? = switch response {
+        case let .error(envelope): envelope
+        case let .projectedAction(projected):
+            if case let .error(envelope) = projected.response {
+                envelope
+            } else {
+                nil
+            }
+        default: nil
+        }
+        guard envelope?.context == "bridge_target_attribution:\(failure.code.rawValue)" else {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution failure response")
+        }
+        guard let envelope else {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution error envelope")
+        }
+        try self.validateFailureResponseSemantics(
+            failure,
+            request: request,
+            envelope: envelope)
+        guard let signedEvidence = payload.targetAttributionEvidence else {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution failure evidence")
+        }
+        let requestEvidence = request.operationTargetEvidence.map(PeekabooBridgeOperationTargetEvidence.init)
+        guard Array(signedEvidence.prefix(requestEvidence.count)) == requestEvidence else {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution request evidence")
+        }
+        switch failure.stage {
+        case .preDispatch:
+            guard signedEvidence == requestEvidence else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch("pre-dispatch target evidence")
+            }
+            do {
+                _ = try PeekabooBridgeOperationTargetAttribution.resolveRequest(request)
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                    "claimed pre-dispatch target attribution failure")
+            } catch let error as DesktopTargetIdentityError {
+                guard PeekabooBridgeTargetAttributionFailure.Code(error) == failure.code else {
+                    throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution failure code")
+                }
+            }
+            return
+        case .postExecution:
+            do {
+                _ = try PeekabooBridgeOperationTargetAttribution.resolveRequest(request)
+            } catch {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                    "post-execution request target evidence")
+            }
+            guard signedEvidence.count > requestEvidence.count else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch("post-execution target evidence")
+            }
+        }
+        do {
+            _ = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve(
+                signedEvidence.map(\.desktopEvidence))
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                "claimed target attribution failure")
+        } catch let error as DesktopTargetIdentityError {
+            guard PeekabooBridgeTargetAttributionFailure.Code(error) == failure.code else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution failure code")
+            }
+        }
+    }
+
+    private static func validateFailureResponseSemantics(
+        _ failure: PeekabooBridgeTargetAttributionFailure,
+        request: PeekabooBridgeRequest,
+        envelope: PeekabooBridgeErrorEnvelope) throws
+    {
+        guard request.mayMutateDesktop else {
+            guard envelope.code == .invalidRequest,
+                  envelope.actionOutcome == nil
+            else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                    "read-only target attribution failure semantics")
+            }
+            return
+        }
+        guard let outcome = envelope.actionOutcome?.outcome,
+              outcome.route == .bridge
+        else {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                "mutating target attribution failure outcome")
+        }
+        if failure.stage == .preDispatch || !outcome.dispatchState.mutationDispatched {
+            guard envelope.code == .invalidRequest,
+                  outcome.state == .refused,
+                  outcome.evidence == .requestRefused,
+                  outcome.dispatchState == .none,
+                  outcome.retrySafety == .safe,
+                  outcome.refusalReason == .invalidRequest
+            else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                    "retry-safe target attribution refusal")
+            }
+        } else {
+            guard envelope.code == .internalError,
+                  outcome.state == .indeterminate,
+                  outcome.evidence == .completionUnknown,
+                  outcome.dispatchState.mutationDispatched,
+                  outcome.retrySafety == .unsafe
+            else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                    "retry-unsafe target attribution failure")
+            }
+        }
+    }
+
+    private static func validateResponseOutcomeConsistency(
+        _ response: PeekabooBridgeResponse) throws
+    {
+        guard case let .projectedAction(projected) = response,
+              case let .error(envelope) = projected.response
+        else { return }
+        guard projected.outcome == envelope.actionOutcome else {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                "projected error outcome")
+        }
+    }
+}
+
 /// Ephemeral signer, replay fence, and private durable archive for one listening socket lifetime.
 final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
     let attestation: PeekabooBridgeListenerAttestation
@@ -512,15 +990,19 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
             receiptArchiveDirectory: archiveDirectory.path)
         let signature = try privateKey.signature(
             for: PeekabooBridgeOperationReceiptCoding.canonicalData(unsigned))
-        self.privateKey = privateKey
-        self.archiveDirectory = archiveDirectory
-        self.attestation = PeekabooBridgeListenerAttestation(
+        let attestation = PeekabooBridgeListenerAttestation(
             listenerInstanceID: unsigned.listenerInstanceID,
             publicKey: unsigned.publicKey,
             host: unsigned.host,
             createdAtUnixMilliseconds: unsigned.createdAtUnixMilliseconds,
             receiptArchiveDirectory: unsigned.receiptArchiveDirectory,
             signature: signature)
+        try PeekabooBridgePrivateReceiptArchive.writeAtomically(
+            PeekabooBridgeOperationReceiptCoding.canonicalData(attestation),
+            to: archiveDirectory.appendingPathComponent("attestation.json"))
+        self.privateKey = privateKey
+        self.archiveDirectory = archiveDirectory
+        self.attestation = attestation
     }
 
     func claim(
@@ -705,179 +1187,344 @@ enum PeekabooBridgePrivateReceiptArchive {
 }
 
 extension PeekabooBridgeRequest {
-    func operationTargetReceipt(
-        resolvedFrom response: PeekabooBridgeResponse) -> PeekabooBridgeOperationTargetReceipt
-    {
-        if self.operation != .detectElements,
-           let resolved = response.resolvedOperationTargetReceipt
-        {
-            return resolved
-        }
-        // A mutating leaf revalidates any request-carried identity immediately around dispatch.
-        // Read-only calls must instead prove their actual resolved target from the response.
-        return self.mayMutateDesktop ? self.operationTargetReceipt : .global
-    }
-
-    var operationTargetReceipt: PeekabooBridgeOperationTargetReceipt {
+    var operationTargetEvidence: [DesktopTargetIdentity.Evidence] {
         switch self {
         case let .projectedAction(payload):
-            payload.request.operationTargetReceipt
+            payload.request.operationTargetEvidence
         case let .attestedOperation(payload):
-            payload.request.operationTargetReceipt
+            payload.request.operationTargetEvidence
         case let .exactWindowTargetedTypeActions(payload):
-            .window(payload.expectedWindowIdentity)
+            [PeekabooBridgeOperationTargetEvidenceAdapter.exactWindow(
+                identity: payload.expectedWindowIdentity,
+                bounds: payload.expectedWindowBounds,
+                focusedElement: payload.expectedFocusedElement)]
         case let .exactWindowTargetedHotkey(payload):
-            .window(payload.expectedWindowIdentity)
+            [PeekabooBridgeOperationTargetEvidenceAdapter.exactWindow(
+                identity: payload.expectedWindowIdentity,
+                bounds: payload.expectedWindowBounds,
+                focusedElement: payload.expectedFocusedElement)]
         case let .targetedTypeActions(payload):
-            payload.expectedProcessIdentity.map(PeekabooBridgeOperationTargetReceipt.process) ?? .global
+            [.init(
+                processIdentifier: payload.targetProcessIdentifier,
+                processIdentity: payload.expectedProcessIdentity)]
         case let .targetedHotkey(payload):
-            payload.expectedProcessIdentity.map(PeekabooBridgeOperationTargetReceipt.process) ?? .global
+            [.init(
+                processIdentifier: payload.targetProcessIdentifier,
+                processIdentity: payload.expectedProcessIdentity)]
+        case let .getFocusedElement(payload):
+            [.init(
+                processIdentifier: payload.targetProcessIdentifier,
+                processIdentity: payload.expectedProcessIdentity)]
         case let .targetedClick(payload):
-            if let identity = payload.expectedWindowIdentity {
-                .window(identity)
-            } else {
-                payload.expectedProcessIdentity.map(PeekabooBridgeOperationTargetReceipt.process) ?? .global
-            }
+            [.init(
+                processIdentifier: payload.targetProcessIdentifier,
+                processIdentity: payload.expectedProcessIdentity,
+                windowID: payload.targetWindowID,
+                windowIdentity: payload.expectedWindowIdentity,
+                windowBounds: payload.expectedWindowBounds)]
         case let .moveWindow(payload):
-            payload.expectedIdentity.map(PeekabooBridgeOperationTargetReceipt.window) ?? .global
+            [PeekabooBridgeOperationTargetEvidenceAdapter.window(
+                target: payload.target,
+                identity: payload.expectedIdentity)]
         case let .resizeWindow(payload):
-            payload.expectedIdentity.map(PeekabooBridgeOperationTargetReceipt.window) ?? .global
+            [PeekabooBridgeOperationTargetEvidenceAdapter.window(
+                target: payload.target,
+                identity: payload.expectedIdentity)]
         case let .setWindowBounds(payload):
-            payload.expectedIdentity.map(PeekabooBridgeOperationTargetReceipt.window) ?? .global
-        case let .closeWindow(payload),
+            [PeekabooBridgeOperationTargetEvidenceAdapter.window(
+                target: payload.target,
+                identity: payload.expectedIdentity)]
+        case let .focusWindow(payload),
+             let .closeWindow(payload),
              let .backgroundCloseWindow(payload),
              let .minimizeWindow(payload),
              let .restoreWindow(payload),
              let .maximizeWindow(payload):
-            payload.expectedIdentity.map(PeekabooBridgeOperationTargetReceipt.window) ?? .global
+            [PeekabooBridgeOperationTargetEvidenceAdapter.window(
+                target: payload.target,
+                identity: payload.expectedIdentity)]
         case let .quitApplication(payload):
-            payload.expectedIdentity.map(PeekabooBridgeOperationTargetReceipt.process) ?? .global
+            payload.expectedIdentity.map {
+                [.init(processIdentifier: $0.processIdentifier, processIdentity: $0)]
+            } ?? []
+        case let .activateApplication(payload):
+            payload.expectedIdentity.map {
+                [.init(processIdentifier: $0.processIdentifier, processIdentity: $0)]
+            } ?? []
         case let .exactDialogClickButton(receipt), let .exactDialogDismiss(receipt):
-            .window(receipt.target.identity)
+            [.init(target: DesktopTargetIdentity(exactWindow: receipt.target))]
+        case let .inspectAccessibilityTree(payload):
+            payload.windowContext.map(PeekabooBridgeOperationTargetEvidenceAdapter.windowContext).map { [$0] } ?? []
         default:
-            .global
+            []
+        }
+    }
+}
+
+enum PeekabooBridgeOperationTargetEvidenceAdapter {
+    static func exactWindow(
+        identity: WindowMutationIdentity,
+        bounds: CGRect,
+        focusedElement: FocusedElementIdentity? = nil) -> DesktopTargetIdentity.Evidence
+    {
+        .init(
+            processIdentifier: identity.ownerProcessIdentifier,
+            processIdentity: identity.processIdentity,
+            windowID: identity.windowID,
+            windowIdentity: identity,
+            windowBounds: bounds,
+            focusedElement: focusedElement)
+    }
+
+    static func window(
+        target: WindowTarget,
+        identity: WindowMutationIdentity?) -> DesktopTargetIdentity.Evidence
+    {
+        let targetWindowID: Int? = if case let .windowId(windowID) = target {
+            windowID
+        } else {
+            nil
+        }
+        return .init(
+            processIdentifier: identity?.ownerProcessIdentifier,
+            processIdentity: identity?.processIdentity,
+            windowID: targetWindowID ?? identity?.windowID,
+            windowIdentity: identity,
+            windowBounds: identity?.capturedBounds)
+    }
+
+    static func windowContext(_ context: WindowContext) -> DesktopTargetIdentity.Evidence {
+        .init(
+            processIdentifier: context.applicationProcessId,
+            processIdentity: context.windowMutationIdentity?.processIdentity,
+            windowID: context.windowID,
+            windowIdentity: context.windowMutationIdentity,
+            windowBounds: context.windowBounds,
+            focusedElement: context.focusedElement)
+    }
+}
+
+struct PeekabooBridgeResolvedOperationTarget: Sendable {
+    let target: PeekabooBridgeOperationTargetReceipt
+    let focusedElement: FocusedElementIdentity?
+
+    init(_ identity: DesktopTargetIdentity?) {
+        guard let identity else {
+            self.target = .global
+            self.focusedElement = nil
+            return
+        }
+        self.target = .init(targetIdentity: identity)
+        self.focusedElement = identity.exactWindow?.focusedElement
+    }
+}
+
+enum PeekabooBridgeOperationTargetAttribution {
+    static func resolveRequest(_ request: PeekabooBridgeRequest) throws -> DesktopTargetIdentity? {
+        let identity = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve(
+            request.operationTargetEvidence)
+        if request.requiresStableOperationTarget, identity == nil {
+            throw DesktopTargetIdentityError.incompleteExactWindow
+        }
+        return identity
+    }
+
+    static func resolve(
+        request: PeekabooBridgeRequest,
+        response: PeekabooBridgeResponse,
+        handledTarget: DesktopTargetIdentity?) throws -> DesktopTargetIdentity?
+    {
+        try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve(self.evidence(
+            request: request,
+            response: response,
+            handledTarget: handledTarget))
+    }
+
+    static func evidence(
+        request: PeekabooBridgeRequest,
+        response: PeekabooBridgeResponse,
+        handledTarget: DesktopTargetIdentity?) -> [DesktopTargetIdentity.Evidence]
+    {
+        var evidence = request.operationTargetEvidence
+        if let handledTarget {
+            evidence.append(.init(target: handledTarget))
+        }
+        evidence.append(contentsOf: response.operationTargetEvidence(for: request.operation))
+        return evidence
+    }
+
+    static func resolveReceipt(
+        request: PeekabooBridgeRequest,
+        response: PeekabooBridgeResponse,
+        handledTarget: DesktopTargetIdentity? = nil) throws -> PeekabooBridgeResolvedOperationTarget
+    {
+        try PeekabooBridgeResolvedOperationTarget(self.resolve(
+            request: request,
+            response: response,
+            handledTarget: handledTarget))
+    }
+}
+
+extension PeekabooBridgeRequest {
+    fileprivate var requiresStableOperationTarget: Bool {
+        switch self {
+        case let .attestedOperation(payload): payload.request.requiresStableOperationTarget
+        case let .projectedAction(payload): payload.request.requiresStableOperationTarget
+        case .focusWindow: true
+        default: false
         }
     }
 }
 
 extension PeekabooBridgeResponse {
-    var resolvedOperationTargetReceipt: PeekabooBridgeOperationTargetReceipt? {
+    func operationTargetEvidence(
+        for operation: PeekabooBridgeOperation) -> [DesktopTargetIdentity.Evidence]
+    {
         switch self {
         case let .attestedOperation(payload):
-            payload.response.resolvedOperationTargetReceipt
+            payload.response.operationTargetEvidence(for: operation)
         case let .projectedAction(payload):
-            payload.response.resolvedOperationTargetReceipt
+            payload.response.operationTargetEvidence(for: operation)
         case let .desktopObservation(result):
-            Self.coalescedTargetReceipt([
-                Self.exactWindowReceipt(result.target.detectionContext),
-                Self.captureTargetReceipt(result.capture.metadata),
-                Self.processReceipt(result.target.app),
-            ])
+            [
+                Self.evidence(result.target.detectionContext),
+                Self.evidence(result.target.app),
+                Self.evidence(result.target.window),
+            ].compactMap(\.self) + Self.evidence(result.capture.metadata)
         case let .capture(result):
-            Self.captureTargetReceipt(result.metadata)
+            Self.evidence(result.metadata)
         case let .elementDetection(result):
-            Self.exactWindowReceipt(result.metadata.windowContext)
+            operation == .inspectAccessibilityTree
+                ? [Self.evidence(result.metadata.windowContext)].compactMap(\.self)
+                : []
         case let .window(window):
-            window?.mutationIdentity.flatMap(Self.exactWindowReceipt)
+            operation.responseCarriesPostMutationWindowState
+                ? []
+                : window.map(Self.evidence).map { [$0] } ?? []
         case let .application(application):
-            Self.processReceipt(application)
+            [Self.evidence(application)].compactMap(\.self)
         case let .preparedDialogAction(receipt):
-            Self.exactWindowReceipt(receipt.target.identity)
+            [.init(target: DesktopTargetIdentity(exactWindow: receipt.target))]
+        case let .dialogResult(result):
+            Self.evidence(result)
+        case .focusedElement:
+            []
+        case let .error(envelope):
+            [Self.evidence(envelope.actionTargetReceipt)].compactMap(\.self)
         default:
-            nil
+            []
         }
     }
 
-    private static func captureTargetReceipt(
-        _ metadata: CaptureMetadata) -> PeekabooBridgeOperationTargetReceipt?
-    {
-        let windowReceipt: PeekabooBridgeOperationTargetReceipt? = if let window = metadata.windowInfo,
-                                                                      let identity = window.mutationIdentity,
-                                                                      identity.windowID == window.windowID,
-                                                                      identity.capturedBounds == window.bounds
-        {
-            self.exactWindowReceipt(identity)
-        } else {
-            nil
-        }
-        return self.coalescedTargetReceipt([
-            windowReceipt,
-            metadata.applicationInfo.flatMap(self.processReceipt),
-        ])
+    private static func evidence(_ metadata: CaptureMetadata) -> [DesktopTargetIdentity.Evidence] {
+        [
+            self.evidence(metadata.applicationInfo),
+            metadata.windowInfo.map(self.evidence),
+        ].compactMap(\.self)
     }
 
-    private static func exactWindowReceipt(
-        _ context: WindowContext?) -> PeekabooBridgeOperationTargetReceipt?
-    {
-        guard let context,
-              let identity = context.windowMutationIdentity,
-              context.applicationProcessId == identity.ownerProcessIdentifier,
-              context.windowID == identity.windowID,
-              context.windowBounds == identity.capturedBounds
-        else { return nil }
-        return self.exactWindowReceipt(identity)
+    private static func evidence(_ context: WindowContext?) -> DesktopTargetIdentity.Evidence? {
+        guard let context else { return nil }
+        return .init(
+            processIdentifier: context.applicationProcessId,
+            windowID: context.windowID,
+            windowIdentity: context.windowMutationIdentity,
+            windowBounds: context.windowBounds,
+            focusedElement: context.focusedElement)
     }
 
-    private static func exactWindowReceipt(
-        _ identity: WindowMutationIdentity) -> PeekabooBridgeOperationTargetReceipt?
-    {
-        guard identity.windowID > 0,
-              UInt32(exactly: identity.windowID) != nil,
-              identity.ownerProcessIdentifier > 0,
-              identity.ownerProcessStartIdentity > 0,
-              let bounds = identity.capturedBounds,
-              bounds.width > 0,
-              bounds.height > 0
-        else { return nil }
-        return .window(identity)
+    private static func evidence(_ window: WindowIdentity?) -> DesktopTargetIdentity.Evidence? {
+        guard let window else { return nil }
+        return .init(windowID: window.windowID, windowBounds: window.bounds)
     }
 
-    private static func processReceipt(
-        _ application: ApplicationIdentity?) -> PeekabooBridgeOperationTargetReceipt?
-    {
-        guard let application,
-              application.processIdentifier > 0,
-              let generation = application.processStartIdentity,
-              generation > 0
-        else { return nil }
-        return .process(.init(
+    private static func evidence(_ window: ServiceWindowInfo) -> DesktopTargetIdentity.Evidence {
+        .init(
+            processIdentifier: window.mutationIdentity?.ownerProcessIdentifier,
+            processIdentity: window.mutationIdentity?.processIdentity,
+            windowID: window.windowID,
+            windowIdentity: window.mutationIdentity,
+            windowBounds: window.bounds)
+    }
+
+    private static func evidence(_ identity: WindowMutationIdentity) -> DesktopTargetIdentity.Evidence {
+        .init(
+            processIdentifier: identity.ownerProcessIdentifier,
+            processIdentity: identity.processIdentity,
+            windowID: identity.windowID,
+            windowIdentity: identity,
+            windowBounds: identity.capturedBounds)
+    }
+
+    private static func evidence(_ application: ApplicationIdentity?) -> DesktopTargetIdentity.Evidence? {
+        guard let application else { return nil }
+        return .init(
             processIdentifier: application.processIdentifier,
-            processStartIdentity: generation))
+            processIdentity: application.processStartIdentity.map {
+                .init(
+                    processIdentifier: application.processIdentifier,
+                    processStartIdentity: $0)
+            })
     }
 
-    private static func processReceipt(
-        _ application: ServiceApplicationInfo) -> PeekabooBridgeOperationTargetReceipt?
+    private static func evidence(
+        _ application: ServiceApplicationInfo?) -> DesktopTargetIdentity.Evidence?
     {
-        guard application.processIdentifier > 0,
-              let generation = application.processStartIdentity,
-              generation > 0
-        else { return nil }
-        return .process(.init(
+        guard let application else { return nil }
+        return .init(
             processIdentifier: application.processIdentifier,
-            processStartIdentity: generation))
+            processIdentity: application.processStartIdentity.map {
+                .init(
+                    processIdentifier: application.processIdentifier,
+                    processStartIdentity: $0)
+            })
     }
 
-    private static func coalescedTargetReceipt(
-        _ candidates: [PeekabooBridgeOperationTargetReceipt?]) -> PeekabooBridgeOperationTargetReceipt?
-    {
-        var resolved: PeekabooBridgeOperationTargetReceipt?
-        for candidate in candidates.compactMap(\.self) {
-            guard let current = resolved else {
-                resolved = candidate
-                continue
-            }
-            switch (current, candidate) {
-            case (.global, _), (_, .global):
-                return nil
-            case let (.process(lhs), .process(rhs)):
-                guard lhs == rhs else { return nil }
-            case let (.window(lhs), .window(rhs)):
-                guard lhs.hasSameStableReceipt(as: rhs) else { return nil }
-            case let (.window(window), .process(process)), let (.process(process), .window(window)):
-                guard window.processIdentity == process else { return nil }
-                resolved = .window(window)
-            }
+    private static func evidence(_ result: DialogActionResult) -> [DesktopTargetIdentity.Evidence] {
+        var evidence: [DesktopTargetIdentity.Evidence] = []
+        if result.targetWindowIdentity != nil || result.targetWindowBounds != nil || result.focusedElement != nil {
+            evidence.append(.init(
+                processIdentifier: result.targetWindowIdentity?.ownerProcessIdentifier,
+                processIdentity: result.targetWindowIdentity?.processIdentity,
+                windowID: result.targetWindowIdentity?.windowID,
+                windowIdentity: result.targetWindowIdentity,
+                windowBounds: result.targetWindowBounds,
+                focusedElement: result.focusedElement))
         }
-        return resolved
+        if let receiptEvidence = self.evidence(result.targetReceipt) {
+            evidence.append(receiptEvidence)
+        }
+        return evidence
+    }
+
+    private static func evidence(
+        _ receipt: DesktopActionTargetReceipt?) -> DesktopTargetIdentity.Evidence?
+    {
+        guard let receipt else { return nil }
+        return .init(
+            processIdentifier: receipt.processIdentifier,
+            processIdentity: .init(
+                processIdentifier: receipt.processIdentifier,
+                processStartIdentity: receipt.processStartIdentity),
+            windowID: receipt.windowID)
+    }
+}
+
+extension PeekabooBridgeOperation {
+    fileprivate var responseCarriesPostMutationWindowState: Bool {
+        switch self {
+        case .focusWindow,
+             .moveWindow,
+             .resizeWindow,
+             .setWindowBounds,
+             .closeWindow,
+             .backgroundCloseWindow,
+             .minimizeWindow,
+             .restoreWindow,
+             .maximizeWindow:
+            true
+        default:
+            false
+        }
     }
 }

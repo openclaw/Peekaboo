@@ -33,12 +33,20 @@ read_when:
 - Protocol 1.29 binds every post-handshake call to one ephemeral listener identity and returns a signed operation
   receipt. The host keeps privacy-minimized receipts under `<socket>.receipts/<listener-id>/` with mode `0600` in
   owner-only directories. For a private certification run, setting `PEEKABOO_OPERATION_RECEIPT_DIRECTORY` exports
-  one atomic verification bundle per request. That opt-in bundle includes the exact canonical request and response
-  bytes so an independent validator can recompute both signed digests, plus the exact listener-attestation and
-  operation-receipt payload bytes used for Ed25519 signature verification. SHA-256 digests use lowercase hex; binary
-  fields use JSON base64; process generations use canonical decimal strings rather than lossy JSON numbers. The
-  bundle can therefore contain command text and response data and must not be enabled for ordinary automation or
-  written to a shared directory.
+  one atomic verification bundle per successfully routed protocol 1.29 Bridge request. Local execution and older
+  Bridge protocols do not emit a bundle, and certification must fail when an expected bundle is missing. The opt-in
+  bundle includes the exact canonical request and response bytes so an independent validator can recompute both
+  signed digests, plus the exact listener-attestation and operation-receipt payload bytes used for Ed25519 signature
+  verification. SHA-256 digests use lowercase hex; binary fields use JSON base64; process generations use canonical
+  decimal strings rather than lossy JSON numbers. The bundle can therefore contain command text and response data
+  and must not be enabled for ordinary automation or written to a shared directory.
+- Target attribution delegates to the same canonical process/window receipt coalescer used by local automation.
+  Exact-window receipts include immutable bounds and optional focused-element identity. Missing evidence alone is
+  recorded as global; incomplete or contradictory evidence is instead archived as an explicit attribution failure.
+  A mutating operation's attribution failure is retry-safe only before dispatch and becomes indeterminate and
+  retry-unsafe after dispatch. Each failure signs its pre-dispatch or post-execution stage plus the lossless evidence
+  fragments needed to reproduce the canonical failure code. Read-only attribution failures return an ordinary
+  invalid-request response.
 
 ## Examples
 ```bash

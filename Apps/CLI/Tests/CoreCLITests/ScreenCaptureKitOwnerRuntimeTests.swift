@@ -1406,7 +1406,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
         build: String? = nil
     ) -> PeekabooBridgeHandshakeResponse {
         BridgeTestFixtures.handshake(
-            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            negotiatedVersion: PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion,
             hostKind: .onDemand,
             build: build,
             supportedOperations: [.captureScreen, .desktopObservation],
@@ -1450,6 +1450,10 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             hostKind: .onDemand,
             allowlistedTeams: [],
             allowlistedBundles: [],
+            supportedVersions: ClosedRange(uncheckedBounds: (
+                lower: PeekabooBridgeConstants.supportedProtocolRange.lowerBound,
+                upper: PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion
+            )),
             allowedOperations: [
                 .captureScreen,
                 .desktopObservation,

@@ -156,6 +156,48 @@ struct DesktopTargetPlanningTests {
     }
 
     @Test
+    func `zero process generation is rejected`() {
+        #expect(throws: DesktopTargetIdentityError.missingProcessGeneration) {
+            _ = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
+                .init(processIdentity: .init(processIdentifier: 42, processStartIdentity: 0)),
+            ])
+        }
+    }
+
+    @Test
+    func `empty exact window bounds are rejected`() {
+        let identity = WindowMutationIdentity(
+            windowID: 73,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: 9,
+            capturedBounds: .zero)
+        #expect(throws: DesktopTargetIdentityError.incompleteExactWindow) {
+            _ = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
+                .init(
+                    processIdentity: identity.processIdentity,
+                    windowID: identity.windowID,
+                    windowIdentity: identity,
+                    windowBounds: .zero),
+            ])
+        }
+    }
+
+    @Test
+    func `malformed focused-element evidence is a typed target attribution error`() {
+        let bounds = CGRect(x: 10, y: 20, width: 640, height: 480)
+        let window = AutomationTestFixtures.windowIdentity(bounds: bounds)
+        let focused = AutomationTestFixtures.focusedElement(
+            role: " ",
+            frame: CGRect(x: 30, y: 40, width: 200, height: 30))
+
+        #expect(throws: DesktopTargetIdentityError.invalidFocusedElement) {
+            _ = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
+                .init(windowIdentity: window, windowBounds: bounds, focusedElement: focused),
+            ])
+        }
+    }
+
+    @Test
     func `snapshot receipt preserves sticky invalidation instead of treating it as missing`() throws {
         let receipt = try SnapshotTargetReceipt(
             snapshotID: "snapshot-1",

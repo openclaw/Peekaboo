@@ -405,12 +405,15 @@ extension PeekabooBridgeClient {
             guard payload.operation == context.request.operation,
                   try payload.requestSHA256 == (PeekabooBridgeOperationReceiptCoding.sha256(context.request)),
                   try payload.responseSHA256 == (PeekabooBridgeOperationReceiptCoding.sha256(envelope.response)),
-                  payload.target == context.request.operationTargetReceipt(resolvedFrom: envelope.response),
-                  payload.outcome == Self.operationOutcome(in: envelope.response),
+                  payload.outcome == PeekabooBridgeOperationReceiptSemantics.outcome(in: envelope.response),
                   payload.completedAtUnixMilliseconds >= payload.startedAtUnixMilliseconds
             else {
                 throw PeekabooBridgeOperationReceiptError.receiptMismatch("operation facts")
             }
+            try PeekabooBridgeOperationReceiptSemantics.validateTargetAttribution(
+                payload,
+                request: context.request,
+                response: envelope.response)
             let bundle = try PeekabooBridgeOperationReceiptBundle(
                 operationAttestation: context.attestation,
                 receipt: receipt,
@@ -423,16 +426,6 @@ extension PeekabooBridgeClient {
             return (envelope.response, bundle)
         }
         throw PeekabooBridgeOperationReceiptError.receiptMismatch("a nested receipt envelope")
-    }
-
-    private nonisolated static func operationOutcome(
-        in response: PeekabooBridgeResponse) -> DesktopActionOutcome.Projection?
-    {
-        switch response {
-        case let .projectedAction(payload): payload.outcome
-        case let .error(envelope): envelope.actionOutcome
-        default: nil
-        }
     }
 
     private nonisolated static func exportOperationReceiptIfRequested(
