@@ -6,6 +6,112 @@ import Testing
 
 struct UISnapshotStoreConcurrencyTests {
     @Test
+    func `atomic observation publishes exact focused element receipt`() async throws {
+        let snapshot = UISnapshot()
+        let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 900,
+            ownerProcessStartIdentity: 90,
+            capturedBounds: bounds)
+        let focused = FocusedElementIdentity(
+            processIdentifier: 900,
+            windowID: 42,
+            role: "AXTextField",
+            identifier: "editor",
+            frame: CGRect(x: 40, y: 60, width: 200, height: 30))
+
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: CaptureMetadata(
+                size: bounds.size,
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 900,
+                    processStartIdentity: 90,
+                    bundleIdentifier: "com.example.editor",
+                    name: "Editor"),
+                windowInfo: ServiceWindowInfo(
+                    windowID: 42,
+                    title: "Document",
+                    bounds: bounds,
+                    mutationIdentity: identity)),
+            context: WindowContext(
+                applicationName: "Editor",
+                applicationProcessId: 900,
+                windowTitle: "Document",
+                windowID: 42,
+                windowBounds: bounds,
+                windowMutationIdentity: identity,
+                focusedElement: focused))
+
+        #expect(snapshot.focusedElement == focused)
+        #expect(try snapshot.targetReceipt().identity?.exactWindow?.focusedElement == focused)
+    }
+
+    @Test
+    func `fresh focus replaces mutable focus without invalidating stable target`() async {
+        let snapshot = UISnapshot()
+        let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 900,
+            ownerProcessStartIdentity: 90,
+            capturedBounds: bounds)
+        func context(identifier: String?) -> WindowContext {
+            WindowContext(
+                applicationName: "Editor",
+                applicationProcessId: 900,
+                windowTitle: "Document",
+                windowID: 42,
+                windowBounds: bounds,
+                windowMutationIdentity: identity,
+                focusedElement: identifier.map {
+                    FocusedElementIdentity(
+                        processIdentifier: 900,
+                        windowID: 42,
+                        role: "AXTextField",
+                        identifier: $0,
+                        frame: CGRect(x: $0 == "first" ? 40 : 250, y: 60, width: 120, height: 30))
+                })
+        }
+
+        await snapshot.setTargetMetadata(from: context(identifier: "first"))
+        await snapshot.setTargetMetadata(from: context(identifier: "second"))
+        #expect(!snapshot.targetReceiptInvalidated)
+        #expect(snapshot.focusedElement?.identifier == "second")
+
+        await snapshot.setTargetMetadata(from: context(identifier: nil))
+        #expect(!snapshot.targetReceiptInvalidated)
+        #expect(snapshot.focusedElement == nil)
+    }
+
+    @Test
+    func `malformed focused receipt invalidates snapshot target`() async throws {
+        let snapshot = UISnapshot()
+        let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
+        await snapshot.setTargetMetadata(from: WindowContext(
+            applicationName: "Editor",
+            applicationProcessId: 900,
+            windowTitle: "Document",
+            windowID: 42,
+            windowBounds: bounds,
+            windowMutationIdentity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: 900,
+                ownerProcessStartIdentity: 90,
+                capturedBounds: bounds),
+            focusedElement: FocusedElementIdentity(
+                processIdentifier: 900,
+                windowID: 99,
+                role: "AXTextField",
+                frame: CGRect(x: 40, y: 60, width: 120, height: 30))))
+
+        #expect(snapshot.targetReceiptInvalidated)
+        #expect(try snapshot.targetReceipt().targetEvidence == .invalidated)
+    }
+
+    @Test
     func `same process detection metadata preserves capture generation receipt`() async {
         let snapshot = UISnapshot()
         await snapshot.setScreenshot(

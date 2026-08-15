@@ -215,9 +215,10 @@ public struct SeeTool: MCPTool {
         observation: DesktopObservationResult,
         snapshot: UISnapshot) async
     {
-        await snapshot.setScreenshot(path: path, metadata: observation.capture.metadata)
-        await snapshot.setTargetMetadata(
-            from: observation.elements?.metadata.windowContext ?? observation.target.detectionContext)
+        await snapshot.setScreenshot(
+            path: path,
+            metadata: observation.capture.metadata,
+            context: observation.elements?.metadata.windowContext ?? observation.target.detectionContext)
     }
 
     private func generateAnnotationIfNeeded(

@@ -672,10 +672,12 @@ public struct MCPToolContext: @unchecked Sendable {
                       processIdentifier: context.applicationProcessId,
                       windowID: context.windowID,
                       windowIdentity: context.windowMutationIdentity,
-                      windowBounds: context.windowBounds),
+                      windowBounds: context.windowBounds,
+                      focusedElement: context.focusedElement),
               ]),
               let contextExactWindow = contextIdentity.exactWindow,
-              snapshotExactWindow == contextExactWindow
+              snapshotExactWindow.identity.hasSameStableReceipt(as: contextExactWindow.identity),
+              snapshotExactWindow.bounds == contextExactWindow.bounds
         else {
             return false
         }

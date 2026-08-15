@@ -74,6 +74,23 @@ public enum UIAutomationTarget: Sendable, Equatable {
                     field: "target",
                     reason: "Focused-element receipt does not belong to the exact target window")
             }
+            if let focusedElement {
+                guard !focusedElement.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw PeekabooError.invalidInput(
+                        field: "target",
+                        reason: "Focused-element receipt has no accessibility role")
+                }
+                guard !focusedElement.frame.isEmpty else {
+                    throw PeekabooError.invalidInput(
+                        field: "target",
+                        reason: FocusedElementReceiptError.missingElementFrame.localizedDescription)
+                }
+                guard bounds.contains(CGPoint(x: focusedElement.frame.midX, y: focusedElement.frame.midY)) else {
+                    throw PeekabooError.invalidInput(
+                        field: "target",
+                        reason: FocusedElementReceiptError.elementOutsideWindow.localizedDescription)
+                }
+            }
             self.identity = identity
             self.bounds = bounds
             self.focusedElement = focusedElement
@@ -209,16 +226,48 @@ public enum UIAutomationTarget: Sendable, Equatable {
         using automation: any UIAutomationServiceProtocol) async throws -> UIAutomationTarget
     {
         guard let exactWindow = self.exactWindow else { return self }
-        guard let focusedElementService = automation as? any TargetedFocusedElementServiceProtocol,
-              let focus = await focusedElementService.getFocusedElement(
-                  targetProcessIdentifier: exactWindow.identity.ownerProcessIdentifier),
-              let focusedElement = FocusedElementIdentity(focus),
-              focusedElement.windowID == exactWindow.identity.windowID,
-              exactWindow.bounds.contains(CGPoint(x: focusedElement.frame.midX, y: focusedElement.frame.midY))
+        if exactWindow.focusedElement != nil {
+            return self
+        }
+        guard let focusedElementService = automation as? any TargetedFocusedElementServiceProtocol else {
+            throw PeekabooError.invalidInput(
+                field: "target",
+                reason: "The automation host cannot read exact focused-element receipts")
+        }
+        guard let focus = await focusedElementService.getFocusedElement(
+            targetProcessIdentifier: exactWindow.identity.ownerProcessIdentifier)
         else {
             throw PeekabooError.invalidInput(
                 field: "target",
-                reason: "The exact target window has no provable focused element; capture fresh UI state")
+                reason: FocusedElementReceiptError.noFocusedElement.localizedDescription +
+                    " Focus an explicit field and capture fresh exact-window UI state.")
+        }
+        guard focus.processId == Int(exactWindow.identity.ownerProcessIdentifier) else {
+            throw PeekabooError.invalidInput(
+                field: "target",
+                reason: FocusedElementReceiptError.processMismatch.localizedDescription)
+        }
+        guard focus.windowID != nil else {
+            throw PeekabooError.invalidInput(
+                field: "target",
+                reason: FocusedElementReceiptError.missingWindowIdentifier.localizedDescription)
+        }
+        guard !focus.frame.isEmpty else {
+            throw PeekabooError.invalidInput(
+                field: "target",
+                reason: FocusedElementReceiptError.missingElementFrame.localizedDescription)
+        }
+        guard let focusedElement = FocusedElementIdentity(focus),
+              focusedElement.windowID == exactWindow.identity.windowID
+        else {
+            throw PeekabooError.invalidInput(
+                field: "target",
+                reason: FocusedElementReceiptError.windowMismatch.localizedDescription)
+        }
+        guard exactWindow.bounds.contains(CGPoint(x: focusedElement.frame.midX, y: focusedElement.frame.midY)) else {
+            throw PeekabooError.invalidInput(
+                field: "target",
+                reason: FocusedElementReceiptError.elementOutsideWindow.localizedDescription)
         }
         return try self.pinningFocusedElement(focusedElement)
     }

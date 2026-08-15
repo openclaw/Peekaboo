@@ -14,6 +14,7 @@ extension InMemorySnapshotManager {
         if let context = result.metadata.windowContext {
             self.applyWindowContext(context, to: &snapshotData)
         } else {
+            snapshotData.focusedElement = nil
             self.applyLegacyWarnings(result.metadata.warnings, to: &snapshotData)
         }
 
@@ -50,6 +51,7 @@ extension InMemorySnapshotManager {
         snapshotData.windowTitle = context.windowTitle ?? snapshotData.windowTitle
         snapshotData.windowBounds = context.windowBounds ?? snapshotData.windowBounds
         snapshotData.windowMutationIdentity = context.windowMutationIdentity ?? snapshotData.windowMutationIdentity
+        snapshotData.focusedElement = context.focusedElement
         if let windowID = context.windowID {
             snapshotData.windowID = CGWindowID(windowID)
         }
@@ -254,6 +256,7 @@ extension InMemorySnapshotManager {
             snapshotData.windowID != nil ||
             snapshotData.windowBounds != nil ||
             snapshotData.windowMutationIdentity != nil
+            || snapshotData.focusedElement != nil
         else {
             return nil
         }
@@ -265,6 +268,7 @@ extension InMemorySnapshotManager {
             windowTitle: snapshotData.windowTitle,
             windowID: snapshotData.windowID.map(Int.init),
             windowBounds: snapshotData.windowBounds,
-            windowMutationIdentity: snapshotData.windowMutationIdentity)
+            windowMutationIdentity: snapshotData.windowMutationIdentity,
+            focusedElement: snapshotData.focusedElement)
     }
 }

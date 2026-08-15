@@ -29,13 +29,22 @@ enum KeyboardDeliverySupport {
         let exactWindow: UIAutomationTarget.ExactWindow?
         switch (snapshotTarget, selectedWindow) {
         case let (snapshot?, selected?):
-            guard snapshot == selected else {
+            let merged: DesktopTargetIdentity?
+            do {
+                merged = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.coalesce([
+                    DesktopTargetIdentity(exactWindow: snapshot),
+                    DesktopTargetIdentity(exactWindow: selected),
+                ])
+            } catch {
                 throw ValidationError(
                     "The selected snapshot and window selector identify different exact windows. " +
                         "Capture fresh UI state."
                 )
             }
-            exactWindow = snapshot
+            guard let mergedWindow = merged?.exactWindow else {
+                throw ValidationError("The selected exact-window receipts are incomplete.")
+            }
+            exactWindow = mergedWindow
         case let (snapshot?, nil):
             exactWindow = snapshot
         case let (nil, selected?):
@@ -107,7 +116,8 @@ enum KeyboardDeliverySupport {
                 processIdentifier: snapshot.applicationProcessId,
                 windowID: snapshot.windowID.map(Int.init),
                 windowIdentity: snapshot.windowMutationIdentity,
-                windowBounds: snapshot.windowBounds
+                windowBounds: snapshot.windowBounds,
+                focusedElement: snapshot.focusedElement
             ))
         }
         if let detectionResult = try await services.snapshots.getDetectionResult(snapshotId: snapshotId),
@@ -116,7 +126,8 @@ enum KeyboardDeliverySupport {
                 processIdentifier: context.applicationProcessId,
                 windowID: context.windowID,
                 windowIdentity: context.windowMutationIdentity,
-                windowBounds: context.windowBounds
+                windowBounds: context.windowBounds,
+                focusedElement: context.focusedElement
             ))
         }
 

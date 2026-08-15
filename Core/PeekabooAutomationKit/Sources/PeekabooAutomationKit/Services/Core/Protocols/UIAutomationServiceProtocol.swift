@@ -259,6 +259,18 @@ public protocol TargetedFocusedElementServiceProtocol: UIAutomationServiceProtoc
     func getFocusedElement(targetProcessIdentifier: pid_t) async -> UIFocusInfo?
 }
 
+/// Additive capability for exact semantic element focus with a verified per-window AXFocused receipt.
+@MainActor
+public protocol ExactWindowFocusedElementServiceProtocol: UIAutomationServiceProtocol {
+    var supportsExactWindowFocusedElementFocus: Bool { get }
+
+    func focusExactElementWithOutcome(
+        target: ClickTarget,
+        snapshotId: String,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<FocusedElementIdentity>
+}
+
 /// Atomically validates an exact background window's focused element and dispatches keyboard input.
 @MainActor
 public protocol ExactWindowTargetedKeyboardServiceProtocol: UIAutomationServiceProtocol {

@@ -31,6 +31,13 @@ read_when:
 - Text may be omitted only when `--clear` is used. Chain a following `press` command for Return, Tab, Escape, or Delete.
 - Escape handling splits literal text and key presses: `"Hello\nWorld"` becomes `text("Hello"), key(.return), text("World")`, so newlines don’t require separate flags.
 - Exact window selectors and fresh exact-window snapshots preserve PID generation, window ID/bounds, and focused-element identity through dispatch. Stale or ambiguous receipts fail before typing.
+- A fresh exact-window `see` records focus only when exactly one element in that window explicitly reports
+  `AXFocused=true`. Cached trees, a first editable-field guess, and application-level focus from another window are
+  never accepted. To focus a known field without activating the app, use its fresh element ID with background
+  `click`, run `see` again, then type with the new snapshot.
+- Exact background delivery re-resolves that same role/frame/identifier under the captured window and verifies its
+  own `AXFocused` attribute before every keyboard unit. Process relaunch, window/bounds drift, sibling focus, or an
+  unreadable focus attribute stops delivery instead of widening to application or foreground focus.
 - Default profile is `linear`, using no inter-key delay for fast deterministic input. Passing `--wpm` opts into human cadence; `--profile human` uses 140 WPM when `--wpm` is omitted.
 - Background delivery uses process-targeted CoreGraphics keyboard events and requires Event Synthesizing access. Apps that only accept typing in a focused key window may still need `--foreground`.
 - Printable background text is carried as Unicode instead of physical US key positions, so the requested characters remain stable across active keyboard layouts.

@@ -107,6 +107,37 @@ struct MCPExactWindowKeyboardToolTests {
         await Self.uiSnapshots.removeSnapshot(id: snapshot.id)
     }
 
+    @Test
+    func `Type keeps focused snapshot evidence when selector repeats the exact window`() async throws {
+        let window = Self.keyboardWindow(id: 42, index: 0)
+        let snapshot = await Self.makeSnapshot(window: window)
+        let focused = Self.focusInfo(windowID: 42)
+        let focusedIdentity = try #require(FocusedElementIdentity(focused))
+        let stored = try #require(await Self.uiSnapshots.getSnapshot(id: snapshot.id))
+        await stored.setTargetMetadata(from: WindowContext(
+            applicationName: "Editor",
+            applicationBundleId: "com.example.editor",
+            applicationProcessId: 333,
+            windowTitle: window.title,
+            windowID: window.windowID,
+            windowBounds: window.bounds,
+            windowMutationIdentity: window.mutationIdentity,
+            focusedElement: focusedIdentity))
+        let fixture = await Self.makeFixture(focusedWindowID: nil)
+
+        let response = try await TypeTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "snapshot": snapshot.id,
+            "pid": 333,
+            "window_id": 42,
+            "text": "hello",
+        ]))
+
+        #expect(!response.isError)
+        let call = try #require(await MainActor.run { fixture.automation.exactTypeCalls.first })
+        #expect(call.target.focusedElement == focusedIdentity)
+        await Self.uiSnapshots.removeSnapshot(id: snapshot.id)
+    }
+
     private static func makeFixture(
         focusedWindowID: Int?,
         windows: [ServiceWindowInfo] = [Self.keyboardWindow(id: 42, index: 0)],

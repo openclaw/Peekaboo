@@ -18,6 +18,16 @@ struct InMemorySnapshotManagerTests {
     }
 
     @Test
+    func `exact focused element receipt persists in memory and on disk`() async throws {
+        try await Self.verifyFocusedElementPersistence(InMemorySnapshotManager())
+
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-focus-receipt-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+        try await Self.verifyFocusedElementPersistence(SnapshotManager(snapshotStorageURL: storageURL))
+    }
+
+    @Test
     func `implicit latest invalidation preserves explicit in-memory history`() async throws {
         let manager = InMemorySnapshotManager()
         let snapshotId = try await manager.createSnapshot()
@@ -681,6 +691,47 @@ struct InMemorySnapshotManagerTests {
                 elementCount: 0,
                 method: "test",
                 windowContext: WindowContext(applicationBundleId: bundleId)))
+    }
+
+    private static func verifyFocusedElementPersistence(
+        _ manager: any SnapshotManagerProtocol) async throws
+    {
+        let snapshotID = try await manager.createSnapshot()
+        let bounds = CGRect(x: 10, y: 20, width: 600, height: 400)
+        let focused = FocusedElementIdentity(
+            processIdentifier: 701,
+            windowID: 43,
+            role: "AXTextField",
+            identifier: "editor",
+            frame: CGRect(x: 40, y: 60, width: 200, height: 30))
+        let identity = WindowMutationIdentity(
+            windowID: 43,
+            ownerProcessIdentifier: 701,
+            ownerProcessStartIdentity: 100,
+            capturedBounds: bounds)
+        try await manager.storeDetectionResult(
+            snapshotId: snapshotID,
+            result: ElementDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: "/tmp/\(snapshotID).png",
+                elements: DetectedElements(),
+                metadata: DetectionMetadata(
+                    detectionTime: 0,
+                    elementCount: 0,
+                    method: "test",
+                    windowContext: WindowContext(
+                        applicationName: "Editor",
+                        applicationProcessId: 701,
+                        windowTitle: "Document",
+                        windowID: 43,
+                        windowBounds: bounds,
+                        windowMutationIdentity: identity,
+                        focusedElement: focused))))
+
+        let stored = try #require(try await manager.getUIAutomationSnapshot(snapshotId: snapshotID))
+        #expect(stored.focusedElement == focused)
+        #expect(try await manager.getDetectionResult(snapshotId: snapshotID)?.metadata.windowContext?.focusedElement ==
+            focused)
     }
 
     private static func beginInterruptedDiskPublication(

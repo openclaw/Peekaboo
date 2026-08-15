@@ -13,17 +13,20 @@ public struct UIInputExecutionResult: Codable, Equatable, Sendable {
         public let actionName: String?
         public let anchorPoint: CGPoint?
         public let elementRole: String?
+        public let focusedElement: FocusedElementIdentity?
 
         public init(
             outcome: DesktopActionOutcome,
             actionName: String? = nil,
             anchorPoint: CGPoint? = nil,
-            elementRole: String? = nil)
+            elementRole: String? = nil,
+            focusedElement: FocusedElementIdentity? = nil)
         {
             self.outcome = outcome
             self.actionName = actionName
             self.anchorPoint = anchorPoint
             self.elementRole = elementRole
+            self.focusedElement = focusedElement
         }
     }
 

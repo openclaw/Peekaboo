@@ -29,6 +29,10 @@ Peekaboo must deliver type, press, and paste to one exact background window with
 
 - Exact background success reports background delivery plus target PID and window ID, without application activation or global input.
 - Exact routes preserve the focused-element receipt through dispatch.
+- Focus evidence comes from one explicit `AXFocused=true` element in a fresh exact-window observation. Cached AX
+  trees, application menu elements, and inferred editable controls are not focus receipts.
+- Dispatch re-resolves the same focused element under the exact window and revalidates its own focus state before
+  every unit; application-level `AXFocusedUIElement` is not sufficient for inactive-window proof.
 - Multiple eligible same-process windows without an exact receipt fail before dispatch and request a window selector or fresh snapshot.
 - Process-only/app-only/targetless raw press remains a retry-safe, not-dispatched refusal.
 - Stale, incomplete, or contradictory receipts fail before any keyboard or clipboard mutation.

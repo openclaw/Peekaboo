@@ -323,10 +323,19 @@ struct MCPInteractionTarget {
         }
         let exactWindow: UIAutomationTarget.ExactWindow?
         if let snapshotExactWindow, let selectedWindow {
-            guard snapshotExactWindow == selectedWindow else {
+            let merged: DesktopTargetIdentity?
+            do {
+                merged = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.coalesce([
+                    DesktopTargetIdentity(exactWindow: snapshotExactWindow),
+                    DesktopTargetIdentity(exactWindow: selectedWindow),
+                ])
+            } catch {
                 throw MCPInteractionTargetError.backgroundWindowTargetMismatch
             }
-            exactWindow = snapshotExactWindow
+            guard let mergedWindow = merged?.exactWindow else {
+                throw MCPInteractionTargetError.backgroundWindowTargetMismatch
+            }
+            exactWindow = mergedWindow
         } else {
             exactWindow = snapshotExactWindow ?? selectedWindow
         }

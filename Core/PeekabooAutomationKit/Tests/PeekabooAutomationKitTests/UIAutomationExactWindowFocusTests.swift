@@ -102,14 +102,14 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
         let service = UIAutomationService(
             actionInputDriver: ActionInputDriver(),
             automationElementResolver: AutomationElementResolver(),
-            exactWindowFocusReader: { processIdentifier in
-                ExactWindowFocusSnapshot(
-                    processIdentifier: processIdentifier,
+            exactFocusedElementReader: { expected in
+                .success(ExactWindowFocusSnapshot(
+                    processIdentifier: expected.processIdentifier,
                     windowID: 42,
                     frame: CGRect(x: 300, y: 100, width: 200, height: 30),
                     role: "AXTextField",
                     title: "Sibling",
-                    identifier: "sibling")
+                    identifier: "sibling"))
             },
             exactWindowIdentityValidator: { _, _ in true })
 
@@ -127,6 +127,78 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
             XCTFail("Expected sibling focus to fail the clicked-destination proof")
         } catch let PeekabooError.invalidInput(message) {
             XCTAssertTrue(message.contains("target"))
+        }
+    }
+
+    func testExactReceiptValidationDoesNotConsultApplicationFocusedElement() async throws {
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 930_004,
+            ownerProcessStartIdentity: 77,
+            capturedBounds: bounds)
+        let expected = FocusedElementIdentity(
+            processIdentifier: identity.ownerProcessIdentifier,
+            windowID: identity.windowID,
+            role: "AXTextField",
+            identifier: "inactive-editor",
+            frame: CGRect(x: 50, y: 100, width: 200, height: 30))
+        let applicationReaderUsed = LockedBoolean()
+        let service = UIAutomationService(
+            actionInputDriver: ActionInputDriver(),
+            automationElementResolver: AutomationElementResolver(),
+            exactWindowFocusReader: { _ in
+                applicationReaderUsed.setTrue()
+                return nil
+            },
+            exactFocusedElementReader: { receipt in
+                .success(ExactWindowFocusSnapshot(
+                    processIdentifier: receipt.processIdentifier,
+                    windowID: receipt.windowID,
+                    frame: receipt.frame,
+                    role: receipt.role,
+                    title: receipt.title,
+                    identifier: receipt.identifier))
+            },
+            exactWindowIdentityValidator: { candidate, candidateBounds in
+                candidate.hasSameStableReceipt(as: identity) && candidateBounds == bounds
+            })
+
+        try await service.requireExactWindowKeyboardFocus(
+            expectedWindowIdentity: identity,
+            expectedWindowBounds: bounds,
+            expectedFocusedElement: expected)
+
+        XCTAssertFalse(applicationReaderUsed.value)
+    }
+
+    func testExactReceiptMismatchReturnsTypedPreDispatchRefusal() async throws {
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 930_005,
+            ownerProcessStartIdentity: 78,
+            capturedBounds: bounds)
+        let expected = FocusedElementIdentity(
+            processIdentifier: identity.ownerProcessIdentifier,
+            windowID: identity.windowID,
+            role: "AXTextField",
+            identifier: "editor",
+            frame: CGRect(x: 50, y: 100, width: 200, height: 30))
+        let service = UIAutomationService(
+            actionInputDriver: ActionInputDriver(),
+            automationElementResolver: AutomationElementResolver(),
+            exactFocusedElementReader: { _ in .failure(.identifierMismatch) },
+            exactWindowIdentityValidator: { _, _ in true })
+
+        do {
+            try await service.requireExactWindowKeyboardFocus(
+                expectedWindowIdentity: identity,
+                expectedWindowBounds: bounds,
+                expectedFocusedElement: expected)
+            XCTFail("Expected mismatched exact focus receipt to refuse")
+        } catch let PeekabooError.invalidInput(message) {
+            XCTAssertTrue(message.contains("identifier changed"))
         }
     }
 

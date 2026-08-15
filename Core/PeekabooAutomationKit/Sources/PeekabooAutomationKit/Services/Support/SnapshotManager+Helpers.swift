@@ -529,6 +529,7 @@ extension SnapshotManager {
         snapshotData.windowTitle = context.windowTitle ?? snapshotData.windowTitle
         snapshotData.windowBounds = context.windowBounds ?? snapshotData.windowBounds
         snapshotData.windowMutationIdentity = context.windowMutationIdentity ?? snapshotData.windowMutationIdentity
+        snapshotData.focusedElement = context.focusedElement
         if let windowID = context.windowID {
             snapshotData.windowID = CGWindowID(windowID)
         }
@@ -586,6 +587,7 @@ extension SnapshotManager {
             snapshotData.windowID != nil ||
             snapshotData.windowBounds != nil ||
             snapshotData.windowMutationIdentity != nil
+            || snapshotData.focusedElement != nil
         else {
             return nil
         }
@@ -597,7 +599,8 @@ extension SnapshotManager {
             windowTitle: snapshotData.windowTitle,
             windowID: snapshotData.windowID.map(Int.init),
             windowBounds: snapshotData.windowBounds,
-            windowMutationIdentity: snapshotData.windowMutationIdentity)
+            windowMutationIdentity: snapshotData.windowMutationIdentity,
+            focusedElement: snapshotData.focusedElement)
     }
 
     func countScreenshots(in snapshotURL: URL) -> Int {

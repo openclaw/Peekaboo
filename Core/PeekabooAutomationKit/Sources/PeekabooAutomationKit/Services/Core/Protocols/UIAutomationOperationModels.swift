@@ -206,6 +206,63 @@ public struct FocusedElementIdentity: Sendable, Codable, Equatable {
     }
 }
 
+/// Typed reasons an exact-window focused-element receipt could not be established.
+public enum FocusedElementReceiptError: LocalizedError, Equatable, Sendable {
+    case missingProcessIdentifier
+    case missingWindowIdentifier
+    case missingWindowBounds
+    case missingElementFrame
+    case focusedAttributeNotSettable
+    case focusedAttributeUnreadable
+    case focusNotConfirmed
+    case noFocusedElement
+    case multipleFocusedElements
+    case elementOutsideWindow
+    case processMismatch
+    case windowMismatch
+    case roleMismatch
+    case frameMismatch
+    case identifierMismatch
+    case titleMismatch
+
+    public var errorDescription: String? {
+        switch self {
+        case .missingProcessIdentifier:
+            "The focused element has no target process identifier."
+        case .missingWindowIdentifier:
+            "The focused element has no exact owning window identifier."
+        case .missingWindowBounds:
+            "The focused element target has no immutable window bounds receipt."
+        case .missingElementFrame:
+            "The focused element has no non-empty accessibility frame."
+        case .focusedAttributeNotSettable:
+            "The selected element does not expose a writable AXFocused attribute."
+        case .focusedAttributeUnreadable:
+            "The selected element's AXFocused attribute could not be read."
+        case .focusNotConfirmed:
+            "The selected element did not report AXFocused=true after the native focus request."
+        case .noFocusedElement:
+            "The exact target window reports no focused element."
+        case .multipleFocusedElements:
+            "The exact target window reports multiple focused elements."
+        case .elementOutsideWindow:
+            "The focused element frame is outside the exact target window bounds."
+        case .processMismatch:
+            "The focused element belongs to a different process."
+        case .windowMismatch:
+            "The focused element belongs to a different window."
+        case .roleMismatch:
+            "The focused element role changed."
+        case .frameMismatch:
+            "The focused element frame changed."
+        case .identifierMismatch:
+            "The focused element identifier changed."
+        case .titleMismatch:
+            "The focused element title changed."
+        }
+    }
+}
+
 public struct ExactWindowKeyboardTarget: Sendable, Codable, Equatable {
     public let windowIdentity: WindowMutationIdentity
     public let windowBounds: CGRect

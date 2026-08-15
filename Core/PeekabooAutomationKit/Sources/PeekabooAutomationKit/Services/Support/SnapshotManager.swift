@@ -131,6 +131,7 @@ public final class SnapshotManager: SnapshotManagerProtocol {
         if let context = result.metadata.windowContext {
             self.applyWindowContext(context, to: &snapshotData)
         } else {
+            snapshotData.focusedElement = nil
             self.applyLegacyWarnings(result.metadata.warnings, to: &snapshotData)
         }
 

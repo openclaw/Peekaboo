@@ -168,12 +168,19 @@ public final class ClickService {
         switch clickType {
         case .single:
             let valueBefore = element.intAttribute(AXAttributeNames.kAXValueAttribute)
-            let result: UIInputExecutionResult.Action = if targetProcessIdentifier != nil {
-                try self.actionInputDriver.tryPerformAction(
-                    element: element,
-                    actionName: AXActionNames.kAXPressAction)
-            } else {
-                try self.actionInputDriver.tryClick(element: element)
+            let result = try self.actionInputDriver.tryClick(element: element)
+            if let focusedElement = result.focusedElement,
+               let exactWindow = captureReceipt.exactWindow
+            {
+                do {
+                    try Self.validateFocusedElement(focusedElement, exactWindow: exactWindow)
+                } catch {
+                    guard result.outcome.dispatchState.mutationDispatched else { throw error }
+                    throw clickPostDispatchFailure(
+                        outcome: result.outcome,
+                        message: "Element focus was dispatched outside the exact target receipt",
+                        cause: error)
+                }
             }
             if element.subrole == "AXTabButton", valueBefore == 0 {
                 // SwiftUI tabs can report a successful AXPress without selecting. Give working
@@ -195,6 +202,24 @@ public final class ClickService {
             throw ActionInputError.unsupported(.actionUnsupported)
         case .longPress:
             throw ActionInputError.unsupported(.actionUnsupported)
+        }
+    }
+
+    private static func validateFocusedElement(
+        _ focusedElement: FocusedElementIdentity,
+        exactWindow: UIAutomationTarget.ExactWindow) throws
+    {
+        guard focusedElement.processIdentifier == exactWindow.identity.ownerProcessIdentifier else {
+            throw FocusedElementReceiptError.processMismatch
+        }
+        guard focusedElement.windowID == exactWindow.identity.windowID else {
+            throw FocusedElementReceiptError.windowMismatch
+        }
+        guard exactWindow.bounds.contains(CGPoint(
+            x: focusedElement.frame.midX,
+            y: focusedElement.frame.midY))
+        else {
+            throw FocusedElementReceiptError.elementOutsideWindow
         }
     }
 
@@ -869,6 +894,113 @@ public final class ClickService {
 }
 
 extension ClickService {
+    func focusExactElementWithOutcome(
+        target: ClickTarget,
+        snapshotId: String,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<FocusedElementIdentity>
+    {
+        let exactWindow = try UIAutomationTarget.ExactWindow(
+            identity: expectedWindowIdentity,
+            bounds: expectedWindowBounds)
+        let captureReceipt = DesktopOperationPlan.CaptureReceipt(
+            snapshotID: snapshotId,
+            target: .exactWindow(exactWindow))
+        var resolvedElement: AutomationElement?
+        var expectedElementIdentity: FocusedElementIdentity?
+        var focusedElementReceipt: FocusedElementIdentity?
+        let plan = try DesktopOperationPlan(
+            verb: .click,
+            selector: .click(target),
+            captureReceipt: captureReceipt,
+            strategy: .actionOnly,
+            prepare: {
+                _ = try await self.validateSnapshotTarget(
+                    target: target,
+                    snapshotId: snapshotId,
+                    targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+                    requestedTargetWindowID: expectedWindowIdentity.windowID,
+                    captureReceipt: captureReceipt)
+                try self.requireCurrentTarget(
+                    captureReceipt,
+                    afterDispatch: false,
+                    validateProcessIdentity: true)
+                guard let element = try await self.resolveAutomationElement(
+                    target: target,
+                    snapshotId: snapshotId,
+                    targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier)
+                else {
+                    throw ActionInputError.unsupported(.missingElement)
+                }
+                guard let detection = try await self.snapshotManager.getDetectionResult(snapshotId: snapshotId),
+                      let detectedElement = Self.resolveSnapshotTarget(target, in: detection),
+                      let windowContext = detection.metadata.windowContext
+                else {
+                    throw ActionInputError.staleElement
+                }
+                let capturedElementIdentity = try FocusedElementReceiptResolver.receipt(
+                    element: detectedElement,
+                    context: windowContext)
+                guard let identity = element.focusedElementIdentity else {
+                    throw FocusedElementReceiptError.missingWindowIdentifier
+                }
+                try Self.validateFocusedElement(identity, exactWindow: exactWindow)
+                try FocusedElementReceiptResolver.validate(identity, matches: capturedElementIdentity)
+                resolvedElement = element
+                expectedElementIdentity = capturedElementIdentity
+            },
+            action: DesktopOperationPlan.ActionRoute {
+                guard let element = resolvedElement,
+                      let expectedElementIdentity
+                else {
+                    throw PeekabooError.operationError(message: "Exact focus target was not prepared")
+                }
+                let result = try self.actionInputDriver.tryFocus(element: element)
+                guard let focusedElement = result.focusedElement else {
+                    throw FocusedElementReceiptError.focusNotConfirmed
+                }
+                try Self.validateFocusedElement(focusedElement, exactWindow: exactWindow)
+                try FocusedElementReceiptResolver.validate(focusedElement, matches: expectedElementIdentity)
+                focusedElementReceipt = focusedElement
+                return result
+            },
+            synthesis: DesktopOperationPlan.SynthesisRoute {
+                throw PeekabooError.serviceUnavailable(
+                    "Exact semantic focus never falls back to synthetic pointer input")
+            },
+            postvalidate: { result in
+                do {
+                    try self.requireCurrentTarget(
+                        captureReceipt,
+                        afterDispatch: true,
+                        validateProcessIdentity: true)
+                    guard let element = resolvedElement,
+                          element.isFocused,
+                          let actual = element.focusedElementIdentity,
+                          let reported = focusedElementReceipt
+                    else {
+                        throw FocusedElementReceiptError.focusNotConfirmed
+                    }
+                    try Self.validateFocusedElement(actual, exactWindow: exactWindow)
+                    try FocusedElementReceiptResolver.validate(actual, matches: reported)
+                } catch {
+                    guard result.outcome.dispatchState.mutationDispatched else {
+                        throw error
+                    }
+                    throw clickPostDispatchFailure(
+                        outcome: result.outcome,
+                        message: "Element focus was dispatched, but its exact receipt could not be revalidated",
+                        cause: error)
+                }
+            },
+            finalize: self.operationFinalizer)
+        let result = try await self.desktopOperationExecutor.execute(plan)
+        guard let focusedElement = focusedElementReceipt else {
+            throw FocusedElementReceiptError.focusNotConfirmed
+        }
+        return UIAutomationActionResult(payload: focusedElement, outcome: result.outcome)
+    }
+
     fileprivate static func automationTarget(
         targetProcessIdentifier: pid_t?,
         expectedProcessIdentity: ApplicationProcessIdentity?,

@@ -18,6 +18,7 @@ public nonisolated struct UIAutomationSnapshot: Codable, Sendable {
     public var windowTitle: String?
     public var windowBounds: CGRect?
     public var windowMutationIdentity: WindowMutationIdentity?
+    public var focusedElement: FocusedElementIdentity?
     public var captureCoordinateContext: CaptureCoordinateContext?
     public var menuBar: MenuBarData?
     public var windowID: CGWindowID?
@@ -37,6 +38,7 @@ public nonisolated struct UIAutomationSnapshot: Codable, Sendable {
         windowTitle: String? = nil,
         windowBounds: CGRect? = nil,
         windowMutationIdentity: WindowMutationIdentity? = nil,
+        focusedElement: FocusedElementIdentity? = nil,
         captureCoordinateContext: CaptureCoordinateContext? = nil,
         menuBar: MenuBarData? = nil,
         windowID: CGWindowID? = nil,
@@ -55,6 +57,7 @@ public nonisolated struct UIAutomationSnapshot: Codable, Sendable {
         self.windowTitle = windowTitle
         self.windowBounds = windowBounds
         self.windowMutationIdentity = windowMutationIdentity
+        self.focusedElement = focusedElement
         self.captureCoordinateContext = captureCoordinateContext
         self.menuBar = menuBar
         self.windowID = windowID

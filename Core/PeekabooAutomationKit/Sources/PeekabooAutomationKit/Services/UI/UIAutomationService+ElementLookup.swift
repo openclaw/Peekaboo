@@ -77,18 +77,39 @@ extension UIAutomationService {
         expectedWindowBounds: CGRect,
         expectedFocusedElement: FocusedElementIdentity? = nil) async throws
     {
-        let reader = self.exactWindowFocusReader
         let identityValidator = self.exactWindowIdentityValidator
         let targetProcessIdentifier = expectedWindowIdentity.ownerProcessIdentifier
         let focused: ExactWindowFocusSnapshot?
         do {
-            focused = try await ElementDetectionTimeoutRunner.runDetached(
-                targetProcessIdentifier: targetProcessIdentifier,
-                targetProcessStartIdentity: expectedWindowIdentity.ownerProcessStartIdentity,
-                seconds: 0.2)
-            {
-                reader(targetProcessIdentifier)
+            if let expectedFocusedElement {
+                let reader = self.exactFocusedElementReader
+                let result = try await ElementDetectionTimeoutRunner.runDetached(
+                    targetProcessIdentifier: targetProcessIdentifier,
+                    targetProcessStartIdentity: expectedWindowIdentity.ownerProcessStartIdentity,
+                    seconds: 0.2)
+                {
+                    reader(expectedFocusedElement)
+                }
+                switch result {
+                case let .success(value):
+                    focused = value
+                case let .failure(error):
+                    throw error
+                }
+            } else {
+                let reader = self.exactWindowFocusReader
+                focused = try await ElementDetectionTimeoutRunner.runDetached(
+                    targetProcessIdentifier: targetProcessIdentifier,
+                    targetProcessStartIdentity: expectedWindowIdentity.ownerProcessStartIdentity,
+                    seconds: 0.2)
+                {
+                    reader(targetProcessIdentifier)
+                }
             }
+        } catch let error as FocusedElementReceiptError {
+            throw PeekabooError.invalidInput(
+                field: "target",
+                reason: "Exact focused-element receipt is stale: \(error.localizedDescription)")
         } catch {
             throw self.exactWindowKeyboardFocusChangedError()
         }
@@ -136,7 +157,7 @@ extension UIAutomationService {
         let window = element.attribute(Attribute<Element>(AXAttributeNames.kAXWindowAttribute))
         window?.setMessagingTimeout(0.05)
         defer { window?.setMessagingTimeout(0) }
-        let windowID = window.flatMap {
+        let windowID = AXWindowResolver().windowID(from: element.underlyingElement).map(Int.init) ?? window.flatMap {
             WindowIdentityService().getWindowID(from: $0, messagingTimeout: 0.05)
         }.map(Int.init)
         return UIFocusInfo(

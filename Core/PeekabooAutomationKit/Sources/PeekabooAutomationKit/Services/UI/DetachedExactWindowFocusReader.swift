@@ -66,6 +66,67 @@ enum DetachedExactWindowFocusReader {
             identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: focusedElement))
     }
 
+    static func read(expected: FocusedElementIdentity) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError> {
+        guard expected.processIdentifier > 0 else { return .failure(.missingProcessIdentifier) }
+        guard expected.windowID > 0 else { return .failure(.missingWindowIdentifier) }
+        guard !expected.frame.isEmpty else { return .failure(.missingElementFrame) }
+
+        let application = AXUIElementCreateApplication(expected.processIdentifier)
+        AXUIElementSetMessagingTimeout(application, self.messagingTimeout)
+        let windows = self.elementArrayAttribute(kAXWindowsAttribute, of: application)
+        guard let window = windows.first(where: {
+            AXUIElementSetMessagingTimeout($0, self.messagingTimeout)
+            return AXWindowIDResolver.windowID(of: $0).map(Int.init) == expected.windowID
+        }) else {
+            return .failure(.windowMismatch)
+        }
+
+        var queue = [window]
+        var visited: [AXUIElement] = []
+        var roleAndFrameMatches: [AXUIElement] = []
+        var exactMatches: [AXUIElement] = []
+        while let element = queue.first, visited.count < 4096 {
+            queue.removeFirst()
+            guard !visited.contains(where: { CFEqual($0, element) }) else { continue }
+            visited.append(element)
+            AXUIElementSetMessagingTimeout(element, self.messagingTimeout)
+
+            if self.stringAttribute(kAXRoleAttribute as String, of: element) == expected.role,
+               self.frame(of: element) == expected.frame
+            {
+                roleAndFrameMatches.append(element)
+                let identifierMatches = expected.identifier?.isEmpty != false ||
+                    self.stringAttribute(kAXIdentifierAttribute as String, of: element) == expected.identifier
+                let titleMatches = expected.identifier?.isEmpty == false || expected.title?.isEmpty != false ||
+                    self.stringAttribute(kAXTitleAttribute as String, of: element) == expected.title
+                if identifierMatches, titleMatches {
+                    exactMatches.append(element)
+                }
+            }
+            queue.append(contentsOf: self.elementArrayAttribute(kAXChildrenAttribute, of: element))
+        }
+
+        guard !roleAndFrameMatches.isEmpty else { return .failure(.frameMismatch) }
+        guard !exactMatches.isEmpty else {
+            return .failure(expected.identifier?.isEmpty == false ? .identifierMismatch : .titleMismatch)
+        }
+        guard exactMatches.count == 1, let element = exactMatches.first else {
+            return .failure(.multipleFocusedElements)
+        }
+        guard let focused = self.boolAttribute(kAXFocusedAttribute, of: element) else {
+            return .failure(.focusedAttributeUnreadable)
+        }
+        guard focused else { return .failure(.focusNotConfirmed) }
+
+        return .success(ExactWindowFocusSnapshot(
+            processIdentifier: expected.processIdentifier,
+            windowID: expected.windowID,
+            frame: expected.frame,
+            role: expected.role,
+            title: self.stringAttribute(kAXTitleAttribute as String, of: element),
+            identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: element)))
+    }
+
     static func readKeyWindow(processIdentifier: pid_t) -> ExactKeyWindowSnapshot? {
         guard processIdentifier > 0 else { return nil }
         let application = AXUIElementCreateApplication(processIdentifier)
@@ -116,6 +177,12 @@ enum DetachedExactWindowFocusReader {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
         return value as? String
+    }
+
+    private static func boolAttribute(_ name: String, of element: AXUIElement) -> Bool? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
+        return value as? Bool
     }
 
     private static func frame(of element: AXUIElement) -> CGRect? {

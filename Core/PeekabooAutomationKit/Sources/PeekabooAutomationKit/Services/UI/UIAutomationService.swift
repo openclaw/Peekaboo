@@ -47,12 +47,14 @@ struct HotkeyServiceFactoryContext {
 @MainActor
 public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceProtocol,
     ExactWindowTargetedClickServiceProtocol, TargetedFocusedElementServiceProtocol,
-    ExactWindowTargetedKeyboardServiceProtocol, UIAutomationActionOutcomeProviding
+    ExactWindowTargetedKeyboardServiceProtocol, ExactWindowFocusedElementServiceProtocol,
+    UIAutomationActionOutcomeProviding
 {
     public let supportsProcessGenerationPinnedHotkeys = true
     public let supportsProcessGenerationPinnedTypeActions = true
     public let supportsProcessGenerationPinnedClicks = true
     public let supportsExactWindowTargetedKeyboard = true
+    public let supportsExactWindowFocusedElementFocus = true
     public let exactWindowTargetedKeyboardUnavailableReason: String? = nil
     let logger = Logger(subsystem: "boo.peekaboo.core", category: "UIAutomationService")
     let snapshotManager: any SnapshotManagerProtocol
@@ -73,6 +75,8 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
     let automationElementResolver: any AutomationElementResolving
     let elementMutationValueReader: @MainActor @Sendable (AutomationElement) -> String?
     let exactWindowFocusReader: @Sendable (pid_t) -> ExactWindowFocusSnapshot?
+    let exactFocusedElementReader: @Sendable (FocusedElementIdentity)
+        -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
     let exactWindowIdentityValidator: @Sendable (WindowMutationIdentity, CGRect) -> Bool
     let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
     let operationLaneCoordinator: DesktopOperationLaneCoordinator
@@ -153,6 +157,9 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
         feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient(),
         exactWindowFocusReader: @escaping @Sendable (pid_t) -> ExactWindowFocusSnapshot? =
             DetachedExactWindowFocusReader.read,
+        exactFocusedElementReader: @escaping @Sendable (FocusedElementIdentity)
+            -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError> =
+            DetachedExactWindowFocusReader.read,
         exactWindowIdentityValidator: @escaping @Sendable (WindowMutationIdentity, CGRect) -> Bool =
             SystemIdentityResolver.validateWindowMutationIdentity,
         processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? =
@@ -177,6 +184,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
         }
         self.feedbackClient = feedbackClient
         self.exactWindowFocusReader = exactWindowFocusReader
+        self.exactFocusedElementReader = exactFocusedElementReader
         self.exactWindowIdentityValidator = exactWindowIdentityValidator
         self.processStartIdentityProvider = processStartIdentityProvider
         self.operationLaneCoordinator = operationLaneCoordinator

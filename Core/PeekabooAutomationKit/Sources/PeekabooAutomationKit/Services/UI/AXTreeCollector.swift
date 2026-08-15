@@ -150,6 +150,9 @@ struct AXTreeCollector {
                 keyboardShortcut: keyboardShortcut,
                 placeholder: descriptor.placeholder))
         attributes["axEnabledKnown"] = String(descriptor.isEnabled != nil)
+        if let isFocused = descriptor.isFocused {
+            attributes["isFocused"] = String(isFocused)
+        }
 
         let detectedElement = DetectedElement(
             id: elementId,

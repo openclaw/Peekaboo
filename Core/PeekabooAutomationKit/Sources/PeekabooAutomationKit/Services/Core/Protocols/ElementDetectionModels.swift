@@ -124,6 +124,11 @@ public struct DetectedElement: Sendable, Codable {
         self.attributes["isValueSettable"].flatMap(Bool.init)
     }
 
+    /// The element's per-window Accessibility focus state at observation time.
+    public var isFocused: Bool? {
+        self.attributes["isFocused"].flatMap(Bool.init)
+    }
+
     public var isOCRSemanticEvidence: Bool {
         OCRSemanticEvidencePolicy.isSemanticEvidence(
             id: self.id,
@@ -209,6 +214,9 @@ public nonisolated struct WindowContext: Sendable, Codable {
     /// An exact context without this capture-time receipt is observation-only and must not be used for actions.
     public let windowMutationIdentity: WindowMutationIdentity?
 
+    /// Exact non-value-bearing identity of the sole element that reported AXFocused=true in this window.
+    public let focusedElement: FocusedElementIdentity?
+
     /// Whether element detection should attempt to focus embedded web content when inputs are missing
     public let shouldFocusWebContent: Bool?
 
@@ -232,6 +240,7 @@ public nonisolated struct WindowContext: Sendable, Codable {
         windowID: Int? = nil,
         windowBounds: CGRect? = nil,
         windowMutationIdentity: WindowMutationIdentity? = nil,
+        focusedElement: FocusedElementIdentity? = nil,
         shouldFocusWebContent: Bool? = nil,
         includeMenuBarElements: Bool? = nil,
         traversalBudget: AXTraversalBudget?,
@@ -245,6 +254,7 @@ public nonisolated struct WindowContext: Sendable, Codable {
         self.windowID = windowID
         self.windowBounds = windowBounds
         self.windowMutationIdentity = windowMutationIdentity
+        self.focusedElement = focusedElement
         self.shouldFocusWebContent = shouldFocusWebContent
         self.includeMenuBarElements = includeMenuBarElements
         self.traversalBudget = traversalBudget
@@ -260,6 +270,7 @@ public nonisolated struct WindowContext: Sendable, Codable {
         windowID: Int? = nil,
         windowBounds: CGRect? = nil,
         windowMutationIdentity: WindowMutationIdentity? = nil,
+        focusedElement: FocusedElementIdentity? = nil,
         shouldFocusWebContent: Bool? = nil,
         includeMenuBarElements: Bool? = nil,
         requiresFreshAccessibilityTree: Bool = false,
@@ -273,6 +284,7 @@ public nonisolated struct WindowContext: Sendable, Codable {
             windowID: windowID,
             windowBounds: windowBounds,
             windowMutationIdentity: windowMutationIdentity,
+            focusedElement: focusedElement,
             shouldFocusWebContent: shouldFocusWebContent,
             includeMenuBarElements: includeMenuBarElements,
             traversalBudget: nil,

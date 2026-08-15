@@ -35,6 +35,7 @@ extension InMemorySnapshotManager {
         entry.snapshotData.windowBounds = request.windowBounds
         entry.snapshotData.windowID = request.windowID.flatMap { CGWindowID(exactly: $0) }
         entry.snapshotData.windowMutationIdentity = request.windowMutationIdentity
+        entry.snapshotData.focusedElement = nil
         entry.snapshotData.captureCoordinateContext = request.captureCoordinateContext
         entry.snapshotData.lastUpdateTime = Date()
         self.entries[request.snapshotId] = entry
@@ -79,6 +80,7 @@ extension InMemorySnapshotManager {
         entry.snapshotData.windowBounds = request.screenshot.windowBounds
         entry.snapshotData.windowID = request.screenshot.windowID.flatMap { CGWindowID(exactly: $0) }
         entry.snapshotData.windowMutationIdentity = request.screenshot.windowMutationIdentity
+        entry.snapshotData.focusedElement = nil
         entry.snapshotData.captureCoordinateContext = request.screenshot.captureCoordinateContext
         entry.snapshotData.lastUpdateTime = Date()
         if let detectionResult = request.detectionResult {

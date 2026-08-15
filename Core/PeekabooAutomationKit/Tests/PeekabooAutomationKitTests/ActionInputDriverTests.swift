@@ -685,6 +685,66 @@ struct ActionInputDriverTests {
         #expect(result.actionName == AXAttributeNames.kAXFocusedAttribute)
         #expect(result.anchorPoint == CGPoint(x: 25, y: 40))
         #expect(result.elementRole == AXRoleNames.kAXTextFieldRole)
+        #expect(result.outcome.state == .confirmedChange)
+        #expect(result.focusedElement?.identifier == nil)
+    }
+
+    @MainActor
+    @Test
+    func `exact semantic focus returns confirmed receipt without redispatch when already focused`() throws {
+        let frame = CGRect(x: 10, y: 20, width: 30, height: 40)
+        let element = MockAutomationElement(
+            identifier: "editor",
+            role: AXRoleNames.kAXTextFieldRole,
+            frame: frame,
+            isFocusedSettable: true,
+            isFocused: true)
+
+        let result = try ActionInputDriver().tryFocus(element: element)
+
+        #expect(element.setFocusedValues.isEmpty)
+        #expect(result.outcome.state == .confirmedNoChange)
+        #expect(result.focusedElement == FocusedElementIdentity(
+            processIdentifier: 777,
+            windowID: 42,
+            role: AXRoleNames.kAXTextFieldRole,
+            identifier: "editor",
+            frame: frame))
+    }
+
+    @MainActor
+    @Test
+    func `exact semantic focus refuses an unsettable field before mutation`() {
+        let element = MockAutomationElement(
+            role: AXRoleNames.kAXTextFieldRole,
+            frame: CGRect(x: 10, y: 20, width: 30, height: 40))
+
+        #expect(throws: FocusedElementReceiptError.focusedAttributeNotSettable) {
+            _ = try ActionInputDriver().tryFocus(element: element)
+        }
+        #expect(element.setFocusedValues.isEmpty)
+    }
+
+    @MainActor
+    @Test
+    func `exact semantic focus reports retry unsafe when accepted setter cannot be confirmed`() {
+        let element = MockAutomationElement(
+            role: AXRoleNames.kAXTextFieldRole,
+            frame: CGRect(x: 10, y: 20, width: 30, height: 40),
+            isFocusedSettable: true,
+            focusSetterDoesNotChange: true)
+
+        do {
+            _ = try ActionInputDriver().tryFocus(element: element)
+            Issue.record("Expected unconfirmed native focus to fail")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.dispatchState.mutationDispatched)
+            #expect(failure.outcome.retrySafety == .unsafe)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(element.setFocusedValues == [true])
     }
 
     @MainActor
@@ -1135,7 +1195,8 @@ private final class MockAutomationElement: AutomationElementRepresenting, @unche
     let isSelectedSettable: Bool
     var selectedValue: Bool?
     let isEnabled: Bool
-    let isFocused: Bool
+    var isFocused: Bool
+    let focusedElementIdentity: FocusedElementIdentity?
     let isOffscreen: Bool
     var anchorPoint: CGPoint? {
         self.frame.map { CGPoint(x: $0.midX, y: $0.midY) }
@@ -1147,6 +1208,7 @@ private final class MockAutomationElement: AutomationElementRepresenting, @unche
     private let doubleAttributes: [String: Double]
     private let actionErrors: [String: any Error]
     private let valueSetterDoesNotChange: Bool
+    private let focusSetterDoesNotChange: Bool
     var performedActions: [String] = []
     var setValues: [UIElementValue] = []
     var setFocusedValues: [Bool] = []
@@ -1172,13 +1234,15 @@ private final class MockAutomationElement: AutomationElementRepresenting, @unche
         selectedValue: Bool? = nil,
         isEnabled: Bool = true,
         isFocused: Bool = false,
+        focusedElementIdentity: FocusedElementIdentity? = nil,
         isOffscreen: Bool = false,
         children: [MockAutomationElement] = [],
         stringAttributes: [String: String] = [:],
         intAttributes: [String: Int] = [:],
         doubleAttributes: [String: Double] = [:],
         actionErrors: [String: any Error] = [:],
-        valueSetterDoesNotChange: Bool = false)
+        valueSetterDoesNotChange: Bool = false,
+        focusSetterDoesNotChange: Bool = false)
     {
         self.name = name
         self.label = label
@@ -1195,6 +1259,16 @@ private final class MockAutomationElement: AutomationElementRepresenting, @unche
         self.selectedValue = selectedValue
         self.isEnabled = isEnabled
         self.isFocused = isFocused
+        self.focusedElementIdentity = focusedElementIdentity ?? role.flatMap { role in
+            frame.map { frame in
+                FocusedElementIdentity(
+                    processIdentifier: 777,
+                    windowID: 42,
+                    role: role,
+                    identifier: identifier,
+                    frame: frame)
+            }
+        }
         self.isOffscreen = isOffscreen
         self.children = children
         self.stringAttributes = stringAttributes
@@ -1202,6 +1276,7 @@ private final class MockAutomationElement: AutomationElementRepresenting, @unche
         self.doubleAttributes = doubleAttributes
         self.actionErrors = actionErrors
         self.valueSetterDoesNotChange = valueSetterDoesNotChange
+        self.focusSetterDoesNotChange = focusSetterDoesNotChange
     }
 
     func performAutomationAction(_ actionName: String) throws {
@@ -1237,6 +1312,8 @@ private final class MockAutomationElement: AutomationElementRepresenting, @unche
             throw AccessibilitySystemError(.attributeUnsupported)
         }
         self.setFocusedValues.append(focused)
+        guard !self.focusSetterDoesNotChange else { return }
+        self.isFocused = focused
     }
 
     func setAutomationSelected(_ selected: Bool) throws {

@@ -115,6 +115,7 @@ enum DetachedAXObservationWorker {
         kAXIdentifierAttribute,
         kAXEnabledAttribute,
         kAXSelectedAttribute,
+        kAXFocusedAttribute,
         "AXPlaceholderValue",
         "AXEditable",
         "AXKeyboardShortcut",
@@ -524,6 +525,9 @@ enum DetachedAXObservationWorker {
         if let isValueSettable {
             attributes["isValueSettable"] = String(isValueSettable)
         }
+        if let isFocused = descriptor.isFocused {
+            attributes["isFocused"] = String(isFocused)
+        }
         if let source = request.source {
             attributes["source"] = source
         }
@@ -617,6 +621,7 @@ enum DetachedAXObservationWorker {
             isEnabled: self.boolValue(byName[kAXEnabledAttribute]),
             isSelected: self.boolValue(byName[kAXSelectedAttribute]) ??
                 self.booleanSelectionValue(role: role, rawValue: byName[kAXValueAttribute]),
+            isFocused: self.boolValue(byName[kAXFocusedAttribute]),
             placeholder: self.stringValue(byName["AXPlaceholderValue"]),
             isEditable: self.boolValue(byName["AXEditable"]) ?? false,
             keyboardShortcut: self.stringValue(byName["AXKeyboardShortcut"])))
@@ -652,6 +657,7 @@ enum DetachedAXObservationWorker {
             isEnabled: self.boolValue(valuesByName[kAXEnabledAttribute]),
             isSelected: self.boolValue(valuesByName[kAXSelectedAttribute]) ??
                 self.booleanSelectionValue(role: role, rawValue: valuesByName[kAXValueAttribute]),
+            isFocused: self.boolValue(valuesByName[kAXFocusedAttribute]),
             placeholder: self.stringValue(valuesByName["AXPlaceholderValue"]),
             isEditable: self.boolValue(valuesByName["AXEditable"]) ?? false,
             keyboardShortcut: self.stringValue(valuesByName["AXKeyboardShortcut"])))
@@ -884,6 +890,7 @@ private struct Descriptor {
     let identifier: String?
     let isEnabled: Bool?
     let isSelected: Bool?
+    let isFocused: Bool?
     let placeholder: String?
     let isEditable: Bool
     let keyboardShortcut: String?

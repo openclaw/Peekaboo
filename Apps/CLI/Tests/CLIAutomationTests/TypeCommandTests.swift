@@ -292,6 +292,84 @@ struct TypeCommandTests {
 
     @Test
     @MainActor
+    func `Type preserves snapshot focus when an exact window selector has no focus sidecar`() async throws {
+        let pid: Int32 = 2468
+        let bounds = CGRect(x: 20, y: 30, width: 500, height: 400)
+        let identity = WindowMutationIdentity(
+            windowID: 901,
+            ownerProcessIdentifier: pid,
+            ownerProcessStartIdentity: 71,
+            capturedBounds: bounds
+        )
+        let focused = FocusedElementIdentity(
+            processIdentifier: pid,
+            windowID: 901,
+            role: "AXTextArea",
+            identifier: "editor",
+            frame: CGRect(x: 40, y: 60, width: 200, height: 100)
+        )
+        let applicationService = StubApplicationService(applications: [ServiceApplicationInfo(
+            processIdentifier: pid,
+            processStartIdentity: 71,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit"
+        )])
+        let window = ServiceWindowInfo(
+            windowID: 901,
+            title: "Untitled",
+            bounds: bounds,
+            mutationIdentity: identity
+        )
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = .confirmedChange(delivery: .init(
+            mechanism: .windowTargetedEvents,
+            mode: .background
+        ))
+        let context = await self.makeContext(
+            automation: automation,
+            applications: applicationService,
+            windows: StubWindowService(windowsByApp: ["TextEdit": [window]])
+        )
+        let snapshotID = try await context.snapshots.createSnapshot()
+        try await context.snapshots.storeDetectionResult(
+            snapshotId: snapshotID,
+            result: ElementDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: "/tmp/focus.png",
+                elements: DetectedElements(),
+                metadata: DetectionMetadata(
+                    detectionTime: 0,
+                    elementCount: 0,
+                    method: "test",
+                    windowContext: WindowContext(
+                        applicationName: "TextEdit",
+                        applicationBundleId: "com.apple.TextEdit",
+                        applicationProcessId: pid,
+                        windowTitle: "Untitled",
+                        windowID: 901,
+                        windowBounds: bounds,
+                        windowMutationIdentity: identity,
+                        focusedElement: focused
+                    )
+                )
+            )
+        )
+
+        let result = try await self.runType(
+            arguments: [
+                "Hello", "--snapshot", snapshotID, "--pid", String(pid), "--window-id", "901", "--json",
+            ],
+            context: context
+        )
+
+        #expect(result.exitStatus == 0)
+        let call = try #require(automation.exactTypeActionsCalls.first)
+        #expect(call.target.focusedElement == focused)
+        #expect(automation.targetedFocusedElement == nil)
+    }
+
+    @Test
+    @MainActor
     func `Type refuses ambiguous app windows before any keyboard dispatch`() async throws {
         let pid: Int32 = 2468
         let applicationService = StubApplicationService(applications: [ServiceApplicationInfo(

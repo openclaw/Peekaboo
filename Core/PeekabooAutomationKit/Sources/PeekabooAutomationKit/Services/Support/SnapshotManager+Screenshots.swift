@@ -43,6 +43,7 @@ extension SnapshotManager {
         snapshotData.windowBounds = request.windowBounds
         snapshotData.windowID = request.windowID.flatMap { CGWindowID(exactly: $0) }
         snapshotData.windowMutationIdentity = request.windowMutationIdentity
+        snapshotData.focusedElement = nil
         snapshotData.captureCoordinateContext = request.captureCoordinateContext
         snapshotData.lastUpdateTime = Date()
 

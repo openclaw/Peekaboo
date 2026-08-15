@@ -85,6 +85,7 @@ struct AutomationElementResolverTests {
             identifier: identifier,
             isEnabled: true,
             isSelected: nil,
+            isFocused: nil,
             placeholder: nil)
     }
 

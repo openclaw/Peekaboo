@@ -61,6 +61,7 @@ extension ActionInputError: LocalizedError {
 @MainActor
 protocol ActionInputDriving: Sendable {
     func tryClick(element: AutomationElement) throws -> UIInputExecutionResult.Action
+    func tryFocus(element: any AutomationElementRepresenting) throws -> UIInputExecutionResult.Action
     func tryRightClick(element: any AutomationElementRepresenting) async throws -> UIInputExecutionResult.Action
     func tryScroll(
         element: AutomationElement,
@@ -70,6 +71,12 @@ protocol ActionInputDriving: Sendable {
     func tryHotkey(application: NSRunningApplication, keys: [String]) throws -> UIInputExecutionResult.Action
     func trySetValue(element: AutomationElement, value: UIElementValue) throws -> UIInputExecutionResult.Action
     func tryPerformAction(element: AutomationElement, actionName: String) throws -> UIInputExecutionResult.Action
+}
+
+extension ActionInputDriving {
+    func tryFocus(element _: any AutomationElementRepresenting) throws -> UIInputExecutionResult.Action {
+        throw ActionInputError.unsupported(.attributeUnsupported)
+    }
 }
 
 /// Accessibility action implementation for action-first UI input.
@@ -95,6 +102,13 @@ struct ActionInputDriver: ActionInputDriving {
         {
             return try self.focusForClick(element)
         }
+    }
+
+    func tryFocus(element: any AutomationElementRepresenting) throws -> UIInputExecutionResult.Action {
+        guard element.isFocusedSettable else {
+            throw FocusedElementReceiptError.focusedAttributeNotSettable
+        }
+        return try self.focusForClick(element)
     }
 
     func tryRightClick(element: any AutomationElementRepresenting) async throws -> UIInputExecutionResult.Action {
@@ -279,18 +293,49 @@ struct ActionInputDriver: ActionInputDriving {
 
     private func focusForClick(_ element: any AutomationElementRepresenting) throws
     -> UIInputExecutionResult.Action {
-        do {
-            try element.setAutomationFocused(true)
+        guard let wasFocused = element.focusedState else {
+            throw FocusedElementReceiptError.focusedAttributeUnreadable
+        }
+        if wasFocused {
+            guard let focusedElement = element.focusedElementIdentity else {
+                throw FocusedElementReceiptError.missingWindowIdentifier
+            }
             return UIInputExecutionResult.Action(
-                outcome: .dispatchedUnverified(
-                    delivery: Self.accessibilityValueDelivery,
-                    evidence: .deliveryAccepted),
+                outcome: .confirmedNoChange(),
                 actionName: AXAttributeNames.kAXFocusedAttribute,
                 anchorPoint: element.anchorPoint,
-                elementRole: element.role)
+                elementRole: element.role,
+                focusedElement: focusedElement)
+        }
+        do {
+            try element.setAutomationFocused(true)
         } catch {
             throw Self.classify(error)
         }
+        guard element.focusedState == true else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: Self.accessibilityValueDelivery,
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: FocusedElementReceiptError.focusNotConfirmed.localizedDescription,
+                hint: "Observe the exact field before deciding whether to retry focus.")
+        }
+        guard let focusedElement = element.focusedElementIdentity else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: Self.accessibilityValueDelivery,
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "Native focus succeeded but its exact element receipt is incomplete.",
+                hint: "Capture fresh exact-window UI state before retrying.")
+        }
+        return UIInputExecutionResult.Action(
+            outcome: .confirmedChange(
+                delivery: Self.accessibilityValueDelivery,
+                unitCount: .one),
+            actionName: AXAttributeNames.kAXFocusedAttribute,
+            anchorPoint: element.anchorPoint,
+            elementRole: element.role,
+            focusedElement: focusedElement)
     }
 
     private func setValue(_ value: UIElementValue, on element: any AutomationElementRepresenting)

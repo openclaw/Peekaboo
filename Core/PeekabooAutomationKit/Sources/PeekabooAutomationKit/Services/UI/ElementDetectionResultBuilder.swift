@@ -33,6 +33,10 @@ import PeekabooFoundation
             warnings.append("ax_incomplete_read")
         }
 
+        let resolvedWindowContext = usedCache ? FocusedElementReceiptResolver.clearingObservedFocus(
+            from: windowContext) : FocusedElementReceiptResolver.attachingObservedFocus(
+            to: windowContext,
+            elements: elements)
         return ElementDetectionResult(
             snapshotId: snapshotId,
             screenshotPath: screenshotPath,
@@ -42,7 +46,7 @@ import PeekabooFoundation
                 elementCount: elements.count,
                 method: usedCache ? "AXorcist (cached)" : "AXorcist",
                 warnings: warnings,
-                windowContext: windowContext,
+                windowContext: resolvedWindowContext,
                 isDialog: isDialog || DialogElementClassifier.containsDialog(in: elements),
                 truncationInfo: truncationInfo))
     }

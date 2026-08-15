@@ -88,6 +88,19 @@ extension UIAutomationService {
 
     // MARK: - Click Operations
 
+    public func focusExactElementWithOutcome(
+        target: ClickTarget,
+        snapshotId: String,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<FocusedElementIdentity>
+    {
+        try await self.clickService.focusExactElementWithOutcome(
+            target: target,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds)
+    }
+
     /**
      * Perform precise click operations on UI elements or screen coordinates.
      *

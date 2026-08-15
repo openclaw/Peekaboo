@@ -43,6 +43,7 @@ import CoreGraphics
         public let identifier: String?
         public let isEnabled: Bool?
         public let isSelected: Bool?
+        public let isFocused: Bool?
         public let placeholder: String?
     }
 
@@ -82,6 +83,7 @@ import CoreGraphics
         let identifier: String?
         let isEnabled: Bool?
         let isSelected: Bool?
+        let isFocused: Bool?
         let placeholder: String?
     }
 
@@ -104,6 +106,7 @@ import CoreGraphics
         AttributeName.identifier,
         AttributeName.enabled,
         AttributeName.selected,
+        AttributeName.focused,
         AttributeName.placeholderValue,
     ]
 
@@ -205,6 +208,7 @@ import CoreGraphics
             identifier: self.stringValue(valueByName[AttributeName.identifier]),
             isEnabled: self.boolValue(valueByName[AttributeName.enabled]),
             isSelected: selected,
+            isFocused: self.boolValue(valueByName[AttributeName.focused]),
             placeholder: self.stringValue(valueByName[AttributeName.placeholderValue]))
     }
 
@@ -224,6 +228,7 @@ import CoreGraphics
             identifier: attributes.identifier,
             isEnabled: attributes.isEnabled,
             isSelected: attributes.isSelected,
+            isFocused: attributes.isFocused,
             placeholder: attributes.placeholder))
     }
 
@@ -356,5 +361,6 @@ private enum AttributeName {
     static let identifier = "AXIdentifier"
     static let enabled = "AXEnabled"
     static let selected = "AXSelected"
+    static let focused = "AXFocused"
     static let placeholderValue = "AXPlaceholderValue"
 }

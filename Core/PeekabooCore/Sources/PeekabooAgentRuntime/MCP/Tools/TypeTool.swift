@@ -212,8 +212,11 @@ public struct TypeTool: MCPTool {
                 try await Task.sleep(nanoseconds: 100_000_000)
             }
             if let plannedTarget {
+                let focusPinnedTarget = try focusResult.focusedElement.map {
+                    try plannedTarget.pinningFocusedElement($0)
+                } ?? plannedTarget
                 let deliveryTarget = try await self.pinningCurrentFocusedElement(
-                    on: plannedTarget,
+                    on: focusPinnedTarget,
                     using: automation)
                 typeActionResult = try await self.performBackgroundType(
                     request: BackgroundTypeRequest(
@@ -388,7 +391,8 @@ public struct TypeTool: MCPTool {
                 error.localizedDescription,
                 refusalReason: .runtimeIncompatible)
         }
-        guard automation is any TargetedFocusedElementServiceProtocol else {
+        let hasReceipt = target?.exactWindow?.focusedElement != nil
+        guard hasReceipt || (automation is any TargetedFocusedElementServiceProtocol) else {
             throw TypeToolValidationError(
                 "This automation host does not support focused exact-window background typing.",
                 refusalReason: .runtimeIncompatible)
@@ -441,6 +445,21 @@ public struct TypeTool: MCPTool {
                         "This automation host does not support exact-window background element focus.",
                         refusalReason: .runtimeIncompatible)
                 }
+                let expectedFocus = try Self.expectedFocusedElement(
+                    element,
+                    exactWindow: exactWindow)
+                if let focusAutomation = automation as? any ExactWindowFocusedElementServiceProtocol,
+                   focusAutomation.supportsExactWindowFocusedElementFocus
+                {
+                    let result = try await focusAutomation.focusExactElementWithOutcome(
+                        target: .elementId(element.id),
+                        snapshotId: context.snapshot.id,
+                        expectedWindowIdentity: exactWindow.identity,
+                        expectedWindowBounds: exactWindow.bounds)
+                    try Self.requireConfirmedFocus(result.outcome)
+                    try FocusedElementReceiptResolver.validate(result.payload, matches: expectedFocus)
+                    return .completed(outcome: result.outcome, focusedElement: result.payload)
+                }
                 if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
                     let result = try await outcomeAutomation.clickWithOutcome(
                         target: .elementId(element.id),
@@ -449,7 +468,11 @@ public struct TypeTool: MCPTool {
                         expectedWindowIdentity: exactWindow.identity,
                         expectedWindowBounds: exactWindow.bounds)
                     try Self.requireConfirmedFocus(result.outcome)
-                    return .completed(outcome: result.outcome)
+                    let focusedElement = try await self.observeExactFocusedElement(
+                        automation: automation,
+                        exactWindow: exactWindow,
+                        expected: expectedFocus)
+                    return .completed(outcome: result.outcome, focusedElement: focusedElement)
                 }
                 try await exactAutomation.click(
                     target: .elementId(element.id),
@@ -457,7 +480,11 @@ public struct TypeTool: MCPTool {
                     snapshotId: context.snapshot.id,
                     expectedWindowIdentity: exactWindow.identity,
                     expectedWindowBounds: exactWindow.bounds)
-                return .completed(outcome: nil)
+                let focusedElement = try await self.observeExactFocusedElement(
+                    automation: automation,
+                    exactWindow: exactWindow,
+                    expected: expectedFocus)
+                return .completed(outcome: nil, focusedElement: focusedElement)
             }
             guard let processIdentity = target.processIdentity else {
                 throw TypeToolValidationError(
@@ -494,6 +521,55 @@ public struct TypeTool: MCPTool {
                 snapshotId: context.snapshot.id)
             return .completed(outcome: nil)
         }
+    }
+
+    private static func expectedFocusedElement(
+        _ element: UIElement,
+        exactWindow: UIAutomationTarget.ExactWindow) throws -> FocusedElementIdentity
+    {
+        guard !element.frame.isEmpty else {
+            throw TypeToolValidationError(
+                FocusedElementReceiptError.missingElementFrame.localizedDescription,
+                refusalReason: .targetUnavailable)
+        }
+        guard exactWindow.bounds.contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) else {
+            throw TypeToolValidationError(
+                FocusedElementReceiptError.elementOutsideWindow.localizedDescription,
+                refusalReason: .targetUnavailable)
+        }
+        return FocusedElementIdentity(
+            processIdentifier: exactWindow.identity.ownerProcessIdentifier,
+            windowID: exactWindow.identity.windowID,
+            role: element.role,
+            title: element.title,
+            identifier: element.identifier,
+            frame: element.frame)
+    }
+
+    private func observeExactFocusedElement(
+        automation: any UIAutomationServiceProtocol,
+        exactWindow: UIAutomationTarget.ExactWindow,
+        expected: FocusedElementIdentity) async throws -> FocusedElementIdentity
+    {
+        let observation = try await automation.inspectAccessibilityTree(windowContext: WindowContext(
+            applicationProcessId: exactWindow.identity.ownerProcessIdentifier,
+            windowID: exactWindow.identity.windowID,
+            windowBounds: exactWindow.bounds,
+            windowMutationIdentity: exactWindow.identity,
+            includeMenuBarElements: false,
+            requiresFreshAccessibilityTree: true,
+            accessibilityTimeoutSeconds: 2))
+        guard let focusedElement = observation.metadata.windowContext?.focusedElement else {
+            throw TypeToolValidationError(
+                FocusedElementReceiptError.noFocusedElement.localizedDescription,
+                refusalReason: .targetUnavailable)
+        }
+        do {
+            try FocusedElementReceiptResolver.validate(focusedElement, matches: expected)
+        } catch {
+            throw TypeToolValidationError(error.localizedDescription, refusalReason: .targetUnavailable)
+        }
+        return focusedElement
     }
 
     private static func requireConfirmedFocus(_ outcome: DesktopActionOutcome?) throws {
@@ -704,11 +780,15 @@ private final class TypeMutationTracker {
 struct TypeFocusResult {
     let completed: Bool
     let outcome: DesktopActionOutcome?
+    let focusedElement: FocusedElementIdentity?
 
-    static let none = Self(completed: false, outcome: nil)
+    static let none = Self(completed: false, outcome: nil, focusedElement: nil)
 
-    static func completed(outcome: DesktopActionOutcome?) -> Self {
-        Self(completed: true, outcome: outcome)
+    static func completed(
+        outcome: DesktopActionOutcome?,
+        focusedElement: FocusedElementIdentity? = nil) -> Self
+    {
+        Self(completed: true, outcome: outcome, focusedElement: focusedElement)
     }
 }
 

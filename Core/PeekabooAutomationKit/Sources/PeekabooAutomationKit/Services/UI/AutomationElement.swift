@@ -27,6 +27,7 @@ protocol AutomationElementRepresenting: Sendable {
     var selectedValue: Bool? { get }
     var isEnabled: Bool { get }
     var isFocused: Bool { get }
+    var focusedState: Bool? { get }
     var isOffscreen: Bool { get }
     var anchorPoint: CGPoint? { get }
     var automationChildren: [any AutomationElementRepresenting] { get }
@@ -34,6 +35,7 @@ protocol AutomationElementRepresenting: Sendable {
     /// Raw accessibility element for callers that must issue AX calls off the main actor
     /// (e.g. non-blocking `AXShowMenu`). In-memory test elements return `nil`.
     var underlyingAXElement: AXUIElement? { get }
+    var focusedElementIdentity: FocusedElementIdentity? { get }
 
     /// Whether the element advertises `actionName`.
     ///
@@ -50,6 +52,18 @@ protocol AutomationElementRepresenting: Sendable {
     func stringAttribute(_ name: String) -> String?
     func intAttribute(_ name: String) -> Int?
     func doubleAttribute(_ name: String) -> Double?
+}
+
+extension AutomationElementRepresenting {
+    @MainActor
+    var focusedElementIdentity: FocusedElementIdentity? {
+        nil
+    }
+
+    @MainActor
+    var focusedState: Bool? {
+        self.isFocused
+    }
 }
 
 extension AutomationElementRepresenting {
@@ -182,6 +196,11 @@ struct AutomationElement: AutomationElementRepresenting {
     }
 
     @MainActor
+    var focusedState: Bool? {
+        self.element.isFocused()
+    }
+
+    @MainActor
     var isOffscreen: Bool {
         guard let frame else { return false }
         let appKitFrame = GlobalScreenCoordinateGeometry.appKitRect(
@@ -219,6 +238,28 @@ struct AutomationElement: AutomationElementRepresenting {
     @MainActor
     var underlyingAXElement: AXUIElement? {
         self.element.underlyingElement
+    }
+
+    @MainActor
+    var focusedElementIdentity: FocusedElementIdentity? {
+        var processIdentifier: pid_t = 0
+        guard AXUIElementGetPid(self.element.underlyingElement, &processIdentifier) == .success,
+              processIdentifier > 0,
+              let windowID = AXWindowResolver().windowID(from: self.element.underlyingElement).map(Int.init),
+              windowID > 0,
+              let role = self.role,
+              let frame = self.frame,
+              !frame.isEmpty
+        else {
+            return nil
+        }
+        return FocusedElementIdentity(
+            processIdentifier: processIdentifier,
+            windowID: windowID,
+            role: role,
+            title: self.stringAttribute(AXAttributeNames.kAXTitleAttribute),
+            identifier: self.identifier,
+            frame: frame)
     }
 
     @MainActor
