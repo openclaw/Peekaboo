@@ -10,6 +10,28 @@ import Testing
 @Suite(.serialized)
 struct PeekabooBridgeOperationReceiptTests {
     @Test
+    func `concurrent private directory creator revalidates the winning entry`() throws {
+        let root = URL(fileURLWithPath: "/tmp/pbor-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var injectedRace = false
+
+        try PeekabooBridgePrivateReceiptArchive.prepareDirectory(root) { path, mode in
+            #expect(!injectedRace)
+            injectedRace = true
+            #expect(mkdir(path, mode) == 0)
+            errno = EEXIST
+            return -1
+        }
+
+        #expect(injectedRace)
+        var info = stat()
+        #expect(lstat(root.path, &info) == 0)
+        #expect((info.st_mode & S_IFMT) == S_IFDIR)
+        #expect(info.st_uid == geteuid())
+        #expect(info.st_mode & 0o077 == 0)
+    }
+
+    @Test
     func `concurrent atomic receipt writes use unique temporary paths`() async throws {
         let root = URL(fileURLWithPath: "/tmp/pbor-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -206,6 +228,7 @@ struct PeekabooBridgeOperationReceiptTests {
                 snapshotId: "snapshot",
                 expectedProcessIdentity: processIdentity)
             #expect(result.outcome == expectedOutcome.routed(to: .bridge))
+            #expect(result.targetIdentity?.processIdentity == processIdentity)
 
             let receipt = try #require(await client.lastOperationReceipt())
             #expect(receipt.payload.operation == .targetedClick)
@@ -254,11 +277,12 @@ struct PeekabooBridgeOperationReceiptTests {
         do {
             let client = PeekabooBridgeClient(socketPath: socketPath)
             _ = try await client.handshake(client: Self.clientIdentity)
-            _ = try await client.scrollWithOutcome(.init(
+            let result = try await client.scrollWithOutcome(.init(
                 direction: .down,
                 amount: 1,
                 target: "S1",
                 snapshotId: "snapshot"))
+            #expect(result.targetIdentity?.exactWindow?.identity == identity)
             let receipt = try #require(await client.lastOperationReceipt())
             #expect(receipt.payload.operation == .targetedScroll)
             #expect(receipt.payload.target == .window(identity))
@@ -389,6 +413,7 @@ struct PeekabooBridgeOperationReceiptTests {
             processIdentifier: getpid()))
         let peer = PeekabooBridgePeer(
             processIdentifier: getpid(),
+            auditTokenProcessIdentifierVersion: 1,
             processStartIdentity: generation,
             codeSignatureHash: codeSignatureHash,
             userIdentifier: getuid(),
@@ -418,6 +443,21 @@ struct PeekabooBridgeOperationReceiptTests {
             request: .permissionsStatus)
         #expect(throws: PeekabooBridgeOperationReceiptError.clientIdentityMismatch) {
             try authority.claim(mismatched, peer: peer)
+        }
+
+        let unboundPeer = PeekabooBridgePeer(
+            processIdentifier: getpid(),
+            processStartIdentity: generation,
+            codeSignatureHash: codeSignatureHash,
+            userIdentifier: getuid(),
+            bundleIdentifier: nil,
+            teamIdentifier: nil)
+        #expect(throws: PeekabooBridgeOperationReceiptError.peerIdentityMismatch) {
+            try authority.claim(PeekabooBridgeAttestedOperationRequest(
+                requestID: UUID(),
+                expectedListenerInstanceID: authority.attestation.listenerInstanceID,
+                client: payload.client,
+                request: .permissionsStatus), peer: unboundPeer)
         }
 
         let nested = PeekabooBridgeAttestedOperationRequest(

@@ -7,6 +7,7 @@ import Security
 
 public struct PeekabooBridgePeer: Sendable {
     public let processIdentifier: pid_t
+    public let auditTokenProcessIdentifierVersion: Int32?
     public let processStartIdentity: UInt64?
     public let codeSignatureHash: String?
     public let userIdentifier: uid_t?
@@ -15,6 +16,7 @@ public struct PeekabooBridgePeer: Sendable {
 
     public init(
         processIdentifier: pid_t,
+        auditTokenProcessIdentifierVersion: Int32? = nil,
         processStartIdentity: UInt64? = nil,
         codeSignatureHash: String? = nil,
         userIdentifier: uid_t?,
@@ -22,6 +24,7 @@ public struct PeekabooBridgePeer: Sendable {
         teamIdentifier: String?)
     {
         self.processIdentifier = processIdentifier
+        self.auditTokenProcessIdentifierVersion = auditTokenProcessIdentifierVersion
         self.processStartIdentity = processStartIdentity
         self.codeSignatureHash = codeSignatureHash
         self.userIdentifier = userIdentifier

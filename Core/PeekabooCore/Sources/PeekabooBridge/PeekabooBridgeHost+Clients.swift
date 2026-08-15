@@ -58,21 +58,25 @@ extension PeekabooBridgeHost {
         }
     }
 
-    private nonisolated static func peerInfoIfAllowed(
+    nonisolated static func peerInfoIfAllowed(
         fd: Int32,
-        allowedTeamIDs: Set<String>) -> PeekabooBridgePeer?
+        allowedTeamIDs: Set<String>,
+        signingIdentityProvider: (PeekabooBridgePeerAuditIdentity) -> PeerSigningIdentity? = {
+            PeekabooBridgeHost.signingIdentity(auditIdentity: $0)
+        }) -> PeekabooBridgePeer?
     {
-        var pid: pid_t = 0
-        var pidSize = socklen_t(MemoryLayout<pid_t>.size)
-        let result = getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &pidSize)
-        guard result == 0, pid > 0 else { return nil }
+        guard let auditIdentity = try? PeekabooBridgeSocketIO.peerAuditIdentity(fd: fd),
+              let processStartIdentity = SystemIdentityResolver.processStartIdentity(
+                  auditIdentity.processIdentifier)
+        else { return nil }
+        let signingIdentity = signingIdentityProvider(auditIdentity)
+        let pid = auditIdentity.processIdentifier
+        let callerUID = auditIdentity.effectiveUserIdentifier
 
-        let signingIdentity = self.signingIdentity(pid: pid)
-
-        if allowedTeamIDs.isEmpty, let callerUID = self.uid(for: pid), callerUID == getuid() {
+        if allowedTeamIDs.isEmpty, callerUID == getuid() {
             return self.peer(
-                pid: pid,
-                uid: callerUID,
+                auditIdentity: auditIdentity,
+                processStartIdentity: processStartIdentity,
                 signingIdentity: signingIdentity,
                 teamIdentifier: signingIdentity?.teamIdentifier)
         }
@@ -80,56 +84,52 @@ extension PeekabooBridgeHost {
         let teamID = signingIdentity?.teamIdentifier
         if let teamID, allowedTeamIDs.contains(teamID) {
             return self.peer(
-                pid: pid,
-                uid: self.uid(for: pid),
+                auditIdentity: auditIdentity,
+                processStartIdentity: processStartIdentity,
                 signingIdentity: signingIdentity,
                 teamIdentifier: teamID)
         }
 
         #if DEBUG
         let environment = ProcessInfo.processInfo.environment["PEEKABOO_ALLOW_UNSIGNED_SOCKET_CLIENTS"]
-        if environment == "1", let callerUID = self.uid(for: pid), callerUID == getuid() {
+        if environment == "1", callerUID == getuid() {
             self.logger.warning(
                 "allowing unsigned bridge client pid=\(pid, privacy: .public) (debug override)")
             return self.peer(
-                pid: pid,
-                uid: callerUID,
+                auditIdentity: auditIdentity,
+                processStartIdentity: processStartIdentity,
                 signingIdentity: signingIdentity,
                 teamIdentifier: nil)
         }
         #endif
 
-        if let callerUID = self.uid(for: pid) {
-            self.logger.error("bridge client rejected pid=\(pid, privacy: .public) uid=\(callerUID, privacy: .public)")
-        } else {
-            self.logger.error("bridge client rejected pid=\(pid, privacy: .public) (uid unknown)")
-        }
+        self.logger.error("bridge client rejected pid=\(pid, privacy: .public) uid=\(callerUID, privacy: .public)")
         return nil
     }
 
     private nonisolated static func peer(
-        pid: pid_t,
-        uid: uid_t?,
+        auditIdentity: PeekabooBridgePeerAuditIdentity,
+        processStartIdentity: UInt64,
         signingIdentity: PeerSigningIdentity?,
         teamIdentifier: String?) -> PeekabooBridgePeer
     {
         PeekabooBridgePeer(
-            processIdentifier: pid,
-            processStartIdentity: SystemIdentityResolver.processStartIdentity(pid),
+            processIdentifier: auditIdentity.processIdentifier,
+            auditTokenProcessIdentifierVersion: auditIdentity.processIdentifierVersion,
+            processStartIdentity: processStartIdentity,
             codeSignatureHash: signingIdentity?.codeSignatureHash,
-            userIdentifier: uid,
+            userIdentifier: auditIdentity.effectiveUserIdentifier,
             bundleIdentifier: signingIdentity?.bundleIdentifier,
             teamIdentifier: teamIdentifier)
     }
 
-    private nonisolated static func uid(for pid: pid_t) -> uid_t? {
-        var info = kinfo_proc()
-        var size = MemoryLayout.size(ofValue: info)
-        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
-        let ok = mib.withUnsafeMutableBufferPointer { mibPointer -> Bool in
-            sysctl(mibPointer.baseAddress, u_int(mibPointer.count), &info, &size, nil, 0) == 0
-        }
-        return ok ? info.kp_eproc.e_ucred.cr_uid : nil
+    private nonisolated static func signingIdentity(
+        auditIdentity: PeekabooBridgePeerAuditIdentity) -> PeerSigningIdentity?
+    {
+        guard let information = PeekabooBridgeCodeSignatureIdentity.signingInformation(
+            auditIdentity: auditIdentity)
+        else { return nil }
+        return self.signingIdentity(information: information)
     }
 
     nonisolated static func signingIdentity(
@@ -137,7 +137,12 @@ extension PeekabooBridgeHost {
         signingInformationProvider: PeerSigningInformationProvider = signingInformation) -> PeerSigningIdentity?
     {
         guard let info = signingInformationProvider(pid) else { return nil }
+        return self.signingIdentity(information: info)
+    }
 
+    private nonisolated static func signingIdentity(
+        information info: [String: Any]) -> PeerSigningIdentity
+    {
         let teamIdentifier: String? = if let teamID = info[kSecCodeInfoTeamIdentifier as String] as? String {
             teamID
         } else if let entitlements = info[kSecCodeInfoEntitlementsDict as String] as? [String: Any],

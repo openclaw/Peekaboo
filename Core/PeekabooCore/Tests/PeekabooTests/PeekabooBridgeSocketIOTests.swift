@@ -6,6 +6,36 @@ import Testing
 @Suite(.serialized)
 struct PeekabooBridgeSocketIOTests {
     @Test
+    func `peer audit token binds exact process generation and signing identity`() throws {
+        let sockets = try Self.socketPair()
+        defer {
+            close(sockets.reader)
+            close(sockets.writer)
+        }
+
+        for descriptor in [sockets.reader, sockets.writer] {
+            let identity = try PeekabooBridgeSocketIO.peerAuditIdentity(fd: descriptor)
+            #expect(identity.processIdentifier == getpid())
+            #expect(identity.processIdentifierVersion > 0)
+            #expect(identity.effectiveUserIdentifier == geteuid())
+            #expect(identity.tokenData.count == MemoryLayout<audit_token_t>.size)
+            #expect(PeekabooBridgeCodeSignatureIdentity.codeSignatureHash(auditIdentity: identity) ==
+                PeekabooBridgeCodeSignatureIdentity.codeSignatureHash(processIdentifier: getpid()))
+        }
+    }
+
+    @Test
+    func `unconnected socket has no peer audit identity`() throws {
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        #expect(descriptor >= 0)
+        defer { close(descriptor) }
+
+        #expect(throws: POSIXError.self) {
+            _ = try PeekabooBridgeSocketIO.peerAuditIdentity(fd: descriptor)
+        }
+    }
+
+    @Test
     func `read times out when peer remains idle`() throws {
         let sockets = try Self.socketPair()
         defer {

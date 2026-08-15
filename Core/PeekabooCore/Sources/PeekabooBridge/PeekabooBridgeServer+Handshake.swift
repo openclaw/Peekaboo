@@ -58,12 +58,18 @@ extension PeekabooBridgeServer {
             max(payload.protocolVersion, self.supportedVersions.lowerBound),
             self.supportedVersions.upperBound)
 
-        let advertisedOps = Array(self.operationsCompatibleWithNegotiatedVersion(
+        var advertisedOps = Array(self.operationsCompatibleWithNegotiatedVersion(
             self.allowedOperationsToAdvertise(),
             negotiated)).sorted { $0.rawValue < $1.rawValue }
         var enabledOps = self.operationsCompatibleWithNegotiatedVersion(
             self.effectiveAllowedOperations(permissions: permissions),
             negotiated)
+        if negotiated >= PeekabooBridgeConstants.attestedOperationReceiptVersion,
+           !advertisedOps.contains(.listWindows)
+        {
+            advertisedOps.removeAll { $0 == .focusWindow }
+            enabledOps.remove(.focusWindow)
+        }
         var permissionTags = Dictionary(
             uniqueKeysWithValues: advertisedOps.map { op in
                 (op.rawValue, Array(op.requiredPermissions).sorted { $0.rawValue < $1.rawValue })
@@ -90,9 +96,11 @@ extension PeekabooBridgeServer {
             """)
 
         var advertisedCapabilities = self.hostCapabilities
-        if negotiated >= PeekabooBridgeConstants.attestedOperationReceiptVersion,
-           operationReceiptAuthority != nil
-        {
+        let supportsAttestedOperationReceipts =
+            negotiated >= PeekabooBridgeConstants.attestedOperationReceiptVersion &&
+            operationReceiptAuthority != nil &&
+            advertisedCapabilities.contains(PeekabooBridgeHostCapability.desktopActionOutcomeProjection)
+        if supportsAttestedOperationReceipts {
             advertisedCapabilities.insert(PeekabooBridgeHostCapability.attestedOperationReceipts)
         }
         let response = PeekabooBridgeHandshakeResponse(
@@ -105,7 +113,7 @@ extension PeekabooBridgeServer {
             permissionTags: permissionTags,
             hostIdentity: self.hostIdentity,
             hostCapabilities: advertisedCapabilities.sorted(),
-            operationAttestation: negotiated >= PeekabooBridgeConstants.attestedOperationReceiptVersion
+            operationAttestation: supportsAttestedOperationReceipts
                 ? operationReceiptAuthority?.attestation
                 : nil)
         return .handshake(response)

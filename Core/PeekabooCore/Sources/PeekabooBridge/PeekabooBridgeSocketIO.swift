@@ -1,17 +1,37 @@
 import Darwin
 import Foundation
 
+struct PeekabooBridgePeerAuditIdentity {
+    let token: audit_token_t
+    let processIdentifier: pid_t
+    let processIdentifierVersion: Int32
+    let effectiveUserIdentifier: uid_t
+
+    var tokenData: Data {
+        withUnsafeBytes(of: self.token) { Data($0) }
+    }
+}
+
 enum PeekabooBridgeSocketIO {
-    static func peerProcessIdentifier(fd: Int32) throws -> pid_t {
-        var processIdentifier: pid_t = 0
-        var size = socklen_t(MemoryLayout<pid_t>.size)
-        guard getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &processIdentifier, &size) == 0,
-              processIdentifier > 0,
-              size == MemoryLayout<pid_t>.size
-        else {
+    static func peerAuditIdentity(fd: Int32) throws -> PeekabooBridgePeerAuditIdentity {
+        var token = audit_token_t()
+        var size = socklen_t(MemoryLayout<audit_token_t>.size)
+        guard getsockopt(fd, SOL_LOCAL, LOCAL_PEERTOKEN, &token, &size) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EPROTO)
         }
-        return processIdentifier
+        let processIdentifier = audit_token_to_pid(token)
+        let processIdentifierVersion = audit_token_to_pidversion(token)
+        guard size == MemoryLayout<audit_token_t>.size,
+              processIdentifier > 0,
+              processIdentifierVersion > 0
+        else {
+            throw POSIXError(.EPROTO)
+        }
+        return PeekabooBridgePeerAuditIdentity(
+            token: token,
+            processIdentifier: processIdentifier,
+            processIdentifierVersion: processIdentifierVersion,
+            effectiveUserIdentifier: audit_token_to_euid(token))
     }
 
     static func configureConnectedSocket(_ fd: Int32) throws {

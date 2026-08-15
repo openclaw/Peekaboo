@@ -342,6 +342,7 @@ extension PeekabooBridgeClient {
         }
         return UIAutomationActionResult(
             payload: payload,
-            outcome: reply.outcome?.outcome)
+            outcome: reply.outcome?.outcome,
+            targetIdentity: reply.targetIdentity)
     }
 }

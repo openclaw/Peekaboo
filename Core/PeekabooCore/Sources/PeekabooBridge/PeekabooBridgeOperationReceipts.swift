@@ -878,13 +878,11 @@ enum PeekabooBridgeOperationReceiptSemantics {
                 throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                     "post-execution request target evidence")
             }
-            guard signedEvidence.count > requestEvidence.count else {
-                throw PeekabooBridgeOperationReceiptError.receiptMismatch("post-execution target evidence")
-            }
         }
         do {
-            _ = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve(
-                signedEvidence.map(\.desktopEvidence))
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveEvidence(
+                request: request,
+                evidence: signedEvidence.map(\.desktopEvidence))
             throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                 "claimed target attribution failure")
         } catch let error as DesktopTargetIdentityError {
@@ -1010,6 +1008,11 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
         peer: PeekabooBridgePeer,
         currentProcessStartIdentity: (pid_t) -> UInt64? = SystemIdentityResolver.processStartIdentity) throws
     {
+        guard let processIdentifierVersion = peer.auditTokenProcessIdentifierVersion,
+              processIdentifierVersion > 0
+        else {
+            throw PeekabooBridgeOperationReceiptError.peerIdentityMismatch
+        }
         guard payload.expectedListenerInstanceID == self.attestation.listenerInstanceID else {
             throw PeekabooBridgeOperationReceiptError.listenerInstanceMismatch
         }
@@ -1057,7 +1060,31 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
 
 enum PeekabooBridgeCodeSignatureIdentity {
     static func codeSignatureHash(processIdentifier: pid_t) -> String? {
-        let attributes: NSDictionary = [kSecGuestAttributePid: processIdentifier]
+        self.codeSignatureHash(in: self.signingInformation(attributes: [
+            kSecGuestAttributePid: processIdentifier,
+        ]))
+    }
+
+    static func codeSignatureHash(auditIdentity: PeekabooBridgePeerAuditIdentity) -> String? {
+        self.codeSignatureHash(in: self.signingInformation(auditIdentity: auditIdentity))
+    }
+
+    static func signingInformation(
+        auditIdentity: PeekabooBridgePeerAuditIdentity) -> [String: Any]?
+    {
+        self.signingInformation(attributes: [
+            kSecGuestAttributeAudit: auditIdentity.tokenData,
+        ])
+    }
+
+    private static func codeSignatureHash(in information: [String: Any]?) -> String? {
+        guard let hash = information?[kSecCodeInfoUnique as String] as? Data,
+              !hash.isEmpty
+        else { return nil }
+        return hash.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func signingInformation(attributes: NSDictionary) -> [String: Any]? {
         var code: SecCode?
         guard SecCodeCopyGuestWithAttributes(nil, attributes, SecCSFlags(), &code) == errSecSuccess,
               let code
@@ -1071,118 +1098,9 @@ enum PeekabooBridgeCodeSignatureIdentity {
         var information: CFDictionary?
         let flags = SecCSFlags(rawValue: UInt32(kSecCSSigningInformation))
         guard SecCodeCopySigningInformation(staticCode, flags, &information) == errSecSuccess,
-              let values = information as? [String: Any],
-              let hash = values[kSecCodeInfoUnique as String] as? Data,
-              !hash.isEmpty
+              let values = information as? [String: Any]
         else { return nil }
-        return hash.map { String(format: "%02x", $0) }.joined()
-    }
-}
-
-enum PeekabooBridgePrivateReceiptArchive {
-    static func prepareDirectory(_ url: URL) throws {
-        var existing = stat()
-        if lstat(url.path, &existing) == 0 {
-            guard (existing.st_mode & S_IFMT) == S_IFDIR,
-                  existing.st_uid == geteuid(),
-                  existing.st_mode & 0o077 == 0
-            else {
-                throw PeekabooBridgeOperationReceiptError.unsafeArchive(url.path)
-            }
-            return
-        }
-        guard errno == ENOENT else {
-            throw PeekabooBridgeOperationReceiptError.unsafeArchive(url.path)
-        }
-
-        let manager = FileManager.default
-        do {
-            try manager.createDirectory(at: url, withIntermediateDirectories: true)
-            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
-        } catch {
-            throw PeekabooBridgeOperationReceiptError.unsafeArchive(url.path)
-        }
-
-        var info = stat()
-        guard lstat(url.path, &info) == 0,
-              (info.st_mode & S_IFMT) == S_IFDIR,
-              info.st_uid == geteuid(),
-              info.st_mode & 0o077 == 0
-        else {
-            throw PeekabooBridgeOperationReceiptError.unsafeArchive(url.path)
-        }
-    }
-
-    static func writeAtomically(_ data: Data, to destination: URL) throws {
-        try self.prepareDirectory(destination.deletingLastPathComponent())
-        let temporary = self.temporaryURL(for: destination)
-        let descriptor = open(
-            temporary.path,
-            O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
-            S_IRUSR | S_IWUSR)
-        guard descriptor >= 0 else {
-            throw PeekabooBridgeOperationReceiptError.archiveWriteFailed(String(cString: strerror(errno)))
-        }
-        var shouldRemoveTemporary = true
-        defer {
-            close(descriptor)
-            if shouldRemoveTemporary {
-                unlink(temporary.path)
-            }
-        }
-
-        do {
-            guard fchmod(descriptor, S_IRUSR | S_IWUSR) == 0 else {
-                throw PeekabooBridgeOperationReceiptError.archiveWriteFailed(String(cString: strerror(errno)))
-            }
-            try data.withUnsafeBytes { bytes in
-                guard let baseAddress = bytes.baseAddress else { return }
-                var offset = 0
-                while offset < bytes.count {
-                    let count = Darwin.write(descriptor, baseAddress.advanced(by: offset), bytes.count - offset)
-                    if count > 0 {
-                        offset += count
-                    } else if count == -1, errno == EINTR {
-                        continue
-                    } else {
-                        throw PeekabooBridgeOperationReceiptError.archiveWriteFailed(
-                            String(cString: strerror(errno)))
-                    }
-                }
-            }
-            guard fsync(descriptor) == 0 else {
-                throw PeekabooBridgeOperationReceiptError.archiveWriteFailed(String(cString: strerror(errno)))
-            }
-            guard renameatx_np(
-                AT_FDCWD,
-                temporary.path,
-                AT_FDCWD,
-                destination.path,
-                UInt32(RENAME_EXCL)) == 0
-            else {
-                throw PeekabooBridgeOperationReceiptError.archiveWriteFailed(String(cString: strerror(errno)))
-            }
-            shouldRemoveTemporary = false
-            let directoryDescriptor = open(
-                destination.deletingLastPathComponent().path,
-                O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
-            guard directoryDescriptor >= 0 else {
-                throw PeekabooBridgeOperationReceiptError.archiveWriteFailed(String(cString: strerror(errno)))
-            }
-            defer { close(directoryDescriptor) }
-            guard fsync(directoryDescriptor) == 0 else {
-                throw PeekabooBridgeOperationReceiptError.archiveWriteFailed(String(cString: strerror(errno)))
-            }
-        } catch let error as PeekabooBridgeOperationReceiptError {
-            throw error
-        } catch {
-            throw PeekabooBridgeOperationReceiptError.archiveWriteFailed(error.localizedDescription)
-        }
-    }
-
-    static func temporaryURL(for destination: URL, nonce: UUID = UUID()) -> URL {
-        destination.deletingLastPathComponent().appendingPathComponent(
-            ".\(destination.lastPathComponent).\(nonce.uuidString.lowercased()).tmp")
+        return values
     }
 }
 
@@ -1334,10 +1252,23 @@ enum PeekabooBridgeOperationTargetAttribution {
         response: PeekabooBridgeResponse,
         handledTarget: DesktopTargetIdentity?) throws -> DesktopTargetIdentity?
     {
-        try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve(self.evidence(
+        try self.resolveEvidence(
             request: request,
-            response: response,
-            handledTarget: handledTarget))
+            evidence: self.evidence(
+                request: request,
+                response: response,
+                handledTarget: handledTarget))
+    }
+
+    static func resolveEvidence(
+        request: PeekabooBridgeRequest,
+        evidence: [DesktopTargetIdentity.Evidence]) throws -> DesktopTargetIdentity?
+    {
+        let identity = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve(evidence)
+        if request.requiresResolvedOperationTarget, identity == nil {
+            throw DesktopTargetIdentityError.incompleteExactWindow
+        }
+        return identity
     }
 
     static func evidence(
@@ -1372,6 +1303,30 @@ extension PeekabooBridgeRequest {
         case let .projectedAction(payload): payload.request.requiresStableOperationTarget
         case .focusWindow: true
         default: false
+        }
+    }
+
+    fileprivate var requiresResolvedOperationTarget: Bool {
+        switch self {
+        case let .attestedOperation(payload): payload.request.requiresResolvedOperationTarget
+        case let .projectedAction(payload): payload.request.requiresResolvedOperationTarget
+        case .focusWindow, .targetedScroll, .setValue, .performAction:
+            true
+        case let .click(payload):
+            payload.target.requiresElementResolution
+        case let .type(payload):
+            payload.target?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        default:
+            false
+        }
+    }
+}
+
+extension ClickTarget {
+    fileprivate var requiresElementResolution: Bool {
+        switch self {
+        case .elementId, .query: true
+        case .coordinates: false
         }
     }
 }

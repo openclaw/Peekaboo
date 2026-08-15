@@ -282,6 +282,33 @@ struct RemoteWindowManagementServiceTests {
     }
 
     @Test
+    func `protocol 1 29 does not advertise focus without window enumeration`() async throws {
+        let socketPath = "/tmp/peekaboo-remote-window-focus-dependency-\(UUID().uuidString).sock"
+        let server = PeekabooBridgeServer(
+            services: StubServices(windows: RemoteWindowMutationFixture(identity: self.identity)),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [.focusWindow])
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let handshake = try await PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+            .handshake(client: PeekabooBridgeClientIdentity(
+                bundleIdentifier: "dev.peekaboo.focus-dependency-tests",
+                teamIdentifier: nil,
+                processIdentifier: getpid()))
+
+        #expect(!handshake.supportedOperations.contains(.focusWindow))
+        #expect(handshake.enabledOperations?.contains(.focusWindow) == false)
+        await host.stop()
+    }
+
+    @Test
     func `queued legacy overload rejects a recycled process generation before dispatch`() async throws {
         let socketPath = "/tmp/peekaboo-remote-window-reuse-\(UUID().uuidString).sock"
         let identityState = RemoteWindowIdentityState(ownerPID: 420, processStartIdentity: 9001)

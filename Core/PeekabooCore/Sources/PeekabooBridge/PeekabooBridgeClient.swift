@@ -120,11 +120,13 @@ public actor PeekabooBridgeClient {
             if handshake.negotiatedVersion >= PeekabooBridgeConstants.attestedOperationReceiptVersion {
                 guard handshake.hostCapabilities?.contains(
                     PeekabooBridgeHostCapability.attestedOperationReceipts) == true,
+                    handshake.hostCapabilities?.contains(
+                        PeekabooBridgeHostCapability.desktopActionOutcomeProjection) == true,
                     let attestation = handshake.operationAttestation
                 else {
                     throw PeekabooBridgeErrorEnvelope(
-                        code: .versionMismatch,
-                        message: "Protocol 1.29 Bridge host omitted its operation receipt attestation")
+                        code: .unauthorizedClient,
+                        message: "Protocol 1.29 Bridge host omitted required operation receipt capabilities")
                 }
                 do {
                     try attestation.validateSignature()

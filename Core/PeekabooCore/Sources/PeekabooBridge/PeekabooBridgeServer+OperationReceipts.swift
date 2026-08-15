@@ -83,7 +83,9 @@ extension PeekabooBridgeServer {
             response: handled.response,
             handledTarget: handled.targetIdentity ?? requestTarget)
         do {
-            let resolved = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve(attributionEvidence)
+            let resolved = try PeekabooBridgeOperationTargetAttribution.resolveEvidence(
+                request: request,
+                evidence: attributionEvidence)
             let receiptTarget = PeekabooBridgeResolvedOperationTarget(resolved)
             response = handled.response
             target = receiptTarget.target

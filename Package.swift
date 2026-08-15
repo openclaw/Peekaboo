@@ -69,6 +69,7 @@ let package = Package(
                 "PeekabooFoundation",
             ],
             path: "Core/PeekabooCore/Sources/PeekabooBridge",
-            swiftSettings: approachableConcurrencySettings),
+            swiftSettings: approachableConcurrencySettings,
+            linkerSettings: [.linkedLibrary("bsm")]),
     ],
     swiftLanguageModes: [.v6])

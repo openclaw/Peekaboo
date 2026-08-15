@@ -106,7 +106,10 @@ struct PeekabooBridgeOperationReceiptSecurityTests {
                 bundleShortVersion: "1",
                 bundleVersion: "1",
                 codeSignatureHash: "contradictory-cdhash"),
-            hostCapabilities: [PeekabooBridgeHostCapability.attestedOperationReceipts],
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.attestedOperationReceipts,
+                PeekabooBridgeHostCapability.desktopActionOutcomeProjection,
+            ],
             operationAttestation: attestation)
         let handshakeData = try JSONEncoder.peekabooBridgeEncoder().encode(
             PeekabooBridgeResponse.handshake(handshake))
@@ -116,6 +119,43 @@ struct PeekabooBridgeOperationReceiptSecurityTests {
         do {
             _ = try await client.handshake(client: Self.clientIdentity)
             Issue.record("Expected contradictory host CDHash to be rejected")
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            #expect(envelope.code == .unauthorizedClient)
+        }
+        await peer.waitUntilFinished()
+    }
+
+    @Test
+    func `handshake requires outcome projection for protocol 1 29 receipts`() async throws {
+        let root = URL(fileURLWithPath: "/tmp/pbor-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let authority = try PeekabooBridgeOperationReceiptAuthority(
+            socketPath: root.appendingPathComponent("authority.sock").path)
+        let attestation = authority.attestation
+        let handshake = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.attestedOperationReceiptVersion,
+            hostKind: .gui,
+            build: "test",
+            supportedOperations: [.permissionsStatus],
+            permissions: .init(screenRecording: true, accessibility: true, postEvent: true),
+            enabledOperations: [.permissionsStatus],
+            hostIdentity: .init(
+                processIdentifier: attestation.host.processIdentifier,
+                processStartIdentity: attestation.host.processStartIdentity,
+                bundleIdentifier: "dev.peekaboo.tests",
+                bundleShortVersion: "1",
+                bundleVersion: "1",
+                codeSignatureHash: attestation.host.codeSignatureHash),
+            hostCapabilities: [PeekabooBridgeHostCapability.attestedOperationReceipts],
+            operationAttestation: attestation)
+        let handshakeData = try JSONEncoder.peekabooBridgeEncoder().encode(
+            PeekabooBridgeResponse.handshake(handshake))
+        let peer = try ScriptedBridgePeer(scripts: [[.respondData(handshakeData)]])
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+
+        do {
+            _ = try await client.handshake(client: Self.clientIdentity)
+            Issue.record("Expected missing outcome projection to be rejected")
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             #expect(envelope.code == .unauthorizedClient)
         }
@@ -397,6 +437,43 @@ struct PeekabooBridgeOperationReceiptSecurityTests {
         #expect(throws: DesktopTargetIdentityError.incompleteExactWindow) {
             _ = try PeekabooBridgeOperationTargetAttribution.resolveRequest(.focusWindow(.init(
                 target: .application("Fixture"))))
+        }
+        #expect(throws: DesktopTargetIdentityError.incompleteExactWindow) {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+                request: .focusWindow(.init(target: .application("Fixture"))),
+                response: .ok)
+        }
+        #expect(throws: DesktopTargetIdentityError.incompleteExactWindow) {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+                request: .click(.init(
+                    target: .elementId("B1"),
+                    clickType: .single,
+                    snapshotId: nil)),
+                response: .ok)
+        }
+        #expect(throws: DesktopTargetIdentityError.incompleteExactWindow) {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+                request: .type(.init(
+                    text: "x",
+                    target: "B1",
+                    clearExisting: false,
+                    typingDelay: 0,
+                    snapshotId: nil)),
+                response: .ok)
+        }
+        #expect(throws: DesktopTargetIdentityError.incompleteExactWindow) {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+                request: .targetedScroll(.init(request: .init(
+                    direction: .down,
+                    amount: 1,
+                    target: "S1",
+                    snapshotId: "snapshot"))),
+                response: .ok)
+        }
+        #expect(throws: DesktopTargetIdentityError.incompleteExactWindow) {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+                request: .setValue(.init(target: "S1", value: .string("x"), snapshotId: "snapshot")),
+                response: .elementActionResult(.init(target: "S1", actionName: nil, anchorPoint: nil)))
         }
     }
 

@@ -90,7 +90,8 @@ let package = Package(
                 .product(name: "PeekabooFoundation", package: "PeekabooFoundation"),
             ],
             path: "Sources/PeekabooBridge",
-            swiftSettings: coreTargetSettings),
+            swiftSettings: coreTargetSettings,
+            linkerSettings: [.linkedLibrary("bsm")]),
         .testTarget(
             name: "PeekabooBridgeTests",
             dependencies: [

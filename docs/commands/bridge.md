@@ -31,7 +31,9 @@ read_when:
   `hostIdentity` carries the serving PID/process-start identity plus bundle versions and the exact
   executable code-signature hash; older hosts omit these fields and continue to decode normally.
 - Protocol 1.29 binds every post-handshake call to one ephemeral listener identity and returns a signed operation
-  receipt. The host keeps privacy-minimized receipts under `<socket>.receipts/<listener-id>/` with mode `0600` in
+  receipt. Connected peers are bound to the kernel's Unix-socket audit token, including PID version and effective
+  UID; Team ID, bundle ID, and CDHash are resolved from that same audit token rather than a reusable numeric PID.
+  The host keeps privacy-minimized receipts under `<socket>.receipts/<listener-id>/` with mode `0600` in
   owner-only directories. For a private certification run, setting `PEEKABOO_OPERATION_RECEIPT_DIRECTORY` exports
   one atomic verification bundle per successfully routed protocol 1.29 Bridge request. Local execution and older
   Bridge protocols do not emit a bundle, and certification must fail when an expected bundle is missing. The opt-in
@@ -41,8 +43,9 @@ read_when:
   decimal strings rather than lossy JSON numbers. The bundle can therefore contain command text and response data
   and must not be enabled for ordinary automation or written to a shared directory.
 - Target attribution delegates to the same canonical process/window receipt coalescer used by local automation.
-  Exact-window receipts include immutable bounds and optional focused-element identity. Missing evidence alone is
-  recorded as global; incomplete or contradictory evidence is instead archived as an explicit attribution failure.
+  Exact-window receipts include immutable bounds and optional focused-element identity. Targetless operations with
+  no target evidence are recorded as global; missing evidence for target-dependent operations and any incomplete or
+  contradictory evidence are instead archived as explicit attribution failures.
   A mutating operation's attribution failure is retry-safe only before dispatch and becomes indeterminate and
   retry-unsafe after dispatch. Each failure signs its pre-dispatch or post-execution stage plus the lossless evidence
   fragments needed to reproduce the canonical failure code. Read-only attribution failures return an ordinary

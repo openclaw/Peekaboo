@@ -107,12 +107,14 @@ extension PeekabooBridgeClient {
                 requestID: attestedContext?.requestID)
         }
         let verifiedWireResponse: PeekabooBridgeResponse
+        var verifiedTargetIdentity: DesktopTargetIdentity?
         do {
             let verified = try Self.verifyAttestedResponse(
                 wireResponse,
                 context: attestedContext)
             verifiedWireResponse = verified.response
             if let bundle = verified.bundle {
+                verifiedTargetIdentity = try bundle.receipt.payload.resolvedTargetIdentity()
                 self.latestVerifiedOperationReceipt = bundle.receipt
                 self.latestVerifiedOperationReceiptBundle = bundle
                 try Self.exportOperationReceiptIfRequested(
@@ -126,10 +128,14 @@ extension PeekabooBridgeClient {
                 causeDescription: "Bridge operation receipt validation failed: \(error.localizedDescription)",
                 requestID: attestedContext?.requestID)
         }
-        let reply = try Self.unwrapResponse(
+        let unwrappedReply = try Self.unwrapResponse(
             verifiedWireResponse,
             expectsProjectedResponse: expectsProjectedResponse,
             request: request)
+        let reply = PeekabooBridgeTransportReply(
+            response: unwrappedReply.response,
+            outcome: unwrappedReply.outcome,
+            targetIdentity: verifiedTargetIdentity)
         let response = reply.response
         if case let .error(envelope) = response,
            request.mayMutateDesktop
@@ -313,12 +319,12 @@ extension PeekabooBridgeClient {
 
             if let expectedListener = request.expectedListener {
                 try expectedListener.validateSignature()
-                let peerProcessIdentifier = try PeekabooBridgeSocketIO.peerProcessIdentifier(fd: fd)
-                guard peerProcessIdentifier == expectedListener.host.processIdentifier,
-                      SystemIdentityResolver.processStartIdentity(peerProcessIdentifier) ==
+                let auditIdentity = try PeekabooBridgeSocketIO.peerAuditIdentity(fd: fd)
+                guard auditIdentity.processIdentifier == expectedListener.host.processIdentifier,
+                      SystemIdentityResolver.processStartIdentity(auditIdentity.processIdentifier) ==
                       expectedListener.host.processStartIdentity,
                       PeekabooBridgeCodeSignatureIdentity.codeSignatureHash(
-                          processIdentifier: peerProcessIdentifier) == expectedListener.host.codeSignatureHash
+                          auditIdentity: auditIdentity) == expectedListener.host.codeSignatureHash
                 else {
                     throw PeekabooBridgeOperationReceiptError.peerIdentityMismatch
                 }
@@ -457,6 +463,17 @@ extension PeekabooBridgeClient {
 struct PeekabooBridgeTransportReply: Sendable {
     let response: PeekabooBridgeResponse
     let outcome: DesktopActionOutcome.Projection?
+    let targetIdentity: DesktopTargetIdentity?
+
+    init(
+        response: PeekabooBridgeResponse,
+        outcome: DesktopActionOutcome.Projection?,
+        targetIdentity: DesktopTargetIdentity? = nil)
+    {
+        self.response = response
+        self.outcome = outcome
+        self.targetIdentity = targetIdentity
+    }
 }
 
 private struct PeekabooBridgeAttestedRequestContext: Sendable {
