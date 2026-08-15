@@ -40,10 +40,7 @@ struct VerifyCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
 
         do {
             let arguments = try await self.makeArguments()
-            let context = MCPToolContext(
-                services: self.services,
-                snapshotMutationCoordinator: runtime.toolSnapshotMutationCoordinator
-            )
+            let context = Self.makeToolContext(using: runtime)
             let tool = VerifyStateTool(context: context)
             let response = try await context.execute(tool: tool, arguments: ToolArguments(raw: arguments))
             guard !response.isError else {
@@ -85,6 +82,14 @@ struct VerifyCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
             self.handleError(error)
             throw ExitCode(2)
         }
+    }
+
+    static func makeToolContext(using runtime: CommandRuntime) -> MCPToolContext {
+        MCPToolContext(
+            services: runtime.services,
+            snapshotMutationCoordinator: runtime.toolSnapshotMutationCoordinator,
+            capturePreflightRefusal: runtime.toolCapturePreflightRefusal
+        )
     }
 
     private func makeArguments() async throws -> [String: Any] {
