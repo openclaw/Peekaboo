@@ -76,6 +76,18 @@ public enum FocusedElementReceiptResolver {
         }
     }
 
+    static func matches(
+        _ actual: FocusedElementIdentity,
+        expected: FocusedElementIdentity) -> Bool
+    {
+        do {
+            try self.validate(actual, matches: expected)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     public static func attachingObservedFocus(
         to context: WindowContext?,
         elements: [DetectedElement]) -> WindowContext?

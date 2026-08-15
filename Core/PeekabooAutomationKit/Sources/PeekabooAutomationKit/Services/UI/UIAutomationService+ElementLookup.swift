@@ -130,18 +130,16 @@ extension UIAutomationService {
         expected: FocusedElementIdentity?) -> Bool
     {
         guard let expected else { return true }
-        guard focused.processIdentifier == expected.processIdentifier,
-              focused.windowID == expected.windowID,
-              focused.frame == expected.frame,
-              focused.role == expected.role
-        else { return false }
-        if let identifier = expected.identifier, !identifier.isEmpty {
-            return focused.identifier == identifier
-        }
-        if let title = expected.title, !title.isEmpty {
-            return focused.title == title
-        }
-        return true
+        guard let windowID = focused.windowID, let role = focused.role else { return false }
+        return FocusedElementReceiptResolver.matches(
+            FocusedElementIdentity(
+                processIdentifier: focused.processIdentifier,
+                windowID: windowID,
+                role: role,
+                title: focused.title,
+                identifier: focused.identifier,
+                frame: focused.frame),
+            expected: expected)
     }
 
     private func exactWindowKeyboardFocusChangedError() -> PeekabooError {

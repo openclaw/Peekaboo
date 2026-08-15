@@ -112,6 +112,50 @@ struct FocusedElementReceiptResolverTests {
         #expect(snapshotRoundTrip.focusedElement == focused)
     }
 
+    @Test
+    func `title fallback selects one same-frame sibling in either order`() {
+        let frame = CGRect(x: 150, y: 180, width: 250, height: 30)
+        for expectedIdentifier: String? in [nil, ""] {
+            let expected = self.focusedIdentity(
+                title: "Account name",
+                identifier: expectedIdentifier,
+                frame: frame)
+            let wanted = self.focusedIdentity(title: "Account name", identifier: nil, frame: frame)
+            let sibling = self.focusedIdentity(title: "Password", identifier: nil, frame: frame)
+
+            for candidates in [[wanted, sibling], [sibling, wanted]] {
+                let matches = candidates.filter {
+                    FocusedElementReceiptResolver.matches($0, expected: expected)
+                }
+                #expect(matches == [wanted])
+            }
+        }
+    }
+
+    @Test
+    func `title fallback rejects missing and empty observed titles`() {
+        let expected = self.focusedIdentity(title: "Account name", identifier: nil)
+
+        #expect(!FocusedElementReceiptResolver.matches(
+            self.focusedIdentity(title: nil, identifier: nil),
+            expected: expected))
+        #expect(!FocusedElementReceiptResolver.matches(
+            self.focusedIdentity(title: "", identifier: nil),
+            expected: expected))
+    }
+
+    @Test
+    func `nonempty identifier remains authoritative over title`() {
+        let expected = self.focusedIdentity(title: "Old title", identifier: "account-name")
+
+        #expect(FocusedElementReceiptResolver.matches(
+            self.focusedIdentity(title: "New title", identifier: "account-name"),
+            expected: expected))
+        #expect(!FocusedElementReceiptResolver.matches(
+            self.focusedIdentity(title: "Old title", identifier: nil),
+            expected: expected))
+    }
+
     private func context() -> WindowContext {
         WindowContext(
             applicationName: "Editor",
@@ -124,6 +168,20 @@ struct FocusedElementReceiptResolverTests {
                 ownerProcessIdentifier: 700,
                 ownerProcessStartIdentity: 99,
                 capturedBounds: self.bounds))
+    }
+
+    private func focusedIdentity(
+        title: String?,
+        identifier: String?,
+        frame: CGRect = CGRect(x: 150, y: 180, width: 250, height: 30)) -> FocusedElementIdentity
+    {
+        FocusedElementIdentity(
+            processIdentifier: 700,
+            windowID: 42,
+            role: "AXTextField",
+            title: title,
+            identifier: identifier,
+            frame: frame)
     }
 
     private func element(

@@ -91,15 +91,20 @@ enum DetachedExactWindowFocusReader {
             visited.append(element)
             AXUIElementSetMessagingTimeout(element, self.messagingTimeout)
 
-            if self.stringAttribute(kAXRoleAttribute as String, of: element) == expected.role,
-               self.frame(of: element) == expected.frame
+            let observedRole = self.stringAttribute(kAXRoleAttribute as String, of: element)
+            let observedFrame = self.frame(of: element)
+            if observedRole == expected.role,
+               observedFrame == expected.frame
             {
                 roleAndFrameMatches.append(element)
-                let identifierMatches = expected.identifier?.isEmpty != false ||
-                    self.stringAttribute(kAXIdentifierAttribute as String, of: element) == expected.identifier
-                let titleMatches = expected.identifier?.isEmpty == false || expected.title?.isEmpty != false ||
-                    self.stringAttribute(kAXTitleAttribute as String, of: element) == expected.title
-                if identifierMatches, titleMatches {
+                let candidate = FocusedElementIdentity(
+                    processIdentifier: expected.processIdentifier,
+                    windowID: expected.windowID,
+                    role: observedRole ?? "",
+                    title: self.stringAttribute(kAXTitleAttribute as String, of: element),
+                    identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: element),
+                    frame: observedFrame ?? .zero)
+                if FocusedElementReceiptResolver.matches(candidate, expected: expected) {
                     exactMatches.append(element)
                 }
             }

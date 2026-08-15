@@ -55,11 +55,12 @@ struct ClickServiceTargetResolutionTests {
                 windowContext: WindowContext(
                     applicationProcessId: identity.processIdentifier,
                     windowID: 42,
-                    windowBounds: .zero,
+                    windowBounds: Self.testWindowBounds,
                     windowMutationIdentity: WindowMutationIdentity(
                         windowID: 42,
                         ownerProcessIdentifier: identity.processIdentifier,
-                        ownerProcessStartIdentity: identity.processStartIdentity))))
+                        ownerProcessStartIdentity: identity.processStartIdentity,
+                        capturedBounds: Self.testWindowBounds))))
         let service = UIAutomationService(
             snapshotManager: InMemorySnapshotManager(detectionResult: detection),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
@@ -85,7 +86,7 @@ struct ClickServiceTargetResolutionTests {
         let generation = ClickLockedGeneration(73)
         let identity = ApplicationProcessIdentity(processIdentifier: getpid(), processStartIdentity: 73)
         let action = ClickSuccessfulActionInputDriver(afterAction: { generation.value = 74 })
-        let tracker = ClickWindowTracker(bounds: .zero)
+        let tracker = ClickWindowTracker(bounds: Self.testWindowBounds)
         try await WindowMovementTrackingProviderScope.withProvider(tracker) {
             let detection = ElementDetectionResult(
                 snapshotId: "snapshot",
@@ -102,11 +103,12 @@ struct ClickServiceTargetResolutionTests {
                     windowContext: WindowContext(
                         applicationProcessId: identity.processIdentifier,
                         windowID: 42,
-                        windowBounds: .zero,
+                        windowBounds: Self.testWindowBounds,
                         windowMutationIdentity: WindowMutationIdentity(
                             windowID: 42,
                             ownerProcessIdentifier: identity.processIdentifier,
-                            ownerProcessStartIdentity: identity.processStartIdentity))))
+                            ownerProcessStartIdentity: identity.processStartIdentity,
+                            capturedBounds: Self.testWindowBounds))))
             let service = UIAutomationService(
                 snapshotManager: InMemorySnapshotManager(detectionResult: detection),
                 inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
@@ -366,7 +368,7 @@ struct ClickServiceTargetResolutionTests {
     @MainActor
     func `background element double click falls back from AX to exact synthetic routing`() async throws {
         let pid = getpid()
-        let tracker = ClickWindowTracker(bounds: .zero)
+        let tracker = ClickWindowTracker(bounds: Self.testWindowBounds)
         try await WindowMovementTrackingProviderScope.withProvider(tracker) {
             let element = DetectedElement(
                 id: "B1",
@@ -423,7 +425,7 @@ struct ClickServiceTargetResolutionTests {
     @MainActor
     func `background element click uses action first with targeted synthetic fallback`() async throws {
         let pid = getpid()
-        let tracker = ClickWindowTracker(bounds: .zero)
+        let tracker = ClickWindowTracker(bounds: Self.testWindowBounds)
         try await WindowMovementTrackingProviderScope.withProvider(tracker) {
             let element = DetectedElement(
                 id: "B1",
@@ -474,7 +476,7 @@ struct ClickServiceTargetResolutionTests {
     @MainActor
     func `background element click succeeds through AX action without synthesis`() async throws {
         let pid = getpid()
-        let tracker = ClickWindowTracker(bounds: .zero)
+        let tracker = ClickWindowTracker(bounds: Self.testWindowBounds)
         try await WindowMovementTrackingProviderScope.withProvider(tracker) {
             let element = DetectedElement(
                 id: "B1",
@@ -509,7 +511,7 @@ struct ClickServiceTargetResolutionTests {
 
             #expect(result.path == .action)
             #expect(result.actionName == "AXPress")
-            #expect(action.clickCount == 0)
+            #expect(action.clickCount == 1)
             #expect(action.performedActionNames == [AXActionNames.kAXPressAction])
             #expect(synthetic.events.isEmpty)
             #expect(resolver.targetProcessIdentifiers == [pid])
@@ -520,7 +522,7 @@ struct ClickServiceTargetResolutionTests {
     @MainActor
     func `background element right click succeeds through AXShowMenu without synthesis`() async throws {
         let pid = getpid()
-        let tracker = ClickWindowTracker(bounds: .zero)
+        let tracker = ClickWindowTracker(bounds: Self.testWindowBounds)
         try await WindowMovementTrackingProviderScope.withProvider(tracker) {
             let element = DetectedElement(
                 id: "B1",
@@ -565,7 +567,7 @@ struct ClickServiceTargetResolutionTests {
     @MainActor
     func `background element right click reports synthetic permission when AX fallback fails`() async {
         let pid = getpid()
-        let tracker = ClickWindowTracker(bounds: .zero)
+        let tracker = ClickWindowTracker(bounds: Self.testWindowBounds)
         await WindowMovementTrackingProviderScope.withProvider(tracker) {
             let element = DetectedElement(
                 id: "B1",
@@ -841,7 +843,9 @@ struct ClickServiceTargetResolutionTests {
                         applicationProcessId: pid,
                         windowID: 42,
                         windowBounds: CGRect(x: 100, y: 100, width: 300, height: 300),
-                        windowMutationIdentity: Self.windowIdentity(processIdentifier: pid))))
+                        windowMutationIdentity: Self.windowIdentity(
+                            processIdentifier: pid,
+                            capturedBounds: CGRect(x: 100, y: 100, width: 300, height: 300)))))
             let resolver = ClickFixedAutomationElementResolver()
             let synthetic = ClickRecordingSyntheticInputDriver()
             let service = ClickService(
@@ -871,7 +875,7 @@ struct ClickServiceTargetResolutionTests {
     @MainActor
     func `background AX permission denial falls back to targeted synthesis`() async throws {
         let pid = getpid()
-        let tracker = ClickWindowTracker(bounds: .zero)
+        let tracker = ClickWindowTracker(bounds: Self.testWindowBounds)
         try await WindowMovementTrackingProviderScope.withProvider(tracker) {
             let element = DetectedElement(
                 id: "B1",
@@ -982,7 +986,7 @@ struct ClickServiceTargetResolutionTests {
     @MainActor
     func `targeted action-only permission denial maps to accessibility permission`() async {
         let pid = getpid()
-        let tracker = ClickWindowTracker(bounds: .zero)
+        let tracker = ClickWindowTracker(bounds: Self.testWindowBounds)
         await WindowMovementTrackingProviderScope.withProvider(tracker) {
             let element = DetectedElement(
                 id: "B1",
@@ -1255,21 +1259,29 @@ struct ClickServiceTargetResolutionTests {
 
     private static func exactWindowContext(
         processIdentifier: pid_t,
-        bounds: CGRect = .zero) -> WindowContext
+        bounds: CGRect = Self.testWindowBounds) -> WindowContext
     {
         WindowContext(
             applicationProcessId: processIdentifier,
             windowID: 42,
             windowBounds: bounds,
-            windowMutationIdentity: self.windowIdentity(processIdentifier: processIdentifier))
+            windowMutationIdentity: self.windowIdentity(
+                processIdentifier: processIdentifier,
+                capturedBounds: bounds))
     }
 
-    private static func windowIdentity(processIdentifier: pid_t) -> WindowMutationIdentity {
+    private static func windowIdentity(
+        processIdentifier: pid_t,
+        capturedBounds: CGRect = Self.testWindowBounds) -> WindowMutationIdentity
+    {
         WindowMutationIdentity(
             windowID: 42,
             ownerProcessIdentifier: processIdentifier,
-            ownerProcessStartIdentity: 1)
+            ownerProcessStartIdentity: 1,
+            capturedBounds: capturedBounds)
     }
+
+    private static let testWindowBounds = CGRect(x: 0, y: 0, width: 800, height: 600)
 }
 
 @MainActor
@@ -1472,8 +1484,10 @@ private final class ClickSuccessfulActionInputDriver: ActionInputDriving {
 
     func tryClick(element _: AutomationElement) throws -> UIInputExecutionResult.Action {
         self.clickCount += 1
+        self.performedActionNames.append(AXActionNames.kAXPressAction)
+        self.afterAction?()
         return AutomationTestFixtures.uiActionReceipt(
-            actionName: "AXPress",
+            actionName: AXActionNames.kAXPressAction,
             anchorPoint: CGPoint(x: 70, y: 50),
             elementRole: "AXButton")
     }

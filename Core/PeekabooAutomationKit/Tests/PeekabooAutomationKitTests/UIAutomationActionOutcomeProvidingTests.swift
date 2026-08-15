@@ -422,6 +422,15 @@ struct UIAutomationActionOutcomeProvidingTests {
                     title: focused.title,
                     identifier: focused.identifier)
             },
+            exactFocusedElementReader: { _ in
+                .success(ExactWindowFocusSnapshot(
+                    processIdentifier: focused.processIdentifier,
+                    windowID: focused.windowID,
+                    frame: focused.frame,
+                    role: focused.role,
+                    title: focused.title,
+                    identifier: focused.identifier))
+            },
             exactWindowIdentityValidator: { identity, bounds in
                 identity == windowIdentity && bounds == windowIdentity.capturedBounds
             },
