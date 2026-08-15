@@ -46,26 +46,30 @@ enum DesktopOperationSnapshotReceiptValidator {
                 target: .process(UIAutomationTarget.Process(processIdentifier: processIdentifier)),
                 coordinateContext: detectionResult.metadata.captureCoordinateContext)
         }
-        guard let bounds = context.windowBounds,
-              context.applicationProcessId == identity.ownerProcessIdentifier,
-              context.windowID == identity.windowID,
-              identity.capturedBounds == bounds,
-              processStartIdentityProvider(identity.ownerProcessIdentifier) == identity.ownerProcessStartIdentity,
-              exactWindowIdentityValidator(identity, bounds)
+        let captureReceipt: DesktopOperationPlan.CaptureReceipt
+        do {
+            captureReceipt = try DesktopOperationPlan.CaptureReceipt(snapshotReceipt: SnapshotTargetReceipt(
+                snapshotID: snapshotID,
+                evidence: [.init(
+                    processIdentifier: context.applicationProcessId,
+                    windowID: context.windowID,
+                    windowIdentity: identity,
+                    windowBounds: context.windowBounds)],
+                applicationBundleIdentifier: context.applicationBundleId,
+                applicationName: context.applicationName,
+                coordinateContext: detectionResult.metadata.captureCoordinateContext))
+        } catch let error as DesktopTargetIdentityError {
+            throw SnapshotTargetReceiptPreDispatchError(error)
+        }
+        guard let exactWindow = captureReceipt.exactWindow,
+              processStartIdentityProvider(exactWindow.identity.ownerProcessIdentifier) ==
+              exactWindow.identity.ownerProcessStartIdentity,
+              exactWindowIdentityValidator(exactWindow.identity, exactWindow.bounds)
         else {
             throw PeekabooError.snapshotStale(
                 "target window owner, process generation, or bounds changed before desktop mutation")
         }
-        return try DesktopOperationPlan.CaptureReceipt(snapshotReceipt: SnapshotTargetReceipt(
-            snapshotID: snapshotID,
-            evidence: [.init(
-                processIdentifier: context.applicationProcessId,
-                windowID: context.windowID,
-                windowIdentity: identity,
-                windowBounds: bounds)],
-            applicationBundleIdentifier: context.applicationBundleId,
-            applicationName: context.applicationName,
-            coordinateContext: detectionResult.metadata.captureCoordinateContext))
+        return captureReceipt
     }
 
     static func validate(

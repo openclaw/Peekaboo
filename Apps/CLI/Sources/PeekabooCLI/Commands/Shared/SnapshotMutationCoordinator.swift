@@ -32,6 +32,16 @@ enum SnapshotMutationCoordinator {
         let value: Value
         do {
             value = try await operation()
+        } catch let error as SnapshotTargetReceiptPreDispatchError {
+            // Receipt-shape planning is complete before any action/synthesis route can dispatch.
+            // Release this lease without changing conservative handling for live drift or unknown errors.
+            try? await snapshots.finishSnapshotMutation(lease, requiresFreshObservation: false)
+            throw PreDispatchActionError(
+                message: error.localizedDescription,
+                code: .SNAPSHOT_STALE,
+                hint: "Run 'peekaboo see' again and use a complete exact-window snapshot.",
+                reason: .targetUnavailable
+            )
         } catch let failure as DesktopActionFailure {
             // A typed failure says whether dispatch occurred. If lease finalization itself fails, the
             // still-present pending receipt remains the safer state and the original action failure

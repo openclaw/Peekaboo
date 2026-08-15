@@ -140,6 +140,29 @@ public enum DesktopTargetIdentityError: LocalizedError, Equatable, Sendable {
     }
 }
 
+/// A structural snapshot-receipt refusal proven before desktop mutation dispatch.
+///
+/// Only receipt-planning owners construct this wrapper. Callers may therefore release a mutation
+/// lease for this error without weakening fail-closed handling for live drift or post-dispatch failures.
+public struct SnapshotTargetReceiptPreDispatchError: LocalizedError, Equatable, Sendable {
+    public let receiptError: DesktopTargetIdentityError
+
+    init(_ receiptError: DesktopTargetIdentityError) {
+        self.receiptError = receiptError
+    }
+
+    public var errorDescription: String? {
+        switch self.receiptError {
+        case .incompleteExactWindow:
+            "Snapshot target receipt is incomplete: exact-window identity and immutable captured bounds are required."
+        case .missingProcessGeneration:
+            "Snapshot target receipt has no capture-time process-generation receipt."
+        default:
+            "Snapshot target receipt is invalid: \(self.receiptError.localizedDescription)"
+        }
+    }
+}
+
 /// Snapshot lifecycle plus optional stable target identity. Coordinate authority is admitted separately.
 public struct SnapshotTargetReceipt: Equatable, Sendable {
     public enum TargetEvidence: Equatable, Sendable {

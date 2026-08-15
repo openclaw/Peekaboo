@@ -405,9 +405,10 @@ struct ScrollServiceTargetResolutionTests {
             exactWindowIdentityValidator: { _, _ in true },
             processStartIdentityProvider: { _ in 11 })
 
-        await #expect(throws: PeekabooError.self) {
+        let error = await #expect(throws: SnapshotTargetReceiptPreDispatchError.self) {
             _ = try await service.scroll(Self.backgroundRequest())
         }
+        #expect(error?.receiptError == .contradictoryWindowBounds)
         #expect(action.scrollCalls.isEmpty)
     }
 

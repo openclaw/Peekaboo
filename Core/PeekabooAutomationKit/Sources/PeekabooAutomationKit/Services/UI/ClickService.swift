@@ -926,16 +926,31 @@ extension ClickService {
         guard let targetWindowID, let targetProcessIdentifier else { return nil }
         guard let snapshotId,
               let detection = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId),
-              let context = detection.metadata.windowContext,
-              let identity = context.windowMutationIdentity,
-              let bounds = context.windowBounds,
-              identity.windowID == Int(targetWindowID),
-              identity.ownerProcessIdentifier == targetProcessIdentifier
+              let context = detection.metadata.windowContext
         else {
             throw PeekabooError.snapshotStale(
                 "Exact-window click snapshot has no capture-time process-generation receipt and bounds")
         }
-        return try DesktopOperationPlan.ExactWindowReceipt(identity: identity, bounds: bounds)
+        do {
+            let receipt = try SnapshotTargetReceipt(
+                snapshotID: snapshotId,
+                evidence: [
+                    .init(
+                        processIdentifier: targetProcessIdentifier,
+                        windowID: Int(targetWindowID)),
+                    .init(
+                        processIdentifier: context.applicationProcessId,
+                        windowID: context.windowID,
+                        windowIdentity: context.windowMutationIdentity,
+                        windowBounds: context.windowBounds),
+                ])
+            guard let exactWindow = try receipt.requireIdentity().exactWindow else {
+                throw DesktopTargetIdentityError.incompleteExactWindow
+            }
+            return exactWindow
+        } catch let error as DesktopTargetIdentityError {
+            throw SnapshotTargetReceiptPreDispatchError(error)
+        }
     }
 
     private func requireCurrentTarget(

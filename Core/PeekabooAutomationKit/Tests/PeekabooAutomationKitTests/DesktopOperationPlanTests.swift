@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import PeekabooAutomationKitTestSupport
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -125,6 +126,94 @@ struct DesktopOperationPlanTests {
                 requireExactWindow: false,
                 processStartIdentityProvider: { _ in nil },
                 exactWindowIdentityValidator: { _, _ in false })
+        }
+    }
+
+    @Test
+    func `capture receipt classifies incomplete immutable window evidence before live validation`() throws {
+        let process = AutomationTestFixtures.processIdentity()
+        let bounds = CGRect(x: 1, y: 2, width: 300, height: 200)
+        let identity = AutomationTestFixtures.windowIdentity(
+            processIdentity: process,
+            bounds: nil)
+        let detectionResult = AutomationTestFixtures.detectionResult(
+            windowContext: WindowContext(
+                applicationProcessId: process.processIdentifier,
+                windowID: identity.windowID,
+                windowBounds: bounds,
+                windowMutationIdentity: identity))
+
+        let error = #expect(throws: SnapshotTargetReceiptPreDispatchError.self) {
+            _ = try DesktopOperationSnapshotReceiptValidator.captureReceipt(
+                snapshotID: detectionResult.snapshotId,
+                detectionResult: detectionResult,
+                requireExactWindow: true,
+                processStartIdentityProvider: { _ in
+                    Issue.record("Incomplete receipt reached live process validation")
+                    return nil
+                },
+                exactWindowIdentityValidator: { _, _ in
+                    Issue.record("Incomplete receipt reached live window validation")
+                    return false
+                })
+        }
+
+        #expect(error?.receiptError == .incompleteExactWindow)
+        #expect(error?.localizedDescription.contains("immutable captured bounds") == true)
+    }
+
+    @Test
+    func `capture receipt keeps structural bounds conflict distinct from live drift`() throws {
+        let process = AutomationTestFixtures.processIdentity()
+        let capturedBounds = CGRect(x: 1, y: 2, width: 300, height: 200)
+        let identity = AutomationTestFixtures.windowIdentity(
+            processIdentity: process,
+            bounds: capturedBounds)
+        let detectionResult = AutomationTestFixtures.detectionResult(
+            windowContext: WindowContext(
+                applicationProcessId: process.processIdentifier,
+                windowID: identity.windowID,
+                windowBounds: capturedBounds.offsetBy(dx: 1, dy: 0),
+                windowMutationIdentity: identity))
+
+        let error = #expect(throws: SnapshotTargetReceiptPreDispatchError.self) {
+            _ = try DesktopOperationSnapshotReceiptValidator.captureReceipt(
+                snapshotID: detectionResult.snapshotId,
+                detectionResult: detectionResult,
+                requireExactWindow: true,
+                processStartIdentityProvider: { _ in process.processStartIdentity },
+                exactWindowIdentityValidator: { _, _ in true })
+        }
+
+        #expect(error?.receiptError == .contradictoryWindowBounds)
+    }
+
+    @Test
+    func `capture receipt preserves live process drift as stale snapshot`() throws {
+        let process = AutomationTestFixtures.processIdentity()
+        let bounds = CGRect(x: 1, y: 2, width: 300, height: 200)
+        let identity = AutomationTestFixtures.windowIdentity(
+            processIdentity: process,
+            bounds: bounds)
+        let detectionResult = AutomationTestFixtures.detectionResult(
+            windowContext: WindowContext(
+                applicationProcessId: process.processIdentifier,
+                windowID: identity.windowID,
+                windowBounds: bounds,
+                windowMutationIdentity: identity))
+
+        do {
+            _ = try DesktopOperationSnapshotReceiptValidator.captureReceipt(
+                snapshotID: detectionResult.snapshotId,
+                detectionResult: detectionResult,
+                requireExactWindow: true,
+                processStartIdentityProvider: { _ in process.processStartIdentity + 1 },
+                exactWindowIdentityValidator: { _, _ in true })
+            Issue.record("Expected live process drift to remain a stale-snapshot failure")
+        } catch let PeekabooError.snapshotStale(reason) {
+            #expect(reason.contains("process generation"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
         }
     }
 

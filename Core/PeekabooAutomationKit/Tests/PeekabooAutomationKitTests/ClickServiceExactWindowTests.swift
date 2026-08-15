@@ -58,6 +58,53 @@ struct ClickServiceExactWindowTests {
 
     @Test
     @MainActor
+    func `Snapshot refinement reports incomplete immutable bounds before delivery`() async throws {
+        let process = AutomationTestFixtures.processIdentity(
+            processIdentifier: getpid(),
+            processStartIdentity: 71)
+        let bounds = CGRect(x: 0, y: 0, width: 200, height: 100)
+        let identity = AutomationTestFixtures.windowIdentity(
+            windowID: 42,
+            processIdentity: process,
+            bounds: nil)
+        let detection = AutomationTestFixtures.detectionResult(
+            snapshotID: "incomplete",
+            elements: DetectedElements(buttons: [AutomationTestFixtures.detectedElement(
+                id: "B1",
+                type: .button,
+                label: "Button")]),
+            windowContext: WindowContext(
+                applicationProcessId: process.processIdentifier,
+                windowID: identity.windowID,
+                windowBounds: bounds,
+                windowMutationIdentity: identity))
+        let synthetic = ClickRecordingSyntheticInputDriver()
+        let service = ClickService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: detection),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            syntheticInputDriver: synthetic,
+            exactWindowIdentityValidator: { _, _ in
+                Issue.record("Incomplete click receipt reached live window validation")
+                return false
+            },
+            processStartIdentityProvider: { _ in process.processStartIdentity })
+
+        let error = await #expect(throws: SnapshotTargetReceiptPreDispatchError.self) {
+            _ = try await service.click(
+                target: .elementId("B1"),
+                clickType: .single,
+                snapshotId: detection.snapshotId,
+                targetProcessIdentifier: process.processIdentifier,
+                expectedProcessIdentity: process)
+        }
+
+        #expect(error?.receiptError == .incompleteExactWindow)
+        #expect(error?.localizedDescription.contains("immutable captured bounds") == true)
+        #expect(synthetic.events.isEmpty)
+    }
+
+    @Test
+    @MainActor
     func `Background coordinate click preserves exact target window`() async throws {
         let synthetic = ClickRecordingSyntheticInputDriver()
         let identity = WindowMutationIdentity(
