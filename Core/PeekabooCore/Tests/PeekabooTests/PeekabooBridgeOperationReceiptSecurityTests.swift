@@ -203,6 +203,18 @@ struct PeekabooBridgeOperationReceiptSecurityTests {
             outcome: nil,
             startedAtUnixMilliseconds: now,
             completedAtUnixMilliseconds: now)
+        #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+            try PeekabooBridgeOperationReceiptSemantics.validateReceiptCarriage(
+                receiptPayload,
+                request: projectedRequest,
+                response: .ok)
+        }
+        #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+            try PeekabooBridgeOperationReceiptSemantics.validateReceiptCarriage(
+                receiptPayload,
+                request: projectedRequest,
+                response: .projectedAction(.init(response: .ok, outcome: nil)))
+        }
         let receipt = try authority.signAndArchive(receiptPayload)
         let bundle = try Self.bundle(
             authority: authority,

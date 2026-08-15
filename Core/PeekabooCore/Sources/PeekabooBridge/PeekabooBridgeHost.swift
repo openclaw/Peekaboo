@@ -41,7 +41,7 @@ struct PeekabooBridgeClientContext: @unchecked Sendable {
     let requestTimeoutSec: TimeInterval
     let connectionTracker: PeekabooBridgeConnectionTracker
     let requestTracker: PeekabooBridgeRequestTracker
-    let operationReceiptAuthority: PeekabooBridgeOperationReceiptAuthority
+    let operationReceiptAuthority: PeekabooBridgeOperationReceiptAuthority?
 }
 
 actor PeekabooBridgeConnectionTracker {
@@ -469,15 +469,19 @@ public final actor PeekabooBridgeHost {
             close(lease.fd)
             throw error
         }
-        let operationReceiptAuthority: PeekabooBridgeOperationReceiptAuthority
-        do {
-            operationReceiptAuthority = try PeekabooBridgeOperationReceiptAuthority(socketPath: path)
-            self.operationReceiptAuthority = operationReceiptAuthority
-        } catch {
-            close(self.listenFD)
-            self.listenFD = -1
-            self.releaseOwnership()
-            throw error
+        let operationReceiptAuthority: PeekabooBridgeOperationReceiptAuthority?
+        if self.server.supportedVersions.upperBound >= PeekabooBridgeConstants.attestedOperationReceiptVersion {
+            do {
+                operationReceiptAuthority = try PeekabooBridgeOperationReceiptAuthority(socketPath: path)
+                self.operationReceiptAuthority = operationReceiptAuthority
+            } catch {
+                close(self.listenFD)
+                self.listenFD = -1
+                self.releaseOwnership()
+                throw error
+            }
+        } else {
+            operationReceiptAuthority = nil
         }
 
         let fd = self.listenFD

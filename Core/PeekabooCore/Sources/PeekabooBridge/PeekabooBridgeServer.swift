@@ -39,7 +39,7 @@ public final class PeekabooBridgeServer {
     let hostKind: PeekabooBridgeHostKind
     let allowlistedTeams: Set<String>
     let allowlistedBundles: Set<String>
-    let supportedVersions: ClosedRange<PeekabooBridgeProtocolVersion>
+    nonisolated let supportedVersions: ClosedRange<PeekabooBridgeProtocolVersion>
     let allowedOperations: Set<PeekabooBridgeOperation>
     let hostIdentity: PeekabooBridgeHostIdentity?
     let hostCapabilities: Set<String>

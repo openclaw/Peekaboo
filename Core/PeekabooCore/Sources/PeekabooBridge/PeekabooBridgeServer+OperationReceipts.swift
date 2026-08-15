@@ -39,6 +39,8 @@ extension PeekabooBridgeServer {
             let code: PeekabooBridgeErrorCode = switch error {
             case .replayedRequest, .listenerInstanceMismatch, .clientIdentityMismatch:
                 .invalidRequest
+            case .replayFenceExhausted:
+                .serverBusy
             default:
                 .unauthorizedClient
             }
@@ -139,6 +141,10 @@ extension PeekabooBridgeServer {
             completedAtUnixMilliseconds: max(
                 context.startedAt,
                 PeekabooBridgeOperationReceiptCoding.unixMilliseconds()))
+        try PeekabooBridgeOperationReceiptSemantics.validateReceiptCarriage(
+            receiptPayload,
+            request: context.request,
+            response: response)
         let receipt: PeekabooBridgeOperationReceipt
         do {
             receipt = try context.authority.signAndArchive(receiptPayload)

@@ -246,7 +246,7 @@ enum PeekabooBridgeConnectedRequest {
         let peer: PeekabooBridgePeer
         let connection: PeekabooBridgeConnectionLiveness
         let requestTracker: PeekabooBridgeRequestTracker
-        let operationReceiptAuthority: PeekabooBridgeOperationReceiptAuthority
+        let operationReceiptAuthority: PeekabooBridgeOperationReceiptAuthority?
     }
 
     private enum Result: Sendable {

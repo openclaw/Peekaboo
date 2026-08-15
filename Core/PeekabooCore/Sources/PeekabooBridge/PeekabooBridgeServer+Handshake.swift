@@ -75,6 +75,17 @@ extension PeekabooBridgeServer {
         {
             enabledOps.remove(.focusWindow)
         }
+        if negotiated >= PeekabooBridgeConstants.attestedOperationReceiptVersion,
+           !advertisedOps.contains(.findApplication)
+        {
+            advertisedOps.removeAll { $0 == .activateApplication }
+            enabledOps.remove(.activateApplication)
+        }
+        if negotiated >= PeekabooBridgeConstants.attestedOperationReceiptVersion,
+           !enabledOps.contains(.findApplication)
+        {
+            enabledOps.remove(.activateApplication)
+        }
         var permissionTags = Dictionary(
             uniqueKeysWithValues: advertisedOps.map { op in
                 (op.rawValue, Array(op.requiredPermissions).sorted { $0.rawValue < $1.rawValue })

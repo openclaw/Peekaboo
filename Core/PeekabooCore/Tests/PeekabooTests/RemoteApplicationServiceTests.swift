@@ -150,6 +150,68 @@ struct RemoteApplicationServiceTests {
     }
 
     @Test
+    func `protocol 1 29 hides activation without application lookup`() async throws {
+        let socketPath = "/tmp/peekaboo-remote-app-activation-dependency-\(UUID().uuidString).sock"
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: StubServices(applications: StubApplicationService()),
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                allowedOperations: [.activateApplication])
+        }
+        let host = PeekabooBridgeHost(socketPath: socketPath, server: server, allowedTeamIDs: [])
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let handshake = try await PeekabooBridgeClient(socketPath: socketPath).handshake(client: .init(
+            bundleIdentifier: "dev.peekaboo.activation-dependency-tests",
+            teamIdentifier: nil,
+            processIdentifier: getpid()))
+        #expect(!handshake.supportedOperations.contains(.activateApplication))
+        #expect(handshake.enabledOperations?.contains(.activateApplication) == false)
+        await host.stop()
+    }
+
+    @Test
+    func `protocol 1 28 activation starts without receipt authority or lookup`() async throws {
+        let root = URL(fileURLWithPath: "/tmp/peekaboo-legacy-activation-\(UUID().uuidString)", isDirectory: true)
+        let socketPath = root.appendingPathComponent("bridge.sock").path
+        defer { try? FileManager.default.removeItem(at: root) }
+        let applications = await MainActor.run { StubApplicationService() }
+        let legacyVersion = PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: StubServices(applications: applications),
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                supportedVersions: legacyVersion...legacyVersion,
+                allowedOperations: [.activateApplication])
+        }
+        let host = PeekabooBridgeHost(socketPath: socketPath, server: server, allowedTeamIDs: [])
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let client = PeekabooBridgeClient(socketPath: socketPath)
+        let handshake = try await client.handshake(
+            client: .init(
+                bundleIdentifier: "dev.peekaboo.legacy-activation-tests",
+                teamIdentifier: nil,
+                processIdentifier: getpid()),
+            protocolVersion: legacyVersion)
+        #expect(handshake.supportedOperations.contains(.activateApplication))
+        #expect(handshake.operationAttestation == nil)
+        try await client.activateApplication(identifier: "StubApp")
+        let request = try #require(await MainActor.run { applications.activationRequests.first })
+        #expect(request.identifier == "StubApp")
+        #expect(request.expectedIdentity == nil)
+        let artifacts = try FileManager.default.contentsOfDirectory(atPath: root.path)
+        #expect(!artifacts.contains { $0.contains(".receipts") })
+        await host.stop()
+    }
+
+    @Test
     func `old bridge rejects background launch before transport`() async throws {
         let remote = await MainActor.run {
             RemoteApplicationService(

@@ -712,6 +712,7 @@ enum PeekabooBridgeOperationReceiptError: Error, LocalizedError, Equatable {
     case peerIdentityMismatch
     case clientIdentityMismatch
     case replayedRequest
+    case replayFenceExhausted
     case invalidOperationSignature
     case receiptMismatch(String)
     case unsafeArchive(String)
@@ -731,6 +732,8 @@ enum PeekabooBridgeOperationReceiptError: Error, LocalizedError, Equatable {
             "Bridge request client identity does not match the connected peer"
         case .replayedRequest:
             "Bridge operation request ID was already used by this listener"
+        case .replayFenceExhausted:
+            "Bridge listener replay fence reached its bounded capacity; restart the listener"
         case .invalidOperationSignature:
             "Bridge operation receipt signature is invalid"
         case let .receiptMismatch(field):
@@ -788,7 +791,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
         response: PeekabooBridgeResponse) throws
     {
         try payload.validateTargetState()
-        try self.validateResponseOutcomeConsistency(response)
+        try self.validateReceiptCarriage(payload, request: request, response: response)
         guard let failure = payload.targetAttributionFailure else {
             try self.validateSuccessfulTargetAttribution(
                 payload,
@@ -801,6 +804,84 @@ enum PeekabooBridgeOperationReceiptSemantics {
             failure: failure,
             request: request,
             response: response)
+    }
+
+    static func validateReceiptCarriage(
+        _ payload: PeekabooBridgeOperationReceiptPayload,
+        request: PeekabooBridgeRequest,
+        response: PeekabooBridgeResponse) throws
+    {
+        do {
+            try request.validateAttestedOperationCarriage()
+        } catch {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch("attested request carriage")
+        }
+        if request.mayMutateDesktop {
+            guard case .projectedAction = request,
+                  case let .projectedAction(projected) = response,
+                  let outcome = projected.outcome,
+                  outcome.route == .bridge,
+                  payload.outcome == outcome,
+                  self.response(projected.response, matches: request.operation)
+            else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch("mutating action outcome carriage")
+            }
+        }
+        try self.validateResponseOutcomeConsistency(response)
+    }
+
+    private static func response(
+        _ response: PeekabooBridgeResponse,
+        matches operation: PeekabooBridgeOperation) -> Bool
+    {
+        if case .error = response {
+            return true
+        }
+        switch operation {
+        case .browserExecute:
+            if case .browserToolResponse = response {
+                return true
+            }
+        case .detectElements, .inspectAccessibilityTree:
+            if case .elementDetection = response {
+                return true
+            }
+        case .desktopObservation:
+            if case .desktopObservation = response {
+                return true
+            }
+        case .typeActions, .targetedTypeActions, .exactWindowTargetedTypeActions:
+            if case .typeResult = response {
+                return true
+            }
+        case .setValue, .performAction:
+            if case .elementActionResult = response {
+                return true
+            }
+        case .launchApplication, .launchApplicationWithOptions, .relaunchApplicationWithOptions:
+            if case .application = response {
+                return true
+            }
+        case .quitApplication:
+            if case .bool = response {
+                return true
+            }
+        case .clickMenuBarItemNamed, .clickMenuBarItemIndex:
+            if case .clickResult = response {
+                return true
+            }
+        case .dialogClickButton, .backgroundDialogClickButton, .dialogEnterText, .dialogHandleFile,
+             .dialogDismiss, .exactDialogClickButton, .exactDialogDismiss, .exactDialogEnterText,
+             .exactDialogForceDismiss:
+            if case .dialogResult = response {
+                return true
+            }
+        default:
+            if case .ok = response {
+                return true
+            }
+        }
+        return false
     }
 
     private static func validateSuccessfulTargetAttribution(
@@ -962,14 +1043,24 @@ enum PeekabooBridgeOperationReceiptSemantics {
 
 /// Ephemeral signer, replay fence, and private durable archive for one listening socket lifetime.
 final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
+    private static let defaultMaximumClaimCount = 16384
+    private static let retainedListenerDirectoryCount = 16
+
     let attestation: PeekabooBridgeListenerAttestation
 
     private let privateKey: Curve25519.Signing.PrivateKey
     private let archiveDirectory: URL
+    private let maximumClaimCount: Int
     private let lock = NSLock()
     private var claimedRequestIDs: Set<UUID> = []
 
-    init(socketPath: String) throws {
+    init(
+        socketPath: String,
+        maximumClaimCount: Int = PeekabooBridgeOperationReceiptAuthority.defaultMaximumClaimCount) throws
+    {
+        guard maximumClaimCount > 0 else {
+            throw PeekabooBridgeOperationReceiptError.replayFenceExhausted
+        }
         let processIdentifier = getpid()
         guard let processStartIdentity = SystemIdentityResolver.processStartIdentity(processIdentifier),
               let codeSignatureHash = PeekabooBridgeCodeSignatureIdentity.codeSignatureHash(
@@ -980,12 +1071,16 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
         let privateKey = Curve25519.Signing.PrivateKey()
         let publicKey = privateKey.publicKey.rawRepresentation
         let listenerInstanceID = UUID()
-        let archiveRoot = URL(fileURLWithPath: socketPath + ".receipts", isDirectory: true)
+        let socketNamespace = PeekabooBridgeOperationReceiptCoding.sha256(Data(socketPath.utf8))
+        let archiveRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PeekabooOperationReceipts", isDirectory: true)
+            .appendingPathComponent(socketNamespace, isDirectory: true)
+        try PeekabooBridgePrivateReceiptArchive.prepareDirectory(archiveRoot)
         let archiveDirectory = archiveRoot.appendingPathComponent(
             listenerInstanceID.uuidString.lowercased(),
             isDirectory: true)
-        try PeekabooBridgePrivateReceiptArchive.prepareDirectory(archiveRoot)
         try PeekabooBridgePrivateReceiptArchive.prepareDirectory(archiveDirectory)
+        try Self.pruneOldListenerDirectories(in: archiveRoot, excluding: archiveDirectory)
 
         let unsigned = PeekabooBridgeListenerAttestation.UnsignedPayload(
             schemaVersion: 1,
@@ -1011,6 +1106,7 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
             to: archiveDirectory.appendingPathComponent("attestation.json"))
         self.privateKey = privateKey
         self.archiveDirectory = archiveDirectory
+        self.maximumClaimCount = maximumClaimCount
         self.attestation = attestation
     }
 
@@ -1036,6 +1132,10 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
         }
 
         self.lock.lock()
+        guard self.claimedRequestIDs.count < self.maximumClaimCount else {
+            self.lock.unlock()
+            throw PeekabooBridgeOperationReceiptError.replayFenceExhausted
+        }
         let inserted = self.claimedRequestIDs.insert(payload.requestID).inserted
         self.lock.unlock()
         guard inserted else {
@@ -1066,6 +1166,31 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
             isDirectory: false)
         try PeekabooBridgePrivateReceiptArchive.writeAtomically(data, to: destination)
         return receipt
+    }
+
+    private static func pruneOldListenerDirectories(in archiveRoot: URL, excluding current: URL) throws {
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey, .isDirectoryKey, .isSymbolicLinkKey]
+        let candidates = try FileManager.default.contentsOfDirectory(
+            at: archiveRoot,
+            includingPropertiesForKeys: Array(keys))
+            .filter { url in
+                let values = try? url.resourceValues(forKeys: keys)
+                var info = stat()
+                return url.standardizedFileURL != current.standardizedFileURL &&
+                    UUID(uuidString: url.lastPathComponent) != nil &&
+                    values?.isDirectory == true && values?.isSymbolicLink != true
+                    && lstat(url.path, &info) == 0
+                    && info.st_uid == geteuid()
+                    && info.st_mode & 0o077 == 0
+            }
+            .sorted { lhs, rhs in
+                let left = try? lhs.resourceValues(forKeys: keys).contentModificationDate
+                let right = try? rhs.resourceValues(forKeys: keys).contentModificationDate
+                return (left ?? .distantPast) > (right ?? .distantPast)
+            }
+        for stale in candidates.dropFirst(Self.retainedListenerDirectoryCount - 1) {
+            try FileManager.default.removeItem(at: stale)
+        }
     }
 }
 
@@ -1289,7 +1414,9 @@ enum PeekabooBridgeOperationTargetAttribution {
         handledTarget: DesktopTargetIdentity?) -> [DesktopTargetIdentity.Evidence]
     {
         var evidence = request.operationTargetEvidence
-        if let handledTarget {
+        if let handledTarget,
+           request.requiresResolvedOperationTarget || !request.operationTargetEvidence.isEmpty
+        {
             evidence.append(.init(target: handledTarget))
         }
         evidence.append(contentsOf: response.operationTargetEvidence(for: request.operation))

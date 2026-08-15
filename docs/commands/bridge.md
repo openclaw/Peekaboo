@@ -33,8 +33,9 @@ read_when:
 - Protocol 1.29 binds every post-handshake call to one ephemeral listener identity and returns a signed operation
   receipt. Connected peers are bound to the kernel's Unix-socket audit token, including PID version and effective
   UID; Team ID, bundle ID, and CDHash are resolved from that same audit token rather than a reusable numeric PID.
-  The host keeps privacy-minimized receipts under `<socket>.receipts/<listener-id>/` with mode `0600` in
-  owner-only directories. For a private certification run, setting `PEEKABOO_OPERATION_RECEIPT_DIRECTORY` exports
+  The host keeps a bounded recent archive under a private per-user temporary namespace keyed by the socket path,
+  with listener UUID directories and files mode `0600`; old listener archives are pruned and a bounded replay fence requires listener rotation before
+  it can exhaust memory or disk. For a private certification run, setting `PEEKABOO_OPERATION_RECEIPT_DIRECTORY` exports
   one atomic verification bundle per successfully routed protocol 1.29 Bridge request. Local execution and older
   Bridge protocols do not emit a bundle, and certification must fail when an expected bundle is missing. The opt-in
   bundle includes the exact canonical request and response bytes so an independent validator can recompute both

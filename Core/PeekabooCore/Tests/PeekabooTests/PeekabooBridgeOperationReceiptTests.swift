@@ -10,6 +10,32 @@ import Testing
 @Suite(.serialized)
 struct PeekabooBridgeOperationReceiptTests {
     @Test
+    func `listener archive does not depend on a predictable shared root`() throws {
+        let root = URL(fileURLWithPath: "/tmp/pbor-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let socketPath = root.appendingPathComponent("bridge.sock").path
+        let predictable = URL(fileURLWithPath: socketPath + ".receipts", isDirectory: true)
+        try FileManager.default.createDirectory(at: predictable, withIntermediateDirectories: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: predictable.path)
+
+        let authority = try PeekabooBridgeOperationReceiptAuthority(socketPath: socketPath)
+        #expect(authority.attestation.receiptArchiveDirectory != predictable.path)
+        #expect(authority.attestation.receiptArchiveDirectory.contains("PeekabooOperationReceipts"))
+        Self.expectPrivateDirectory(authority.attestation.receiptArchiveDirectory)
+
+        var latest = authority
+        for _ in 0..<18 {
+            latest = try PeekabooBridgeOperationReceiptAuthority(socketPath: socketPath)
+        }
+        let archiveRoot = URL(fileURLWithPath: latest.attestation.receiptArchiveDirectory)
+            .deletingLastPathComponent()
+        let retained = try FileManager.default.contentsOfDirectory(atPath: archiveRoot.path)
+            .filter { UUID(uuidString: $0) != nil }
+        #expect(retained.count == 16)
+    }
+
+    @Test
     func `concurrent private directory creator revalidates the winning entry`() throws {
         let root = URL(fileURLWithPath: "/tmp/pbor-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -468,6 +494,23 @@ struct PeekabooBridgeOperationReceiptTests {
         #expect(throws: PeekabooBridgeErrorEnvelope.self) {
             _ = try nested.validatedRequest()
         }
+
+        let bounded = try PeekabooBridgeOperationReceiptAuthority(
+            socketPath: root.appendingPathComponent("bounded.sock").path,
+            maximumClaimCount: 1)
+        let boundedPayload = PeekabooBridgeAttestedOperationRequest(
+            requestID: UUID(),
+            expectedListenerInstanceID: bounded.attestation.listenerInstanceID,
+            client: payload.client,
+            request: .permissionsStatus)
+        try bounded.claim(boundedPayload, peer: peer)
+        #expect(throws: PeekabooBridgeOperationReceiptError.replayFenceExhausted) {
+            try bounded.claim(PeekabooBridgeAttestedOperationRequest(
+                requestID: UUID(),
+                expectedListenerInstanceID: bounded.attestation.listenerInstanceID,
+                client: payload.client,
+                request: .permissionsStatus), peer: peer)
+        }
     }
 
     @Test
@@ -545,7 +588,7 @@ struct PeekabooBridgeOperationReceiptTests {
             operation: .permissionsStatus,
             requestSHA256: PeekabooBridgeOperationReceiptCoding.sha256(request),
             responseSHA256: PeekabooBridgeOperationReceiptCoding.sha256(response),
-            target: .window(largeIdentity),
+            target: .global,
             outcome: nil,
             startedAtUnixMilliseconds: now,
             completedAtUnixMilliseconds: now)
@@ -560,6 +603,32 @@ struct PeekabooBridgeOperationReceiptTests {
             canonicalResponse: PeekabooBridgeOperationReceiptCoding.canonicalData(response))
         try bundle.validate()
 
+        let forgedPayload = try PeekabooBridgeOperationReceiptPayload(
+            requestID: UUID(),
+            listenerInstanceID: authority.attestation.listenerInstanceID,
+            listenerPublicKeySHA256: PeekabooBridgeOperationReceiptCoding.sha256(
+                authority.attestation.publicKey),
+            host: authority.attestation.host,
+            client: authority.attestation.host,
+            operation: .permissionsStatus,
+            requestSHA256: PeekabooBridgeOperationReceiptCoding.sha256(request),
+            responseSHA256: PeekabooBridgeOperationReceiptCoding.sha256(response),
+            target: .window(largeIdentity),
+            outcome: nil,
+            startedAtUnixMilliseconds: now,
+            completedAtUnixMilliseconds: now)
+        let forgedReceipt = try authority.signAndArchive(forgedPayload)
+        let forgedBundle = try PeekabooBridgeOperationReceiptBundle(
+            operationAttestation: authority.attestation,
+            receipt: forgedReceipt,
+            canonicalListenerAttestationPayload: bundle.canonicalListenerAttestationPayload,
+            canonicalReceiptPayload: PeekabooBridgeOperationReceiptCoding.canonicalData(forgedReceipt.payload),
+            canonicalRequest: bundle.canonicalRequest,
+            canonicalResponse: bundle.canonicalResponse)
+        #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+            try forgedBundle.validate()
+        }
+
         let corrupted = PeekabooBridgeOperationReceiptBundle(
             operationAttestation: authority.attestation,
             receipt: receipt,
@@ -571,7 +640,7 @@ struct PeekabooBridgeOperationReceiptTests {
             try corrupted.validate()
         }
 
-        let encodedTarget = try PeekabooBridgeOperationReceiptCoding.canonicalData(payload.target)
+        let encodedTarget = try PeekabooBridgeOperationReceiptCoding.canonicalData(forgedPayload.target)
         let targetObject = try #require(JSONSerialization.jsonObject(with: encodedTarget) as? [String: Any])
         #expect(targetObject["processStartIdentity"] as? String == "9007199254740993")
         #expect(try JSONDecoder.peekabooBridgeDecoder().decode(
