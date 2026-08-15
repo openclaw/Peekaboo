@@ -2,6 +2,7 @@ import { canonicalBytes } from '../validate-attested-operation-receipts.mjs';
 
 export const adapterAPIVersion = 1;
 export const adapterID = 'canonical-attested-operation-receipts-v1';
+export const embedsAttestation = false;
 
 function decodeSignature(value, context) {
   if (!value || typeof value !== 'object' || Array.isArray(value)

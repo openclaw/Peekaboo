@@ -38,8 +38,9 @@ function exactKeys(value, expected) {
 function canonicalValue(value) {
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
   if (typeof value === 'number') {
-    if (!Number.isFinite(value) || Object.is(value, -0)) {
-      throw new TypeError('canonical JSON only accepts finite non-negative-zero numbers');
+    if (!Number.isFinite(value) || Object.is(value, -0)
+        || (Number.isInteger(value) && !Number.isSafeInteger(value))) {
+      throw new TypeError('canonical JSON only accepts finite, lossless, non-negative-zero numbers');
     }
     return value;
   }
@@ -255,6 +256,19 @@ function validateAttestation(attestation, contract, failures) {
   }
 }
 
+function validateSocketEvidence(evidence, contract, failures) {
+  if (!exactKeys(evidence, ['path', 'device', 'inode', 'isSocket', 'isSymbolicLink'])
+      || evidence.path !== contract.socketEndpoint.path
+      || evidence.device !== contract.socketEndpoint.device
+      || evidence.inode !== contract.socketEndpoint.inode
+      || evidence.isSocket !== true || evidence.isSymbolicLink !== false) {
+    failures.push(failure(
+      'socket_endpoint',
+      'Live socket evidence does not equal the run-pinned path/device/inode',
+    ));
+  }
+}
+
 function validateReceipt(receipt, expected, contract, rawKey, failures) {
   const value = receipt?.normalized;
   const requestID = value?.requestID ?? expected?.requestID ?? null;
@@ -392,12 +406,14 @@ export async function validateAttestedOperationReceipts({
   receiptDirectory,
   adapter,
   adapterSHA256,
+  socketEvidence,
 }) {
   const failures = validateContract(contract);
   if (failures.some((entry) => entry.rule === 'contract_schema')) {
     return { success: false, adapter: null, receipts: [], failures };
   }
   if (!adapter || adapter.adapterAPIVersion !== 1 || typeof adapter.adapterID !== 'string'
+      || typeof adapter.embedsAttestation !== 'boolean'
       || typeof adapter.decodeAttestation !== 'function' || typeof adapter.decodeReceipt !== 'function') {
     failures.push(failure('adapter_contract', 'Receipt adapter does not implement API version 1'));
     return { success: false, adapter: null, receipts: [], failures };
@@ -412,6 +428,7 @@ export async function validateAttestedOperationReceipts({
       failures,
     };
   }
+  validateSocketEvidence(socketEvidence, contract, failures);
 
   let attestation;
   try {
@@ -435,6 +452,13 @@ export async function validateAttestedOperationReceipts({
     try {
       const document = loadJSON(file.bytes, file.name);
       decoded = await adapter.decodeReceipt(document, { fileName: file.name, fileSHA256: file.sha256 });
+      if (adapter.embedsAttestation) {
+        if (!decoded?.attestation) {
+          failures.push(failure('listener_decode', 'Receipt bundle omitted its same-connection attestation'));
+        } else {
+          validateAttestation(decoded.attestation, contract, failures);
+        }
+      }
       const requestID = decoded?.normalized?.requestID;
       if (`${requestID}.json` !== file.name) {
         failures.push(failure('archive_filename', 'Receipt filename does not equal its signed request ID', requestID ?? null));
@@ -515,12 +539,21 @@ async function runCLI() {
   const adapterURL = pathToFileURL(path.resolve(args.adapter));
   const adapterSHA256 = sha256(fs.readFileSync(args.adapter));
   const adapter = await import(`${adapterURL.href}?sha256=${adapterSHA256}`);
+  const socketStat = fs.lstatSync(contract.socketEndpoint.path, { bigint: true });
+  const socketEvidence = {
+    path: contract.socketEndpoint.path,
+    device: String(socketStat.dev),
+    inode: String(socketStat.ino),
+    isSocket: socketStat.isSocket(),
+    isSymbolicLink: socketStat.isSymbolicLink(),
+  };
   const result = await validateAttestedOperationReceipts({
     contract,
     attestationDocument,
     receiptDirectory,
     adapter,
     adapterSHA256,
+    socketEvidence,
   });
   const output = `${JSON.stringify(result, null, 2)}\n`;
   if (args.output) fs.writeFileSync(args.output, output, { mode: 0o600 });

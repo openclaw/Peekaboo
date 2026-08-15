@@ -2,6 +2,7 @@ import { canonicalBytes } from '../validate-attested-operation-receipts.mjs';
 
 export const adapterAPIVersion = 1;
 export const adapterID = 'peekaboo-bridge-operation-receipt-bundle-1.29';
+export const embedsAttestation = true;
 
 function object(value, context) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -24,9 +25,13 @@ function uuid(value, context) {
 
 function processIdentity(value, context) {
   const identity = object(value, context);
+  if (typeof identity.processStartIdentity !== 'string'
+      || !/^[1-9][0-9]*$/.test(identity.processStartIdentity)) {
+    throw new Error(`${context} start identity is not a canonical positive decimal string`);
+  }
   return {
     pid: identity.processIdentifier,
-    startIdentity: String(identity.processStartIdentity),
+    startIdentity: identity.processStartIdentity,
     codeSignatureHash: identity.codeSignatureHash,
   };
 }
@@ -77,21 +82,31 @@ function normalizeBounds(value) {
 
 function normalizeTarget(value) {
   const target = object(value, 'operation target');
-  if (target.window) {
-    const window = object(object(target.window, 'window target')._0, 'window receipt');
+  if (target.kind === 'window') {
+    if (typeof target.processStartIdentity !== 'string'
+        || !/^[1-9][0-9]*$/.test(target.processStartIdentity)) {
+      throw new Error('window target start identity is not a canonical positive decimal string');
+    }
     return {
       scope: 'window',
-      pid: window.ownerProcessIdentifier,
-      processStartIdentity: String(window.ownerProcessStartIdentity),
-      windowID: window.windowID,
-      bounds: normalizeBounds(window.capturedBounds),
+      pid: target.processIdentifier,
+      processStartIdentity: target.processStartIdentity,
+      windowID: target.windowID,
+      bounds: normalizeBounds(target.capturedBounds),
     };
   }
-  if (target.process) {
-    const process = processIdentity(object(target.process, 'process target')._0, 'process receipt');
-    return { scope: 'process', pid: process.pid, processStartIdentity: process.startIdentity };
+  if (target.kind === 'process') {
+    if (typeof target.processStartIdentity !== 'string'
+        || !/^[1-9][0-9]*$/.test(target.processStartIdentity)) {
+      throw new Error('process target start identity is not a canonical positive decimal string');
+    }
+    return {
+      scope: 'process',
+      pid: target.processIdentifier,
+      processStartIdentity: target.processStartIdentity,
+    };
   }
-  if (target.global) return { scope: 'global' };
+  if (target.kind === 'global') return { scope: 'global' };
   throw new Error('operation target uses an unknown enum case');
 }
 
@@ -151,6 +166,7 @@ export function decodeReceipt(document) {
   const receipt = object(bundle.receipt, 'signed operation receipt');
   const payload = object(receipt.payload, 'signed operation payload');
   return {
+    attestation: decodeAttestation(bundle),
     normalized: normalizeReceiptPayload(payload),
     signedBytes: canonicalBytes(payload),
     signature: signature(receipt.signature, 'operation signature'),

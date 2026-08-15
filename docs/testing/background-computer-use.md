@@ -149,8 +149,9 @@ The validator verifies
 the listener self-signature and every Ed25519 receipt, requires protocol 1.29 or newer, rejects global/process-only or
 cross-target routing, and requires every mutation to carry a retry-unsafe background outcome. A missing, duplicate,
 undecodable, or unsigned response is indeterminate and fails certification; it is never converted into a replayable
-operation. The export directory must be a non-symlink private directory containing exactly one stable private file per
-expected request. The Bridge's signed archive remains bound to `<socket>.receipts/<listener-instance>`.
+operation. At consumption time the socket must still be a non-symlink socket at the run-pinned device/inode. The export
+directory must be a non-symlink private directory containing exactly one stable private file per expected request. The
+Bridge's signed archive remains bound to `<socket>.receipts/<listener-instance>`.
 
 `scripts/receipt-adapters/peekaboo-bridge-operation-receipt-bundle-1-29.mjs` decodes the real opt-in verification
 bundle. Every bundle contains the exact same-connection listener attestation, signed receipt, and canonical request and

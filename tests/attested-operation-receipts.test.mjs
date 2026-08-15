@@ -133,6 +133,13 @@ function makeFixture() {
       outcome: request.outcome,
     })),
   };
+  const socketEvidence = {
+    path: socketPath,
+    device: contract.socketEndpoint.device,
+    inode: contract.socketEndpoint.inode,
+    isSocket: true,
+    isSymbolicLink: false,
+  };
   const attestationPayload = {
     schemaVersion: 1,
     listenerInstanceID,
@@ -185,6 +192,7 @@ function makeFixture() {
     root,
     receiptDirectory,
     contract,
+    socketEvidence,
     attestationDocument,
     receiptDocuments,
     cleanup() { fs.rmSync(root, { recursive: true, force: true }); },
@@ -202,7 +210,7 @@ function convertToBridgeBundles(fixture) {
     publicKey: fixture.contract.listener.signingPublicKeyBase64,
     host: {
       processIdentifier: fixture.contract.listener.bridgePID,
-      processStartIdentity: Number(fixture.contract.listener.bridgeStartIdentity),
+      processStartIdentity: fixture.contract.listener.bridgeStartIdentity,
       codeSignatureHash: fixture.contract.listener.bridgeCodeSignatureHash,
     },
     createdAtUnixMilliseconds: fixture.contract.listener.createdAtMilliseconds,
@@ -215,18 +223,15 @@ function convertToBridgeBundles(fixture) {
   fixture.receiptDocuments = fixture.receiptDocuments.map((document, index) => {
     const normalized = document.payload;
     const targetReceipt = {
-      window: {
-        _0: {
-          capturedBounds: [
-            [normalized.target.bounds.x, normalized.target.bounds.y],
-            [normalized.target.bounds.width, normalized.target.bounds.height],
-          ],
-          isMinimized: false,
-          ownerProcessIdentifier: normalized.target.pid,
-          ownerProcessStartIdentity: Number(normalized.target.processStartIdentity),
-          windowID: normalized.target.windowID,
-        },
-      },
+      kind: 'window',
+      processIdentifier: normalized.target.pid,
+      processStartIdentity: normalized.target.processStartIdentity,
+      windowID: normalized.target.windowID,
+      capturedBounds: [
+        [normalized.target.bounds.x, normalized.target.bounds.y],
+        [normalized.target.bounds.width, normalized.target.bounds.height],
+      ],
+      isMinimized: false,
     };
     const outcome = normalized.outcome === null ? null : {
       state: 'confirmed_change',
@@ -250,12 +255,12 @@ function convertToBridgeBundles(fixture) {
       listenerPublicKeySHA256: normalized.listenerKeySHA256,
       host: {
         processIdentifier: normalized.bridgePID,
-        processStartIdentity: Number(normalized.bridgeStartIdentity),
+        processStartIdentity: normalized.bridgeStartIdentity,
         codeSignatureHash: normalized.bridgeCodeSignatureHash,
       },
       client: {
         processIdentifier: normalized.clientPID,
-        processStartIdentity: Number(normalized.clientStartIdentity),
+        processStartIdentity: normalized.clientStartIdentity,
         codeSignatureHash: normalized.clientCodeSignatureHash,
       },
       operation: normalized.operation,
@@ -298,6 +303,7 @@ async function validate(
     receiptDirectory: fixture.receiptDirectory,
     adapter: selectedAdapter,
     adapterSHA256: sha256(fs.readFileSync(selectedAdapterPath)),
+    socketEvidence: fixture.socketEvidence,
   });
 }
 
@@ -342,6 +348,63 @@ test('protocol 1.29 adapter verifies the real same-connection bundle shape', asy
   fs.writeFileSync(receiptPath, `${JSON.stringify(tampered.receiptDocuments[0])}\n`, { mode: 0o600 });
   fs.chmodSync(receiptPath, 0o600);
   assert.ok(rules(await validate(tampered, bridgeBundleAdapter, bridgeBundleAdapterPath)).has('response_digest'));
+
+  const largeIdentity = convertToBridgeBundles(makeFixture());
+  t.after(largeIdentity.cleanup);
+  largeIdentity.contract.expectedOperations[0].client.startIdentity = '9007199254740993';
+  largeIdentity.receiptDocuments[0].receipt.payload.client.processStartIdentity = '9007199254740993';
+  largeIdentity.receiptDocuments[0].receipt.signature =
+    signature(largeIdentity.receiptDocuments[0].receipt.payload).value;
+  const largeIdentityPath = path.join(
+    largeIdentity.receiptDirectory,
+    `${largeIdentity.contract.expectedOperations[0].requestID}.json`,
+  );
+  fs.writeFileSync(
+    largeIdentityPath,
+    `${JSON.stringify(largeIdentity.receiptDocuments[0])}\n`,
+    { mode: 0o600 },
+  );
+  fs.chmodSync(largeIdentityPath, 0o600);
+  assert.equal(
+    (await validate(largeIdentity, bridgeBundleAdapter, bridgeBundleAdapterPath)).success,
+    true,
+  );
+
+  const mixedListener = convertToBridgeBundles(makeFixture());
+  t.after(mixedListener.cleanup);
+  mixedListener.receiptDocuments[1].operationAttestation.listenerInstanceID =
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const mixedListenerPath = path.join(
+    mixedListener.receiptDirectory,
+    `${mixedListener.contract.expectedOperations[1].requestID}.json`,
+  );
+  fs.writeFileSync(
+    mixedListenerPath,
+    `${JSON.stringify(mixedListener.receiptDocuments[1])}\n`,
+    { mode: 0o600 },
+  );
+  fs.chmodSync(mixedListenerPath, 0o600);
+  const mixedResult = await validate(mixedListener, bridgeBundleAdapter, bridgeBundleAdapterPath);
+  assert.ok(rules(mixedResult).has('listener_attestation'));
+  assert.ok(rules(mixedResult).has('listener_signature'));
+
+  const globalTarget = convertToBridgeBundles(makeFixture());
+  t.after(globalTarget.cleanup);
+  globalTarget.receiptDocuments[0].receipt.payload.target = { kind: 'global' };
+  globalTarget.receiptDocuments[0].receipt.signature =
+    signature(globalTarget.receiptDocuments[0].receipt.payload).value;
+  const globalTargetPath = path.join(
+    globalTarget.receiptDirectory,
+    `${globalTarget.contract.expectedOperations[0].requestID}.json`,
+  );
+  fs.writeFileSync(
+    globalTargetPath,
+    `${JSON.stringify(globalTarget.receiptDocuments[0])}\n`,
+    { mode: 0o600 },
+  );
+  fs.chmodSync(globalTargetPath, 0o600);
+  assert.ok(rules(await validate(globalTarget, bridgeBundleAdapter, bridgeBundleAdapterPath))
+    .has('receipt_schema'));
 });
 
 test('listener identity and self-signature are pinned', async (t) => {
@@ -476,12 +539,21 @@ test('contract pins protocol socket listener archive and distinct targets', asyn
   assert.ok(rules(result).has('contract_protocol'));
   assert.ok(rules(result).has('contract_archive_route'));
   assert.ok(rules(result).has('contract_target_isolation'));
+
+  const socketFixture = makeFixture();
+  t.after(socketFixture.cleanup);
+  socketFixture.socketEvidence.inode = '99124';
+  assert.ok(rules(await validate(socketFixture)).has('socket_endpoint'));
 });
 
 test('adapter boundary is explicit and versioned', async (t) => {
   const fixture = makeFixture();
   t.after(fixture.cleanup);
-  const result = await validate(fixture, { adapterAPIVersion: 2, adapterID: 'future' });
+  const result = await validate(fixture, {
+    adapterAPIVersion: 2,
+    adapterID: 'future',
+    embedsAttestation: false,
+  });
   assert.equal(result.success, false);
   assert.ok(rules(result).has('adapter_contract'));
 
