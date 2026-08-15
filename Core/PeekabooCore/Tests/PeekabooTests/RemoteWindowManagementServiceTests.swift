@@ -309,6 +309,53 @@ struct RemoteWindowManagementServiceTests {
     }
 
     @Test
+    func `protocol 1 29 focus preserves structured post dispatch failure`() async throws {
+        let socketPath = "/tmp/peekaboo-remote-window-focus-failure-\(UUID().uuidString).sock"
+        let focusFailure = DesktopActionFailure.indeterminate(
+            route: .local,
+            delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: "Focus completion is uncertain",
+            hint: "Observe the intended window before retrying.")
+        let windows = RemoteWindowMutationFixture(
+            identity: self.identity,
+            focusFailure: focusFailure)
+        let server = PeekabooBridgeServer(
+            services: StubServices(windows: windows),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [.listWindows, .focusWindow],
+            windowOwnerProcessIdentifierProvider: { _ in 420 },
+            windowBoundsProvider: { _ in CGRect(x: 0, y: 0, width: 100, height: 100) },
+            processStartIdentityProvider: { _ in 9001 })
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
+        do {
+            try await client.focusWindow(target: .windowId(self.identity.windowID))
+            Issue.record("Expected focus failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.route == .bridge)
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.dispatchState.mutationDispatched)
+            #expect(failure.outcome.retrySafety == .unsafe)
+        }
+        let receipt = try #require(await client.lastOperationReceipt())
+        #expect(receipt.payload.outcome?.state == .indeterminate)
+        #expect(receipt.payload.outcome?.retrySafe == false)
+        #expect(receipt.payload.target == .window(self.identity))
+        await host.stop()
+    }
+
+    @Test
     func `queued legacy overload rejects a recycled process generation before dispatch`() async throws {
         let socketPath = "/tmp/peekaboo-remote-window-reuse-\(UUID().uuidString).sock"
         let identityState = RemoteWindowIdentityState(ownerPID: 420, processStartIdentity: 9001)
@@ -410,6 +457,7 @@ private struct RecordedRemoteWindowMutation: Equatable {
 private actor RemoteWindowMutationFixture: WindowManagementActionResultProviding {
     let identity: WindowMutationIdentity
     private var actionOutcome: DesktopActionOutcome?
+    private let focusFailure: DesktopActionFailure?
     private let blocksFirstLegacyMove: Bool
     private var didBlockLegacyMove = false
     private var legacyMutationStarted = false
@@ -423,11 +471,13 @@ private actor RemoteWindowMutationFixture: WindowManagementActionResultProviding
     init(
         identity: WindowMutationIdentity,
         blocksFirstLegacyMove: Bool = false,
-        actionOutcome: DesktopActionOutcome? = nil)
+        actionOutcome: DesktopActionOutcome? = nil,
+        focusFailure: DesktopActionFailure? = nil)
     {
         self.identity = identity
         self.blocksFirstLegacyMove = blocksFirstLegacyMove
         self.actionOutcome = actionOutcome
+        self.focusFailure = focusFailure
     }
 
     func setActionOutcome(_ outcome: DesktopActionOutcome?) {
@@ -590,6 +640,9 @@ private actor RemoteWindowMutationFixture: WindowManagementActionResultProviding
 
     func focusWindow(target: WindowTarget) async throws {
         self.focusedTargets.append(target.description)
+        if let focusFailure {
+            throw focusFailure
+        }
     }
 
     func listWindows(target _: WindowTarget) async throws -> [ServiceWindowInfo] {

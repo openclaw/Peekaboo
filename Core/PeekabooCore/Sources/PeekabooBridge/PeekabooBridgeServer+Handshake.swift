@@ -70,6 +70,11 @@ extension PeekabooBridgeServer {
             advertisedOps.removeAll { $0 == .focusWindow }
             enabledOps.remove(.focusWindow)
         }
+        if negotiated >= PeekabooBridgeConstants.attestedOperationReceiptVersion,
+           !enabledOps.contains(.listWindows)
+        {
+            enabledOps.remove(.focusWindow)
+        }
         var permissionTags = Dictionary(
             uniqueKeysWithValues: advertisedOps.map { op in
                 (op.rawValue, Array(op.requiredPermissions).sorted { $0.rawValue < $1.rawValue })

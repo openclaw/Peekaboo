@@ -452,7 +452,14 @@ public struct PeekabooBridgeAttestedOperationRequest: Codable, Sendable {
     }
 
     func validatedRequest() throws -> PeekabooBridgeRequest {
-        switch self.request {
+        try self.request.validateAttestedOperationCarriage()
+        return self.request
+    }
+}
+
+extension PeekabooBridgeRequest {
+    fileprivate func validateAttestedOperationCarriage() throws {
+        switch self {
         case .attestedOperation:
             throw PeekabooBridgeErrorEnvelope(
                 code: .invalidRequest,
@@ -468,10 +475,13 @@ public struct PeekabooBridgeAttestedOperationRequest: Codable, Sendable {
                     code: .invalidRequest,
                     message: "Attested Bridge operation requests cannot be nested inside action carriage")
             }
+        case _ where self.mayMutateDesktop:
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Mutating attested Bridge operations require action outcome carriage")
         default:
             break
         }
-        return self.request
     }
 }
 
@@ -653,6 +663,7 @@ public struct PeekabooBridgeOperationReceiptBundle: Codable, Equatable, Sendable
             response = try JSONDecoder.peekabooBridgeDecoder().decode(
                 PeekabooBridgeResponse.self,
                 from: self.canonicalResponse)
+            try request.validateAttestedOperationCarriage()
         } catch {
             throw PeekabooBridgeOperationReceiptError.receiptMismatch("the exported request or response bytes")
         }
@@ -1268,6 +1279,7 @@ enum PeekabooBridgeOperationTargetAttribution {
         if request.requiresResolvedOperationTarget, identity == nil {
             throw DesktopTargetIdentityError.incompleteExactWindow
         }
+        try request.validateResolvedOperationTarget(identity)
         return identity
     }
 
@@ -1312,11 +1324,42 @@ extension PeekabooBridgeRequest {
         case let .projectedAction(payload): payload.request.requiresResolvedOperationTarget
         case .focusWindow, .targetedScroll, .setValue, .performAction:
             true
+        case let .desktopObservation(payload):
+            payload.target.requiresExactWindowReceipt
         case let .click(payload):
             payload.target.requiresElementResolution
         case let .type(payload):
             payload.target?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         default:
+            false
+        }
+    }
+
+    fileprivate func validateResolvedOperationTarget(_ identity: DesktopTargetIdentity?) throws {
+        switch self {
+        case let .attestedOperation(payload):
+            try payload.request.validateResolvedOperationTarget(identity)
+        case let .projectedAction(payload):
+            try payload.request.validateResolvedOperationTarget(identity)
+        case let .desktopObservation(payload):
+            guard case let .windowID(expectedWindowID) = payload.target else { return }
+            guard let exactWindow = identity?.exactWindow else {
+                throw DesktopTargetIdentityError.incompleteExactWindow
+            }
+            guard exactWindow.identity.windowID == Int(expectedWindowID) else {
+                throw DesktopTargetIdentityError.contradictoryWindowIdentifier
+            }
+        default:
+            return
+        }
+    }
+}
+
+extension DesktopObservationTargetRequest {
+    fileprivate var requiresExactWindowReceipt: Bool {
+        if case .windowID = self {
+            true
+        } else {
             false
         }
     }

@@ -673,10 +673,25 @@ struct PeekabooBridgeOperationReceiptTests {
             target: .init(kind: .appWindow, app: app),
             capture: capture,
             elements: nil)
-        #expect(try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
-            request: request,
-            response: .desktopObservation(processOnly)).target == .process(
-            .init(processIdentifier: 42, processStartIdentity: identity.ownerProcessStartIdentity)))
+        #expect(throws: DesktopTargetIdentityError.incompleteExactWindow) {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+                request: request,
+                response: .desktopObservation(processOnly))
+        }
+        let differentIdentity = WindowMutationIdentity(
+            windowID: 74,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: identity.ownerProcessStartIdentity,
+            capturedBounds: bounds)
+        let differentTarget = try DesktopTargetIdentity(exactWindow: .init(
+            identity: differentIdentity,
+            bounds: bounds))
+        #expect(throws: DesktopTargetIdentityError.contradictoryWindowIdentifier) {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+                request: request,
+                response: .desktopObservation(processOnly),
+                handledTarget: differentTarget)
+        }
 
         let incompleteIdentity = WindowMutationIdentity(
             windowID: 73,

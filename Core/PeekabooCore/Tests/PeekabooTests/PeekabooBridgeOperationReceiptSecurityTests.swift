@@ -163,6 +163,58 @@ struct PeekabooBridgeOperationReceiptSecurityTests {
     }
 
     @Test
+    func `raw attested mutations require projected outcome carriage`() throws {
+        let root = URL(fileURLWithPath: "/tmp/pbor-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let authority = try PeekabooBridgeOperationReceiptAuthority(
+            socketPath: root.appendingPathComponent("authority.sock").path)
+        let rawRequest = PeekabooBridgeRequest.requestPostEventPermission
+        let rawPayload = PeekabooBridgeAttestedOperationRequest(
+            requestID: UUID(),
+            expectedListenerInstanceID: authority.attestation.listenerInstanceID,
+            client: authority.attestation.host,
+            request: rawRequest)
+
+        #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try rawPayload.validatedRequest()
+        }
+
+        let projectedRequest = PeekabooBridgeRequest.projectedAction(.init(request: rawRequest))
+        let projectedPayload = PeekabooBridgeAttestedOperationRequest(
+            requestID: UUID(),
+            expectedListenerInstanceID: authority.attestation.listenerInstanceID,
+            client: authority.attestation.host,
+            request: projectedRequest)
+        #expect(try projectedPayload.validatedRequest().operation == .requestPostEventPermission)
+
+        let response = PeekabooBridgeResponse.ok
+        let now = PeekabooBridgeOperationReceiptCoding.unixMilliseconds()
+        let receiptPayload = try PeekabooBridgeOperationReceiptPayload(
+            requestID: rawPayload.requestID,
+            listenerInstanceID: authority.attestation.listenerInstanceID,
+            listenerPublicKeySHA256: PeekabooBridgeOperationReceiptCoding.sha256(
+                authority.attestation.publicKey),
+            host: authority.attestation.host,
+            client: authority.attestation.host,
+            operation: rawRequest.operation,
+            requestSHA256: PeekabooBridgeOperationReceiptCoding.sha256(rawRequest),
+            responseSHA256: PeekabooBridgeOperationReceiptCoding.sha256(response),
+            target: .global,
+            outcome: nil,
+            startedAtUnixMilliseconds: now,
+            completedAtUnixMilliseconds: now)
+        let receipt = try authority.signAndArchive(receiptPayload)
+        let bundle = try Self.bundle(
+            authority: authority,
+            receipt: receipt,
+            request: rawRequest,
+            response: response)
+        #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+            try bundle.validate()
+        }
+    }
+
+    @Test
     func `offline bundle validation rejects signed operation semantics that contradict its bytes`() throws {
         let root = URL(fileURLWithPath: "/tmp/pbor-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
