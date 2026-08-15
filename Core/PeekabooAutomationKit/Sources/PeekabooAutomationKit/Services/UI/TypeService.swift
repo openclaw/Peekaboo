@@ -356,9 +356,7 @@ public final class TypeService {
                     targetProcessIdentifier: targetProcessIdentifier,
                     deliveryValidator: deliveryValidator)
                 return .dispatchedUnverified(
-                    delivery: DesktopActionOutcome.Delivery(
-                        mechanism: targetProcessIdentifier == nil ? .globalEvents : .processTargetedEvents,
-                        mode: targetProcessIdentifier == nil ? .foreground : .background),
+                    delivery: automationTarget.keyboardDelivery,
                     evidence: .deliveryAccepted)
             },
             success: { executionResult in

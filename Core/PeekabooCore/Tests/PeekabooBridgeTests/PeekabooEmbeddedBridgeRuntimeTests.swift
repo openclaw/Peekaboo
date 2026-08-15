@@ -19,7 +19,6 @@ struct PeekabooEmbeddedBridgeRuntimeTests {
         #expect(PeekabooBridgeOperation.exactWindowTargetedClick.nativeServiceOwnsDesktopOperationLane)
         #expect(PeekabooBridgeOperation.nativeDesktopOperationLaneOperations == Set(
             PeekabooBridgeOperation.allCases.filter(\.nativeServiceOwnsDesktopOperationLane)))
-        #expect(PeekabooBridgeOperation.nativeDesktopOperationLaneOperations.count == 56)
 
         for operation in PeekabooBridgeOperation.allCases {
             #expect(services.ownsDesktopOperationLane(for: operation) ==

@@ -100,6 +100,50 @@ struct TypeServiceTargetResolutionTests {
 
     @Test
     @MainActor
+    func `keyboard outcomes preserve process and exact window routes`() async throws {
+        let processIdentifier = getpid()
+        let generation: UInt64 = 91
+        let bounds = CGRect(x: 100, y: 100, width: 800, height: 600)
+        let process = try UIAutomationTarget.process(.init(
+            processIdentifier: processIdentifier,
+            identity: ApplicationProcessIdentity(
+                processIdentifier: processIdentifier,
+                processStartIdentity: generation)))
+        let exactWindow = try UIAutomationTarget.exactWindow(.init(
+            identity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: processIdentifier,
+                ownerProcessStartIdentity: generation,
+                capturedBounds: bounds),
+            bounds: bounds))
+        var typed: [Character] = []
+        let service = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            targetedCharacterTyper: { character, _ in typed.append(character) })
+
+        let processSummary = try await service.typeActionsTrackingSecureInput(
+            [.text("p")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: process)
+        let exactSummary = try await service.typeActionsTrackingSecureInput(
+            [.text("w")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: exactWindow)
+
+        #expect(typed == ["p", "w"])
+        #expect(processSummary.executionResult.outcome.delivery == .init(
+            mechanism: .processTargetedEvents,
+            mode: .background))
+        #expect(exactSummary.executionResult.outcome.delivery == .init(
+            mechanism: .windowTargetedEvents,
+            mode: .background))
+    }
+
+    @Test
+    @MainActor
     func `action-first missing snapshot fails as stale instead of falling back`() async {
         let service = TypeService(
             snapshotManager: InMemorySnapshotManager(),

@@ -160,6 +160,17 @@ public enum UIAutomationTarget: Sendable, Equatable {
         return target
     }
 
+    var keyboardDelivery: DesktopActionOutcome.Delivery {
+        switch self {
+        case .foreground:
+            .init(mechanism: .globalEvents, mode: .foreground)
+        case .process:
+            .init(mechanism: .processTargetedEvents, mode: .background)
+        case .exactWindow:
+            .init(mechanism: .windowTargetedEvents, mode: .background)
+        }
+    }
+
     /// Select one background keyboard destination without reducing an exact receipt to a process.
     public static func backgroundKeyboard(
         process: Process,

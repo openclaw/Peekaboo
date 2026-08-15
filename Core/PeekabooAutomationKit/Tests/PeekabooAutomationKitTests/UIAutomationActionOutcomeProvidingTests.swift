@@ -300,8 +300,13 @@ struct UIAutomationActionOutcomeProvidingTests {
             snapshotId: nil,
             target: exactTarget)
 
-        for result in [pidType, processType, windowType, focusedType] {
+        for result in [pidType, processType] {
             #expect(result.outcome == Self.backgroundOutcome)
+            #expect(result.payload.totalCharacters == 0)
+            #expect(result.payload.keyPresses == 0)
+        }
+        for result in [windowType, focusedType] {
+            #expect(result.outcome == Self.windowBackgroundOutcome)
             #expect(result.payload.totalCharacters == 0)
             #expect(result.payload.keyPresses == 0)
         }
@@ -446,6 +451,12 @@ struct UIAutomationActionOutcomeProvidingTests {
     private static var backgroundOutcome: DesktopActionOutcome {
         .dispatchedUnverified(
             delivery: .init(mechanism: .processTargetedEvents, mode: .background),
+            evidence: .deliveryAccepted)
+    }
+
+    private static var windowBackgroundOutcome: DesktopActionOutcome {
+        .dispatchedUnverified(
+            delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
             evidence: .deliveryAccepted)
     }
 
