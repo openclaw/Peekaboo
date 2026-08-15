@@ -17,6 +17,7 @@ extension PeekabooBridgeServer {
     {
         let resolvedBundle = peer?.bundleIdentifier ?? payload.client.bundleIdentifier
         let resolvedTeam = peer?.teamIdentifier ?? payload.client.teamIdentifier
+        let operationReceiptAuthority = PeekabooBridgeRequestContext.operationReceiptAuthority
 
         guard self.supportedVersions.contains(payload.protocolVersion) else {
             throw PeekabooBridgeErrorEnvelope(
@@ -26,7 +27,6 @@ extension PeekabooBridgeServer {
                 this host. Ask the user to relaunch Peekaboo so the bridge host updates, then retry.
                 """)
         }
-
         if let bundle = resolvedBundle,
            !self.allowlistedBundles.isEmpty,
            !self.allowlistedBundles.contains(bundle)
@@ -89,6 +89,12 @@ extension PeekabooBridgeServer {
             tags=\(permissionTags.count, privacy: .public)
             """)
 
+        var advertisedCapabilities = self.hostCapabilities
+        if negotiated >= PeekabooBridgeConstants.attestedOperationReceiptVersion,
+           operationReceiptAuthority != nil
+        {
+            advertisedCapabilities.insert(PeekabooBridgeHostCapability.attestedOperationReceipts)
+        }
         let response = PeekabooBridgeHandshakeResponse(
             negotiatedVersion: negotiated,
             hostKind: self.hostKind,
@@ -98,7 +104,10 @@ extension PeekabooBridgeServer {
             enabledOperations: Array(enabledOps).sorted { $0.rawValue < $1.rawValue },
             permissionTags: permissionTags,
             hostIdentity: self.hostIdentity,
-            hostCapabilities: self.hostCapabilities.sorted())
+            hostCapabilities: advertisedCapabilities.sorted(),
+            operationAttestation: negotiated >= PeekabooBridgeConstants.attestedOperationReceiptVersion
+                ? operationReceiptAuthority?.attestation
+                : nil)
         return .handshake(response)
     }
 

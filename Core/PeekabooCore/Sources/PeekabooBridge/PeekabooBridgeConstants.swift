@@ -28,7 +28,11 @@ public enum PeekabooBridgeConstants {
     }
 
     /// Current protocol version supported by this build.
-    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 28)
+    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 29)
+
+    /// First protocol with listener-bound, signed per-operation receipts.
+    public static let attestedOperationReceiptVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 29)
 
     /// First protocol with atomic host-side execution of an exact dialog input request.
     public static let exactDialogInputExecutionVersion =

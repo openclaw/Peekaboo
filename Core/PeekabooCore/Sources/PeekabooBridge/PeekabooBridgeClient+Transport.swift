@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import PeekabooAutomationKit
 import PeekabooFoundation
 
 extension PeekabooBridgeClient {
@@ -14,6 +15,12 @@ extension PeekabooBridgeClient {
         _ request: PeekabooBridgeRequest,
         timeoutSec: TimeInterval? = nil) async throws -> PeekabooBridgeTransportReply
     {
+        if case .handshake = request {
+            // Handshake resets are owned by `handshake(client:)`.
+        } else {
+            self.latestVerifiedOperationReceipt = nil
+            self.latestVerifiedOperationReceiptBundle = nil
+        }
         let explicitlyProjected = if case .projectedAction = request {
             true
         } else {
@@ -21,9 +28,12 @@ extension PeekabooBridgeClient {
         }
         let expectsProjectedResponse = explicitlyProjected ||
             (self.actionProjectionEnabled && request.mayMutateDesktop)
-        let wireRequest = expectsProjectedResponse && !explicitlyProjected
+        let projectedRequest = expectsProjectedResponse && !explicitlyProjected
             ? PeekabooBridgeRequest.projectedAction(.init(request: request))
             : request
+        let preparedRequest = try self.prepareWireRequest(projectedRequest)
+        let attestedContext = preparedRequest.context
+        let wireRequest = preparedRequest.request
         let payload = try self.encoder.encode(wireRequest)
         let op = request.operation
         let start = Date()
@@ -38,10 +48,12 @@ extension PeekabooBridgeClient {
             responseData = try await withTaskCancellationHandler {
                 try await Task.detached(priority: .userInitiated) {
                     try Self.sendBlocking(
-                        socketPath: socketPath,
-                        requestData: payload,
-                        maxResponseBytes: maxResponseBytes,
-                        timeoutSec: requestTimeoutSec,
+                        .init(
+                            socketPath: socketPath,
+                            requestData: payload,
+                            maxResponseBytes: maxResponseBytes,
+                            timeoutSec: requestTimeoutSec,
+                            expectedListener: attestedContext?.attestation),
                         cancellation: cancellation)
                 }.value
             } onCancel: {
@@ -53,7 +65,8 @@ extension PeekabooBridgeClient {
             }
             throw Self.responseLostFailure(
                 operation: op,
-                causeDescription: "\(failure.underlying)")
+                causeDescription: "\(failure.underlying)",
+                requestID: attestedContext?.requestID)
         }
         guard !responseData.isEmpty else {
             let details = """
@@ -74,7 +87,8 @@ extension PeekabooBridgeClient {
             }
             throw Self.responseLostFailure(
                 operation: op,
-                causeDescription: details)
+                causeDescription: details,
+                requestID: attestedContext?.requestID)
         }
 
         let wireResponse: PeekabooBridgeResponse
@@ -89,10 +103,31 @@ extension PeekabooBridgeClient {
             }
             throw Self.responseLostFailure(
                 operation: op,
-                causeDescription: "Bridge response decoding failed: \(error)")
+                causeDescription: "Bridge response decoding failed: \(error)",
+                requestID: attestedContext?.requestID)
+        }
+        let verifiedWireResponse: PeekabooBridgeResponse
+        do {
+            let verified = try Self.verifyAttestedResponse(
+                wireResponse,
+                context: attestedContext)
+            verifiedWireResponse = verified.response
+            if let bundle = verified.bundle {
+                self.latestVerifiedOperationReceipt = bundle.receipt
+                self.latestVerifiedOperationReceiptBundle = bundle
+                try Self.exportOperationReceiptIfRequested(
+                    bundle,
+                    directory: self.operationReceiptExportDirectory)
+            }
+        } catch {
+            guard request.mayMutateDesktop else { throw error }
+            throw Self.responseLostFailure(
+                operation: op,
+                causeDescription: "Bridge operation receipt validation failed: \(error.localizedDescription)",
+                requestID: attestedContext?.requestID)
         }
         let reply = try Self.unwrapResponse(
-            wireResponse,
+            verifiedWireResponse,
             expectsProjectedResponse: expectsProjectedResponse,
             request: request)
         let response = reply.response
@@ -110,6 +145,48 @@ extension PeekabooBridgeClient {
         self.logger.debug(
             "bridge \(op.rawValue, privacy: .public) completed in \(duration, format: .fixed(precision: 3))s")
         return reply
+    }
+
+    private func prepareWireRequest(
+        _ request: PeekabooBridgeRequest) throws -> PeekabooBridgePreparedRequest
+    {
+        guard let attestation = self.operationAttestation else {
+            return .init(request: request, context: nil)
+        }
+        if case .handshake = request {
+            return .init(request: request, context: nil)
+        }
+
+        let processIdentifier = getpid()
+        guard let processStartIdentity = SystemIdentityResolver.processStartIdentity(processIdentifier) else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .internalError,
+                message: "Could not establish the Bridge client's process-generation receipt")
+        }
+        guard let codeSignatureHash = PeekabooBridgeCodeSignatureIdentity.codeSignatureHash(
+            processIdentifier: processIdentifier)
+        else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .internalError,
+                message: "Could not establish the Bridge client's code-signature receipt")
+        }
+        let requestID = UUID()
+        let clientIdentity = PeekabooBridgeOperationProcessIdentity(
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity,
+            codeSignatureHash: codeSignatureHash)
+        let context = PeekabooBridgeAttestedRequestContext(
+            requestID: requestID,
+            attestation: attestation,
+            clientIdentity: clientIdentity,
+            request: request)
+        return .init(
+            request: .attestedOperation(.init(
+                requestID: requestID,
+                expectedListenerInstanceID: attestation.listenerInstanceID,
+                client: clientIdentity,
+                request: request)),
+            context: context)
     }
 
     private nonisolated static func unwrapResponse(
@@ -198,10 +275,7 @@ extension PeekabooBridgeClient {
     }
 
     private nonisolated static func sendBlocking(
-        socketPath: String,
-        requestData: Data,
-        maxResponseBytes: Int,
-        timeoutSec: TimeInterval,
+        _ request: PeekabooBridgeBlockingRequest,
         cancellation: PeekabooBridgeClientConnectionCancellation) throws -> Data
     {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -215,12 +289,12 @@ extension PeekabooBridgeClient {
         do {
             Self.disableSigPipe(fd: fd)
             try PeekabooBridgeSocketIO.configureConnectedSocket(fd)
-            let deadline = Date().addingTimeInterval(timeoutSec)
+            let deadline = Date().addingTimeInterval(request.timeoutSec)
 
             var addr = sockaddr_un()
             addr.sun_family = sa_family_t(AF_UNIX)
             let capacity = MemoryLayout.size(ofValue: addr.sun_path)
-            let copied = socketPath.withCString { cstr -> Int in
+            let copied = request.socketPath.withCString { cstr -> Int in
                 strlcpy(&addr.sun_path.0, cstr, capacity)
             }
             guard copied < capacity else { throw POSIXError(.ENAMETOOLONG) }
@@ -237,15 +311,28 @@ extension PeekabooBridgeClient {
                 try PeekabooBridgeSocketIO.finishConnect(fd: fd, deadline: deadline)
             }
 
+            if let expectedListener = request.expectedListener {
+                try expectedListener.validateSignature()
+                let peerProcessIdentifier = try PeekabooBridgeSocketIO.peerProcessIdentifier(fd: fd)
+                guard peerProcessIdentifier == expectedListener.host.processIdentifier,
+                      SystemIdentityResolver.processStartIdentity(peerProcessIdentifier) ==
+                      expectedListener.host.processStartIdentity,
+                      PeekabooBridgeCodeSignatureIdentity.codeSignatureHash(
+                          processIdentifier: peerProcessIdentifier) == expectedListener.host.codeSignatureHash
+                else {
+                    throw PeekabooBridgeOperationReceiptError.peerIdentityMismatch
+                }
+            }
+
             try cancellation.check()
-            try PeekabooBridgeSocketIO.writeAll(fd: fd, data: requestData, deadline: deadline)
+            try PeekabooBridgeSocketIO.writeAll(fd: fd, data: request.requestData, deadline: deadline)
             do {
                 guard shutdown(fd, SHUT_WR) == 0 else {
                     throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
                 }
                 let response = try PeekabooBridgeSocketIO.readAll(
                     fd: fd,
-                    maxBytes: maxResponseBytes,
+                    maxBytes: request.maxResponseBytes,
                     deadline: deadline)
                 try cancellation.check()
                 return response
@@ -269,16 +356,97 @@ extension PeekabooBridgeClient {
 
     private nonisolated static func responseLostFailure(
         operation: PeekabooBridgeOperation,
-        causeDescription: String) -> DesktopActionFailure
+        causeDescription: String,
+        requestID: UUID? = nil) -> DesktopActionFailure
     {
+        let requestSuffix = requestID.map { "; request_id=\($0.uuidString.lowercased())" } ?? ""
         let message = "Bridge response was lost after \(operation.rawValue) was dispatched; " +
-            "outcome is indeterminate; do not retry"
+            "outcome is indeterminate; do not retry\(requestSuffix)"
         return DesktopActionFailure.indeterminate(
             route: .bridge,
             evidence: .responseLost,
             message: message,
             hint: "Observe the target before retrying this operation.",
             causeDescription: causeDescription)
+    }
+
+    private nonisolated static func verifyAttestedResponse(
+        _ response: PeekabooBridgeResponse,
+        context: PeekabooBridgeAttestedRequestContext?) throws
+        -> (response: PeekabooBridgeResponse, bundle: PeekabooBridgeOperationReceiptBundle?)
+    {
+        guard let context else {
+            guard case .attestedOperation = response else { return (response, nil) }
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch("an unrequested receipt envelope")
+        }
+        guard case let .attestedOperation(envelope) = response else {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch("the required receipt envelope")
+        }
+        guard case .attestedOperation = envelope.response else {
+            let receipt = envelope.receipt
+            try receipt.validateSignature(publicKey: context.attestation.publicKey)
+            let payload = receipt.payload
+            guard payload.schemaVersion == 1 else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch("schema_version")
+            }
+            guard payload.requestID == context.requestID else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch("request_id")
+            }
+            guard payload.listenerInstanceID == context.attestation.listenerInstanceID,
+                  payload.listenerPublicKeySHA256 == PeekabooBridgeOperationReceiptCoding.sha256(
+                      context.attestation.publicKey),
+                  payload.host == context.attestation.host
+            else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch("listener identity")
+            }
+            guard payload.client == context.clientIdentity else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch("client identity")
+            }
+            guard payload.operation == context.request.operation,
+                  try payload.requestSHA256 == (PeekabooBridgeOperationReceiptCoding.sha256(context.request)),
+                  try payload.responseSHA256 == (PeekabooBridgeOperationReceiptCoding.sha256(envelope.response)),
+                  payload.target == context.request.operationTargetReceipt(resolvedFrom: envelope.response),
+                  payload.outcome == Self.operationOutcome(in: envelope.response),
+                  payload.completedAtUnixMilliseconds >= payload.startedAtUnixMilliseconds
+            else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch("operation facts")
+            }
+            let bundle = try PeekabooBridgeOperationReceiptBundle(
+                operationAttestation: context.attestation,
+                receipt: receipt,
+                canonicalListenerAttestationPayload: PeekabooBridgeOperationReceiptCoding.canonicalData(
+                    context.attestation.unsignedPayload),
+                canonicalReceiptPayload: PeekabooBridgeOperationReceiptCoding.canonicalData(receipt.payload),
+                canonicalRequest: PeekabooBridgeOperationReceiptCoding.canonicalData(context.request),
+                canonicalResponse: PeekabooBridgeOperationReceiptCoding.canonicalData(envelope.response))
+            try bundle.validate()
+            return (envelope.response, bundle)
+        }
+        throw PeekabooBridgeOperationReceiptError.receiptMismatch("a nested receipt envelope")
+    }
+
+    private nonisolated static func operationOutcome(
+        in response: PeekabooBridgeResponse) -> DesktopActionOutcome.Projection?
+    {
+        switch response {
+        case let .projectedAction(payload): payload.outcome
+        case let .error(envelope): envelope.actionOutcome
+        default: nil
+        }
+    }
+
+    private nonisolated static func exportOperationReceiptIfRequested(
+        _ bundle: PeekabooBridgeOperationReceiptBundle,
+        directory: URL?) throws
+    {
+        guard let directory else { return }
+        let directoryURL = directory.standardizedFileURL
+        let destination = directoryURL.appendingPathComponent(
+            bundle.receipt.payload.requestID.uuidString.lowercased() + ".json",
+            isDirectory: false)
+        try PeekabooBridgePrivateReceiptArchive.writeAtomically(
+            PeekabooBridgeOperationReceiptCoding.canonicalData(bundle),
+            to: destination)
     }
 
     private nonisolated static func legacyCompletionUnknownFailure(
@@ -296,6 +464,26 @@ extension PeekabooBridgeClient {
 struct PeekabooBridgeTransportReply: Sendable {
     let response: PeekabooBridgeResponse
     let outcome: DesktopActionOutcome.Projection?
+}
+
+private struct PeekabooBridgeAttestedRequestContext: Sendable {
+    let requestID: UUID
+    let attestation: PeekabooBridgeListenerAttestation
+    let clientIdentity: PeekabooBridgeOperationProcessIdentity
+    let request: PeekabooBridgeRequest
+}
+
+private struct PeekabooBridgePreparedRequest: Sendable {
+    let request: PeekabooBridgeRequest
+    let context: PeekabooBridgeAttestedRequestContext?
+}
+
+private struct PeekabooBridgeBlockingRequest: Sendable {
+    let socketPath: String
+    let requestData: Data
+    let maxResponseBytes: Int
+    let timeoutSec: TimeInterval
+    let expectedListener: PeekabooBridgeListenerAttestation?
 }
 
 private struct PeekabooBridgeResponseReadFailure: Error {

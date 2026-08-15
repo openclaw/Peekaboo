@@ -3,6 +3,7 @@ import PeekabooAutomationKit
 
 enum PeekabooBridgeRequestContext {
     @TaskLocal static var clientConnectionProbe: (@Sendable () -> Bool)?
+    @TaskLocal static var operationReceiptAuthority: PeekabooBridgeOperationReceiptAuthority?
 
     static func checkRequestIsActive() throws {
         try Task.checkCancellation()
@@ -176,6 +177,9 @@ extension PeekabooBridgeRequest {
     }
 
     var mayMutateDesktop: Bool {
+        if case let .attestedOperation(payload) = self {
+            return payload.request.mayMutateDesktop
+        }
         if case let .projectedAction(payload) = self {
             return payload.request.mayMutateDesktop
         }

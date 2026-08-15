@@ -9,24 +9,32 @@ public actor PeekabooBridgeClient {
     let requestTimeoutSec: TimeInterval
     let encoder: JSONEncoder
     let decoder: JSONDecoder
+    let operationReceiptExportDirectory: URL?
     let logger = Logger(subsystem: "boo.peekaboo.bridge", category: "client")
     var actionProjectionEnabled = false
     var exactDialogInputExecutionEnabled = false
     var exactDialogForceDismissExecutionEnabled = false
     var dialogInputFocusPolicyEnabled = false
+    var operationAttestation: PeekabooBridgeListenerAttestation?
+    var latestVerifiedOperationReceipt: PeekabooBridgeOperationReceipt?
+    var latestVerifiedOperationReceiptBundle: PeekabooBridgeOperationReceiptBundle?
 
     public init(
         socketPath: String = PeekabooBridgeConstants.peekabooSocketPath,
         maxResponseBytes: Int = 64 * 1024 * 1024,
         requestTimeoutSec: TimeInterval = 10,
         encoder: JSONEncoder = .peekabooBridgeEncoder(),
-        decoder: JSONDecoder = .peekabooBridgeDecoder())
+        decoder: JSONDecoder = .peekabooBridgeDecoder(),
+        operationReceiptExportDirectory: URL? = nil)
     {
         self.socketPath = socketPath
         self.maxResponseBytes = maxResponseBytes
         self.requestTimeoutSec = requestTimeoutSec
         self.encoder = encoder
         self.decoder = decoder
+        let environmentDirectory = ProcessInfo.processInfo.environment["PEEKABOO_OPERATION_RECEIPT_DIRECTORY"]
+            .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
+        self.operationReceiptExportDirectory = operationReceiptExportDirectory ?? environmentDirectory
     }
 
     @discardableResult
@@ -41,6 +49,9 @@ public actor PeekabooBridgeClient {
         self.exactDialogInputExecutionEnabled = false
         self.exactDialogForceDismissExecutionEnabled = false
         self.dialogInputFocusPolicyEnabled = false
+        self.operationAttestation = nil
+        self.latestVerifiedOperationReceipt = nil
+        self.latestVerifiedOperationReceiptBundle = nil
         let deadline: Date?
         if let overallTimeoutSec {
             guard overallTimeoutSec.isFinite, overallTimeoutSec > 0 else {
@@ -82,6 +93,16 @@ public actor PeekabooBridgeClient {
         }
     }
 
+    /// Most recent protocol-1.29 receipt accepted by this client after signature and digest validation.
+    public func lastOperationReceipt() -> PeekabooBridgeOperationReceipt? {
+        self.latestVerifiedOperationReceipt
+    }
+
+    /// Most recent full audit bundle. It contains the complete request and response payload bytes.
+    public func lastOperationReceiptBundle() -> PeekabooBridgeOperationReceiptBundle? {
+        self.latestVerifiedOperationReceiptBundle
+    }
+
     private func performHandshake(
         client: PeekabooBridgeClientIdentity,
         requestedHost: PeekabooBridgeHostKind?,
@@ -96,6 +117,32 @@ public actor PeekabooBridgeClient {
 
         switch response {
         case let .handshake(handshake):
+            if handshake.negotiatedVersion >= PeekabooBridgeConstants.attestedOperationReceiptVersion {
+                guard handshake.hostCapabilities?.contains(
+                    PeekabooBridgeHostCapability.attestedOperationReceipts) == true,
+                    let attestation = handshake.operationAttestation
+                else {
+                    throw PeekabooBridgeErrorEnvelope(
+                        code: .versionMismatch,
+                        message: "Protocol 1.29 Bridge host omitted its operation receipt attestation")
+                }
+                do {
+                    try attestation.validateSignature()
+                } catch {
+                    throw PeekabooBridgeErrorEnvelope(
+                        code: .unauthorizedClient,
+                        message: "Bridge listener operation attestation is invalid",
+                        details: error.localizedDescription)
+                }
+                guard handshake.hostIdentity?.processIdentifier == attestation.host.processIdentifier,
+                      handshake.hostIdentity?.processStartIdentity == attestation.host.processStartIdentity
+                else {
+                    throw PeekabooBridgeErrorEnvelope(
+                        code: .unauthorizedClient,
+                        message: "Bridge listener attestation contradicts the advertised host process generation")
+                }
+                self.operationAttestation = attestation
+            }
             self.actionProjectionEnabled =
                 handshake.negotiatedVersion >= PeekabooBridgeConstants.desktopActionOutcomeProjectionVersion &&
                 handshake.hostCapabilities?.contains(

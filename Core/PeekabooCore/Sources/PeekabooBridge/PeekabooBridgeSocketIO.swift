@@ -2,6 +2,18 @@ import Darwin
 import Foundation
 
 enum PeekabooBridgeSocketIO {
+    static func peerProcessIdentifier(fd: Int32) throws -> pid_t {
+        var processIdentifier: pid_t = 0
+        var size = socklen_t(MemoryLayout<pid_t>.size)
+        guard getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &processIdentifier, &size) == 0,
+              processIdentifier > 0,
+              size == MemoryLayout<pid_t>.size
+        else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EPROTO)
+        }
+        return processIdentifier
+    }
+
     static func configureConnectedSocket(_ fd: Int32) throws {
         try self.setCloseOnExec(fd)
 

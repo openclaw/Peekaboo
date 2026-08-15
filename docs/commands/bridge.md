@@ -30,6 +30,15 @@ read_when:
 - Structured status includes optional `hostIdentity` and `hostCapabilities` from current hosts.
   `hostIdentity` carries the serving PID/process-start identity plus bundle versions and the exact
   executable code-signature hash; older hosts omit these fields and continue to decode normally.
+- Protocol 1.29 binds every post-handshake call to one ephemeral listener identity and returns a signed operation
+  receipt. The host keeps privacy-minimized receipts under `<socket>.receipts/<listener-id>/` with mode `0600` in
+  owner-only directories. For a private certification run, setting `PEEKABOO_OPERATION_RECEIPT_DIRECTORY` exports
+  one atomic verification bundle per request. That opt-in bundle includes the exact canonical request and response
+  bytes so an independent validator can recompute both signed digests, plus the exact listener-attestation and
+  operation-receipt payload bytes used for Ed25519 signature verification. SHA-256 digests use lowercase hex; binary
+  fields use JSON base64; process generations use canonical decimal strings rather than lossy JSON numbers. The
+  bundle can therefore contain command text and response data and must not be enabled for ordinary automation or
+  written to a shared directory.
 
 ## Examples
 ```bash

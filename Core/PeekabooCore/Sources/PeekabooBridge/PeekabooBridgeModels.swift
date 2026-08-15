@@ -333,6 +333,7 @@ public enum PeekabooBridgeHostCapability {
     public static let exactDialogInputExecution = "exactDialogInputExecution"
     public static let exactForcedDialogDismissExecution = "exactForcedDialogDismissExecution"
     public static let dialogInputFocusPolicy = "dialogInputFocusPolicy"
+    public static let attestedOperationReceipts = "attestedOperationReceipts"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
@@ -350,6 +351,8 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
     public let hostIdentity: PeekabooBridgeHostIdentity?
     /// Optional raw capabilities of this host process and its launch mode.
     public let hostCapabilities: [String]?
+    /// Ephemeral identity of the exact listener that served this handshake.
+    public let operationAttestation: PeekabooBridgeListenerAttestation?
 
     public init(
         negotiatedVersion: PeekabooBridgeProtocolVersion,
@@ -360,7 +363,8 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         enabledOperations: [PeekabooBridgeOperation]? = nil,
         permissionTags: [String: [PeekabooBridgePermissionKind]] = [:],
         hostIdentity: PeekabooBridgeHostIdentity? = nil,
-        hostCapabilities: [String]? = nil)
+        hostCapabilities: [String]? = nil,
+        operationAttestation: PeekabooBridgeListenerAttestation? = nil)
     {
         self.negotiatedVersion = negotiatedVersion
         self.hostKind = hostKind
@@ -371,6 +375,7 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         self.permissionTags = permissionTags
         self.hostIdentity = hostIdentity
         self.hostCapabilities = hostCapabilities
+        self.operationAttestation = operationAttestation
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -383,6 +388,7 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         case permissionTags
         case hostIdentity
         case hostCapabilities
+        case operationAttestation
     }
 
     public init(from decoder: any Decoder) throws {
@@ -400,6 +406,9 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
             forKey: .permissionTags) ?? [:]
         self.hostIdentity = try container.decodeIfPresent(PeekabooBridgeHostIdentity.self, forKey: .hostIdentity)
         self.hostCapabilities = try container.decodeIfPresent([String].self, forKey: .hostCapabilities)
+        self.operationAttestation = try container.decodeIfPresent(
+            PeekabooBridgeListenerAttestation.self,
+            forKey: .operationAttestation)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -417,6 +426,7 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         if let hostCapabilities, !hostCapabilities.isEmpty {
             try container.encode(hostCapabilities, forKey: .hostCapabilities)
         }
+        try container.encodeIfPresent(self.operationAttestation, forKey: .operationAttestation)
     }
 }
 

@@ -15,7 +15,7 @@ struct ExactDialogInputWireTests {
         ]
         let legacyVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 26)
 
-        #expect(PeekabooBridgeConstants.protocolVersion == .init(major: 1, minor: 28))
+        #expect(PeekabooBridgeConstants.protocolVersion == .init(major: 1, minor: 29))
         #expect(PeekabooBridgeConstants.exactDialogInputExecutionVersion == .init(major: 1, minor: 27))
         #expect(PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion == .init(major: 1, minor: 28))
         #expect(PeekabooBridgeHostCapability.exactDialogInputExecution == "exactDialogInputExecution")

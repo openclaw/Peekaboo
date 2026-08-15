@@ -241,6 +241,14 @@ final class PeekabooBridgeRequestTracker: @unchecked Sendable {
 }
 
 enum PeekabooBridgeConnectedRequest {
+    struct Context: @unchecked Sendable {
+        let server: PeekabooBridgeServer
+        let peer: PeekabooBridgePeer
+        let connection: PeekabooBridgeConnectionLiveness
+        let requestTracker: PeekabooBridgeRequestTracker
+        let operationReceiptAuthority: PeekabooBridgeOperationReceiptAuthority
+    }
+
     private enum Result: Sendable {
         case response(Data)
         case disconnected
@@ -320,45 +328,46 @@ enum PeekabooBridgeConnectedRequest {
 
     static func handle(
         requestData: Data,
-        server: PeekabooBridgeServer,
-        peer: PeekabooBridgePeer,
-        connection: PeekabooBridgeConnectionLiveness,
-        requestTracker: PeekabooBridgeRequestTracker) async -> Data?
+        context: Context) async -> Data?
     {
-        guard let trackedRequest = requestTracker.begin() else {
-            connection.markDisconnected()
+        guard let trackedRequest = context.requestTracker.begin() else {
+            context.connection.markDisconnected()
             return nil
         }
         let race = CompletionRace()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 guard race.install(continuation) else {
-                    requestTracker.finish(trackedRequest)
+                    context.requestTracker.finish(trackedRequest)
                     return
                 }
 
                 let requestTask = Task {
                     guard await trackedRequest.awaitActivation() else {
-                        requestTracker.finish(trackedRequest)
+                        context.requestTracker.finish(trackedRequest)
                         return
                     }
                     let connectionProbe: @Sendable () -> Bool = {
-                        connection.canReceiveResponse()
+                        context.connection.canReceiveResponse()
                     }
                     let operation: @Sendable () async -> Data = {
-                        await server.decodeAndHandle(requestData, peer: peer)
+                        await context.server.decodeAndHandle(requestData, peer: context.peer)
                     }
-                    let response = await PeekabooBridgeRequestContext.$clientConnectionProbe.withValue(
-                        connectionProbe,
-                        operation: operation)
-                    requestTracker.finish(trackedRequest)
+                    let response = await PeekabooBridgeRequestContext.$operationReceiptAuthority.withValue(
+                        context.operationReceiptAuthority)
+                    {
+                        await PeekabooBridgeRequestContext.$clientConnectionProbe.withValue(
+                            connectionProbe,
+                            operation: operation)
+                    }
+                    context.requestTracker.finish(trackedRequest)
                     race.finish(.response(response))
                 }
                 trackedRequest.install(task: requestTask)
                 let disconnectTask = Task.detached {
                     while !Task.isCancelled {
-                        guard connection.canReceiveResponse() else {
-                            connection.markDisconnected()
+                        guard context.connection.canReceiveResponse() else {
+                            context.connection.markDisconnected()
                             race.finish(.disconnected)
                             return
                         }
@@ -372,7 +381,7 @@ enum PeekabooBridgeConnectedRequest {
                 race.setTasks(request: requestTask, disconnect: disconnectTask)
             }
         } onCancel: {
-            connection.markDisconnected()
+            context.connection.markDisconnected()
             trackedRequest.cancel()
             race.finish(.disconnected)
         }

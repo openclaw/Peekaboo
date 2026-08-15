@@ -7,17 +7,23 @@ import Security
 
 public struct PeekabooBridgePeer: Sendable {
     public let processIdentifier: pid_t
+    public let processStartIdentity: UInt64?
+    public let codeSignatureHash: String?
     public let userIdentifier: uid_t?
     public let bundleIdentifier: String?
     public let teamIdentifier: String?
 
     public init(
         processIdentifier: pid_t,
+        processStartIdentity: UInt64? = nil,
+        codeSignatureHash: String? = nil,
         userIdentifier: uid_t?,
         bundleIdentifier: String?,
         teamIdentifier: String?)
     {
         self.processIdentifier = processIdentifier
+        self.processStartIdentity = processStartIdentity
+        self.codeSignatureHash = codeSignatureHash
         self.userIdentifier = userIdentifier
         self.bundleIdentifier = bundleIdentifier
         self.teamIdentifier = teamIdentifier
@@ -43,8 +49,8 @@ public final class PeekabooBridgeServer {
     let desktopMutationWatermarkStore: DesktopMutationWatermarkStore?
     let desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator
     let automationActivityObserver: (@Sendable (pid_t) -> Void)?
-    private let encoder: JSONEncoder
-    private let decoder: JSONDecoder
+    let encoder: JSONEncoder
+    let decoder: JSONDecoder
     let logger = Logger(subsystem: "boo.peekaboo.bridge", category: "server")
 
     public init(
@@ -154,35 +160,7 @@ public final class PeekabooBridgeServer {
         self.decoder = decoder
     }
 
-    public func decodeAndHandle(_ requestData: Data, peer: PeekabooBridgePeer?) async -> Data {
-        do {
-            try PeekabooBridgeRequestPreflight.validate(requestData)
-            let request = try self.decoder.decode(PeekabooBridgeRequest.self, from: requestData)
-            if case let .projectedAction(payload) = request {
-                return await self.handleProjectedAction(payload, peer: peer)
-            }
-            let handled = try await self.route(request, peer: peer)
-            return try self.encoder.encode(handled.response)
-        } catch let envelope as PeekabooBridgeErrorEnvelope {
-            self.logger.error("bridge request failed: \(envelope.message, privacy: .public)")
-            return PeekabooBridgeResponse.encodeError(envelope.legacyCompatible, using: self.encoder)
-        } catch is CancellationError {
-            self.logger.debug("bridge request cancelled after its client disconnected")
-            let envelope = PeekabooBridgeErrorEnvelope(
-                code: .timeout,
-                message: "Bridge request was cancelled")
-            return PeekabooBridgeResponse.encodeError(envelope, using: self.encoder)
-        } catch {
-            self.logger.error("bridge request decoding failed: \(error.localizedDescription, privacy: .public)")
-            let envelope = PeekabooBridgeErrorEnvelope(
-                code: .decodingFailed,
-                message: "Failed to decode request",
-                details: "\(error)")
-            return PeekabooBridgeResponse.encodeError(envelope, using: self.encoder)
-        }
-    }
-
-    private func handleProjectedAction(
+    func handleProjectedAction(
         _ payload: PeekabooBridgeProjectedActionRequest,
         peer: PeekabooBridgePeer?) async -> Data
     {
@@ -219,7 +197,7 @@ public final class PeekabooBridgeServer {
         return data
     }
 
-    private func route(
+    func route(
         _ request: PeekabooBridgeRequest,
         peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeHandledResponse
     {
