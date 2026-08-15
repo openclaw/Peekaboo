@@ -204,6 +204,24 @@ test('observations and route receipts require successful JSON envelopes', () => 
   assert.ok(rules(validate(failedRoute)).has('observation_route'));
 });
 
+test('synthetic overlap evidence cannot replace signed protocol 1.29 receipt validation', () => {
+  const failed = makePassingOverlapReport(catalog);
+  failed.receipt_validation.success = false;
+  assert.ok(rules(validate(failed)).has('receipt_validation'));
+
+  const missing = makePassingOverlapReport(catalog);
+  delete missing.receipt_validation;
+  assert.ok(rules(validate(missing)).has('report_schema'));
+
+  const incomplete = makePassingOverlapReport(catalog);
+  incomplete.receipt_validation.receipt_count -= 1;
+  assert.ok(rules(validate(incomplete)).has('receipt_validation'));
+
+  const legacyProtocol = makePassingOverlapReport(catalog);
+  legacyProtocol.host.protocol_minor = 28;
+  assert.ok(rules(validate(legacyProtocol)).has('host_receipt'));
+});
+
 test('controller token namespaces are run-bound and disjoint', () => {
   const report = makePassingOverlapReport(catalog);
   report.controllers[1].initial_token = report.controllers[0].initial_token;

@@ -93,12 +93,38 @@ function validateHost(report, failures) {
       || !hex40.test(host.code_signature_hash ?? '')
       || !hex64.test(host.executable_sha256 ?? '')
       || !positiveInteger(host.protocol_major)
-      || !Number.isSafeInteger(host.protocol_minor) || host.protocol_minor < 0
+      || host.protocol_major !== 1
+      || !Number.isSafeInteger(host.protocol_minor) || host.protocol_minor < 29
       || host.stable !== true) {
     failures.push(failure('host_receipt', 'Signed current host receipt is incomplete, malformed, or unstable'));
   }
   if (host?.source_commit !== report.source_commit) {
     failures.push(failure('host_source', 'Host source commit differs from the certified CLI source'));
+  }
+}
+
+function validateReceiptCertification(report, failures) {
+  const validation = report.receipt_validation;
+  const trackedOperationCount = (report.controllers ?? []).reduce((total, controller) => (
+    total + (controller.mutations?.length ?? 0) + (controller.observations?.length ?? 0)
+  ), 0) + (report.restoration_checkpoints ?? []).reduce((total, checkpoint) => (
+    total + (checkpoint.observations?.length ?? 0)
+  ), 0);
+  if (!exactKeys(validation, [
+    'success', 'adapter_id', 'adapter_sha256', 'contract_sha256', 'result_sha256',
+    'receipt_count', 'session_count',
+  ]) || validation?.success !== true
+      || validation.adapter_id !== 'peekaboo-bridge-operation-receipt-bundle-1.29-logical-session-v1'
+      || !hex64.test(validation.adapter_sha256 ?? '')
+      || !hex64.test(validation.contract_sha256 ?? '')
+      || !hex64.test(validation.result_sha256 ?? '')
+      || validation.receipt_count < trackedOperationCount
+      || !positiveInteger(validation.session_count)
+      || validation.session_count > validation.receipt_count) {
+    failures.push(failure(
+      'receipt_validation',
+      'Overlap report is not bound to a successful complete protocol-1.29 signed-receipt verdict',
+    ));
   }
 }
 
@@ -393,9 +419,9 @@ export function validateOverlapCertification(catalog, report, expectedCatalogSHA
   if (!exactKeys(report, [
     'version', 'catalog_sha256', 'run_id', 'source_commit', 'cli', 'host', 'sentinel',
     'controllers', 'overlap', 'invariants', 'cursor_observation', 'restoration',
-    'restoration_checkpoints', 'cleanup', 'evidence',
-  ]) || report?.version !== 1) {
-    failures.push(failure('report_schema', 'Report must be one closed version-1 object'));
+    'restoration_checkpoints', 'cleanup', 'receipt_validation', 'evidence',
+  ]) || report?.version !== 2) {
+    failures.push(failure('report_schema', 'Report must be one closed version-2 object'));
     return { success: false, failures };
   }
   if (!hex64.test(report.catalog_sha256 ?? '')
@@ -463,6 +489,7 @@ export function validateOverlapCertification(catalog, report, expectedCatalogSHA
 
   const [controllerA, controllerB] = report.controllers ?? [];
   validateRestorationCheckpoints(report, failures);
+  validateReceiptCertification(report, failures);
   const workflowMutationsA = (controllerA?.mutations ?? []).filter((entry) => entry?.phase === 'workflow');
   const workflowMutationsB = (controllerB?.mutations ?? []).filter((entry) => entry?.phase === 'workflow');
   const overlap = report.overlap;
@@ -734,7 +761,7 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
     },
   ];
   return {
-    version: 1,
+    version: 2,
     catalog_sha256: catalogSHA256,
     run_id: runID,
     source_commit: '0123456789abcdef0123456789abcdef01234567',
@@ -751,7 +778,7 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
       source_commit: '0123456789abcdef0123456789abcdef01234567',
       code_signature_hash: 'a'.repeat(40),
       protocol_major: 1,
-      protocol_minor: 25,
+      protocol_minor: 29,
       executable_sha256: 'b'.repeat(64),
       stable: true,
     },
@@ -821,6 +848,15 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
       { id: 'A', pid: 101, start_identity: '10100', gone: true },
       { id: 'B', pid: 202, start_identity: '20200', gone: true },
     ],
+    receipt_validation: {
+      success: true,
+      adapter_id: 'peekaboo-bridge-operation-receipt-bundle-1.29-logical-session-v1',
+      adapter_sha256: '1'.repeat(64),
+      contract_sha256: '2'.repeat(64),
+      result_sha256: '3'.repeat(64),
+      receipt_count: 22,
+      session_count: 22,
+    },
     evidence: Object.fromEntries(catalog.required_evidence.map((name) => [name, true])),
   };
 }

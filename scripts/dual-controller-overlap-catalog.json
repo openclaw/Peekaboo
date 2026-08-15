@@ -20,6 +20,7 @@
     "independent_readback",
     "overlapping_intervals",
     "restoration",
-    "generation_pinned_cleanup"
+    "generation_pinned_cleanup",
+    "signed_operation_receipts"
   ]
 }

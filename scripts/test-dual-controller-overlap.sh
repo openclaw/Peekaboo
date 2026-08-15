@@ -2129,7 +2129,7 @@ jq -n \
 ' > "$ARTIFACT_ROOT/overlap.json"
 
 jq -n \
-    --argjson version 1 --arg catalogSHA "$CATALOG_SHA256" --arg runID "$RUN_ID" \
+    --argjson version 2 --arg catalogSHA "$CATALOG_SHA256" --arg runID "$RUN_ID" \
     --arg source "$SOURCE_COMMIT" --arg cliCDHash "$CLI_CDHASH" --arg cliSHA "$CLI_SHA256" \
     --arg cliPath "$PEEKABOO_BIN" \
     --argjson hostPID "$HOST_PID" --arg hostIdentity "$HOST_IDENTITY" \
@@ -2144,6 +2144,7 @@ jq -n \
     --slurpfile b "$ARTIFACT_ROOT/controllers/B-report.json" \
     --slurpfile overlap "$ARTIFACT_ROOT/overlap.json" \
     --slurpfile restorationCheckpoints "$ARTIFACT_ROOT/restoration-checkpoints.json" \
+    --slurpfile receiptValidation "$ARTIFACT_ROOT/receipt-validation-summary.json" \
     --argjson monitorClean "$MONITOR_CLEAN" --argjson aGone "$A_GONE" --argjson bGone "$B_GONE" '
     {
         version: $version,
@@ -2201,12 +2202,14 @@ jq -n \
             {id: "A", pid: $a[0].target.pid, start_identity: $a[0].target.start_identity, gone: $aGone},
             {id: "B", pid: $b[0].target.pid, start_identity: $b[0].target.start_identity, gone: $bGone}
         ],
+        receipt_validation: $receiptValidation[0],
         evidence: {
             exact_target_receipts: true,
             independent_readback: true,
             overlapping_intervals: ($overlap[0].seconds > 0),
             restoration: true,
-            generation_pinned_cleanup: ($aGone and $bGone)
+            generation_pinned_cleanup: ($aGone and $bGone),
+            signed_operation_receipts: ($receiptValidation[0].success == true)
         }
     }
 ' > "$ARTIFACT_ROOT/observed.json"
