@@ -5,7 +5,9 @@ import {
   createPublicKey,
   verify as verifySignature,
 } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -16,6 +18,7 @@ const HEX64 = /^[0-9a-f]{64}$/;
 const DECIMAL_IDENTITY = /^[1-9][0-9]*$/;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+const RETAINED_LISTENER_DIRECTORY_LIMIT = 16;
 
 function failure(rule, message, requestID = null) {
   return { rule, message, request_id: requestID };
@@ -91,6 +94,16 @@ function validTarget(value) {
     && validBounds(value.bounds);
 }
 
+function validFocusedElement(value) {
+  return exactKeys(value, ['pid', 'windowID', 'role', 'title', 'identifier', 'frame'])
+    && positiveInteger(value.pid)
+    && positiveInteger(value.windowID) && value.windowID <= 0xffff_ffff
+    && typeof value.role === 'string' && value.role.length > 0
+    && (value.title === null || typeof value.title === 'string')
+    && (value.identifier === null || typeof value.identifier === 'string')
+    && validBounds(value.frame);
+}
+
 function sameJSON(left, right) {
   try {
     return canonicalBytes(left).equals(canonicalBytes(right));
@@ -99,12 +112,55 @@ function sameJSON(left, right) {
   }
 }
 
-function validOutcome(value) {
-  return exactKeys(value, ['deliveryMode', 'effect', 'mutationDispatched', 'retrySafe'])
+function validOutcomeShape(value) {
+  return exactKeys(value, [
+    'state', 'route', 'deliveryMode', 'effect', 'evidence', 'dispatchState', 'retrySafety',
+    'mutationDispatched', 'retrySafe',
+  ])
+    && typeof value.state === 'string' && value.state.length > 0
+    && value.route === 'bridge'
+    && (value.deliveryMode === null || ['background', 'foreground'].includes(value.deliveryMode))
+    && typeof value.effect === 'string' && value.effect.length > 0
+    && typeof value.evidence === 'string' && value.evidence.length > 0
+    && typeof value.dispatchState === 'string' && value.dispatchState.length > 0
+    && typeof value.retrySafety === 'string' && value.retrySafety.length > 0
+    && typeof value.mutationDispatched === 'boolean'
+    && typeof value.retrySafe === 'boolean';
+}
+
+function validSuccessfulOutcome(value) {
+  return validOutcomeShape(value)
     && value.deliveryMode === 'background'
     && ['confirmed', 'unverifiable'].includes(value.effect)
     && value.mutationDispatched === true
     && value.retrySafe === false;
+}
+
+function validAttributionFailure(value) {
+  return exactKeys(value, ['code', 'message', 'stage', 'evidenceCount', 'evidenceSHA256'])
+    && typeof value.code === 'string' && value.code.length > 0
+    && typeof value.message === 'string' && value.message.length > 0
+    && ['pre_dispatch', 'post_execution'].includes(value.stage)
+    && positiveInteger(value.evidenceCount)
+    && typeof value.evidenceSHA256 === 'string' && HEX64.test(value.evidenceSHA256);
+}
+
+function validAttributionFailureOutcome(failure, outcome) {
+  if (!validAttributionFailure(failure) || !validOutcomeShape(outcome)) return false;
+  if (failure.stage === 'pre_dispatch') {
+    return outcome.state === 'refused'
+      && outcome.evidence === 'request_refused'
+      && outcome.dispatchState === 'none'
+      && outcome.retrySafety === 'safe'
+      && outcome.mutationDispatched === false
+      && outcome.retrySafe === true;
+  }
+  return outcome.state === 'indeterminate'
+    && outcome.evidence === 'completion_unknown'
+    && ['dispatched', 'may_have_dispatched'].includes(outcome.dispatchState)
+    && outcome.retrySafety === 'unsafe'
+    && outcome.mutationDispatched === true
+    && outcome.retrySafe === false;
 }
 
 function publicKeyFromRaw(rawKey) {
@@ -128,10 +184,11 @@ function verifyEd25519(bytes, signature, rawKey) {
 function validateContract(contract) {
   const failures = [];
   if (!exactKeys(contract, [
-    'version', 'certificationRunID', 'adapter', 'protocol', 'socketEndpoint', 'listener',
-    'ownedTarget', 'foregroundTarget', 'interval', 'expectedOperations',
-  ]) || contract.version !== 1) {
-    return [failure('contract_schema', 'Contract must be one closed version-1 object')];
+    'version', 'certificationRunID', 'adapter', 'protocolImplementation', 'protocol',
+    'socketEndpoint', 'listener', 'hostArchive', 'ownedTarget', 'foregroundTarget',
+    'interval', 'expectedOperations',
+  ]) || contract.version !== 2) {
+    return [failure('contract_schema', 'Contract must be one closed version-2 object')];
   }
   if (typeof contract.certificationRunID !== 'string' || contract.certificationRunID.length === 0) {
     failures.push(failure('contract_run', 'Certification run ID must be nonempty'));
@@ -140,6 +197,22 @@ function validateContract(contract) {
       || typeof contract.adapter.id !== 'string' || contract.adapter.id.length === 0
       || typeof contract.adapter.sha256 !== 'string' || !HEX64.test(contract.adapter.sha256)) {
     failures.push(failure('contract_adapter', 'Contract must pin one exact adapter ID and source digest'));
+  }
+  if (!exactKeys(contract.protocolImplementation, [
+    'sourceCommit', 'sourceTree', 'peerBinding', 'operationReceiptsSHA256',
+    'socketIOSHA256', 'hostClientsSHA256', 'privateArchiveSHA256',
+  ]) || typeof contract.protocolImplementation.sourceCommit !== 'string'
+      || !/^[0-9a-f]{40}$/.test(contract.protocolImplementation.sourceCommit)
+      || typeof contract.protocolImplementation.sourceTree !== 'string'
+      || !/^[0-9a-f]{40}$/.test(contract.protocolImplementation.sourceTree)
+      || contract.protocolImplementation.peerBinding !== 'darwin-audit-token-pidversion-euid-cdhash-v1'
+      || ['operationReceiptsSHA256', 'socketIOSHA256', 'hostClientsSHA256', 'privateArchiveSHA256']
+        .some((key) => typeof contract.protocolImplementation[key] !== 'string'
+          || !HEX64.test(contract.protocolImplementation[key]))) {
+    failures.push(failure(
+      'contract_protocol_implementation',
+      'Contract must pin the audited Darwin peer-binding implementation and source hashes',
+    ));
   }
   if (!exactKeys(contract.protocol, ['major', 'minor'])
       || contract.protocol.major !== 1 || contract.protocol.minor < 29
@@ -175,11 +248,32 @@ function validateContract(contract) {
       || !path.isAbsolute(listener.receiptArchiveDirectory)) {
     failures.push(failure('contract_listener', 'Listener contract is malformed or its public-key digest is wrong'));
   }
+  const expectedSocketNamespace = typeof contract.socketEndpoint?.path === 'string'
+    ? sha256(Buffer.from(contract.socketEndpoint.path, 'utf8'))
+    : null;
+  const hostArchive = contract.hostArchive;
+  if (!exactKeys(hostArchive, [
+    'temporaryRoot', 'rootDirectory', 'socketNamespaceSHA256', 'listenerDirectoryLimit',
+    'attestationFileSHA256',
+  ]) || typeof hostArchive.temporaryRoot !== 'string' || !path.isAbsolute(hostArchive.temporaryRoot)
+      || typeof hostArchive.rootDirectory !== 'string' || !path.isAbsolute(hostArchive.rootDirectory)
+      || hostArchive.socketNamespaceSHA256 !== expectedSocketNamespace
+      || path.basename(hostArchive.rootDirectory) !== expectedSocketNamespace
+      || path.basename(path.dirname(hostArchive.rootDirectory)) !== 'PeekabooOperationReceipts'
+      || path.dirname(path.dirname(hostArchive.rootDirectory)) !== hostArchive.temporaryRoot
+      || hostArchive.listenerDirectoryLimit !== RETAINED_LISTENER_DIRECTORY_LIMIT
+      || typeof hostArchive.attestationFileSHA256 !== 'string'
+      || !HEX64.test(hostArchive.attestationFileSHA256)) {
+    failures.push(failure(
+      'contract_archive_namespace',
+      'Host archive must use the private hashed socket namespace and bounded retention contract',
+    ));
+  }
   if (listener?.receiptArchiveDirectory !== path.join(
-    `${contract.socketEndpoint?.path}.receipts`,
+    hostArchive?.rootDirectory ?? '',
     listener?.instanceID ?? '',
   )) {
-    failures.push(failure('contract_archive_route', 'Listener archive is not derived from the exact socket and instance'));
+    failures.push(failure('contract_archive_route', 'Listener archive is not bound to its hashed socket namespace'));
   }
   if (!validTarget(contract.ownedTarget) || !validTarget(contract.foregroundTarget)) {
     failures.push(failure('contract_targets', 'Owned and foreground targets must be exact window-generation receipts'));
@@ -208,18 +302,29 @@ function validateContract(contract) {
     }
     contract.expectedOperations.forEach((entry) => {
       if (!exactKeys(entry, [
-        'operationID', 'requestID', 'kind', 'operation', 'client', 'requestSHA256', 'responseSHA256',
-        'target', 'outcome',
+        'operationID', 'requestID', 'kind', 'operation', 'requestEnvelopeCase', 'requestCase',
+        'responseEnvelopeCase', 'responseCase', 'targetRequired', 'client', 'requestSHA256',
+        'responseSHA256', 'target', 'focusedElement', 'attributionFailure', 'outcome',
       ]) || typeof entry.operationID !== 'string' || entry.operationID.length === 0
           || (entry.requestID !== null
             && (typeof entry.requestID !== 'string' || !UUID.test(entry.requestID)))
           || !['observation', 'mutation'].includes(entry.kind)
           || typeof entry.operation !== 'string' || entry.operation.length === 0
+          || typeof entry.requestEnvelopeCase !== 'string' || entry.requestEnvelopeCase.length === 0
+          || typeof entry.requestCase !== 'string' || entry.requestCase.length === 0
+          || typeof entry.responseEnvelopeCase !== 'string' || entry.responseEnvelopeCase.length === 0
+          || typeof entry.responseCase !== 'string' || entry.responseCase.length === 0
+          || entry.targetRequired !== true
           || !validProcess(entry.client)
           || typeof entry.requestSHA256 !== 'string' || !HEX64.test(entry.requestSHA256)
           || typeof entry.responseSHA256 !== 'string' || !HEX64.test(entry.responseSHA256)
           || !sameJSON(entry.target, contract.ownedTarget)
-          || (entry.kind === 'observation' ? entry.outcome !== null : !validOutcome(entry.outcome))) {
+          || (entry.focusedElement !== null && !validFocusedElement(entry.focusedElement))
+          || entry.attributionFailure !== null
+          || (entry.kind === 'observation' ? entry.outcome !== null : !validSuccessfulOutcome(entry.outcome))
+          || (entry.kind === 'mutation'
+            && (entry.requestEnvelopeCase !== 'projectedAction'
+              || entry.responseEnvelopeCase !== 'projectedAction'))) {
         failures.push(failure(
           'contract_operation',
           `Expected operation ${entry?.operationID ?? 'unknown'} is malformed or escapes the owned target`,
@@ -269,6 +374,19 @@ function validateSocketEvidence(evidence, contract, failures) {
   }
 }
 
+function validateSourceEvidence(evidence, contract, failures) {
+  const expected = contract.protocolImplementation;
+  if (!exactKeys(evidence, [
+    'sourceCommit', 'sourceTree', 'peerBinding', 'operationReceiptsSHA256',
+    'socketIOSHA256', 'hostClientsSHA256', 'privateArchiveSHA256',
+  ]) || !sameJSON(evidence, expected)) {
+    failures.push(failure(
+      'protocol_implementation',
+      'Checked-out protocol owner files differ from the run-pinned audited implementation',
+    ));
+  }
+}
+
 function validateReceipt(receipt, expected, contract, rawKey, failures) {
   const value = receipt?.normalized;
   const requestID = value?.requestID ?? expected?.requestID ?? null;
@@ -276,7 +394,9 @@ function validateReceipt(receipt, expected, contract, rawKey, failures) {
     'schemaVersion', 'requestID', 'listenerInstanceID', 'listenerKeySHA256',
     'bridgePID', 'bridgeStartIdentity', 'bridgeCodeSignatureHash',
     'clientPID', 'clientStartIdentity', 'clientCodeSignatureHash',
-    'operation', 'requestSHA256', 'responseSHA256', 'target', 'outcome',
+    'operation', 'requestSHA256', 'responseSHA256', 'target', 'focusedElement',
+    'attributionFailure', 'outcome', 'requestEnvelopeCase', 'requestCase',
+    'responseEnvelopeCase', 'responseCase', 'responseOutcome',
     'startedAtMilliseconds', 'completedAtMilliseconds',
   ]) || value.schemaVersion !== 1 || typeof value.requestID !== 'string' || !UUID.test(value.requestID)
       || value.listenerInstanceID !== contract.listener.instanceID
@@ -292,8 +412,19 @@ function validateReceipt(receipt, expected, contract, rawKey, failures) {
       || typeof value.operation !== 'string' || value.operation.length === 0
       || typeof value.requestSHA256 !== 'string' || !HEX64.test(value.requestSHA256)
       || typeof value.responseSHA256 !== 'string' || !HEX64.test(value.responseSHA256)
-      || !validTarget(value.target)
-      || (value.outcome !== null && !validOutcome(value.outcome))
+      || (value.target !== null && !validTarget(value.target))
+      || (value.focusedElement !== null && !validFocusedElement(value.focusedElement))
+      || (value.attributionFailure !== null && !validAttributionFailure(value.attributionFailure))
+      || ((value.target === null) === (value.attributionFailure === null))
+      || (value.focusedElement !== null
+        && (value.target === null || value.focusedElement.pid !== value.target.pid
+          || value.focusedElement.windowID !== value.target.windowID))
+      || (value.outcome !== null && !validOutcomeShape(value.outcome))
+      || typeof value.requestEnvelopeCase !== 'string' || value.requestEnvelopeCase.length === 0
+      || typeof value.requestCase !== 'string' || value.requestCase.length === 0
+      || typeof value.responseEnvelopeCase !== 'string' || value.responseEnvelopeCase.length === 0
+      || typeof value.responseCase !== 'string' || value.responseCase.length === 0
+      || !sameJSON(value.responseOutcome, value.outcome)
       || !safeMilliseconds(value.startedAtMilliseconds)
       || !safeMilliseconds(value.completedAtMilliseconds)
       || value.completedAtMilliseconds < value.startedAtMilliseconds) {
@@ -321,20 +452,41 @@ function validateReceipt(receipt, expected, contract, rawKey, failures) {
   }
   if ((expected.requestID !== null && value.requestID !== expected.requestID)
       || value.operation !== expected.operation
+      || value.requestEnvelopeCase !== expected.requestEnvelopeCase
+      || value.requestCase !== expected.requestCase
+      || value.responseEnvelopeCase !== expected.responseEnvelopeCase
+      || value.responseCase !== expected.responseCase
       || value.clientPID !== expected.client.pid
       || value.clientStartIdentity !== expected.client.startIdentity
       || value.clientCodeSignatureHash !== expected.client.codeSignatureHash
       || value.requestSHA256 !== expected.requestSHA256
       || value.responseSHA256 !== expected.responseSHA256
       || !sameJSON(value.target, expected.target)
+      || !sameJSON(value.focusedElement, expected.focusedElement)
+      || !sameJSON(value.attributionFailure, expected.attributionFailure)
       || !sameJSON(value.outcome, expected.outcome)) {
     failures.push(failure('receipt_contract', 'Receipt differs from the exact requested operation', requestID));
   }
-  if (!sameJSON(value.target, contract.ownedTarget)
+  if (value.attributionFailure !== null) {
+    failures.push(failure(
+      'attribution_failure',
+      `Operation target attribution failed at ${value.attributionFailure.stage}`,
+      requestID,
+    ));
+    if (expected.kind === 'mutation'
+        && !validAttributionFailureOutcome(value.attributionFailure, value.outcome)) {
+      failures.push(failure(
+        'attribution_semantics',
+        'Target attribution failure stage/evidence contradicts its action outcome',
+        requestID,
+      ));
+    }
+  }
+  if (expected.targetRequired !== true || !sameJSON(value.target, contract.ownedTarget)
       || sameJSON(value.target, contract.foregroundTarget)) {
     failures.push(failure('target_ownership', 'Peekaboo receipt is not isolated to its owned target', requestID));
   }
-  if (expected.kind === 'mutation' && !validOutcome(value.outcome)) {
+  if (expected.kind === 'mutation' && !validSuccessfulOutcome(value.outcome)) {
     failures.push(failure('background_outcome', 'Mutation lacks a retry-unsafe background outcome', requestID));
   }
   if (expected.kind === 'observation' && value.outcome !== null) {
@@ -355,7 +507,8 @@ function validatePrivateDirectory(directory, expectedCount, failures) {
     return [];
   }
   if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()
-      || (directoryStat.mode & 0o077) !== 0) {
+      || (directoryStat.mode & 0o077) !== 0
+      || (typeof process.geteuid === 'function' && directoryStat.uid !== process.geteuid())) {
     failures.push(failure('archive_permissions', 'Receipt export must be a real private directory (0700 or stricter)'));
     return [];
   }
@@ -392,6 +545,77 @@ function validatePrivateDirectory(directory, expectedCount, failures) {
   return documents;
 }
 
+function validateHostArchive(contract, attestationBytes, receiptBytesByID, failures) {
+  const root = contract.hostArchive.rootDirectory;
+  const listenerDirectory = contract.listener.receiptArchiveDirectory;
+  const namespaceDirectory = path.dirname(root);
+  let resolvedTemporaryRoot;
+  try {
+    resolvedTemporaryRoot = fs.realpathSync(contract.hostArchive.temporaryRoot);
+    const systemTemporaryRoot = fs.realpathSync(os.tmpdir());
+    if (resolvedTemporaryRoot !== systemTemporaryRoot
+        && !resolvedTemporaryRoot.startsWith(`${systemTemporaryRoot}${path.sep}`)) {
+      failures.push(failure('host_archive_namespace', 'Host archive is outside the private system temporary root'));
+    }
+  } catch (error) {
+    failures.push(failure('host_archive_namespace', `Host temporary root is unavailable: ${error.message}`));
+    return;
+  }
+  for (const [directory, label] of [
+    [contract.hostArchive.temporaryRoot, 'temporary root'],
+    [namespaceDirectory, 'namespace'],
+    [root, 'root'],
+    [listenerDirectory, 'listener'],
+  ]) {
+    let info;
+    try {
+      info = fs.lstatSync(directory);
+    } catch (error) {
+      failures.push(failure('host_archive_directory', `${label} archive directory is unavailable: ${error.message}`));
+      return;
+    }
+    if (!info.isDirectory() || info.isSymbolicLink() || (info.mode & 0o077) !== 0
+        || (typeof process.geteuid === 'function' && info.uid !== process.geteuid())) {
+      failures.push(failure('host_archive_permissions', `${label} archive directory is not private and owner-bound`));
+      return;
+    }
+  }
+  const listenerNames = fs.readdirSync(root).sort();
+  if (listenerNames.length > contract.hostArchive.listenerDirectoryLimit
+      || listenerNames.some((name) => !UUID.test(name))) {
+    failures.push(failure('host_archive_retention', 'Hashed archive exceeds or escapes bounded listener retention'));
+  }
+  const expectedFiles = new Map([['attestation.json', attestationBytes]]);
+  for (const [requestID, bytes] of receiptBytesByID) {
+    expectedFiles.set(`${requestID}.json`, bytes);
+  }
+  const actualFiles = fs.readdirSync(listenerDirectory).sort();
+  if (actualFiles.length !== expectedFiles.size
+      || actualFiles.some((name) => !expectedFiles.has(name))) {
+    failures.push(failure('host_archive_completeness', 'Listener archive differs from the certified operation set'));
+  }
+  for (const [name, expectedBytes] of expectedFiles) {
+    const filePath = path.join(listenerDirectory, name);
+    try {
+      const before = fs.lstatSync(filePath);
+      const bytes = fs.readFileSync(filePath);
+      const after = fs.lstatSync(filePath);
+      if (!before.isFile() || before.isSymbolicLink() || (before.mode & 0o177) !== 0
+          || (typeof process.geteuid === 'function' && before.uid !== process.geteuid())
+          || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
+          || before.mtimeMs !== after.mtimeMs || !bytes.equals(expectedBytes)) {
+        failures.push(failure('host_archive_file', `Host archive file is unsafe or mismatched: ${name}`));
+      }
+      if (name === 'attestation.json'
+          && sha256(bytes) !== contract.hostArchive.attestationFileSHA256) {
+        failures.push(failure('host_archive_attestation', 'Archived listener attestation hash is wrong'));
+      }
+    } catch (error) {
+      failures.push(failure('host_archive_file', `Host archive file is unavailable: ${name}: ${error.message}`));
+    }
+  }
+}
+
 function loadJSON(bytes, context) {
   try {
     return JSON.parse(bytes.toString('utf8'));
@@ -407,15 +631,18 @@ export async function validateAttestedOperationReceipts({
   adapter,
   adapterSHA256,
   socketEvidence,
+  sourceEvidence,
 }) {
   const failures = validateContract(contract);
   if (failures.some((entry) => entry.rule === 'contract_schema')) {
     return { success: false, adapter: null, receipts: [], failures };
   }
-  if (!adapter || adapter.adapterAPIVersion !== 1 || typeof adapter.adapterID !== 'string'
+  if (!adapter || adapter.adapterAPIVersion !== 2 || typeof adapter.adapterID !== 'string'
       || typeof adapter.embedsAttestation !== 'boolean'
-      || typeof adapter.decodeAttestation !== 'function' || typeof adapter.decodeReceipt !== 'function') {
-    failures.push(failure('adapter_contract', 'Receipt adapter does not implement API version 1'));
+      || typeof adapter.decodeAttestation !== 'function' || typeof adapter.decodeReceipt !== 'function'
+      || typeof adapter.hostAttestationBytes !== 'function'
+      || typeof adapter.hostReceiptBytes !== 'function') {
+    failures.push(failure('adapter_contract', 'Receipt adapter does not implement API version 2'));
     return { success: false, adapter: null, receipts: [], failures };
   }
   if (adapter.adapterID !== contract.adapter?.id
@@ -429,10 +656,13 @@ export async function validateAttestedOperationReceipts({
     };
   }
   validateSocketEvidence(socketEvidence, contract, failures);
+  validateSourceEvidence(sourceEvidence, contract, failures);
 
   let attestation;
+  let hostAttestationBytes = Buffer.alloc(0);
   try {
     attestation = await adapter.decodeAttestation(attestationDocument);
+    hostAttestationBytes = await adapter.hostAttestationBytes(attestationDocument);
     validateAttestation(attestation, contract, failures);
   } catch (error) {
     failures.push(failure('listener_decode', `Listener attestation could not be decoded: ${error.message}`));
@@ -445,6 +675,7 @@ export async function validateAttestedOperationReceipts({
     .map((entry) => [entry.requestID, entry]));
   const unclaimedOperationIDs = new Set(expectedOperations.map((entry) => entry.operationID));
   const decodedReceipts = [];
+  const hostReceiptBytesByID = new Map();
   const seenRequestIDs = new Set();
   const rawKey = Buffer.from(contract.listener?.signingPublicKeyBase64 ?? '', 'base64');
   for (const file of files) {
@@ -452,6 +683,7 @@ export async function validateAttestedOperationReceipts({
     try {
       const document = loadJSON(file.bytes, file.name);
       decoded = await adapter.decodeReceipt(document, { fileName: file.name, fileSHA256: file.sha256 });
+      const hostReceiptBytes = await adapter.hostReceiptBytes(document);
       if (adapter.embedsAttestation) {
         if (!decoded?.attestation) {
           failures.push(failure('listener_decode', 'Receipt bundle omitted its same-connection attestation'));
@@ -467,6 +699,9 @@ export async function validateAttestedOperationReceipts({
         failures.push(failure('receipt_replay', 'Request ID appears more than once', requestID ?? null));
       }
       seenRequestIDs.add(requestID);
+      if (typeof requestID === 'string' && Buffer.isBuffer(hostReceiptBytes)) {
+        hostReceiptBytesByID.set(requestID, hostReceiptBytes);
+      }
       let expected = expectedByRequestID.get(requestID);
       if (!expected) {
         const candidates = expectedOperations.filter((entry) => entry.requestID === null
@@ -500,6 +735,12 @@ export async function validateAttestedOperationReceipts({
       ));
     }
   }
+  validateHostArchive(
+    contract,
+    hostAttestationBytes,
+    hostReceiptBytesByID,
+    failures,
+  );
   return {
     success: failures.length === 0,
     adapter: { id: adapter.adapterID, api_version: adapter.adapterAPIVersion, sha256: adapterSHA256 },
@@ -547,6 +788,35 @@ async function runCLI() {
     isSocket: socketStat.isSocket(),
     isSymbolicLink: socketStat.isSymbolicLink(),
   };
+  const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const fileDigest = (relativePath) => sha256(fs.readFileSync(path.join(repositoryRoot, relativePath)));
+  const sourceCommit = execFileSync(
+    'git',
+    ['rev-parse', contract.protocolImplementation.sourceCommit],
+    { cwd: repositoryRoot, encoding: 'utf8' },
+  ).trim();
+  const sourceTree = execFileSync(
+    'git',
+    ['rev-parse', `${sourceCommit}^{tree}`],
+    { cwd: repositoryRoot, encoding: 'utf8' },
+  ).trim();
+  const sourceEvidence = {
+    sourceCommit,
+    sourceTree,
+    peerBinding: 'darwin-audit-token-pidversion-euid-cdhash-v1',
+    operationReceiptsSHA256: fileDigest(
+      'Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationReceipts.swift',
+    ),
+    socketIOSHA256: fileDigest(
+      'Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeSocketIO.swift',
+    ),
+    hostClientsSHA256: fileDigest(
+      'Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeHost+Clients.swift',
+    ),
+    privateArchiveSHA256: fileDigest(
+      'Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgePrivateReceiptArchive.swift',
+    ),
+  };
   const result = await validateAttestedOperationReceipts({
     contract,
     attestationDocument,
@@ -554,6 +824,7 @@ async function runCLI() {
     adapter,
     adapterSHA256,
     socketEvidence,
+    sourceEvidence,
   });
   const output = `${JSON.stringify(result, null, 2)}\n`;
   if (args.output) fs.writeFileSync(args.output, output, { mode: 0o600 });

@@ -136,29 +136,37 @@ scripts/test-dual-controller-overlap.sh --self-test \
 ```
 
 Protocol 1.29 adds the operation-level evidence needed to remove that live reservation safely. The coexistence harness
-must set `PEEKABOO_OPERATION_RECEIPT_DIRECTORY` to a new private directory and retain the request ID returned by every
-command. It then validates the exported receipts with
+must set `PEEKABOO_OPERATION_RECEIPT_DIRECTORY` to a new private directory. It retains a returned request ID when one is
+available and otherwise binds each receipt to the unique registered CLI PID/process-generation/CDHash and operation. It
+then validates the exported receipts with
 `scripts/validate-attested-operation-receipts.mjs`. The validator deliberately consumes receipts through a versioned
 adapter: the protocol decoder owns the producer's wire spelling, while the certification policy owns the normalized
 identity, target, timing, and outcome checks. A producer format change therefore cannot silently weaken certification.
 
-The run-specific contract pins the signed listener instance and public key from the verified handshake, Bridge and
-client process generations and code-signature hashes, exact socket device/inode, the window-generation receipt owned by
-Peekaboo, a distinct foreground-controller target, the overlap interval, and every expected request/response digest.
-The validator verifies
-the listener self-signature and every Ed25519 receipt, requires protocol 1.29 or newer, rejects global/process-only or
-cross-target routing, and requires every mutation to carry a retry-unsafe background outcome. A missing, duplicate,
-undecodable, or unsigned response is indeterminate and fails certification; it is never converted into a replayable
-operation. At consumption time the socket must still be a non-symlink socket at the run-pinned device/inode. The export
-directory must be a non-symlink private directory containing exactly one stable private file per expected request. The
-Bridge's signed archive remains bound to `<socket>.receipts/<listener-instance>`.
+The run-specific contract pins the exact audited protocol source, including its Darwin audit-token, PID-version,
+effective-UID, and CDHash peer-binding owners. It also pins the signed listener instance and public key, Bridge and client
+process generations and CDHashes, exact socket device/inode, Peekaboo's exact window-generation target, a distinct
+foreground-controller target, the overlap interval, and every expected request/response digest and enum case. The
+validator verifies the listener self-signature and every Ed25519 receipt, requires protocol 1.29 or newer, rejects
+global/process-only or cross-target routing, validates optional focused-element identity, and requires every mutation to
+carry the exact background outcome returned by the canonical response. Signed attribution failures retain their
+pre-dispatch or post-execution stage and evidence digest for diagnosis, but cannot certify the protected lane. A missing,
+duplicate, undecodable, or unsigned response is indeterminate and fails certification; it is never converted into a
+replayable operation.
+
+At consumption time the socket must still be a non-symlink socket at the run-pinned device/inode. The private export
+must contain exactly one stable file per expected request. The host archive must independently contain the same signed
+receipts plus `attestation.json`, all mode `0600`, below
+`$TMPDIR/PeekabooOperationReceipts/<sha256(socket-path)>/<listener-instance>`. Every directory is owner-only and
+non-symlink, and the bounded namespace may retain no more than 16 listener generations.
 
 `scripts/receipt-adapters/peekaboo-bridge-operation-receipt-bundle-1-29.mjs` decodes the real opt-in verification
-bundle. Every bundle contains the exact same-connection listener attestation, signed receipt, and canonical request and
-response bytes, so the validator never substitutes a status probe made over another connection. Those bytes can contain
-typed text and other sensitive command payloads: use a new private artifact directory, do not publish it, and remove it
-after the certification evidence has been reduced to non-sensitive hashes and verdicts. The validator can take the
-attestation from the first bundle automatically:
+bundle. Every bundle contains the exact same-connection listener attestation and signed receipt, the canonical signature
+payload bytes, and the canonical request and response bytes. The validator therefore never reconstructs signed bytes or
+substitutes a status probe made over another connection. Those bytes can contain typed text and other sensitive command
+payloads: use a new private artifact directory, do not publish it, and remove it after the certification evidence has
+been reduced to non-sensitive hashes and verdicts. The validator takes the attestation from the first bundle
+automatically:
 
 ```bash
 node scripts/validate-attested-operation-receipts.mjs \
@@ -185,6 +193,9 @@ target may become frontmost; unrelated activation is still a violation. Clipboar
 generation, and unattributed input stay strict throughout. The heartbeat records the attributed producer generations and
 event count. The coordinator must revoke the grant and restore the sentinel before the monitor can emit another clean
 sample. Cursor motion stays observational, so a person using the machine does not create a false Peekaboo failure.
+`scripts/physical-overlap-contract-catalog.json` freezes this split-controller policy to the exact protocol 1.29 source
+under test. It forbids virtualization, Lume, VNC, AppleScript, and JXA; a later live binding may fill only the exact
+sentinel, controlled targets, socket/listener, CLI generations, and integrated Computer Use producer generations.
 
 For the interaction commands exercised here, background is the omission contract: `--foreground` is the only consent
 for focus/activation, global keyboard input, physical cursor movement, or synthetic pointer/wheel events. Explicit app

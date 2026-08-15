@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "product_source": {
+    "commit": "a712664b14f0cbe569bbdd3186f1e5a188e7c70c",
+    "tree": "9edf0d05673329a0a339b05c778ba9a547b0a80e",
+    "peer_binding": "darwin-audit-token-pidversion-euid-cdhash-v1",
+    "operation_receipts_sha256": "a1e4aeefaa952898c581606d20005689de022c919f76e85c8c9e1e97296088db",
+    "socket_io_sha256": "18005731dd37a0045e22ce06ceaed92405dfaa0d86d046f2d1cba33fcf9fd32a",
+    "host_clients_sha256": "5aa63a11a95adb966c11d2bac7415a4437241ff0fdaf081b85765947a45105ee",
+    "private_archive_sha256": "40ef72a3cf1ce57e8da245b2fa1f620dfa1c3104dff9f9ac1e8d23d3c6a5d039"
+  },
+  "controllers": [
+    {
+      "id": "peekaboo",
+      "interaction_mode": "background",
+      "producer_policy": "forbid-session-global-input",
+      "target_policy": "owned-exact-window",
+      "operation_evidence": "protocol-1.29-signed-bundle"
+    },
+    {
+      "id": "integrated-computer-use",
+      "interaction_mode": "foreground",
+      "producer_policy": "exact-pid-generation-attribution",
+      "target_policy": "distinct-exact-window",
+      "operation_evidence": "native-monitor-event-attribution"
+    }
+  ],
+  "phases": [
+    "baseline",
+    "foreground-granted",
+    "foreground-revoked",
+    "restored"
+  ],
+  "invariants": [
+    "protocol-source-pinned",
+    "listener-same-connection-attested",
+    "socket-device-inode-stable",
+    "peekaboo-exact-window-background-only",
+    "peekaboo-no-session-global-input",
+    "foreground-controller-generation-attributed",
+    "foreground-controller-target-isolated",
+    "unattributed-input-absent",
+    "clipboard-unchanged",
+    "peekaboo-overlay-absent",
+    "monitor-live-through-cleanup",
+    "sentinel-restored",
+    "controlled-targets-restored",
+    "generation-pinned-cleanup"
+  ],
+  "receipt_requirements": [
+    "canonical-listener-payload",
+    "canonical-receipt-payload",
+    "canonical-request-digest",
+    "canonical-response-digest",
+    "request-case-match",
+    "response-case-match",
+    "response-outcome-match",
+    "target-required",
+    "focused-identity-consistent",
+    "attribution-failure-absent",
+    "private-export-complete",
+    "private-hashed-host-archive-complete"
+  ],
+  "foreground_attribution_requirements": {
+    "minimum_event_count": 1,
+    "active_target_set": "sentinel-or-exact-foreground-target",
+    "grant_revision_monotonic": true,
+    "revoke_before_clean_sample": true,
+    "unexpected_activation_fails": true
+  },
+  "restoration_requirements": [
+    "foreground-grant-revoked",
+    "sentinel-frontmost-pid-and-window",
+    "clipboard-change-count-and-digest",
+    "peekaboo-target-content",
+    "foreground-target-content",
+    "owned-process-generations-terminated"
+  ],
+  "cursor_policy": "observational",
+  "prohibited_mechanisms": [
+    "virtualization",
+    "lume",
+    "vnc",
+    "applescript",
+    "jxa"
+  ]
+}

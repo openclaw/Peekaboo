@@ -1,7 +1,7 @@
 import { canonicalBytes } from '../validate-attested-operation-receipts.mjs';
 
-export const adapterAPIVersion = 1;
-export const adapterID = 'canonical-attested-operation-receipts-v1';
+export const adapterAPIVersion = 2;
+export const adapterID = 'canonical-attested-operation-receipts-v2';
 export const embedsAttestation = false;
 
 function decodeSignature(value, context) {
@@ -35,4 +35,12 @@ export function decodeReceipt(document) {
     requestCanonicalBytes: Buffer.from(document.requestCanonicalBase64, 'base64'),
     responseCanonicalBytes: Buffer.from(document.responseCanonicalBase64, 'base64'),
   };
+}
+
+export function hostAttestationBytes(document) {
+  return canonicalBytes(document);
+}
+
+export function hostReceiptBytes(document) {
+  return canonicalBytes(document);
 }

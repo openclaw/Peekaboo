@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto';
+
 import { canonicalBytes } from '../validate-attested-operation-receipts.mjs';
 
-export const adapterAPIVersion = 1;
-export const adapterID = 'peekaboo-bridge-operation-receipt-bundle-1.29';
+export const adapterAPIVersion = 2;
+export const adapterID = 'peekaboo-bridge-operation-receipt-bundle-1.29-final';
 export const embedsAttestation = true;
 
 function object(value, context) {
@@ -38,7 +40,7 @@ function processIdentity(value, context) {
 
 function listenerAttestation(document) {
   const root = object(document, 'verification bundle');
-  return object(root.operationAttestation ?? root, 'operation attestation');
+  return object(root.operationAttestation, 'same-connection operation attestation');
 }
 
 function normalizeAttestation(value) {
@@ -81,6 +83,7 @@ function normalizeBounds(value) {
 }
 
 function normalizeTarget(value) {
+  if (value === null || value === undefined) return null;
   const target = object(value, 'operation target');
   if (target.kind === 'window') {
     if (typeof target.processStartIdentity !== 'string'
@@ -114,14 +117,120 @@ function normalizeOutcome(value) {
   if (value === null || value === undefined) return null;
   const outcome = object(value, 'desktop action outcome');
   return {
-    deliveryMode: outcome.delivery_mode,
+    state: outcome.state,
+    route: outcome.route,
+    deliveryMode: outcome.delivery_mode ?? null,
     effect: outcome.effect,
+    evidence: outcome.evidence,
+    dispatchState: outcome.dispatch_state,
+    retrySafety: outcome.retry_safety,
     mutationDispatched: outcome.mutation_dispatched,
     retrySafe: outcome.retry_safe,
   };
 }
 
-function normalizeReceiptPayload(value) {
+function normalizeFocusedElement(value) {
+  if (value === null || value === undefined) return null;
+  const focused = object(value, 'focused element identity');
+  return {
+    pid: focused.processIdentifier,
+    windowID: focused.windowID,
+    role: focused.role,
+    title: focused.title ?? null,
+    identifier: focused.identifier ?? null,
+    frame: normalizeBounds(focused.frame),
+  };
+}
+
+function normalizeAttributionFailure(value, evidence) {
+  if (value === null || value === undefined) {
+    if (evidence !== null && evidence !== undefined) {
+      throw new Error('successful target attribution unexpectedly carries failure evidence');
+    }
+    return null;
+  }
+  const failure = object(value, 'target attribution failure');
+  if (!Array.isArray(evidence) || evidence.length === 0) {
+    throw new Error('target attribution failure is missing its signed evidence set');
+  }
+  return {
+    code: failure.code,
+    message: failure.message,
+    stage: failure.stage,
+    evidenceCount: evidence.length,
+    evidenceSHA256: sha256(canonicalBytes(evidence)),
+  };
+}
+
+function parseCanonicalJSON(bytes, context) {
+  let value;
+  try {
+    value = JSON.parse(bytes.toString('utf8'));
+  } catch (error) {
+    throw new Error(`${context} is not JSON: ${error.message}`);
+  }
+  if (!canonicalBytes(value).equals(bytes)) {
+    throw new Error(`${context} is not the canonical sorted JSON payload`);
+  }
+  return value;
+}
+
+function sha256(bytes) {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function canonicalPayload(value, expected, context) {
+  const bytes = base64(value, context);
+  const parsed = parseCanonicalJSON(bytes, context);
+  if (!canonicalBytes(parsed).equals(canonicalBytes(expected))) {
+    throw new Error(`${context} does not equal the exported object`);
+  }
+  return bytes;
+}
+
+function enumCase(value, context) {
+  const envelope = object(value, context);
+  const keys = Object.keys(envelope);
+  if (keys.length !== 1 || typeof keys[0] !== 'string' || keys[0].length === 0) {
+    throw new Error(`${context} must contain exactly one enum case`);
+  }
+  return keys[0];
+}
+
+function associatedValue(value, caseName, context) {
+  const associated = object(object(value, context)[caseName], `${context} case`);
+  return object(associated._0, `${context} associated value`);
+}
+
+function wireFacts(requestBytes, responseBytes) {
+  const request = parseCanonicalJSON(requestBytes, 'canonical request');
+  const response = parseCanonicalJSON(responseBytes, 'canonical response');
+  const requestEnvelopeCase = enumCase(request, 'canonical request');
+  const requestValue = requestEnvelopeCase === 'projectedAction'
+    ? object(associatedValue(request, requestEnvelopeCase, 'canonical request').request, 'projected request')
+    : request;
+  const requestCase = enumCase(requestValue, 'operation request');
+  const responseEnvelopeCase = enumCase(response, 'canonical response');
+  let responseValue = response;
+  let responseOutcome = null;
+  if (responseEnvelopeCase === 'projectedAction') {
+    const projected = associatedValue(response, responseEnvelopeCase, 'canonical response');
+    responseValue = object(projected.response, 'projected response');
+    responseOutcome = normalizeOutcome(projected.outcome);
+  } else if (responseEnvelopeCase === 'error') {
+    const envelope = associatedValue(response, responseEnvelopeCase, 'canonical response');
+    responseOutcome = normalizeOutcome(envelope.actionOutcome);
+  }
+  return {
+    requestEnvelopeCase,
+    requestCase,
+    responseEnvelopeCase,
+    responseCase: enumCase(responseValue, 'operation response'),
+    responseOutcome,
+  };
+}
+
+function normalizeReceiptPayload(value, facts) {
   const host = processIdentity(value.host, 'receipt Bridge identity');
   const client = processIdentity(value.client, 'receipt client identity');
   return {
@@ -139,7 +248,17 @@ function normalizeReceiptPayload(value) {
     requestSHA256: value.requestSHA256,
     responseSHA256: value.responseSHA256,
     target: normalizeTarget(value.target),
+    focusedElement: normalizeFocusedElement(value.focusedElement),
+    attributionFailure: normalizeAttributionFailure(
+      value.targetAttributionFailure,
+      value.targetAttributionEvidence,
+    ),
     outcome: normalizeOutcome(value.outcome),
+    requestEnvelopeCase: facts.requestEnvelopeCase,
+    requestCase: facts.requestCase,
+    responseEnvelopeCase: facts.responseEnvelopeCase,
+    responseCase: facts.responseCase,
+    responseOutcome: facts.responseOutcome,
     startedAtMilliseconds: value.startedAtUnixMilliseconds,
     completedAtMilliseconds: value.completedAtUnixMilliseconds,
   };
@@ -153,10 +272,15 @@ function signature(value, context) {
 }
 
 export function decodeAttestation(document) {
+  const bundle = object(document, 'verification bundle');
   const attestation = listenerAttestation(document);
   return {
     normalized: normalizeAttestation(attestation),
-    signedBytes: canonicalBytes(unsignedAttestation(attestation)),
+    signedBytes: canonicalPayload(
+      bundle.canonicalListenerAttestationPayload,
+      unsignedAttestation(attestation),
+      'canonical listener attestation payload',
+    ),
     signature: signature(attestation.signature, 'listener signature'),
   };
 }
@@ -165,12 +289,27 @@ export function decodeReceipt(document) {
   const bundle = object(document, 'verification bundle');
   const receipt = object(bundle.receipt, 'signed operation receipt');
   const payload = object(receipt.payload, 'signed operation payload');
+  const requestCanonicalBytes = base64(bundle.canonicalRequest, 'canonical request');
+  const responseCanonicalBytes = base64(bundle.canonicalResponse, 'canonical response');
+  const facts = wireFacts(requestCanonicalBytes, responseCanonicalBytes);
   return {
     attestation: decodeAttestation(bundle),
-    normalized: normalizeReceiptPayload(payload),
-    signedBytes: canonicalBytes(payload),
+    normalized: normalizeReceiptPayload(payload, facts),
+    signedBytes: canonicalPayload(
+      bundle.canonicalReceiptPayload,
+      payload,
+      'canonical receipt payload',
+    ),
     signature: signature(receipt.signature, 'operation signature'),
-    requestCanonicalBytes: base64(bundle.canonicalRequest, 'canonical request'),
-    responseCanonicalBytes: base64(bundle.canonicalResponse, 'canonical response'),
+    requestCanonicalBytes,
+    responseCanonicalBytes,
   };
+}
+
+export function hostAttestationBytes(document) {
+  return canonicalBytes(listenerAttestation(document));
+}
+
+export function hostReceiptBytes(document) {
+  return canonicalBytes(object(object(document, 'verification bundle').receipt, 'signed operation receipt'));
 }
