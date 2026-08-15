@@ -11,13 +11,14 @@ struct ScreenCaptureKitProcessCapabilityRuntimeTests {
         let directory = URL(fileURLWithPath: "/tmp/pb-cap-\(identifier)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: directory) }
+        let socketPath = directory.appendingPathComponent("bridge.sock").path
 
         let process = Process()
         process.executableURL = try TestChildProcess.peekabooBinaryURL()
         process.arguments = [
             "daemon", "run",
             "--mode", "manual",
-            "--bridge-socket", directory.appendingPathComponent("bridge.sock").path,
+            "--bridge-socket", socketPath,
         ]
         process.standardOutput = FileHandle.nullDevice
         let standardError = Pipe()
@@ -35,7 +36,10 @@ struct ScreenCaptureKitProcessCapabilityRuntimeTests {
                 $0.processStartIdentity == processStartIdentity
         }))
 
-        Self.stop(process)
+        let exitedAfterSIGTERM = Self.stop(process)
+        #expect(exitedAfterSIGTERM)
+        #expect(!FileManager.default.fileExists(atPath: socketPath))
+        #expect(try Data(contentsOf: URL(fileURLWithPath: "\(socketPath).lock")).isEmpty)
         try ScreenCaptureKitOwnerLease.removeStaleProcessCapabilityMarkers()
     }
 
@@ -63,15 +67,18 @@ struct ScreenCaptureKitProcessCapabilityRuntimeTests {
         throw RuntimeError("Peekaboo marker fixture did not publish its process capability")
     }
 
-    private static func stop(_ process: Process) {
-        guard process.isRunning else { return }
+    @discardableResult
+    private static func stop(_ process: Process) -> Bool {
+        guard process.isRunning else { return true }
         process.terminate()
         for _ in 0..<100 where process.isRunning {
             usleep(10000)
         }
+        let exitedAfterSIGTERM = !process.isRunning
         if process.isRunning {
             kill(process.processIdentifier, SIGKILL)
         }
         process.waitUntilExit()
+        return exitedAfterSIGTERM
     }
 }

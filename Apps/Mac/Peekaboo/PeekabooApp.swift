@@ -232,6 +232,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var windowOpener: ((String) -> Void)?
     private var bridgeHost: PeekabooBridgeHost?
     private var bridgeStartTask: Task<Void, Never>?
+    private let terminationGate = ProcessTerminationGate()
+    private var terminationSignalSource: ProcessTerminationSignalSource?
+    private var didReceiveTerminationSignal = false
     private var didSchedulePermissionsOnboarding = false
 
     // State connections
@@ -271,6 +274,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_: Notification) {
+        self.installTerminationSignalSource()
         self.logger.info("Peekaboo launching...")
         NSLog("PeekabooApp: applicationDidFinishLaunching")
 
@@ -387,6 +391,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false // Menu bar app stays running
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        self.logger.info("Deferring application termination until Bridge ownership is released")
+        switch self.terminationGate.begin(
+            shutdown: { [weak self] in
+                await self?.stopBridgeHostForTermination()
+            },
+            reply: { shouldTerminate in
+                sender.reply(toApplicationShouldTerminate: shouldTerminate)
+            })
+        {
+        case .terminateNow:
+            return .terminateNow
+        case .terminateLater:
+            return .terminateLater
+        }
+    }
+
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard !self.launchPolicy.isBackgroundBridgeHost || flag else { return false }
         // Reopen fires for dock clicks and for `open`/relaunch attempts while
@@ -403,14 +424,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_: Notification) {
+        self.terminationSignalSource?.cancel()
+        self.terminationSignalSource = nil
         self.statusBarController?.removeStatusItem()
         self.statusBarController = nil
-        self.bridgeStartTask?.cancel()
+    }
+
+    private func installTerminationSignalSource() {
+        guard self.terminationSignalSource == nil else { return }
+        self.terminationSignalSource = ProcessTerminationSignalSource(signals: [SIGTERM]) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, !self.didReceiveTerminationSignal else { return }
+                self.didReceiveTerminationSignal = true
+                self.logger.info("Received SIGTERM; releasing Bridge ownership before process exit")
+                await self.stopBridgeHostForTermination()
+                Darwin.exit(EXIT_SUCCESS)
+            }
+        }
+    }
+
+    private func stopBridgeHostForTermination() async {
+        let bridgeStartTask = self.bridgeStartTask
+        bridgeStartTask?.cancel()
+        await bridgeStartTask?.value
         self.bridgeStartTask = nil
 
-        if let bridgeHost = self.bridgeHost {
-            Task { await bridgeHost.stop() }
-        }
+        guard let bridgeHost = self.bridgeHost else { return }
+        _ = await bridgeHost.stop()
+        await bridgeHost.waitUntilFullyStopped()
+        self.bridgeHost = nil
+        self.logger.info("Bridge ownership released; application termination may continue")
     }
 
     // MARK: - Window Management

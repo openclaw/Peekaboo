@@ -332,6 +332,28 @@ struct PeekabooBridgeHostOwnershipTests {
     }
 
     @Test
+    func `clean stop removes the exact owned socket and clears its lease identity`() async throws {
+        let socketPath = Self.socketPath()
+        defer { Self.removeSocketArtifacts(socketPath) }
+
+        let host = await Self.makeHost(socketPath: socketPath)
+        try await host.startChecked()
+
+        var socketInfo = stat()
+        #expect(lstat(socketPath, &socketInfo) == 0)
+        #expect(socketInfo.st_mode & mode_t(S_IFMT) == mode_t(S_IFSOCK))
+        #expect(socketInfo.st_mode & mode_t(0o777) == mode_t(S_IRUSR | S_IWUSR))
+        let markerBefore = try Data(contentsOf: URL(fileURLWithPath: "\(socketPath).lock"))
+        #expect(!markerBefore.isEmpty)
+
+        #expect(await host.stop() == .stopped)
+        await host.waitUntilFullyStopped()
+
+        #expect(!FileManager.default.fileExists(atPath: socketPath))
+        #expect(try Data(contentsOf: URL(fileURLWithPath: "\(socketPath).lock")).isEmpty)
+    }
+
+    @Test
     func `stopping an old host preserves a replacement socket`() async throws {
         let socketPath = Self.socketPath()
         defer { Self.removeSocketArtifacts(socketPath) }

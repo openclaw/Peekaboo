@@ -43,6 +43,12 @@ extension DaemonCommand {
             )
 
             let daemon = PeekabooDaemon(configuration: config)
+            let terminationSignalSource = ProcessTerminationSignalSource { [weak daemon] _ in
+                Task { @MainActor in
+                    _ = await daemon?.requestStop()
+                }
+            }
+            defer { terminationSignalSource.cancel() }
             try await daemon.runUntilStopChecked()
         }
 
