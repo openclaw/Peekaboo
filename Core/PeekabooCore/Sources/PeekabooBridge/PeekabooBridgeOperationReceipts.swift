@@ -633,8 +633,7 @@ enum PeekabooBridgePrivateReceiptArchive {
 
     static func writeAtomically(_ data: Data, to destination: URL) throws {
         try self.prepareDirectory(destination.deletingLastPathComponent())
-        let temporary = destination.deletingLastPathComponent().appendingPathComponent(
-            ".(destination.lastPathComponent).(UUID().uuidString.lowercased()).tmp")
+        let temporary = self.temporaryURL(for: destination)
         let descriptor = open(
             temporary.path,
             O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
@@ -697,6 +696,11 @@ enum PeekabooBridgePrivateReceiptArchive {
         } catch {
             throw PeekabooBridgeOperationReceiptError.archiveWriteFailed(error.localizedDescription)
         }
+    }
+
+    static func temporaryURL(for destination: URL, nonce: UUID = UUID()) -> URL {
+        destination.deletingLastPathComponent().appendingPathComponent(
+            ".\(destination.lastPathComponent).\(nonce.uuidString.lowercased()).tmp")
     }
 }
 

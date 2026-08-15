@@ -10,6 +10,45 @@ import Testing
 @Suite(.serialized)
 struct PeekabooBridgeOperationReceiptTests {
     @Test
+    func `concurrent atomic receipt writes use unique temporary paths`() async throws {
+        let root = URL(fileURLWithPath: "/tmp/pbor-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let writerCount = 16
+        let barrier = ReceiptWriteBarrier(parties: writerCount)
+        let payload = Data(repeating: 0xA5, count: 4 * 1024 * 1024)
+        try PeekabooBridgePrivateReceiptArchive.prepareDirectory(root)
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for index in 0..<writerCount {
+                group.addTask {
+                    await barrier.wait()
+                    let destination = root.appendingPathComponent("receipt-\(index).json")
+                    try PeekabooBridgePrivateReceiptArchive.writeAtomically(payload, to: destination)
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        for index in 0..<writerCount {
+            let destination = root.appendingPathComponent("receipt-\(index).json")
+            #expect(try Data(contentsOf: destination) == payload)
+        }
+        let artifacts = try FileManager.default.contentsOfDirectory(atPath: root.path)
+        #expect(artifacts.filter { $0.hasSuffix(".tmp") }.isEmpty)
+
+        let fixedNonce = try #require(UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
+        let first = PeekabooBridgePrivateReceiptArchive.temporaryURL(
+            for: root.appendingPathComponent("first.json"),
+            nonce: fixedNonce)
+        let second = PeekabooBridgePrivateReceiptArchive.temporaryURL(
+            for: root.appendingPathComponent("second.json"),
+            nonce: fixedNonce)
+        #expect(first != second)
+        #expect(first.lastPathComponent == ".first.json.aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.tmp")
+        #expect(second.lastPathComponent == ".second.json.aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.tmp")
+    }
+
+    @Test
     func `listener signs archives and exports independently verifiable operation bundles`() async throws {
         let root = URL(fileURLWithPath: "/tmp/pbor-\(UUID().uuidString)", isDirectory: true)
         let socketPath = root.appendingPathComponent("bridge.sock").path
@@ -477,5 +516,29 @@ struct PeekabooBridgeOperationReceiptTests {
         #expect((info.st_mode & S_IFMT) == S_IFREG)
         #expect(info.st_uid == geteuid())
         #expect(info.st_mode & 0o777 == 0o600)
+    }
+}
+
+private actor ReceiptWriteBarrier {
+    private let parties: Int
+    private var waiting = 0
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    init(parties: Int) {
+        self.parties = parties
+    }
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            self.waiting += 1
+            guard self.waiting == self.parties else {
+                self.continuations.append(continuation)
+                return
+            }
+            let continuations = self.continuations
+            self.continuations.removeAll()
+            continuations.forEach { $0.resume() }
+            continuation.resume()
+        }
     }
 }

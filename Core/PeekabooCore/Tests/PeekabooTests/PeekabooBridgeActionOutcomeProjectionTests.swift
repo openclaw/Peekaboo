@@ -192,7 +192,7 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
     @Test
     func `client wraps mutations only after current capability negotiation`() async throws {
         let currentHandshake = BridgeTestFixtures.handshake(
-            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            negotiatedVersion: PeekabooBridgeConstants.desktopActionOutcomeProjectionVersion,
             supportedOperations: [.click],
             hostCapabilities: [PeekabooBridgeHostCapability.desktopActionOutcomeProjection])
         let currentPeer = try ScriptedBridgePeer(responses: [
@@ -245,7 +245,7 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
     @Test
     func `capable client treats a missing projected response as lost`() async throws {
         let handshake = BridgeTestFixtures.handshake(
-            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            negotiatedVersion: PeekabooBridgeConstants.desktopActionOutcomeProjectionVersion,
             supportedOperations: [.click],
             hostCapabilities: [PeekabooBridgeHostCapability.desktopActionOutcomeProjection])
         let peer = try ScriptedBridgePeer(responses: [.handshake(handshake), .ok])
@@ -401,7 +401,7 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             route: .bridge,
             delivery: .init(mechanism: .accessibilityAction, mode: .background))
         let currentHandshake = BridgeTestFixtures.handshake(
-            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            negotiatedVersion: PeekabooBridgeConstants.desktopActionOutcomeProjectionVersion,
             supportedOperations: [.click],
             hostCapabilities: [PeekabooBridgeHostCapability.desktopActionOutcomeProjection])
         let currentPeer = try ScriptedBridgePeer(responses: [
@@ -447,7 +447,7 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             causeDescription: "cleanup receipt was unavailable")
         let envelope = PeekabooBridgeErrorEnvelope(code: .internalError, actionFailure: expected)
         let handshake = BridgeTestFixtures.handshake(
-            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            negotiatedVersion: PeekabooBridgeConstants.desktopActionOutcomeProjectionVersion,
             supportedOperations: [.click],
             hostCapabilities: [PeekabooBridgeHostCapability.desktopActionOutcomeProjection])
         let peer = try ScriptedBridgePeer(responses: [
@@ -722,8 +722,8 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
     }
 
     @Test
-    func `current protocol 1 28 preserves projection capability introduced at 1 23`() {
-        let currentVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 28)
+    func `current protocol 1 29 preserves projection capability introduced at 1 23`() {
+        let currentVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 29)
         let projectionVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 23)
 
         #expect(PeekabooBridgeConstants.protocolVersion == currentVersion)
