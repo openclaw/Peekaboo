@@ -114,6 +114,42 @@ struct RemoteApplicationServiceTests {
     }
 
     @Test
+    func `protocol 1 29 void activation request auto pins the live process`() async throws {
+        let socketPath = "/tmp/peekaboo-remote-app-activation-pin-\(UUID().uuidString).sock"
+        let applications = await MainActor.run { StubApplicationService() }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: StubServices(applications: applications),
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [])
+        }
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: .init(
+            bundleIdentifier: "dev.peekaboo.activation-pin-tests",
+            teamIdentifier: nil,
+            processIdentifier: getpid()))
+        try await client.activateApplication(request: .init(identifier: "StubApp"))
+
+        let requests = await MainActor.run { applications.activationRequests }
+        #expect(requests.count == 1)
+        let request = try #require(requests.first)
+        #expect(request.identifier == "PID:123")
+        #expect(request.expectedIdentity == .init(
+            processIdentifier: 123,
+            processStartIdentity: 456))
+        await host.stop()
+    }
+
+    @Test
     func `old bridge rejects background launch before transport`() async throws {
         let remote = await MainActor.run {
             RemoteApplicationService(

@@ -471,6 +471,15 @@ struct PeekabooBridgeOperationReceiptSecurityTests {
         #expect(try PeekabooBridgeOperationTargetAttribution.resolveRequest(activate)?.processIdentity == identity)
         #expect(try PeekabooBridgeOperationTargetAttribution.resolveRequest(focus)?.exactWindow?.identity ==
             windowIdentity)
+        #expect(throws: DesktopTargetIdentityError.incompleteExactWindow) {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveRequest(.activateApplication(.init(
+                identifier: "dev.peekaboo.fixture")))
+        }
+        #expect(throws: DesktopTargetIdentityError.incompleteExactWindow) {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveRequest(.quitApplication(.init(
+                identifier: "dev.peekaboo.fixture",
+                force: false)))
+        }
         let wireEvidence = PeekabooBridgeOperationTargetEvidence(.init(processIdentity: identity))
         let encodedEvidence = try PeekabooBridgeOperationReceiptCoding.canonicalData(wireEvidence)
         let encodedEvidenceString = try #require(String(data: encodedEvidence, encoding: .utf8))

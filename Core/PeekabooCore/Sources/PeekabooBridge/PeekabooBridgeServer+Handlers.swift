@@ -829,6 +829,10 @@ extension PeekabooBridgeServer {
             let exactWindow = try UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds)
             return .init(
                 response: .ok,
+                outcome: .dispatchedUnverified(
+                    delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one),
                 targetIdentity: DesktopTargetIdentity(exactWindow: exactWindow))
         case let .moveWindow(payload):
             let identity = try Self.requireWindowMutationReceipt(payload.expectedIdentity, operation: .moveWindow)

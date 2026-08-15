@@ -438,7 +438,20 @@ extension PeekabooBridgeClient {
     }
 
     public func activateApplication(identifier: String) async throws {
-        try await self.sendExpectOK(.activateApplication(PeekabooBridgeAppIdentifierRequest(identifier: identifier)))
+        guard self.operationAttestation != nil else {
+            try await self.sendExpectOK(
+                .activateApplication(PeekabooBridgeAppIdentifierRequest(identifier: identifier)))
+            return
+        }
+        let application = try await self.findApplication(identifier: identifier)
+        guard let expectedIdentity = application.processIdentity else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge host did not return a stable process-generation identity for \(identifier)")
+        }
+        try await self.activateApplication(request: .init(
+            identifier: "PID:\(application.processIdentifier)",
+            expectedIdentity: expectedIdentity))
     }
 
     public func activateApplication(request: ApplicationActivationRequest) async throws {
@@ -448,6 +461,17 @@ extension PeekabooBridgeClient {
     public func activateApplicationResult(
         request: ApplicationActivationRequest) async throws -> DesktopActionResult<Void>
     {
+        if self.operationAttestation != nil, request.expectedIdentity == nil {
+            let application = try await self.findApplication(identifier: request.identifier)
+            guard let expectedIdentity = application.processIdentity else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "Bridge host did not return a stable process-generation identity for \(request.identifier)")
+            }
+            return try await self.activateApplicationResult(request: .init(
+                identifier: "PID:\(application.processIdentifier)",
+                expectedIdentity: expectedIdentity))
+        }
         let outcome = try await self.sendExpectOKCarryingActionOutcome(.activateApplication(
             PeekabooBridgeAppIdentifierRequest(
                 identifier: request.identifier,

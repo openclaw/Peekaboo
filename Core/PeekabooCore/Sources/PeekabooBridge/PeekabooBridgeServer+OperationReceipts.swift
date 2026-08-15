@@ -169,16 +169,21 @@ extension PeekabooBridgeServer {
                     outcome: handled.outcome,
                     targetIdentity: handled.targetIdentity)
             } catch let envelope as PeekabooBridgeErrorEnvelope {
-                return Self.projectedFailure(envelope)
+                return Self.projectedFailure(envelope, for: payload.request)
+            } catch let failure as DesktopActionFailure {
+                return Self.projectedFailure(.init(
+                    code: .internalError,
+                    actionFailure: failure.routed(to: .bridge),
+                    details: "\(failure)"), for: payload.request)
             } catch is CancellationError {
                 return Self.projectedFailure(.init(
                     code: .timeout,
-                    message: "Bridge request was cancelled"))
+                    message: "Bridge request was cancelled"), for: payload.request)
             } catch {
                 return Self.projectedFailure(.init(
                     code: .internalError,
                     message: error.localizedDescription,
-                    details: "\(error)"))
+                    details: "\(error)"), for: payload.request)
             }
         }
         do {
@@ -196,13 +201,35 @@ extension PeekabooBridgeServer {
     }
 
     private static func projectedFailure(
-        _ envelope: PeekabooBridgeErrorEnvelope) -> PeekabooBridgeHandledResponse
+        _ unprojectedEnvelope: PeekabooBridgeErrorEnvelope,
+        for request: PeekabooBridgeRequest) -> PeekabooBridgeHandledResponse
     {
-        .init(
+        let envelope = self.canonicalMutationFailureEnvelope(unprojectedEnvelope, for: request)
+        return .init(
             response: .projectedAction(.init(
                 response: .error(envelope),
                 outcome: envelope.actionOutcome)),
             outcome: envelope.actionOutcome?.outcome)
+    }
+
+    private static func canonicalMutationFailureEnvelope(
+        _ envelope: PeekabooBridgeErrorEnvelope,
+        for request: PeekabooBridgeRequest) -> PeekabooBridgeErrorEnvelope
+    {
+        guard request.mayMutateDesktop, envelope.actionOutcome == nil else { return envelope }
+        let failure = DesktopActionFailure.indeterminate(
+            route: .bridge,
+            evidence: .completionUnknown,
+            message: envelope.message,
+            hint: "Observe the intended target before retrying this operation.",
+            causeDescription: envelope.details)
+        return PeekabooBridgeErrorEnvelope(
+            code: envelope.code,
+            actionFailure: failure,
+            details: envelope.details,
+            permission: envelope.permission,
+            kind: envelope.kind,
+            context: envelope.context)
     }
 
     private static func targetAttributionFailureResponse(

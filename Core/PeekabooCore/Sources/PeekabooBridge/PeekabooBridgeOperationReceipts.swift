@@ -1313,7 +1313,7 @@ extension PeekabooBridgeRequest {
         switch self {
         case let .attestedOperation(payload): payload.request.requiresStableOperationTarget
         case let .projectedAction(payload): payload.request.requiresStableOperationTarget
-        case .focusWindow: true
+        case .focusWindow, .activateApplication, .quitApplication: true
         default: false
         }
     }

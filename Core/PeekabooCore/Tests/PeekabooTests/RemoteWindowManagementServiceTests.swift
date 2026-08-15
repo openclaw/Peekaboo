@@ -356,6 +356,76 @@ struct RemoteWindowManagementServiceTests {
     }
 
     @Test
+    func `protocol 1 29 focus signs a dispatched outcome on success`() async throws {
+        let socketPath = "/tmp/peekaboo-remote-window-focus-success-\(UUID().uuidString).sock"
+        let windows = RemoteWindowMutationFixture(identity: self.identity)
+        let server = PeekabooBridgeServer(
+            services: StubServices(windows: windows),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [.listWindows, .focusWindow],
+            windowOwnerProcessIdentifierProvider: { _ in 420 },
+            windowBoundsProvider: { _ in CGRect(x: 0, y: 0, width: 100, height: 100) },
+            processStartIdentityProvider: { _ in 9001 })
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
+        try await client.focusWindow(target: .windowId(self.identity.windowID))
+
+        let receipt = try #require(await client.lastOperationReceipt())
+        #expect(receipt.payload.outcome?.state == .dispatchedUnverified)
+        #expect(receipt.payload.outcome?.retrySafe == false)
+        #expect(receipt.payload.outcome?.dispatchState.mutationDispatched == true)
+        #expect(receipt.payload.target == .window(self.identity))
+        await host.stop()
+    }
+
+    @Test
+    func `protocol 1 29 focus cancellation remains retry unsafe`() async throws {
+        let socketPath = "/tmp/peekaboo-remote-window-focus-cancel-\(UUID().uuidString).sock"
+        let windows = RemoteWindowMutationFixture(
+            identity: self.identity,
+            cancelsFocus: true)
+        let server = PeekabooBridgeServer(
+            services: StubServices(windows: windows),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [.listWindows, .focusWindow],
+            windowOwnerProcessIdentifierProvider: { _ in 420 },
+            windowBoundsProvider: { _ in CGRect(x: 0, y: 0, width: 100, height: 100) },
+            processStartIdentityProvider: { _ in 9001 })
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
+        do {
+            try await client.focusWindow(target: .windowId(self.identity.windowID))
+            Issue.record("Expected focus cancellation")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.route == .bridge)
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.retrySafety == .unsafe)
+        }
+        let receipt = try #require(await client.lastOperationReceipt())
+        #expect(receipt.payload.outcome?.state == .indeterminate)
+        #expect(receipt.payload.outcome?.retrySafe == false)
+        await host.stop()
+    }
+
+    @Test
     func `queued legacy overload rejects a recycled process generation before dispatch`() async throws {
         let socketPath = "/tmp/peekaboo-remote-window-reuse-\(UUID().uuidString).sock"
         let identityState = RemoteWindowIdentityState(ownerPID: 420, processStartIdentity: 9001)
@@ -458,6 +528,7 @@ private actor RemoteWindowMutationFixture: WindowManagementActionResultProviding
     let identity: WindowMutationIdentity
     private var actionOutcome: DesktopActionOutcome?
     private let focusFailure: DesktopActionFailure?
+    private let cancelsFocus: Bool
     private let blocksFirstLegacyMove: Bool
     private var didBlockLegacyMove = false
     private var legacyMutationStarted = false
@@ -472,12 +543,14 @@ private actor RemoteWindowMutationFixture: WindowManagementActionResultProviding
         identity: WindowMutationIdentity,
         blocksFirstLegacyMove: Bool = false,
         actionOutcome: DesktopActionOutcome? = nil,
-        focusFailure: DesktopActionFailure? = nil)
+        focusFailure: DesktopActionFailure? = nil,
+        cancelsFocus: Bool = false)
     {
         self.identity = identity
         self.blocksFirstLegacyMove = blocksFirstLegacyMove
         self.actionOutcome = actionOutcome
         self.focusFailure = focusFailure
+        self.cancelsFocus = cancelsFocus
     }
 
     func setActionOutcome(_ outcome: DesktopActionOutcome?) {
@@ -642,6 +715,9 @@ private actor RemoteWindowMutationFixture: WindowManagementActionResultProviding
         self.focusedTargets.append(target.description)
         if let focusFailure {
             throw focusFailure
+        }
+        if self.cancelsFocus {
+            throw CancellationError()
         }
     }
 
