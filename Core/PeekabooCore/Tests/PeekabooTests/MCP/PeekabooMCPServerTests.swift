@@ -242,6 +242,67 @@ struct PeekabooMCPServerTests {
 
     @Test
     @MainActor
+    func `press wire rejects malformed modifier shapes without dispatch`() async throws {
+        let automation = MockAutomationService(accessibilityGranted: true)
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let session = try await MCPWireSession.connect(context: context)
+        let cases: [([String: Value], String)] = [
+            (
+                ["key": .string("c"), "modifiers": .string("cmd")],
+                "modifiers must be an array of modifier strings"),
+            (
+                ["key": .string("c"), "modifiers": .object(["cmd": .bool(true)])],
+                "modifiers must be an array of modifier strings"),
+            (
+                ["key": .string("c"), "modifiers": .array([.string("cmd"), .int(7)])],
+                "modifiers[1] must be a non-empty modifier string"),
+            (
+                ["key": .string("c"), "modifiers": .array([.string("cmd"), .string("  ")])],
+                "modifiers[1] must be a non-empty modifier string"),
+            (
+                [
+                    "keys": .array([.string("cmd+c")]),
+                    "modifiers": .object(["unexpected": .bool(true)]),
+                ],
+                "Use either keys or key+modifiers, not both"),
+            (
+                ["keys": .array([.string("cmd+c")]), "modifiers": .array([])],
+                "Use either keys or key+modifiers, not both"),
+        ]
+
+        do {
+            for (arguments, expectedMessage) in cases {
+                var foregroundArguments = arguments
+                foregroundArguments["foreground"] = .bool(true)
+                let request: RequestContext<CallTool.Result> = try await session.client.callTool(
+                    name: "press",
+                    arguments: foregroundArguments)
+                let result = try await request.value
+                #expect(result.isError == true)
+                #expect(result.content.contains { content in
+                    guard case let .text(text, _, _) = content else { return false }
+                    return text.contains(expectedMessage)
+                })
+
+                let encoded = try JSONEncoder().encode(result)
+                let json = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+                let metadata = try #require(json["_meta"] as? [String: Any])
+                #expect(metadata["refusal_reason"] as? String == "invalid_request")
+                #expect(metadata["mutation_dispatched"] as? Bool == false)
+                #expect(metadata["retry_safe"] as? Bool == true)
+                #expect(automation.lastHotkeyKeys == nil)
+                #expect(automation.targetedHotkeyCalls.isEmpty)
+            }
+        } catch {
+            await session.stop()
+            throw error
+        }
+
+        await session.stop()
+    }
+
+    @Test
+    @MainActor
     func `every advertised closed schema rejects unknown properties as invalid params`() async throws {
         let context = await MCPToolTestHelpers.makeContext()
         let session = try await MCPWireSession.connect(context: context)

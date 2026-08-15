@@ -24,16 +24,68 @@ struct MCPKeyboardBackgroundToolTests {
             "modifiers": ["command", "shift"],
         ]))
         #expect(single.map(\.serviceKeys) == ["cmd,shift,c"])
+
+        let keyOnly = try PressTool.parseChords(arguments: ToolArguments(raw: [
+            "key": "Return",
+        ]))
+        #expect(keyOnly.map(\.serviceKeys) == ["return"])
+
+        let emptyModifiers = try PressTool.parseChords(arguments: ToolArguments(raw: [
+            "key": "Tab",
+            "modifiers": [],
+        ]))
+        #expect(emptyModifiers.map(\.serviceKeys) == ["tab"])
     }
 
     @Test
     func `Press tool rejects mixed schema shapes`() {
-        #expect(throws: KeyboardChordError.self) {
+        let error = #expect(throws: PressToolValidationError.self) {
             _ = try PressTool.parseChords(arguments: ToolArguments(raw: [
                 "keys": ["cmd+c"],
                 "key": "v",
                 "modifiers": ["cmd"],
             ]))
+        }
+        #expect(error?.message == "Use either keys or key+modifiers, not both")
+    }
+
+    @Test
+    func `Press tool reports malformed modifier shapes without dispatch`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            snapshotOwner: Self.uiSnapshots.owner)
+        let cases: [([String: Any], String)] = [
+            (["key": "c", "modifiers": "cmd"], "modifiers must be an array of modifier strings"),
+            (["key": "c", "modifiers": ["cmd": true]], "modifiers must be an array of modifier strings"),
+            (["key": "c", "modifiers": ["cmd", 7]], "modifiers[1] must be a non-empty modifier string"),
+            (["key": "c", "modifiers": ["cmd", "  "]], "modifiers[1] must be a non-empty modifier string"),
+            (
+                ["keys": ["cmd+c"], "modifiers": ["unexpected": true]],
+                "Use either keys or key+modifiers, not both"),
+            (["keys": ["cmd+c"], "modifiers": []], "Use either keys or key+modifiers, not both"),
+        ]
+
+        for (arguments, expectedMessage) in cases {
+            var foregroundArguments = arguments
+            foregroundArguments["foreground"] = true
+            let response = try await PressTool(context: context).execute(
+                arguments: ToolArguments(raw: foregroundArguments))
+            #expect(response.isError)
+            guard case let .text(message, _, _)? = response.content.first else {
+                Issue.record("Expected press validation text")
+                continue
+            }
+            #expect(message.contains(expectedMessage))
+            #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
+            #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+            guard case let .object(meta) = response.meta else {
+                Issue.record("Expected press validation metadata")
+                continue
+            }
+            #expect(meta["mutation_dispatched"] == .bool(false))
+            #expect(meta["retry_safe"] == .bool(true))
+            #expect(meta["refusal_reason"] == .string("invalid_request"))
         }
     }
 
@@ -816,6 +868,29 @@ struct MCPKeyboardBackgroundToolTests {
                 isActionable: true),
         ])
         return snapshotId
+    }
+}
+
+struct PressToolParsingValidationTests {
+    @Test
+    func `Press tool rejects malformed modifier shapes while parsing`() {
+        let cases: [([String: Any], String)] = [
+            (["key": "c", "modifiers": "cmd"], "modifiers must be an array of modifier strings"),
+            (["key": "c", "modifiers": ["cmd": true]], "modifiers must be an array of modifier strings"),
+            (["key": "c", "modifiers": ["cmd", 7]], "modifiers[1] must be a non-empty modifier string"),
+            (["key": "c", "modifiers": ["cmd", "  "]], "modifiers[1] must be a non-empty modifier string"),
+            (
+                ["keys": ["cmd+c"], "modifiers": ["unexpected": true]],
+                "Use either keys or key+modifiers, not both"),
+            (["keys": ["cmd+c"], "modifiers": []], "Use either keys or key+modifiers, not both"),
+        ]
+
+        for (arguments, expectedMessage) in cases {
+            let error = #expect(throws: PressToolValidationError.self) {
+                _ = try PressTool.parseChords(arguments: ToolArguments(raw: arguments))
+            }
+            #expect(error?.message == expectedMessage)
+        }
     }
 }
 

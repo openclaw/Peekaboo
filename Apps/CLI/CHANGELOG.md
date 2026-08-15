@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Make Agent sessions immutable background-only by default, centrally refusing foreground/global input, activation, raw press, shared-pointer, persistent clipboard mutation, shared system UI mutations, Space switch/follow, browser setup/fronting, and Shell-tool access before dispatch while retaining Space listing and unfollowed window placement; `--allow-foreground` sets a new session's immutable maximum, must be explicitly repeated on resume, and never exposes the Shell tool, while session output exposes full copyable IDs, tasks, lifecycle meaning, and stored policy.
 
 ### Fixed
+- Refuse malformed MCP `press` key/modifier shapes before target resolution or keyboard dispatch instead of silently dropping invalid modifier values.
 - Compose setup, delivery, cleanup, cancellation, and refusal receipts through one Foundation action-sequence owner so foreground focus cannot be erased by a no-dispatch leaf and CLI/MCP target refusals expose complete retry guidance.
 - Make explicit Bridge socket overrides fail closed when unavailable instead of reporting a successful local fallback.
 - Validate `see` selectors, explicit caller-local PIDs, and `scroll` directions before runtime-host and ScreenCaptureKit ownership preflight so request errors cannot be masked by ambient capture state.

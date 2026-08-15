@@ -330,16 +330,20 @@ public struct PressTool: MCPTool {
     }
 
     static func parseChords(arguments: ToolArguments) throws -> [KeyboardChord] {
-        let sequence = try self.validatedChordSequence(arguments: arguments)
-        let key = arguments.getString("key")
-        let modifiers = arguments.getStringArray("modifiers") ?? []
-
-        if sequence != nil, key != nil || !modifiers.isEmpty {
-            throw KeyboardChordError.invalid("Use either keys or key+modifiers, not both")
+        let hasSequence = arguments.getValue(for: "keys") != nil
+        let hasKey = arguments.getValue(for: "key") != nil
+        let hasModifiers = arguments.getValue(for: "modifiers") != nil
+        if hasSequence, hasKey || hasModifiers {
+            throw PressToolValidationError(message: "Use either keys or key+modifiers, not both")
         }
+
+        let sequence = try self.validatedChordSequence(arguments: arguments)
         if let sequence {
             return try sequence.map(KeyboardChord.init(parsing:))
         }
+
+        let key = arguments.getString("key")
+        let modifiers = try self.validatedModifiers(arguments: arguments) ?? []
         guard let key, !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw PressToolValidationError(
                 message: "Provide either a non-empty keys array or a non-empty key with optional modifiers")
@@ -362,6 +366,22 @@ public struct PressTool: MCPTool {
                 throw PressToolValidationError(message: "keys[\(index)] must be a non-empty chord string")
             }
             return chord
+        }
+    }
+
+    private static func validatedModifiers(arguments: ToolArguments) throws -> [String]? {
+        guard let value = arguments.getValue(for: "modifiers") else { return nil }
+        guard case let .array(items) = value else {
+            throw PressToolValidationError(message: "modifiers must be an array of modifier strings")
+        }
+        return try items.enumerated().map { index, item in
+            guard case let .string(modifier) = item,
+                  !modifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                throw PressToolValidationError(
+                    message: "modifiers[\(index)] must be a non-empty modifier string")
+            }
+            return modifier
         }
     }
 
@@ -608,7 +628,7 @@ private struct PressResponseMessageInput {
     let targetFocusCompleted: Bool
 }
 
-private struct PressToolValidationError: Error {
+struct PressToolValidationError: Error {
     let message: String
     let refusalReason: DesktopActionOutcome.RefusalReason
 
