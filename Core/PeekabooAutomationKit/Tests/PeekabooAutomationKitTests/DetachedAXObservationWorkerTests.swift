@@ -1,10 +1,27 @@
 import ApplicationServices
 import CoreGraphics
+import Foundation
 import PeekabooFoundation
 import Testing
 @_spi(Testing) @testable import PeekabooAutomationKit
 
 struct DetachedAXObservationWorkerTests {
+    @Test
+    func `observation focus decoder accepts native and numeric booleans`() {
+        #expect(DetachedAXObservationWorker.booleanAttributeValue(true) == true)
+        #expect(DetachedAXObservationWorker.booleanAttributeValue(false) == false)
+        #expect(DetachedAXObservationWorker.booleanAttributeValue(NSNumber(value: 1)) == true)
+        #expect(DetachedAXObservationWorker.booleanAttributeValue(NSNumber(value: 0)) == false)
+    }
+
+    @Test
+    func `observation focus decoder rejects unreadable values`() {
+        #expect(DetachedAXObservationWorker.booleanAttributeValue(nil) == nil)
+        #expect(DetachedAXObservationWorker.booleanAttributeValue("true") == nil)
+        #expect(DetachedAXObservationWorker.booleanAttributeValue(NSNull()) == nil)
+        #expect(DetachedAXObservationWorker.booleanAttributeValue([1]) == nil)
+    }
+
     @Test
     func `identical bounds never substitute for an unproven exact window id`() {
         let sharedBounds = CGRect(x: 10, y: 20, width: 800, height: 600)

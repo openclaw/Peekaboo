@@ -767,7 +767,7 @@ enum DetachedAXObservationWorker {
     }
 
     private static func boolAttribute(_ name: String, of element: AXUIElement) -> Bool? {
-        self.boolValue(self.rawAttribute(name, of: element))
+        self.booleanAttributeValue(self.rawAttribute(name, of: element))
     }
 
     private static func frame(of element: AXUIElement) -> CGRect? {
@@ -783,11 +783,12 @@ enum DetachedAXObservationWorker {
         value as? String
     }
 
+    static func booleanAttributeValue(_ value: Any?) -> Bool? {
+        self.boolValue(value)
+    }
+
     private static func boolValue(_ value: Any?) -> Bool? {
-        if let bool = value as? Bool {
-            return bool
-        }
-        return (value as? NSNumber)?.boolValue
+        AXDescriptorReader.boolValue(value)
     }
 
     private static func pointValue(_ value: Any?) -> CGPoint? {

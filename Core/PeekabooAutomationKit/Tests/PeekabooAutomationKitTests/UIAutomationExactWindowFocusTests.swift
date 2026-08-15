@@ -6,6 +6,20 @@ import XCTest
 
 @MainActor
 final class UIAutomationExactWindowFocusTests: XCTestCase {
+    func testExactReaderAcceptsNativeAndNumericFocusedBooleans() {
+        XCTAssertEqual(DetachedExactWindowFocusReader.focusedAttributeValue(true), true)
+        XCTAssertEqual(DetachedExactWindowFocusReader.focusedAttributeValue(false), false)
+        XCTAssertEqual(DetachedExactWindowFocusReader.focusedAttributeValue(NSNumber(value: 1)), true)
+        XCTAssertEqual(DetachedExactWindowFocusReader.focusedAttributeValue(NSNumber(value: 0)), false)
+    }
+
+    func testExactReaderRejectsUnreadableFocusedValues() {
+        XCTAssertNil(DetachedExactWindowFocusReader.focusedAttributeValue(nil))
+        XCTAssertNil(DetachedExactWindowFocusReader.focusedAttributeValue("true"))
+        XCTAssertNil(DetachedExactWindowFocusReader.focusedAttributeValue(NSNull()))
+        XCTAssertNil(DetachedExactWindowFocusReader.focusedAttributeValue([1]))
+    }
+
     func testUnresponsiveFocusedChildReaderDoesNotBlockMainActorPastDeadline() async throws {
         let started = LockedBoolean()
         let release = DispatchSemaphore(value: 0)

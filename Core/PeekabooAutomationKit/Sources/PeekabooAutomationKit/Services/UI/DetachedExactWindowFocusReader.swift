@@ -187,7 +187,11 @@ enum DetachedExactWindowFocusReader {
     private static func boolAttribute(_ name: String, of element: AXUIElement) -> Bool? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
-        return value as? Bool
+        return self.focusedAttributeValue(value)
+    }
+
+    static func focusedAttributeValue(_ value: Any?) -> Bool? {
+        AXDescriptorReader.boolValue(value)
     }
 
     private static func frame(of element: AXUIElement) -> CGRect? {
