@@ -50,6 +50,85 @@ struct UISnapshotStoreConcurrencyTests {
     }
 
     @Test
+    func `fresh detection supplies exact focus receipt when capture has no window`() async throws {
+        let snapshot = UISnapshot()
+        let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
+        let context = Self.exactContext(bounds: bounds)
+
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: Self.captureMetadata(window: nil, bounds: bounds),
+            context: context)
+
+        #expect(!snapshot.targetReceiptInvalidated)
+        #expect(snapshot.applicationProcessIdentity == ApplicationProcessIdentity(
+            processIdentifier: 900,
+            processStartIdentity: 90))
+        #expect(snapshot.windowMutationIdentity == context.windowMutationIdentity)
+        #expect(snapshot.windowBounds == bounds)
+        #expect(snapshot.focusedElement == context.focusedElement)
+        #expect(try snapshot.targetReceipt().identity?.exactWindow?.focusedElement == context.focusedElement)
+    }
+
+    @Test
+    func `capture and detection publication order preserves the same exact receipt`() async throws {
+        let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
+        let context = Self.exactContext(bounds: bounds)
+        let metadata = Self.captureMetadata(window: nil, bounds: bounds)
+
+        let captureFirst = UISnapshot()
+        await captureFirst.setScreenshot(path: "/tmp/capture-first.png", metadata: metadata)
+        await captureFirst.setTargetMetadata(from: context)
+
+        let detectionFirst = UISnapshot()
+        await detectionFirst.setTargetMetadata(from: context)
+        await detectionFirst.setScreenshot(
+            path: "/tmp/detection-first.png",
+            metadata: metadata,
+            context: context)
+
+        for snapshot in [captureFirst, detectionFirst] {
+            #expect(!snapshot.targetReceiptInvalidated)
+            #expect(try snapshot.targetReceipt().identity?.exactWindow?.focusedElement == context.focusedElement)
+        }
+    }
+
+    @Test
+    func `atomic observation permanently invalidates actual target disagreements`() async throws {
+        let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
+        let captureWindow = ServiceWindowInfo(
+            windowID: 42,
+            title: "Document",
+            bounds: bounds,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: 900,
+                ownerProcessStartIdentity: 90,
+                capturedBounds: bounds))
+        let wrongBounds = CGRect(x: 20, y: 20, width: 400, height: 300)
+        let contexts = [
+            Self.exactContext(processIdentifier: 901, bounds: bounds),
+            Self.exactContext(processGeneration: 91, bounds: bounds),
+            Self.exactContext(windowID: 43, bounds: bounds),
+            Self.exactContext(bounds: wrongBounds),
+            Self.exactContext(focusedWindowID: 43, bounds: bounds),
+        ]
+
+        for context in contexts {
+            let snapshot = UISnapshot()
+            await snapshot.setScreenshot(
+                path: "/tmp/conflict.png",
+                metadata: Self.captureMetadata(window: captureWindow, bounds: bounds),
+                context: context)
+
+            #expect(snapshot.targetReceiptInvalidated)
+            #expect(snapshot.windowMutationIdentity == nil)
+            #expect(snapshot.focusedElement == nil)
+            #expect(try snapshot.targetReceipt().targetEvidence == .invalidated)
+        }
+    }
+
+    @Test
     func `fresh focus replaces mutable focus without invalidating stable target`() async {
         let snapshot = UISnapshot()
         let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
@@ -478,5 +557,47 @@ struct UISnapshotStoreConcurrencyTests {
                 }
             }
         }
+    }
+
+    private static func captureMetadata(
+        window: ServiceWindowInfo?,
+        bounds: CGRect) -> CaptureMetadata
+    {
+        CaptureMetadata(
+            size: bounds.size,
+            mode: .window,
+            applicationInfo: ServiceApplicationInfo(
+                processIdentifier: 900,
+                processStartIdentity: 90,
+                bundleIdentifier: "com.example.editor",
+                name: "Editor"),
+            windowInfo: window)
+    }
+
+    private static func exactContext(
+        processIdentifier: pid_t = 900,
+        processGeneration: UInt64 = 90,
+        windowID: Int = 42,
+        focusedWindowID: Int? = nil,
+        bounds: CGRect) -> WindowContext
+    {
+        let identity = WindowMutationIdentity(
+            windowID: windowID,
+            ownerProcessIdentifier: processIdentifier,
+            ownerProcessStartIdentity: processGeneration,
+            capturedBounds: bounds)
+        return WindowContext(
+            applicationName: "Editor",
+            applicationProcessId: processIdentifier,
+            windowTitle: "Document",
+            windowID: windowID,
+            windowBounds: bounds,
+            windowMutationIdentity: identity,
+            focusedElement: FocusedElementIdentity(
+                processIdentifier: processIdentifier,
+                windowID: focusedWindowID ?? windowID,
+                role: "AXTextField",
+                identifier: "editor",
+                frame: CGRect(x: bounds.minX + 30, y: bounds.minY + 40, width: 200, height: 30)))
     }
 }

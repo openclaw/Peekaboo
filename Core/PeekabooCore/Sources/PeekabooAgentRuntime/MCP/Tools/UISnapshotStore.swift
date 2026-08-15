@@ -52,40 +52,61 @@ actor UISnapshot {
             } else {
                 nil
             }
-            let applicationProcessIdentifier = metadata.applicationInfo.map { Int32($0.processIdentifier) }
-            let applicationProcessStartIdentity = metadata.applicationInfo?.processStartIdentity
-            let windowIdentity = metadata.windowInfo?.mutationIdentity
-            let effectiveMetadataProcessIdentifier = applicationProcessIdentifier ??
-                windowIdentity?.ownerProcessIdentifier
+            let metadataProcessIdentifier = metadata.applicationInfo.map { Int32($0.processIdentifier) }
+            let metadataProcessStartIdentity = metadata.applicationInfo?.processStartIdentity
+            let metadataWindowIdentity = metadata.windowInfo?.mutationIdentity
             let contextWindowIdentity = context?.windowMutationIdentity
             let contextFocusedElement = context?.focusedElement
-            let hasWindowIdentifierConflict = if let windowIdentity, let windowID = metadata.windowInfo?.windowID {
-                windowIdentity.windowID != windowID
+            let contextWindowBounds = context?.windowBounds ?? contextWindowIdentity?.capturedBounds
+            let windowIdentity = metadataWindowIdentity ?? contextWindowIdentity
+            let windowID = metadata.windowInfo?.windowID ?? contextWindowIdentity?.windowID ?? context?.windowID
+            let windowBounds = metadata.windowInfo?.bounds ?? contextWindowBounds
+            let applicationProcessIdentifier = metadataProcessIdentifier ?? context?.applicationProcessId ??
+                windowIdentity?.ownerProcessIdentifier
+            let applicationProcessStartIdentity = metadataProcessStartIdentity ??
+                windowIdentity?.ownerProcessStartIdentity
+            let hasWindowIdentifierConflict = if let metadataWindowIdentity,
+                                                 let metadataWindowID = metadata.windowInfo?.windowID
+            {
+                metadataWindowIdentity.windowID != metadataWindowID
             } else {
                 false
             }
-            let hasProcessConflict = if let applicationProcessIdentifier, let windowIdentity {
-                windowIdentity.ownerProcessIdentifier != applicationProcessIdentifier
+            let hasProcessConflict = if let metadataProcessIdentifier, let windowIdentity {
+                windowIdentity.ownerProcessIdentifier != metadataProcessIdentifier
+            } else if let contextProcessIdentifier = context?.applicationProcessId, let windowIdentity {
+                windowIdentity.ownerProcessIdentifier != contextProcessIdentifier
             } else {
                 false
             }
-            let hasGenerationConflict = if let applicationProcessStartIdentity, let windowIdentity {
-                windowIdentity.ownerProcessStartIdentity != applicationProcessStartIdentity
+            let hasGenerationConflict = if let metadataProcessStartIdentity, let windowIdentity {
+                windowIdentity.ownerProcessStartIdentity != metadataProcessStartIdentity
             } else {
                 false
             }
-            let hasContextWindowConflict = if let contextWindowIdentity, let windowIdentity {
-                !contextWindowIdentity.hasSameStableReceipt(as: windowIdentity) ||
-                    context?.windowBounds != metadata.windowInfo?.bounds
+            let hasContextWindowConflict = if let contextWindowIdentity, metadata.windowInfo != nil {
+                (metadataWindowIdentity.map {
+                    !contextWindowIdentity.hasSameStableReceipt(as: $0)
+                } ?? false) ||
+                    metadata.windowInfo?.windowID != contextWindowIdentity.windowID ||
+                    (contextWindowBounds.map { metadata.windowInfo?.bounds != $0 } ?? false)
             } else {
-                contextWindowIdentity != nil
+                false
+            }
+            let hasMalformedContextWindow = if let contextWindowIdentity {
+                context?.windowID.map { $0 != contextWindowIdentity.windowID } ?? false ||
+                    (contextWindowIdentity.capturedBounds.flatMap { capturedBounds in
+                        context?.windowBounds.map { $0 != capturedBounds }
+                    } ?? false)
+            } else {
+                false
             }
             let hasContextFocusConflict = if let contextFocusedElement {
-                contextFocusedElement.processIdentifier != effectiveMetadataProcessIdentifier ||
-                    contextFocusedElement.windowID != metadata.windowInfo?.windowID ||
+                contextFocusedElement.processIdentifier != applicationProcessIdentifier ||
+                    contextFocusedElement.windowID != windowID ||
                     contextFocusedElement.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                     contextFocusedElement.frame.isEmpty ||
-                    metadata.windowInfo?.bounds.contains(CGPoint(
+                    windowBounds?.contains(CGPoint(
                         x: contextFocusedElement.frame.midX,
                         y: contextFocusedElement.frame.midY)) != true
             } else {
@@ -118,15 +139,16 @@ actor UISnapshot {
             let hasPriorWindowRemoval = priorWindowIdentity != nil && windowIdentity == nil
             let targetReceiptInvalidated = $0.targetReceiptInvalidated ||
                 hasWindowIdentifierConflict || hasProcessConflict || hasGenerationConflict ||
-                hasContextWindowConflict || hasContextFocusConflict || hasPriorReceiptConflict ||
+                hasContextWindowConflict || hasMalformedContextWindow || hasContextFocusConflict ||
+                hasPriorReceiptConflict ||
                 hasPriorReceiptRemoval || hasPriorWindowConflict || hasPriorWindowRemoval
 
             $0.applicationName = context?.applicationName ?? metadata.applicationInfo?.name
             $0.windowTitle = context?.windowTitle ?? metadata.windowInfo?.title
             $0.applicationProcessId = incomingReceipt?.processIdentifier ?? applicationProcessIdentifier
             $0.applicationProcessStartIdentity = targetReceiptInvalidated ? nil : incomingReceipt?.processStartIdentity
-            $0.windowID = metadata.windowInfo?.windowID
-            $0.windowBounds = metadata.windowInfo?.bounds
+            $0.windowID = windowID
+            $0.windowBounds = windowBounds
             $0.windowMutationIdentity = targetReceiptInvalidated ? nil : windowIdentity
             $0.focusedElement = targetReceiptInvalidated ? nil : contextFocusedElement
             $0.targetReceiptInvalidated = targetReceiptInvalidated
