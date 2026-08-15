@@ -5,6 +5,121 @@ import Testing
 @MainActor
 struct WindowCGInfoLookupTests {
     @Test
+    func `exact lookup resolves an off-Space window from the full catalog without AX window identity`() throws {
+        let bounds = CGRect(x: 10, y: 20, width: 800, height: 600)
+        var queries: [(CGWindowListOption, CGWindowID)] = []
+        var generations = [UInt64(9001), 9001]
+        let lookup = WindowCGInfoLookup(
+            windowListProvider: { options, relativeToWindow in
+                queries.append((options, relativeToWindow))
+                if options.contains(.optionIncludingWindow) {
+                    return []
+                }
+                return [Self.windowDictionary(
+                    windowID: 712,
+                    ownerPID: 41,
+                    bounds: bounds,
+                    isOnScreen: false)]
+            },
+            processStartIdentityProvider: { _ in generations.removeFirst() },
+            currentWindowIdentityProvider: { windowID in
+                SystemWindowIdentity(
+                    windowID: windowID,
+                    ownerProcessIdentifier: 41,
+                    title: "Current metadata",
+                    bounds: bounds,
+                    layer: 0,
+                    alpha: 1,
+                    isOnScreen: false,
+                    sharingState: .readOnly)
+            },
+            isMainWindowProvider: { _ in false })
+
+        let window = try #require(lookup.serviceWindowInfo(windowID: 712))
+
+        #expect(window.windowID == 712)
+        #expect(window.bounds == bounds)
+        #expect(window.isOnScreen == false)
+        #expect(window.mutationIdentity?.ownerProcessStartIdentity == 9001)
+        #expect(queries.count == 2)
+        #expect(queries[0].0.contains(.optionIncludingWindow))
+        #expect(queries[0].1 == 712)
+        #expect(queries[1].0.contains(.optionAll))
+        #expect(queries[1].1 == kCGNullWindowID)
+    }
+
+    @Test
+    func `exact lookup does not widen a missing ID to matching title owner or bounds`() {
+        let bounds = CGRect(x: 10, y: 20, width: 800, height: 600)
+        var currentIdentityRead = false
+        let lookup = WindowCGInfoLookup(
+            windowListProvider: { options, _ in
+                if options.contains(.optionIncludingWindow) {
+                    return []
+                }
+                return [Self.windowDictionary(
+                    windowID: 713,
+                    ownerPID: 41,
+                    bounds: bounds,
+                    isOnScreen: false)]
+            },
+            processStartIdentityProvider: { _ in 9001 },
+            currentWindowIdentityProvider: { windowID in
+                currentIdentityRead = true
+                return SystemWindowIdentity(
+                    windowID: windowID,
+                    ownerProcessIdentifier: 41,
+                    title: "Original metadata",
+                    bounds: bounds,
+                    layer: 0,
+                    alpha: 1,
+                    isOnScreen: false,
+                    sharingState: .readOnly)
+            },
+            isMainWindowProvider: { _ in false })
+
+        #expect(lookup.serviceWindowInfo(windowID: 712) == nil)
+        #expect(!currentIdentityRead)
+    }
+
+    @Test
+    func `exact lookup rejects full-catalog owner drift`() {
+        let window = Self.fullCatalogWindowInfo(
+            dictionaryOwner: 41,
+            currentOwner: 52,
+            dictionaryBounds: CGRect(x: 10, y: 20, width: 800, height: 600),
+            currentBounds: CGRect(x: 10, y: 20, width: 800, height: 600),
+            processGenerations: [9001, 9001])
+
+        #expect(window == nil)
+    }
+
+    @Test
+    func `exact lookup rejects full-catalog PID generation reuse`() {
+        let bounds = CGRect(x: 10, y: 20, width: 800, height: 600)
+        let window = Self.fullCatalogWindowInfo(
+            dictionaryOwner: 41,
+            currentOwner: 41,
+            dictionaryBounds: bounds,
+            currentBounds: bounds,
+            processGenerations: [9001, 9002])
+
+        #expect(window == nil)
+    }
+
+    @Test
+    func `exact lookup rejects full-catalog bounds drift`() {
+        let window = Self.fullCatalogWindowInfo(
+            dictionaryOwner: 41,
+            currentOwner: 41,
+            dictionaryBounds: CGRect(x: 10, y: 20, width: 800, height: 600),
+            currentBounds: CGRect(x: 30, y: 40, width: 640, height: 480),
+            processGenerations: [9001, 9001])
+
+        #expect(window == nil)
+    }
+
+    @Test
     func `exact lookup binds metadata and mutation identity to the dictionary owner`() throws {
         let window = try #require(Self.serviceWindowInfo(
             dictionaryOwner: 41,
@@ -246,5 +361,60 @@ struct WindowCGInfoLookupTests {
                     isOnScreen: true,
                     sharingState: .readOnly)
             })
+    }
+
+    private static func fullCatalogWindowInfo(
+        dictionaryOwner: pid_t,
+        currentOwner: pid_t,
+        dictionaryBounds: CGRect,
+        currentBounds: CGRect,
+        processGenerations: [UInt64]) -> ServiceWindowInfo?
+    {
+        var remainingGenerations = processGenerations
+        let lookup = WindowCGInfoLookup(
+            windowListProvider: { options, _ in
+                if options.contains(.optionIncludingWindow) {
+                    return []
+                }
+                return [Self.windowDictionary(
+                    windowID: 712,
+                    ownerPID: dictionaryOwner,
+                    bounds: dictionaryBounds,
+                    isOnScreen: false)]
+            },
+            processStartIdentityProvider: { _ in
+                guard !remainingGenerations.isEmpty else { return nil }
+                return remainingGenerations.removeFirst()
+            },
+            currentWindowIdentityProvider: { windowID in
+                SystemWindowIdentity(
+                    windowID: windowID,
+                    ownerProcessIdentifier: currentOwner,
+                    title: "Current metadata",
+                    bounds: currentBounds,
+                    layer: 0,
+                    alpha: 1,
+                    isOnScreen: false,
+                    sharingState: .readOnly)
+            },
+            isMainWindowProvider: { _ in false })
+        return lookup.serviceWindowInfo(windowID: 712)
+    }
+
+    private static func windowDictionary(
+        windowID: Int,
+        ownerPID: pid_t,
+        bounds: CGRect,
+        isOnScreen: Bool) -> [String: Any]
+    {
+        [
+            kCGWindowNumber as String: windowID,
+            kCGWindowOwnerPID as String: Int(ownerPID),
+            kCGWindowName as String: "Original metadata",
+            kCGWindowBounds as String: bounds.dictionaryRepresentation,
+            kCGWindowLayer as String: 0,
+            kCGWindowAlpha as String: 1.0,
+            kCGWindowIsOnscreen as String: isOnScreen,
+        ]
     }
 }

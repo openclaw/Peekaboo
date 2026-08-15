@@ -3,19 +3,37 @@ import Foundation
 
 @MainActor
 struct WindowCGInfoLookup {
-    private let windowIdentityService: WindowIdentityService
+    typealias WindowListProvider = (CGWindowListOption, CGWindowID) -> [[String: Any]]?
 
-    init(windowIdentityService: WindowIdentityService = WindowIdentityService()) {
-        self.windowIdentityService = windowIdentityService
+    private let windowListProvider: WindowListProvider
+    private let processStartIdentityProvider: (pid_t) -> UInt64?
+    private let currentWindowIdentityProvider: (CGWindowID) -> SystemWindowIdentity?
+    private let isMainWindowProvider: (CGWindowID) -> Bool
+
+    init(
+        windowIdentityService: WindowIdentityService = WindowIdentityService(),
+        windowListProvider: @escaping WindowListProvider = { options, relativeToWindow in
+            CGWindowListCopyWindowInfo(options, relativeToWindow) as? [[String: Any]]
+        },
+        processStartIdentityProvider: @escaping (pid_t) -> UInt64? =
+            SystemIdentityResolver.processStartIdentity,
+        currentWindowIdentityProvider: @escaping (CGWindowID) -> SystemWindowIdentity? =
+            SystemIdentityResolver.windowIdentity,
+        isMainWindowProvider: ((CGWindowID) -> Bool)? = nil)
+    {
+        self.windowListProvider = windowListProvider
+        self.processStartIdentityProvider = processStartIdentityProvider
+        self.currentWindowIdentityProvider = currentWindowIdentityProvider
+        self.isMainWindowProvider = isMainWindowProvider ?? windowIdentityService.isTopmostRenderableWindow
     }
 
     func serviceWindowInfo(windowID: Int) -> ServiceWindowInfo? {
         // Exact ID refreshes happen after mutations and snapshot focus; keep them on the CG fast path
         // instead of walking every app's AX window list.
         guard let cgWindowID = CGWindowID(exactly: windowID),
-              let windowList = CGWindowListCopyWindowInfo(
-                  [.optionIncludingWindow, .excludeDesktopElements],
-                  cgWindowID) as? [[String: Any]]
+              let windowList = SystemIdentityResolver.exactWindowCatalog(
+                  cgWindowID,
+                  windowListProvider: self.windowListProvider)
         else {
             return nil
         }
@@ -23,9 +41,9 @@ struct WindowCGInfoLookup {
         return Self.serviceWindowInfo(
             windowID: windowID,
             windowList: windowList,
-            isMainWindowProvider: self.windowIdentityService.isTopmostRenderableWindow,
-            processStartIdentityProvider: SystemIdentityResolver.processStartIdentity,
-            currentWindowIdentityProvider: SystemIdentityResolver.windowIdentity)
+            isMainWindowProvider: self.isMainWindowProvider,
+            processStartIdentityProvider: self.processStartIdentityProvider,
+            currentWindowIdentityProvider: self.currentWindowIdentityProvider)
     }
 
     static func serviceWindowInfo(

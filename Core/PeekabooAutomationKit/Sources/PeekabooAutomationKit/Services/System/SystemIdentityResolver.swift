@@ -99,23 +99,41 @@ public enum SystemIdentityResolver {
     /// Resolves one exact window from the current WindowServer catalog without AX traversal.
     public static func windowIdentity(_ windowID: CGWindowID) -> SystemWindowIdentity? {
         guard windowID != kCGNullWindowID else { return nil }
-        if let windows = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]],
-           let identity = self.windowIdentity(windowID, in: windows)
-        {
-            return identity
-        }
-
-        // `optionIncludingWindow` can omit a minimized/off-screen window even while `optionAll`
-        // still carries its exact WindowServer ID, owner, and frame. Search the full catalog only
-        // after the fast exact query misses; never fall back to title or bounds matching.
-        guard let windows = CGWindowListCopyWindowInfo(
-            [.optionAll, .excludeDesktopElements],
-            kCGNullWindowID) as? [[String: Any]],
+        guard let windows = self.exactWindowCatalog(
+            windowID,
+            windowListProvider: { options, relativeToWindow in
+                CGWindowListCopyWindowInfo(options, relativeToWindow) as? [[String: Any]]
+            }),
             let identity = self.windowIdentity(windowID, in: windows)
         else {
             return nil
         }
         return identity
+    }
+
+    /// Returns the catalog slice that contains one exact WindowServer ID.
+    ///
+    /// `optionIncludingWindow` can omit a minimized or off-Space window even while `optionAll`
+    /// still carries its exact ID, owner, and frame. The fallback remains ID-only: descriptive
+    /// metadata such as title and bounds is never used to select a different entry.
+    static func exactWindowCatalog(
+        _ windowID: CGWindowID,
+        windowListProvider: (CGWindowListOption, CGWindowID) -> [[String: Any]]?) -> [[String: Any]]?
+    {
+        guard windowID != kCGNullWindowID else { return nil }
+        if let exact = windowListProvider([.optionIncludingWindow], windowID),
+           self.containsWindow(windowID, in: exact)
+        {
+            return exact
+        }
+        guard let all = windowListProvider(
+            [.optionAll, .excludeDesktopElements],
+            kCGNullWindowID),
+            self.containsWindow(windowID, in: all)
+        else {
+            return nil
+        }
+        return all
     }
 
     /// Captures one generation-bound exact-window identity while allowing descriptive metadata
@@ -210,6 +228,15 @@ public enum SystemIdentityResolver {
         windows.first(where: {
             self.intValue($0[kCGWindowNumber as String]) == Int(windowID)
         }).flatMap(self.windowIdentity(from:))
+    }
+
+    private static func containsWindow(
+        _ windowID: CGWindowID,
+        in windows: [[String: Any]]) -> Bool
+    {
+        windows.contains {
+            self.intValue($0[kCGWindowNumber as String]) == Int(windowID)
+        }
     }
 
     /// Resolves the current CoreGraphics owner for one exact window identifier.
