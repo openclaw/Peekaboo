@@ -85,6 +85,8 @@ struct ApplicationMutationPlannerTests {
         let plan = try await planner.plan(identifier: "PID:101")
 
         #expect(plan.processIdentity == application.processIdentity)
+        #expect(try plan.expectedTargetIdentity.processIdentity == application.processIdentity)
+        #expect(try plan.expectedTargetIdentity.exactWindow == nil)
         #expect(broadReadCount == 0)
         #expect(directReadCount == 2)
     }

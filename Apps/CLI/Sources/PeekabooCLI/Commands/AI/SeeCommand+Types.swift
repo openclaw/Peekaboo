@@ -91,22 +91,17 @@ struct SeeExecutionReceipt: Equatable, Sendable {
         guard let first = receipts.first else { return .none }
         guard receipts.count > 1 else { return first }
 
-        let outcomes = receipts.map(\.outcome)
-        let outcome = DesktopActionSequenceAccumulator.completedBatch(
-            outcomes: outcomes,
-            succeededCount: receipts.count,
-            attemptedCount: receipts.count
-        )
-        let targetReceipt: DesktopActionTargetReceipt? =
-            if let firstTarget = first.targetReceipt,
-            receipts.allSatisfy({
-                $0.targetReceipt == firstTarget
-            }) {
-                firstTarget
-            } else {
-                nil
-            }
-        return Self(outcome: outcome, targetReceipt: targetReceipt)
+        var sequence = UIAutomationActionResultSequenceAccumulator()
+        for receipt in receipts {
+            sequence.record(
+                outcome: receipt.outcome,
+                targetReceipt: receipt.targetReceipt,
+                attribution: .operationTarget,
+                defaultDispatchedUnitCount: .one
+            )
+        }
+        let resolution = sequence.resolution
+        return Self(outcome: resolution.outcome, targetReceipt: resolution.targetReceipt)
     }
 
     func requirePublishableOutcome(operation: String, requiresOutcome: Bool) throws {
@@ -124,15 +119,19 @@ struct SeeExecutionReceipt: Equatable, Sendable {
     ) -> any Error {
         guard let outcome = self.outcome else { return error }
         if let failure = error as? DesktopActionFailure {
-            var sequence = DesktopActionSequenceAccumulator()
-            sequence.record(.outcome(outcome))
-            let composed = sequence.failure(
+            var sequence = UIAutomationActionResultSequenceAccumulator()
+            sequence.record(
+                outcome: outcome,
+                targetReceipt: self.targetReceipt,
+                attribution: .operationTarget
+            )
+            return sequence.failure(
                 combining: failure,
+                operation: operation,
                 message: failure.message,
                 hint: failure.hint ?? "Observe the target before deciding whether to retry \(operation).",
                 causeDescription: failure.causeDescription
             )
-            return composed.attributed(to: self.aggregateTarget(with: failure))
         }
 
         return postResultProcessingError(
@@ -175,49 +174,6 @@ struct SeeExecutionReceipt: Equatable, Sendable {
             processStartIdentity: identity.ownerProcessStartIdentity,
             windowID: identity.windowID
         )
-    }
-
-    private func aggregateTarget(with laterFailure: DesktopActionFailure)
-    -> DesktopActionTargetReceipt? {
-        guard let outcome = self.outcome else { return laterFailure.targetReceipt }
-        switch (
-            outcome.dispatchState.mutationDispatched,
-            laterFailure.outcome.dispatchState.mutationDispatched
-        ) {
-        case (true, true):
-            guard self.targetReceipt != nil, laterFailure.targetReceipt != nil else { return nil }
-            return Self.compatibleTarget(self.targetReceipt, laterFailure.targetReceipt)
-        case (true, false):
-            return self.targetReceipt
-        case (false, true):
-            return laterFailure.targetReceipt
-        case (false, false):
-            return Self.compatibleTarget(self.targetReceipt, laterFailure.targetReceipt)
-        }
-    }
-
-    private static func compatibleTarget(
-        _ prior: DesktopActionTargetReceipt?,
-        _ later: DesktopActionTargetReceipt?
-    ) -> DesktopActionTargetReceipt? {
-        switch (prior, later) {
-        case let (prior?, later?):
-            guard prior.processIdentifier == later.processIdentifier,
-                  prior.processStartIdentity == later.processStartIdentity
-            else { return nil }
-            if prior.windowID == later.windowID {
-                return prior
-            }
-            guard prior.windowID == nil || later.windowID == nil else { return nil }
-            return DesktopActionTargetReceipt(
-                processIdentifier: prior.processIdentifier,
-                processStartIdentity: prior.processStartIdentity
-            )
-        case (let target?, nil), (nil, let target?):
-            return target
-        case (nil, nil):
-            return nil
-        }
     }
 }
 

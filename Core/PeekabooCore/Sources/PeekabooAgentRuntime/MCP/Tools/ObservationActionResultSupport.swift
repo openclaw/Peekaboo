@@ -9,10 +9,10 @@ enum ObservationActionResultSupport {
         after result: UIAutomationActionResult<some Sendable>?,
         operation: String) -> any Error
     {
-        ObservationActionResultSemantics.preservingFailure(
+        guard let result else { return error }
+        return ObservationActionResultSemantics.preservingFailure(
             error,
-            after: result?.outcome,
-            targetIdentity: result?.targetIdentity,
+            after: result,
             operation: operation)
     }
 
