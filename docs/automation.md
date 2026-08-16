@@ -27,7 +27,7 @@ Process and window selectors are fail-closed. Choose either `--app` or `--pid`, 
 
 Peekaboo has two input delivery modes:
 
-- **Background** (default when a target process is known) uses exact semantic or typed delivery without activating the app. `type` and `paste` require `--app`, `--pid`, or supported snapshot process metadata. Public raw `press` refuses in background because a process receipt cannot certify chord intent or effect. Background click can retain its exact window/element target.
+- **Background** (default when a target process is known) uses exact semantic or typed delivery without activating the app. `type` and `paste` require `--app`, `--pid`, or supported snapshot process metadata. Raw `press` requires a fresh exact-window/snapshot receipt; app/PID-only and targetless forms refuse. Background click can retain its exact window/element target.
 - **Foreground** focuses the target first, then sends normal/global input to the active key window or mouse focus. Add `--foreground` when an app ignores background input, when a text field only accepts key-window input, or when you want focus/Space switching to be part of the action.
 
 Focus flags tune foreground focus behavior but do not silently change delivery mode. Add `--foreground` explicitly. `--no-auto-focus` also does not discard a background keyboard PID. Background element/query/coordinate clicks complete through Accessibility alone. Keyboard input and foreground synthetic pointer input require Event Synthesizing for the sender shown by `peekaboo permissions status`; request it with `peekaboo permissions request event-synthesizing`.
@@ -47,7 +47,8 @@ Examples:
 peekaboo click "Address and search bar" --app Safari
 peekaboo type "github.com/openclaw/Peekaboo" --app Safari
 
-# Foreground: raw chords require explicit consent
+# Exact-window raw chords can stay background; app-only chords require foreground consent
+peekaboo press cmd+l --window-id 12345
 peekaboo press cmd+l --app Safari --foreground --space-switch
 peekaboo type "github.com/openclaw/Peekaboo" --app Safari --foreground && peekaboo press Return --app Safari --foreground
 ```
@@ -58,7 +59,7 @@ peekaboo type "github.com/openclaw/Peekaboo" --app Safari --foreground && peekab
 | --- | --- |
 | [click](commands/click.md) | mouse clicks, double/triple, right/middle, hold |
 | [type](commands/type.md) | typing strings into targeted fields |
-| [press](commands/press.md) | explicit-foreground individual keys and xdotool-style raw chords |
+| [press](commands/press.md) | exact-window background or explicit-foreground raw keys/chords |
 | [scroll](commands/scroll.md) | background AX/exact-window scrolling on a target, or explicit foreground wheel input |
 | [drag](commands/drag.md) | press, move, release — files, sliders, selections |
 | [move](commands/move.md) | warp the mouse without clicking |

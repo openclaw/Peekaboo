@@ -79,7 +79,9 @@ peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 480,120
 The point is relative to the captured window. Add `--global` for screen coordinates, or add `--foreground` only when
 the target app requires focused synthetic input. See [automation.md](automation.md) for the full input vocabulary.
 
-Targeted click and type use background delivery by default, so Safari can receive them without becoming frontmost. Raw `press` requires explicit `--foreground`; prefer semantic actions for background confirmation when one exists.
+Targeted click and type use background delivery by default, so Safari can receive them without becoming frontmost. Raw
+`press` can stay background with a fresh exact-window/snapshot receipt; app/PID-only or targetless chords require
+explicit `--foreground`. Prefer semantic actions for background confirmation when one exists.
 
 Targeted `scroll --on <id>` is background-safe through Accessibility or, for a fresh exact-window pixel snapshot of a visible WebKit surface, PID-routed wheel events. The latter reports an unverifiable effect and must be observed before retry. Targetless/smooth scroll, `move`, and `drag` use the shared physical cursor and require explicit `--foreground`.
 

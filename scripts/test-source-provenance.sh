@@ -135,5 +135,31 @@ rg -Fq 'exec "$PEEKABOO_BIN" "$@" --json --no-remote' \
   "$ROOT_DIR/scripts/test-background-computer-use.sh"
 rg -Fq 'exec "$PEEKABOO_BIN" "$@" --json --bridge-socket "$BRIDGE_SOCKET"' \
   "$ROOT_DIR/scripts/test-background-computer-use.sh"
+rg -Fq -- '--physical-input-observational' \
+  "$ROOT_DIR/scripts/test-background-computer-use.sh"
+rg -Fq -- '--cursor-observational' \
+  "$ROOT_DIR/scripts/test-background-computer-use.sh"
+rg -Fq -- '--execution-nonce "$RUN_EXECUTION_NONCE"' \
+  "$ROOT_DIR/scripts/test-background-computer-use.sh"
+rg -Fq -- '--monitor-instance-id "$monitor_instance_id"' \
+  "$ROOT_DIR/scripts/test-background-computer-use.sh"
+rg -Fq -- '--history-commitment "$history_commitment"' \
+  "$ROOT_DIR/scripts/test-background-computer-use.sh"
+rg -Fq 'source_artifacts: $sourceArtifacts' \
+  "$ROOT_DIR/scripts/test-background-computer-use.sh"
+rg -Fq 'cli_executable_sha256: $cliExecutableSHA256' \
+  "$ROOT_DIR/scripts/test-background-computer-use.sh"
+rg -Fq 'bridge_executable_sha256: $bridgeExecutableSHA256' \
+  "$ROOT_DIR/scripts/test-background-computer-use.sh"
+rg -Fq 'monitor_receipt: {' \
+  "$ROOT_DIR/scripts/test-background-computer-use.sh"
+rg -Fq 'PeekabooPlaygroundSource.json' \
+  "$ROOT_DIR/scripts/test-background-computer-use.sh"
+rg -Fq 'open -g -n "$application_path"' \
+  "$ROOT_DIR/scripts/test-background-computer-use.sh"
+rg -Fq 'type "$TYPE_TOKEN" --clear --pid "$PLAYGROUND_PID" --window-id "$TEXT_WINDOW_ID"' \
+  "$ROOT_DIR/scripts/test-background-computer-use.sh"
+rg -Fq 'press return --pid "$PLAYGROUND_PID" --window-id "$TEXT_WINDOW_ID"' \
+  "$ROOT_DIR/scripts/test-background-computer-use.sh"
 
 echo "test-source-provenance: ok"

@@ -1,12 +1,15 @@
 #!/bin/bash
 
 set -euo pipefail
+umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CERTIFICATION_CATALOG="$ROOT_DIR/scripts/background-computer-use-catalog.json"
 CERTIFICATION_REPORTER="$ROOT_DIR/scripts/validate-background-computer-use-report.mjs"
 CERTIFICATION_TEST="$ROOT_DIR/tests/background-computer-use-report.test.mjs"
 PLAYGROUND_BUNDLE_ID="boo.peekaboo.playground.debug"
+TEXTEDIT_BUNDLE_ID="com.apple.TextEdit"
+TEXTEDIT_APP="/System/Applications/TextEdit.app"
 SENTINEL_BUNDLE_ID=""
 PEEKABOO_BIN="${PEEKABOO_BIN:-}"
 ARTIFACT_ROOT=""
@@ -22,8 +25,9 @@ usage() {
 Usage: scripts/test-background-computer-use.sh [options]
 
 Deterministically validates that targeted Peekaboo computer-use operations stay
-in the background. The optional foreground phase is the only phase allowed to
-move the physical cursor or synthesize pointer/wheel events.
+in the background. Human mouse movement is observational; the optional foreground
+phase is the only phase allowed to move the cursor on Peekaboo's behalf or
+synthesize pointer/wheel events.
 
 Options:
   --bin PATH                 Peekaboo CLI (default: repo debug binary, then PATH)
@@ -99,7 +103,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     exit 2
 fi
 
-for command_name in jq node rg swiftc xcodebuild codesign security; do
+for command_name in git jq node plutil realpath rg swiftc xcodebuild codesign security open uuidgen shasum; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Missing required command: $command_name" >&2
         exit 2
@@ -113,6 +117,15 @@ CERTIFICATION_INVARIANTS_JSON="$(jq -cer '
     select((unique | length) == length)
 ' "$CERTIFICATION_CATALOG")" || {
     echo "Certification catalog must declare unique nonempty invariant names." >&2
+    exit 2
+}
+CERTIFICATION_PHYSICAL_APPS_JSON="$(jq -cer '
+    .physical_apps |
+    select(type == "array" and length == 8) |
+    select(all(.[]; type == "string" and length > 0)) |
+    select((unique | length) == length)
+' "$CERTIFICATION_CATALOG")" || {
+    echo "Certification catalog must declare eight unique physical app names." >&2
     exit 2
 }
 
@@ -134,16 +147,165 @@ mkdir -p \
     "$ARTIFACT_ROOT" \
     "$ARTIFACT_ROOT/cases" \
     "$ARTIFACT_ROOT/contaminated-attempts" \
-    "$ARTIFACT_ROOT/bin"
+    "$ARTIFACT_ROOT/bin" \
+    "$ARTIFACT_ROOT/setup" \
+    "$ARTIFACT_ROOT/physical-targets"
+chmod 700 "$ARTIFACT_ROOT"
+
+SOURCE_CATALOG="$CERTIFICATION_CATALOG"
+SOURCE_REPORTER="$CERTIFICATION_REPORTER"
+SOURCE_PROBE="$ROOT_DIR/scripts/support/background-computer-use-probe.swift"
+SOURCE_HARNESS="$ROOT_DIR/scripts/test-background-computer-use.sh"
+SOURCE_INPUT_ROOT="$ARTIFACT_ROOT/source-inputs"
+mkdir -m 700 "$SOURCE_INPUT_ROOT"
+cp -p "$SOURCE_CATALOG" "$SOURCE_INPUT_ROOT/catalog.json"
+cp -p "$SOURCE_REPORTER" "$SOURCE_INPUT_ROOT/reporter.mjs"
+cp -p "$SOURCE_PROBE" "$SOURCE_INPUT_ROOT/probe.swift"
+cp -p "$SOURCE_HARNESS" "$SOURCE_INPUT_ROOT/harness.sh"
+chmod 400 "$SOURCE_INPUT_ROOT"/*
+CATALOG_SHA256_INITIAL="$(shasum -a 256 "$SOURCE_INPUT_ROOT/catalog.json" | awk '{print $1}')"
+REPORTER_SHA256_INITIAL="$(shasum -a 256 "$SOURCE_INPUT_ROOT/reporter.mjs" | awk '{print $1}')"
+PROBE_SOURCE_SHA256_INITIAL="$(shasum -a 256 "$SOURCE_INPUT_ROOT/probe.swift" | awk '{print $1}')"
+HARNESS_SHA256_INITIAL="$(shasum -a 256 "$SOURCE_INPUT_ROOT/harness.sh" | awk '{print $1}')"
+CERTIFICATION_CATALOG="$SOURCE_INPUT_ROOT/catalog.json"
+CERTIFICATION_REPORTER="$SOURCE_INPUT_ROOT/reporter.mjs"
+CERTIFICATION_INVARIANTS_JSON="$(jq -cer '
+    .invariants |
+    select(type == "array" and length > 0) |
+    select(all(.[]; type == "string" and length > 0)) |
+    select((unique | length) == length)
+' "$CERTIFICATION_CATALOG")"
+CERTIFICATION_PHYSICAL_APPS_JSON="$(jq -cer '
+    .physical_apps |
+    select(type == "array" and length == 8) |
+    select(all(.[]; type == "string" and length > 0)) |
+    select((unique | length) == length)
+' "$CERTIFICATION_CATALOG")"
 
 PROBE_BIN="$ARTIFACT_ROOT/bin/background-computer-use-probe"
-swiftc "$ROOT_DIR/scripts/support/background-computer-use-probe.swift" \
+swiftc "$SOURCE_INPUT_ROOT/probe.swift" \
     -o "$PROBE_BIN" \
     -framework AppKit \
     -framework ApplicationServices \
     -framework CoreGraphics \
-    -framework CryptoKit
+    -framework CryptoKit \
+    -framework Security
 "$PROBE_BIN" self-test > "$ARTIFACT_ROOT/probe-self-test.json"
+
+MONITOR_DIGEST_FIXTURE="$ARTIFACT_ROOT/monitor-digest-fixture.json"
+MONITOR_DIGEST_EXPECTED="$ARTIFACT_ROOT/monitor-digest-expected.txt"
+node - "$MONITOR_DIGEST_FIXTURE" "$MONITOR_DIGEST_EXPECTED" <<'NODE'
+const fs = require('node:fs');
+const { createHash } = require('node:crypto');
+const [fixturePath, expectedPath] = process.argv.slice(2);
+const nonce = 'a'.repeat(64);
+const monitorID = '00000000-0000-4000-8000-000000000001';
+const heartbeat = (sequence, name) => ({
+  sequence,
+  monotonicMicroseconds: 7786870761000 + sequence * 10000,
+  wallClockMilliseconds: 1786870761000 + sequence * 10,
+  lastCleanSequence: sequence,
+  contaminationRetries: 0,
+  contaminationBlocked: false,
+  inputAttributionAvailable: true,
+  allowedProducerRevision: sequence < 2 ? 1 : sequence < 5 ? 2 : 3,
+  phase: name,
+  cursorMovementObserved: false,
+  pendingActivationCount: 0,
+  pendingFocusedWindowChange: false,
+  authorizationEpoch: sequence,
+  transitionAcknowledged: false,
+  foregroundActive: false,
+  foregroundTargetPID: null,
+  foregroundTargetWindowID: null,
+  attributedForegroundEventCount: 0,
+  attributedForegroundSourcePIDs: [],
+  foregroundActivityObserved: false,
+  executionNonce: nonce,
+  monitorInstanceID: monitorID,
+  historyCommitmentSHA256: 'b'.repeat(64),
+});
+const fenceNames = [
+  'baseline-stable', 'grant-stable', 'operations-start',
+  'operations-complete', 'revoke-stable', 'final-stable',
+];
+const evidence = {
+  version: 1,
+  execution_nonce: nonce,
+  monitor_instance_id: monitorID,
+  monitor_source_sha256: '1'.repeat(64),
+  coordinator_source_sha256: '2'.repeat(64),
+  monitor_process: {
+    pid: 4242,
+    start_identity: '1786870761472',
+    executable_path: '/tmp/Peekaboo Monitor',
+    executable_sha256: '3'.repeat(64),
+    code_signature_hash: '4'.repeat(40),
+    team_id: 'UNICODEÉ',
+    source_commit: '5'.repeat(40),
+    heartbeat_path: '/tmp/heartbeat.json',
+  },
+  monitor_attestation_socket_path: '/tmp/attestation.sock',
+  sentinel: { pid: 99, start_identity: '9007199254740991', window_id: 101 },
+  foreground_controller: { pid: 88, start_identity: '8800', code_signature_hash: '6'.repeat(40) },
+  foreground_target: { pid: 77, start_identity: '7700', window_id: 202 },
+  producer_sets: { baseline: { revision: 1 }, grant: { revision: 2 }, revoke: { revision: 3 } },
+  fences: fenceNames.map((name, index) => ({ name, heartbeat: heartbeat(index + 1, name) })),
+  baseline_sample: { frontmost_pid: 99, frontmost_window_id: 101, clipboard_change_count: 7, clipboard_digest: '7'.repeat(64) },
+  final_sample: { frontmost_pid: 99, frontmost_window_id: 101, clipboard_change_count: 7, clipboard_digest: '7'.repeat(64) },
+  foreground_plan: {
+    request_marker: 'foreground:"quoted"\\path🦞\u2028line\u2029paragraph',
+    semantic_element: { role: 'AXTextField', identifier: null, title: 'Résumé 😀' },
+    unicode_order_probe: { '\u{1F600}': 'non-bmp', '\uE000': 'bmp-private-use' },
+  },
+  violation_records: [],
+  contamination_records: [],
+  baseline_commitment_sha256: '8'.repeat(64),
+  history_commitment_sha256: '9'.repeat(64),
+  crash_evidence: { version: 1, baseline: [], final: [], new_reports: [] },
+  restoration: { background_final_bounds_slot_ids: ['a', 'b'], foreground_postcondition_sha256: 'c'.repeat(64), sentinel_sample_sha256: 'd'.repeat(64) },
+};
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+  }
+  return value;
+}
+const bytes = Buffer.concat([
+  Buffer.from('peekaboo.multi-target-certification.monitor-evidence.v2\0', 'utf8'),
+  Buffer.from(JSON.stringify(canonical(evidence)), 'utf8'),
+]);
+fs.writeFileSync(fixturePath, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
+fs.writeFileSync(expectedPath, `${createHash('sha256').update(bytes).digest('hex')}\n`, { mode: 0o600 });
+NODE
+"$PROBE_BIN" monitor-evidence-v2-digest --input "$MONITOR_DIGEST_FIXTURE" \
+    --output "$ARTIFACT_ROOT/monitor-digest-observed.json"
+[[ "$(jq -er '.monitor_evidence_sha256' "$ARTIFACT_ROOT/monitor-digest-observed.json")" == \
+    "$(tr -d '[:space:]' < "$MONITOR_DIGEST_EXPECTED")" ]] || {
+    echo "Monitor evidence digest differs from the Node/finalizer canonical contract." >&2
+    exit 1
+}
+printf '%s\n' '{"value":-0}' > "$ARTIFACT_ROOT/monitor-digest-negative-zero.json"
+if "$PROBE_BIN" monitor-evidence-v2-digest \
+    --input "$ARTIFACT_ROOT/monitor-digest-negative-zero.json" >/dev/null 2>&1; then
+    echo "Monitor evidence digest accepted negative zero." >&2
+    exit 1
+fi
+printf '%s\n' '{"value":-9223372036854775808}' > "$ARTIFACT_ROOT/monitor-digest-int64-min.json"
+if "$PROBE_BIN" monitor-evidence-v2-digest \
+    --input "$ARTIFACT_ROOT/monitor-digest-int64-min.json" >/dev/null 2>&1; then
+    echo "Monitor evidence digest accepted an unsafe Int64 minimum." >&2
+    exit 1
+fi
+printf '%s\n' '{"value":1.5}' > "$ARTIFACT_ROOT/monitor-digest-fractional.json"
+if "$PROBE_BIN" monitor-evidence-v2-digest \
+    --input "$ARTIFACT_ROOT/monitor-digest-fractional.json" >/dev/null 2>&1; then
+    echo "Monitor evidence digest accepted a fractional committed number." >&2
+    exit 1
+fi
+
+RUN_EXECUTION_NONCE="$(printf '%s' "$(uuidgen):$$:$(date +%s%N):$RANDOM" | shasum -a 256 | awk '{print $1}')"
 
 same_process_generation() {
     local expected_start_identity="$1"
@@ -159,35 +321,6 @@ refresh_playground_process_receipt() {
     [[ "$start_identity" =~ ^[0-9]+$ ]] || return 1
     PLAYGROUND_PID="$pid"
     PLAYGROUND_PROCESS_START_IDENTITY="$start_identity"
-}
-
-read_launch_process_receipt() {
-    local result_file="$1"
-    local receipt
-    LAUNCH_RECEIPT_PID=""
-    LAUNCH_RECEIPT_PROCESS_START_IDENTITY=""
-    [[ -n "$result_file" && -s "$result_file" ]] || return 1
-    receipt="$(jq -er '
-        .data as $data |
-        if ($data | has("pid")) and ($data | has("process_start_identity")) and
-           (($data | has("new_pid")) | not) and (($data | has("new_process_start_identity")) | not)
-        then [$data.pid, $data.process_start_identity]
-        elif ($data | has("new_pid")) and ($data | has("new_process_start_identity")) and
-             (($data | has("pid")) | not) and (($data | has("process_start_identity")) | not)
-        then [$data.new_pid, $data.new_process_start_identity]
-        else empty
-        end as $receipt |
-        $receipt[0] as $pid |
-        $receipt[1] as $identity |
-        select(
-            ($pid | type) == "number" and $pid > 0 and ($pid | floor) == $pid and
-            ($identity | type) == "number" and $identity > 0 and ($identity | floor) == $identity
-        ) |
-        $receipt | @tsv
-    ' "$result_file")" || return 1
-    IFS=$'\t' read -r LAUNCH_RECEIPT_PID LAUNCH_RECEIPT_PROCESS_START_IDENTITY <<< "$receipt"
-    [[ "$LAUNCH_RECEIPT_PID" =~ ^[0-9]+$ ]] && \
-        [[ "$LAUNCH_RECEIPT_PROCESS_START_IDENTITY" =~ ^[0-9]+$ ]]
 }
 
 quit_with_process_receipt() {
@@ -293,12 +426,29 @@ monitor_sequence() {
     ' "$1"
 }
 
+heartbeat_matches_current_run() {
+    local heartbeat_path="$1"
+    [[ -z "${monitor_instance_id:-}" ]] && return 0
+    jq -e \
+        --arg executionNonce "$RUN_EXECUTION_NONCE" \
+        --arg monitorInstanceID "$monitor_instance_id" \
+        --arg historyCommitmentSHA256 "$(tr -d '[:space:]' < "$history_commitment")" '
+        .executionNonce == $executionNonce and
+        .monitorInstanceID == $monitorInstanceID and
+        .historyCommitmentSHA256 == $historyCommitmentSHA256 and
+        (.monotonicMicroseconds | type) == "number" and .monotonicMicroseconds > 0 and
+        (.wallClockMilliseconds | type) == "number" and .wallClockMilliseconds > 0 and
+        (.authorizationEpoch | type) == "number" and .authorizationEpoch > 0
+    ' "$heartbeat_path" >/dev/null 2>&1
+}
+
 wait_for_monitor_advance() {
     local heartbeat_path="$1"
     local previous_sequence="$2"
     local attempts="${3:-100}"
     local current_sequence=""
     for _ in $(seq 1 "$attempts"); do
+        heartbeat_matches_current_run "$heartbeat_path" || return 1
         current_sequence="$(monitor_sequence "$heartbeat_path" 2>/dev/null || true)"
         if [[ "$current_sequence" =~ ^[0-9]+$ ]] && ((current_sequence > previous_sequence)); then
             return 0
@@ -321,6 +471,7 @@ wait_for_monitor_clean_advance() {
     local attempts="${3:-100}"
     local current_clean_sequence=""
     for _ in $(seq 1 "$attempts"); do
+        heartbeat_matches_current_run "$heartbeat_path" || return 1
         if jq -e '.contaminationBlocked == true or .inputAttributionAvailable == false' \
             "$heartbeat_path" >/dev/null 2>&1; then
             return 1
@@ -340,6 +491,7 @@ wait_for_allowed_producer_revision() {
     local expected_revision="$2"
     local attempts="${3:-100}"
     for _ in $(seq 1 "$attempts"); do
+        heartbeat_matches_current_run "$heartbeat_path" || return 1
         if jq -e --argjson expected "$expected_revision" \
             '.allowedProducerRevision == $expected and
              .inputAttributionAvailable == true and
@@ -358,6 +510,7 @@ wait_for_running_command_fence() {
     local previous_sequence="$3"
     local attempts="${4:-100}"
     for _ in $(seq 1 "$attempts"); do
+        heartbeat_matches_current_run "$heartbeat_path" || return 1
         if jq -e \
             --argjson revision "$expected_revision" \
             --argjson previous "$previous_sequence" '
@@ -417,16 +570,114 @@ read_pinned_bridge_receipt() {
                 ($identity.processStartIdentity | tostring)
             ),
             socketPath: $selected.socketPath,
-            sourceCommit: $identity.sourceCommit
+            sourceCommit: $identity.sourceCommit,
+            codeSignatureHash: $identity.codeSignatureHash
         } |
         select(
             (.pid | type) == "number" and .pid > 0 and
             (.startIdentity | type) == "string" and
             (.startIdentity | test("^[0-9]+$")) and
             (.sourceCommit | type) == "string" and
-            (.sourceCommit | test("^[0-9a-f]{40}$"))
+            (.sourceCommit | test("^[0-9a-f]{40}$")) and
+            (.codeSignatureHash | type) == "string" and
+            (.codeSignatureHash | test("^[0-9a-f]{40}$"))
         )
     ' "$status_file"
+}
+
+application_receipt_from_inventory() {
+    local inventory_file="${1:?Application inventory required}"
+    local bundle_id="${2:?Bundle identifier required}"
+    jq -cer --arg bundleID "$bundle_id" '
+        [.data.apps[]? |
+            select(.bundle_id == $bundleID) |
+            {
+                application_name: .name,
+                bundle_id: .bundle_id,
+                pid: .pid,
+                process_start_identity: (
+                    .process_start_identity_decimal // (.process_start_identity | tostring)
+                )
+            } |
+            select(
+                (.application_name | type) == "string" and .application_name != "" and
+                (.pid | type) == "number" and .pid > 0 and (.pid | floor) == .pid and
+                (.process_start_identity | type) == "string" and
+                (.process_start_identity | test("^[1-9][0-9]*$"))
+            )] as $matches |
+        select(($matches | length) == 1) |
+        $matches[0]
+    ' "$inventory_file"
+}
+
+new_application_receipt_from_inventories() {
+    local before_file="${1:?Before inventory required}"
+    local after_file="${2:?After inventory required}"
+    local bundle_id="${3:?Bundle identifier required}"
+    jq -cer --arg bundleID "$bundle_id" --slurpfile before "$before_file" '
+        [$before[0].data.apps[]? | select(.bundle_id == $bundleID) | .pid] as $priorPIDs |
+        [.data.apps[]? |
+            select(.bundle_id == $bundleID) |
+            select((.pid as $pid | $priorPIDs | index($pid)) == null) |
+            {
+                application_name: .name,
+                bundle_id: .bundle_id,
+                pid: .pid,
+                process_start_identity: (
+                    .process_start_identity_decimal // (.process_start_identity | tostring)
+                )
+            } |
+            select(
+                (.application_name | type) == "string" and .application_name != "" and
+                (.pid | type) == "number" and .pid > 0 and (.pid | floor) == .pid and
+                (.process_start_identity | type) == "string" and
+                (.process_start_identity | test("^[1-9][0-9]*$"))
+            )] as $matches |
+        select(($matches | length) == 1) |
+        $matches[0]
+    ' "$after_file"
+}
+
+exact_window_receipt_from_inventory() {
+    local inventory_file="${1:?Window inventory required}"
+    jq -cer '
+        [.data.windows[]? |
+            select((.layer // 0) == 0 and .is_on_screen == true) |
+            {
+                window_id: .window_id,
+                window_title: (.window_title // .title // ""),
+                bounds: .bounds,
+                is_key: (.is_key == true)
+            } |
+            select(
+                (.window_id | type) == "number" and .window_id > 0 and
+                (.window_id | floor) == .window_id and
+                (.window_title | type) == "string" and
+                (.bounds | type) == "object" and
+                ([.bounds.x, .bounds.y, .bounds.width, .bounds.height] |
+                    all(type == "number")) and
+                .bounds.width > 0 and .bounds.height > 0
+            )] as $eligible |
+        [$eligible[] | select(.is_key)] as $keyWindows |
+        if ($keyWindows | length) == 1 then $keyWindows[0]
+        elif ($eligible | length) == 1 then $eligible[0]
+        else empty
+        end |
+        del(.is_key)
+    ' "$inventory_file"
+}
+
+physical_target_receipt() {
+    local slug="${1:?Physical app slug required}"
+    local application_receipt_file="${2:?Application receipt required}"
+    local window_receipt_file="${3:?Window receipt required}"
+    jq -cn \
+        --arg slug "$slug" \
+        --slurpfile application "$application_receipt_file" \
+        --slurpfile window "$window_receipt_file" '
+        select(($application | length) == 1 and ($window | length) == 1) |
+        $application[0] + $window[0] + {physical_app: $slug}
+    '
 }
 
 if $SELF_TEST_ONLY; then
@@ -451,7 +702,8 @@ if $SELF_TEST_ONLY; then
                 handshake: {hostIdentity: {
                     processIdentifier: 4242,
                     processStartIdentityDecimal: "987654321",
-                    sourceCommit: "0123456789abcdef0123456789abcdef01234567"
+                    sourceCommit: "0123456789abcdef0123456789abcdef01234567",
+                    codeSignatureHash: "0123456789abcdef0123456789abcdef01234567"
                 }}
             }}
         }' > "$BRIDGE_RECEIPT_SELF_TEST"
@@ -491,6 +743,38 @@ if $SELF_TEST_ONLY; then
        [[ "$(certification_phase_identity click --on B1 --foreground)" != "foreground" ]] || \
        [[ "$(certification_phase_identity click --foreground=true --on B1)" != "foreground" ]]; then
         echo "Certification phase identity self-test failed." >&2
+        exit 1
+    fi
+    APPLICATIONS_BEFORE_SELF_TEST="$ARTIFACT_ROOT/applications-before-self-test.json"
+    APPLICATIONS_AFTER_SELF_TEST="$ARTIFACT_ROOT/applications-after-self-test.json"
+    APPLICATIONS_AMBIGUOUS_SELF_TEST="$ARTIFACT_ROOT/applications-ambiguous-self-test.json"
+    WINDOWS_SELF_TEST="$ARTIFACT_ROOT/windows-self-test.json"
+    WINDOWS_AMBIGUOUS_SELF_TEST="$ARTIFACT_ROOT/windows-ambiguous-self-test.json"
+    printf '%s\n' \
+        '{"data":{"apps":[{"name":"TextEdit","bundle_id":"com.apple.TextEdit","pid":101,"process_start_identity_decimal":"7001"}]}}' \
+        > "$APPLICATIONS_BEFORE_SELF_TEST"
+    printf '%s\n' \
+        '{"data":{"apps":[{"name":"TextEdit","bundle_id":"com.apple.TextEdit","pid":101,"process_start_identity_decimal":"7001"},{"name":"TextEdit","bundle_id":"com.apple.TextEdit","pid":102,"process_start_identity_decimal":"7002"}]}}' \
+        > "$APPLICATIONS_AFTER_SELF_TEST"
+    cp "$APPLICATIONS_AFTER_SELF_TEST" "$APPLICATIONS_AMBIGUOUS_SELF_TEST"
+    printf '%s\n' \
+        '{"data":{"windows":[{"window_id":41,"window_title":"First","bounds":{"x":1,"y":2,"width":640,"height":480},"layer":0,"is_on_screen":true,"is_key":false},{"window_id":42,"window_title":"Owned","bounds":{"x":3,"y":4,"width":800,"height":600},"layer":0,"is_on_screen":true,"is_key":true}]}}' \
+        > "$WINDOWS_SELF_TEST"
+    jq '.data.windows[0].is_key = true' "$WINDOWS_SELF_TEST" > "$WINDOWS_AMBIGUOUS_SELF_TEST"
+    NEW_APPLICATION_SELF_TEST="$ARTIFACT_ROOT/new-application-self-test.json"
+    NEW_WINDOW_SELF_TEST="$ARTIFACT_ROOT/new-window-self-test.json"
+    new_application_receipt_from_inventories \
+        "$APPLICATIONS_BEFORE_SELF_TEST" "$APPLICATIONS_AFTER_SELF_TEST" \
+        "$TEXTEDIT_BUNDLE_ID" > "$NEW_APPLICATION_SELF_TEST"
+    exact_window_receipt_from_inventory "$WINDOWS_SELF_TEST" > "$NEW_WINDOW_SELF_TEST"
+    if ! jq -e '.pid == 102 and .process_start_identity == "7002"' \
+        "$NEW_APPLICATION_SELF_TEST" >/dev/null || \
+       ! jq -e '.window_id == 42 and .window_title == "Owned"' \
+        "$NEW_WINDOW_SELF_TEST" >/dev/null || \
+       application_receipt_from_inventory \
+        "$APPLICATIONS_AMBIGUOUS_SELF_TEST" "$TEXTEDIT_BUNDLE_ID" >/dev/null 2>&1 || \
+       exact_window_receipt_from_inventory "$WINDOWS_AMBIGUOUS_SELF_TEST" >/dev/null 2>&1; then
+        echo "Owned application/window receipt self-test failed." >&2
         exit 1
     fi
     HEARTBEAT_SELF_TEST="$ARTIFACT_ROOT/heartbeat-self-test.json"
@@ -540,12 +824,13 @@ if $SELF_TEST_ONLY; then
         exit 1
     fi
     INVARIANT_SELF_TEST="$ARTIFACT_ROOT/invariant-self-test.jsonl"
-    printf '%s\n' '{"kind":"physical_cursor","expected":"1,1","actual":"2,2"}' \
+    printf '%s\n' \
+        '{"kind":"producer_pointer_event","expected":"none","actual":"pid=123; type=5"}' \
         > "$INVARIANT_SELF_TEST"
     INVARIANT_RESULTS_SELF_TEST="$(invariant_results "$INVARIANT_SELF_TEST")"
     if ! jq -e \
         --argjson catalog "$CERTIFICATION_INVARIANTS_JSON" '
-        ([.[] | select(.name == "physical_cursor" and .passed == false)] | length) == 1 and
+        ([.[] | select(.name == "producer_pointer_event" and .passed == false)] | length) == 1 and
         all(.[]; .name as $name | ($catalog | index($name)) != null) and
         ([.[] | select(.passed == false)] | length) == 1
     ' <<< "$INVARIANT_RESULTS_SELF_TEST" >/dev/null; then
@@ -559,41 +844,17 @@ if $SELF_TEST_ONLY; then
         echo "Contamination replay policy self-test failed." >&2
         exit 1
     fi
-    VALID_LAUNCH_RECEIPT="$ARTIFACT_ROOT/valid-launch-receipt.json"
-    VALID_RELAUNCH_RECEIPT="$ARTIFACT_ROOT/valid-relaunch-receipt.json"
-    MISSING_LAUNCH_RECEIPT="$ARTIFACT_ROOT/missing-launch-receipt.json"
-    MISMATCHED_LAUNCH_RECEIPT="$ARTIFACT_ROOT/mismatched-launch-receipt.json"
-    printf '%s\n' \
-        '{"data":{"pid":101,"process_start_identity":8}}' > "$VALID_LAUNCH_RECEIPT"
-    printf '%s\n' \
-        '{"data":{"new_pid":102,"new_process_start_identity":9}}' > "$VALID_RELAUNCH_RECEIPT"
-    printf '%s\n' '{"data":{"pid":103}}' > "$MISSING_LAUNCH_RECEIPT"
-    printf '%s\n' \
-        '{"data":{"pid":104,"new_process_start_identity":10}}' > "$MISMATCHED_LAUNCH_RECEIPT"
-    if ! read_launch_process_receipt "$VALID_LAUNCH_RECEIPT" || \
-       [[ "$LAUNCH_RECEIPT_PID" != 101 || "$LAUNCH_RECEIPT_PROCESS_START_IDENTITY" != 8 ]]; then
-        echo "Launch receipt parsing self-test failed." >&2
-        exit 1
-    fi
     PLAYGROUND_PID=100
     PLAYGROUND_PROCESS_START_IDENTITY=7
-    refresh_playground_process_receipt \
-        "$LAUNCH_RECEIPT_PID" "$LAUNCH_RECEIPT_PROCESS_START_IDENTITY"
+    refresh_playground_process_receipt 101 8
     if [[ "$PLAYGROUND_PID" != 101 || "$PLAYGROUND_PROCESS_START_IDENTITY" != 8 ]] || \
        same_process_generation 7 "$PLAYGROUND_PROCESS_START_IDENTITY" || \
        ! same_process_generation 8 "$PLAYGROUND_PROCESS_START_IDENTITY"; then
-        echo "Playground relaunch receipt refresh self-test failed." >&2
+        echo "Playground owned-process receipt refresh self-test failed." >&2
         exit 1
     fi
     if refresh_playground_process_receipt 102 ""; then
-        echo "Playground relaunch accepted a missing process generation." >&2
-        exit 1
-    fi
-    if ! read_launch_process_receipt "$VALID_RELAUNCH_RECEIPT" || \
-       [[ "$LAUNCH_RECEIPT_PID" != 102 || "$LAUNCH_RECEIPT_PROCESS_START_IDENTITY" != 9 ]] || \
-       read_launch_process_receipt "$MISSING_LAUNCH_RECEIPT" || \
-       read_launch_process_receipt "$MISMATCHED_LAUNCH_RECEIPT"; then
-        echo "Relaunch/missing receipt parsing self-test failed." >&2
+        echo "Playground ownership accepted a missing process generation." >&2
         exit 1
     fi
     PB_SELF_TEST_CALLS=()
@@ -662,6 +923,17 @@ if [[ -z "$PEEKABOO_BIN" || ! -x "$PEEKABOO_BIN" ]]; then
     echo "Peekaboo CLI not found; build it or pass --bin." >&2
     exit 2
 fi
+PEEKABOO_BIN="$(realpath "$PEEKABOO_BIN")"
+PEEKABOO_EXECUTABLE_SHA256="$(shasum -a 256 "$PEEKABOO_BIN" | awk '{print $1}')"
+PEEKABOO_EXECUTABLE_DEVICE="$(stat -f '%d' "$PEEKABOO_BIN")"
+PEEKABOO_EXECUTABLE_INODE="$(stat -f '%i' "$PEEKABOO_BIN")"
+PEEKABOO_CODE_SIGNATURE_HASH="$(codesign -dvvv "$PEEKABOO_BIN" 2>&1 | \
+    awk -F= '/^CDHash=/{print $2; exit}')"
+if [[ ! "$PEEKABOO_EXECUTABLE_SHA256" =~ ^[0-9a-f]{64}$ || \
+      ! "$PEEKABOO_CODE_SIGNATURE_HASH" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "Peekaboo CLI lacks an exact executable SHA-256 or code-signature hash." >&2
+    exit 2
+fi
 
 pb() {
     if $NO_REMOTE; then
@@ -702,6 +974,10 @@ fi
 EVENT_PRODUCER_SOURCE=local
 EVENT_PRODUCER_SOURCE_COMMIT="$PEEKABOO_SOURCE_COMMIT"
 REMOTE_EVENT_PRODUCER_JSON=null
+BRIDGE_EXECUTABLE_SHA256_JSON=null
+BRIDGE_CODE_SIGNATURE_HASH_JSON=null
+BRIDGE_EXECUTABLE_DEVICE_JSON=null
+BRIDGE_EXECUTABLE_INODE_JSON=null
 if ! $NO_REMOTE; then
     pb bridge status --verbose --json > "$ARTIFACT_ROOT/bridge-event-producer.json"
     REMOTE_EVENT_PRODUCER_JSON="$(read_pinned_bridge_receipt \
@@ -716,11 +992,34 @@ if ! $NO_REMOTE; then
     fi
     EVENT_PRODUCER_SOURCE=remote
     EVENT_PRODUCER_SOURCE_COMMIT="$BRIDGE_SOURCE_COMMIT"
+    BRIDGE_PID="$(jq -er '.pid' <<<"$REMOTE_EVENT_PRODUCER_JSON")"
+    BRIDGE_START_IDENTITY="$(jq -er '.startIdentity' <<<"$REMOTE_EVENT_PRODUCER_JSON")"
+    "$PROBE_BIN" process-executable --pid "$BRIDGE_PID" \
+        --output "$ARTIFACT_ROOT/bridge-executable-before.json"
+    if ! jq -e --argjson pid "$BRIDGE_PID" --arg startIdentity "$BRIDGE_START_IDENTITY" '
+        .pid == $pid and .startIdentity == $startIdentity and
+        (.sha256 | test("^[0-9a-f]{64}$"))
+    ' "$ARTIFACT_ROOT/bridge-executable-before.json" >/dev/null; then
+        echo "Pinned Bridge executable receipt differs from its handshake generation." >&2
+        exit 2
+    fi
+    BRIDGE_EXECUTABLE_SHA256_JSON="$(jq -c '.sha256' "$ARTIFACT_ROOT/bridge-executable-before.json")"
+    BRIDGE_CODE_SIGNATURE_HASH_JSON="$(jq -c '.codeSignatureHash' <<<"$REMOTE_EVENT_PRODUCER_JSON")"
+    BRIDGE_EXECUTABLE_PATH="$(jq -er '.path' "$ARTIFACT_ROOT/bridge-executable-before.json")"
+    BRIDGE_EXECUTABLE_DEVICE_JSON="$(stat -f '%d' "$BRIDGE_EXECUTABLE_PATH" | jq -Rsc 'rtrimstr("\n")')"
+    BRIDGE_EXECUTABLE_INODE_JSON="$(stat -f '%i' "$BRIDGE_EXECUTABLE_PATH" | jq -Rsc 'rtrimstr("\n")')"
 fi
+
+PLAYGROUND_SOURCE_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+PLAYGROUND_SOURCE_TREE="$(git -C "$ROOT_DIR" rev-parse HEAD:Apps/Playground)"
 
 build_playground() {
     local derived_data="$ARTIFACT_ROOT/DerivedData"
     local build_log="$ARTIFACT_ROOT/playground-build.log"
+    if [[ -n "$(git -C "$ROOT_DIR" status --porcelain --untracked-files=all -- Apps/Playground)" ]]; then
+        echo "Playground sources differ from the committed source tree; refusing a false provenance stamp." >&2
+        return 1
+    fi
     xcodebuild \
         -project "$ROOT_DIR/Apps/Playground/Playground.xcodeproj" \
         -scheme Playground \
@@ -738,6 +1037,14 @@ build_playground() {
         echo "No OpenClaw Foundation Developer ID Application identity is available." >&2
         return 1
     fi
+
+    mkdir -p "$PLAYGROUND_APP/Contents/Resources"
+    jq -n \
+        --arg sourceCommit "$PLAYGROUND_SOURCE_COMMIT" \
+        --arg sourceTree "$PLAYGROUND_SOURCE_TREE" '
+        {version: 1, source_commit: $sourceCommit, source_tree: $sourceTree}
+    ' > "$PLAYGROUND_APP/Contents/Resources/PeekabooPlaygroundSource.json"
+    chmod 444 "$PLAYGROUND_APP/Contents/Resources/PeekabooPlaygroundSource.json"
 
     codesign --force --deep --options runtime --timestamp --sign "$identity" "$PLAYGROUND_APP"
 }
@@ -758,6 +1065,16 @@ if [[ ! -d "$PLAYGROUND_APP" ]]; then
     echo "Playground app not found: $PLAYGROUND_APP" >&2
     exit 2
 fi
+PLAYGROUND_SOURCE_MANIFEST="$PLAYGROUND_APP/Contents/Resources/PeekabooPlaygroundSource.json"
+if ! jq -e \
+    --arg sourceCommit "$PLAYGROUND_SOURCE_COMMIT" \
+    --arg sourceTree "$PLAYGROUND_SOURCE_TREE" '
+    type == "object" and keys == ["source_commit", "source_tree", "version"] and
+    .version == 1 and .source_commit == $sourceCommit and .source_tree == $sourceTree
+' "$PLAYGROUND_SOURCE_MANIFEST" >/dev/null; then
+    echo "Playground app lacks an exact current-source manifest; rebuild it from this checkout." >&2
+    exit 2
+fi
 codesign --verify --deep --strict "$PLAYGROUND_APP"
 codesign -dv --verbose=2 "$PLAYGROUND_APP" > "$ARTIFACT_ROOT/playground-signature.txt" 2>&1
 if ! rg -q '^TeamIdentifier=' "$ARTIFACT_ROOT/playground-signature.txt" || \
@@ -765,12 +1082,22 @@ if ! rg -q '^TeamIdentifier=' "$ARTIFACT_ROOT/playground-signature.txt" || \
     echo "Playground must have a team-signed identity, not an ad-hoc signature." >&2
     exit 2
 fi
+PLAYGROUND_EXECUTABLE_NAME="$(plutil -extract CFBundleExecutable raw \
+    "$PLAYGROUND_APP/Contents/Info.plist")"
+PLAYGROUND_EXECUTABLE="$PLAYGROUND_APP/Contents/MacOS/$PLAYGROUND_EXECUTABLE_NAME"
 
 MONITOR_PID=""
 PLAYGROUND_PID=""
 PLAYGROUND_PROCESS_START_IDENTITY=""
 LIFECYCLE_PIDS=()
 LIFECYCLE_PROCESS_START_IDENTITIES=()
+MAXIMIZE_TEXTEDIT_PID=""
+MAXIMIZE_TEXTEDIT_WINDOW_ID=""
+QUIT_TEXTEDIT_PID=""
+QUIT_TEXTEDIT_PROCESS_START_IDENTITY=""
+OWNED_PID=""
+OWNED_PROCESS_START_IDENTITY=""
+OWNED_WINDOW_ID=""
 
 quit_owned_process() {
     local pid="$1"
@@ -814,6 +1141,129 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+write_application_inventory() {
+    local output="${1:?Application inventory output required}"
+    pb app list --include-hidden --include-background --json > "$output"
+}
+
+process_generation_matches() {
+    local pid="${1:?PID required}"
+    local expected_start_identity="${2:?Process start identity required}"
+    local output="${3:?Process identity output required}"
+    "$PROBE_BIN" process-identity --pid "$pid" --output "$output" 2>/dev/null &&
+        jq -e --argjson pid "$pid" --arg expected "$expected_start_identity" '
+            .pid == $pid and .startIdentity == $expected
+        ' "$output" >/dev/null
+}
+
+sentinel_still_exact() {
+    local output="${1:?Sentinel sample output required}"
+    "$PROBE_BIN" sample --output "$output"
+    jq -e --argjson pid "$SENTINEL_PID" --argjson windowID "$SENTINEL_WINDOW_ID" '
+        .frontmostPID == $pid and .frontmostWindowID == $windowID
+    ' "$output" >/dev/null
+}
+
+launch_owned_background_app() {
+    local label="${1:?Owned app label required}"
+    local bundle_id="${2:?Owned app bundle identifier required}"
+    local application_path="${3:?Owned app path required}"
+    local track_lifecycle="${4:-false}"
+    local setup_dir="$ARTIFACT_ROOT/setup/$label"
+    local before="$setup_dir/applications-before.json"
+    local after="$setup_dir/applications-after.json"
+    local application_receipt="$setup_dir/application-receipt.json"
+    local window_inventory="$setup_dir/windows.json"
+    local window_receipt="$setup_dir/window-receipt.json"
+    local target_receipt="$setup_dir/target-receipt.json"
+    mkdir -p "$setup_dir"
+
+    write_application_inventory "$before"
+    open -g -n "$application_path" > "$setup_dir/open.stdout" 2> "$setup_dir/open.stderr"
+
+    local attempt
+    for attempt in $(seq 1 80); do
+        write_application_inventory "$after"
+        if new_application_receipt_from_inventories \
+            "$before" "$after" "$bundle_id" > "$application_receipt" 2>/dev/null; then
+            break
+        fi
+        sleep 0.05
+    done
+    if [[ ! -s "$application_receipt" ]]; then
+        echo "Background setup did not produce one exact new $label process." >&2
+        return 1
+    fi
+
+    OWNED_PID="$(jq -er '.pid' "$application_receipt")"
+    OWNED_PROCESS_START_IDENTITY="$(jq -er '.process_start_identity' "$application_receipt")"
+    if [[ "$label" == playground ]]; then
+        refresh_playground_process_receipt \
+            "$OWNED_PID" "$OWNED_PROCESS_START_IDENTITY" || return 1
+    elif [[ "$track_lifecycle" == true ]]; then
+        LIFECYCLE_PIDS+=("$OWNED_PID")
+        LIFECYCLE_PROCESS_START_IDENTITIES+=("$OWNED_PROCESS_START_IDENTITY")
+    fi
+    if ! process_generation_matches \
+        "$OWNED_PID" "$OWNED_PROCESS_START_IDENTITY" "$setup_dir/process-identity.json"; then
+        echo "Background setup could not pin the $label process generation." >&2
+        return 1
+    fi
+
+    for attempt in $(seq 1 80); do
+        if pb window list --pid "$OWNED_PID" --json > "$window_inventory" 2> "$setup_dir/windows.stderr" &&
+           exact_window_receipt_from_inventory "$window_inventory" > "$window_receipt" 2>/dev/null; then
+            break
+        fi
+        sleep 0.05
+    done
+    if [[ ! -s "$window_receipt" ]]; then
+        echo "Background setup did not produce one exact visible $label window." >&2
+        return 1
+    fi
+    OWNED_WINDOW_ID="$(jq -er '.window_id' "$window_receipt")"
+    physical_target_receipt \
+        "$label" "$application_receipt" "$window_receipt" > "$target_receipt"
+
+    if ! sentinel_still_exact "$setup_dir/sentinel-after.json"; then
+        echo "Background setup changed the exact foreground sentinel while launching $label." >&2
+        return 1
+    fi
+}
+
+resolve_existing_physical_target() {
+    local slug="${1:?Physical app slug required}"
+    local bundle_id="${2:?Physical app bundle identifier required}"
+    local target_dir="$ARTIFACT_ROOT/physical-targets/$slug"
+    local application_inventory="$target_dir/applications.json"
+    local application_receipt="$target_dir/application-receipt.json"
+    local window_inventory="$target_dir/windows.json"
+    local window_receipt="$target_dir/window-receipt.json"
+    mkdir -p "$target_dir"
+
+    write_application_inventory "$application_inventory"
+    if ! application_receipt_from_inventory \
+        "$application_inventory" "$bundle_id" > "$application_receipt"; then
+        echo "Physical app $slug requires exactly one already-running $bundle_id process." >&2
+        return 1
+    fi
+    local pid process_start_identity
+    pid="$(jq -er '.pid' "$application_receipt")"
+    process_start_identity="$(jq -er '.process_start_identity' "$application_receipt")"
+    if ! process_generation_matches \
+        "$pid" "$process_start_identity" "$target_dir/process-identity.json"; then
+        echo "Physical app $slug changed process generation during setup." >&2
+        return 1
+    fi
+    if ! pb window list --pid "$pid" --json > "$window_inventory" ||
+       ! exact_window_receipt_from_inventory "$window_inventory" > "$window_receipt"; then
+        echo "Physical app $slug requires one exact visible key or sole window." >&2
+        return 1
+    fi
+    physical_target_receipt \
+        "$slug" "$application_receipt" "$window_receipt" > "$target_dir/target-receipt.json"
+}
+
 "$PROBE_BIN" sample --output "$ARTIFACT_ROOT/sentinel.json"
 SENTINEL_PID="$(jq -r '.frontmostPID // empty' "$ARTIFACT_ROOT/sentinel.json")"
 SENTINEL_WINDOW_ID="$(jq -r '.frontmostWindowID // empty' "$ARTIFACT_ROOT/sentinel.json")"
@@ -823,44 +1273,100 @@ if [[ -z "$SENTINEL_PID" || -z "$SENTINEL_WINDOW_ID" ]]; then
     echo "A foreground sentinel window is required for background certification." >&2
     exit 1
 fi
-if [[ "$SENTINEL_OBSERVED_BUNDLE_ID" == "$PLAYGROUND_BUNDLE_ID" ]]; then
-    echo "A non-Playground foreground sentinel window is required for certification." >&2
-    exit 1
-fi
+case "$SENTINEL_OBSERVED_BUNDLE_ID" in
+    "$PLAYGROUND_BUNDLE_ID"|"$TEXTEDIT_BUNDLE_ID"|com.apple.Safari|com.apple.iCal|\
+        com.apple.systempreferences|com.apple.calculator|com.apple.ActivityMonitor|com.apple.finder)
+        echo "The foreground sentinel must not be one of the eight physical matrix targets." >&2
+        exit 1
+        ;;
+esac
 if [[ -n "$SENTINEL_BUNDLE_ID" && "$SENTINEL_OBSERVED_BUNDLE_ID" != "$SENTINEL_BUNDLE_ID" ]]; then
     echo "Required sentinel $SENTINEL_BUNDLE_ID is not already frontmost; refusing to activate it." >&2
     exit 1
 fi
 
-if "$PROBE_BIN" find-app --bundle-id "$PLAYGROUND_BUNDLE_ID" >/dev/null 2>&1; then
-    pb app quit --app "$PLAYGROUND_BUNDLE_ID" --json \
-        > "$ARTIFACT_ROOT/playground-quit-existing.json" || true
+launch_owned_background_app playground "$PLAYGROUND_BUNDLE_ID" "$PLAYGROUND_APP" false
+cp "$ARTIFACT_ROOT/setup/playground/target-receipt.json" \
+    "$ARTIFACT_ROOT/physical-targets/playground.json"
+
+if [[ ! -d "$TEXTEDIT_APP" ]]; then
+    echo "TextEdit app not found at $TEXTEDIT_APP." >&2
+    exit 2
+fi
+launch_owned_background_app textedit-maximize "$TEXTEDIT_BUNDLE_ID" "$TEXTEDIT_APP" true
+MAXIMIZE_TEXTEDIT_PID="$OWNED_PID"
+MAXIMIZE_TEXTEDIT_WINDOW_ID="$OWNED_WINDOW_ID"
+jq '.physical_app = "textedit"' \
+    "$ARTIFACT_ROOT/setup/textedit-maximize/target-receipt.json" \
+    > "$ARTIFACT_ROOT/physical-targets/textedit.json"
+
+launch_owned_background_app textedit-quit "$TEXTEDIT_BUNDLE_ID" "$TEXTEDIT_APP" true
+QUIT_TEXTEDIT_PID="$OWNED_PID"
+QUIT_TEXTEDIT_PROCESS_START_IDENTITY="$OWNED_PROCESS_START_IDENTITY"
+
+resolve_existing_physical_target safari com.apple.Safari
+resolve_existing_physical_target calendar com.apple.iCal
+resolve_existing_physical_target settings com.apple.systempreferences
+resolve_existing_physical_target calculator com.apple.calculator
+resolve_existing_physical_target activity-monitor com.apple.ActivityMonitor
+resolve_existing_physical_target finder com.apple.finder
+
+jq -s \
+    --argjson expected "$CERTIFICATION_PHYSICAL_APPS_JSON" '
+    map({key: .physical_app, value: .}) | from_entries as $targets |
+    select(($targets | keys | sort) == ($expected | sort)) |
+    {version: 1, targets: $targets}
+' \
+    "$ARTIFACT_ROOT/physical-targets/playground.json" \
+    "$ARTIFACT_ROOT/physical-targets/textedit.json" \
+    "$ARTIFACT_ROOT/physical-targets/safari/target-receipt.json" \
+    "$ARTIFACT_ROOT/physical-targets/calendar/target-receipt.json" \
+    "$ARTIFACT_ROOT/physical-targets/settings/target-receipt.json" \
+    "$ARTIFACT_ROOT/physical-targets/calculator/target-receipt.json" \
+    "$ARTIFACT_ROOT/physical-targets/activity-monitor/target-receipt.json" \
+    "$ARTIFACT_ROOT/physical-targets/finder/target-receipt.json" \
+    > "$ARTIFACT_ROOT/physical-targets.json"
+if [[ ! -s "$ARTIFACT_ROOT/physical-targets.json" ]]; then
+    echo "Physical target setup did not resolve the closed eight-app matrix." >&2
+    exit 1
 fi
 
-pb app launch "$PLAYGROUND_APP" --wait-ready --foreground --json \
-    > "$ARTIFACT_ROOT/playground-launch.json"
-if ! read_launch_process_receipt "$ARTIFACT_ROOT/playground-launch.json" || \
-   ! refresh_playground_process_receipt \
-       "$LAUNCH_RECEIPT_PID" "$LAUNCH_RECEIPT_PROCESS_START_IDENTITY"; then
-    echo "Playground launch did not return a process-generation receipt." >&2
-    exit 1
-fi
-if ! kill -0 "$PLAYGROUND_PID" 2>/dev/null; then
-    echo "Playground launch receipt names a process that is no longer running." >&2
-    exit 1
-fi
+attest_physical_target_binary() {
+    local slug="$1"
+    local pid executable_receipt executable_path code_signature_hash expected_playground_executable
+    pid="$(jq -er --arg slug "$slug" '.targets[$slug].pid' "$ARTIFACT_ROOT/physical-targets.json")"
+    executable_receipt="$ARTIFACT_ROOT/physical-targets/$slug-executable.json"
+    "$PROBE_BIN" process-executable --pid "$pid" --output "$executable_receipt"
+    executable_path="$(jq -er '.path' "$executable_receipt")"
+    if [[ "$slug" == playground ]]; then
+        expected_playground_executable="$(realpath "$PLAYGROUND_EXECUTABLE")"
+        [[ "$(realpath "$executable_path")" == "$expected_playground_executable" ]] || {
+            echo "Playground process executable differs from the signed fixture." >&2
+            return 1
+        }
+        codesign --verify --strict "$executable_path"
+    else
+        codesign --verify --strict -R '=anchor apple' "$executable_path"
+    fi
+    code_signature_hash="$(codesign -dvvv "$executable_path" 2>&1 | \
+        awk -F= '/^CDHash=/{print $2; exit}')"
+    [[ "$code_signature_hash" =~ ^[0-9a-f]{40}$ ]] || return 1
+    jq \
+        --arg slug "$slug" \
+        --arg codeSignatureHash "$code_signature_hash" \
+        --slurpfile executable "$executable_receipt" '
+        .targets[$slug].executable = {
+            path: $executable[0].path,
+            sha256: $executable[0].sha256,
+            code_signature_hash: $codeSignatureHash
+        }
+    ' "$ARTIFACT_ROOT/physical-targets.json" > "$ARTIFACT_ROOT/physical-targets.json.tmp"
+    mv "$ARTIFACT_ROOT/physical-targets.json.tmp" "$ARTIFACT_ROOT/physical-targets.json"
+}
 
-pb window focus --pid "$SENTINEL_PID" --window-id "$SENTINEL_WINDOW_ID" --verify --json \
-    > "$ARTIFACT_ROOT/sentinel-restore.json"
-"$PROBE_BIN" sample --output "$ARTIFACT_ROOT/sentinel-restored.json"
-if ! jq -e \
-    --argjson pid "$SENTINEL_PID" \
-    --argjson windowID "$SENTINEL_WINDOW_ID" \
-    '.frontmostPID == $pid and .frontmostWindowID == $windowID' \
-    "$ARTIFACT_ROOT/sentinel-restored.json" >/dev/null; then
-    echo "Foreground fixture launch did not restore the exact sentinel window." >&2
-    exit 1
-fi
+for physical_slug in playground textedit safari calendar settings calculator activity-monitor finder; do
+    attest_physical_target_binary "$physical_slug"
+done
 
 FAILURES=0
 LAST_RESULT=""
@@ -947,18 +1453,40 @@ run_case() {
 
     local setup_window_id=""
     local setup_pid=""
-    if [[ "${1:-}" == "--setup-nonmaximized-window" ]]; then
-        setup_window_id="$2"
-        setup_pid="$3"
-        shift 3
-    fi
     local stale_window_id=""
     local stale_pid=""
-    if [[ "${1:-}" == "--setup-stale-window" ]]; then
-        stale_window_id="$2"
-        stale_pid="$3"
-        shift 3
-    fi
+    local physical_app=""
+    local physical_target_receipt=null
+    local background_target_pid="$PLAYGROUND_PID"
+    while true; do
+        case "${1:-}" in
+            --setup-nonmaximized-window)
+                setup_window_id="$2"
+                setup_pid="$3"
+                shift 3
+                ;;
+            --setup-stale-window)
+                stale_window_id="$2"
+                stale_pid="$3"
+                shift 3
+                ;;
+            --physical-app)
+                physical_app="$2"
+                physical_target_receipt="$(jq -c --arg slug "$2" \
+                    '.targets[$slug]' "$ARTIFACT_ROOT/physical-targets.json")"
+                background_target_pid="$(jq -er --arg slug "$2" \
+                    '.targets[$slug].pid' "$ARTIFACT_ROOT/physical-targets.json")"
+                shift 2
+                ;;
+            --background-target-pid)
+                background_target_pid="$2"
+                shift 2
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
 
     local case_dir="$ARTIFACT_ROOT/cases/$name"
     if ! mkdir "$case_dir"; then
@@ -973,6 +1501,9 @@ run_case() {
     local allowed_producers="$case_dir/allowed-event-producers.json"
     local ready="$case_dir/monitor.ready"
     local heartbeat="$case_dir/monitor-heartbeat.json"
+    local history_commitment="$case_dir/history-commitment.txt"
+    local monitor_instance_id
+    monitor_instance_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
     local result="$case_dir/result.json"
     local stderr_file="$case_dir/stderr.txt"
     local exit_file="$case_dir/exit-code.txt"
@@ -999,11 +1530,31 @@ run_case() {
     observed_phase="$(certification_phase_identity "$@")"
 
     printf '%s\n' setup > "$phase"
-    printf '%s\n' '{"revision":0,"producers":[]}' > "$allowed_producers"
     "$PROBE_BIN" sample --output "$before"
+    jq -cn \
+        --arg executionNonce "$RUN_EXECUTION_NONCE" \
+        --arg monitorInstanceID "$monitor_instance_id" '
+        {
+            revision: 1,
+            executionNonce: $executionNonce,
+            monitorInstanceID: $monitorInstanceID,
+            producers: [],
+            foreground: {active: false, target: null}
+        }
+    ' > "$allowed_producers"
+    jq -cS \
+        --arg domain 'peekaboo.background-computer-use.monitor-baseline.v2' \
+        --arg executionNonce "$RUN_EXECUTION_NONCE" \
+        --arg monitorInstanceID "$monitor_instance_id" \
+        --arg caseID "$name" \
+        --slurpfile baseline "$before" \
+        '{domain: $domain, execution_nonce: $executionNonce,
+          monitor_instance_id: $monitorInstanceID, case_id: $caseID,
+          baseline: $baseline[0]}' | shasum -a 256 | awk '{print $1}' \
+        > "$history_commitment"
     if [[ -z "$(jq -r '.frontmostPID // empty' "$before")" || \
           -z "$(jq -r '.frontmostWindowID // empty' "$before")" || \
-          "$(jq -r '.frontmostPID // empty' "$before")" == "$PLAYGROUND_PID" ]]; then
+          "$(jq -r '.frontmostPID // empty' "$before")" == "$background_target_pid" ]]; then
         printf '%s\n' \
             '{"stage":"precommand","reason":"no non-target foreground baseline"}' \
             > "$case_dir/contamination-blocked.json"
@@ -1019,6 +1570,11 @@ run_case() {
         --phase "$phase"
         --allowed-producers "$allowed_producers"
         --invariant-names "$CERTIFICATION_INVARIANTS_JSON"
+        --execution-nonce "$RUN_EXECUTION_NONCE"
+        --monitor-instance-id "$monitor_instance_id"
+        --history-commitment "$history_commitment"
+        --physical-input-observational
+        --cursor-observational
         --interval-ms 10)
     if [[ "$clipboard_policy" == "allow-temporary" ]]; then
         monitor_args+=(--allow-clipboard-mutation)
@@ -1034,6 +1590,19 @@ run_case() {
         record_failure "$name invariant monitor did not start"
         return 1
     fi
+    if ! jq -e \
+        --arg executionNonce "$RUN_EXECUTION_NONCE" \
+        --arg monitorInstanceID "$monitor_instance_id" \
+        --arg historyCommitmentSHA256 "$(tr -d '[:space:]' < "$history_commitment")" '
+        .executionNonce == $executionNonce and
+        .monitorInstanceID == $monitorInstanceID and
+        .historyCommitmentSHA256 == $historyCommitmentSHA256 and
+        (.authorizationEpoch | type) == "number" and .authorizationEpoch > 0
+    ' "$heartbeat" >/dev/null; then
+        abort_current_monitor
+        record_failure "$name monitor heartbeat was not bound to its execution nonce, instance, and baseline"
+        return 1
+    fi
     if ! monitor_sequence "$heartbeat" >/dev/null; then
         abort_current_monitor
         record_failure "$name invariant monitor became ready without a heartbeat"
@@ -1046,6 +1615,7 @@ run_case() {
             > "$case_dir/contamination-blocked.json"
         return 1
     fi
+    cp "$heartbeat" "$case_dir/monitor-start-heartbeat.json"
 
     if [[ -n "$setup_window_id" ]]; then
         local setup_result="$case_dir/nonmaximized-setup.json"
@@ -1214,13 +1784,20 @@ run_case() {
         --argjson revision "$command_pid" \
         --argjson pid "$command_pid" \
         --arg startIdentity "$command_start_identity" \
+        --arg executionNonce "$RUN_EXECUTION_NONCE" \
+        --arg monitorInstanceID "$monitor_instance_id" \
         --argjson remote "$case_remote_receipt" '
         {
             revision: $revision,
+            executionNonce: $executionNonce,
+            monitorInstanceID: $monitorInstanceID,
             producers: (
-                [{pid: $pid, startIdentity: $startIdentity}] +
-                (if $remote == null then [] else [$remote] end)
-            )
+                [{pid: $pid, startIdentity: $startIdentity, role: "bridge"}] +
+                (if $remote == null then [] else [
+                    {pid: $remote.pid, startIdentity: $remote.startIdentity, role: "bridge"}
+                ] end)
+            ),
+            foreground: {active: false, target: null}
         }
     ' > "$allowed_producers.tmp"
     mv "$allowed_producers.tmp" "$allowed_producers"
@@ -1332,6 +1909,7 @@ run_case() {
             > "$case_dir/contamination-blocked.json"
         failed=true
     fi
+    cp "$heartbeat" "$case_dir/monitor-final-heartbeat.json"
     "$PROBE_BIN" sample --output "$after"
     local monitor_liveness="$monitor_progress"
     local monitor_kill_exit=1
@@ -1353,6 +1931,10 @@ run_case() {
         monitor_liveness=false
         record_failure "$name invariant monitor exited unexpectedly (status $monitor_wait_exit)"
         failed=true
+    fi
+    local cursor_movement_observed=false
+    if jq -e '.cursorMovementObserved == true' "$heartbeat" >/dev/null 2>&1; then
+        cursor_movement_observed=true
     fi
     MONITOR_PID=""
     LAST_RESULT="$result"
@@ -1422,6 +2004,8 @@ run_case() {
         --arg surface "cli" \
         --arg command "$observed_command" \
         --arg phase "$observed_phase" \
+        --arg physicalApp "$physical_app" \
+        --argjson physicalTarget "$physical_target_receipt" \
         --arg expectedExit "$expected_exit" \
         --argjson exitCode "$command_exit" \
         --argjson resultSuccess "$result_success" \
@@ -1434,16 +2018,25 @@ run_case() {
         --argjson contaminationClear "$contamination_clear" \
         --argjson desktopRestored "$desktop_restored" \
         --argjson clipboardPolicy "$clipboard_policy_passed" \
+        --argjson cursorMovementObserved "$cursor_movement_observed" \
         --argjson nonmaximizedPrecondition "$nonmaximized_precondition" \
         --argjson snapshotWindowDrift "$snapshot_window_drift" \
         --argjson targetWindowRestored "$target_window_restored" \
         --argjson eventProducer "$case_remote_receipt" \
         --argjson eventProducerStable "$event_producer_stable" \
+        --arg executionNonce "$RUN_EXECUTION_NONCE" \
+        --arg monitorInstanceID "$monitor_instance_id" \
+        --arg historyCommitmentSHA256 "$(tr -d '[:space:]' < "$history_commitment")" \
+        --argjson producerRevision "$command_pid" \
+        --slurpfile monitorStart "$case_dir/monitor-start-heartbeat.json" \
+        --slurpfile monitorFinal "$case_dir/monitor-final-heartbeat.json" \
         '{
             id: $id,
             surface: $surface,
             command: $command,
             phase: $phase,
+            physical_app: (if $physicalApp == "" then null else $physicalApp end),
+            physical_target: $physicalTarget,
             expected_exit: $expectedExit,
             exit_code: $exitCode,
             result_success: $resultSuccess,
@@ -1452,13 +2045,35 @@ run_case() {
             error_code: $errorCode,
             event_producer: $eventProducer,
             event_producer_stable: $eventProducerStable,
+            monitor_receipt: {
+                execution_nonce: $executionNonce,
+                monitor_instance_id: $monitorInstanceID,
+                history_commitment_sha256: $historyCommitmentSHA256,
+                producer_revision: $producerRevision,
+                start: {
+                    sequence: $monitorStart[0].sequence,
+                    authorization_epoch: $monitorStart[0].authorizationEpoch,
+                    producer_revision: $monitorStart[0].allowedProducerRevision,
+                    monotonic_microseconds: $monitorStart[0].monotonicMicroseconds,
+                    wall_clock_milliseconds: $monitorStart[0].wallClockMilliseconds
+                },
+                final: {
+                    sequence: $monitorFinal[0].sequence,
+                    authorization_epoch: $monitorFinal[0].authorizationEpoch,
+                    producer_revision: $monitorFinal[0].allowedProducerRevision,
+                    monotonic_microseconds: $monitorFinal[0].monotonicMicroseconds,
+                    wall_clock_milliseconds: $monitorFinal[0].wallClockMilliseconds
+                }
+            },
             invariants: $invariants,
             evidence: {
                 result_contract: $resultContract,
                 monitor_liveness: $monitorLiveness,
                 contamination_clear: $contaminationClear,
                 desktop_restored: $desktopRestored,
-                clipboard_policy: $clipboardPolicy
+                clipboard_policy: $clipboardPolicy,
+                cursor_observational: true,
+                cursor_movement_observed: $cursorMovementObserved
             },
             oracles: (
                 (if $nonmaximizedPrecondition == null then {}
@@ -1604,6 +2219,78 @@ assert_snapshot_identifiers() {
     record_case_oracle "$case_name" snapshot_identifiers true
 }
 
+run_physical_observation() {
+    local slug="${1:?Physical app slug required}"
+    local case_name="physical-$slug"
+    local target
+    target="$(jq -cer --arg slug "$slug" '.targets[$slug]' \
+        "$ARTIFACT_ROOT/physical-targets.json")"
+    local pid process_start_identity window_id artifact case_dir
+    pid="$(jq -er '.pid' <<< "$target")"
+    process_start_identity="$(jq -er '.process_start_identity' <<< "$target")"
+    window_id="$(jq -er '.window_id' <<< "$target")"
+    case_dir="$(case_dir_path "$case_name")"
+    artifact="$case_dir/window.png"
+
+    run_checked_case "$case_name" unchanged success \
+        --physical-app "$slug" \
+        see --no-elements --pid "$pid" --window-id "$window_id" --path "$artifact" || true
+    assert_case_artifacts "$case_name" "$artifact" || true
+
+    local generation_file="$case_dir/target-process-identity.json"
+    local executable_file="$case_dir/target-process-executable.json"
+    local window_readback="$case_dir/target-window-readback.json"
+    local target_verified=true
+    if ! process_generation_matches \
+        "$pid" "$process_start_identity" "$generation_file"; then
+        target_verified=false
+    fi
+    if ! "$PROBE_BIN" process-executable --pid "$pid" --output "$executable_file" || \
+       ! jq -e --argjson target "$target" '
+            .pid == $target.pid and
+            .startIdentity == $target.process_start_identity and
+            .path == $target.executable.path and
+            .sha256 == $target.executable.sha256
+       ' "$executable_file" >/dev/null; then
+        target_verified=false
+    elif [[ "$(codesign -dvvv "$(jq -er '.path' "$executable_file")" 2>&1 | \
+        awk -F= '/^CDHash=/{print $2; exit}')" != \
+        "$(jq -er '.executable.code_signature_hash' <<< "$target")" ]]; then
+        target_verified=false
+    fi
+    if ! pb window list --pid "$pid" --json > "$window_readback" ||
+       ! jq -e --argjson target "$target" '
+            any(.data.windows[]?;
+                .window_id == $target.window_id and
+                .window_title == $target.window_title and
+                .bounds == $target.bounds)
+       ' "$window_readback" >/dev/null; then
+        target_verified=false
+    fi
+    if ! jq -e --argjson target "$target" --arg artifact "$artifact" '
+        ($target.bounds |
+            [[.x, .y], [.width, .height]]) as $expectedBounds |
+        .success == true and
+        (.data.files | length) == 1 and
+        .data.files[0].window_id == $target.window_id and
+        .data.files[0].path == $artifact and
+        .data.files[0].mime_type == "image/png" and
+        (.data.observations | length) == 1 and
+        .data.observations[0].target.window_id == $target.window_id and
+        .data.observations[0].target.resolved_kind == "window-id" and
+        .data.observations[0].target.bounds == $expectedBounds and
+        .data.observations[0].coordinates.logical_bounds == $expectedBounds
+    ' "$LAST_RESULT" >/dev/null; then
+        target_verified=false
+    fi
+    if [[ "$target_verified" != true ]]; then
+        record_case_oracle "$case_name" physical_target false || true
+        record_failure "$case_name did not preserve its exact process/window receipt"
+    else
+        record_case_oracle "$case_name" physical_target true
+    fi
+}
+
 capture_playground_log() {
     local output="$1"
     "$ROOT_DIR/Apps/Playground/scripts/playground-log.sh" --last 10m --all --json \
@@ -1702,47 +2389,6 @@ assert_playground_scroll_changed() {
     record_case_oracle "$case_name" scroll_offset_changed true
 }
 
-read_lifecycle_launch_receipt() {
-    local name="$1"
-    local result_file="$2"
-    if [[ -z "$result_file" || ! -s "$result_file" ]]; then
-        record_case_oracle "$name" launch_receipt false || true
-        record_failure "$name did not produce a launch receipt"
-        LIFECYCLE_PID=""
-        LIFECYCLE_WINDOW_ID=""
-        LIFECYCLE_PROCESS_START_IDENTITY=""
-        return 1
-    fi
-    if ! read_launch_process_receipt "$result_file"; then
-        record_case_oracle "$name" launch_receipt false || true
-        record_failure "$name did not return its launch-bound process-generation receipt"
-        LIFECYCLE_PID=""
-        LIFECYCLE_WINDOW_ID=""
-        LIFECYCLE_PROCESS_START_IDENTITY=""
-        return 1
-    fi
-    LIFECYCLE_PID="$LAUNCH_RECEIPT_PID"
-    LIFECYCLE_PROCESS_START_IDENTITY="$LAUNCH_RECEIPT_PROCESS_START_IDENTITY"
-    LIFECYCLE_WINDOW_ID="$(jq -r '.data.window_ids[0] // empty' "$result_file")"
-    if [[ ! "$LIFECYCLE_PID" =~ ^[0-9]+$ ]] || [[ ! "$LIFECYCLE_WINDOW_ID" =~ ^[0-9]+$ ]] || \
-       ! jq -e '
-           .data.window_ready == true and
-           .data.window_identity == "exact" and
-           .data.window_count > 0 and
-           (.data.window_ids | length) == .data.window_count
-       ' "$result_file" >/dev/null; then
-        record_case_oracle "$name" launch_receipt false || true
-        record_failure "$name did not return a refreshed exact window receipt"
-        LIFECYCLE_PID=""
-        LIFECYCLE_WINDOW_ID=""
-        LIFECYCLE_PROCESS_START_IDENTITY=""
-        return 1
-    fi
-    LIFECYCLE_PIDS+=("$LIFECYCLE_PID")
-    LIFECYCLE_PROCESS_START_IDENTITIES+=("$LIFECYCLE_PROCESS_START_IDENTITY")
-    record_case_oracle "$name" launch_receipt true
-}
-
 assert_lifecycle_quit_outcome() {
     local case_name="$1"
     local result_file="$2"
@@ -1790,44 +2436,34 @@ assert_lifecycle_quit_outcome() {
     record_case_oracle "$case_name" process_exit_truth true
 }
 
-LIFECYCLE_PID=""
-LIFECYCLE_WINDOW_ID=""
-LIFECYCLE_PROCESS_START_IDENTITY=""
-run_checked_case lifecycle-launch-maximize-close unchanged success \
-    app launch TextEdit --new-instance --wait-for-window || true
-if read_lifecycle_launch_receipt lifecycle-launch-maximize-close "$LAST_RESULT"; then
-    MAXIMIZE_TEXTEDIT_WINDOW_ID="$LIFECYCLE_WINDOW_ID"
-    run_checked_case lifecycle-maximize unchanged success \
-        --setup-nonmaximized-window "$MAXIMIZE_TEXTEDIT_WINDOW_ID" "$LIFECYCLE_PID" \
-        window maximize --window-id "$MAXIMIZE_TEXTEDIT_WINDOW_ID" || true
-    if ! verified_maximize_result \
-        "$LAST_RESULT" \
-        "$(case_dir_path lifecycle-maximize)/maximize-readback.json" \
-        "$(case_dir_path lifecycle-maximize)/before.json" \
-        "$MAXIMIZE_TEXTEDIT_WINDOW_ID"; then
-        record_last_case_oracle verified_bounds false || true
-        record_failure "lifecycle-maximize did not return verified settled bounds"
-    else
-        record_last_case_oracle verified_bounds true
-    fi
-    run_checked_case lifecycle-close unchanged success \
-        window close --window-id "$MAXIMIZE_TEXTEDIT_WINDOW_ID" || true
-fi
+for physical_app in playground textedit safari calendar settings calculator activity-monitor finder; do
+    run_physical_observation "$physical_app"
+done
 
-LIFECYCLE_PID=""
-LIFECYCLE_WINDOW_ID=""
-LIFECYCLE_PROCESS_START_IDENTITY=""
-run_checked_case lifecycle-launch-quit unchanged success \
-    app launch TextEdit --new-instance --wait-for-window || true
-if read_lifecycle_launch_receipt lifecycle-launch-quit "$LAST_RESULT"; then
-    QUIT_TEXTEDIT_PID="$LIFECYCLE_PID"
-    QUIT_TEXTEDIT_PROCESS_START_IDENTITY="$LIFECYCLE_PROCESS_START_IDENTITY"
-    run_checked_case lifecycle-quit unchanged either \
-        app quit --pid "$QUIT_TEXTEDIT_PID" \
-        --expected-process-start-identity "$QUIT_TEXTEDIT_PROCESS_START_IDENTITY" || true
-    assert_lifecycle_quit_outcome lifecycle-quit "$LAST_RESULT" "$QUIT_TEXTEDIT_PID" \
-        "$QUIT_TEXTEDIT_PROCESS_START_IDENTITY" || true
+run_checked_case lifecycle-maximize unchanged success \
+    --background-target-pid "$MAXIMIZE_TEXTEDIT_PID" \
+    --setup-nonmaximized-window "$MAXIMIZE_TEXTEDIT_WINDOW_ID" "$MAXIMIZE_TEXTEDIT_PID" \
+    window maximize --window-id "$MAXIMIZE_TEXTEDIT_WINDOW_ID" || true
+if ! verified_maximize_result \
+    "$LAST_RESULT" \
+    "$(case_dir_path lifecycle-maximize)/maximize-readback.json" \
+    "$(case_dir_path lifecycle-maximize)/before.json" \
+    "$MAXIMIZE_TEXTEDIT_WINDOW_ID"; then
+    record_last_case_oracle verified_bounds false || true
+    record_failure "lifecycle-maximize did not return verified settled bounds"
+else
+    record_last_case_oracle verified_bounds true
 fi
+run_checked_case lifecycle-close unchanged success \
+    --background-target-pid "$MAXIMIZE_TEXTEDIT_PID" \
+    window close --window-id "$MAXIMIZE_TEXTEDIT_WINDOW_ID" || true
+
+run_checked_case lifecycle-quit unchanged either \
+    --background-target-pid "$QUIT_TEXTEDIT_PID" \
+    app quit --pid "$QUIT_TEXTEDIT_PID" \
+    --expected-process-start-identity "$QUIT_TEXTEDIT_PROCESS_START_IDENTITY" || true
+assert_lifecycle_quit_outcome lifecycle-quit "$LAST_RESULT" "$QUIT_TEXTEDIT_PID" \
+    "$QUIT_TEXTEDIT_PROCESS_START_IDENTITY" || true
 
 open_fixture() {
     local title="$1"
@@ -1906,18 +2542,24 @@ TYPE_TOKEN="type-$RUN_TOKEN"
 PASTE_TOKEN="paste-$RUN_TOKEN"
 SET_TOKEN="set-$RUN_TOKEN"
 
-run_checked_case type-window-selector-rejected unchanged failure \
-    type "must-not-route-$RUN_TOKEN" --pid "$PLAYGROUND_PID" --window-id "$TEXT_WINDOW_ID" || true
-assert_result_contains refusal_guidance "$LAST_RESULT" "cannot safely target a specific window" || true
+run_checked_case type-ambiguous-pid-refused unchanged failure \
+    type "must-not-route-$RUN_TOKEN" --pid "$PLAYGROUND_PID" || true
+assert_result_contains refusal_guidance "$LAST_RESULT" "multiple eligible windows" || true
 
-run_checked_case type-text unchanged success \
-    type "$TYPE_TOKEN" --pid "$PLAYGROUND_PID" || true
-assert_background_delivery type-text "$LAST_RESULT" || true
-run_checked_case press-background-refused unchanged failure \
+run_checked_case type-exact-window unchanged success \
+    type "$TYPE_TOKEN" --clear --pid "$PLAYGROUND_PID" --window-id "$TEXT_WINDOW_ID" || true
+assert_background_delivery type-exact-window "$LAST_RESULT" || true
+run_checked_case press-exact-window unchanged success \
+    press return --pid "$PLAYGROUND_PID" --window-id "$TEXT_WINDOW_ID" || true
+assert_background_delivery press-exact-window "$LAST_RESULT" || true
+run_checked_case press-pid-refused unchanged failure \
     press return --pid "$PLAYGROUND_PID" || true
 assert_result_contains refusal_guidance "$LAST_RESULT" "require explicit foreground consent" || true
+run_checked_case press-app-refused unchanged failure \
+    press return --app "$PLAYGROUND_BUNDLE_ID" || true
+assert_result_contains refusal_guidance "$LAST_RESULT" "require explicit foreground consent" || true
 run_checked_case paste-text allow-temporary success \
-    paste "$PASTE_TOKEN" --pid "$PLAYGROUND_PID" || true
+    paste "$PASTE_TOKEN" --pid "$PLAYGROUND_PID" --window-id "$TEXT_WINDOW_ID" || true
 assert_background_delivery paste-text "$LAST_RESULT" || true
 
 run_checked_case see-text-after-paste unchanged success \
@@ -2038,7 +2680,10 @@ fi
 
 sleep 0.3
 capture_playground_log "$ARTIFACT_ROOT/playground.json"
-assert_playground_log type-text playground_log "$ARTIFACT_ROOT/playground.json" "$TYPE_TOKEN" || true
+assert_playground_log_line type-exact-window playground_log_line \
+    "$ARTIFACT_ROOT/playground.json" "Basic text changed" "To: '$TYPE_TOKEN'" || true
+assert_playground_log_line press-exact-window playground_log_line \
+    "$ARTIFACT_ROOT/playground.json" "Submitted basic text field" "Value: '$TYPE_TOKEN'" || true
 assert_playground_log paste-text playground_log "$ARTIFACT_ROOT/playground.json" "$PASTE_TOKEN" || true
 assert_playground_log set-value playground_log "$ARTIFACT_ROOT/playground.json" "$SET_TOKEN" || true
 
@@ -2056,16 +2701,113 @@ if $RUN_FOREGROUND_PHASE; then
         > "$FOREGROUND_DIR/scroll-down.json"
     pb scroll --direction up --amount 1 --foreground --json \
         > "$FOREGROUND_DIR/scroll-up.json"
-    pb move --at "$ORIGINAL_CURSOR" --foreground --json \
-        > "$FOREGROUND_DIR/restore-cursor.json"
+    "$PROBE_BIN" sample --output "$FOREGROUND_DIR/before-cursor-restore.json"
+    if jq -e --slurpfile move "$FOREGROUND_DIR/move.json" '
+        ((.cursor.x - $move[0].data.targetLocation.x) | fabs) <= 0.5 and
+        ((.cursor.y - $move[0].data.targetLocation.y) | fabs) <= 0.5
+    ' "$FOREGROUND_DIR/before-cursor-restore.json" >/dev/null; then
+        pb move --at "$ORIGINAL_CURSOR" --foreground --json \
+            > "$FOREGROUND_DIR/restore-cursor.json"
+    else
+        printf '%s\n' \
+            '{"restored":false,"reason":"cursor changed after Peekaboo move; refusing to overwrite newer user state"}' \
+            > "$FOREGROUND_DIR/restore-cursor-skipped.json"
+    fi
 
-    pb window focus --pid "$SENTINEL_PID" --window-id "$SENTINEL_WINDOW_ID" --verify --json \
-        > "$FOREGROUND_DIR/restore-sentinel.json"
+    "$PROBE_BIN" sample --output "$FOREGROUND_DIR/before-sentinel-restore.json"
+    if jq -e --argjson pid "$PLAYGROUND_PID" '.frontmostPID == $pid' \
+        "$FOREGROUND_DIR/before-sentinel-restore.json" >/dev/null; then
+        pb window focus --pid "$SENTINEL_PID" --window-id "$SENTINEL_WINDOW_ID" --verify --json \
+            > "$FOREGROUND_DIR/restore-sentinel.json"
+    else
+        printf '%s\n' \
+            '{"restored":false,"reason":"frontmost app changed after Peekaboo switch; refusing to overwrite newer user state"}' \
+            > "$FOREGROUND_DIR/restore-sentinel-skipped.json"
+    fi
 fi
 
 OBSERVED_CERTIFICATION="$ARTIFACT_ROOT/certification-observed.json"
 CERTIFICATION_RESULT="$ARTIFACT_ROOT/certification.json"
 case_summaries=("$ARTIFACT_ROOT"/cases/*/summary.json)
+PROVENANCE_STABLE=true
+for source_and_digest in \
+    "$SOURCE_CATALOG:$CATALOG_SHA256_INITIAL" \
+    "$SOURCE_REPORTER:$REPORTER_SHA256_INITIAL" \
+    "$SOURCE_PROBE:$PROBE_SOURCE_SHA256_INITIAL" \
+    "$SOURCE_HARNESS:$HARNESS_SHA256_INITIAL"; do
+    source_path="${source_and_digest%:*}"
+    expected_digest="${source_and_digest##*:}"
+    if [[ "$(shasum -a 256 "$source_path" | awk '{print $1}')" != "$expected_digest" ]]; then
+        record_failure "certification source input changed after its private snapshot: $source_path"
+        PROVENANCE_STABLE=false
+    fi
+done
+if [[ "$(shasum -a 256 "$PEEKABOO_BIN" | awk '{print $1}')" != "$PEEKABOO_EXECUTABLE_SHA256" || \
+      "$(codesign -dvvv "$PEEKABOO_BIN" 2>&1 | awk -F= '/^CDHash=/{print $2; exit}')" != \
+        "$PEEKABOO_CODE_SIGNATURE_HASH" || \
+      "$(stat -f '%d' "$PEEKABOO_BIN")" != "$PEEKABOO_EXECUTABLE_DEVICE" || \
+      "$(stat -f '%i' "$PEEKABOO_BIN")" != "$PEEKABOO_EXECUTABLE_INODE" ]]; then
+    record_failure "Peekaboo CLI executable or code signature changed during the matrix"
+    PROVENANCE_STABLE=false
+fi
+if ! $NO_REMOTE; then
+    "$PROBE_BIN" process-executable --pid "$BRIDGE_PID" \
+        --output "$ARTIFACT_ROOT/bridge-executable-after.json" || true
+    if ! jq -e \
+        --argjson pid "$BRIDGE_PID" \
+        --arg startIdentity "$BRIDGE_START_IDENTITY" \
+        --argjson expectedSHA256 "$BRIDGE_EXECUTABLE_SHA256_JSON" '
+        .pid == $pid and .startIdentity == $startIdentity and .sha256 == $expectedSHA256
+    ' "$ARTIFACT_ROOT/bridge-executable-after.json" >/dev/null 2>&1; then
+        record_failure "Pinned Bridge executable or process generation changed during the matrix"
+        PROVENANCE_STABLE=false
+    fi
+    if [[ "$(stat -f '%d' "$BRIDGE_EXECUTABLE_PATH")" != \
+          "$(jq -r . <<<"$BRIDGE_EXECUTABLE_DEVICE_JSON")" || \
+          "$(stat -f '%i' "$BRIDGE_EXECUTABLE_PATH")" != \
+          "$(jq -r . <<<"$BRIDGE_EXECUTABLE_INODE_JSON")" ]]; then
+        record_failure "Pinned Bridge executable inode changed during the matrix"
+        PROVENANCE_STABLE=false
+    fi
+fi
+PLAYGROUND_CODE_SIGNATURE_HASH="$(codesign -dvvv "$PLAYGROUND_APP" 2>&1 | \
+    awk -F= '/^CDHash=/{print $2; exit}')"
+SOURCE_ARTIFACTS_JSON="$(jq -cn \
+    --arg catalogSHA256 "$CATALOG_SHA256_INITIAL" \
+    --arg reporterSHA256 "$REPORTER_SHA256_INITIAL" \
+    --arg probeSourceSHA256 "$PROBE_SOURCE_SHA256_INITIAL" \
+    --arg probeExecutableSHA256 "$(shasum -a 256 "$PROBE_BIN" | awk '{print $1}')" \
+    --arg harnessSHA256 "$HARNESS_SHA256_INITIAL" \
+    --arg cliExecutableSHA256 "$PEEKABOO_EXECUTABLE_SHA256" \
+    --arg cliCodeSignatureHash "$PEEKABOO_CODE_SIGNATURE_HASH" \
+    --arg cliExecutableDevice "$PEEKABOO_EXECUTABLE_DEVICE" \
+    --arg cliExecutableInode "$PEEKABOO_EXECUTABLE_INODE" \
+    --argjson bridgeExecutableSHA256 "$BRIDGE_EXECUTABLE_SHA256_JSON" \
+    --argjson bridgeCodeSignatureHash "$BRIDGE_CODE_SIGNATURE_HASH_JSON" \
+    --argjson bridgeExecutableDevice "$BRIDGE_EXECUTABLE_DEVICE_JSON" \
+    --argjson bridgeExecutableInode "$BRIDGE_EXECUTABLE_INODE_JSON" \
+    --arg playgroundSourceTree "$PLAYGROUND_SOURCE_TREE" \
+    --arg playgroundExecutableSHA256 "$(shasum -a 256 "$PLAYGROUND_EXECUTABLE" | awk '{print $1}')" \
+    --arg playgroundCodeSignatureHash "$PLAYGROUND_CODE_SIGNATURE_HASH" '
+    {
+        catalog_sha256: $catalogSHA256,
+        reporter_sha256: $reporterSHA256,
+        probe_source_sha256: $probeSourceSHA256,
+        probe_executable_sha256: $probeExecutableSHA256,
+        harness_sha256: $harnessSHA256,
+        cli_executable_sha256: $cliExecutableSHA256,
+        cli_code_signature_hash: $cliCodeSignatureHash,
+        cli_executable_device: $cliExecutableDevice,
+        cli_executable_inode: $cliExecutableInode,
+        bridge_executable_sha256: $bridgeExecutableSHA256,
+        bridge_code_signature_hash: $bridgeCodeSignatureHash,
+        bridge_executable_device: $bridgeExecutableDevice,
+        bridge_executable_inode: $bridgeExecutableInode,
+        playground_source_tree: $playgroundSourceTree,
+        playground_executable_sha256: $playgroundExecutableSHA256,
+        playground_code_signature_hash: $playgroundCodeSignatureHash
+    }
+')"
 jq -s \
     --slurpfile probe "$ARTIFACT_ROOT/probe-self-test.json" \
     --arg cliSourceCommit "$PEEKABOO_SOURCE_COMMIT" \
@@ -2073,8 +2815,11 @@ jq -s \
     --arg eventProducerSourceCommit "$EVENT_PRODUCER_SOURCE_COMMIT" \
     --arg requestedBridgeSocket "$BRIDGE_SOCKET" \
     --argjson remoteHost "$REMOTE_EVENT_PRODUCER_JSON" \
+    --argjson sourceArtifacts "$SOURCE_ARTIFACTS_JSON" \
+    --argjson provenanceStable "$PROVENANCE_STABLE" \
     '{
         probe_canary: ($probe[0].success == true),
+        provenance_stable: $provenanceStable,
         provenance: {
             cli_source_commit: $cliSourceCommit,
             event_producer_source: $eventProducerSource,
@@ -2082,7 +2827,8 @@ jq -s \
             requested_bridge_socket: (
                 if $eventProducerSource == "remote" then $requestedBridgeSocket else null end
             ),
-            remote_host: $remoteHost
+            remote_host: $remoteHost,
+            source_artifacts: $sourceArtifacts
         },
         cases: .
     }' \
@@ -2099,6 +2845,9 @@ if [[ $CERTIFICATION_EXIT -ne 0 ]]; then
 fi
 
 CASE_COUNT="$(find "$ARTIFACT_ROOT/cases" -name summary.json -type f | wc -l | tr -d ' ')"
+CURSOR_MOVEMENT_OBSERVED="$(jq -s \
+    'any(.[]; .evidence.cursor_movement_observed == true)' \
+    "${case_summaries[@]}")"
 jq -n \
     --arg peekaboo "$(head -n 1 "$ARTIFACT_ROOT/peekaboo-version.txt")" \
     --arg sourceCommit "$PEEKABOO_SOURCE_COMMIT" \
@@ -2108,8 +2857,10 @@ jq -n \
     --argjson sentinelWindowID "$SENTINEL_WINDOW_ID" \
     --argjson cases "$CASE_COUNT" \
     --argjson failures "$FAILURES" \
+    --argjson cursorMovementObserved "$CURSOR_MOVEMENT_OBSERVED" \
     --argjson foregroundPhase "$RUN_FOREGROUND_PHASE" \
     --slurpfile certification "$CERTIFICATION_RESULT" \
+    --slurpfile physicalTargets "$ARTIFACT_ROOT/physical-targets.json" \
     '{
         success: ($failures == 0),
         peekaboo: $peekaboo,
@@ -2118,6 +2869,9 @@ jq -n \
         sentinel: {pid: $sentinelPID, window_id: $sentinelWindowID},
         cases: $cases,
         failures: $failures,
+        cursor_observational: true,
+        cursor_movement_observed: $cursorMovementObserved,
+        physical_targets: $physicalTargets[0],
         foreground_phase: $foregroundPhase,
         certification: $certification[0]
     }' > "$ARTIFACT_ROOT/summary.json"

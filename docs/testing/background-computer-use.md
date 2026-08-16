@@ -14,45 +14,68 @@ scripts/test-background-computer-use.sh
 ```
 
 It builds the Playground fixture, signs it with the OpenClaw Foundation Developer ID, and samples the already-frontmost
-app/window as the sentinel. It explicitly foreground-launches the controlled fixture before monitoring, then restores
-and verifies that exact sentinel window. The monitored phase never activates Calculator or restores a stale foreground
-app after the run. It then exercises fresh, exact PID/window snapshots through
-`see` (including AX-only and screenshot-only modes), `capture live`, click by ID and query, `type`, raw-press refusal, `paste`,
+app/window as the sentinel. Before any certifying monitor starts, native background LaunchServices requests
+(`open -g -n`) create one task-owned Playground generation and two task-owned TextEdit generations. Exact before/after
+application-inventory deltas, native process-start identities, and exact visible windows establish ownership. Every
+setup launch must leave the sentinel unchanged; the harness never foregrounds a fixture and never "restores" a stale
+foreground app after setup.
+
+The live matrix also requires one already-running process with one exact key or sole visible window for Safari,
+Calendar, System Settings, Calculator, Activity Monitor, and Finder. Those six processes are read-only prerequisites:
+the harness never launches, quits, closes, or otherwise mutates them. Together with the owned Playground and TextEdit
+targets, eight monitored screenshot-only exact-window cells prove cross-app routing without focus or cursor control.
+Missing processes, duplicate instances, ambiguous windows, process-generation drift, or changed window receipts fail
+closed rather than selecting a first match.
+
+The remaining cases exercise fresh, exact PID/window snapshots through `see` (including AX-only and screenshot-only
+modes), `capture live`, click by ID and query, exact-window `type`, `press`, and `paste`, app/PID-only raw-press refusal,
 `set-value`, `action`, and targeted background scroll. Stale snapshots and unsupported named AX actions must
 fail nonzero instead of falling back to foreground synthesis. Standard targeted scroll must report Accessibility
 delivery and produce an independent, PID-scoped Playground offset change; controlled WebKit fixtures may instead
 report exact-window routed, unverifiable delivery and must prove the offset independently before any retry.
-The monitored lifecycle phase also launches distinct TextEdit processes with exact window receipts, establishes a
-non-maximized exact frame, then maximizes and closes that background window. Quit accepts exactly two tuples: confirmed
-success with the target process gone, or `suspected_noop`/`INTERACTION_FAILED` with that target still alive. The harness
-does not infer the state of an unrelated sibling process from the quit result.
-Harness cleanup consumes each controlled PID and process-start identity directly from the launch/relaunch result and
-passes both values in one generation-pinned `app quit` request. A missing receipt for the essential Playground fixture
-aborts immediately; a missing lifecycle receipt records a failed/omitted catalog case. Cleanup never probes a bare
-post-launch PID to mint ownership or issues a separate unpinned quit that could hit a recycled process. Background raw
-`press` and keyboard requests with a window selector are refused. Process-only typed cases use the exact PID to isolate
-the target process and intentionally do not claim sibling-window isolation. Fixture windows open through background
-semantic menu actions rather than uncertified raw shortcuts.
-The harness invokes the current CLI directly; it does not use AppleScript or a command runner.
+The monitored lifecycle phase uses the already-owned TextEdit receipts, establishes a non-maximized exact frame, then
+maximizes and closes one window. Quit accepts exactly two tuples: confirmed success with the target process gone, or
+`suspected_noop`/`INTERACTION_FAILED` with that target still alive. The harness does not infer the state of an unrelated
+sibling process from the quit result. Cleanup passes every task-owned PID and process-start identity in one
+generation-pinned `app quit` request; it never mints ownership from a bare post-launch PID or issues an unpinned quit
+that could hit a recycled process.
+
+PID-only typing is deliberately refused once Playground has multiple eligible windows. Exact-window typing succeeds
+only after one background semantic click establishes the fixture focus. Exact-window raw Return then exercises the
+receipt-pinned background press route and requires an independent PID-scoped submit log. The same raw press with only
+an app or PID must refuse before dispatch with foreground-consent guidance. Fixture windows open through background
+semantic menu actions rather than uncertified shortcuts. The harness invokes the current CLI directly and uses no
+AppleScript or JXA.
 Certification requires a stamped CLI whose `--version --json` output contains one canonical 40-hex `sourceCommit`.
 Remote certification pins every command to one exact Bridge socket and requires its additive host-identity receipt to
 expose the same source commit. Raw SwiftPM and manual unstamped Xcode builds report `unknown` and are intentionally
 refused for certification. The validated certification report records both stamps and rejects missing or mismatched
 provenance when artifacts are replayed. Every monitored case brackets its command with exact socket, PID, and
-process-generation attestations; a restarted or rebound Bridge host invalidates that case.
+process-generation attestations; a restarted or rebound Bridge host invalidates that case. The report also commits
+pre/post CLI and Bridge executable SHA-256, CDHash, device, and inode receipts. Catalog, reporter, probe, and harness
+inputs are copied into the owner-private run root before execution and verified unchanged afterward. Playground carries
+an embedded current-commit/source-tree manifest beneath the app signature, so a prebuilt fixture cannot claim the
+checkout's source merely because its bundle identifier matches.
 
 Every background case starts only after the 10 ms monitor completes its first sample and publishes a sequence
 heartbeat. After the command and its restoration checks finish, the case waits for that sequence to advance again; an
 alive but wedged watcher cannot certify a pass. The case also fails if the monitor does not remain alive until the
-harness terminates it, or if Peekaboo changes the sentinel PID/top window or physical cursor, the clipboard leaks, or a
-new visible Peekaboo window appears. A passive native event tap correlates input with exact command/Bridge-host PID and
+harness terminates it, or if Peekaboo changes the sentinel PID/top window, the clipboard leaks, or a new visible
+Peekaboo window appears. Physical cursor coordinates are observational because the user may move the mouse while the
+matrix runs. The probe records `cursorMovementObserved`; hardware-origin `mouseMoved` events from PID 0 neither fail nor
+contaminate a row. User clicks, keys, wheel input, attribution loss, and focus changes remain contamination. A passive
+native event tap correlates product input with exact command/Bridge-host PID and
 process-generation receipts. An acknowledged producer event that reaches the session-global tap violates the catalog's
 `global_input_event` invariant; legitimate background PID-targeted delivery does not traverse that tap. All other input
 makes the attempt sticky-indeterminate. An activation or focused-window notification accompanied by that external input
 is part of the same contamination; without external input it violates the matching focus invariant. The tap requests
 the complete non-null event mask and verifies that macOS retained the required mouse, keyboard, scroll, and tablet bits;
-missing listen access, a reduced tap, disablement, or event overflow blocks certification. The original focus/cursor
-baseline is never rebased into a pass. A pre-command attempt can be discarded and restarted from a fresh baseline, with
+missing listen access, a reduced tap, disablement, or event overflow blocks certification. The original focus baseline
+is never rebased into a pass; no cursor-position equality is required. The catalog's
+`producer_pointer_event` slot means Peekaboo emitted no attributable shared-pointer route, not that the user
+kept the mouse still. When observational cursor policy is disabled, coordinate drift is reported separately as the
+out-of-catalog `cursor_position` violation, which still fails the harness without blaming Peekaboo for the user's input.
+A pre-command attempt can be discarded and restarted from a fresh baseline, with
 three total attempts. After dispatch, only catalog rows with a named replay-safe reset contract may rerun the whole row; mutation rows
 such as click, type, paste, close, and quit block instead. Disabled attribution, event overflow, or retry exhaustion also
 blocks the row instead of silently passing or blaming unrelated motion on Peekaboo. Clipboard and overlay invariants
@@ -60,9 +83,10 @@ remain active even on a contaminated interactive sample. The harness does not sa
 run-start clipboard snapshot, so a newer user clipboard is never overwritten during cleanup; the paste command's own
 transaction must restore its temporary payload. Clipboard
 contents are hashed, never printed. Selected mutations use fresh UI readback or PID-scoped Playground log checks and
-deltas; result contracts cover the remaining cases. Unrelated app windows and content are not collected. Artifact
-directories must be new or empty so a rerun cannot reuse old summaries, images, or logs. Results go under
-`.artifacts/background-computer-use/<UTC>/`.
+deltas; result contracts cover the remaining cases. Only exact declared or controlled target windows are collected;
+their screenshot artifacts can contain visible local app content and must remain private. Unrelated windows are not
+captured. Artifact directories must be new or empty so a rerun cannot reuse old summaries, images, or logs. Results go under
+the owner-only `.artifacts/background-computer-use/<UTC>/` root.
 
 The native monitor has one authorization-epoch state machine for producer publication and all input, activation, and
 focused-window callbacks. Each callback is admitted on one atomic cutoff and retains that epoch plus the PID,
@@ -106,28 +130,48 @@ counters are scoped to the advertised revision so an earlier grant cannot satisf
 current/deferred target generation or window drift disables attribution. Hardware-origin mouse movement may be recorded as
 observational when the harness opts in; other user input still makes the attempt indeterminate.
 
-This state machine is deterministic infrastructure only in the current slice. The dual-controller command continues to
-refuse before UI setup: no physical foreground grant/revoke coordinator is enabled, and these epoch contracts alone are
-not concurrent certification.
+Every heartbeat is bound to one 64-hex execution nonce, one UUIDv4 monitor instance, and one SHA-256 history
+commitment. Closed heartbeats use safe-integer `monotonicMicroseconds` for strict ordering and
+`wallClockMilliseconds` for signed-receipt interval comparison; adjacent fence deltas may differ by at most two seconds,
+so a wall-clock jump fails closed. Fractional timestamps remain diagnostic-only and never enter sealed evidence.
+Producer documents carry the same run identity and use a closed schema. The source-owned live coordinator
+can additionally start an owner-private Unix attestation socket. After the monitor matches six ordered certification
+fences against heartbeats it actually published, it seals the exact coordinator corpus, rewrites the final heartbeat
+to the sealed history commitment, and serves a newline-delimited challenge response containing its PID generation,
+code-signature hash, and domain-separated `monitor-evidence` digest. The controller verifies the kernel Unix peer PID;
+writing heartbeat, evidence, or receipt files cannot mint monitor authority.
 
-The 34 required CLI cases are source-controlled in `scripts/background-computer-use-catalog.json`. Each row declares
+The standalone probe's `monitor-evidence-v2-digest` helper is deliberately scoped to this closed integer-only monitor
+schema. It sorts decoded object keys by ECMAScript UTF-16 order, retains source-owned Node integer tokens, and rejects
+fractions, exponents, negative zero, duplicate keys, and integers outside JavaScript's safe range. The general digest
+specification remains implemented by the Node finalizer; this native helper does not claim to canonicalize arbitrary
+JSON numbers.
+
+The 42-case matrix does not grant a foreground controller; its default remains background-only. Concurrent certification
+is a separate source-owned coordinator workflow and requires the run-bound seal, PID attestation, signed receipts, and
+foreground semantic witness together. The matrix therefore does not pass the five live-seal paths or claim a v4 live
+certificate. The probe's deterministic tests exercise the seal and peer-PID endpoint; the dependent live coordinator
+owns the six-fence execution. Epoch heartbeats alone are not a concurrent certification.
+
+The 42 required CLI cases are source-controlled in the version 2
+`scripts/background-computer-use-catalog.json`. Each row declares
 its exit contract and, where applicable, its effect, delivery, refusal code, allowed outcome tuples, and named checks.
 The catalog is the canonical list of monitored invariant families and projects their names into the native probe,
 harness summaries, synthetic fixtures, and reporter. The harness writes one exact array of closed `{name, passed}`
 results per case, preserving duplicate names so the reporter can reject them after ordinary JSON parsing. The reporter
 `scripts/validate-background-computer-use-report.mjs` rejects missing, duplicate, or unknown rows; surface, command, or
 phase drift; wrong refusal codes; disallowed conditional outcomes; effect or delivery drift; absent declared
-readback/log/artifact evidence; monitor failure; and every missing, unknown, or violated catalog invariant. A legacy
-aggregate violation count cannot certify a row. Command and phase identity are
+readback/log/artifact evidence; physical-app identity or coverage drift; monitor failure; and every missing, unknown, or
+violated catalog invariant. A legacy aggregate violation count cannot certify a row. Command and phase identity are
 derived from the actual harness arguments rather than copied from the catalog, so adding `--foreground` invalidates a
 background row. The stale-snapshot row resizes the exact captured window under the same monitor, requires
 `SNAPSHOT_STALE` when reusing that real snapshot ID, and restores the original bounds before the case can pass. A run is
 not certified merely because the cases that happened to execute passed. The machine-readable verdict is
 `certification.json` beside the normal summary.
 
-Completeness is relative to this source-controlled 34-case single-controller matrix; it is not a claim that every
+Completeness is relative to this source-controlled 42-case single-controller matrix; it is not a claim that every
 Peekaboo CLI combination is represented. `scripts/test-dual-controller-overlap.sh` is the complementary workflow-level
-cell; its internal steps deliberately stay outside the 34-row command catalog.
+cell; its internal steps deliberately stay outside the 42-row command catalog.
 
 The overlap cell starts two owned TextEdit executable generations during setup, pins their exact process/window
 receipts, and then restores an independently selected sentinel window. Two separate controller processes launch
@@ -187,7 +231,9 @@ switching and other inherently foreground commands are outside that statement. T
 scripts/test-background-computer-use.sh --foreground-phase
 ```
 
-That phase restores the cursor, relaunches Playground to reset fixture state, and returns to the captured sentinel.
+That opt-in phase intentionally controls the shared cursor. It restores the prior cursor and sentinel only when their
+current values still match Peekaboo's last write; a concurrent user change is newer state and is never overwritten. The
+phase is not part of the default background certification and should run only on an otherwise idle desktop.
 Do not move Dock items, switch Spaces, or open file dialogs in this harness; those belong in explicitly destructive or
 interactive test plans.
 
@@ -204,6 +250,9 @@ duplicate/missing/unknown/violated invariant results, legacy object/aggregate sh
 
 Use `--bin`, `--artifacts`, `--sentinel-bundle-id`, or `--playground-app ... --skip-playground-build` to select an exact
 binary, require an already-frontmost app, or use a prebuilt signed fixture. The harness refuses rather than activating a
-requested sentinel that is not already frontmost. Add `--no-remote` when the exact CLI is team-signed and
+requested sentinel that is not already frontmost; the sentinel must not be any of the eight physical targets. Before a
+live run, leave exactly one visible key or sole window open for Safari, Calendar, System Settings, Calculator, Activity
+Monitor, and Finder. Add `--no-remote` when the exact CLI is team-signed and
 has local TCC grants; this prevents an installed bridge host from masking working-tree behavior. A prebuilt app must
-have a team signature; ad-hoc fixtures are rejected.
+have a team signature and the exact current-source `PeekabooPlaygroundSource.json` manifest; ad-hoc or unstamped
+fixtures are rejected.

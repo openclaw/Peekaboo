@@ -5,6 +5,7 @@ import CryptoKit
 import Darwin
 import Dispatch
 import Foundation
+import Security
 import Synchronization
 
 // The shell harness compiles this standalone probe directly; its deterministic contracts stay in the same source.
@@ -12,6 +13,24 @@ import Synchronization
 
 @_silgen_name("_AXUIElementGetWindow")
 private func copyProbeAXWindowID(_ element: AXUIElement, _ windowID: inout CGWindowID) -> AXError
+
+private let selfTestExecutionNonce = String(repeating: "a", count: 64)
+private let selfTestMonitorInstanceID = "00000000-0000-4000-8000-000000000001"
+
+private func isLowerHex(_ value: String, count: Int) -> Bool {
+    value.utf8.count == count && value.utf8.allSatisfy {
+        (0x30...0x39).contains($0) || (0x61...0x66).contains($0)
+    }
+}
+
+private func isCanonicalV4UUID(_ value: String) -> Bool {
+    guard value == value.lowercased(), value.count == 36,
+          value[value.index(value.startIndex, offsetBy: 14)] == "4",
+          "89ab".contains(value[value.index(value.startIndex, offsetBy: 19)]),
+          let uuid = UUID(uuidString: value)
+    else { return false }
+    return uuid.uuidString.lowercased() == value
+}
 
 private struct Point: Codable, Equatable {
     let x: Double
@@ -43,9 +62,10 @@ private struct Violation: Codable, Hashable {
     let actual: String
 }
 
-private struct WatchHeartbeat: Codable {
+private struct WatchHeartbeat: Codable, Equatable {
     let sequence: UInt64
-    let timestamp: Double
+    let monotonicMicroseconds: UInt64
+    let wallClockMilliseconds: Int64
     let lastCleanSequence: UInt64
     let contaminationRetries: Int
     let contaminationBlocked: Bool
@@ -63,11 +83,60 @@ private struct WatchHeartbeat: Codable {
     let attributedForegroundEventCount: Int
     let attributedForegroundSourcePIDs: [Int32]
     let foregroundActivityObserved: Bool
+    let executionNonce: String
+    let monitorInstanceID: String
+    let historyCommitmentSHA256: String
+
+    private enum CodingKeys: String, CodingKey {
+        case sequence, monotonicMicroseconds, wallClockMilliseconds, lastCleanSequence
+        case contaminationRetries, contaminationBlocked
+        case inputAttributionAvailable, allowedProducerRevision, phase, cursorMovementObserved
+        case pendingActivationCount, pendingFocusedWindowChange, authorizationEpoch
+        case transitionAcknowledged, foregroundActive, foregroundTargetPID, foregroundTargetWindowID
+        case attributedForegroundEventCount, attributedForegroundSourcePIDs, foregroundActivityObserved
+        case executionNonce, monitorInstanceID, historyCommitmentSHA256
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(self.sequence, forKey: .sequence)
+        try values.encode(self.monotonicMicroseconds, forKey: .monotonicMicroseconds)
+        try values.encode(self.wallClockMilliseconds, forKey: .wallClockMilliseconds)
+        try values.encode(self.lastCleanSequence, forKey: .lastCleanSequence)
+        try values.encode(self.contaminationRetries, forKey: .contaminationRetries)
+        try values.encode(self.contaminationBlocked, forKey: .contaminationBlocked)
+        try values.encode(self.inputAttributionAvailable, forKey: .inputAttributionAvailable)
+        try values.encode(self.allowedProducerRevision, forKey: .allowedProducerRevision)
+        try values.encode(self.phase, forKey: .phase)
+        try values.encode(self.cursorMovementObserved, forKey: .cursorMovementObserved)
+        try values.encode(self.pendingActivationCount, forKey: .pendingActivationCount)
+        try values.encode(self.pendingFocusedWindowChange, forKey: .pendingFocusedWindowChange)
+        try values.encode(self.authorizationEpoch, forKey: .authorizationEpoch)
+        try values.encode(self.transitionAcknowledged, forKey: .transitionAcknowledged)
+        try values.encode(self.foregroundActive, forKey: .foregroundActive)
+        if let foregroundTargetPID {
+            try values.encode(foregroundTargetPID, forKey: .foregroundTargetPID)
+        } else {
+            try values.encodeNil(forKey: .foregroundTargetPID)
+        }
+        if let foregroundTargetWindowID {
+            try values.encode(foregroundTargetWindowID, forKey: .foregroundTargetWindowID)
+        } else {
+            try values.encodeNil(forKey: .foregroundTargetWindowID)
+        }
+        try values.encode(self.attributedForegroundEventCount, forKey: .attributedForegroundEventCount)
+        try values.encode(self.attributedForegroundSourcePIDs, forKey: .attributedForegroundSourcePIDs)
+        try values.encode(self.foregroundActivityObserved, forKey: .foregroundActivityObserved)
+        try values.encode(self.executionNonce, forKey: .executionNonce)
+        try values.encode(self.monitorInstanceID, forKey: .monitorInstanceID)
+        try values.encode(self.historyCommitmentSHA256, forKey: .historyCommitmentSHA256)
+    }
 
     func withTransitionAcknowledged(_ acknowledged: Bool) -> WatchHeartbeat {
         WatchHeartbeat(
             sequence: self.sequence,
-            timestamp: self.timestamp,
+            monotonicMicroseconds: self.monotonicMicroseconds,
+            wallClockMilliseconds: self.wallClockMilliseconds,
             lastCleanSequence: self.lastCleanSequence,
             contaminationRetries: self.contaminationRetries,
             contaminationBlocked: self.contaminationBlocked,
@@ -84,11 +153,41 @@ private struct WatchHeartbeat: Codable {
             foregroundTargetWindowID: self.foregroundTargetWindowID,
             attributedForegroundEventCount: self.attributedForegroundEventCount,
             attributedForegroundSourcePIDs: self.attributedForegroundSourcePIDs,
-            foregroundActivityObserved: self.foregroundActivityObserved)
+            foregroundActivityObserved: self.foregroundActivityObserved,
+            executionNonce: self.executionNonce,
+            monitorInstanceID: self.monitorInstanceID,
+            historyCommitmentSHA256: self.historyCommitmentSHA256)
+    }
+
+    func withHistoryCommitmentSHA256(_ digest: String) -> WatchHeartbeat {
+        WatchHeartbeat(
+            sequence: self.sequence,
+            monotonicMicroseconds: self.monotonicMicroseconds,
+            wallClockMilliseconds: self.wallClockMilliseconds,
+            lastCleanSequence: self.lastCleanSequence,
+            contaminationRetries: self.contaminationRetries,
+            contaminationBlocked: self.contaminationBlocked,
+            inputAttributionAvailable: self.inputAttributionAvailable,
+            allowedProducerRevision: self.allowedProducerRevision,
+            phase: self.phase,
+            cursorMovementObserved: self.cursorMovementObserved,
+            pendingActivationCount: self.pendingActivationCount,
+            pendingFocusedWindowChange: self.pendingFocusedWindowChange,
+            authorizationEpoch: self.authorizationEpoch,
+            transitionAcknowledged: self.transitionAcknowledged,
+            foregroundActive: self.foregroundActive,
+            foregroundTargetPID: self.foregroundTargetPID,
+            foregroundTargetWindowID: self.foregroundTargetWindowID,
+            attributedForegroundEventCount: self.attributedForegroundEventCount,
+            attributedForegroundSourcePIDs: self.attributedForegroundSourcePIDs,
+            foregroundActivityObserved: self.foregroundActivityObserved,
+            executionNonce: self.executionNonce,
+            monitorInstanceID: self.monitorInstanceID,
+            historyCommitmentSHA256: digest)
     }
 }
 
-private struct ContaminationRecord: Codable {
+private struct ContaminationRecord: Codable, Equatable {
     let state: String
     let retry: Int
     let sequence: UInt64
@@ -149,6 +248,8 @@ private enum InvariantSlot: Int, CaseIterable {
     case clipboardChangeCount
     case peekabooOverlayWindow
 }
+
+private let cursorPositionViolationKind = "cursor_position"
 
 private struct InvariantProjection {
     let names: [String]
@@ -215,22 +316,90 @@ private struct AllowedForegroundTarget: Codable, Equatable, Hashable, Sendable {
 private struct AllowedForegroundActivity: Codable, Equatable, Hashable, Sendable {
     let active: Bool
     let target: AllowedForegroundTarget?
+
+    private enum CodingKeys: String, CodingKey {
+        case active, target
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(self.active, forKey: .active)
+        if let target {
+            try values.encode(target, forKey: .target)
+        } else {
+            try values.encodeNil(forKey: .target)
+        }
+    }
 }
 
 private struct AllowedEventProducerSet: Codable, Equatable, Sendable {
     let revision: UInt64
+    let executionNonce: String
+    let monitorInstanceID: String
     let producers: [AllowedEventProducer]
     let foreground: AllowedForegroundActivity?
+
+    init(
+        revision: UInt64,
+        executionNonce: String = selfTestExecutionNonce,
+        monitorInstanceID: String = selfTestMonitorInstanceID,
+        producers: [AllowedEventProducer],
+        foreground: AllowedForegroundActivity? = nil)
+    {
+        self.revision = revision
+        self.executionNonce = executionNonce
+        self.monitorInstanceID = monitorInstanceID
+        self.producers = producers
+        self.foreground = foreground
+    }
 
     var effectiveForeground: AllowedForegroundActivity {
         self.foreground ?? AllowedForegroundActivity(active: false, target: nil)
     }
 
     func hasExactlyEquivalentPayload(to other: AllowedEventProducerSet) -> Bool {
-        self.producers.count == other.producers.count &&
+        self.executionNonce == other.executionNonce &&
+            self.monitorInstanceID == other.monitorInstanceID &&
+            self.producers.count == other.producers.count &&
             Set(self.producers) == Set(other.producers) &&
             self.foreground == other.foreground
     }
+}
+
+private func decodeAllowedProducerSet(
+    _ data: Data,
+    executionNonce: String,
+    monitorInstanceID: String) throws -> AllowedEventProducerSet
+{
+    let object = try JSONSerialization.jsonObject(with: data)
+    guard let root = object as? [String: Any],
+          Set(root.keys) == ["revision", "executionNonce", "monitorInstanceID", "producers", "foreground"],
+          let producers = root["producers"] as? [[String: Any]],
+          producers.allSatisfy({ producer in
+              Set(producer.keys) == ["pid", "startIdentity", "role"] &&
+                  producer["role"] is String
+          }),
+          let foreground = root["foreground"] as? [String: Any],
+          Set(foreground.keys) == ["active", "target"],
+          foreground["active"] is Bool
+    else {
+        throw ProbeError.invalidArguments("allowed producer document is not one closed schema")
+    }
+    if let target = foreground["target"] as? [String: Any] {
+        guard Set(target.keys) == ["pid", "startIdentity", "windowID"] else {
+            throw ProbeError.invalidArguments("allowed foreground target is not closed")
+        }
+    } else if !(foreground["target"] is NSNull) {
+        throw ProbeError.invalidArguments("allowed foreground target must be one object or null")
+    }
+    let decoded = try JSONDecoder().decode(AllowedEventProducerSet.self, from: data)
+    guard decoded.executionNonce == executionNonce,
+          decoded.monitorInstanceID == monitorInstanceID,
+          decoded.producers.allSatisfy({ $0.role != nil })
+    else {
+        throw ProbeError.invalidArguments("allowed producer document is not bound to this monitor run")
+    }
+    return decoded
 }
 
 private struct ProcessGenerationIdentity: Hashable, Sendable {
@@ -374,6 +543,7 @@ private struct MonitorEpochMachineState: Sendable {
     var lastAdmission: UInt64 = 0
     var nextEpochSerial: UInt64 = 2
     var acknowledgementReadyRevision: UInt64?
+    var isQuiesced = false
 }
 
 /// The one publication/admission authority for input, activation, and focus callbacks.
@@ -464,6 +634,24 @@ private final class MonitorEpochMachine: Sendable {
 
     func reserveForTesting() -> MonitorAdmissionToken {
         self.reserve()
+    }
+
+    func quiesce() {
+        self.state.withLock { state in
+            state.isQuiesced = true
+            state.openBucket.events.removeAll()
+            state.openBucket.pendingAdmissions.removeAll()
+            state.sealedBuckets.removeAll()
+        }
+    }
+
+    func pendingEvidenceCountForTesting() -> Int {
+        self.state.withLock { state in
+            state.openBucket.events.count + state.openBucket.pendingAdmissions.count +
+                state.sealedBuckets.reduce(0) { partial, bucket in
+                    partial + bucket.events.count + bucket.pendingAdmissions.count
+                }
+        }
     }
 
     @discardableResult
@@ -559,6 +747,9 @@ private final class MonitorEpochMachine: Sendable {
 
     private func reserve() -> MonitorAdmissionToken {
         self.state.withLock { state in
+            if state.isQuiesced {
+                return MonitorAdmissionToken(admission: 0, epoch: state.openBucket.epoch)
+            }
             state.lastAdmission += 1
             let token = MonitorAdmissionToken(
                 admission: state.lastAdmission,
@@ -570,6 +761,9 @@ private final class MonitorEpochMachine: Sendable {
 
     private func complete(_ token: MonitorAdmissionToken, with kind: MonitorEventKind) -> Bool {
         self.state.withLock { state in
+            if state.isQuiesced || token.admission == 0 {
+                return true
+            }
             if state.openBucket.epoch == token.epoch {
                 return Self.complete(token, with: kind, in: &state.openBucket)
             }
@@ -1171,6 +1365,17 @@ private func processStartIdentity(pid: Int32) -> UInt64? {
     return seconds.multipliedReportingOverflow(by: 1_000_000).partialValue &+ microseconds
 }
 
+private func monotonicMicroseconds() -> UInt64 {
+    var timebase = mach_timebase_info_data_t()
+    mach_timebase_info(&timebase)
+    let ticks = mach_continuous_time()
+    let denominator = UInt64(timebase.denom)
+    let numerator = UInt64(timebase.numer)
+    let whole = (ticks / denominator) * numerator
+    let remainder = (ticks % denominator) * numerator / denominator
+    return (whole + remainder) / 1000
+}
+
 private func violations(current: SystemSample, context: InvariantEvaluationContext) -> Set<Violation> {
     var result = Set<Violation>()
 
@@ -1192,7 +1397,7 @@ private func violations(current: SystemSample, context: InvariantEvaluationConte
             abs(current.cursor.y - context.interactiveBaseline.cursor.y) > 0.5
         if cursorMoved, !context.cursorObservational {
             result.insert(Violation(
-                kind: context.projection[.physicalCursor],
+                kind: cursorPositionViolationKind,
                 expected: "\(context.interactiveBaseline.cursor.x),\(context.interactiveBaseline.cursor.y)",
                 actual: "\(current.cursor.x),\(current.cursor.y)"))
         }
@@ -1501,9 +1706,27 @@ private struct ClosedEpochEventClassification {
     var focusEvents = [ProcessWindowEvidence]()
     var bridgeSources = Set<Int32>()
     var bridgeTypes = Set<UInt32>()
+    var bridgePointerSources = Set<Int32>()
+    var bridgePointerTypes = Set<UInt32>()
     var activationCount = 0
     var focusCount = 0
 }
+
+private let sharedPointerEventTypes = Set([
+    CGEventType.leftMouseDown.rawValue,
+    CGEventType.leftMouseUp.rawValue,
+    CGEventType.rightMouseDown.rawValue,
+    CGEventType.rightMouseUp.rawValue,
+    CGEventType.mouseMoved.rawValue,
+    CGEventType.leftMouseDragged.rawValue,
+    CGEventType.rightMouseDragged.rawValue,
+    CGEventType.otherMouseDown.rawValue,
+    CGEventType.otherMouseUp.rawValue,
+    CGEventType.otherMouseDragged.rawValue,
+    CGEventType.scrollWheel.rawValue,
+    CGEventType.tabletPointer.rawValue,
+    CGEventType.tabletProximity.rawValue,
+])
 
 private struct ClosedEpochEvaluation {
     let violations: Set<Violation>
@@ -1520,12 +1743,16 @@ private struct ForegroundActivitySummary {
 private struct WatchState {
     let baseline: SystemSample
     let interactiveBaseline: InteractiveBaseline
+    let executionNonce: String
+    let monitorInstanceID: String
+    var historyCommitmentSHA256: String
     let allowClipboardMutation: Bool
     let physicalInputObservational: Bool
     let cursorObservational: Bool
     let projection: InvariantProjection
     let outputPath: String
     let contaminationOutputPath: String
+    let evidenceLedger: MonitorPublicationLedger?
     private var recorded = Set<Violation>()
     private var sequence: UInt64 = 0
     private var lastCleanSequence: UInt64 = 0
@@ -1598,13 +1825,14 @@ private struct WatchState {
                 abs(current.cursor.y - self.interactiveBaseline.cursor.y) > 0.5
             if cursorMoved, !self.cursorObservational {
                 currentViolations.insert(Violation(
-                    kind: self.projection[.physicalCursor],
+                    kind: cursorPositionViolationKind,
                     expected: "\(self.interactiveBaseline.cursor.x),\(self.interactiveBaseline.cursor.y)",
                     actual: "\(current.cursor.x),\(current.cursor.y)"))
             }
         }
         for violation in currentViolations.subtracting(self.recorded) {
             try appendJSONLine(violation, to: self.outputPath)
+            self.evidenceLedger?.record(violation: violation)
             self.recorded.insert(violation)
         }
 
@@ -1617,7 +1845,8 @@ private struct WatchState {
             ForegroundActivitySummary()
         return WatchHeartbeat(
             sequence: self.sequence,
-            timestamp: current.timestamp,
+            monotonicMicroseconds: monotonicMicroseconds(),
+            wallClockMilliseconds: Int64((current.timestamp * 1000).rounded(.down)),
             lastCleanSequence: self.lastCleanSequence,
             contaminationRetries: self.contaminationRetries,
             contaminationBlocked: self.contaminationState.blocked,
@@ -1634,7 +1863,10 @@ private struct WatchState {
             foregroundTargetWindowID: finalAuthorization.target?.windowID,
             attributedForegroundEventCount: finalActivity.eventCount,
             attributedForegroundSourcePIDs: finalActivity.sourcePIDs.sorted(),
-            foregroundActivityObserved: finalActivity.eventCount > 0)
+            foregroundActivityObserved: finalActivity.eventCount > 0,
+            executionNonce: self.executionNonce,
+            monitorInstanceID: self.monitorInstanceID,
+            historyCommitmentSHA256: self.historyCommitmentSHA256)
     }
 
     private mutating func evaluate(
@@ -1677,6 +1909,13 @@ private struct WatchState {
                 expected: "no session-global input events",
                 actual: "pids=\(classification.bridgeSources.sorted().map(String.init).joined(separator: ",")); " +
                     "types=\(classification.bridgeTypes.sorted().map(String.init).joined(separator: ","))"))
+        }
+        if !classification.bridgePointerSources.isEmpty {
+            epochViolations.insert(Violation(
+                kind: self.projection[.physicalCursor],
+                expected: "no producer-attributed shared-pointer events",
+                actual: "pids=\(classification.bridgePointerSources.sorted().map(String.init).joined(separator: ",")); " +
+                    "types=\(classification.bridgePointerTypes.sorted().map(String.init).joined(separator: ","))"))
         }
 
         let physicalInputIsObservational = self.physicalInputObservational &&
@@ -1779,6 +2018,10 @@ private struct WatchState {
         case .bridge:
             classification.bridgeSources.insert(input.source.pid)
             classification.bridgeTypes.insert(input.type)
+            if sharedPointerEventTypes.contains(input.type) {
+                classification.bridgePointerSources.insert(input.source.pid)
+                classification.bridgePointerTypes.insert(input.type)
+            }
         case .foregroundController:
             guard let target = authorization.target,
                   input.sessionFocus.map({ evidenceMatches(
@@ -1857,14 +2100,14 @@ private struct WatchState {
         if countsRetry {
             self.contaminationRetries += 1
         }
-        try appendJSONLine(
-            ContaminationRecord(
-                state: reason,
-                retry: self.contaminationRetries,
-                sequence: self.sequence + 1,
-                sourcePIDs: sourcePIDs,
-                eventTypes: eventTypes),
-            to: self.contaminationOutputPath)
+        let record = ContaminationRecord(
+            state: reason,
+            retry: self.contaminationRetries,
+            sequence: self.sequence + 1,
+            sourcePIDs: sourcePIDs,
+            eventTypes: eventTypes)
+        try appendJSONLine(record, to: self.contaminationOutputPath)
+        self.evidenceLedger?.record(contamination: record)
         self.contaminationState.observe(
             externalInput: !attributionFailed,
             attributionFailed: attributionFailed)
@@ -1877,6 +2120,9 @@ private func writeJSON(_ value: some Encodable, to path: String?) throws {
     let data = try encoder.encode(value)
     if let path {
         try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        guard chmod(path, S_IRUSR | S_IWUSR) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
     } else {
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
@@ -1900,6 +2146,9 @@ private final class PreparedJSONPublication {
         self.destinationURL = destinationURL
         self.temporaryURL = temporaryURL
         try data.write(to: temporaryURL)
+        guard chmod(temporaryURL.path, S_IRUSR | S_IWUSR) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
     }
 
     deinit {
@@ -1919,13 +2168,1030 @@ private final class PreparedJSONPublication {
     }
 }
 
+private struct MonitorProcessReceipt: Codable, Equatable {
+    let pid: Int32
+    let startIdentity: String
+    let codeSignatureHash: String
+
+    private enum CodingKeys: String, CodingKey {
+        case pid
+        case startIdentity = "start_identity"
+        case codeSignatureHash = "code_signature_hash"
+    }
+}
+
+private struct MonitorAttestationRequest: Codable {
+    let version: Int
+    let executionNonce: String
+    let monitorInstanceID: String
+    let challenge: String
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case executionNonce = "execution_nonce"
+        case monitorInstanceID = "monitor_instance_id"
+        case challenge
+    }
+}
+
+private struct MonitorAttestationResponse: Codable {
+    let version: Int
+    let executionNonce: String
+    let monitorInstanceID: String
+    let challenge: String
+    let monitor: MonitorProcessReceipt
+    let monitorEvidenceSHA256: String
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case executionNonce = "execution_nonce"
+        case monitorInstanceID = "monitor_instance_id"
+        case challenge
+        case monitor
+        case monitorEvidenceSHA256 = "monitor_evidence_sha256"
+    }
+}
+
+private struct MonitorSealRequest: Codable {
+    let version: Int
+    let executionNonce: String
+    let monitorInstanceID: String
+    let phase: String
+    let draftPath: String
+    let sealedPath: String
+    let historyCommitmentSHA256: String
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case executionNonce = "execution_nonce"
+        case monitorInstanceID = "monitor_instance_id"
+        case phase
+        case draftPath = "draft_path"
+        case sealedPath = "sealed_path"
+        case historyCommitmentSHA256 = "history_commitment_sha256"
+    }
+}
+
+private struct MonitorSealReceipt: Codable {
+    let version: Int
+    let executionNonce: String
+    let monitorInstanceID: String
+    let phase: String
+    let monitorEvidenceSHA256: String
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case executionNonce = "execution_nonce"
+        case monitorInstanceID = "monitor_instance_id"
+        case phase
+        case monitorEvidenceSHA256 = "monitor_evidence_sha256"
+    }
+}
+
+private func currentCodeSignatureHash() -> String? {
+    var dynamicCode: SecCode?
+    guard SecCodeCopySelf([], &dynamicCode) == errSecSuccess, let dynamicCode else { return nil }
+    var staticCode: SecStaticCode?
+    guard SecCodeCopyStaticCode(dynamicCode, [], &staticCode) == errSecSuccess, let staticCode else { return nil }
+    var information: CFDictionary?
+    let flags = SecCSFlags(rawValue: UInt32(kSecCSSigningInformation))
+    guard SecCodeCopySigningInformation(staticCode, flags, &information) == errSecSuccess,
+          let values = information as? [String: Any],
+          let data = values[kSecCodeInfoUnique as String] as? Data,
+          data.count == 20
+    else { return nil }
+    return data.map { String(format: "%02x", $0) }.joined()
+}
+
+private func currentMonitorProcessReceipt() throws -> MonitorProcessReceipt {
+    let pid = getpid()
+    guard let startIdentity = processStartIdentity(pid: pid).map(String.init),
+          let codeSignatureHash = currentCodeSignatureHash(),
+          isLowerHex(codeSignatureHash, count: 40)
+    else {
+        throw ProbeError.invalidArguments("monitor cannot bind its live process generation and code signature")
+    }
+    return MonitorProcessReceipt(
+        pid: pid,
+        startIdentity: startIdentity,
+        codeSignatureHash: codeSignatureHash)
+}
+
+private func requireOwnerPrivateParent(of path: String) throws {
+    guard path.hasPrefix("/"), !path.contains("\0") else {
+        throw ProbeError.invalidArguments("monitor path must be absolute")
+    }
+    let parent = URL(fileURLWithPath: path).deletingLastPathComponent().standardizedFileURL.path
+    var info = stat()
+    guard lstat(parent, &info) == 0,
+          (info.st_mode & S_IFMT) == S_IFDIR,
+          info.st_uid == geteuid(),
+          (info.st_mode & 0o077) == 0
+    else {
+        throw ProbeError.invalidArguments("monitor artifact parent must be owner private")
+    }
+}
+
+private func readOwnerPrivateFile(
+    _ path: String,
+    maximumBytes: Int = 16 * 1024 * 1024,
+    afterOpen: (() throws -> Void)? = nil) throws -> Data
+{
+    func sameFile(_ lhs: stat, _ rhs: stat) -> Bool {
+        lhs.st_dev == rhs.st_dev && lhs.st_ino == rhs.st_ino && lhs.st_size == rhs.st_size &&
+            lhs.st_mtimespec.tv_sec == rhs.st_mtimespec.tv_sec &&
+            lhs.st_mtimespec.tv_nsec == rhs.st_mtimespec.tv_nsec &&
+            lhs.st_ctimespec.tv_sec == rhs.st_ctimespec.tv_sec &&
+            lhs.st_ctimespec.tv_nsec == rhs.st_ctimespec.tv_nsec && lhs.st_nlink == rhs.st_nlink
+    }
+    func valid(_ info: stat) -> Bool {
+        (info.st_mode & S_IFMT) == S_IFREG && info.st_uid == geteuid() && info.st_nlink == 1 &&
+            (info.st_mode & 0o077) == 0 && info.st_size >= 0 && info.st_size <= maximumBytes
+    }
+
+    var pathBefore = stat()
+    guard lstat(path, &pathBefore) == 0, valid(pathBefore) else {
+        throw ProbeError.invalidArguments("monitor input must be one bounded owner-private regular file")
+    }
+    let descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+    guard descriptor >= 0 else { throw ProbeError.invalidArguments("monitor input cannot be opened safely") }
+    defer { close(descriptor) }
+    var descriptorBefore = stat()
+    guard fstat(descriptor, &descriptorBefore) == 0,
+          valid(descriptorBefore),
+          sameFile(pathBefore, descriptorBefore)
+    else {
+        throw ProbeError.invalidArguments("monitor input changed while it was opened")
+    }
+    try afterOpen?()
+    var data = Data()
+    var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+    while data.count <= maximumBytes {
+        let count = Darwin.read(descriptor, &buffer, buffer.count)
+        if count > 0 {
+            data.append(contentsOf: buffer.prefix(count))
+        } else if count == 0 {
+            break
+        } else if errno == EINTR {
+            continue
+        } else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
+    var descriptorAfter = stat()
+    var pathAfter = stat()
+    guard data.count <= maximumBytes,
+          data.count == descriptorBefore.st_size,
+          fstat(descriptor, &descriptorAfter) == 0,
+          lstat(path, &pathAfter) == 0,
+          sameFile(descriptorBefore, descriptorAfter),
+          sameFile(descriptorAfter, pathAfter)
+    else {
+        throw ProbeError.invalidArguments("monitor input changed while it was read")
+    }
+    return data
+}
+
+private func readStableOwnerPrivateFile(_ path: String, maximumBytes: Int = 16 * 1024 * 1024) throws -> Data {
+    var lastError: Error?
+    for _ in 0..<3 {
+        do {
+            return try readOwnerPrivateFile(path, maximumBytes: maximumBytes)
+        } catch {
+            lastError = error
+            usleep(1000)
+        }
+    }
+    throw lastError ?? ProbeError.invalidArguments("monitor input could not be read stably")
+}
+
+private func writeOwnerPrivateJSON(_ value: some Encodable, to path: String) throws {
+    try requireOwnerPrivateParent(of: path)
+    var existing = stat()
+    guard lstat(path, &existing) != 0, errno == ENOENT else {
+        throw ProbeError.invalidArguments("monitor output path already exists")
+    }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    var data = try encoder.encode(value)
+    data.append(0x0A)
+    let descriptor = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, S_IRUSR | S_IWUSR)
+    guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    defer { close(descriptor) }
+    try data.withUnsafeBytes { bytes in
+        guard let base = bytes.baseAddress else { return }
+        var offset = 0
+        while offset < bytes.count {
+            let count = Darwin.write(descriptor, base.advanced(by: offset), bytes.count - offset)
+            if count > 0 {
+                offset += count
+            } else if count < 0, errno == EINTR {
+                continue
+            } else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        }
+    }
+    guard fsync(descriptor) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+}
+
+private func canonicalJSONObjectData(_ object: Any) throws -> Data {
+    func validate(_ value: Any) throws {
+        if value is NSNull || value is String || value is Bool {
+            return
+        }
+        if let number = value as? NSNumber {
+            let double = number.doubleValue
+            guard double.isFinite,
+                  !(double == 0 && double.sign == .minus)
+            else {
+                throw ProbeError.invalidArguments("canonical monitor JSON contains an invalid number")
+            }
+            if floor(double) == double {
+                guard abs(double) <= 9_007_199_254_740_991 else {
+                    throw ProbeError.invalidArguments("canonical monitor JSON contains a lossy integer")
+                }
+            }
+            return
+        }
+        if let array = value as? [Any] {
+            for entry in array {
+                try validate(entry)
+            }
+            return
+        }
+        if let dictionary = value as? [String: Any] {
+            for entry in dictionary.values {
+                try validate(entry)
+            }
+            return
+        }
+        throw ProbeError.invalidArguments("canonical monitor JSON contains a non-JSON value")
+    }
+    try validate(object)
+    return try JSONSerialization.data(
+        withJSONObject: object,
+        options: [.sortedKeys, .withoutEscapingSlashes])
+}
+
+extension Array {
+    fileprivate subscript(safe index: Index) -> Element? {
+        self.indices.contains(index) ? self[index] : nil
+    }
+}
+
+private struct RawCanonicalJSONParser {
+    private let bytes: [UInt8]
+    private var index = 0
+
+    init(_ data: Data) {
+        self.bytes = Array(data)
+    }
+
+    mutating func parse() throws -> Data {
+        let value = try self.parseValue()
+        self.skipWhitespace()
+        guard self.index == self.bytes.count else { throw self.invalid() }
+        return value
+    }
+
+    private mutating func parseValue() throws -> Data {
+        self.skipWhitespace()
+        guard let byte = self.bytes[safe: self.index] else { throw self.invalid() }
+        return switch byte {
+        case 0x7B: try self.parseObject()
+        case 0x5B: try self.parseArray()
+        case 0x22: try self.parseString().encoded
+        case 0x74: try self.parseLiteral("true")
+        case 0x66: try self.parseLiteral("false")
+        case 0x6E: try self.parseLiteral("null")
+        case 0x2D, 0x30...0x39: try self.parseNumber()
+        default: throw self.invalid()
+        }
+    }
+
+    private mutating func parseObject() throws -> Data {
+        self.index += 1
+        self.skipWhitespace()
+        var entries = [(key: String, encodedKey: Data, value: Data)]()
+        if self.consume(0x7D) {
+            return Data("{}".utf8)
+        }
+        while true {
+            self.skipWhitespace()
+            let key = try self.parseString()
+            self.skipWhitespace()
+            guard self.consume(0x3A) else { throw self.invalid() }
+            try entries.append((key.value, key.encoded, self.parseValue()))
+            self.skipWhitespace()
+            if self.consume(0x7D) {
+                break
+            }
+            guard self.consume(0x2C) else { throw self.invalid() }
+        }
+        guard Set(entries.map(\.key)).count == entries.count else { throw self.invalid() }
+        entries.sort {
+            Array($0.key.utf16).lexicographicallyPrecedes(Array($1.key.utf16))
+        }
+        var output = Data("{".utf8)
+        for (offset, entry) in entries.enumerated() {
+            if offset > 0 {
+                output.append(0x2C)
+            }
+            output.append(entry.encodedKey)
+            output.append(0x3A)
+            output.append(entry.value)
+        }
+        output.append(0x7D)
+        return output
+    }
+
+    private mutating func parseArray() throws -> Data {
+        self.index += 1
+        self.skipWhitespace()
+        var values = [Data]()
+        if self.consume(0x5D) {
+            return Data("[]".utf8)
+        }
+        while true {
+            try values.append(self.parseValue())
+            self.skipWhitespace()
+            if self.consume(0x5D) {
+                break
+            }
+            guard self.consume(0x2C) else { throw self.invalid() }
+        }
+        var output = Data("[".utf8)
+        for (offset, value) in values.enumerated() {
+            if offset > 0 {
+                output.append(0x2C)
+            }
+            output.append(value)
+        }
+        output.append(0x5D)
+        return output
+    }
+
+    private mutating func parseString() throws -> (value: String, encoded: Data) {
+        let start = self.index
+        guard self.consume(0x22) else { throw self.invalid() }
+        var escaped = false
+        while let byte = self.bytes[safe: self.index] {
+            self.index += 1
+            if escaped {
+                escaped = false
+            } else if byte == 0x5C {
+                escaped = true
+            } else if byte == 0x22 {
+                let token = Data(self.bytes[start..<self.index])
+                guard let value = try JSONSerialization.jsonObject(
+                    with: token,
+                    options: .fragmentsAllowed) as? String
+                else { throw self.invalid() }
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.withoutEscapingSlashes]
+                return try (value, encoder.encode(value))
+            } else if byte < 0x20 {
+                throw self.invalid()
+            }
+        }
+        throw self.invalid()
+    }
+
+    private mutating func parseNumber() throws -> Data {
+        let start = self.index
+        _ = self.consume(0x2D)
+        guard let first = self.bytes[safe: self.index] else { throw self.invalid() }
+        if first == 0x30 {
+            self.index += 1
+            if let next = self.bytes[safe: self.index], (0x30...0x39).contains(next) {
+                throw self.invalid()
+            }
+        } else if (0x31...0x39).contains(first) {
+            self.index += 1
+            while let next = self.bytes[safe: self.index], (0x30...0x39).contains(next) {
+                self.index += 1
+            }
+        } else {
+            throw self.invalid()
+        }
+        if let suffix = self.bytes[safe: self.index], suffix == 0x2E || suffix == 0x65 || suffix == 0x45 {
+            throw self.invalid()
+        }
+        let token = Data(self.bytes[start..<self.index])
+        guard let text = String(data: token, encoding: .utf8),
+              let number = Double(text), number.isFinite,
+              !(number == 0 && number.sign == .minus)
+        else { throw self.invalid() }
+        guard let integer = Int64(text),
+              integer >= -9_007_199_254_740_991,
+              integer <= 9_007_199_254_740_991
+        else { throw self.invalid() }
+        return token
+    }
+
+    private mutating func parseLiteral(_ literal: String) throws -> Data {
+        let literalBytes = Array(literal.utf8)
+        guard self.bytes[self.index...].starts(with: literalBytes) else { throw self.invalid() }
+        self.index += literalBytes.count
+        return Data(literalBytes)
+    }
+
+    private mutating func skipWhitespace() {
+        while let byte = self.bytes[safe: self.index], [0x20, 0x09, 0x0A, 0x0D].contains(byte) {
+            self.index += 1
+        }
+    }
+
+    private mutating func consume(_ byte: UInt8) -> Bool {
+        guard self.bytes[safe: self.index] == byte else { return false }
+        self.index += 1
+        return true
+    }
+
+    private func invalid() -> ProbeError {
+        .invalidArguments("monitor evidence is not canonicalizable JSON")
+    }
+}
+
+private func monitorAggregateSHA256(domain: String, jsonData: Data) throws -> String {
+    var parser = RawCanonicalJSONParser(jsonData)
+    var bytes = Data("peekaboo.multi-target-certification.\(domain).v2\0".utf8)
+    try bytes.append(parser.parse())
+    return SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+}
+
+private func monitorAggregateSHA256(domain: String, object: Any) throws -> String {
+    try monitorAggregateSHA256(domain: domain, jsonData: canonicalJSONObjectData(object))
+}
+
+private final class MonitorPublicationLedger: @unchecked Sendable {
+    private let lock = NSLock()
+    private var publishedHeartbeats = [WatchHeartbeat]()
+    private var producerSets = [UInt64: AllowedEventProducerSet]()
+    private var violations = [Violation]()
+    private var contaminations = [ContaminationRecord]()
+    private var evidenceSHA256: String?
+
+    func record(_ heartbeat: WatchHeartbeat) {
+        self.lock.withLock { self.publishedHeartbeats.append(heartbeat) }
+    }
+
+    func heartbeats() -> [WatchHeartbeat] {
+        self.lock.withLock { self.publishedHeartbeats }
+    }
+
+    func recordProducerSet(_ producerSet: AllowedEventProducerSet) throws {
+        try self.lock.withLock {
+            if let prior = self.producerSets[producerSet.revision] {
+                guard prior.hasExactlyEquivalentPayload(to: producerSet) else {
+                    throw ProbeError.invalidArguments("monitor producer revision was replayed with different semantics")
+                }
+                return
+            }
+            self.producerSets[producerSet.revision] = producerSet
+        }
+    }
+
+    func producerSet(revision: UInt64) -> AllowedEventProducerSet? {
+        self.lock.withLock { self.producerSets[revision] }
+    }
+
+    func record(violation: Violation) {
+        self.lock.withLock { self.violations.append(violation) }
+    }
+
+    func record(contamination: ContaminationRecord) {
+        self.lock.withLock { self.contaminations.append(contamination) }
+    }
+
+    func evidenceRecords() -> (violations: [Violation], contaminations: [ContaminationRecord]) {
+        self.lock.withLock { (self.violations, self.contaminations) }
+    }
+
+    func seal(digest: String) throws {
+        try self.lock.withLock {
+            guard self.evidenceSHA256 == nil else {
+                throw ProbeError.invalidArguments("monitor evidence was already sealed")
+            }
+            self.evidenceSHA256 = digest
+        }
+    }
+
+    func sealedDigest() -> String? {
+        self.lock.withLock { self.evidenceSHA256 }
+    }
+}
+
+private func unixSocketAddress(path: String) throws -> sockaddr_un {
+    let bytes = Array(path.utf8) + [0]
+    var address = sockaddr_un()
+    let offset = MemoryLayout.offset(of: \sockaddr_un.sun_path) ?? 0
+    guard bytes.count <= MemoryLayout.size(ofValue: address.sun_path),
+          offset + bytes.count <= Int(UInt8.max)
+    else {
+        throw ProbeError.invalidArguments("monitor attestation socket path is too long")
+    }
+    address.sun_family = sa_family_t(AF_UNIX)
+    address.sun_len = UInt8(offset + bytes.count)
+    withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: bytes) }
+    return address
+}
+
+private func readSocketJSONLine(
+    _ descriptor: Int32,
+    maximumBytes: Int,
+    timeoutMilliseconds: Int = 2000) throws -> Data
+{
+    var data = Data()
+    var byte = UInt8.zero
+    let deadline = DispatchTime.now().uptimeNanoseconds + UInt64(timeoutMilliseconds) * 1_000_000
+    while data.count < maximumBytes {
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard now < deadline else {
+            throw ProbeError.invalidArguments("monitor attestation request exceeded its whole-message deadline")
+        }
+        let remainingMilliseconds = max(1, Int((deadline - now) / 1_000_000))
+        var event = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+        let ready = poll(&event, 1, Int32(clamping: remainingMilliseconds))
+        if ready == 0 {
+            throw ProbeError.invalidArguments("monitor attestation request exceeded its whole-message deadline")
+        }
+        if ready < 0 {
+            if errno == EINTR {
+                continue
+            }
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        let count = Darwin.read(descriptor, &byte, 1)
+        if count == 1 {
+            if byte == 0x0A {
+                return data
+            }
+            data.append(byte)
+        } else if count < 0, errno == EINTR {
+            continue
+        } else if count == 0 {
+            throw ProbeError.invalidArguments("monitor attestation request ended before its newline delimiter")
+        } else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
+    throw ProbeError.invalidArguments("monitor attestation request exceeds its bound")
+}
+
+private func writeSocketJSON(_ value: some Encodable, descriptor: Int32) throws {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    var data = try encoder.encode(value)
+    data.append(0x0A)
+    try data.withUnsafeBytes { bytes in
+        guard let base = bytes.baseAddress else { return }
+        var offset = 0
+        while offset < bytes.count {
+            let count = Darwin.write(descriptor, base.advanced(by: offset), bytes.count - offset)
+            if count > 0 {
+                offset += count
+            } else if count < 0, errno == EINTR {
+                continue
+            } else {
+                throw ProbeError.invalidArguments("monitor attestation response could not be written")
+            }
+        }
+    }
+}
+
+private final class MonitorAttestationServer: @unchecked Sendable {
+    private let socketPath: String
+    private let executionNonce: String
+    private let monitorInstanceID: String
+    private let monitor: MonitorProcessReceipt
+    private let ledger: MonitorPublicationLedger
+    private let lock = NSLock()
+    private var listener: Int32 = -1
+    private var activeClient: Int32 = -1
+
+    init(
+        socketPath: String,
+        executionNonce: String,
+        monitorInstanceID: String,
+        monitor: MonitorProcessReceipt,
+        ledger: MonitorPublicationLedger) throws
+    {
+        try requireOwnerPrivateParent(of: socketPath)
+        var existing = stat()
+        guard lstat(socketPath, &existing) != 0, errno == ENOENT else {
+            throw ProbeError.invalidArguments("monitor attestation socket path already exists")
+        }
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        do {
+            var address = try unixSocketAddress(path: socketPath)
+            let length = socklen_t(address.sun_len)
+            let bound = withUnsafePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.bind(descriptor, $0, length)
+                }
+            }
+            guard bound == 0,
+                  chmod(socketPath, S_IRUSR | S_IWUSR) == 0,
+                  listen(descriptor, 8) == 0,
+                  fcntl(descriptor, F_SETFL, O_NONBLOCK) == 0
+            else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        } catch {
+            close(descriptor)
+            unlink(socketPath)
+            throw error
+        }
+        self.socketPath = socketPath
+        self.executionNonce = executionNonce
+        self.monitorInstanceID = monitorInstanceID
+        self.monitor = monitor
+        self.ledger = ledger
+        self.listener = descriptor
+    }
+
+    func start() {
+        DispatchQueue(label: "boo.peekaboo.certification.monitor-attestation").async { self.serve() }
+    }
+
+    func stop() {
+        let descriptor = self.lock.withLock { () -> Int32 in
+            let current = self.listener
+            self.listener = -1
+            if self.activeClient >= 0 {
+                shutdown(self.activeClient, SHUT_RDWR)
+            }
+            return current
+        }
+        if descriptor >= 0 {
+            close(descriptor)
+            unlink(self.socketPath)
+        }
+    }
+
+    func hasActiveClient() -> Bool {
+        self.lock.withLock { self.activeClient >= 0 }
+    }
+
+    private func serve() {
+        while true {
+            let client = self.lock.withLock { () -> Int32 in
+                guard self.listener >= 0 else { return -2 }
+                return accept(self.listener, nil, nil)
+            }
+            if client == -2 {
+                return
+            }
+            if client >= 0 {
+                self.lock.withLock { self.activeClient = client }
+                do {
+                    var timeout = timeval(tv_sec: 2, tv_usec: 0)
+                    var noSignal: Int32 = 1
+                    let size = socklen_t(MemoryLayout<timeval>.size)
+                    guard setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, size) == 0,
+                          setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, size) == 0,
+                          setsockopt(
+                              client,
+                              SOL_SOCKET,
+                              SO_NOSIGPIPE,
+                              &noSignal,
+                              socklen_t(MemoryLayout<Int32>.size)) == 0
+                    else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+                    try self.handle(client)
+                } catch {
+                    // A malformed, early, cross-user, or stalled challenge is refused by closing it.
+                }
+                self.lock.withLock {
+                    if self.activeClient == client {
+                        self.activeClient = -1
+                        close(client)
+                    }
+                }
+            } else if errno != EAGAIN, errno != EWOULDBLOCK, errno != EINTR {
+                return
+            }
+            usleep(10000)
+        }
+    }
+
+    private func handle(_ descriptor: Int32) throws {
+        var peerUID = uid_t()
+        var peerGID = gid_t()
+        guard getpeereid(descriptor, &peerUID, &peerGID) == 0, peerUID == geteuid(),
+              let digest = self.ledger.sealedDigest()
+        else {
+            throw ProbeError.invalidArguments("monitor attestation peer or sealed corpus is unavailable")
+        }
+        let data = try readSocketJSONLine(descriptor, maximumBytes: 64 * 1024)
+        let object = try JSONSerialization.jsonObject(with: data)
+        guard let dictionary = object as? [String: Any],
+              Set(dictionary.keys) == ["version", "execution_nonce", "monitor_instance_id", "challenge"]
+        else {
+            throw ProbeError.invalidArguments("monitor attestation request keys are not closed")
+        }
+        let request = try JSONDecoder().decode(MonitorAttestationRequest.self, from: data)
+        guard request.version == 1,
+              request.executionNonce == self.executionNonce,
+              request.monitorInstanceID == self.monitorInstanceID,
+              isLowerHex(request.challenge, count: 64)
+        else {
+            throw ProbeError.invalidArguments("monitor attestation request is not run bound")
+        }
+        try writeSocketJSON(
+            MonitorAttestationResponse(
+                version: 1,
+                executionNonce: self.executionNonce,
+                monitorInstanceID: self.monitorInstanceID,
+                challenge: request.challenge,
+                monitor: self.monitor,
+                monitorEvidenceSHA256: digest),
+            descriptor: descriptor)
+    }
+}
+
+private struct MonitorSealConfiguration {
+    let executionNonce: String
+    let monitorInstanceID: String
+    let requestPath: String
+    let sealedEvidencePath: String
+    let attestationEvidencePath: String
+    let receiptPath: String
+    let attestationSocketPath: String
+    let heartbeatPath: String
+    let violationsPath: String
+    let contaminationPath: String
+    let baseline: SystemSample
+    let initialCommitmentSHA256: String
+    let monitor: MonitorProcessReceipt
+}
+
+private func writeOwnerPrivateData(_ data: Data, to path: String) throws {
+    try requireOwnerPrivateParent(of: path)
+    let descriptor = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, S_IRUSR | S_IWUSR)
+    guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    defer { close(descriptor) }
+    try data.withUnsafeBytes { bytes in
+        guard let base = bytes.baseAddress else { return }
+        var offset = 0
+        while offset < bytes.count {
+            let count = Darwin.write(descriptor, base.advanced(by: offset), bytes.count - offset)
+            if count > 0 {
+                offset += count
+            } else if count < 0, errno == EINTR {
+                continue
+            } else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        }
+    }
+    guard fsync(descriptor) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+}
+
+private func sameJSONObject(_ lhs: Any, _ rhs: Any) -> Bool {
+    (try? canonicalJSONObjectData(lhs)) == (try? canonicalJSONObjectData(rhs))
+}
+
+private func monitorSampleProjection(_ sample: SystemSample) -> [String: Any] {
+    [
+        "frontmost_pid": sample.frontmostPID.map(NSNumber.init(value:)) ?? NSNull(),
+        "frontmost_window_id": sample.frontmostWindowID.map(NSNumber.init(value:)) ?? NSNull(),
+        "clipboard_change_count": sample.clipboardChangeCount,
+        "clipboard_digest": sample.clipboardDigest,
+    ]
+}
+
+private func decodeHeartbeat(_ object: Any) throws -> WatchHeartbeat {
+    guard let dictionary = object as? [String: Any], Set(dictionary.keys) == [
+        "sequence", "monotonicMicroseconds", "wallClockMilliseconds", "lastCleanSequence", "contaminationRetries",
+        "contaminationBlocked", "inputAttributionAvailable", "allowedProducerRevision",
+        "phase", "cursorMovementObserved", "pendingActivationCount",
+        "pendingFocusedWindowChange", "authorizationEpoch", "transitionAcknowledged",
+        "foregroundActive", "foregroundTargetPID", "foregroundTargetWindowID",
+        "attributedForegroundEventCount", "attributedForegroundSourcePIDs",
+        "foregroundActivityObserved", "executionNonce", "monitorInstanceID",
+        "historyCommitmentSHA256",
+    ] else {
+        throw ProbeError.invalidArguments("sealed monitor heartbeat keys are not closed")
+    }
+    let data = try JSONSerialization.data(withJSONObject: dictionary)
+    let heartbeat = try JSONDecoder().decode(WatchHeartbeat.self, from: data)
+    guard heartbeat.monotonicMicroseconds > 0,
+          heartbeat.monotonicMicroseconds <= 9_007_199_254_740_991,
+          heartbeat.wallClockMilliseconds > 0,
+          heartbeat.wallClockMilliseconds <= 9_007_199_254_740_991
+    else {
+        throw ProbeError.invalidArguments("monitor heartbeat clocks are outside the exact safe-integer domain")
+    }
+    return heartbeat
+}
+
+private func monitorClockStepIsConsistent(
+    previous: WatchHeartbeat,
+    current: WatchHeartbeat,
+    toleranceMicroseconds: UInt64 = 2_000_000) -> Bool
+{
+    guard previous.monotonicMicroseconds <= 9_007_199_254_740_991,
+          current.monotonicMicroseconds <= 9_007_199_254_740_991,
+          previous.wallClockMilliseconds > 0,
+          current.wallClockMilliseconds > 0,
+          previous.wallClockMilliseconds <= 9_007_199_254_740_991,
+          current.wallClockMilliseconds <= 9_007_199_254_740_991,
+          current.monotonicMicroseconds > previous.monotonicMicroseconds,
+          current.wallClockMilliseconds >= previous.wallClockMilliseconds
+    else { return false }
+    let monotonicDelta = current.monotonicMicroseconds - previous.monotonicMicroseconds
+    let (wallDelta, subtractionOverflow) = current.wallClockMilliseconds.subtractingReportingOverflow(
+        previous.wallClockMilliseconds)
+    guard !subtractionOverflow, wallDelta >= 0 else { return false }
+    let (wallMicroseconds, multiplicationOverflow) = wallDelta.multipliedReportingOverflow(by: 1000)
+    guard !multiplicationOverflow else { return false }
+    let wallMagnitude = UInt64(wallMicroseconds)
+    let difference = wallMagnitude >= monotonicDelta
+        ? wallMagnitude - monotonicDelta
+        : monotonicDelta - wallMagnitude
+    return difference <= toleranceMicroseconds
+}
+
+private func sealMonitorEvidenceIfRequested(
+    configuration: MonitorSealConfiguration,
+    ledger: MonitorPublicationLedger,
+    finalSampleProvider: () throws -> SystemSample = { try sample(includeClipboardDigest: true) }) throws -> Bool
+{
+    if ledger.sealedDigest() != nil {
+        return true
+    }
+    var requestInfo = stat()
+    guard lstat(configuration.requestPath, &requestInfo) == 0 else {
+        if errno == ENOENT {
+            return false
+        }
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+    let requestData = try readOwnerPrivateFile(configuration.requestPath, maximumBytes: 64 * 1024)
+    let requestObject = try JSONSerialization.jsonObject(with: requestData)
+    guard let requestDictionary = requestObject as? [String: Any],
+          Set(requestDictionary.keys) == [
+              "version", "execution_nonce", "monitor_instance_id", "phase", "draft_path",
+              "sealed_path", "history_commitment_sha256",
+          ]
+    else {
+        throw ProbeError.invalidArguments("monitor seal request keys are not closed")
+    }
+    let request = try JSONDecoder().decode(MonitorSealRequest.self, from: requestData)
+    guard request.version == 1,
+          request.executionNonce == configuration.executionNonce,
+          request.monitorInstanceID == configuration.monitorInstanceID,
+          request.phase == "seal",
+          request.sealedPath == configuration.sealedEvidencePath,
+          configuration.attestationEvidencePath == configuration.sealedEvidencePath,
+          isLowerHex(request.historyCommitmentSHA256, count: 64),
+          URL(fileURLWithPath: request.draftPath).deletingLastPathComponent().standardizedFileURL.path ==
+          URL(fileURLWithPath: configuration.sealedEvidencePath)
+          .deletingLastPathComponent().standardizedFileURL.path,
+          request.draftPath != configuration.sealedEvidencePath
+    else {
+        throw ProbeError.invalidArguments("monitor seal request is not bound to this run and output")
+    }
+
+    let draftData = try readOwnerPrivateFile(request.draftPath)
+    let draftObject = try JSONSerialization.jsonObject(with: draftData)
+    let evidenceKeys: Set = [
+        "version", "execution_nonce", "monitor_instance_id", "monitor_source_sha256",
+        "coordinator_source_sha256", "monitor_process", "monitor_attestation_socket_path", "sentinel",
+        "foreground_controller", "foreground_target", "producer_sets", "fences",
+        "baseline_sample", "final_sample", "foreground_plan", "violation_records",
+        "contamination_records", "baseline_commitment_sha256", "history_commitment_sha256",
+        "crash_evidence", "restoration",
+    ]
+    guard let evidence = draftObject as? [String: Any],
+          Set(evidence.keys) == evidenceKeys,
+          (evidence["version"] as? NSNumber)?.intValue == 1,
+          evidence["execution_nonce"] as? String == configuration.executionNonce,
+          evidence["monitor_instance_id"] as? String == configuration.monitorInstanceID,
+          evidence["monitor_attestation_socket_path"] as? String == configuration.attestationSocketPath,
+          evidence["baseline_commitment_sha256"] as? String == configuration.initialCommitmentSHA256,
+          evidence["history_commitment_sha256"] as? String == request.historyCommitmentSHA256,
+          let monitorProcess = evidence["monitor_process"] as? [String: Any],
+          (monitorProcess["pid"] as? NSNumber)?.int32Value == configuration.monitor.pid,
+          monitorProcess["start_identity"] as? String == configuration.monitor.startIdentity,
+          monitorProcess["code_signature_hash"] as? String == configuration.monitor.codeSignatureHash,
+          let baselineSample = evidence["baseline_sample"],
+          sameJSONObject(baselineSample, monitorSampleProjection(configuration.baseline)),
+          let violationRecords = evidence["violation_records"] as? [[String: Any]],
+          violationRecords.allSatisfy({ Set($0.keys) == ["kind", "expected", "actual"] }),
+          let contaminationRecords = evidence["contamination_records"] as? [[String: Any]],
+          contaminationRecords.allSatisfy({
+              Set($0.keys) == ["state", "retry", "sequence", "sourcePIDs", "eventTypes"]
+          }),
+          let producerSets = evidence["producer_sets"] as? [String: Any],
+          Set(producerSets.keys) == ["baseline", "grant", "revoke"],
+          let fenceRows = evidence["fences"] as? [[String: Any]]
+    else {
+        throw ProbeError.invalidArguments("monitor evidence draft is not the exact clean run-bound corpus")
+    }
+    let draftViolations = try JSONDecoder().decode(
+        [Violation].self,
+        from: JSONSerialization.data(withJSONObject: violationRecords))
+    let draftContaminations = try JSONDecoder().decode(
+        [ContaminationRecord].self,
+        from: JSONSerialization.data(withJSONObject: contaminationRecords))
+    let recordedEvidence = ledger.evidenceRecords()
+    guard draftViolations == recordedEvidence.violations,
+          draftContaminations == recordedEvidence.contaminations,
+          draftViolations.isEmpty,
+          draftContaminations.isEmpty
+    else {
+        throw ProbeError.invalidArguments("sealed cleanliness differs from the monitor-owned in-memory evidence")
+    }
+    for (label, revision) in [("baseline", UInt64(1)), ("grant", UInt64(2)), ("revoke", UInt64(3))] {
+        guard let producerSetObject = producerSets[label],
+              JSONSerialization.isValidJSONObject(producerSetObject)
+        else { throw ProbeError.invalidArguments("monitor producer set is not JSON") }
+        let producerSet = try decodeAllowedProducerSet(
+            JSONSerialization.data(withJSONObject: producerSetObject),
+            executionNonce: configuration.executionNonce,
+            monitorInstanceID: configuration.monitorInstanceID)
+        guard producerSet.revision == revision,
+              ledger.producerSet(revision: revision)?.hasExactlyEquivalentPayload(to: producerSet) == true
+        else {
+            throw ProbeError.invalidArguments("sealed producer set differs from monitor authorization history")
+        }
+    }
+    let currentFinalSample = try finalSampleProvider()
+    guard let finalSample = evidence["final_sample"],
+          sameJSONObject(finalSample, monitorSampleProjection(currentFinalSample))
+    else {
+        throw ProbeError.invalidArguments("monitor evidence final sample differs from the live desktop")
+    }
+
+    let names = [
+        "baseline-stable", "grant-stable", "operations-start",
+        "operations-complete", "revoke-stable", "final-stable",
+    ]
+    guard fenceRows.count == names.count else {
+        throw ProbeError.invalidArguments("monitor evidence draft does not contain the six required fences")
+    }
+    let published = ledger.heartbeats()
+    var sealedHeartbeats = [WatchHeartbeat]()
+    for (index, row) in fenceRows.enumerated() {
+        guard Set(row.keys) == ["name", "heartbeat"], row["name"] as? String == names[index],
+              let heartbeatObject = row["heartbeat"]
+        else {
+            throw ProbeError.invalidArguments("monitor evidence fences are not closed and ordered")
+        }
+        let heartbeat = try decodeHeartbeat(heartbeatObject)
+        let emittedCandidate = index == names.indices.last
+            ? heartbeat.withHistoryCommitmentSHA256(configuration.initialCommitmentSHA256)
+            : heartbeat
+        guard heartbeat.executionNonce == configuration.executionNonce,
+              heartbeat.monitorInstanceID == configuration.monitorInstanceID,
+              published.contains(emittedCandidate),
+              index == names.indices.last
+              ? heartbeat.historyCommitmentSHA256 == request.historyCommitmentSHA256
+              : heartbeat.historyCommitmentSHA256 == configuration.initialCommitmentSHA256
+        else {
+            throw ProbeError.invalidArguments("monitor evidence fence was not emitted by this live monitor")
+        }
+        sealedHeartbeats.append(heartbeat)
+    }
+    guard sealedHeartbeats.enumerated().dropFirst().allSatisfy({ index, heartbeat in
+        let previous = sealedHeartbeats[index - 1]
+        return heartbeat.sequence > previous.sequence &&
+            monitorClockStepIsConsistent(previous: previous, current: heartbeat) &&
+            heartbeat.authorizationEpoch > previous.authorizationEpoch
+    }) else {
+        throw ProbeError.invalidArguments(
+            "monitor fence sequence, integer clocks, and authorization epochs must increase without a clock jump")
+    }
+
+    let digest = try monitorAggregateSHA256(domain: "monitor-evidence", jsonData: draftData)
+    try writeOwnerPrivateData(draftData, to: configuration.sealedEvidencePath)
+    let finalHeartbeat = sealedHeartbeats[sealedHeartbeats.index(before: sealedHeartbeats.endIndex)]
+    try writeJSON(finalHeartbeat, to: configuration.heartbeatPath)
+    ledger.record(finalHeartbeat)
+    try writeOwnerPrivateJSON(
+        MonitorSealReceipt(
+            version: 1,
+            executionNonce: configuration.executionNonce,
+            monitorInstanceID: configuration.monitorInstanceID,
+            phase: "sealed",
+            monitorEvidenceSHA256: digest),
+        to: configuration.receiptPath)
+    try ledger.seal(digest: digest)
+    return true
+}
+
 private func appendJSONLine(_ value: some Encodable, to path: String) throws {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
     let data = try encoder.encode(value) + Data("\n".utf8)
     let url = URL(fileURLWithPath: path)
     if !FileManager.default.fileExists(atPath: path) {
-        FileManager.default.createFile(atPath: path, contents: nil)
+        FileManager.default.createFile(
+            atPath: path,
+            contents: nil,
+            attributes: [.posixPermissions: 0o600])
     }
     let handle = try FileHandle(forWritingTo: url)
     defer { try? handle.close() }
@@ -1938,6 +3204,16 @@ private func argument(_ name: String, in arguments: [String]) -> String? {
     return arguments[index + 1]
 }
 
+private func readHexCommitment(path: String) throws -> String {
+    guard let contents = try String(data: readStableOwnerPrivateFile(path, maximumBytes: 1024), encoding: .utf8)
+    else { throw ProbeError.invalidArguments("monitor commitment is not UTF-8") }
+    let value = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard isLowerHex(value, count: 64) else {
+        throw ProbeError.invalidArguments("monitor commitment must contain one lowercase SHA-256")
+    }
+    return value
+}
+
 private func runWatch(arguments: [String]) throws -> Never {
     guard let baselinePath = argument("--baseline", in: arguments),
           let outputPath = argument("--output", in: arguments),
@@ -1946,10 +3222,15 @@ private func runWatch(arguments: [String]) throws -> Never {
           let heartbeatPath = argument("--heartbeat", in: arguments),
           let phasePath = argument("--phase", in: arguments),
           let allowedProducersPath = argument("--allowed-producers", in: arguments),
-          let invariantNamesJSON = argument("--invariant-names", in: arguments)
+          let invariantNamesJSON = argument("--invariant-names", in: arguments),
+          let executionNonce = argument("--execution-nonce", in: arguments),
+          let monitorInstanceID = argument("--monitor-instance-id", in: arguments),
+          let historyCommitmentPath = argument("--history-commitment", in: arguments),
+          isLowerHex(executionNonce, count: 64),
+          isCanonicalV4UUID(monitorInstanceID)
     else {
         throw ProbeError.invalidArguments(
-            "watch requires baseline/output paths, phase, allowed producers, heartbeat, and invariant names")
+            "watch requires baseline/output paths, run identity, phase, producers, heartbeat, and commitments")
     }
 
     let intervalMilliseconds = Int(argument("--interval-ms", in: arguments) ?? "20") ?? 20
@@ -1960,7 +3241,7 @@ private func runWatch(arguments: [String]) throws -> Never {
     let physicalInputObservational = arguments.contains("--physical-input-observational")
     let cursorObservational = arguments.contains("--cursor-observational")
     let invariantProjection = try InvariantProjection(json: invariantNamesJSON)
-    let baselineData = try Data(contentsOf: URL(fileURLWithPath: baselinePath))
+    let baselineData = try readStableOwnerPrivateFile(baselinePath)
     let baseline = try JSONDecoder().decode(SystemSample.self, from: baselineData)
     guard let baselinePID = baseline.frontmostPID,
           let baselineWindowID = baseline.frontmostWindowID,
@@ -1968,11 +3249,66 @@ private func runWatch(arguments: [String]) throws -> Never {
     else {
         throw ProbeError.focusedWindowObserverUnavailable
     }
-    let initialProducerData = try Data(contentsOf: URL(fileURLWithPath: allowedProducersPath))
-    let initialProducerSet = try JSONDecoder().decode(AllowedEventProducerSet.self, from: initialProducerData)
+    let initialProducerData = try readStableOwnerPrivateFile(allowedProducersPath)
+    let initialProducerSet = try decodeAllowedProducerSet(
+        initialProducerData,
+        executionNonce: executionNonce,
+        monitorInstanceID: monitorInstanceID)
     let initialAuthorization = try makeMonitorAuthorization(initialProducerSet)
-    FileManager.default.createFile(atPath: outputPath, contents: nil)
-    FileManager.default.createFile(atPath: contaminationOutputPath, contents: nil)
+    let historyCommitmentSHA256 = try readHexCommitment(path: historyCommitmentPath)
+    FileManager.default.createFile(
+        atPath: outputPath,
+        contents: nil,
+        attributes: [.posixPermissions: 0o600])
+    FileManager.default.createFile(
+        atPath: contaminationOutputPath,
+        contents: nil,
+        attributes: [.posixPermissions: 0o600])
+
+    let ledger = MonitorPublicationLedger()
+    try ledger.recordProducerSet(initialProducerSet)
+    let attestationArguments = [
+        argument("--attestation-socket", in: arguments),
+        argument("--attestation-evidence", in: arguments),
+        argument("--seal-request", in: arguments),
+        argument("--sealed-evidence", in: arguments),
+        argument("--seal-receipt", in: arguments),
+    ]
+    let usesLiveSeal = attestationArguments.contains(where: { $0 != nil })
+    guard !usesLiveSeal || attestationArguments.allSatisfy({ $0 != nil }) else {
+        throw ProbeError.invalidArguments("live monitor attestation and seal paths must be supplied together")
+    }
+    let monitorReceipt = usesLiveSeal ? try currentMonitorProcessReceipt() : nil
+    let attestationServer: MonitorAttestationServer? = if usesLiveSeal {
+        try MonitorAttestationServer(
+            socketPath: attestationArguments[0]!,
+            executionNonce: executionNonce,
+            monitorInstanceID: monitorInstanceID,
+            monitor: monitorReceipt!,
+            ledger: ledger)
+    } else {
+        nil
+    }
+    attestationServer?.start()
+    defer { attestationServer?.stop() }
+    let sealConfiguration: MonitorSealConfiguration? = if usesLiveSeal {
+        MonitorSealConfiguration(
+            executionNonce: executionNonce,
+            monitorInstanceID: monitorInstanceID,
+            requestPath: attestationArguments[2]!,
+            sealedEvidencePath: attestationArguments[3]!,
+            attestationEvidencePath: attestationArguments[1]!,
+            receiptPath: attestationArguments[4]!,
+            attestationSocketPath: attestationArguments[0]!,
+            heartbeatPath: heartbeatPath,
+            violationsPath: outputPath,
+            contaminationPath: contaminationOutputPath,
+            baseline: baseline,
+            initialCommitmentSHA256: historyCommitmentSHA256,
+            monitor: monitorReceipt!)
+    } else {
+        nil
+    }
 
     let machine = MonitorEpochMachine(initialAuthorization: initialAuthorization)
     let inputTracker = InputEventTracker(machine: machine)
@@ -1986,10 +3322,13 @@ private func runWatch(arguments: [String]) throws -> Never {
         pid: baselinePID,
         startIdentity: baselineStartIdentity))
     try focusObservers.prepare(target: initialAuthorization.target)
+    var monitoringQuiesced = false
     defer {
-        focusObservers.stop()
-        activationTracker.stop()
-        inputTracker.stop()
+        if !monitoringQuiesced {
+            focusObservers.stop()
+            activationTracker.stop()
+            inputTracker.stop()
+        }
     }
 
     var watchState = WatchState(
@@ -1999,21 +3338,36 @@ private func runWatch(arguments: [String]) throws -> Never {
             processStartIdentity: baselineStartIdentity,
             frontmostWindowID: baselineWindowID,
             cursor: baseline.cursor),
+        executionNonce: executionNonce,
+        monitorInstanceID: monitorInstanceID,
+        historyCommitmentSHA256: historyCommitmentSHA256,
         allowClipboardMutation: allowClipboardMutation,
         physicalInputObservational: physicalInputObservational,
         cursorObservational: cursorObservational,
         projection: invariantProjection,
         outputPath: outputPath,
-        contaminationOutputPath: contaminationOutputPath)
+        contaminationOutputPath: contaminationOutputPath,
+        evidenceLedger: ledger)
     var firstSample = true
     var acknowledgementGate = MonitorAcknowledgementGate()
+    func publishHeartbeat(_ heartbeat: WatchHeartbeat) throws {
+        try writeJSON(heartbeat, to: heartbeatPath)
+        ledger.record(heartbeat)
+    }
     while true {
         CFRunLoopRunInMode(
             .defaultMode,
             Double(intervalMilliseconds) / 1000,
             false)
-        let producerData = try Data(contentsOf: URL(fileURLWithPath: allowedProducersPath))
-        let allowedProducerSet = try JSONDecoder().decode(AllowedEventProducerSet.self, from: producerData)
+        if ledger.sealedDigest() != nil {
+            continue
+        }
+        let producerData = try readStableOwnerPrivateFile(allowedProducersPath)
+        let allowedProducerSet = try decodeAllowedProducerSet(
+            producerData,
+            executionNonce: executionNonce,
+            monitorInstanceID: monitorInstanceID)
+        watchState.historyCommitmentSHA256 = try readHexCommitment(path: historyCommitmentPath)
         let publishingHigherRevision = allowedProducerSet.revision > machine.currentAuthorization.revision
         let requiresIdleBarrier = monitorRequiresIdleBarrier(
             pendingAcknowledgementRevision: acknowledgementGate.pendingRevision,
@@ -2026,6 +3380,9 @@ private func runWatch(arguments: [String]) throws -> Never {
         }
         if !publishingHigherRevision || reachedIdleBarrier {
             applyMonitorAuthorization(allowedProducerSet, to: machine, observers: focusObservers)
+            if machine.currentAuthorization.source == allowedProducerSet {
+                try ledger.recordProducerSet(allowedProducerSet)
+            }
         }
         let current = try sample(includeClipboardDigest: false)
         guard runLoopReachesIdle(timeout: max(Double(intervalMilliseconds) / 1000, 0.1)),
@@ -2033,8 +3390,11 @@ private func runWatch(arguments: [String]) throws -> Never {
         else {
             continue
         }
-        let phase = try String(contentsOfFile: phasePath, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let phaseContents = try String(
+            data: readStableOwnerPrivateFile(phasePath, maximumBytes: 1024),
+            encoding: .utf8)
+        else { throw ProbeError.invalidArguments("watch phase must be UTF-8") }
+        let phase = phaseContents.trimmingCharacters(in: .whitespacesAndNewlines)
         guard ["setup", "running", "complete"].contains(phase) else {
             throw ProbeError.invalidArguments("watch phase must be setup, running, or complete")
         }
@@ -2046,7 +3406,7 @@ private func runWatch(arguments: [String]) throws -> Never {
         var publishedHeartbeat = false
         if let revision = acknowledgementGate.pendingRevision {
             if heartbeat.contaminationBlocked || !heartbeat.inputAttributionAvailable {
-                try writeJSON(heartbeat.withTransitionAcknowledged(false), to: heartbeatPath)
+                try publishHeartbeat(heartbeat.withTransitionAcknowledged(false))
                 publishedHeartbeat = true
             } else if acknowledgementGate.readyRevision == revision {
                 let preparedHeartbeat = try PreparedJSONPublication(
@@ -2062,41 +3422,60 @@ private func runWatch(arguments: [String]) throws -> Never {
                         switch result {
                         case .published:
                             acknowledgementGate.didPublish(revision: revision)
+                            ledger.record(heartbeat.withTransitionAcknowledged(true))
                             publishedHeartbeat = true
                         case .rejected(reason: "blocked_producer_ack_evidence_pending"):
-                            try writeJSON(heartbeat.withTransitionAcknowledged(false), to: heartbeatPath)
+                            try publishHeartbeat(heartbeat.withTransitionAcknowledged(false))
                             publishedHeartbeat = true
                         case .idempotent, .rejected:
                             throw ProbeError.invalidArguments("blocked_producer_ack_publication")
                         }
                     } catch let error as MonitorAcknowledgementPreparationError {
                         recordMonitorAcknowledgementPreparationFailure(error, machine: machine)
-                        try writeJSON(heartbeat.withTransitionAcknowledged(false), to: heartbeatPath)
+                        try publishHeartbeat(heartbeat.withTransitionAcknowledged(false))
                         publishedHeartbeat = true
                     }
                 } else {
-                    try writeJSON(heartbeat.withTransitionAcknowledged(false), to: heartbeatPath)
+                    try publishHeartbeat(heartbeat.withTransitionAcknowledged(false))
                     publishedHeartbeat = true
                 }
             } else {
-                try writeJSON(heartbeat.withTransitionAcknowledged(false), to: heartbeatPath)
+                try publishHeartbeat(heartbeat.withTransitionAcknowledged(false))
                 publishedHeartbeat = true
             }
         } else {
-            try writeJSON(heartbeat.withTransitionAcknowledged(false), to: heartbeatPath)
+            try publishHeartbeat(heartbeat.withTransitionAcknowledged(false))
             publishedHeartbeat = true
         }
         if firstSample, publishedHeartbeat {
             try Data("ready\n".utf8).write(to: URL(fileURLWithPath: readyPath), options: .atomic)
             firstSample = false
         }
+        if let sealConfiguration {
+            let sealed = try sealMonitorEvidenceIfRequested(configuration: sealConfiguration, ledger: ledger)
+            if sealed, !monitoringQuiesced {
+                focusObservers.stop()
+                activationTracker.stop()
+                inputTracker.stop()
+                machine.quiesce()
+                monitoringQuiesced = true
+            }
+        }
     }
 }
 
 private func producerReceiptSchemaIsLossless() -> Bool {
-    let data = Data(#"{"revision":1,"producers":[{"pid":42,"startIdentity":"987654321"}]}"#.utf8)
-    guard let decoded = try? JSONDecoder().decode(AllowedEventProducerSet.self, from: data) else { return false }
+    let data = Data(
+        #"{"revision":1,"executionNonce":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","monitorInstanceID":"00000000-0000-4000-8000-000000000001","producers":[{"pid":42,"startIdentity":"987654321","role":"bridge"}],"foreground":{"active":false,"target":null}}"#
+            .utf8)
+    guard let decoded = try? decodeAllowedProducerSet(
+        data,
+        executionNonce: selfTestExecutionNonce,
+        monitorInstanceID: selfTestMonitorInstanceID)
+    else { return false }
     return decoded.revision == 1 &&
+        decoded.executionNonce == selfTestExecutionNonce &&
+        decoded.monitorInstanceID == selfTestMonitorInstanceID &&
         decoded.producers.first?.pid == 42 &&
         decoded.producers.first?.startIdentity == "987654321" &&
         decoded.producers.first?.effectiveRole == .bridge &&
@@ -2108,6 +3487,8 @@ private func foregroundAuthorizationSchemaIsStrict() -> Bool {
         #"""
         {
           "revision": 2,
+          "executionNonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "monitorInstanceID": "00000000-0000-4000-8000-000000000001",
           "producers": [
             {"pid": 20, "startIdentity": "2000", "role": "bridge"},
             {"pid": 30, "startIdentity": "3000", "role": "foreground-controller"}
@@ -2119,12 +3500,15 @@ private func foregroundAuthorizationSchemaIsStrict() -> Bool {
         }
         """#
             .utf8)
-    guard let decoded = try? JSONDecoder().decode(AllowedEventProducerSet.self, from: data),
-          let authorization = try? makeMonitorAuthorization(
-              decoded,
-              processIdentity: { [20: 2000, 30: 3000][$0] },
-              targetValidator: { $0.pid == 40 && $0.startIdentity == "4000" && $0.windowID == 401 }),
-          authorization.target?.windowID == 401
+    guard let decoded = try? decodeAllowedProducerSet(
+        data,
+        executionNonce: selfTestExecutionNonce,
+        monitorInstanceID: selfTestMonitorInstanceID),
+        let authorization = try? makeMonitorAuthorization(
+            decoded,
+            processIdentity: { [20: 2000, 30: 3000][$0] },
+            targetValidator: { $0.pid == 40 && $0.startIdentity == "4000" && $0.windowID == 401 }),
+        authorization.target?.windowID == 401
     else {
         return false
     }
@@ -3371,12 +4755,16 @@ private func makeSelfTestWatchState(
     WatchState(
         baseline: desktop.sample,
         interactiveBaseline: desktop.baseline,
+        executionNonce: selfTestExecutionNonce,
+        monitorInstanceID: selfTestMonitorInstanceID,
+        historyCommitmentSHA256: String(repeating: "b", count: 64),
         allowClipboardMutation: false,
         physicalInputObservational: physicalInputObservational,
         cursorObservational: cursorObservational,
         projection: projection,
         outputPath: outputPath,
-        contaminationOutputPath: contaminationPath)
+        contaminationOutputPath: contaminationPath,
+        evidenceLedger: nil)
 }
 
 private func transitionAcknowledgementNeverAdvancesClean(
@@ -4034,6 +5422,86 @@ private func physicalCursorIsObservationalButOtherInputContaminates(
         keyHeartbeat.contaminationBlocked
 }
 
+private func bridgePointerEventViolatesBothInputSlots(
+    directory: String,
+    projection: InvariantProjection) throws -> Bool
+{
+    let desktop = selfTestDesktop()
+    let bridge = testProducer(20, "2000")
+    let machine = MonitorEpochMachine(initialAuthorization: testAuthorization(testProducerSet(
+        revision: 1,
+        producers: [bridge])))
+    machine.admitForTesting(.input(InputEventEvidence(
+        type: CGEventType.mouseMoved.rawValue,
+        source: testEvidence(20, "2000", nil),
+        sessionFocus: nil)))
+    let output = "\(directory)/bridge-pointer-violations.jsonl"
+    var watch = makeSelfTestWatchState(
+        desktop: desktop,
+        projection: projection,
+        outputPath: output,
+        contaminationPath: "\(directory)/bridge-pointer-contamination.jsonl")
+    guard let closure = machine.closeForHeartbeat() else { return false }
+    let heartbeat = try watch.observe(
+        current: desktop.sample,
+        phase: "running",
+        closure: closure,
+        processIdentity: { [10: 1000, 20: 2000][$0] },
+        targetValidator: { _ in true })
+    let kinds = Set(decodeJSONLines(Violation.self, at: output).map(\.kind))
+    let keyMachine = MonitorEpochMachine(initialAuthorization: testAuthorization(testProducerSet(
+        revision: 1,
+        producers: [bridge])))
+    keyMachine.admitForTesting(.input(InputEventEvidence(
+        type: CGEventType.keyDown.rawValue,
+        source: testEvidence(20, "2000", nil),
+        sessionFocus: nil)))
+    let keyOutput = "\(directory)/bridge-key-violations.jsonl"
+    var keyWatch = makeSelfTestWatchState(
+        desktop: desktop,
+        projection: projection,
+        outputPath: keyOutput,
+        contaminationPath: "\(directory)/bridge-key-contamination.jsonl")
+    guard let keyClosure = keyMachine.closeForHeartbeat() else { return false }
+    let keyHeartbeat = try keyWatch.observe(
+        current: desktop.sample,
+        phase: "running",
+        closure: keyClosure,
+        processIdentity: { [10: 1000, 20: 2000][$0] },
+        targetValidator: { _ in true })
+    let keyKinds = Set(decodeJSONLines(Violation.self, at: keyOutput).map(\.kind))
+    return !heartbeat.contaminationBlocked && !keyHeartbeat.contaminationBlocked &&
+        kinds == Set([projection[.physicalCursor], projection[.globalInputEvent]]) &&
+        keyKinds == Set([projection[.globalInputEvent]])
+}
+
+private func cursorPositionAndProducerPointerRemainDistinct(
+    projection: InvariantProjection) -> Bool
+{
+    let desktop = selfTestDesktop()
+    let moved = SystemSample(
+        timestamp: desktop.sample.timestamp + 1,
+        frontmostPID: desktop.sample.frontmostPID,
+        frontmostBundleIdentifier: desktop.sample.frontmostBundleIdentifier,
+        frontmostWindowID: desktop.sample.frontmostWindowID,
+        cursor: Point(x: desktop.sample.cursor.x + 10, y: desktop.sample.cursor.y),
+        clipboardChangeCount: desktop.sample.clipboardChangeCount,
+        clipboardDigest: desktop.sample.clipboardDigest,
+        peekabooWindowIDs: desktop.sample.peekabooWindowIDs,
+        visibleScreenFramesTopLeft: desktop.sample.visibleScreenFramesTopLeft)
+    let kinds = Set(violations(
+        current: moved,
+        context: InvariantEvaluationContext(
+            baseline: desktop.sample,
+            interactiveBaseline: desktop.baseline,
+            allowClipboardMutation: false,
+            evaluateInteractiveInvariants: true,
+            cursorObservational: false,
+            projection: projection)).map(\.kind))
+    return kinds == Set([cursorPositionViolationKind]) &&
+        !kinds.contains(projection[.physicalCursor])
+}
+
 private func unexpectedActivationViolatesFocus(
     directory: String,
     projection: InvariantProjection) throws -> Bool
@@ -4058,6 +5526,563 @@ private func unexpectedActivationViolatesFocus(
         targetValidator: { _ in true })
     let kinds = Set(decodeJSONLines(Violation.self, at: output).map(\.kind))
     return kinds == Set([projection[.frontmostPID], projection[.frontmostWindow]])
+}
+
+private func monitorDigestMatchesNodeContract() -> Bool {
+    let object: [String: Any] = [
+        "z": [3, ["b": true, "a": NSNull()]],
+        "a": "x",
+        "n": 1_786_870_761_474,
+    ]
+    return (try? monitorAggregateSHA256(domain: "monitor-evidence", object: object)) ==
+        "69412ce746d97a2445185fddaa4c56f6e33708c904d8ffc012d5982a81839999"
+}
+
+private func canonicalBooleanValuesRemainBooleans() -> Bool {
+    guard let data = try? canonicalJSONObjectData(["true": true, "false": false]) else { return false }
+    return String(data: data, encoding: .utf8) == #"{"false":false,"true":true}"#
+}
+
+private func producerLedgerPreservesEquivalentReorder() -> Bool {
+    let first = AllowedEventProducerSet(
+        revision: 7,
+        producers: [testProducer(20, "2000", role: .bridge), testProducer(21, "2100", role: .bridge)],
+        foreground: AllowedForegroundActivity(active: false, target: nil))
+    let reordered = AllowedEventProducerSet(
+        revision: 7,
+        producers: Array(first.producers.reversed()),
+        foreground: AllowedForegroundActivity(active: false, target: nil))
+    let mutated = AllowedEventProducerSet(
+        revision: 7,
+        producers: [testProducer(20, "2001", role: .bridge), testProducer(21, "2100", role: .bridge)],
+        foreground: AllowedForegroundActivity(active: false, target: nil))
+    let ledger = MonitorPublicationLedger()
+    do {
+        try ledger.recordProducerSet(first)
+        try ledger.recordProducerSet(reordered)
+    } catch {
+        return false
+    }
+    do {
+        try ledger.recordProducerSet(mutated)
+        return false
+    } catch {
+        return ledger.producerSet(revision: 7) == first
+    }
+}
+
+private func quiescedMonitorDropsAllAdmissions() -> Bool {
+    let machine = MonitorEpochMachine(initialAuthorization: testAuthorization(testProducerSet(
+        revision: 1,
+        producers: [])))
+    let pending = machine.reserveForTesting()
+    machine.quiesce()
+    guard machine.completeForTesting(
+        pending,
+        with: .activation(testEvidence(10, "1000", 100)))
+    else { return false }
+    for _ in 0..<100 {
+        machine.admitForTesting(.input(InputEventEvidence(
+            type: CGEventType.keyDown.rawValue,
+            source: testEvidence(20, "2000", nil),
+            sessionFocus: nil)))
+    }
+    return machine.pendingEvidenceCountForTesting() == 0
+}
+
+private func ownerPrivateReadRejectsLinksAndPathSwap() throws -> Bool {
+    let directory = "\(NSTemporaryDirectory())pbr-\(UUID().uuidString)"
+    try FileManager.default.createDirectory(
+        atPath: directory,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(atPath: directory) }
+    let original = "\(directory)/original"
+    let hardlink = "\(directory)/hardlink"
+    let symlinkPath = "\(directory)/symlink"
+    try writeOwnerPrivateData(Data("original".utf8), to: original)
+    guard link(original, hardlink) == 0 else { return false }
+    let hardlinkRefused: Bool
+    do {
+        _ = try readOwnerPrivateFile(original)
+        hardlinkRefused = false
+    } catch {
+        hardlinkRefused = true
+    }
+    unlink(hardlink)
+    guard symlink(original, symlinkPath) == 0 else { return false }
+    let symlinkRefused: Bool
+    do {
+        _ = try readOwnerPrivateFile(symlinkPath)
+        symlinkRefused = false
+    } catch {
+        symlinkRefused = true
+    }
+    let replacement = "\(directory)/replacement"
+    try writeOwnerPrivateData(Data("replacement".utf8), to: replacement)
+    let swapRefused: Bool
+    do {
+        _ = try readOwnerPrivateFile(original, afterOpen: {
+            guard rename(replacement, original) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        })
+        swapRefused = false
+    } catch {
+        swapRefused = true
+    }
+    return hardlinkRefused && symlinkRefused && swapRefused
+}
+
+private func testHeartbeat(
+    sequence: UInt64,
+    authorizationEpoch: UInt64,
+    revision: UInt64,
+    commitment: String,
+    monotonic: UInt64? = nil,
+    wall: Int64? = nil) -> WatchHeartbeat
+{
+    WatchHeartbeat(
+        sequence: sequence,
+        monotonicMicroseconds: monotonic ?? sequence * 10000,
+        wallClockMilliseconds: wall ?? 1_786_870_761_000 + Int64(sequence * 10),
+        lastCleanSequence: sequence,
+        contaminationRetries: 0,
+        contaminationBlocked: false,
+        inputAttributionAvailable: true,
+        allowedProducerRevision: revision,
+        phase: sequence < 3 ? "setup" : (sequence < 6 ? "running" : "complete"),
+        cursorMovementObserved: false,
+        pendingActivationCount: 0,
+        pendingFocusedWindowChange: false,
+        authorizationEpoch: authorizationEpoch,
+        transitionAcknowledged: false,
+        foregroundActive: false,
+        foregroundTargetPID: nil,
+        foregroundTargetWindowID: nil,
+        attributedForegroundEventCount: 0,
+        attributedForegroundSourcePIDs: [],
+        foregroundActivityObserved: false,
+        executionNonce: selfTestExecutionNonce,
+        monitorInstanceID: selfTestMonitorInstanceID,
+        historyCommitmentSHA256: commitment)
+}
+
+private func integerClockExtremesFailClosed() -> Bool {
+    let commitment = String(repeating: "b", count: 64)
+    let baseline = testHeartbeat(sequence: 1, authorizationEpoch: 1, revision: 1, commitment: commitment)
+    let unsafe = testHeartbeat(
+        sequence: 2,
+        authorizationEpoch: 2,
+        revision: 1,
+        commitment: commitment,
+        monotonic: UInt64.max,
+        wall: Int64.max)
+    let backward = testHeartbeat(
+        sequence: 2,
+        authorizationEpoch: 2,
+        revision: 1,
+        commitment: commitment,
+        monotonic: baseline.monotonicMicroseconds - 1,
+        wall: baseline.wallClockMilliseconds)
+    return !monitorClockStepIsConsistent(previous: baseline, current: unsafe) &&
+        !monitorClockStepIsConsistent(previous: baseline, current: backward)
+}
+
+private func monitorSealIsRunBoundAndOwned() throws -> Bool {
+    let directory = "\(NSTemporaryDirectory())pbs-\(UUID().uuidString)"
+    try FileManager.default.createDirectory(
+        atPath: directory,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(atPath: directory) }
+    let baseline = selfTestDesktop().sample
+    let initialCommitment = String(repeating: "b", count: 64)
+    let historyCommitment = String(repeating: "e", count: 64)
+    let monitor = try currentMonitorProcessReceipt()
+    let producerSets = (1...3).map { revision in
+        AllowedEventProducerSet(
+            revision: UInt64(revision),
+            producers: [testProducer(20, "2000", role: .bridge)],
+            foreground: AllowedForegroundActivity(active: false, target: nil))
+    }
+    let baseHeartbeats = (1...6).map { value in
+        testHeartbeat(
+            sequence: UInt64(value),
+            authorizationEpoch: UInt64(value),
+            revision: value < 2 ? 1 : (value < 5 ? 2 : 3),
+            commitment: initialCommitment)
+    }
+    func populatedLedger() throws -> MonitorPublicationLedger {
+        let value = MonitorPublicationLedger()
+        for producerSet in producerSets {
+            try value.recordProducerSet(producerSet)
+        }
+        for heartbeat in baseHeartbeats {
+            value.record(heartbeat)
+        }
+        return value
+    }
+    let ledger = try populatedLedger()
+    let names = [
+        "baseline-stable", "grant-stable", "operations-start",
+        "operations-complete", "revoke-stable", "final-stable",
+    ]
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let fenceRows: [[String: Any]] = try zip(names, baseHeartbeats).enumerated().map { index, entry in
+        let heartbeat = index == names.indices.last
+            ? entry.1.withHistoryCommitmentSHA256(historyCommitment)
+            : entry.1
+        let object = try JSONSerialization.jsonObject(with: encoder.encode(heartbeat))
+        return ["name": entry.0, "heartbeat": object]
+    }
+    let socketPath = "\(directory)/attestation.sock"
+    let evidence: [String: Any] = try [
+        "version": 1,
+        "execution_nonce": selfTestExecutionNonce,
+        "monitor_instance_id": selfTestMonitorInstanceID,
+        "monitor_source_sha256": String(repeating: "1", count: 64),
+        "coordinator_source_sha256": String(repeating: "2", count: 64),
+        "monitor_process": [
+            "pid": monitor.pid,
+            "start_identity": monitor.startIdentity,
+            "code_signature_hash": monitor.codeSignatureHash,
+        ],
+        "monitor_attestation_socket_path": socketPath,
+        "sentinel": ["pid": 10, "start_identity": "1000", "window_id": 100],
+        "foreground_controller": [
+            "pid": 30,
+            "start_identity": "3000",
+            "code_signature_hash": String(repeating: "3", count: 40),
+        ],
+        "foreground_target": ["pid": 40, "start_identity": "4000", "window_id": 400],
+        "producer_sets": [
+            "baseline": JSONSerialization.jsonObject(with: encoder.encode(producerSets[0])),
+            "grant": JSONSerialization.jsonObject(with: encoder.encode(producerSets[1])),
+            "revoke": JSONSerialization.jsonObject(with: encoder.encode(producerSets[2])),
+        ],
+        "fences": fenceRows,
+        "baseline_sample": monitorSampleProjection(baseline),
+        "final_sample": monitorSampleProjection(baseline),
+        "foreground_plan": [:],
+        "violation_records": [],
+        "contamination_records": [],
+        "baseline_commitment_sha256": initialCommitment,
+        "history_commitment_sha256": historyCommitment,
+        "crash_evidence": [:],
+        "restoration": [:],
+    ]
+    let draftPath = "\(directory)/draft.json"
+    let sealedPath = "\(directory)/sealed.json"
+    let requestPath = "\(directory)/request.json"
+    let receiptPath = "\(directory)/receipt.json"
+    let heartbeatPath = "\(directory)/heartbeat.json"
+    let violationsPath = "\(directory)/violations.jsonl"
+    let contaminationPath = "\(directory)/contamination.jsonl"
+    try writeOwnerPrivateData(Data(), to: violationsPath)
+    try writeOwnerPrivateData(Data(), to: contaminationPath)
+    try writeOwnerPrivateData(
+        JSONSerialization.data(withJSONObject: evidence, options: [.prettyPrinted, .sortedKeys]),
+        to: draftPath)
+    let request = MonitorSealRequest(
+        version: 1,
+        executionNonce: selfTestExecutionNonce,
+        monitorInstanceID: selfTestMonitorInstanceID,
+        phase: "seal",
+        draftPath: draftPath,
+        sealedPath: sealedPath,
+        historyCommitmentSHA256: historyCommitment)
+    try writeOwnerPrivateData(encoder.encode(request), to: requestPath)
+    let blockedSealedPath = "\(directory)/blocked-sealed.json"
+    let blockedRequestPath = "\(directory)/blocked-request.json"
+    let blockedReceiptPath = "\(directory)/blocked-receipt.json"
+    let blockedHeartbeatPath = "\(directory)/blocked-heartbeat.json"
+    try writeOwnerPrivateData(Data("occupied".utf8), to: blockedSealedPath)
+    let blockedRequest = MonitorSealRequest(
+        version: 1,
+        executionNonce: selfTestExecutionNonce,
+        monitorInstanceID: selfTestMonitorInstanceID,
+        phase: "seal",
+        draftPath: draftPath,
+        sealedPath: blockedSealedPath,
+        historyCommitmentSHA256: historyCommitment)
+    try writeOwnerPrivateData(encoder.encode(blockedRequest), to: blockedRequestPath)
+    let blockedLedger = try populatedLedger()
+    let blockedConfiguration = MonitorSealConfiguration(
+        executionNonce: selfTestExecutionNonce,
+        monitorInstanceID: selfTestMonitorInstanceID,
+        requestPath: blockedRequestPath,
+        sealedEvidencePath: blockedSealedPath,
+        attestationEvidencePath: blockedSealedPath,
+        receiptPath: blockedReceiptPath,
+        attestationSocketPath: socketPath,
+        heartbeatPath: blockedHeartbeatPath,
+        violationsPath: violationsPath,
+        contaminationPath: contaminationPath,
+        baseline: baseline,
+        initialCommitmentSHA256: initialCommitment,
+        monitor: monitor)
+    var blockedAttempts = 0
+    for _ in 0..<2 {
+        do {
+            _ = try sealMonitorEvidenceIfRequested(
+                configuration: blockedConfiguration,
+                ledger: blockedLedger,
+                finalSampleProvider: { baseline })
+        } catch {
+            blockedAttempts += 1
+        }
+    }
+    guard blockedAttempts == 2,
+          blockedLedger.sealedDigest() == nil,
+          try readOwnerPrivateFile(blockedSealedPath) == Data("occupied".utf8)
+    else { return false }
+    let configuration = MonitorSealConfiguration(
+        executionNonce: selfTestExecutionNonce,
+        monitorInstanceID: selfTestMonitorInstanceID,
+        requestPath: requestPath,
+        sealedEvidencePath: sealedPath,
+        attestationEvidencePath: sealedPath,
+        receiptPath: receiptPath,
+        attestationSocketPath: socketPath,
+        heartbeatPath: heartbeatPath,
+        violationsPath: violationsPath,
+        contaminationPath: contaminationPath,
+        baseline: baseline,
+        initialCommitmentSHA256: initialCommitment,
+        monitor: monitor)
+    guard try sealMonitorEvidenceIfRequested(
+        configuration: configuration,
+        ledger: ledger,
+        finalSampleProvider: { baseline })
+    else { return false }
+    let sealedData = try readOwnerPrivateFile(sealedPath)
+    let sealedObject = try JSONSerialization.jsonObject(with: sealedData)
+    let receipt = try JSONDecoder().decode(
+        MonitorSealReceipt.self,
+        from: readOwnerPrivateFile(receiptPath))
+    let finalHeartbeat = try JSONDecoder().decode(
+        WatchHeartbeat.self,
+        from: readOwnerPrivateFile(heartbeatPath))
+    let expectedDigest = try monitorAggregateSHA256(domain: "monitor-evidence", object: evidence)
+    return sameJSONObject(sealedObject, evidence) &&
+        receipt.monitorEvidenceSHA256 == expectedDigest &&
+        finalHeartbeat == baseHeartbeats[5].withHistoryCommitmentSHA256(historyCommitment) &&
+        ledger.sealedDigest() == receipt.monitorEvidenceSHA256
+}
+
+private func monitorAttestationServerIsPeerPIDCompatible() throws -> Bool {
+    let socketDirectory = "\(NSTemporaryDirectory())pba-\(UUID().uuidString)"
+    try FileManager.default.createDirectory(
+        atPath: socketDirectory,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(atPath: socketDirectory) }
+    let socketPath = "\(socketDirectory)/a.sock"
+    let ledger = MonitorPublicationLedger()
+    let digest = String(repeating: "c", count: 64)
+    try ledger.seal(digest: digest)
+    let monitor = try currentMonitorProcessReceipt()
+    let server = try MonitorAttestationServer(
+        socketPath: socketPath,
+        executionNonce: selfTestExecutionNonce,
+        monitorInstanceID: selfTestMonitorInstanceID,
+        monitor: monitor,
+        ledger: ledger)
+    server.start()
+    defer { server.stop() }
+    for _ in 0..<100 {
+        var info = stat()
+        if lstat(socketPath, &info) == 0, (info.st_mode & S_IFMT) == S_IFSOCK {
+            break
+        }
+        usleep(1000)
+    }
+    let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard descriptor >= 0 else { return false }
+    defer { close(descriptor) }
+    var address = try unixSocketAddress(path: socketPath)
+    let addressLength = socklen_t(address.sun_len)
+    let connected = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            Darwin.connect(descriptor, $0, addressLength)
+        }
+    }
+    guard connected == 0 else { return false }
+    var peerPID = pid_t()
+    var peerPIDSize = socklen_t(MemoryLayout<pid_t>.size)
+    guard getsockopt(descriptor, SOL_LOCAL, LOCAL_PEERPID, &peerPID, &peerPIDSize) == 0,
+          peerPID == getpid()
+    else { return false }
+    let challenge = String(repeating: "d", count: 64)
+    try writeSocketJSON(
+        MonitorAttestationRequest(
+            version: 1,
+            executionNonce: selfTestExecutionNonce,
+            monitorInstanceID: selfTestMonitorInstanceID,
+            challenge: challenge),
+        descriptor: descriptor)
+    let responseData = try readSocketJSONLine(descriptor, maximumBytes: 64 * 1024)
+    let object = try JSONSerialization.jsonObject(with: responseData)
+    guard let dictionary = object as? [String: Any], Set(dictionary.keys) == [
+        "version", "execution_nonce", "monitor_instance_id", "challenge", "monitor",
+        "monitor_evidence_sha256",
+    ] else { return false }
+    let response = try JSONDecoder().decode(MonitorAttestationResponse.self, from: responseData)
+    return response.version == 1 &&
+        response.executionNonce == selfTestExecutionNonce &&
+        response.monitorInstanceID == selfTestMonitorInstanceID &&
+        response.challenge == challenge &&
+        response.monitor == monitor &&
+        response.monitorEvidenceSHA256 == digest
+}
+
+private func socketReadDeadlineIsWholeMessage() -> Bool {
+    var descriptors = [Int32](repeating: -1, count: 2)
+    guard socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0 else { return false }
+    let reader = descriptors[0]
+    let writer = descriptors[1]
+    var noSignal: Int32 = 1
+    _ = setsockopt(writer, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
+    let finished = DispatchSemaphore(value: 0)
+    DispatchQueue.global().async {
+        for byte in Array("{\"slow\":true}".utf8) {
+            var value = byte
+            if Darwin.write(writer, &value, 1) != 1 {
+                break
+            }
+            usleep(20000)
+        }
+        close(writer)
+        finished.signal()
+    }
+    let started = DispatchTime.now().uptimeNanoseconds
+    let refused: Bool
+    do {
+        _ = try readSocketJSONLine(reader, maximumBytes: 1024, timeoutMilliseconds: 60)
+        refused = false
+    } catch {
+        refused = true
+    }
+    let elapsed = DispatchTime.now().uptimeNanoseconds - started
+    close(reader)
+    _ = finished.wait(timeout: .now() + .seconds(1))
+
+    var unterminated = [Int32](repeating: -1, count: 2)
+    guard socketpair(AF_UNIX, SOCK_STREAM, 0, &unterminated) == 0 else { return false }
+    var byte = UInt8(ascii: "{")
+    _ = Darwin.write(unterminated[1], &byte, 1)
+    shutdown(unterminated[1], SHUT_WR)
+    let eofRefused: Bool
+    do {
+        _ = try readSocketJSONLine(unterminated[0], maximumBytes: 1024, timeoutMilliseconds: 100)
+        eofRefused = false
+    } catch {
+        eofRefused = true
+    }
+    close(unterminated[0])
+    close(unterminated[1])
+    return refused && elapsed < 200_000_000 && eofRefused
+}
+
+private func stoppingServerTerminatesActiveClient() throws -> Bool {
+    let directory = "\(NSTemporaryDirectory())pbstop-\(UUID().uuidString)"
+    try FileManager.default.createDirectory(
+        atPath: directory,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(atPath: directory) }
+    let ledger = MonitorPublicationLedger()
+    try ledger.seal(digest: String(repeating: "f", count: 64))
+    let server = try MonitorAttestationServer(
+        socketPath: "\(directory)/a.sock",
+        executionNonce: selfTestExecutionNonce,
+        monitorInstanceID: selfTestMonitorInstanceID,
+        monitor: currentMonitorProcessReceipt(),
+        ledger: ledger)
+    server.start()
+    let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard descriptor >= 0 else { return false }
+    defer { close(descriptor) }
+    var address = try unixSocketAddress(path: "\(directory)/a.sock")
+    let addressLength = socklen_t(address.sun_len)
+    let connected = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            Darwin.connect(descriptor, $0, addressLength)
+        }
+    }
+    guard connected == 0 else {
+        server.stop()
+        return false
+    }
+    for _ in 0..<100 where !server.hasActiveClient() {
+        usleep(1000)
+    }
+    guard server.hasActiveClient() else {
+        server.stop()
+        return false
+    }
+    server.stop()
+    var event = pollfd(fd: descriptor, events: Int16(POLLIN | POLLHUP), revents: 0)
+    return poll(&event, 1, 500) > 0
+}
+
+private func attestationServerSurvivesEarlyClientClose() throws -> Bool {
+    let directory = "\(NSTemporaryDirectory())pbclose-\(UUID().uuidString)"
+    try FileManager.default.createDirectory(
+        atPath: directory,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(atPath: directory) }
+    let socketPath = "\(directory)/a.sock"
+    let ledger = MonitorPublicationLedger()
+    let digest = String(repeating: "f", count: 64)
+    try ledger.seal(digest: digest)
+    let server = try MonitorAttestationServer(
+        socketPath: socketPath,
+        executionNonce: selfTestExecutionNonce,
+        monitorInstanceID: selfTestMonitorInstanceID,
+        monitor: currentMonitorProcessReceipt(),
+        ledger: ledger)
+    server.start()
+    defer { server.stop() }
+    func connectClient() throws -> Int32 {
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        var address = try unixSocketAddress(path: socketPath)
+        let length = socklen_t(address.sun_len)
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(descriptor, $0, length)
+            }
+        }
+        guard result == 0 else {
+            close(descriptor)
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        return descriptor
+    }
+    let request = MonitorAttestationRequest(
+        version: 1,
+        executionNonce: selfTestExecutionNonce,
+        monitorInstanceID: selfTestMonitorInstanceID,
+        challenge: String(repeating: "a", count: 64))
+    let early = try connectClient()
+    try writeSocketJSON(request, descriptor: early)
+    var resetLinger = linger(l_onoff: 1, l_linger: 0)
+    _ = setsockopt(early, SOL_SOCKET, SO_LINGER, &resetLinger, socklen_t(MemoryLayout<linger>.size))
+    close(early)
+    for _ in 0..<200 where server.hasActiveClient() {
+        usleep(1000)
+    }
+
+    let retry = try connectClient()
+    defer { close(retry) }
+    try writeSocketJSON(request, descriptor: retry)
+    let responseData = try readSocketJSONLine(retry, maximumBytes: 64 * 1024)
+    let response = try JSONDecoder().decode(MonitorAttestationResponse.self, from: responseData)
+    return response.challenge == request.challenge && response.monitorEvidenceSHA256 == digest
 }
 
 private func runSelfTest() throws {
@@ -4085,6 +6110,39 @@ private func runSelfTest() throws {
     }
     guard producerReceiptSchemaIsLossless() else {
         throw ProbeError.invalidArguments("producer receipt schema lost default roles or decimal identities")
+    }
+    guard monitorDigestMatchesNodeContract() else {
+        throw ProbeError.invalidArguments("monitor evidence digest differs from the Node canonical contract")
+    }
+    guard canonicalBooleanValuesRemainBooleans() else {
+        throw ProbeError.invalidArguments("canonical JSON reclassified Boolean values as numbers")
+    }
+    guard producerLedgerPreservesEquivalentReorder() else {
+        throw ProbeError.invalidArguments("producer ledger rejected an idempotent reorder or accepted drift")
+    }
+    guard quiescedMonitorDropsAllAdmissions() else {
+        throw ProbeError.invalidArguments("post-seal monitor admission was not quiesced")
+    }
+    guard integerClockExtremesFailClosed() else {
+        throw ProbeError.invalidArguments("monitor clock arithmetic accepted an unsafe or backward step")
+    }
+    guard try ownerPrivateReadRejectsLinksAndPathSwap() else {
+        throw ProbeError.invalidArguments("owner-private monitor reads accepted a link or path swap")
+    }
+    guard try monitorSealIsRunBoundAndOwned() else {
+        throw ProbeError.invalidArguments("monitor did not seal its exact in-memory run corpus")
+    }
+    guard try monitorAttestationServerIsPeerPIDCompatible() else {
+        throw ProbeError.invalidArguments("monitor attestation is not kernel peer-PID compatible")
+    }
+    guard socketReadDeadlineIsWholeMessage() else {
+        throw ProbeError.invalidArguments("attestation slow-drip or unterminated input did not fail closed")
+    }
+    guard try stoppingServerTerminatesActiveClient() else {
+        throw ProbeError.invalidArguments("stopping the attestation server left an active client blocked")
+    }
+    guard try attestationServerSurvivesEarlyClientClose() else {
+        throw ProbeError.invalidArguments("an early-closing attestation client terminated the server")
     }
     guard foregroundAuthorizationSchemaIsStrict() else {
         throw ProbeError.invalidArguments("foreground authorization schema accepted an invalid role or target")
@@ -4233,11 +6291,20 @@ private func runSelfTest() throws {
     else {
         throw ProbeError.invalidArguments("physical cursor and unrelated input policies were conflated")
     }
+    guard try bridgePointerEventViolatesBothInputSlots(
+        directory: testDirectory,
+        projection: projection)
+    else {
+        throw ProbeError.invalidArguments("producer pointer input did not violate its dedicated invariant")
+    }
+    guard cursorPositionAndProducerPointerRemainDistinct(projection: projection) else {
+        throw ProbeError.invalidArguments("cursor position drift was conflated with producer pointer input")
+    }
     guard try unexpectedActivationViolatesFocus(directory: testDirectory, projection: projection) else {
         throw ProbeError.invalidArguments("unexpected activation did not retain callback-time focus evidence")
     }
 
-    try writeJSON(SelfTestResult(success: true, tests: 44), to: nil)
+    try writeJSON(SelfTestResult(success: true, tests: 57), to: nil)
 }
 
 private func findApp(arguments: [String]) throws {
@@ -4339,12 +6406,29 @@ private struct SelfTestResult: Encodable {
     let tests: Int
 }
 
+private struct MonitorDigestResult: Encodable {
+    let monitorEvidenceSHA256: String
+
+    private enum CodingKeys: String, CodingKey {
+        case monitorEvidenceSHA256 = "monitor_evidence_sha256"
+    }
+}
+
+private func writeMonitorEvidenceV2Digest(arguments: [String]) throws {
+    guard let inputPath = argument("--input", in: arguments) else {
+        throw ProbeError.invalidArguments("monitor-evidence-v2-digest requires one integer-only --input corpus")
+    }
+    let data = try Data(contentsOf: URL(fileURLWithPath: inputPath), options: .mappedIfSafe)
+    let digest = try monitorAggregateSHA256(domain: "monitor-evidence", jsonData: data)
+    try writeJSON(MonitorDigestResult(monitorEvidenceSHA256: digest), to: argument("--output", in: arguments))
+}
+
 do {
     let arguments = Array(CommandLine.arguments.dropFirst())
     guard let mode = arguments.first else {
         throw ProbeError.invalidArguments(
             "expected sample, clock, watch, find-app, process-identity, process-executable, " +
-                "process-executable-identity, ignore-term, or self-test")
+                "process-executable-identity, monitor-evidence-v2-digest, ignore-term, or self-test")
     }
     switch mode {
     case "sample":
@@ -4363,6 +6447,8 @@ do {
         try writeProcessExecutable(arguments: arguments)
     case "process-executable-identity":
         try writeProcessExecutableIdentity(arguments: arguments)
+    case "monitor-evidence-v2-digest":
+        try writeMonitorEvidenceV2Digest(arguments: arguments)
     case "ignore-term":
         runIgnoringTermination()
     case "self-test":

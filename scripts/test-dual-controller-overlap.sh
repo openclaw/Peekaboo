@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
+umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CATALOG="$ROOT_DIR/scripts/dual-controller-overlap-catalog.json"
@@ -175,7 +176,8 @@ run_launch_ownership_self_test() {
 
 PROBE_BIN="$ARTIFACT_ROOT/bin/background-computer-use-probe"
 swiftc "$PROBE_SOURCE" -o "$PROBE_BIN" \
-    -framework AppKit -framework ApplicationServices -framework CoreGraphics -framework CryptoKit
+    -framework AppKit -framework ApplicationServices -framework CoreGraphics -framework CryptoKit \
+    -framework Security
 "$PROBE_BIN" self-test > "$ARTIFACT_ROOT/probe-self-test.json"
 
 pb() {
@@ -457,9 +459,10 @@ finish_monitoring() {
     fi
     "$PROBE_BIN" sample --no-clipboard-digest --output "$final_sample_path" || sample_succeeded=false
     for _ in $(seq 1 100); do
-        local current_sequence heartbeat_timestamp pending_activations pending_focus final_sample_timestamp
+        local current_sequence heartbeat_wall_milliseconds pending_activations pending_focus final_sample_timestamp
         current_sequence="$(jq -r '.sequence // 0' "$ARTIFACT_ROOT/monitor-heartbeat.json" 2>/dev/null || printf 0)"
-        heartbeat_timestamp="$(jq -r '.timestamp // 0' "$ARTIFACT_ROOT/monitor-heartbeat.json" 2>/dev/null || printf 0)"
+        heartbeat_wall_milliseconds="$(jq -r '.wallClockMilliseconds // 0' \
+            "$ARTIFACT_ROOT/monitor-heartbeat.json" 2>/dev/null || printf 0)"
         pending_activations="$(jq -r '.pendingActivationCount // -1' \
             "$ARTIFACT_ROOT/monitor-heartbeat.json" 2>/dev/null || printf -- -1)"
         pending_focus="$(read_pending_focus_state \
@@ -467,8 +470,8 @@ finish_monitoring() {
         final_sample_timestamp="$(jq -r '.timestamp // 0' "$final_sample_path" 2>/dev/null || printf 0)"
         if [[ "$current_sequence" =~ ^[0-9]+$ && "$current_sequence" -gt "$pre_cleanup_sequence" ]] && \
            [[ "$pending_activations" == 0 && "$pending_focus" == false ]] && \
-           awk -v heartbeat="$heartbeat_timestamp" -v final="$final_sample_timestamp" \
-               'BEGIN { exit !(heartbeat >= final) }'; then
+           awk -v heartbeat="$heartbeat_wall_milliseconds" -v final="$final_sample_timestamp" \
+               'BEGIN { exit !(heartbeat >= final * 1000) }'; then
             settled=true
             break
         fi
@@ -1397,7 +1400,8 @@ cp -p "$SOURCE_REPORTER" "$REPORTER"
 cp -p "$SOURCE_PROBE_SOURCE" "$CERTIFIED_PROBE_SOURCE"
 chmod 400 "$CATALOG" "$REPORTER" "$CERTIFIED_PROBE_SOURCE"
 swiftc "$CERTIFIED_PROBE_SOURCE" -o "$PROBE_BIN" \
-    -framework AppKit -framework ApplicationServices -framework CoreGraphics -framework CryptoKit
+    -framework AppKit -framework ApplicationServices -framework CoreGraphics -framework CryptoKit \
+    -framework Security
 "$PROBE_BIN" self-test > "$ARTIFACT_ROOT/probe-live-self-test.json"
 
 pb bridge status --verbose --json > "$ARTIFACT_ROOT/bridge-before.json"
@@ -1549,9 +1553,22 @@ jq -e --argjson pid "$SENTINEL_PID" --argjson window "$SENTINEL_WINDOW_ID" '
 }
 
 INVARIANT_NAMES='["sentinel_frontmost_pid","sentinel_top_window","physical_cursor","no_peekaboo_global_input","clipboard_change_count","peekaboo_alpha_overlay"]'
+MONITOR_EXECUTION_NONCE="$(printf '%s' "$RUN_ID" | shasum -a 256 | awk '{print $1}')"
+MONITOR_INSTANCE_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+shasum -a 256 "$ARTIFACT_ROOT/baseline.json" | awk '{print $1}' \
+    > "$ARTIFACT_ROOT/monitor-history-commitment.txt"
 printf '%s\n' running > "$ARTIFACT_ROOT/monitor-phase.txt"
 jq -n --argjson pid "$HOST_PID" --arg identity "$HOST_IDENTITY" \
-    '{revision: 1, producers: [{pid: $pid, startIdentity: $identity}]}' \
+    --arg executionNonce "$MONITOR_EXECUTION_NONCE" \
+    --arg monitorInstanceID "$MONITOR_INSTANCE_ID" '
+    {
+        revision: 1,
+        executionNonce: $executionNonce,
+        monitorInstanceID: $monitorInstanceID,
+        producers: [{pid: $pid, startIdentity: $identity, role: "bridge"}],
+        foreground: {active: false, target: null}
+    }
+' \
     > "$ARTIFACT_ROOT/allowed-producers.json"
 "$PROBE_BIN" watch \
     --baseline "$ARTIFACT_ROOT/baseline.json" \
@@ -1562,6 +1579,9 @@ jq -n --argjson pid "$HOST_PID" --arg identity "$HOST_IDENTITY" \
     --phase "$ARTIFACT_ROOT/monitor-phase.txt" \
     --allowed-producers "$ARTIFACT_ROOT/allowed-producers.json" \
     --invariant-names "$INVARIANT_NAMES" \
+    --execution-nonce "$MONITOR_EXECUTION_NONCE" \
+    --monitor-instance-id "$MONITOR_INSTANCE_ID" \
+    --history-commitment "$ARTIFACT_ROOT/monitor-history-commitment.txt" \
     --cursor-observational \
     --physical-input-observational \
     --interval-ms 20 &
@@ -2015,7 +2035,8 @@ if [[ ! -s "$ARTIFACT_ROOT/monitor-violations.jsonl" && \
       "$ARTIFACT_ROOT/monitor-watchdog.json" >/dev/null && \
    jq -e --argjson sequence "$PRE_CLEANUP_SEQUENCE" --slurpfile final "$ARTIFACT_ROOT/final-sample.json" '
       .inputAttributionAvailable == true and .contaminationBlocked == false and
-      .allowedProducerRevision == 1 and .sequence > $sequence and .timestamp >= $final[0].timestamp and
+      .allowedProducerRevision == 1 and .sequence > $sequence and
+      .wallClockMilliseconds >= (($final[0].timestamp * 1000) | floor) and
       .pendingActivationCount == 0 and .pendingFocusedWindowChange == false
    ' \
       "$ARTIFACT_ROOT/monitor-heartbeat.json" >/dev/null; then

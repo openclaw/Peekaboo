@@ -83,7 +83,11 @@ By default, Peekaboo will:
 
 ## Focus Options
 
-Interaction commands that use foreground delivery support these focus-related options. `click`, `type`, and `paste` default to background delivery when Peekaboo can resolve a target process. Raw `press` always requires `--foreground`. Targeted scroll stays background through Accessibility or a capability-gated exact-window WebKit route, while targetless/smooth scroll and all move/drag operations require explicit foreground mode.
+Interaction commands that use foreground delivery support these focus-related options. `click`, `type`, and `paste`
+default to background delivery when Peekaboo can resolve a target process. Raw `press` stays background only with a
+fresh exact-window/snapshot receipt; app/PID-only and targetless forms require `--foreground`. Targeted scroll stays
+background through Accessibility or a capability-gated exact-window WebKit route, while targetless/smooth scroll and
+all move/drag operations require explicit foreground mode.
 
 ### `--no-auto-focus`
 Disables automatic focus management (not recommended).
@@ -98,7 +102,10 @@ Use cases:
 - Testing or debugging focus issues
 
 ### `--focus-background`
-Uses command-supported background delivery instead of activating the target app. For input commands that can resolve a target process, this is now the default; the flag is a legacy alias where still exposed. `press` retains the spelling for compatibility but refuses raw background chords and requires `--foreground`.
+Uses command-supported background delivery instead of activating the target app. For input commands that can resolve a
+target process, this is now the default; the flag is a legacy alias where still exposed. `press` retains the spelling
+for compatibility, but the alias does not replace the fresh exact-window/snapshot receipt required for background raw
+chords.
 
 ```bash
 peekaboo press cmd+l --app Safari --foreground
@@ -113,7 +120,10 @@ Use cases:
 - Typing or pasting into a targeted app without activating it
 - Keeping a long-running foreground workflow uninterrupted
 
-Currently, typed text and paste use background delivery when `--app`, `--pid`, or supported snapshot process metadata identifies a live process. Raw key chords cannot prove semantic intent or effect and are refused without `--foreground`. Background click can preserve an exact window/element target.
+Currently, typed text and paste use background delivery when `--app`, `--pid`, or supported snapshot process metadata
+identifies a live process. Raw key chords require either a fresh exact-window/snapshot focused-element receipt or
+explicit `--foreground`; app/PID-only and targetless raw chords refuse. Background click can preserve an exact
+window/element target.
 
 Background delivery is a delivery mode, not a focus mode. It cannot be combined with foreground focus timeout, retry, or Space-switching flags. Background element/query/coordinate clicks and targeted scroll prefer Accessibility; an opaque WebKit scroll target may use exact PID/window wheel delivery without focus. Keyboard delivery, that WebKit wheel route, and foreground synthetic pointer operations require Event Synthesizing; `peekaboo permissions request event-synthesizing` requests it for the selected bridge host by default, or for the local CLI with `--no-remote`.
 
