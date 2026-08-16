@@ -91,6 +91,11 @@ struct SeeExecutionReceipt: Equatable, Sendable {
         guard let first = receipts.first else { return .none }
         guard receipts.count > 1 else { return first }
 
+        let outcome = DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: receipts.map(\.outcome),
+            succeededCount: receipts.count,
+            attemptedCount: receipts.count
+        )
         var sequence = UIAutomationActionResultSequenceAccumulator()
         for receipt in receipts {
             sequence.record(
@@ -101,7 +106,7 @@ struct SeeExecutionReceipt: Equatable, Sendable {
             )
         }
         let resolution = sequence.resolution
-        return Self(outcome: resolution.outcome, targetReceipt: resolution.targetReceipt)
+        return Self(outcome: outcome, targetReceipt: resolution.targetReceipt)
     }
 
     func requirePublishableOutcome(operation: String, requiresOutcome: Bool) throws {

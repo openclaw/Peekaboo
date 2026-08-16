@@ -474,6 +474,34 @@ extension SeeCommandRuntimeTests {
         #expect(incompatible.outcome == nil)
         #expect(incompatible.targetReceipt == targetA)
 
+        let missingOutcome = SeeExecutionReceipt.combining([
+            SeeExecutionReceipt(
+                outcome: .confirmedChange(route: .bridge, delivery: delivery, unitCount: .one),
+                targetReceipt: targetA
+            ),
+            SeeExecutionReceipt(outcome: nil, targetReceipt: targetA),
+        ])
+        #expect(missingOutcome.outcome?.state == .indeterminate)
+        #expect(missingOutcome.outcome?.route == .bridge)
+        #expect(missingOutcome.outcome?.dispatchState == .mayHaveDispatched(
+            unitCount: DesktopActionOutcome.DispatchUnitCount(2)
+        ))
+        #expect(missingOutcome.targetReceipt == targetA)
+
+        let partial = SeeExecutionReceipt.combining([
+            SeeExecutionReceipt(
+                outcome: .partial(route: .bridge, delivery: delivery, unitCount: .one),
+                targetReceipt: targetA
+            ),
+            SeeExecutionReceipt(
+                outcome: .confirmedNoChange(route: .bridge),
+                targetReceipt: targetA
+            ),
+        ])
+        #expect(partial.outcome?.state == .partial)
+        #expect(partial.outcome?.dispatchState.unitCount == .one)
+        #expect(partial.targetReceipt == targetA)
+
         let processTarget = try DesktopTargetIdentity(processIdentity: ApplicationProcessIdentity(
             processIdentifier: 10,
             processStartIdentity: 20
