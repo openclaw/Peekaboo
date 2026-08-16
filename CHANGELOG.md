@@ -2,10 +2,12 @@
 
 ## [4.2.1] - Unreleased
 
+### Added
+- Add authenticated `peekaboo bridge receipt validate` for fail-closed, agent-readable verification of private protocol 1.29 bundles against the exact live listener that produced them.
+
 ## [4.2.0] - 2026-08-16
 
 ### Added
-- Add authenticated `peekaboo bridge receipt validate` for fail-closed, agent-readable verification of private protocol 1.29 bundles against the exact live listener that produced them.
 - Add Bridge protocol 1.29 peer-bound signed operation sessions and exact target/result receipts, with bounded rollover, replay protection, and fail-closed recovery for long-running background automation.
 - Make protocol 1.29 browser receipts require a fully resolved explicit DevTools endpoint, and make exact dialog text entry use background Accessibility value mutation while refusing receipt-incapable legacy dialog mutations before dispatch.
 - Add Bridge protocol 1.26 exact browser connection receipts, binding persistent Chrome DevTools MCP sessions to one process generation or validated loopback DevTools browser identity.
