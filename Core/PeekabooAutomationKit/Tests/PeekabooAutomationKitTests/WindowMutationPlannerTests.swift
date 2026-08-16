@@ -8,8 +8,9 @@ import Testing
 struct WindowMutationPlannerTests {
     @Test
     func `partial window inventory refuses title and index uniqueness`() async {
-        let application = AutomationTestFixtures.application()
-        let window = AutomationTestFixtures.window()
+        let fixture = AutomationTestFixtures.linkedDesktopTarget()
+        let application = fixture.application
+        let window = fixture.window
         let applications = DesktopTargetPlanning.ApplicationMutationPlanner(
             inventoryProvider: { .complete([application]) })
         let planner = DesktopTargetPlanning.WindowMutationPlanner(
@@ -38,8 +39,9 @@ struct WindowMutationPlannerTests {
 
     @Test
     func `exact window ID can use a partial direct lookup`() async throws {
-        let application = AutomationTestFixtures.application()
-        let window = AutomationTestFixtures.window()
+        let fixture = AutomationTestFixtures.linkedDesktopTarget()
+        let application = fixture.application
+        let window = fixture.window
         let applications = DesktopTargetPlanning.ApplicationMutationPlanner(
             inventoryProvider: { .complete([application]) })
         let planner = DesktopTargetPlanning.WindowMutationPlanner(
@@ -87,8 +89,9 @@ struct WindowMutationPlannerTests {
 
     @Test
     func `window provider transport failures stay unavailable instead of impersonating target loss`() async throws {
-        let application = AutomationTestFixtures.application()
-        let window = AutomationTestFixtures.window()
+        let fixture = AutomationTestFixtures.linkedDesktopTarget()
+        let application = fixture.application
+        let window = fixture.window
         let shouldFail = AutomationTestLockedValue(true)
         let applications = DesktopTargetPlanning.ApplicationMutationPlanner(
             inventoryProvider: { .complete([application]) })
@@ -140,8 +143,9 @@ struct WindowMutationPlannerTests {
 
     @Test
     func `exact window absence becomes not found initially and stale after selection`() async throws {
-        let application = AutomationTestFixtures.application()
-        let window = AutomationTestFixtures.window()
+        let fixture = AutomationTestFixtures.linkedDesktopTarget()
+        let application = fixture.application
+        let window = fixture.window
         let isMissing = AutomationTestLockedValue(true)
         let applications = DesktopTargetPlanning.ApplicationMutationPlanner(
             inventoryProvider: { .complete([application]) })
@@ -238,8 +242,9 @@ struct WindowMutationPlannerTests {
 
     @Test
     func `relative selector lists only by canonical exact PID and returns exact target`() async throws {
-        let application = AutomationTestFixtures.application()
-        let window = AutomationTestFixtures.window()
+        let fixture = AutomationTestFixtures.linkedDesktopTarget()
+        let application = fixture.application
+        let window = fixture.window
         let spy = WindowPlannerInventorySpy(
             applicationInventories: [[application], [application]],
             windows: [.application("PID:101"): [window]])
@@ -264,8 +269,9 @@ struct WindowMutationPlannerTests {
 
     @Test
     func `exact ID alone derives owner while a wrong explicit owner refuses`() async throws {
-        let application = AutomationTestFixtures.application()
-        let window = AutomationTestFixtures.window()
+        let fixture = AutomationTestFixtures.linkedDesktopTarget()
+        let application = fixture.application
+        let window = fixture.window
         let exactSpy = WindowPlannerInventorySpy(
             applicationInventories: [[application], [application]],
             windows: [.windowId(201): [window]])
@@ -293,9 +299,10 @@ struct WindowMutationPlannerTests {
 
     @Test
     func `owner drift after window inventory refuses pre-dispatch`() async throws {
-        let original = AutomationTestFixtures.application()
+        let fixture = AutomationTestFixtures.linkedDesktopTarget()
+        let original = fixture.application
         let changed = AutomationTestFixtures.wrongGenerationApplication()
-        let window = AutomationTestFixtures.window()
+        let window = fixture.window
         let spy = WindowPlannerInventorySpy(
             applicationInventories: [[original], [changed]],
             windows: [.application("PID:101"): [window]])
@@ -356,6 +363,7 @@ struct WindowMutationPlannerTests {
         let application = AutomationTestFixtures.application()
         let original = AutomationTestFixtures.window()
         let moved = AutomationTestFixtures.window(
+            copying: original,
             bounds: original.bounds.offsetBy(dx: 1, dy: 0))
         let spy = WindowPlannerInventorySpy(
             applicationInventories: [[application], [application], [application]],
@@ -376,7 +384,9 @@ struct WindowMutationPlannerTests {
         let replacementOwner = AutomationTestFixtures.processIdentity(
             processIdentifier: 202,
             processStartIdentity: 2002)
-        let replacement = AutomationTestFixtures.window(processIdentity: replacementOwner)
+        let replacement = AutomationTestFixtures.window(
+            copying: original,
+            processIdentity: replacementOwner)
         let spy = WindowPlannerInventorySpy(
             applicationInventories: [[application], [application]],
             windows: [.windowId(201): [original]])
@@ -393,7 +403,10 @@ struct WindowMutationPlannerTests {
     func `revalidation keeps historical selection evidence while refreshing exact execution state`() async throws {
         let application = AutomationTestFixtures.application()
         let original = AutomationTestFixtures.window(title: "Selected Document", isMinimized: false)
-        let refreshed = AutomationTestFixtures.window(title: "Renamed Document", isMinimized: true)
+        let refreshed = AutomationTestFixtures.window(
+            copying: original,
+            title: "Renamed Document",
+            isMinimized: true)
         let sibling = AutomationTestFixtures.window(windowID: 202, title: "Selected Document", index: 0)
         let spy = WindowPlannerInventorySpy(
             applicationInventories: [[application], [application], [application]],

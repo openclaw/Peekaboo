@@ -1,3 +1,4 @@
+import CoreGraphics
 import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import Testing
@@ -6,6 +7,106 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct AutomationKitTestSupportTests {
+    @Test
+    func `linked desktop target keeps every receipt on one process generation`() {
+        let process = AutomationTestFixtures.processIdentity(
+            processIdentifier: 42,
+            processStartIdentity: 1001)
+        let bounds = CGRect(x: 10, y: 20, width: 300, height: 200)
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: process,
+            bundleIdentifier: "com.example.Linked",
+            applicationName: "Linked App",
+            windowID: 71,
+            windowTitle: "Linked Window",
+            bounds: bounds)
+
+        #expect(fixture.application.processIdentity == process)
+        #expect(fixture.application.windowCount == 1)
+        #expect(fixture.application.windowIDs == [71])
+        #expect(fixture.window.mutationIdentity == fixture.windowIdentity)
+        #expect(fixture.windowIdentity.processIdentity == process)
+        #expect(fixture.processTargetIdentity.processIdentity == process)
+        #expect(fixture.windowTargetIdentity.exactWindow?.identity == fixture.windowIdentity)
+        #expect(fixture.processTargetReceipt == DesktopActionTargetReceipt(
+            processIdentifier: 42,
+            processStartIdentity: 1001))
+        #expect(fixture.windowTargetReceipt == DesktopActionTargetReceipt(
+            processIdentifier: 42,
+            processStartIdentity: 1001,
+            windowID: 71))
+        #expect(fixture.windowContext.windowMutationIdentity == fixture.windowIdentity)
+        #expect(fixture.windowContext.windowBounds == bounds)
+    }
+
+    @Test
+    func `window copy overrides coherent identity fields and preserves unrelated metadata`() {
+        let originalBounds = CGRect(x: 1, y: 2, width: 300, height: 200)
+        let originalIdentity = AutomationTestFixtures.windowIdentity(
+            windowID: 71,
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001),
+            bounds: originalBounds)
+        let evidence = WindowMutationPostconditionEvidence(
+            isMaximized: true,
+            verifiedVisibleWorkArea: CGRect(x: 0, y: 0, width: 1200, height: 800))
+        let original = ServiceWindowInfo(
+            windowID: 71,
+            title: "Original",
+            bounds: originalBounds,
+            isMainWindow: true,
+            isKeyWindow: true,
+            isFrontmost: false,
+            subrole: "AXStandardWindow",
+            windowLevel: 3,
+            alpha: 0.75,
+            index: 4,
+            spaceID: 5,
+            spaceName: "Work",
+            screenIndex: 1,
+            screenName: "Studio Display",
+            sharingState: .readWrite,
+            isExcludedFromWindowsMenu: true,
+            mutationIdentity: originalIdentity,
+            mutationPostconditionEvidence: evidence)
+
+        let renamed = AutomationTestFixtures.window(copying: original, title: "Renamed")
+        #expect(renamed.mutationIdentity == originalIdentity)
+        #expect(renamed.mutationPostconditionEvidence == evidence)
+
+        let replacementProcess = AutomationTestFixtures.processIdentity(
+            processIdentifier: 43,
+            processStartIdentity: 1002)
+        let movedBounds = originalBounds.offsetBy(dx: 10, dy: 20)
+        let moved = AutomationTestFixtures.window(
+            copying: original,
+            bounds: movedBounds,
+            processIdentity: replacementProcess,
+            isMinimized: true,
+            isOffScreen: true,
+            isOnScreen: false)
+
+        #expect(moved.bounds == movedBounds)
+        #expect(moved.isMinimized)
+        #expect(moved.isOffScreen)
+        #expect(!moved.isOnScreen)
+        #expect(moved.mutationIdentity == AutomationTestFixtures.windowIdentity(
+            windowID: 71,
+            processIdentity: replacementProcess,
+            bounds: movedBounds,
+            isMinimized: true))
+        #expect(moved.subrole == original.subrole)
+        #expect(moved.windowLevel == original.windowLevel)
+        #expect(moved.alpha == original.alpha)
+        #expect(moved.index == original.index)
+        #expect(moved.spaceID == original.spaceID)
+        #expect(moved.spaceName == original.spaceName)
+        #expect(moved.screenIndex == original.screenIndex)
+        #expect(moved.screenName == original.screenName)
+        #expect(moved.sharingState == original.sharingState)
+        #expect(moved.isExcludedFromWindowsMenu == original.isExcludedFromWindowsMenu)
+        #expect(moved.mutationPostconditionEvidence == nil)
+    }
+
     @Test
     func `script sequences outcomes and failures without sharing instance state`() async throws {
         let first = Self.outcome(evidence: .deliveryAccepted)

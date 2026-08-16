@@ -1,22 +1,29 @@
 import CoreGraphics
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
 struct UIAutomationActionResultSemanticsTests {
+    private static let windowBounds = CGRect(x: 10, y: 20, width: 300, height: 200)
+
     private let backgroundDelivery = DesktopActionOutcome.Delivery(
         mechanism: .accessibilityAction,
         mode: .background)
 
     @Test
-    func `receipt projection preserves process and exact window generations`() throws {
+    func `receipt projection preserves process and exact window generations`() {
         let process = ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 1001)
-        let processTarget = try DesktopTargetIdentity(processIdentity: process)
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: process,
+            windowID: 71,
+            bounds: Self.windowBounds)
+        let processTarget = fixture.processTargetIdentity
         #expect(processTarget.actionTargetReceipt == DesktopActionTargetReceipt(
             processIdentifier: process.processIdentifier,
             processStartIdentity: process.processStartIdentity))
 
-        let window = try self.windowTarget(windowID: 71, process: process)
+        let window = fixture.windowTargetIdentity
         #expect(window.actionTargetReceipt == DesktopActionTargetReceipt(
             processIdentifier: process.processIdentifier,
             processStartIdentity: process.processStartIdentity,
@@ -25,9 +32,9 @@ struct UIAutomationActionResultSemanticsTests {
 
     @Test
     func `shared validator accepts configured success and target policy`() throws {
-        let target = try DesktopTargetIdentity(processIdentity: .init(
-            processIdentifier: 42,
-            processStartIdentity: 1001))
+        let target = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001))
+            .processTargetIdentity
         let result = UIAutomationActionResult(
             payload: (),
             outcome: DesktopActionOutcome.dispatchedUnverified(
@@ -47,9 +54,9 @@ struct UIAutomationActionResultSemanticsTests {
 
     @Test
     func `shared validator rejects delivery drift and attributes the target`() throws {
-        let target = try DesktopTargetIdentity(processIdentity: .init(
-            processIdentifier: 42,
-            processStartIdentity: 1001))
+        let target = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001))
+            .processTargetIdentity
         let result = UIAutomationActionResult(
             payload: (),
             outcome: DesktopActionOutcome.confirmedChange(delivery: .init(
@@ -73,12 +80,15 @@ struct UIAutomationActionResultSemanticsTests {
 
     @Test
     func `shared validator rejects missing or contradictory targets after dispatch`() throws {
-        let expected = try self.windowTarget(
+        let process = ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 1001)
+        let expected = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: process,
             windowID: 71,
-            process: .init(processIdentifier: 42, processStartIdentity: 1001))
-        let other = try self.windowTarget(
+            bounds: Self.windowBounds).windowTargetIdentity
+        let other = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: process,
             windowID: 72,
-            process: .init(processIdentifier: 42, processStartIdentity: 1001))
+            bounds: Self.windowBounds).windowTargetIdentity
         let outcome = DesktopActionOutcome.confirmedChange(delivery: self.backgroundDelivery)
 
         for actual in [DesktopTargetIdentity?.none, other] {
@@ -115,19 +125,5 @@ struct UIAutomationActionResultSemanticsTests {
             #expect(failure.outcome == result.outcome)
             #expect(failure.targetReceipt == nil)
         }
-    }
-
-    private func windowTarget(
-        windowID: Int,
-        process: ApplicationProcessIdentity) throws -> DesktopTargetIdentity
-    {
-        let bounds = CGRect(x: 10, y: 20, width: 300, height: 200)
-        return try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
-            identity: .init(
-                windowID: windowID,
-                ownerProcessIdentifier: process.processIdentifier,
-                ownerProcessStartIdentity: process.processStartIdentity,
-                capturedBounds: bounds),
-            bounds: bounds))
     }
 }

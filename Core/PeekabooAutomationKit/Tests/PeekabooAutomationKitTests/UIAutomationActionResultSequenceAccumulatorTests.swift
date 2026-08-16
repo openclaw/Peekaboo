@@ -1,16 +1,21 @@
 import CoreGraphics
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
 struct UIAutomationActionResultSequenceAccumulatorTests {
+    private static let windowBounds = CGRect(x: 10, y: 20, width: 300, height: 200)
+
     private let backgroundDelivery = DesktopActionOutcome.Delivery(
         mechanism: .accessibilityAction,
         mode: .background)
 
     @Test
     func `homogeneous mutation phases preserve target leaves and exact units`() throws {
-        let target = try self.windowTarget(windowID: 71)
+        let target = AutomationTestFixtures.linkedDesktopTarget(
+            windowID: 71,
+            bounds: Self.windowBounds).windowTargetIdentity
         let receipt = target.actionTargetReceipt
         let firstLeaf = try self.leaf(index: 0, target: receipt)
         let secondLeaf = try self.leaf(index: 1, target: receipt)
@@ -46,9 +51,13 @@ struct UIAutomationActionResultSequenceAccumulatorTests {
 
     @Test
     func `process and exact mutation phases retain only their common process scope`() throws {
-        let process = ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 1001)
-        let processTarget = try DesktopTargetIdentity(processIdentity: process)
-        let windowTarget = try self.windowTarget(windowID: 71, process: process)
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001),
+            windowID: 71,
+            bounds: Self.windowBounds)
+        let process = fixture.processIdentity
+        let processTarget = fixture.processTargetIdentity
+        let windowTarget = fixture.windowTargetIdentity
         var sequence = UIAutomationActionResultSequenceAccumulator()
         for target in [processTarget, windowTarget] {
             sequence.record(
@@ -73,8 +82,12 @@ struct UIAutomationActionResultSequenceAccumulatorTests {
 
     @Test
     func `different exact mutation targets fail closed`() throws {
-        let first = try self.windowTarget(windowID: 71)
-        let second = try self.windowTarget(windowID: 72)
+        let first = AutomationTestFixtures.linkedDesktopTarget(
+            windowID: 71,
+            bounds: Self.windowBounds).windowTargetIdentity
+        let second = AutomationTestFixtures.linkedDesktopTarget(
+            windowID: 72,
+            bounds: Self.windowBounds).windowTargetIdentity
         var sequence = UIAutomationActionResultSequenceAccumulator()
         for target in [first, second] {
             sequence.record(
@@ -101,7 +114,9 @@ struct UIAutomationActionResultSequenceAccumulatorTests {
 
     @Test
     func `required leaf cannot borrow a setup target`() throws {
-        let target = try self.windowTarget(windowID: 71)
+        let target = AutomationTestFixtures.linkedDesktopTarget(
+            windowID: 71,
+            bounds: Self.windowBounds).windowTargetIdentity
         var sequence = UIAutomationActionResultSequenceAccumulator()
         sequence.record(
             UIAutomationActionResult(
@@ -129,7 +144,9 @@ struct UIAutomationActionResultSequenceAccumulatorTests {
 
     @Test
     func `targetless leaf suppresses setup attribution and rejects its own target`() throws {
-        let target = try self.windowTarget(windowID: 71)
+        let target = AutomationTestFixtures.linkedDesktopTarget(
+            windowID: 71,
+            bounds: Self.windowBounds).windowTargetIdentity
         let pointerDelivery = DesktopActionOutcome.Delivery(
             mechanism: .globalEvents,
             mode: .foreground)
@@ -170,7 +187,9 @@ struct UIAutomationActionResultSequenceAccumulatorTests {
 
     @Test
     func `failure composition follows dispatched targets and preserves prior leaves`() throws {
-        let target = try self.windowTarget(windowID: 71)
+        let target = AutomationTestFixtures.linkedDesktopTarget(
+            windowID: 71,
+            bounds: Self.windowBounds).windowTargetIdentity
         let evidence = try self.leaf(index: 0, target: target.actionTargetReceipt)
         var sequence = UIAutomationActionResultSequenceAccumulator()
         sequence.record(
@@ -183,10 +202,12 @@ struct UIAutomationActionResultSequenceAccumulatorTests {
                 targetIdentity: target,
                 selectedLeafEvidence: [evidence]),
             attribution: .operationTarget)
-        let leafFailure = try DesktopActionFailure.preDispatchRefusal(
+        let leafFailure = DesktopActionFailure.preDispatchRefusal(
             reason: .targetUnavailable,
             message: "Later phase refused")
-            .attributed(to: self.windowTarget(windowID: 72).actionTargetReceipt)
+            .attributed(to: AutomationTestFixtures.linkedDesktopTarget(
+                windowID: 72,
+                bounds: Self.windowBounds).windowTargetReceipt)
 
         let failure = sequence.failure(
             combining: leafFailure,
@@ -200,7 +221,9 @@ struct UIAutomationActionResultSequenceAccumulatorTests {
 
     @Test
     func `selected leaves require canonical dispatched evidence`() throws {
-        let target = try self.windowTarget(windowID: 71)
+        let target = AutomationTestFixtures.linkedDesktopTarget(
+            windowID: 71,
+            bounds: Self.windowBounds).windowTargetIdentity
         let evidence = try self.leaf(index: 0, target: target.actionTargetReceipt)
         var sequence = UIAutomationActionResultSequenceAccumulator()
         sequence.record(
@@ -217,22 +240,6 @@ struct UIAutomationActionResultSequenceAccumulatorTests {
                 operation: "No-dispatch leaf sequence",
                 requiresOutcome: true)
         }
-    }
-
-    private func windowTarget(
-        windowID: Int,
-        process: ApplicationProcessIdentity = .init(
-            processIdentifier: 42,
-            processStartIdentity: 1001)) throws -> DesktopTargetIdentity
-    {
-        let bounds = CGRect(x: 10, y: 20, width: 300, height: 200)
-        return try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
-            identity: WindowMutationIdentity(
-                windowID: windowID,
-                ownerProcessIdentifier: process.processIdentifier,
-                ownerProcessStartIdentity: process.processStartIdentity,
-                capturedBounds: bounds),
-            bounds: bounds))
     }
 
     private func leaf(
