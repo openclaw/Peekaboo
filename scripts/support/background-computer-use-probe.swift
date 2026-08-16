@@ -207,6 +207,20 @@ private struct AllowedEventProducerSet: Codable {
     let foreground: AllowedForegroundActivity?
 }
 
+private struct PendingFocusEvents: Equatable {
+    var activations: [Int32] = []
+    var focusedWindowChanged = false
+
+    mutating func clearOnForegroundTransition(
+        from current: AllowedForegroundActivity,
+        to next: AllowedForegroundActivity)
+    {
+        if current != next {
+            self = PendingFocusEvents()
+        }
+    }
+}
+
 private func foregroundControllerCardinalityIsValid(
     producers: [AllowedEventProducer],
     foreground: AllowedForegroundActivity) -> Bool
@@ -728,6 +742,14 @@ private func producerEventsMatchReceipts(
     }
 }
 
+private func shouldCreditForegroundAttribution(
+    batch: InputEventBatch,
+    attributionValid: Bool,
+    foregroundActive: Bool) -> Bool
+{
+    batch.foregroundEventCount > 0 && attributionValid && foregroundActive
+}
+
 private func foregroundTargetIsLive(_ target: AllowedForegroundTarget) -> Bool {
     guard target.pid > 0,
           target.windowID > 0,
@@ -816,8 +838,7 @@ private struct WatchState {
     private var allowedProducerRevision: UInt64?
     private var allowedProducerReceipts: [Int32: String] = [:]
     private var allowedForeground = AllowedForegroundActivity(active: false, target: nil)
-    private var pendingActivations: [Int32] = []
-    private var pendingFocusedWindowChange = false
+    private var pendingFocusEvents = PendingFocusEvents()
     private var cursorMovementObserved = false
     private var attributedForegroundEventCount = 0
     private var attributedForegroundSourcePIDs = Set<Int32>()
@@ -884,6 +905,9 @@ private struct WatchState {
         self.allowedProducerReceipts = Dictionary(uniqueKeysWithValues: producerSet.producers.map {
             ($0.pid, $0.startIdentity)
         })
+        self.pendingFocusEvents.clearOnForegroundTransition(
+            from: self.allowedForeground,
+            to: foreground)
         self.allowedForeground = foreground
         self.allowedProducerRevision = producerSet.revision
     }
@@ -900,10 +924,10 @@ private struct WatchState {
         {
             self.cursorMovementObserved = true
         }
-        let deferredActivations = self.pendingActivations
-        let deferredFocusedWindowChange = self.pendingFocusedWindowChange
-        self.pendingActivations = unexpectedActivations
-        self.pendingFocusedWindowChange = focusedWindowChanged
+        let deferredFocusEvents = self.pendingFocusEvents
+        self.pendingFocusEvents = PendingFocusEvents(
+            activations: unexpectedActivations,
+            focusedWindowChanged: focusedWindowChanged)
 
         if inputBatch.attributionFailed {
             try self.block(
@@ -920,24 +944,30 @@ private struct WatchState {
         if !producerEventsValid {
             try self.block(
                 reason: "blocked_producer_generation_drift",
-                sourcePIDs: inputBatch.producerSourcePIDs,
-                eventTypes: inputBatch.producerEventTypes,
+                sourcePIDs: Set(inputBatch.producerSourcePIDs + inputBatch.foregroundSourcePIDs).sorted(),
+                eventTypes: Set(inputBatch.producerEventTypes + inputBatch.foregroundEventTypes).sorted(),
                 attributionFailed: true,
                 countsRetry: false)
         }
-        if inputBatch.foregroundEventCount > 0 {
-            if !self.allowedForeground.active {
-                try self.block(
-                    reason: "blocked_unpermitted_foreground_input",
-                    sourcePIDs: inputBatch.foregroundSourcePIDs,
-                    eventTypes: inputBatch.foregroundEventTypes,
-                    attributionFailed: true,
-                    countsRetry: false)
-            } else {
-                self.attributedForegroundEventCount += inputBatch.foregroundEventCount
-                self.attributedForegroundSourcePIDs.formUnion(inputBatch.foregroundSourcePIDs)
-                self.foregroundActivityObserved = true
-            }
+        let foregroundAttributionValid = producerEventsValid && !inputBatch.attributionFailed
+        if shouldCreditForegroundAttribution(
+            batch: inputBatch,
+            attributionValid: foregroundAttributionValid,
+            foregroundActive: self.allowedForeground.active)
+        {
+            self.attributedForegroundEventCount += inputBatch.foregroundEventCount
+            self.attributedForegroundSourcePIDs.formUnion(inputBatch.foregroundSourcePIDs)
+            self.foregroundActivityObserved = true
+        } else if inputBatch.foregroundEventCount > 0,
+                  foregroundAttributionValid,
+                  !self.allowedForeground.active
+        {
+            try self.block(
+                reason: "blocked_unpermitted_foreground_input",
+                sourcePIDs: inputBatch.foregroundSourcePIDs,
+                eventTypes: inputBatch.foregroundEventTypes,
+                attributionFailed: true,
+                countsRetry: false)
         }
         let observesPhysicalInput = physicalInputIsObservational(
             inputBatch,
@@ -967,7 +997,7 @@ private struct WatchState {
         {
             currentViolations.formUnion(foregroundFocusViolations(
                 current: current,
-                unexpectedActivations: deferredActivations,
+                unexpectedActivations: deferredFocusEvents.activations,
                 foreground: self.allowedForeground,
                 baseline: self.interactiveBaseline,
                 projection: self.projection))
@@ -976,8 +1006,8 @@ private struct WatchState {
             if !self.allowedForeground.active {
                 currentViolations.formUnion(transientFocusViolations(
                     externalEventCount: observesPhysicalInput ? 0 : inputBatch.externalEventCount,
-                    unexpectedActivations: deferredActivations,
-                    focusedWindowChanged: deferredFocusedWindowChange,
+                    unexpectedActivations: deferredFocusEvents.activations,
+                    focusedWindowChanged: deferredFocusEvents.focusedWindowChanged,
                     baseline: self.interactiveBaseline,
                     projection: self.projection))
             }
@@ -1006,8 +1036,8 @@ private struct WatchState {
             allowedProducerRevision: self.allowedProducerRevision ?? 0,
             phase: phase,
             cursorMovementObserved: self.cursorMovementObserved,
-            pendingActivationCount: self.pendingActivations.count,
-            pendingFocusedWindowChange: self.pendingFocusedWindowChange,
+            pendingActivationCount: self.pendingFocusEvents.activations.count,
+            pendingFocusedWindowChange: self.pendingFocusEvents.focusedWindowChanged,
             attributedForegroundEventCount: self.attributedForegroundEventCount,
             attributedForegroundSourcePIDs: self.attributedForegroundSourcePIDs.sorted(),
             foregroundActivityObserved: self.foregroundActivityObserved,
@@ -1194,6 +1224,72 @@ private func foregroundControllerCardinalityIsSafe() -> Bool {
         !foregroundControllerCardinalityIsValid(producers: [bridge, first, second], foreground: active) &&
         foregroundControllerCardinalityIsValid(producers: [bridge], foreground: revoked) &&
         !foregroundControllerCardinalityIsValid(producers: [bridge, first], foreground: revoked)
+}
+
+private func foregroundTransitionsClearDeferredFocus() -> Bool {
+    let inactive = AllowedForegroundActivity(active: false, target: nil)
+    let firstTarget = AllowedForegroundActivity(
+        active: true,
+        target: AllowedForegroundTarget(pid: 42, startIdentity: "4200", windowID: 43))
+    let secondTarget = AllowedForegroundActivity(
+        active: true,
+        target: AllowedForegroundTarget(pid: 44, startIdentity: "4400", windowID: 45))
+    let populated = PendingFocusEvents(activations: [42], focusedWindowChanged: true)
+
+    var unchanged = populated
+    unchanged.clearOnForegroundTransition(from: inactive, to: inactive)
+    guard unchanged == populated else { return false }
+
+    var granted = populated
+    granted.clearOnForegroundTransition(from: inactive, to: firstTarget)
+    guard granted == PendingFocusEvents() else { return false }
+
+    var sameGrant = populated
+    sameGrant.clearOnForegroundTransition(from: firstTarget, to: firstTarget)
+    guard sameGrant == populated else { return false }
+
+    var retargeted = populated
+    retargeted.clearOnForegroundTransition(from: firstTarget, to: secondTarget)
+    guard retargeted == PendingFocusEvents() else { return false }
+
+    var revoked = populated
+    revoked.clearOnForegroundTransition(from: firstTarget, to: inactive)
+    return revoked == PendingFocusEvents()
+}
+
+private func foregroundGenerationDriftCannotBeCredited() -> Bool {
+    let batch = InputEventBatch(
+        producerEventCount: 0,
+        producerSourcePIDs: [],
+        producerEventTypes: [],
+        foregroundEventCount: 1,
+        foregroundSourcePIDs: [42],
+        foregroundEventTypes: [CGEventType.keyDown.rawValue],
+        externalEventCount: 0,
+        externalSourcePIDs: [],
+        externalEventTypes: [],
+        attributionFailed: false)
+    let receipts = [Int32(42): "4200"]
+    let valid = producerEventsMatchReceipts(
+        batch: batch,
+        receipts: receipts,
+        processIdentity: { _ in 4200 })
+    let recycled = producerEventsMatchReceipts(
+        batch: batch,
+        receipts: receipts,
+        processIdentity: { _ in 4201 })
+    return shouldCreditForegroundAttribution(
+        batch: batch,
+        attributionValid: valid,
+        foregroundActive: true) &&
+        !shouldCreditForegroundAttribution(
+            batch: batch,
+            attributionValid: recycled,
+            foregroundActive: true) &&
+        !shouldCreditForegroundAttribution(
+            batch: batch,
+            attributionValid: valid,
+            foregroundActive: false)
 }
 
 private func physicalInputPolicyIsSafe() -> Bool {
@@ -1441,6 +1537,14 @@ private func runSelfTest() throws {
         throw ProbeError.invalidArguments(
             "foreground policy must allow exactly one active controller and none after revocation")
     }
+    guard foregroundTransitionsClearDeferredFocus() else {
+        throw ProbeError.invalidArguments(
+            "foreground grant transitions must clear deferred activation and focus state")
+    }
+    guard foregroundGenerationDriftCannotBeCredited() else {
+        throw ProbeError.invalidArguments(
+            "recycled foreground controller PIDs must not receive attribution credit")
+    }
     let transientKinds = Set(transientFocusViolations(
         externalEventCount: 0,
         unexpectedActivations: [102],
@@ -1506,7 +1610,7 @@ private func runSelfTest() throws {
         throw ProbeError.invalidArguments("unattributed foreground focus did not fail closed")
     }
 
-    try writeJSON(SelfTestResult(success: true, tests: 19), to: nil)
+    try writeJSON(SelfTestResult(success: true, tests: 21), to: nil)
 }
 
 private func findApp(arguments: [String]) throws {
