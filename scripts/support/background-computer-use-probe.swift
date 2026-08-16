@@ -63,6 +63,29 @@ private struct WatchHeartbeat: Codable {
     let attributedForegroundEventCount: Int
     let attributedForegroundSourcePIDs: [Int32]
     let foregroundActivityObserved: Bool
+
+    func withTransitionAcknowledged(_ acknowledged: Bool) -> WatchHeartbeat {
+        WatchHeartbeat(
+            sequence: self.sequence,
+            timestamp: self.timestamp,
+            lastCleanSequence: self.lastCleanSequence,
+            contaminationRetries: self.contaminationRetries,
+            contaminationBlocked: self.contaminationBlocked,
+            inputAttributionAvailable: self.inputAttributionAvailable,
+            allowedProducerRevision: self.allowedProducerRevision,
+            phase: self.phase,
+            cursorMovementObserved: self.cursorMovementObserved,
+            pendingActivationCount: self.pendingActivationCount,
+            pendingFocusedWindowChange: self.pendingFocusedWindowChange,
+            authorizationEpoch: self.authorizationEpoch,
+            transitionAcknowledged: acknowledged,
+            foregroundActive: self.foregroundActive,
+            foregroundTargetPID: self.foregroundTargetPID,
+            foregroundTargetWindowID: self.foregroundTargetWindowID,
+            attributedForegroundEventCount: self.attributedForegroundEventCount,
+            attributedForegroundSourcePIDs: self.attributedForegroundSourcePIDs,
+            foregroundActivityObserved: self.foregroundActivityObserved)
+    }
 }
 
 private struct ContaminationRecord: Codable {
@@ -239,11 +262,44 @@ private struct MonitorAuthorization: Equatable, Sendable {
     }
 }
 
+private enum MonitorEpochPhase: Equatable, Sendable {
+    case stable
+    case transition(prior: MonitorAuthorization)
+    case awaitingAcknowledgement(prior: MonitorAuthorization)
+
+    var priorAuthorization: MonitorAuthorization? {
+        switch self {
+        case .stable:
+            nil
+        case let .transition(prior), let .awaitingAcknowledgement(prior):
+            prior
+        }
+    }
+
+    var isStable: Bool {
+        if case .stable = self {
+            return true
+        }
+        return false
+    }
+
+    var requiresAcknowledgementHeartbeat: Bool {
+        if case .transition = self {
+            return true
+        }
+        return false
+    }
+}
+
 private struct MonitorEpoch: Equatable, Sendable {
     let serial: UInt64
     let authorization: MonitorAuthorization
     let lowerAdmissionCutoff: UInt64
-    let transitionBarrier: Bool
+    let phase: MonitorEpochPhase
+
+    var focusAuthorization: MonitorAuthorization {
+        self.phase.priorAuthorization ?? self.authorization
+    }
 }
 
 private struct InputEventEvidence: Equatable, Sendable {
@@ -285,11 +341,12 @@ private struct MonitorEpochClosure: Sendable {
     }
 
     var transitionAcknowledged: Bool {
-        self.epochs.contains { $0.epoch.transitionBarrier }
-    }
-
-    func appending(_ other: MonitorEpochClosure) -> MonitorEpochClosure {
-        MonitorEpochClosure(epochs: self.epochs + other.epochs)
+        self.epochs.contains {
+            if case .transition = $0.epoch.phase {
+                return true
+            }
+            return false
+        }
     }
 }
 
@@ -316,11 +373,12 @@ private struct MonitorEpochMachineState: Sendable {
     var sealedBuckets = [MonitorEpochBucket]()
     var lastAdmission: UInt64 = 0
     var nextEpochSerial: UInt64 = 2
+    var acknowledgementReadyRevision: UInt64?
 }
 
 /// The one publication/admission authority for input, activation, and focus callbacks.
-/// A callback samples evidence while holding this cutoff, so it can only land wholly
-/// before or wholly after a policy publication.
+/// A callback reserves its epoch under this cutoff, samples outside the lock, and
+/// cannot be drained until that exact reservation completes.
 private final class MonitorEpochMachine: Sendable {
     private let state: Mutex<MonitorEpochMachineState>
 
@@ -330,11 +388,15 @@ private final class MonitorEpochMachine: Sendable {
                 serial: 1,
                 authorization: initialAuthorization,
                 lowerAdmissionCutoff: 0,
-                transitionBarrier: false))))
+                phase: .stable))))
     }
 
     var currentAuthorization: MonitorAuthorization {
         self.state.withLock { $0.openBucket.epoch.authorization }
+    }
+
+    var currentPhase: MonitorEpochPhase {
+        self.state.withLock { $0.openBucket.epoch.phase }
     }
 
     func publish(_ authorization: MonitorAuthorization) -> MonitorPublicationResult {
@@ -348,12 +410,15 @@ private final class MonitorEpochMachine: Sendable {
             guard authorization.revision > current.revision else {
                 return .rejected(reason: "blocked_producer_revision_replay")
             }
+            guard state.openBucket.epoch.phase.isStable else {
+                return .rejected(reason: "blocked_producer_revision_before_ack")
+            }
             Self.sealOpenBucket(state: &state)
             state.openBucket = MonitorEpochBucket(epoch: MonitorEpoch(
                 serial: state.nextEpochSerial,
                 authorization: authorization,
                 lowerAdmissionCutoff: state.lastAdmission,
-                transitionBarrier: true))
+                phase: .transition(prior: current)))
             state.nextEpochSerial += 1
             return .published
         }
@@ -364,7 +429,7 @@ private final class MonitorEpochMachine: Sendable {
         evidence: (MonitorAuthorization) -> (source: ProcessWindowEvidence, sessionFocus: ProcessWindowEvidence?))
     {
         let token = self.reserve()
-        let sample = evidence(token.epoch.authorization)
+        let sample = evidence(token.epoch.focusAuthorization)
         let kind = MonitorEventKind.input(InputEventEvidence(
             type: type.rawValue,
             source: sample.source,
@@ -414,19 +479,73 @@ private final class MonitorEpochMachine: Sendable {
     func closeForHeartbeat() -> MonitorEpochClosure? {
         self.state.withLock { state in
             let shouldSealOpenBucket = state.sealedBuckets.isEmpty ||
-                state.openBucket.epoch.transitionBarrier ||
+                state.openBucket.epoch.phase.requiresAcknowledgementHeartbeat ||
                 !state.openBucket.pendingAdmissions.isEmpty ||
                 !state.openBucket.events.isEmpty
             if shouldSealOpenBucket {
+                let closedEpoch = state.openBucket.epoch
                 Self.sealOpenBucket(state: &state)
                 state.openBucket = MonitorEpochBucket(epoch: MonitorEpoch(
                     serial: state.nextEpochSerial,
-                    authorization: state.openBucket.epoch.authorization,
+                    authorization: closedEpoch.authorization,
                     lowerAdmissionCutoff: state.lastAdmission,
-                    transitionBarrier: false))
+                    phase: Self.continuationPhase(after: closedEpoch.phase)))
                 state.nextEpochSerial += 1
             }
             return Self.drainCompletedPrefix(state: &state)
+        }
+    }
+
+    func acknowledge(revision: UInt64) -> MonitorPublicationResult {
+        self.acknowledge(revision: revision, preparing: {}, publishing: {})
+    }
+
+    func markAcknowledgementReady(revision: UInt64) -> MonitorPublicationResult {
+        self.state.withLock { state in
+            let openEpoch = state.openBucket.epoch
+            guard openEpoch.authorization.revision == revision else {
+                return .rejected(reason: "blocked_producer_ack_revision_mismatch")
+            }
+            guard case .awaitingAcknowledgement = openEpoch.phase else {
+                return .rejected(reason: "blocked_producer_ack_without_transition")
+            }
+            state.acknowledgementReadyRevision = revision
+            return .published
+        }
+    }
+
+    func acknowledge(
+        revision: UInt64,
+        preparing acknowledgementPreparation: () throws -> Void,
+        publishing acknowledgement: () throws -> Void) rethrows -> MonitorPublicationResult
+    {
+        try self.state.withLock { state in
+            let openEpoch = state.openBucket.epoch
+            guard openEpoch.authorization.revision == revision else {
+                return .rejected(reason: "blocked_producer_ack_revision_mismatch")
+            }
+            guard case .awaitingAcknowledgement = openEpoch.phase else {
+                return .rejected(reason: "blocked_producer_ack_without_transition")
+            }
+            guard state.acknowledgementReadyRevision == revision else {
+                return .rejected(reason: "blocked_producer_ack_before_callback_barrier")
+            }
+            guard state.sealedBuckets.isEmpty,
+                  state.openBucket.pendingAdmissions.isEmpty,
+                  state.openBucket.events.isEmpty
+            else {
+                return .rejected(reason: "blocked_producer_ack_evidence_pending")
+            }
+            try acknowledgementPreparation()
+            try acknowledgement()
+            state.openBucket = MonitorEpochBucket(epoch: MonitorEpoch(
+                serial: state.nextEpochSerial,
+                authorization: openEpoch.authorization,
+                lowerAdmissionCutoff: state.lastAdmission,
+                phase: .stable))
+            state.nextEpochSerial += 1
+            state.acknowledgementReadyRevision = nil
+            return .published
         }
     }
 
@@ -479,6 +598,15 @@ private final class MonitorEpochMachine: Sendable {
         state.sealedBuckets.append(state.openBucket)
     }
 
+    private static func continuationPhase(after phase: MonitorEpochPhase) -> MonitorEpochPhase {
+        switch phase {
+        case .stable:
+            .stable
+        case let .transition(prior), let .awaitingAcknowledgement(prior):
+            .awaitingAcknowledgement(prior: prior)
+        }
+    }
+
     private static func drainCompletedPrefix(state: inout MonitorEpochMachineState) -> MonitorEpochClosure? {
         let completedCount = state.sealedBuckets.prefix { $0.pendingAdmissions.isEmpty }.count
         guard completedCount > 0 else { return nil }
@@ -505,6 +633,42 @@ private struct AttemptContaminationState {
     var permitsInteractiveEvaluation: Bool {
         !self.blocked
     }
+}
+
+private final class RunLoopIdleBarrierState: Sendable {
+    private let reached = Mutex(false)
+
+    func markReached() {
+        self.reached.withLock { $0 = true }
+    }
+
+    func wasReached() -> Bool {
+        self.reached.withLock { $0 }
+    }
+}
+
+private func runLoopReachesIdle(timeout: TimeInterval) -> Bool {
+    let runLoop = CFRunLoopGetCurrent()
+    let state = RunLoopIdleBarrierState()
+    guard let observer = CFRunLoopObserverCreateWithHandler(
+        kCFAllocatorDefault,
+        CFRunLoopActivity.beforeWaiting.rawValue,
+        false,
+        0,
+        { _, _ in
+            state.markReached()
+            CFRunLoopStop(runLoop)
+        })
+    else {
+        return false
+    }
+    CFRunLoopAddObserver(runLoop, observer, .defaultMode)
+    defer {
+        CFRunLoopRemoveObserver(runLoop, observer, .defaultMode)
+        CFRunLoopObserverInvalidate(observer)
+    }
+    _ = CFRunLoopRunInMode(.defaultMode, timeout, false)
+    return state.wasReached()
 }
 
 private final class InputEventTracker {
@@ -640,9 +804,7 @@ private final class ActivationTracker {
             }
             let pid = app.processIdentifier
             machine.admitActivation {
-                processWindowEvidence(
-                    pid: pid,
-                    windowID: focusedWindowID(pid: pid))
+                processWindowEvidence(pid: pid) { focusedWindowID(pid: pid) }
             }
         }
     }
@@ -731,11 +893,11 @@ private final class FocusedWindowTracker: FocusObserverTracking {
 
     private func focusedWindowEvidence() -> ProcessWindowEvidence {
         guard let applicationElement = self.applicationElement else {
-            return processWindowEvidence(pid: self.identity.pid, windowID: nil)
+            return processWindowEvidence(pid: self.identity.pid) { nil }
         }
-        return processWindowEvidence(
-            pid: self.identity.pid,
-            windowID: focusedWindowID(applicationElement: applicationElement))
+        return processWindowEvidence(pid: self.identity.pid) {
+            focusedWindowID(applicationElement: applicationElement)
+        }
     }
 }
 
@@ -854,10 +1016,24 @@ private func topWindowPID(windows: [[String: Any]]) -> Int32? {
     }
 }
 
-private func processWindowEvidence(pid: Int32, windowID: UInt32?) -> ProcessWindowEvidence {
-    ProcessWindowEvidence(
+private func sampleProcessWindowEvidence(
+    pid: Int32,
+    processIdentity: () -> UInt64?,
+    windowID: () -> UInt32?) -> ProcessWindowEvidence
+{
+    let identityBefore = processIdentity()
+    let sampledWindowID = windowID()
+    let identityAfter = processIdentity()
+    guard identityBefore == identityAfter, let identityBefore else {
+        return ProcessWindowEvidence(pid: pid, startIdentity: nil, windowID: nil)
+    }
+    return ProcessWindowEvidence(pid: pid, startIdentity: String(identityBefore), windowID: sampledWindowID)
+}
+
+private func processWindowEvidence(pid: Int32, windowID: () -> UInt32?) -> ProcessWindowEvidence {
+    sampleProcessWindowEvidence(
         pid: pid,
-        startIdentity: processStartIdentity(pid: pid).map(String.init),
+        processIdentity: { processStartIdentity(pid: pid) },
         windowID: windowID)
 }
 
@@ -886,7 +1062,7 @@ private func inputEventEvidence(
     sourcePID: Int32,
     authorization: MonitorAuthorization) -> (source: ProcessWindowEvidence, sessionFocus: ProcessWindowEvidence?)
 {
-    let source = processWindowEvidence(pid: sourcePID, windowID: nil)
+    let source = processWindowEvidence(pid: sourcePID) { nil }
     guard authorization.producersByPID[sourcePID]?.effectiveRole == .foregroundController,
           authorization.target != nil
     else {
@@ -894,7 +1070,7 @@ private func inputEventEvidence(
     }
     let sessionFocus = NSWorkspace.shared.frontmostApplication.map { app in
         let pid = app.processIdentifier
-        return processWindowEvidence(pid: pid, windowID: focusedWindowID(pid: pid))
+        return processWindowEvidence(pid: pid) { focusedWindowID(pid: pid) }
     }
     return (source: source, sessionFocus: sessionFocus)
 }
@@ -1044,20 +1220,35 @@ private func foregroundControllerCardinalityIsValid(
         : controllerCount == 0 && foreground.target == nil
 }
 
-private func foregroundTargetIsLive(_ target: AllowedForegroundTarget) -> Bool {
+private func foregroundTargetIsLive(
+    _ target: AllowedForegroundTarget,
+    processIdentity: () -> UInt64?,
+    windowMatches: () -> Bool) -> Bool
+{
     guard target.pid > 0,
           target.windowID > 0,
-          processStartIdentity(pid: target.pid).map(String.init) == target.startIdentity
+          processIdentity().map(String.init) == target.startIdentity,
+          windowMatches(),
+          processIdentity().map(String.init) == target.startIdentity
     else {
         return false
     }
-    let windows = CGWindowListCopyWindowInfo(
-        [.optionIncludingWindow, .excludeDesktopElements],
-        target.windowID) as? [[String: Any]] ?? []
-    return windows.contains { window in
-        (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == target.pid &&
-            (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value == target.windowID
-    }
+    return true
+}
+
+private func foregroundTargetIsLive(_ target: AllowedForegroundTarget) -> Bool {
+    foregroundTargetIsLive(
+        target,
+        processIdentity: { processStartIdentity(pid: target.pid) },
+        windowMatches: {
+            let windows = CGWindowListCopyWindowInfo(
+                [.optionIncludingWindow, .excludeDesktopElements],
+                target.windowID) as? [[String: Any]] ?? []
+            return windows.contains { window in
+                (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == target.pid &&
+                    (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value == target.windowID
+            }
+        })
 }
 
 private func makeMonitorAuthorization(
@@ -1100,6 +1291,7 @@ private func applyMonitorAuthorization(
 {
     let current = machine.currentAuthorization
     if producerSet.revision == current.revision {
+        // Exact rereads are required while this revision waits for its acknowledgement barrier.
         if !current.hasExactlyEquivalentPayload(to: producerSet) {
             machine.admitFailure(reason: "blocked_producer_revision_replay")
         }
@@ -1107,6 +1299,10 @@ private func applyMonitorAuthorization(
     }
     guard producerSet.revision > current.revision else {
         machine.admitFailure(reason: "blocked_producer_revision_replay")
+        return
+    }
+    guard machine.currentPhase.isStable else {
+        machine.admitFailure(reason: "blocked_producer_revision_before_ack")
         return
     }
     let authorization: MonitorAuthorization
@@ -1130,24 +1326,68 @@ private func applyMonitorAuthorization(
     }
 }
 
-private func closeMonitorEpoch(
-    _ machine: MonitorEpochMachine,
-    observers: FocusObserverCoordinator) -> MonitorEpochClosure?
+private func publishMonitorTransitionAcknowledgement(
+    revision: UInt64,
+    machine: MonitorEpochMachine,
+    observers: FocusObserverCoordinator,
+    processIdentity: @escaping (Int32) -> UInt64? = processStartIdentity(pid:),
+    targetValidator: @escaping (AllowedForegroundTarget) -> Bool = foregroundTargetIsLive,
+    publish: () throws -> Void = {}) throws -> MonitorPublicationResult
 {
-    guard var closure = machine.closeForHeartbeat() else { return nil }
-    if closure.transitionAcknowledged,
-       closure.finalEpoch.epoch.authorization.revision == machine.currentAuthorization.revision
-    {
-        do {
-            try observers.reconcile(activeTarget: closure.finalEpoch.epoch.authorization.target)
-        } catch {
-            machine.admitFailure(reason: "blocked_focus_observer_removal")
-            if let failureClosure = machine.closeForHeartbeat() {
-                closure = closure.appending(failureClosure)
-            }
-        }
+    let authorization = machine.currentAuthorization
+    let priorAuthorization = machine.currentPhase.priorAuthorization
+    guard authorization.revision == revision else {
+        return .rejected(reason: "blocked_producer_ack_revision_mismatch")
     }
-    return closure
+    return try machine.acknowledge(
+        revision: revision,
+        preparing: {
+            let authorizations = [authorization] + (priorAuthorization.map { [$0] } ?? [])
+            guard authorizations.allSatisfy({ candidate in
+                candidate.source.producers.filter {
+                    $0.effectiveRole == .foregroundController
+                }.allSatisfy { producer in
+                    processIdentity(producer.pid).map(String.init) == producer.startIdentity
+                } && candidate.target.map(targetValidator) != false
+            }) else {
+                throw ProbeError.invalidArguments("blocked_foreground_ack_liveness")
+            }
+            try observers.reconcile(activeTarget: authorization.target)
+        },
+        publishing: publish)
+}
+
+private struct MonitorAcknowledgementGate {
+    private(set) var pendingRevision: UInt64?
+    private(set) var readyRevision: UInt64?
+
+    mutating func record(_ closure: MonitorEpochClosure) {
+        guard closure.transitionAcknowledged else { return }
+        self.pendingRevision = closure.finalEpoch.epoch.authorization.revision
+        self.readyRevision = nil
+    }
+
+    mutating func completeCallbackBarrier(machine: MonitorEpochMachine) throws {
+        guard let pendingRevision = self.pendingRevision else { return }
+        guard machine.markAcknowledgementReady(revision: pendingRevision) == .published else {
+            throw ProbeError.invalidArguments("blocked_producer_ack_callback_barrier")
+        }
+        self.readyRevision = pendingRevision
+    }
+
+    mutating func didPublish(revision: UInt64) {
+        precondition(self.pendingRevision == revision && self.readyRevision == revision)
+        self.pendingRevision = nil
+        self.readyRevision = nil
+    }
+}
+
+private func monitorRequiresIdleBarrier(
+    pendingAcknowledgementRevision: UInt64?,
+    currentRevision: UInt64,
+    proposedRevision: UInt64) -> Bool
+{
+    pendingAcknowledgementRevision != nil || proposedRevision > currentRevision
 }
 
 private func evidenceMatches(
@@ -1197,13 +1437,8 @@ private func currentFocusViolations(
     projection: InvariantProjection) -> Set<Violation>
 {
     var allowed = Set(["\(baseline.frontmostPID):\(baseline.frontmostWindowID)"])
-    let authorizations = closure.transitionAcknowledged
-        ? closure.epochs.map(\.epoch.authorization)
-        : [closure.finalEpoch.epoch.authorization]
-    for authorization in authorizations {
-        if let target = authorization.target {
-            allowed.insert("\(target.pid):\(target.windowID)")
-        }
+    if let target = closure.finalEpoch.epoch.focusAuthorization.target {
+        allowed.insert("\(target.pid):\(target.windowID)")
     }
     let currentKey = current.frontmostPID.flatMap { pid in
         current.frontmostWindowID.map { "\(pid):\($0)" }
@@ -1239,6 +1474,11 @@ private struct ClosedEpochEvaluation {
     let focusCount: Int
 }
 
+private struct ForegroundActivitySummary {
+    var eventCount = 0
+    var sourcePIDs = Set<Int32>()
+}
+
 private struct WatchState {
     let baseline: SystemSample
     let interactiveBaseline: InteractiveBaseline
@@ -1255,9 +1495,7 @@ private struct WatchState {
     private var contaminationState = AttemptContaminationState()
     private var inputAttributionAvailable = true
     private var cursorMovementObserved = false
-    private var attributedForegroundEventCount = 0
-    private var attributedForegroundSourcePIDs = Set<Int32>()
-    private var foregroundActivityObserved = false
+    private var foregroundActivityByRevision = [UInt64: ForegroundActivitySummary]()
 
     mutating func observe(
         current: SystemSample,
@@ -1291,6 +1529,7 @@ private struct WatchState {
             let evaluation = try self.evaluate(
                 closedEpoch: closedEpoch,
                 phase: phase,
+                processIdentity: processIdentity,
                 targetValidator: targetValidator)
             currentViolations.formUnion(evaluation.violations)
             totalActivationCount += evaluation.activationCount
@@ -1301,19 +1540,17 @@ private struct WatchState {
 
         let evaluateInteractive = allEpochsPermitInteractiveEvaluation && self.inputAttributionAvailable &&
             self.contaminationState.permitsInteractiveEvaluation
+        let finalEpoch = closure.finalEpoch.epoch
+        let focusAuthorization = finalEpoch.focusAuthorization
         let context = InvariantEvaluationContext(
             baseline: self.baseline,
             interactiveBaseline: self.interactiveBaseline,
             allowClipboardMutation: self.allowClipboardMutation,
-            evaluateInteractiveInvariants: evaluateInteractive &&
-                !closure.finalEpoch.epoch.authorization.foreground.active &&
-                !closure.transitionAcknowledged,
+            evaluateInteractiveInvariants: evaluateInteractive && !focusAuthorization.foreground.active,
             cursorObservational: self.cursorObservational,
             projection: self.projection)
         currentViolations.formUnion(violations(current: current, context: context))
-        if evaluateInteractive,
-           closure.finalEpoch.epoch.authorization.foreground.active || closure.transitionAcknowledged
-        {
+        if evaluateInteractive, focusAuthorization.foreground.active {
             currentViolations.formUnion(currentFocusViolations(
                 current: current,
                 closure: closure,
@@ -1334,10 +1571,12 @@ private struct WatchState {
         }
 
         self.sequence += 1
-        if evaluateInteractive, !closure.transitionAcknowledged, currentViolations.isEmpty {
+        if evaluateInteractive, finalEpoch.phase.isStable, currentViolations.isEmpty {
             self.lastCleanSequence = self.sequence
         }
         let finalAuthorization = closure.finalEpoch.epoch.authorization
+        let finalActivity = self.foregroundActivityByRevision[finalAuthorization.revision] ??
+            ForegroundActivitySummary()
         return WatchHeartbeat(
             sequence: self.sequence,
             timestamp: current.timestamp,
@@ -1355,18 +1594,34 @@ private struct WatchState {
             foregroundActive: finalAuthorization.foreground.active,
             foregroundTargetPID: finalAuthorization.target?.pid,
             foregroundTargetWindowID: finalAuthorization.target?.windowID,
-            attributedForegroundEventCount: self.attributedForegroundEventCount,
-            attributedForegroundSourcePIDs: self.attributedForegroundSourcePIDs.sorted(),
-            foregroundActivityObserved: self.foregroundActivityObserved)
+            attributedForegroundEventCount: finalActivity.eventCount,
+            attributedForegroundSourcePIDs: finalActivity.sourcePIDs.sorted(),
+            foregroundActivityObserved: finalActivity.eventCount > 0)
     }
 
     private mutating func evaluate(
         closedEpoch: ClosedMonitorEpoch,
         phase: String,
+        processIdentity: (Int32) -> UInt64?,
         targetValidator: (AllowedForegroundTarget) -> Bool) throws -> ClosedEpochEvaluation
     {
         let authorization = closedEpoch.epoch.authorization
-        if let target = authorization.target, !targetValidator(target) {
+        let producers = Set(
+            (authorization.source.producers + closedEpoch.epoch.focusAuthorization.source.producers).filter {
+                $0.effectiveRole == .foregroundController
+            })
+        for producer in producers
+            where processIdentity(producer.pid).map(String.init) != producer.startIdentity
+        {
+            try self.block(
+                reason: "blocked_producer_generation_drift",
+                sourcePIDs: [producer.pid],
+                eventTypes: [],
+                attributionFailed: true,
+                countsRetry: false)
+        }
+        let targets = Set([authorization.target, closedEpoch.epoch.focusAuthorization.target].compactMap(\.self))
+        for target in targets where !targetValidator(target) {
             try self.block(
                 reason: "blocked_foreground_target_drift",
                 sourcePIDs: [target.pid],
@@ -1376,7 +1631,7 @@ private struct WatchState {
         }
         let classification = try self.classify(
             events: closedEpoch.events,
-            authorization: authorization)
+            epoch: closedEpoch.epoch)
         var epochViolations = Set<Violation>()
         if !classification.bridgeSources.isEmpty {
             epochViolations.insert(Violation(
@@ -1402,7 +1657,7 @@ private struct WatchState {
         } else {
             try epochViolations.formUnion(self.focusViolations(
                 classification.focusEvents,
-                authorization: authorization))
+                authorization: closedEpoch.epoch.focusAuthorization))
         }
         return ClosedEpochEvaluation(
             violations: epochViolations,
@@ -1413,7 +1668,7 @@ private struct WatchState {
 
     private mutating func classify(
         events: [MonitorEvent],
-        authorization: MonitorAuthorization) throws -> ClosedEpochEventClassification
+        epoch: MonitorEpoch) throws -> ClosedEpochEventClassification
     {
         var classification = ClosedEpochEventClassification()
         for event in events {
@@ -1428,7 +1683,7 @@ private struct WatchState {
             case let .input(input):
                 try self.classify(
                     input: input,
-                    authorization: authorization,
+                    epoch: epoch,
                     into: &classification)
             case let .activation(evidence):
                 classification.activationCount += 1
@@ -1453,9 +1708,22 @@ private struct WatchState {
 
     private mutating func classify(
         input: InputEventEvidence,
-        authorization: MonitorAuthorization,
+        epoch: MonitorEpoch,
         into classification: inout ClosedEpochEventClassification) throws
     {
+        let authorization = epoch.focusAuthorization
+        if !epoch.phase.isStable,
+           authorization.producersByPID[input.source.pid] == nil,
+           epoch.authorization.producersByPID[input.source.pid]?.effectiveRole == .foregroundController
+        {
+            try self.block(
+                reason: "blocked_foreground_input_before_transition_ack",
+                sourcePIDs: [input.source.pid],
+                eventTypes: [input.type],
+                attributionFailed: true,
+                countsRetry: false)
+            return
+        }
         guard let producer = authorization.producersByPID[input.source.pid] else {
             classification.externalInputs.append(input)
             return
@@ -1490,10 +1758,16 @@ private struct WatchState {
                     countsRetry: false)
                 return
             }
-            self.attributedForegroundEventCount += 1
-            self.attributedForegroundSourcePIDs.insert(input.source.pid)
-            self.foregroundActivityObserved = true
+            var activity = self.foregroundActivityByRevision[authorization.revision] ??
+                ForegroundActivitySummary()
+            activity.eventCount += 1
+            activity.sourcePIDs.insert(input.source.pid)
+            self.foregroundActivityByRevision[authorization.revision] = activity
         }
+    }
+
+    func foregroundActivity(for revision: UInt64) -> ForegroundActivitySummary {
+        self.foregroundActivityByRevision[revision] ?? ForegroundActivitySummary()
     }
 
     private mutating func focusViolations(
@@ -1568,6 +1842,40 @@ private func writeJSON(_ value: some Encodable, to path: String?) throws {
     } else {
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+}
+
+private final class PreparedJSONPublication {
+    private let temporaryURL: URL
+    private let destinationURL: URL
+    private var committed = false
+
+    init(_ value: some Encodable, destinationPath: String) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        var data = try encoder.encode(value)
+        data.append(Data("\n".utf8))
+        self.destinationURL = URL(fileURLWithPath: destinationPath)
+        self.temporaryURL = self.destinationURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(".\(self.destinationURL.lastPathComponent).\(UUID().uuidString).tmp")
+        try data.write(to: self.temporaryURL)
+    }
+
+    deinit {
+        if !self.committed {
+            try? FileManager.default.removeItem(at: self.temporaryURL)
+        }
+    }
+
+    func commit() throws {
+        guard !self.committed else {
+            throw ProbeError.invalidArguments("prepared JSON publication was already committed")
+        }
+        guard rename(self.temporaryURL.path, self.destinationURL.path) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        self.committed = true
     }
 }
 
@@ -1658,15 +1966,28 @@ private func runWatch(arguments: [String]) throws -> Never {
         outputPath: outputPath,
         contaminationOutputPath: contaminationOutputPath)
     var firstSample = true
+    var acknowledgementGate = MonitorAcknowledgementGate()
     while true {
         CFRunLoopRunInMode(
             .defaultMode,
             Double(intervalMilliseconds) / 1000,
-            true)
+            false)
         let producerData = try Data(contentsOf: URL(fileURLWithPath: allowedProducersPath))
         let allowedProducerSet = try JSONDecoder().decode(AllowedEventProducerSet.self, from: producerData)
-        applyMonitorAuthorization(allowedProducerSet, to: machine, observers: focusObservers)
-        guard let closure = closeMonitorEpoch(machine, observers: focusObservers) else {
+        let publishingHigherRevision = allowedProducerSet.revision > machine.currentAuthorization.revision
+        let requiresIdleBarrier = monitorRequiresIdleBarrier(
+            pendingAcknowledgementRevision: acknowledgementGate.pendingRevision,
+            currentRevision: machine.currentAuthorization.revision,
+            proposedRevision: allowedProducerSet.revision)
+        let reachedIdleBarrier = !requiresIdleBarrier ||
+            runLoopReachesIdle(timeout: max(Double(intervalMilliseconds) / 1000, 0.1))
+        if reachedIdleBarrier {
+            try acknowledgementGate.completeCallbackBarrier(machine: machine)
+        }
+        if !publishingHigherRevision || reachedIdleBarrier {
+            applyMonitorAuthorization(allowedProducerSet, to: machine, observers: focusObservers)
+        }
+        guard let closure = machine.closeForHeartbeat() else {
             continue
         }
         let current = try sample(includeClipboardDigest: false)
@@ -1679,10 +2000,45 @@ private func runWatch(arguments: [String]) throws -> Never {
             current: current,
             phase: phase,
             closure: closure)
-        try writeJSON(
-            heartbeat,
-            to: heartbeatPath)
-        if firstSample {
+        acknowledgementGate.record(closure)
+        var publishedHeartbeat = false
+        if let revision = acknowledgementGate.pendingRevision {
+            if heartbeat.contaminationBlocked || !heartbeat.inputAttributionAvailable {
+                try writeJSON(heartbeat.withTransitionAcknowledged(false), to: heartbeatPath)
+                publishedHeartbeat = true
+            } else if acknowledgementGate.readyRevision == revision {
+                let preparedHeartbeat = try PreparedJSONPublication(
+                    heartbeat.withTransitionAcknowledged(true),
+                    destinationPath: heartbeatPath)
+                if runLoopReachesIdle(timeout: max(Double(intervalMilliseconds) / 1000, 0.1)) {
+                    let result = try publishMonitorTransitionAcknowledgement(
+                        revision: revision,
+                        machine: machine,
+                        observers: focusObservers,
+                        publish: { try preparedHeartbeat.commit() })
+                    switch result {
+                    case .published:
+                        acknowledgementGate.didPublish(revision: revision)
+                        publishedHeartbeat = true
+                    case .rejected(reason: "blocked_producer_ack_evidence_pending"):
+                        try writeJSON(heartbeat.withTransitionAcknowledged(false), to: heartbeatPath)
+                        publishedHeartbeat = true
+                    case .idempotent, .rejected:
+                        throw ProbeError.invalidArguments("blocked_producer_ack_publication")
+                    }
+                } else {
+                    try writeJSON(heartbeat.withTransitionAcknowledged(false), to: heartbeatPath)
+                    publishedHeartbeat = true
+                }
+            } else {
+                try writeJSON(heartbeat.withTransitionAcknowledged(false), to: heartbeatPath)
+                publishedHeartbeat = true
+            }
+        } else {
+            try writeJSON(heartbeat.withTransitionAcknowledged(false), to: heartbeatPath)
+            publishedHeartbeat = true
+        }
+        if firstSample, publishedHeartbeat {
             try Data("ready\n".utf8).write(to: URL(fileURLWithPath: readyPath), options: .atomic)
             firstSample = false
         }
@@ -1771,6 +2127,11 @@ private func testEvidence(_ pid: Int32, _ startIdentity: String?, _ windowID: UI
     ProcessWindowEvidence(pid: pid, startIdentity: startIdentity, windowID: windowID)
 }
 
+private func acknowledgeForTesting(_ machine: MonitorEpochMachine, revision: UInt64) -> Bool {
+    machine.markAcknowledgementReady(revision: revision) == .published &&
+        machine.acknowledge(revision: revision) == .published
+}
+
 private func selfTestDesktop() -> (sample: SystemSample, baseline: InteractiveBaseline) {
     let sample = SystemSample(
         timestamp: 1,
@@ -1806,7 +2167,6 @@ private final class MonitorClosureCapture: Sendable {
 private struct MonitorAdmissionLatencyResult: Sendable {
     let publication: MonitorPublicationResult
     let heartbeatDeferred: Bool
-    let elapsed: Duration
 }
 
 private final class MonitorAdmissionLatencyCapture: Sendable {
@@ -1842,17 +2202,14 @@ private func suspendedSamplingDoesNotHoldPublicationLock() -> Bool {
     guard samplingStarted.wait(timeout: .now() + .seconds(1)) == .success else { return false }
 
     DispatchQueue.global(qos: .userInitiated).async {
-        let clock = ContinuousClock()
-        let start = clock.now
         let publication = machine.publish(second)
         let heartbeatDeferred = machine.closeForHeartbeat() == nil
         capture.store(MonitorAdmissionLatencyResult(
             publication: publication,
-            heartbeatDeferred: heartbeatDeferred,
-            elapsed: start.duration(to: clock.now)))
+            heartbeatDeferred: heartbeatDeferred))
         publicationFinished.signal()
     }
-    let completedBeforeRelease = publicationFinished.wait(timeout: .now() + .milliseconds(100)) == .success
+    let completedBeforeRelease = publicationFinished.wait(timeout: .now() + .seconds(1)) == .success
     releaseSampling.signal()
     guard samplingFinished.wait(timeout: .now() + .seconds(1)) == .success else { return false }
     if !completedBeforeRelease {
@@ -1862,7 +2219,6 @@ private func suspendedSamplingDoesNotHoldPublicationLock() -> Bool {
     guard let result = capture.load(),
           result.publication == .published,
           result.heartbeatDeferred,
-          result.elapsed < .milliseconds(50),
           let closure = machine.closeForHeartbeat()
     else {
         return false
@@ -1943,7 +2299,8 @@ private func recordPublishDrainIsLinearizable() -> Bool {
                       event.admission <= closed.upperAdmissionCutoff
               }),
               epochs.contains(where: {
-                  $0.epoch.authorization.revision == 2 && $0.epoch.transitionBarrier
+                  $0.epoch.authorization.revision == 2 &&
+                      $0.epoch.phase.requiresAcknowledgementHeartbeat
               })
         else {
             return false
@@ -1962,14 +2319,303 @@ private func exactPublicationCutoffIsClosed() -> Bool {
     guard let closure = machine.closeForHeartbeat(), closure.epochs.count == 2 else { return false }
     let old = closure.epochs[0]
     let new = closure.epochs[1]
-    return old.epoch.authorization.revision == 1 && old.upperAdmissionCutoff == 1 &&
-        old.events.map(\.admission) == [1] &&
-        new.epoch.authorization.revision == 2 && new.epoch.lowerAdmissionCutoff == 1 &&
-        new.upperAdmissionCutoff == 2 && new.events.map(\.admission) == [2] &&
-        closure.transitionAcknowledged
+    guard old.epoch.authorization.revision == 1, old.upperAdmissionCutoff == 1,
+          old.events.map(\.admission) == [1], old.epoch.phase.isStable,
+          new.epoch.authorization.revision == 2, new.epoch.focusAuthorization.revision == 1,
+          new.epoch.lowerAdmissionCutoff == 1, new.upperAdmissionCutoff == 2,
+          new.events.map(\.admission) == [2], closure.transitionAcknowledged,
+          acknowledgeForTesting(machine, revision: second.revision)
+    else {
+        return false
+    }
+    machine.admitForTesting(.activation(testEvidence(10, "1000", 100)))
+    guard let stableClosure = machine.closeForHeartbeat(),
+          let stableEvent = stableClosure.epochs.flatMap(\.events).first
+    else {
+        return false
+    }
+    return stableEvent.epoch.authorization.revision == 2 && stableEvent.epoch.phase.isStable
 }
 
-private func queuedRevisionsRemainDistinct() -> Bool {
+private enum MonitorAcknowledgementTestError: Error {
+    case requestedFailure
+}
+
+private func acknowledgementWriteOwnsAdmissionCutoff() -> Bool {
+    let first = testAuthorization(testProducerSet(revision: 1, producers: []))
+    let second = testAuthorization(testProducerSet(revision: 2, producers: []))
+    let machine = MonitorEpochMachine(initialAuthorization: first)
+    guard machine.publish(second) == .published,
+          machine.acknowledge(revision: second.revision) ==
+          .rejected(reason: "blocked_producer_ack_without_transition"),
+          let closure = machine.closeForHeartbeat(),
+          closure.transitionAcknowledged,
+          machine.acknowledge(revision: second.revision + 1) ==
+          .rejected(reason: "blocked_producer_ack_revision_mismatch"),
+          machine.acknowledge(revision: second.revision) ==
+          .rejected(reason: "blocked_producer_ack_before_callback_barrier"),
+          machine.markAcknowledgementReady(revision: second.revision) == .published
+    else {
+        return false
+    }
+    do {
+        _ = try machine.acknowledge(revision: second.revision, preparing: {}, publishing: {
+            throw MonitorAcknowledgementTestError.requestedFailure
+        })
+        return false
+    } catch MonitorAcknowledgementTestError.requestedFailure {
+        guard !machine.currentPhase.isStable else { return false }
+    } catch {
+        return false
+    }
+
+    let reservationStarted = DispatchSemaphore(value: 0)
+    let reservationFinished = DispatchSemaphore(value: 0)
+    let capturedToken = Mutex<MonitorAdmissionToken?>(nil)
+    var reservationCompletedDuringWrite = false
+    let result: MonitorPublicationResult
+    do {
+        result = try machine.acknowledge(revision: second.revision, preparing: {}, publishing: {
+            DispatchQueue.global(qos: .userInitiated).async {
+                reservationStarted.signal()
+                let token = machine.reserveForTesting()
+                capturedToken.withLock { $0 = token }
+                reservationFinished.signal()
+            }
+            guard reservationStarted.wait(timeout: .now() + .seconds(1)) == .success else {
+                throw MonitorAcknowledgementTestError.requestedFailure
+            }
+            reservationCompletedDuringWrite =
+                reservationFinished.wait(timeout: .now() + .milliseconds(100)) == .success
+        })
+    } catch {
+        return false
+    }
+    guard result == .published, !reservationCompletedDuringWrite,
+          reservationFinished.wait(timeout: .now() + .seconds(1)) == .success,
+          let token = capturedToken.withLock({ $0 }), token.epoch.phase.isStable,
+          token.epoch.authorization.revision == second.revision,
+          machine.cancelForTesting(token, reason: "test_cleanup"),
+          machine.acknowledge(revision: second.revision) ==
+          .rejected(reason: "blocked_producer_ack_without_transition")
+    else {
+        return false
+    }
+    return true
+}
+
+private func sealedPreAcknowledgementBucketsBlockPublication() -> Bool {
+    let first = testAuthorization(testProducerSet(revision: 1, producers: []))
+    let second = testAuthorization(testProducerSet(revision: 2, producers: []))
+    let machine = MonitorEpochMachine(initialAuthorization: first)
+    guard machine.publish(second) == .published,
+          machine.closeForHeartbeat()?.transitionAcknowledged == true,
+          machine.markAcknowledgementReady(revision: second.revision) == .published
+    else {
+        return false
+    }
+    let firstPending = machine.reserveForTesting()
+    guard machine.closeForHeartbeat() == nil else { return false }
+    let secondPending = machine.reserveForTesting()
+    guard machine.closeForHeartbeat() == nil,
+          machine.completeForTesting(
+              firstPending,
+              with: .activation(testEvidence(10, "1000", 100))),
+          machine.closeForHeartbeat() != nil,
+          machine.acknowledge(revision: second.revision) ==
+          .rejected(reason: "blocked_producer_ack_evidence_pending"),
+          machine.completeForTesting(
+              secondPending,
+              with: .activation(testEvidence(10, "1000", 100))),
+          machine.closeForHeartbeat() != nil,
+          machine.acknowledge(revision: second.revision) == .published
+    else {
+        return false
+    }
+    return machine.currentPhase.isStable
+}
+
+private func acknowledgementGateRequiresNextCallbackTurn() -> Bool {
+    let first = testAuthorization(testProducerSet(revision: 1, producers: []))
+    let second = testAuthorization(testProducerSet(revision: 2, producers: []))
+    let machine = MonitorEpochMachine(initialAuthorization: first)
+    guard machine.publish(second) == .published,
+          let closure = machine.closeForHeartbeat(),
+          closure.transitionAcknowledged
+    else {
+        return false
+    }
+    var gate = MonitorAcknowledgementGate()
+    gate.record(closure)
+    guard gate.pendingRevision == second.revision, gate.readyRevision == nil,
+          machine.acknowledge(revision: second.revision) ==
+          .rejected(reason: "blocked_producer_ack_before_callback_barrier")
+    else {
+        return false
+    }
+    do {
+        try gate.completeCallbackBarrier(machine: machine)
+    } catch {
+        return false
+    }
+    guard gate.readyRevision == second.revision,
+          machine.acknowledge(revision: second.revision) == .published
+    else {
+        return false
+    }
+    gate.didPublish(revision: second.revision)
+    return gate.pendingRevision == nil && gate.readyRevision == nil && machine.currentPhase.isStable
+}
+
+private func stableMonitoringDoesNotRequireIdleBarrier() -> Bool {
+    !monitorRequiresIdleBarrier(
+        pendingAcknowledgementRevision: nil,
+        currentRevision: 7,
+        proposedRevision: 7) &&
+        !monitorRequiresIdleBarrier(
+            pendingAcknowledgementRevision: nil,
+            currentRevision: 7,
+            proposedRevision: 6) &&
+        monitorRequiresIdleBarrier(
+            pendingAcknowledgementRevision: nil,
+            currentRevision: 7,
+            proposedRevision: 8) &&
+        monitorRequiresIdleBarrier(
+            pendingAcknowledgementRevision: 7,
+            currentRevision: 7,
+            proposedRevision: 7)
+}
+
+private func finalIdleBarrierDefersQueuedEvidence() -> Bool {
+    let first = testAuthorization(testProducerSet(revision: 1, producers: []))
+    let second = testAuthorization(testProducerSet(revision: 2, producers: []))
+    let machine = MonitorEpochMachine(initialAuthorization: first)
+    guard machine.publish(second) == .published,
+          machine.closeForHeartbeat()?.transitionAcknowledged == true,
+          machine.markAcknowledgementReady(revision: second.revision) == .published
+    else {
+        return false
+    }
+    let runLoop = CFRunLoopGetCurrent()
+    CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue) {
+        machine.admitActivation { testEvidence(10, "1000", 100) }
+    }
+    CFRunLoopWakeUp(runLoop)
+    guard runLoopReachesIdle(timeout: 1),
+          machine.acknowledge(revision: second.revision) ==
+          .rejected(reason: "blocked_producer_ack_evidence_pending"),
+          let closure = machine.closeForHeartbeat()
+    else {
+        return false
+    }
+    return closure.epochs.flatMap(\.events).count == 1 && !machine.currentPhase.isStable
+}
+
+private func transitionHeartbeatRetainsPendingEvidence(
+    directory: String,
+    projection: InvariantProjection) throws -> Bool
+{
+    let desktop = selfTestDesktop()
+    let firstProducer = testProducer(20, "2000")
+    let secondProducer = testProducer(21, "2100")
+    let first = testAuthorization(testProducerSet(revision: 1, producers: [firstProducer]))
+    let second = testAuthorization(testProducerSet(revision: 2, producers: [firstProducer, secondProducer]))
+    let machine = MonitorEpochMachine(initialAuthorization: first)
+    guard machine.publish(second) == .published else { return false }
+    machine.admitActivation { testEvidence(10, "1000", 100) }
+    guard let closure = machine.closeForHeartbeat() else { return false }
+    var watch = makeSelfTestWatchState(
+        desktop: desktop,
+        projection: projection,
+        outputPath: "\(directory)/transition-summary-violations.jsonl",
+        contaminationPath: "\(directory)/transition-summary-contamination.jsonl")
+    let heartbeat = try watch.observe(
+        current: desktop.sample,
+        phase: "running",
+        closure: closure,
+        processIdentity: { [10: 1000, 20: 2000, 21: 2100][$0] },
+        targetValidator: { _ in true })
+    let unpublished = heartbeat.withTransitionAcknowledged(false)
+    return heartbeat.transitionAcknowledged && unpublished.pendingActivationCount == 1 &&
+        unpublished.pendingFocusedWindowChange == heartbeat.pendingFocusedWindowChange &&
+        !unpublished.transitionAcknowledged && unpublished.sequence == heartbeat.sequence &&
+        unpublished.allowedProducerRevision == heartbeat.allowedProducerRevision
+}
+
+private func notificationEvidenceIsCapturedAtAdmission() -> Bool {
+    let authorization = testAuthorization(testProducerSet(revision: 1, producers: []))
+    let machine = MonitorEpochMachine(initialAuthorization: authorization)
+    var activationEvidence = testEvidence(40, "4000", 401)
+    machine.admitActivation { activationEvidence }
+    activationEvidence = testEvidence(40, "4001", 402)
+    let observer = ProcessGenerationIdentity(pid: 40, startIdentity: "4000")
+    var focusEvidence = testEvidence(40, "4000", 401)
+    machine.admitFocus(observer: observer) { focusEvidence }
+    focusEvidence = testEvidence(40, "4001", 402)
+    guard let closure = machine.closeForHeartbeat() else { return false }
+    let events = closure.epochs.flatMap(\.events)
+    guard events.count == 2 else { return false }
+    guard case let .activation(capturedActivation) = events[0].kind,
+          case let .focus(capturedFocus) = events[1].kind
+    else {
+        return false
+    }
+    return capturedActivation == testEvidence(40, "4000", 401) &&
+        capturedFocus == FocusEventEvidence(observer: observer, observed: testEvidence(40, "4000", 401))
+}
+
+private func processWindowEvidenceRejectsGenerationABA() -> Bool {
+    var identities = [UInt64(4000), UInt64(4001)].makeIterator()
+    let driftedEvidence = sampleProcessWindowEvidence(
+        pid: 40,
+        processIdentity: { identities.next() },
+        windowID: { 401 })
+    guard driftedEvidence == testEvidence(40, nil, nil) else { return false }
+
+    let stableEvidence = sampleProcessWindowEvidence(
+        pid: 40,
+        processIdentity: { 4000 },
+        windowID: { 401 })
+    let target = AllowedForegroundTarget(pid: 40, startIdentity: "4000", windowID: 401)
+    var targetIdentities = [UInt64(4000), UInt64(4001)].makeIterator()
+    let driftedTargetAccepted = foregroundTargetIsLive(
+        target,
+        processIdentity: { targetIdentities.next() },
+        windowMatches: { true })
+    let stableTargetAccepted = foregroundTargetIsLive(
+        target,
+        processIdentity: { 4000 },
+        windowMatches: { true })
+    return stableEvidence == testEvidence(40, "4000", 401) &&
+        !driftedTargetAccepted && stableTargetAccepted
+}
+
+private func idleBarrierDrainsQueuedCallbacksBeforePublication() -> Bool {
+    let first = testAuthorization(testProducerSet(revision: 1, producers: []))
+    let second = testAuthorization(testProducerSet(revision: 2, producers: []))
+    let machine = MonitorEpochMachine(initialAuthorization: first)
+    let callbacks = Mutex<[Int]>([])
+    let runLoop = CFRunLoopGetCurrent()
+    CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue) {
+        callbacks.withLock { $0.append(1) }
+    }
+    CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue) {
+        callbacks.withLock { $0.append(2) }
+        machine.admitActivation { testEvidence(10, "1000", 100) }
+    }
+    CFRunLoopWakeUp(runLoop)
+    guard runLoopReachesIdle(timeout: 1), callbacks.withLock({ $0 }) == [1, 2],
+          machine.publish(second) == .published,
+          let closure = machine.closeForHeartbeat(),
+          let event = closure.epochs.flatMap(\.events).first
+    else {
+        return false
+    }
+    return event.epoch.authorization.revision == first.revision &&
+        closure.finalEpoch.epoch.authorization.revision == second.revision
+}
+
+private func revisionsRequireAcknowledgement() -> Bool {
     let bridge = testProducer(20, "2000")
     let controller = testProducer(30, "3000", role: .foregroundController)
     let targetA = AllowedForegroundTarget(pid: 40, startIdentity: "4000", windowID: 401)
@@ -1995,13 +2641,26 @@ private func queuedRevisionsRemainDistinct() -> Bool {
             foreground: AllowedForegroundActivity(active: true, target: targetC)),
         testProducerSet(revision: 5, producers: [bridge], foreground: inactive),
     ]
+    var acknowledgedRevisions = [UInt64]()
     for producerSet in revisions {
-        guard machine.publish(testAuthorization(producerSet)) == .published else { return false }
+        let authorization = testAuthorization(producerSet)
+        guard machine.publish(authorization) == .published else { return false }
+        if producerSet.revision == 2 {
+            let next = testAuthorization(revisions[1])
+            guard case .rejected(reason: "blocked_producer_revision_before_ack") = machine.publish(next) else {
+                return false
+            }
+        }
+        guard let closure = machine.closeForHeartbeat(),
+              closure.transitionAcknowledged,
+              closure.finalEpoch.epoch.authorization.revision == producerSet.revision,
+              acknowledgeForTesting(machine, revision: producerSet.revision)
+        else {
+            return false
+        }
+        acknowledgedRevisions.append(producerSet.revision)
     }
-    guard let closure = machine.closeForHeartbeat() else { return false }
-    return closure.epochs.map(\.epoch.authorization.revision) == [1, 2, 3, 4, 5] &&
-        closure.epochs.dropFirst().allSatisfy(\.epoch.transitionBarrier) &&
-        closure.finalEpoch.epoch.authorization.target == nil
+    return acknowledgedRevisions == [2, 3, 4, 5] && machine.currentAuthorization.target == nil
 }
 
 private func equalRevisionRequiresExactPayload() -> Bool {
@@ -2021,7 +2680,7 @@ private func equalRevisionRequiresExactPayload() -> Bool {
     return true
 }
 
-private func grantRetargetRevokeRetainsEventEpochs() -> Bool {
+private func queuedGrantEraEventsRetainAuthorization() -> Bool {
     let bridge = testProducer(20, "2000")
     let controller = testProducer(30, "3000", role: .foregroundController)
     let targetA = AllowedForegroundTarget(pid: 40, startIdentity: "4000", windowID: 401)
@@ -2040,23 +2699,42 @@ private func grantRetargetRevokeRetainsEventEpochs() -> Bool {
         producers: [bridge, controller],
         foreground: AllowedForegroundActivity(active: true, target: targetB)))
     let revoke = testAuthorization(testProducerSet(revision: 4, producers: [bridge], foreground: inactive))
-    guard machine.publish(grant) == .published else { return false }
-    machine.admitForTesting(.input(InputEventEvidence(
-        type: CGEventType.keyDown.rawValue,
-        source: testEvidence(30, "3000", nil),
-        sessionFocus: testEvidence(40, "4000", 401))))
-    guard machine.publish(retarget) == .published else { return false }
-    machine.admitForTesting(.focus(FocusEventEvidence(
-        observer: ProcessGenerationIdentity(pid: 40, startIdentity: "4000"),
-        observed: testEvidence(40, "4000", 401))))
-    guard machine.publish(revoke) == .published else { return false }
+    guard machine.publish(grant) == .published,
+          let grantClosure = machine.closeForHeartbeat(),
+          grantClosure.transitionAcknowledged,
+          acknowledgeForTesting(machine, revision: grant.revision)
+    else {
+        return false
+    }
+    let queuedGrantInput = machine.reserveForTesting()
+    guard machine.publish(retarget) == .published,
+          machine.completeForTesting(queuedGrantInput, with: .input(InputEventEvidence(
+              type: CGEventType.keyDown.rawValue,
+              source: testEvidence(30, "3000", nil),
+              sessionFocus: testEvidence(40, "4000", 401)))),
+          let retargetClosure = machine.closeForHeartbeat(),
+          retargetClosure.transitionAcknowledged,
+          acknowledgeForTesting(machine, revision: retarget.revision)
+    else {
+        return false
+    }
+    let queuedRetargetFocus = machine.reserveForTesting()
+    guard machine.publish(revoke) == .published,
+          machine.completeForTesting(queuedRetargetFocus, with: .focus(FocusEventEvidence(
+              observer: ProcessGenerationIdentity(pid: 40, startIdentity: "4000"),
+              observed: testEvidence(40, "4000", 402))))
+    else {
+        return false
+    }
     machine.admitForTesting(.input(InputEventEvidence(
         type: CGEventType.keyDown.rawValue,
         source: testEvidence(30, "3000", nil),
         sessionFocus: testEvidence(40, "4000", 402))))
-    guard let closure = machine.closeForHeartbeat() else { return false }
-    let events = closure.epochs.flatMap(\.events)
-    return events.count == 3 && events.map(\.epoch.authorization.revision) == [2, 3, 4]
+    guard let revokeClosure = machine.closeForHeartbeat(), revokeClosure.transitionAcknowledged else { return false }
+    let events = retargetClosure.epochs.flatMap(\.events) + revokeClosure.epochs.flatMap(\.events)
+    return events.count == 3 && events.map(\.epoch.authorization.revision) == [2, 3, 4] &&
+        events[0].epoch.phase.isStable && events[1].epoch.phase.isStable &&
+        events[2].epoch.phase.requiresAcknowledgementHeartbeat
 }
 
 private enum FakeFocusObserverError: Error {
@@ -2118,6 +2796,26 @@ private func observerLifecycleIsBarrierBound() -> Bool {
         [10: 1000, 20: 2000, 30: 3000, 40: 4000, 41: 4100, 42: 4200][$0]
     }
     let targetValidator: (AllowedForegroundTarget) -> Bool = { _ in true }
+    func closeAndAcknowledge() -> MonitorEpochClosure? {
+        guard let closure = machine.closeForHeartbeat(), closure.transitionAcknowledged else { return nil }
+        do {
+            guard machine.markAcknowledgementReady(
+                revision: closure.finalEpoch.epoch.authorization.revision) == .published
+            else {
+                return nil
+            }
+            let result = try publishMonitorTransitionAcknowledgement(
+                revision: closure.finalEpoch.epoch.authorization.revision,
+                machine: machine,
+                observers: coordinator,
+                processIdentity: identities,
+                targetValidator: targetValidator)
+            guard result == .published else { return nil }
+        } catch {
+            return nil
+        }
+        return closure
+    }
 
     applyMonitorAuthorization(
         testProducerSet(
@@ -2131,7 +2829,7 @@ private func observerLifecycleIsBarrierBound() -> Bool {
     let firstIdentity = ProcessGenerationIdentity(pid: 40, startIdentity: "4000")
     let secondIdentity = ProcessGenerationIdentity(pid: 41, startIdentity: "4100")
     guard coordinator.observedIdentities == Set([baseline, firstIdentity]),
-          closeMonitorEpoch(machine, observers: coordinator)?.transitionAcknowledged == true
+          closeAndAcknowledge() != nil
     else {
         return false
     }
@@ -2146,7 +2844,7 @@ private func observerLifecycleIsBarrierBound() -> Bool {
         processIdentity: identities,
         targetValidator: targetValidator)
     guard coordinator.observedIdentities == Set([baseline, firstIdentity]),
-          closeMonitorEpoch(machine, observers: coordinator)?.transitionAcknowledged == true
+          closeAndAcknowledge() != nil
     else {
         return false
     }
@@ -2163,7 +2861,7 @@ private func observerLifecycleIsBarrierBound() -> Bool {
     guard coordinator.observedIdentities == Set([baseline, firstIdentity, secondIdentity]) else {
         return false
     }
-    guard let retargetAcknowledgement = closeMonitorEpoch(machine, observers: coordinator) else { return false }
+    guard let retargetAcknowledgement = closeAndAcknowledge() else { return false }
     guard retargetAcknowledgement.transitionAcknowledged,
           coordinator.observedIdentities == Set([baseline, secondIdentity]),
           store.stops == [firstIdentity]
@@ -2182,7 +2880,7 @@ private func observerLifecycleIsBarrierBound() -> Bool {
         observers: coordinator,
         processIdentity: identities,
         targetValidator: targetValidator)
-    guard let failedInstallClosure = closeMonitorEpoch(machine, observers: coordinator) else { return false }
+    guard let failedInstallClosure = machine.closeForHeartbeat() else { return false }
     guard machine.currentAuthorization.revision == 4,
           !coordinator.observedIdentities.contains(failedInstallIdentity),
           failedInstallClosure.epochs.flatMap(\.events).contains(where: {
@@ -2202,15 +2900,283 @@ private func observerLifecycleIsBarrierBound() -> Bool {
         observers: coordinator,
         processIdentity: identities,
         targetValidator: targetValidator)
-    guard let failedRemovalClosure = closeMonitorEpoch(machine, observers: coordinator) else { return false }
-    return machine.currentAuthorization.revision == 6 && failedRemovalClosure.transitionAcknowledged &&
-        coordinator.observedIdentities.contains(secondIdentity) &&
-        failedRemovalClosure.epochs.flatMap(\.events).contains(where: {
-            if case .attributionFailure(reason: "blocked_focus_observer_removal", process: nil) = $0.kind {
+    guard let failedRemovalAcknowledgement = machine.closeForHeartbeat(),
+          failedRemovalAcknowledgement.transitionAcknowledged
+    else {
+        return false
+    }
+    var acknowledgementPublished = false
+    do {
+        guard machine.markAcknowledgementReady(
+            revision: failedRemovalAcknowledgement.finalEpoch.epoch.authorization.revision) == .published
+        else {
+            return false
+        }
+        _ = try publishMonitorTransitionAcknowledgement(
+            revision: failedRemovalAcknowledgement.finalEpoch.epoch.authorization.revision,
+            machine: machine,
+            observers: coordinator,
+            processIdentity: identities,
+            targetValidator: targetValidator)
+        {
+            acknowledgementPublished = true
+        }
+        return false
+    } catch {
+        return machine.currentAuthorization.revision == 6 && !machine.currentPhase.isStable &&
+            !acknowledgementPublished && coordinator.observedIdentities.contains(secondIdentity)
+    }
+}
+
+private func productionRevisionReplayFailsClosed(
+    directory: String,
+    projection: InvariantProjection) throws -> Bool
+{
+    let desktop = selfTestDesktop()
+    let first = testProducer(20, "2000")
+    let second = testProducer(21, "2100")
+    let source = testProducerSet(revision: 7, producers: [first, second])
+    let machine = MonitorEpochMachine(initialAuthorization: testAuthorization(source))
+    let store = FakeFocusObserverStore()
+    let observers = FocusObserverCoordinator { FakeFocusObserver(identity: $0, store: store) }
+    applyMonitorAuthorization(
+        testProducerSet(
+            revision: 7,
+            producers: [first, second],
+            foreground: AllowedForegroundActivity(active: false, target: nil)),
+        to: machine,
+        observers: observers,
+        processIdentity: { [20: 2000, 21: 2100][$0] },
+        targetValidator: { _ in true })
+    guard let closure = machine.closeForHeartbeat() else { return false }
+    let contamination = "\(directory)/revision-replay-contamination.jsonl"
+    var watch = makeSelfTestWatchState(
+        desktop: desktop,
+        projection: projection,
+        outputPath: "\(directory)/revision-replay-violations.jsonl",
+        contaminationPath: contamination)
+    let heartbeat = try watch.observe(
+        current: desktop.sample,
+        phase: "running",
+        closure: closure,
+        processIdentity: { [10: 1000, 20: 2000, 21: 2100][$0] },
+        targetValidator: { _ in true })
+    let states = Set(decodeJSONLines(ContaminationRecord.self, at: contamination).map(\.state))
+    return machine.currentAuthorization.source == source && store.starts.isEmpty && store.stops.isEmpty &&
+        heartbeat.contaminationBlocked && !heartbeat.inputAttributionAvailable &&
+        states == Set(["blocked_producer_revision_replay"])
+}
+
+private func productionRevisionBeforeAckDoesNotPrepareObserver() -> Bool {
+    let baseline = ProcessGenerationIdentity(pid: 10, startIdentity: "1000")
+    let firstTarget = AllowedForegroundTarget(pid: 40, startIdentity: "4000", windowID: 401)
+    let secondTarget = AllowedForegroundTarget(pid: 41, startIdentity: "4100", windowID: 411)
+    let bridge = testProducer(20, "2000")
+    let controller = testProducer(30, "3000", role: .foregroundController)
+    let store = FakeFocusObserverStore()
+    let observers = FocusObserverCoordinator { FakeFocusObserver(identity: $0, store: store) }
+    do {
+        try observers.startBaseline(baseline)
+    } catch {
+        return false
+    }
+    let machine = MonitorEpochMachine(initialAuthorization: testAuthorization(testProducerSet(
+        revision: 1,
+        producers: [bridge])))
+    let identities: (Int32) -> UInt64? = {
+        [10: 1000, 20: 2000, 30: 3000, 40: 4000, 41: 4100][$0]
+    }
+    applyMonitorAuthorization(
+        testProducerSet(
+            revision: 2,
+            producers: [bridge, controller],
+            foreground: AllowedForegroundActivity(active: true, target: firstTarget)),
+        to: machine,
+        observers: observers,
+        processIdentity: identities,
+        targetValidator: { _ in true })
+    let firstIdentity = ProcessGenerationIdentity(pid: 40, startIdentity: "4000")
+    let secondIdentity = ProcessGenerationIdentity(pid: 41, startIdentity: "4100")
+    guard observers.observedIdentities == Set([baseline, firstIdentity]) else { return false }
+    applyMonitorAuthorization(
+        testProducerSet(
+            revision: 3,
+            producers: [bridge, controller],
+            foreground: AllowedForegroundActivity(active: true, target: secondTarget)),
+        to: machine,
+        observers: observers,
+        processIdentity: identities,
+        targetValidator: { _ in true })
+    guard let closure = machine.closeForHeartbeat() else { return false }
+    return machine.currentAuthorization.revision == 2 && !machine.currentPhase.isStable &&
+        observers.observedIdentities == Set([baseline, firstIdentity]) &&
+        !observers.observedIdentities.contains(secondIdentity) &&
+        closure.epochs.flatMap(\.events).contains(where: {
+            if case .attributionFailure(reason: "blocked_producer_revision_before_ack", process: nil) = $0.kind {
                 return true
             }
             return false
         })
+}
+
+private func productionIdempotentRevisionIsAllowedBeforeAck() -> Bool {
+    let bridge = testProducer(20, "2000")
+    let controller = testProducer(30, "3000", role: .foregroundController)
+    let target = AllowedForegroundTarget(pid: 40, startIdentity: "4000", windowID: 401)
+    let initial = testProducerSet(revision: 1, producers: [bridge])
+    let grant = testProducerSet(
+        revision: 2,
+        producers: [bridge, controller],
+        foreground: AllowedForegroundActivity(active: true, target: target))
+    let machine = MonitorEpochMachine(initialAuthorization: testAuthorization(initial))
+    let observers = FocusObserverCoordinator { identity in
+        FakeFocusObserver(identity: identity, store: FakeFocusObserverStore())
+    }
+    let identities: (Int32) -> UInt64? = { [20: 2000, 30: 3000, 40: 4000][$0] }
+    applyMonitorAuthorization(
+        grant,
+        to: machine,
+        observers: observers,
+        processIdentity: identities,
+        targetValidator: { $0 == target })
+    guard machine.currentAuthorization.revision == 2, !machine.currentPhase.isStable else { return false }
+    applyMonitorAuthorization(
+        grant,
+        to: machine,
+        observers: observers,
+        processIdentity: identities,
+        targetValidator: { $0 == target })
+    guard let closure = machine.closeForHeartbeat() else { return false }
+    return closure.transitionAcknowledged && closure.epochs.flatMap(\.events).isEmpty &&
+        machine.currentAuthorization.revision == 2
+}
+
+private func acknowledgementRevalidatesControllerAndTargetLiveness() -> Bool {
+    let bridge = testProducer(20, "2000")
+    let controller = testProducer(30, "3000", role: .foregroundController)
+    let target = AllowedForegroundTarget(pid: 40, startIdentity: "4000", windowID: 401)
+    let active = testAuthorization(testProducerSet(
+        revision: 1,
+        producers: [bridge, controller],
+        foreground: AllowedForegroundActivity(active: true, target: target)))
+    let revoked = testAuthorization(testProducerSet(revision: 2, producers: [bridge]))
+
+    func blocks(
+        processIdentity: @escaping (Int32) -> UInt64?,
+        targetValidator: @escaping (AllowedForegroundTarget) -> Bool) -> Bool
+    {
+        let machine = MonitorEpochMachine(initialAuthorization: active)
+        let observers = FocusObserverCoordinator { identity in
+            FakeFocusObserver(identity: identity, store: FakeFocusObserverStore())
+        }
+        guard machine.publish(revoked) == .published,
+              machine.closeForHeartbeat()?.transitionAcknowledged == true,
+              machine.markAcknowledgementReady(revision: revoked.revision) == .published
+        else {
+            return false
+        }
+        var published = false
+        do {
+            _ = try publishMonitorTransitionAcknowledgement(
+                revision: revoked.revision,
+                machine: machine,
+                observers: observers,
+                processIdentity: processIdentity,
+                targetValidator: targetValidator)
+            {
+                published = true
+            }
+            return false
+        } catch {
+            return !published && !machine.currentPhase.isStable
+        }
+    }
+
+    let controllerDriftBlocked = blocks(
+        processIdentity: { [20: 2000, 30: 3001, 40: 4000][$0] },
+        targetValidator: { $0 == target })
+    let targetDriftBlocked = blocks(
+        processIdentity: { [20: 2000, 30: 3000, 40: 4000][$0] },
+        targetValidator: { _ in false })
+    return controllerDriftBlocked && targetDriftBlocked
+}
+
+private func pendingAcknowledgementEvidenceDrainsBeforePublication(
+    directory: String,
+    projection: InvariantProjection) throws -> Bool
+{
+    let desktop = selfTestDesktop()
+    let bridge = testProducer(20, "2000")
+    let controller = testProducer(30, "3000", role: .foregroundController)
+    let target = AllowedForegroundTarget(pid: 40, startIdentity: "4000", windowID: 401)
+    let active = testAuthorization(testProducerSet(
+        revision: 1,
+        producers: [bridge, controller],
+        foreground: AllowedForegroundActivity(active: true, target: target)))
+    let revoked = testAuthorization(testProducerSet(revision: 2, producers: [bridge]))
+    let machine = MonitorEpochMachine(initialAuthorization: active)
+    let observers = FocusObserverCoordinator { identity in
+        FakeFocusObserver(identity: identity, store: FakeFocusObserverStore())
+    }
+    guard machine.publish(revoked) == .published,
+          let transitionClosure = machine.closeForHeartbeat(),
+          transitionClosure.transitionAcknowledged
+    else {
+        return false
+    }
+    var watch = makeSelfTestWatchState(
+        desktop: desktop,
+        projection: projection,
+        outputPath: "\(directory)/pending-ack-violations.jsonl",
+        contaminationPath: "\(directory)/pending-ack-contamination.jsonl")
+    let identities: (Int32) -> UInt64? = { [10: 1000, 20: 2000, 30: 3000, 40: 4000][$0] }
+    _ = try watch.observe(
+        current: desktop.sample,
+        phase: "running",
+        closure: transitionClosure,
+        processIdentity: identities,
+        targetValidator: { $0 == target })
+    guard machine.markAcknowledgementReady(revision: revoked.revision) == .published else { return false }
+    let pending = machine.reserveForTesting()
+    var acknowledgementPublished = false
+    let deferred = try publishMonitorTransitionAcknowledgement(
+        revision: revoked.revision,
+        machine: machine,
+        observers: observers,
+        processIdentity: identities,
+        targetValidator: { $0 == target })
+    {
+        acknowledgementPublished = true
+    }
+    guard deferred == .rejected(reason: "blocked_producer_ack_evidence_pending"),
+          !acknowledgementPublished,
+          machine.completeForTesting(pending, with: .input(InputEventEvidence(
+              type: CGEventType.keyDown.rawValue,
+              source: testEvidence(30, "3000", nil),
+              sessionFocus: testEvidence(40, "4000", 401)))),
+          let evidenceClosure = machine.closeForHeartbeat()
+    else {
+        return false
+    }
+    let evidenceHeartbeat = try watch.observe(
+        current: desktop.sample,
+        phase: "running",
+        closure: evidenceClosure,
+        processIdentity: identities,
+        targetValidator: { $0 == target })
+    let published = try publishMonitorTransitionAcknowledgement(
+        revision: revoked.revision,
+        machine: machine,
+        observers: observers,
+        processIdentity: identities,
+        targetValidator: { $0 == target })
+    {
+        acknowledgementPublished = true
+    }
+    let priorActivity = watch.foregroundActivity(for: active.revision)
+    return published == .published && acknowledgementPublished && machine.currentPhase.isStable &&
+        !evidenceHeartbeat.contaminationBlocked && evidenceHeartbeat.inputAttributionAvailable &&
+        priorActivity.eventCount == 1 && priorActivity.sourcePIDs == Set([30])
 }
 
 private func decodeJSONLines<T: Decodable>(_ type: T.Type, at path: String) -> [T] {
@@ -2270,6 +3236,7 @@ private func transitionAcknowledgementNeverAdvancesClean(
         closure: acknowledgementClosure,
         processIdentity: identities,
         targetValidator: { _ in true })
+    guard acknowledgeForTesting(machine, revision: second.revision) else { return false }
     guard let settledClosure = machine.closeForHeartbeat() else { return false }
     let settled = try watch.observe(
         current: desktop.sample,
@@ -2282,6 +3249,295 @@ private func transitionAcknowledgementNeverAdvancesClean(
         acknowledgement.lastCleanSequence == 1 &&
         settled.allowedProducerRevision == 2 && !settled.transitionAcknowledged &&
         settled.lastCleanSequence == settled.sequence
+}
+
+private func preAcknowledgementForegroundActivityFailsClosed(
+    directory: String,
+    projection: InvariantProjection) throws -> Bool
+{
+    let desktop = selfTestDesktop()
+    let bridge = testProducer(20, "2000")
+    let controller = testProducer(30, "3000", role: .foregroundController)
+    let target = AllowedForegroundTarget(pid: 40, startIdentity: "4000", windowID: 401)
+    let initial = testAuthorization(testProducerSet(revision: 1, producers: [bridge]))
+    let granted = testAuthorization(testProducerSet(
+        revision: 2,
+        producers: [bridge, controller],
+        foreground: AllowedForegroundActivity(active: true, target: target)))
+    let machine = MonitorEpochMachine(initialAuthorization: initial)
+    guard machine.publish(granted) == .published else { return false }
+    machine.admitForTesting(.input(InputEventEvidence(
+        type: CGEventType.keyDown.rawValue,
+        source: testEvidence(30, "3000", nil),
+        sessionFocus: testEvidence(40, "4000", 401))))
+    machine.admitForTesting(.activation(testEvidence(40, "4000", 401)))
+    let output = "\(directory)/pre-ack-violations.jsonl"
+    let contamination = "\(directory)/pre-ack-contamination.jsonl"
+    var watch = makeSelfTestWatchState(
+        desktop: desktop,
+        projection: projection,
+        outputPath: output,
+        contaminationPath: contamination)
+    guard let closure = machine.closeForHeartbeat() else { return false }
+    let heartbeat = try watch.observe(
+        current: desktop.sample,
+        phase: "running",
+        closure: closure,
+        processIdentity: { [10: 1000, 20: 2000, 30: 3000, 40: 4000][$0] },
+        targetValidator: { $0 == target })
+    let states = Set(decodeJSONLines(ContaminationRecord.self, at: contamination).map(\.state))
+    let kinds = Set(decodeJSONLines(Violation.self, at: output).map(\.kind))
+    return heartbeat.transitionAcknowledged && heartbeat.lastCleanSequence == 0 &&
+        heartbeat.attributedForegroundEventCount == 0 && heartbeat.contaminationBlocked &&
+        states == Set(["blocked_foreground_input_before_transition_ack"]) &&
+        kinds == Set([projection[.frontmostPID], projection[.frontmostWindow]])
+}
+
+private func acknowledgementPublicationCutoffIsClosed(
+    directory: String,
+    projection: InvariantProjection) throws -> Bool
+{
+    let desktop = selfTestDesktop()
+    let bridge = testProducer(20, "2000")
+    let controller = testProducer(30, "3000", role: .foregroundController)
+    let target = AllowedForegroundTarget(pid: 40, startIdentity: "4000", windowID: 401)
+    let initial = testAuthorization(testProducerSet(revision: 1, producers: [bridge]))
+    let granted = testAuthorization(testProducerSet(
+        revision: 2,
+        producers: [bridge, controller],
+        foreground: AllowedForegroundActivity(active: true, target: target)))
+    let machine = MonitorEpochMachine(initialAuthorization: initial)
+    guard machine.publish(granted) == .published,
+          let acknowledgementClosure = machine.closeForHeartbeat(),
+          acknowledgementClosure.transitionAcknowledged
+    else {
+        return false
+    }
+    let admission = machine.reserveForTesting()
+    var acknowledgementPublished = false
+    guard machine.markAcknowledgementReady(revision: granted.revision) == .published,
+          machine.acknowledge(revision: granted.revision, preparing: {}, publishing: {
+              acknowledgementPublished = true
+          }) == .rejected(reason: "blocked_producer_ack_evidence_pending"),
+          !acknowledgementPublished,
+          machine.completeForTesting(admission, with: .input(InputEventEvidence(
+              type: CGEventType.keyDown.rawValue,
+              source: testEvidence(30, "3000", nil),
+              sessionFocus: testEvidence(40, "4000", 401)))),
+          let preAcknowledgementClosure = machine.closeForHeartbeat()
+    else {
+        return false
+    }
+    let contamination = "\(directory)/ack-cutoff-contamination.jsonl"
+    var watch = makeSelfTestWatchState(
+        desktop: desktop,
+        projection: projection,
+        outputPath: "\(directory)/ack-cutoff-violations.jsonl",
+        contaminationPath: contamination)
+    _ = try watch.observe(
+        current: desktop.sample,
+        phase: "running",
+        closure: acknowledgementClosure,
+        processIdentity: { [10: 1000, 20: 2000, 30: 3000, 40: 4000][$0] },
+        targetValidator: { $0 == target })
+    let heartbeat = try watch.observe(
+        current: desktop.sample,
+        phase: "running",
+        closure: preAcknowledgementClosure,
+        processIdentity: { [10: 1000, 20: 2000, 30: 3000, 40: 4000][$0] },
+        targetValidator: { $0 == target })
+    let states = Set(decodeJSONLines(ContaminationRecord.self, at: contamination).map(\.state))
+    return !machine.currentPhase.isStable && !preAcknowledgementClosure.transitionAcknowledged &&
+        heartbeat.contaminationBlocked &&
+        heartbeat.attributedForegroundEventCount == 0 &&
+        states == Set(["blocked_foreground_input_before_transition_ack"])
+}
+
+private func transitionSamplingUsesAcknowledgedAuthorization() -> Bool {
+    let bridge = testProducer(20, "2000")
+    let controller = testProducer(30, "3000", role: .foregroundController)
+    let target = AllowedForegroundTarget(pid: 40, startIdentity: "4000", windowID: 401)
+    let active = testAuthorization(testProducerSet(
+        revision: 1,
+        producers: [bridge, controller],
+        foreground: AllowedForegroundActivity(active: true, target: target)))
+    let revoked = testAuthorization(testProducerSet(revision: 2, producers: [bridge]))
+    let revokeMachine = MonitorEpochMachine(initialAuthorization: active)
+    var transitionSample: MonitorAuthorization?
+    guard revokeMachine.publish(revoked) == .published else { return false }
+    revokeMachine.admitInput(type: .keyDown) { authorization in
+        transitionSample = authorization
+        return (
+            source: testEvidence(30, "3000", nil),
+            sessionFocus: authorization.target.map {
+                testEvidence($0.pid, $0.startIdentity, $0.windowID)
+            })
+    }
+    guard let transitionClosure = revokeMachine.closeForHeartbeat(),
+          transitionSample == active,
+          let transitionInput = transitionClosure.epochs.flatMap(\.events).compactMap({ event -> InputEventEvidence? in
+              if case let .input(input) = event.kind {
+                  return input
+              }
+              return nil
+          }).first,
+          transitionInput.sessionFocus == testEvidence(40, "4000", 401)
+    else {
+        return false
+    }
+
+    var awaitingSample: MonitorAuthorization?
+    revokeMachine.admitInput(type: .keyDown) { authorization in
+        awaitingSample = authorization
+        return (
+            source: testEvidence(30, "3000", nil),
+            sessionFocus: authorization.target.map {
+                testEvidence($0.pid, $0.startIdentity, $0.windowID)
+            })
+    }
+    guard let awaitingClosure = revokeMachine.closeForHeartbeat(), awaitingSample == active,
+          awaitingClosure.epochs.flatMap(\.events).contains(where: {
+              if case let .input(input) = $0.kind {
+                  return input.sessionFocus == testEvidence(40, "4000", 401)
+              }
+              return false
+          })
+    else {
+        return false
+    }
+
+    let inactive = testAuthorization(testProducerSet(revision: 1, producers: [bridge]))
+    let granted = testAuthorization(testProducerSet(
+        revision: 2,
+        producers: [bridge, controller],
+        foreground: AllowedForegroundActivity(active: true, target: target)))
+    let grantMachine = MonitorEpochMachine(initialAuthorization: inactive)
+    var grantSample: MonitorAuthorization?
+    guard grantMachine.publish(granted) == .published else { return false }
+    grantMachine.admitInput(type: .keyDown) { authorization in
+        grantSample = authorization
+        return (source: testEvidence(30, "3000", nil), sessionFocus: nil)
+    }
+    return grantSample == inactive
+}
+
+private func queuedGrantEraEvidenceIsNeitherDroppedNorRelabeled(
+    directory: String,
+    projection: InvariantProjection) throws -> Bool
+{
+    let desktop = selfTestDesktop()
+    let bridge = testProducer(20, "2000")
+    let controller = testProducer(30, "3000", role: .foregroundController)
+    let target = AllowedForegroundTarget(pid: 40, startIdentity: "4000", windowID: 401)
+    let active = testAuthorization(testProducerSet(
+        revision: 1,
+        producers: [bridge, controller],
+        foreground: AllowedForegroundActivity(active: true, target: target)))
+    let revoked = testAuthorization(testProducerSet(revision: 2, producers: [bridge]))
+    let machine = MonitorEpochMachine(initialAuthorization: active)
+    let queuedInput = machine.reserveForTesting()
+    let queuedActivation = machine.reserveForTesting()
+    guard machine.publish(revoked) == .published,
+          machine.completeForTesting(queuedInput, with: .input(InputEventEvidence(
+              type: CGEventType.keyDown.rawValue,
+              source: testEvidence(30, "3000", nil),
+              sessionFocus: testEvidence(40, "4000", 401)))),
+          machine.completeForTesting(queuedActivation, with: .activation(testEvidence(99, "9900", 991))),
+          let closure = machine.closeForHeartbeat()
+    else {
+        return false
+    }
+    let output = "\(directory)/queued-grant-violations.jsonl"
+    let contamination = "\(directory)/queued-grant-contamination.jsonl"
+    var watch = makeSelfTestWatchState(
+        desktop: desktop,
+        projection: projection,
+        outputPath: output,
+        contaminationPath: contamination)
+    let heartbeat = try watch.observe(
+        current: desktop.sample,
+        phase: "running",
+        closure: closure,
+        processIdentity: { [10: 1000, 20: 2000, 30: 3000, 40: 4000, 99: 9900][$0] },
+        targetValidator: { $0 == target })
+    let kinds = Set(decodeJSONLines(Violation.self, at: output).map(\.kind))
+    let grantActivity = watch.foregroundActivity(for: active.revision)
+    return heartbeat.transitionAcknowledged && grantActivity.eventCount == 1 &&
+        grantActivity.sourcePIDs == Set([30]) && heartbeat.attributedForegroundEventCount == 0 &&
+        heartbeat.attributedForegroundSourcePIDs.isEmpty && !heartbeat.foregroundActivityObserved &&
+        !heartbeat.contaminationBlocked && decodeJSONLines(ContaminationRecord.self, at: contamination).isEmpty &&
+        kinds == Set([projection[.frontmostPID], projection[.frontmostWindow]])
+}
+
+private func foregroundActivityIsRevisionScoped(
+    directory: String,
+    projection: InvariantProjection) throws -> Bool
+{
+    let desktop = selfTestDesktop()
+    let bridge = testProducer(20, "2000")
+    let firstController = testProducer(30, "3000", role: .foregroundController)
+    let secondController = testProducer(31, "3100", role: .foregroundController)
+    let firstTarget = AllowedForegroundTarget(pid: 40, startIdentity: "4000", windowID: 401)
+    let secondTarget = AllowedForegroundTarget(pid: 41, startIdentity: "4100", windowID: 411)
+    let firstGrant = testAuthorization(testProducerSet(
+        revision: 1,
+        producers: [bridge, firstController],
+        foreground: AllowedForegroundActivity(active: true, target: firstTarget)))
+    let revoke = testAuthorization(testProducerSet(revision: 2, producers: [bridge]))
+    let secondGrant = testAuthorization(testProducerSet(
+        revision: 3,
+        producers: [bridge, secondController],
+        foreground: AllowedForegroundActivity(active: true, target: secondTarget)))
+    let machine = MonitorEpochMachine(initialAuthorization: firstGrant)
+    machine.admitForTesting(.input(InputEventEvidence(
+        type: CGEventType.keyDown.rawValue,
+        source: testEvidence(30, "3000", nil),
+        sessionFocus: testEvidence(40, "4000", 401))))
+    var watch = makeSelfTestWatchState(
+        desktop: desktop,
+        projection: projection,
+        outputPath: "\(directory)/activity-scope-violations.jsonl",
+        contaminationPath: "\(directory)/activity-scope-contamination.jsonl")
+    let identities: (Int32) -> UInt64? = {
+        [10: 1000, 20: 2000, 30: 3000, 31: 3100, 40: 4000, 41: 4100][$0]
+    }
+    guard let firstClosure = machine.closeForHeartbeat() else { return false }
+    let firstHeartbeat = try watch.observe(
+        current: desktop.sample,
+        phase: "running",
+        closure: firstClosure,
+        processIdentity: identities,
+        targetValidator: { $0 == firstTarget || $0 == secondTarget })
+    guard machine.publish(revoke) == .published,
+          let revokeClosure = machine.closeForHeartbeat()
+    else {
+        return false
+    }
+    let revokeHeartbeat = try watch.observe(
+        current: desktop.sample,
+        phase: "running",
+        closure: revokeClosure,
+        processIdentity: identities,
+        targetValidator: { $0 == firstTarget || $0 == secondTarget })
+    guard acknowledgeForTesting(machine, revision: revoke.revision),
+          machine.publish(secondGrant) == .published,
+          let secondGrantClosure = machine.closeForHeartbeat()
+    else {
+        return false
+    }
+    let secondGrantHeartbeat = try watch.observe(
+        current: desktop.sample,
+        phase: "running",
+        closure: secondGrantClosure,
+        processIdentity: identities,
+        targetValidator: { $0 == firstTarget || $0 == secondTarget })
+    return firstHeartbeat.attributedForegroundEventCount == 1 &&
+        firstHeartbeat.attributedForegroundSourcePIDs == [30] && firstHeartbeat.foregroundActivityObserved &&
+        revokeHeartbeat.attributedForegroundEventCount == 0 &&
+        revokeHeartbeat.attributedForegroundSourcePIDs.isEmpty && !revokeHeartbeat.foregroundActivityObserved &&
+        secondGrantHeartbeat.attributedForegroundEventCount == 0 &&
+        secondGrantHeartbeat.attributedForegroundSourcePIDs.isEmpty &&
+        !secondGrantHeartbeat.foregroundActivityObserved
 }
 
 private func wrongWindowThenTargetStillViolates(
@@ -2448,6 +3704,71 @@ private func controllerGenerationDriftFailsClosed(
         states == Set(["blocked_producer_generation_drift"])
 }
 
+private func idleProducerGenerationDriftFailsClosed(
+    directory: String,
+    projection: InvariantProjection) throws -> Bool
+{
+    let desktop = selfTestDesktop()
+    let bridge = testProducer(20, "2000")
+    let controller = testProducer(30, "3000", role: .foregroundController)
+    let target = AllowedForegroundTarget(pid: 40, startIdentity: "4000", windowID: 401)
+    let authorization = testAuthorization(testProducerSet(
+        revision: 2,
+        producers: [bridge, controller],
+        foreground: AllowedForegroundActivity(active: true, target: target)))
+    let machine = MonitorEpochMachine(initialAuthorization: authorization)
+    let contamination = "\(directory)/idle-controller-drift-contamination.jsonl"
+    var watch = makeSelfTestWatchState(
+        desktop: desktop,
+        projection: projection,
+        outputPath: "\(directory)/idle-controller-drift-violations.jsonl",
+        contaminationPath: contamination)
+    guard let closure = machine.closeForHeartbeat() else { return false }
+    let heartbeat = try watch.observe(
+        current: desktop.sample,
+        phase: "running",
+        closure: closure,
+        processIdentity: { [10: 1000, 20: 2000, 30: 3001, 40: 4000][$0] },
+        targetValidator: { $0 == target })
+    let states = Set(decodeJSONLines(ContaminationRecord.self, at: contamination).map(\.state))
+    return heartbeat.contaminationBlocked && !heartbeat.inputAttributionAvailable &&
+        heartbeat.lastCleanSequence == 0 && states == Set(["blocked_producer_generation_drift"])
+}
+
+private func focusNotificationGenerationDriftFailsClosed(
+    directory: String,
+    projection: InvariantProjection) throws -> Bool
+{
+    let desktop = selfTestDesktop()
+    let bridge = testProducer(20, "2000")
+    let controller = testProducer(30, "3000", role: .foregroundController)
+    let target = AllowedForegroundTarget(pid: 40, startIdentity: "4000", windowID: 401)
+    let authorization = testAuthorization(testProducerSet(
+        revision: 2,
+        producers: [bridge, controller],
+        foreground: AllowedForegroundActivity(active: true, target: target)))
+    let machine = MonitorEpochMachine(initialAuthorization: authorization)
+    machine.admitForTesting(.focus(FocusEventEvidence(
+        observer: ProcessGenerationIdentity(pid: 40, startIdentity: "4000"),
+        observed: testEvidence(40, "4001", 401))))
+    let contamination = "\(directory)/focus-generation-drift-contamination.jsonl"
+    var watch = makeSelfTestWatchState(
+        desktop: desktop,
+        projection: projection,
+        outputPath: "\(directory)/focus-generation-drift-violations.jsonl",
+        contaminationPath: contamination)
+    guard let closure = machine.closeForHeartbeat() else { return false }
+    let heartbeat = try watch.observe(
+        current: desktop.sample,
+        phase: "running",
+        closure: closure,
+        processIdentity: { [10: 1000, 20: 2000, 30: 3000, 40: 4000][$0] },
+        targetValidator: { $0 == target })
+    let states = Set(decodeJSONLines(ContaminationRecord.self, at: contamination).map(\.state))
+    return heartbeat.contaminationBlocked && !heartbeat.inputAttributionAvailable &&
+        states == Set(["blocked_focus_observer_generation_drift"])
+}
+
 private func deferredTargetDriftFailsClosed(
     directory: String,
     projection: InvariantProjection) throws -> Bool
@@ -2606,13 +3927,43 @@ private func runSelfTest() throws {
     guard exactPublicationCutoffIsClosed() else {
         throw ProbeError.invalidArguments("events at the publication cutoff did not retain exact epochs")
     }
-    guard queuedRevisionsRemainDistinct() else {
-        throw ProbeError.invalidArguments("grant, retarget, generation change, or revoke epochs collapsed")
+    guard acknowledgementWriteOwnsAdmissionCutoff() else {
+        throw ProbeError.invalidArguments("acknowledgement publication did not own the admission cutoff")
+    }
+    guard sealedPreAcknowledgementBucketsBlockPublication() else {
+        throw ProbeError.invalidArguments("sealed pre-acknowledgement evidence did not block publication")
+    }
+    guard acknowledgementGateRequiresNextCallbackTurn() else {
+        throw ProbeError.invalidArguments("acknowledgement did not wait for the next callback turn")
+    }
+    guard stableMonitoringDoesNotRequireIdleBarrier() else {
+        throw ProbeError.invalidArguments("stable monitoring incorrectly required a callback idle barrier")
+    }
+    guard finalIdleBarrierDefersQueuedEvidence() else {
+        throw ProbeError.invalidArguments("final idle barrier did not defer queued callback evidence")
+    }
+    guard try transitionHeartbeatRetainsPendingEvidence(
+        directory: testDirectory,
+        projection: projection)
+    else {
+        throw ProbeError.invalidArguments("pending transition heartbeat evidence was discarded")
+    }
+    guard notificationEvidenceIsCapturedAtAdmission() else {
+        throw ProbeError.invalidArguments("notification evidence was resampled after callback admission")
+    }
+    guard processWindowEvidenceRejectsGenerationABA() else {
+        throw ProbeError.invalidArguments("process/window evidence accepted generation ABA")
+    }
+    guard idleBarrierDrainsQueuedCallbacksBeforePublication() else {
+        throw ProbeError.invalidArguments("run-loop idle barrier relabeled a queued callback")
+    }
+    guard revisionsRequireAcknowledgement() else {
+        throw ProbeError.invalidArguments("authorization revisions bypassed acknowledgement gating")
     }
     guard equalRevisionRequiresExactPayload() else {
         throw ProbeError.invalidArguments("equal revision reorder/mutation semantics were not fail-closed")
     }
-    guard grantRetargetRevokeRetainsEventEpochs() else {
+    guard queuedGrantEraEventsRetainAuthorization() else {
         throw ProbeError.invalidArguments("grant-era evidence was relabeled after retarget or revoke")
     }
     guard observerLifecycleIsBarrierBound() else {
@@ -2623,6 +3974,48 @@ private func runSelfTest() throws {
         projection: projection)
     else {
         throw ProbeError.invalidArguments("transition acknowledgement advanced the clean sequence")
+    }
+    guard try preAcknowledgementForegroundActivityFailsClosed(
+        directory: testDirectory,
+        projection: projection)
+    else {
+        throw ProbeError.invalidArguments("foreground activity was credited before grant acknowledgement")
+    }
+    guard try acknowledgementPublicationCutoffIsClosed(
+        directory: testDirectory,
+        projection: projection)
+    else {
+        throw ProbeError.invalidArguments("pending evidence crossed the acknowledgement publication cutoff")
+    }
+    guard transitionSamplingUsesAcknowledgedAuthorization() else {
+        throw ProbeError.invalidArguments("transition sampling used an unacknowledged authorization")
+    }
+    guard try queuedGrantEraEvidenceIsNeitherDroppedNorRelabeled(
+        directory: testDirectory,
+        projection: projection)
+    else {
+        throw ProbeError.invalidArguments("queued grant-era focus or controller evidence was lost or relabeled")
+    }
+    guard try foregroundActivityIsRevisionScoped(directory: testDirectory, projection: projection) else {
+        throw ProbeError.invalidArguments("foreground activity leaked into a later authorization revision")
+    }
+    guard try productionRevisionReplayFailsClosed(directory: testDirectory, projection: projection) else {
+        throw ProbeError.invalidArguments("production revision replay handling did not fail closed")
+    }
+    guard productionRevisionBeforeAckDoesNotPrepareObserver() else {
+        throw ProbeError.invalidArguments("unacknowledged revision prepared an unaccepted focus observer")
+    }
+    guard productionIdempotentRevisionIsAllowedBeforeAck() else {
+        throw ProbeError.invalidArguments("idempotent current revision was rejected before acknowledgement")
+    }
+    guard acknowledgementRevalidatesControllerAndTargetLiveness() else {
+        throw ProbeError.invalidArguments("acknowledgement accepted stale controller or target liveness")
+    }
+    guard try pendingAcknowledgementEvidenceDrainsBeforePublication(
+        directory: testDirectory,
+        projection: projection)
+    else {
+        throw ProbeError.invalidArguments("pending acknowledgement evidence did not drain before publication")
     }
     guard try wrongWindowThenTargetStillViolates(directory: testDirectory, projection: projection) else {
         throw ProbeError.invalidArguments("wrong-window callback collapsed into a later target callback")
@@ -2635,6 +4028,15 @@ private func runSelfTest() throws {
     }
     guard try controllerGenerationDriftFailsClosed(directory: testDirectory, projection: projection) else {
         throw ProbeError.invalidArguments("recycled foreground controller did not fail closed")
+    }
+    guard try idleProducerGenerationDriftFailsClosed(directory: testDirectory, projection: projection) else {
+        throw ProbeError.invalidArguments("idle producer generation drift advanced a clean heartbeat")
+    }
+    guard try focusNotificationGenerationDriftFailsClosed(
+        directory: testDirectory,
+        projection: projection)
+    else {
+        throw ProbeError.invalidArguments("focus notification generation drift did not fail closed")
     }
     guard try deferredTargetDriftFailsClosed(directory: testDirectory, projection: projection) else {
         throw ProbeError.invalidArguments("deferred target generation/window drift did not fail closed")
@@ -2649,7 +4051,7 @@ private func runSelfTest() throws {
         throw ProbeError.invalidArguments("unexpected activation did not retain callback-time focus evidence")
     }
 
-    try writeJSON(SelfTestResult(success: true, tests: 20), to: nil)
+    try writeJSON(SelfTestResult(success: true, tests: 41), to: nil)
 }
 
 private func findApp(arguments: [String]) throws {
