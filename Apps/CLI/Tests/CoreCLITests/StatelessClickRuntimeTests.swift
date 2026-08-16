@@ -7,7 +7,7 @@ import Testing
 
 struct StatelessClickRuntimeTests {
     @Test
-    func `Middle and triple clicks require protocol 1 30 raw capability and post event permission`() throws {
+    func `Middle and triple clicks separate protocol payload and background capability requirements`() throws {
         for flag in ["middle", "triple"] {
             let options = try CommanderCLIBinder.makeRuntimeOptions(
                 from: ParsedValues(
@@ -18,6 +18,7 @@ struct StatelessClickRuntimeTests {
                 commandType: ClickCommand.self
             )
             #expect(options.requiresStatelessClickVariants)
+            #expect(options.requiresBackgroundStatelessClickVariants)
             #expect(options.requiresPostEventPermission)
         }
 
@@ -42,10 +43,17 @@ struct StatelessClickRuntimeTests {
         )
         var options = CommandRuntimeOptions()
         options.requiresStatelessClickVariants = true
+        options.requiresBackgroundStatelessClickVariants = true
 
         #expect(!CommandRuntime.supportsRemoteRequirements(for: previous, options: options))
         #expect(!CommandRuntime.supportsRemoteRequirements(for: missingCapability, options: options))
         #expect(CommandRuntime.supportsRemoteRequirements(for: capable, options: options))
+
+        var foregroundOptions = CommandRuntimeOptions()
+        foregroundOptions.requiresStatelessClickVariants = true
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: previous, options: foregroundOptions))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: missingCapability, options: foregroundOptions))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: capable, options: foregroundOptions))
     }
 
     @Test
