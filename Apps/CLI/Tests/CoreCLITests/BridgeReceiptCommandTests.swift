@@ -194,13 +194,88 @@ struct BridgeReceiptCommandTests {
     }
 
     @Test
-    func `legacy or incomplete bundle refuses before trust validation`() {
+    func `legacy or incomplete bundle reports its local schema failure`() {
         let data = Data(#"{"operationAttestation":{}}"#.utf8)
 
-        #expect(throws: BridgeReceiptValidationError.unsupportedProtocol) {
+        #expect(throws: BridgeReceiptValidationError.invalidBundleSchema) {
             _ = try BridgeReceiptVerifier.validate(
                 data: data,
                 trustAnchor: .listenerPublicKey(Data(repeating: 0, count: 32))
+            )
+        }
+    }
+
+    @Test
+    func `incomplete private bundle fails before client construction`() async throws {
+        let bundle = try Self.privateBundleFile(Data(#"{"operationAttestation":{}}"#.utf8))
+        defer { try? FileManager.default.removeItem(at: bundle.deletingLastPathComponent()) }
+        var clientConstructed = false
+
+        await #expect(throws: BridgeReceiptValidationError.invalidBundleSchema) {
+            _ = try await BridgeReceiptVerifier.validate(
+                bundlePath: bundle.path,
+                bridgeSocket: "/private/tmp/missing-bridge.sock",
+                trustedHostTeamIDs: ["TEAMID"],
+                makeClient: { socketPath, timeout, teams in
+                    clientConstructed = true
+                    return PeekabooBridgeClient(
+                        socketPath: socketPath,
+                        requestTimeoutSec: timeout,
+                        trustedHostTeamIDs: teams
+                    )
+                }
+            )
+        }
+        #expect(!clientConstructed)
+    }
+
+    @Test
+    func `custom socket without explicit trust fails before bundle access or client construction`() async {
+        let missingBundle = "/private/tmp/missing-receipt-\(UUID().uuidString).json"
+        var clientConstructed = false
+
+        await #expect(throws: BridgeReceiptValidationError.missingTrustedHostTeamIDForCustomSocket) {
+            _ = try await BridgeReceiptVerifier.validate(
+                bundlePath: missingBundle,
+                bridgeSocket: "/private/tmp/custom-bridge-\(UUID().uuidString).sock",
+                trustedHostTeamIDs: [],
+                makeClient: { socketPath, timeout, teams in
+                    clientConstructed = true
+                    return PeekabooBridgeClient(
+                        socketPath: socketPath,
+                        requestTimeoutSec: timeout,
+                        trustedHostTeamIDs: teams
+                    )
+                }
+            )
+        }
+        #expect(!clientConstructed)
+    }
+
+    @Test
+    func `receipt validator reuses canonical socket trust policy and normalizes explicit teams`() throws {
+        #expect(
+            try BridgeReceiptVerifier.trustedHostTeamIDs(
+                for: PeekabooBridgeConstants.peekabooSocketPath,
+                explicitValues: []
+            ) == PeekabooBridgeConstants.trustedReleaseTeamIDs
+        )
+        #expect(
+            try BridgeReceiptVerifier.trustedHostTeamIDs(
+                for: "/private/tmp/custom.sock",
+                explicitValues: [" TEAMONE ", "TEAMTWO"]
+            ) == ["TEAMONE", "TEAMTWO"]
+        )
+        #expect(throws: BridgeReceiptValidationError.invalidTrustedHostTeamID) {
+            _ = try BridgeReceiptVerifier.trustedHostTeamIDs(
+                for: "/private/tmp/custom.sock",
+                explicitValues: ["   "]
+            )
+        }
+        #expect(throws: BridgeReceiptValidationError.missingTrustedHostTeamIDForCustomSocket) {
+            _ = try BridgeReceiptVerifier.trustedHostTeamIDs(
+                for: "/private/tmp/custom.sock",
+                explicitValues: []
             )
         }
     }
@@ -218,21 +293,25 @@ struct BridgeReceiptCommandTests {
         try Data("{}".utf8).write(to: bundle)
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: bundle.path)
 
-        await #expect(throws: BridgeReceiptValidationError.self) {
+        await #expect(throws: BridgeReceiptValidationError.unsafeBundleFile(
+            "file must be owner-private, regular, nonempty, and at most 256 MiB"
+        )) {
             _ = try await BridgeReceiptVerifier.validate(
                 bundlePath: bundle.path,
                 bridgeSocket: "/private/tmp/missing-bridge.sock",
-                trustedHostTeamIDs: []
+                trustedHostTeamIDs: ["TEAMID"]
             )
         }
 
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: bundle.path)
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: bundle)
-        await #expect(throws: BridgeReceiptValidationError.self) {
+        await #expect(throws: BridgeReceiptValidationError.unsafeBundleFile(
+            "symbolic links are not accepted"
+        )) {
             _ = try await BridgeReceiptVerifier.validate(
                 bundlePath: link.path,
                 bridgeSocket: "/private/tmp/missing-bridge.sock",
-                trustedHostTeamIDs: []
+                trustedHostTeamIDs: ["TEAMID"]
             )
         }
     }
@@ -249,13 +328,25 @@ struct BridgeReceiptCommandTests {
     private static func authenticatedClient(
         socketPath: String,
         requestTimeoutSec: TimeInterval,
-        trustedHostTeamIDs: Set<String>?
+        trustedHostTeamIDs: Set<String>
     ) -> PeekabooBridgeClient {
         BridgeTestFixtures.authenticatedClient(
             socketPath: socketPath,
             requestTimeoutSec: requestTimeoutSec,
-            trustedHostTeamIDs: trustedHostTeamIDs ?? []
+            trustedHostTeamIDs: trustedHostTeamIDs
         )
+    }
+
+    private static func privateBundleFile(_ data: Data) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "peekaboo-receipt-preflight-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let bundle = directory.appendingPathComponent("bundle.json")
+        try data.write(to: bundle)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: bundle.path)
+        return bundle
     }
 
     private static func decodeBundle(_ data: Data) throws -> PeekabooBridgeOperationReceiptBundle {

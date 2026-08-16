@@ -137,8 +137,10 @@ struct BridgeReceiptValidationReport: Codable, Equatable, Sendable {
 enum BridgeReceiptValidationError: LocalizedError, ResultEnvelopeError, Equatable, Sendable {
     case unsafeBundleFile(String)
     case invalidTrustedHostTeamID
+    case missingTrustedHostTeamIDForCustomSocket
     case unsupportedProtocol
     case listenerTrustUnavailable
+    case invalidBundleSchema
     case invalidBundle
 
     nonisolated var errorDescription: String? {
@@ -147,10 +149,14 @@ enum BridgeReceiptValidationError: LocalizedError, ResultEnvelopeError, Equatabl
             "Receipt bundle file is unsafe: \(reason)"
         case .invalidTrustedHostTeamID:
             "Trusted host Team IDs must be nonempty values"
+        case .missingTrustedHostTeamIDForCustomSocket:
+            "Custom Bridge sockets require at least one explicit trusted host Team ID"
         case .unsupportedProtocol:
             "The exact Bridge listener did not negotiate protocol 1.29 receipt attestation"
         case .listenerTrustUnavailable:
             "The authenticated Bridge handshake did not provide a listener trust anchor"
+        case .invalidBundleSchema:
+            "Receipt bundle is incomplete or has an invalid protocol 1.29 schema"
         case .invalidBundle:
             "Receipt bundle validation failed"
         }
@@ -159,7 +165,9 @@ enum BridgeReceiptValidationError: LocalizedError, ResultEnvelopeError, Equatabl
     nonisolated var envelopeCode: ErrorCode? {
         switch self {
         case .unsafeBundleFile: .FILE_IO_ERROR
-        case .invalidTrustedHostTeamID, .unsupportedProtocol, .listenerTrustUnavailable, .invalidBundle:
+        case .invalidTrustedHostTeamID, .missingTrustedHostTeamIDForCustomSocket:
+            .INVALID_ARGUMENT
+        case .unsupportedProtocol, .listenerTrustUnavailable, .invalidBundleSchema, .invalidBundle:
             .VALIDATION_ERROR
         }
     }
@@ -172,8 +180,13 @@ enum BridgeReceiptValidationError: LocalizedError, ResultEnvelopeError, Equatabl
         switch self {
         case .invalidTrustedHostTeamID:
             "Pass each intended Apple signing Team ID with --trusted-host-team-id."
+        case .missingTrustedHostTeamIDForCustomSocket:
+            "Pass at least one --trusted-host-team-id TEAMID for this custom --bridge-socket."
         case .unsupportedProtocol, .listenerTrustUnavailable:
             "Use the exact current signed Bridge socket that exported the bundle."
+        case .invalidBundleSchema:
+            "Fix the bundle schema or use the original owner-private bundle " +
+                "exported by that authenticated Bridge listener."
         case .unsafeBundleFile, .invalidBundle:
             "Use the original owner-private bundle exported by that authenticated Bridge listener."
         }
@@ -185,7 +198,7 @@ enum BridgeReceiptVerifier {
     typealias ClientFactory = @MainActor (
         _ socketPath: String,
         _ requestTimeoutSec: TimeInterval,
-        _ trustedHostTeamIDs: Set<String>?
+        _ trustedHostTeamIDs: Set<String>
     ) -> PeekabooBridgeClient
 
     /// Request and response payloads can each approach the 64 MiB wire ceiling, and the
@@ -205,9 +218,12 @@ enum BridgeReceiptVerifier {
             )
         }
     ) async throws -> BridgeReceiptValidationReport {
+        let teams = try self.trustedHostTeamIDs(
+            for: bridgeSocket,
+            explicitValues: trustedHostTeamIDs
+        )
         let data = try self.readPrivateBundle(at: bundlePath)
         let bundle = try self.decodeBundle(data)
-        let teams = try self.normalizedTrustedHostTeamIDs(trustedHostTeamIDs)
         let client = makeClient(bridgeSocket, self.handshakeTimeoutSeconds, teams)
         let handshake = try await client.handshake(
             client: BridgeDiagnostics.currentClientIdentity(),
@@ -288,40 +304,33 @@ enum BridgeReceiptVerifier {
     }
 
     private static func decodeBundle(_ data: Data) throws -> PeekabooBridgeOperationReceiptBundle {
-        let root: [String: Any]
-        do {
-            root = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
-        } catch {
-            throw BridgeReceiptValidationError.invalidBundle
-        }
-        let requiredKeys = [
-            "operationAttestation",
-            "operationSessionAttestation",
-            "receipt",
-            "canonicalListenerAttestationPayload",
-            "canonicalSessionAttestationPayload",
-            "canonicalReceiptPayload",
-            "canonicalRequest",
-            "canonicalResponse",
-        ]
-        guard requiredKeys.allSatisfy(root.keys.contains) else {
-            throw BridgeReceiptValidationError.unsupportedProtocol
-        }
         do {
             return try JSONDecoder.peekabooBridgeDecoder().decode(
                 PeekabooBridgeOperationReceiptBundle.self,
                 from: data
             )
         } catch {
-            throw BridgeReceiptValidationError.invalidBundle
+            throw BridgeReceiptValidationError.invalidBundleSchema
         }
     }
 
-    private static func normalizedTrustedHostTeamIDs(_ values: [String]) throws -> Set<String>? {
-        guard values.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+    static func trustedHostTeamIDs(
+        for socketPath: String,
+        explicitValues values: [String]
+    ) throws -> Set<String> {
+        let normalized = values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard normalized.allSatisfy({ !$0.isEmpty }) else {
             throw BridgeReceiptValidationError.invalidTrustedHostTeamID
         }
-        return values.isEmpty ? nil : Set(values)
+        if !normalized.isEmpty {
+            return Set(normalized)
+        }
+        guard let defaults = PeekabooBridgeConstants.defaultTrustedHostTeamIDs(socketPath: socketPath),
+              !defaults.isEmpty
+        else {
+            throw BridgeReceiptValidationError.missingTrustedHostTeamIDForCustomSocket
+        }
+        return defaults
     }
 
     private static func readPrivateBundle(at path: String) throws -> Data {
@@ -329,7 +338,7 @@ enum BridgeReceiptVerifier {
             throw BridgeReceiptValidationError.unsafeBundleFile("path is empty or invalid")
         }
         let descriptor = path.withCString {
-            Darwin.open($0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+            Darwin.open($0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
         }
         guard descriptor >= 0 else {
             let reason = switch errno {
@@ -339,7 +348,7 @@ enum BridgeReceiptVerifier {
             }
             throw BridgeReceiptValidationError.unsafeBundleFile(reason)
         }
-        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { Darwin.close(descriptor) }
         var before = stat()
         guard fstat(descriptor, &before) == 0,
               before.st_mode & S_IFMT == S_IFREG,
@@ -353,12 +362,10 @@ enum BridgeReceiptVerifier {
             )
         }
 
-        let data: Data
-        do {
-            data = try handle.readToEnd() ?? Data()
-        } catch {
-            throw BridgeReceiptValidationError.unsafeBundleFile("file could not be read")
-        }
+        let data = try self.readBundleContents(
+            descriptor: descriptor,
+            expectedSize: Int(before.st_size)
+        )
         var after = stat()
         guard fstat(descriptor, &after) == 0,
               before.st_dev == after.st_dev,
@@ -373,6 +380,44 @@ enum BridgeReceiptVerifier {
             throw BridgeReceiptValidationError.unsafeBundleFile("file changed while it was being read")
         }
         return data
+    }
+
+    private static func readBundleContents(descriptor: Int32, expectedSize: Int) throws -> Data {
+        var data = Data()
+        data.reserveCapacity(expectedSize)
+        var buffer = [UInt8](repeating: 0, count: min(expectedSize, 256 * 1024))
+        while data.count < expectedSize {
+            let remaining = expectedSize - data.count
+            let readCount = buffer.withUnsafeMutableBytes { bytes in
+                Darwin.read(descriptor, bytes.baseAddress, min(remaining, bytes.count))
+            }
+            if readCount > 0 {
+                data.append(contentsOf: buffer.prefix(readCount))
+            } else if readCount == 0 {
+                break
+            } else if errno != EINTR {
+                throw BridgeReceiptValidationError.unsafeBundleFile("file could not be read")
+            }
+        }
+        guard data.count == expectedSize else {
+            throw BridgeReceiptValidationError.unsafeBundleFile("file changed while it was being read")
+        }
+
+        var overflowByte: UInt8 = 0
+        while true {
+            let readCount = withUnsafeMutablePointer(to: &overflowByte) {
+                Darwin.read(descriptor, $0, 1)
+            }
+            if readCount == 0 {
+                return data
+            }
+            if readCount > 0 {
+                throw BridgeReceiptValidationError.unsafeBundleFile("file changed while it was being read")
+            }
+            if errno != EINTR {
+                throw BridgeReceiptValidationError.unsafeBundleFile("file could not be read")
+            }
+        }
     }
 
     private static func sha256(_ data: Data) -> String {

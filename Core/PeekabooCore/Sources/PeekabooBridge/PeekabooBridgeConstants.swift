@@ -32,7 +32,7 @@ public enum PeekabooBridgeConstants {
     /// Arbitrary socket paths deliberately return `nil`: protocol 1.29 callers must name the
     /// teams they trust instead of treating possession of a per-user filesystem path as host
     /// authentication.
-    static func defaultTrustedHostTeamIDs(socketPath: String) -> Set<String>? {
+    public static func defaultTrustedHostTeamIDs(socketPath: String) -> Set<String>? {
         let standardized = NSString(string: socketPath).standardizingPath
         let exactPaths = [
             self.peekabooSocketPath,
