@@ -23,9 +23,16 @@ private enum MenuBarClickPreflight {
     }
 }
 
+private struct ResolvedMenuBarClickTarget {
+    let item: MenuBarItemInfo
+    let normalizedSelector: String
+    let matchKind: DesktopSelectedLeafEvidence.MatchKind
+}
+
 /// Command for interacting with macOS menu bar items (status items).
 @MainActor
-struct MenuBarActionCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
+struct MenuBarActionCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable,
+InjectedRuntimeBackedCommand {
     var action: String
 
     @Argument(help: "Name of the menu bar item to click (for click action)")
@@ -50,6 +57,10 @@ struct MenuBarActionCommand: ErrorHandlingCommand, OutputFormattable, InjectedRu
 
     private var isVerbose: Bool {
         self.configuration.verbose
+    }
+
+    var defaultEffect: ActionEffect? {
+        self.action.lowercased() == "click" ? .unverifiable : nil
     }
 
     @MainActor
@@ -97,18 +108,43 @@ struct MenuBarActionCommand: ErrorHandlingCommand, OutputFormattable, InjectedRu
                 throw MenuBarClickPreflight.foregroundConsentRequired
             }
 
-            let resolvedItem = try await self.resolveClickTarget()
+            let resolvedTarget = try await self.resolveClickTarget()
+            let resolvedItem = resolvedTarget.item
             let verifyTarget = self.verify ? Self.makeVerificationTarget(from: resolvedItem) : nil
             let verifier = MenuBarClickVerifier(services: self.services)
             let focusSnapshot = self.verify ? try await verifier.captureFocusSnapshot() : nil
             self.resolvedRuntime.beginInteractionMutation()
-            let result: PeekabooCore.ClickResult
-            if let idx = self.index {
-                result = try await MenuServiceBridge.clickMenuBarItem(at: idx, menu: self.services.menu)
+            let actionResult: UIAutomationActionResult<PeekabooCore.ClickResult>
+            if let baseEvidence = resolvedItem.selectionEvidence {
+                let evidence = try baseEvidence.selecting(
+                    normalizedSelector: resolvedTarget.normalizedSelector,
+                    matchKind: resolvedTarget.matchKind
+                )
+                let request: MenuBarItemActionRequest
+                if let idx = self.index {
+                    request = try MenuBarItemActionRequest(index: idx, expectedLeafEvidence: evidence)
+                } else if let name = self.itemName {
+                    request = try MenuBarItemActionRequest(named: name, expectedLeafEvidence: evidence)
+                } else {
+                    throw PreDispatchActionError(
+                        message: "Provide a menu bar item name or use --index.",
+                        code: .VALIDATION_ERROR,
+                        hint: "Run 'peekaboo menubar list' to discover available status items.",
+                        reason: .invalidRequest
+                    )
+                }
+                actionResult = try await MenuServiceBridge.clickMenuBarItem(
+                    request: request,
+                    menu: self.services.menu
+                )
+            } else if let idx = self.index {
+                // Receiptless providers retain legacy compatibility, but current concrete services
+                // always publish selected-leaf evidence and take the exact request path above.
+                actionResult = try await MenuServiceBridge.clickMenuBarItem(at: idx, menu: self.services.menu)
             } else if let name = self.itemName {
                 // Keep name-based dispatch bound to the name. Reusing the preflight index
                 // could click a different global item if status items reorder between calls.
-                result = try await MenuServiceBridge.clickMenuBarItem(named: name, menu: self.services.menu)
+                actionResult = try await MenuServiceBridge.clickMenuBarItem(named: name, menu: self.services.menu)
             } else {
                 throw PreDispatchActionError(
                     message: "Provide a menu bar item name or use --index.",
@@ -117,41 +153,61 @@ struct MenuBarActionCommand: ErrorHandlingCommand, OutputFormattable, InjectedRu
                     reason: .invalidRequest
                 )
             }
+            let result = actionResult.payload
+            let resultTargetIdentity = try validatedSuccessfulActionResult(
+                actionResult,
+                operation: "Menu bar click",
+                requiresTarget: self.services.menu is any MenuServiceActionResultProviding
+            )
 
-            let verification: MenuBarClickVerification?
-            if self.verify {
-                guard let verifyTarget else {
-                    throw PeekabooError
-                        .operationError(message: "Menu bar verification requested but no target resolved")
+            try await withPreservedActionResultOnFailure(
+                actionResult,
+                targetIdentity: resultTargetIdentity,
+                operation: "Menu bar click"
+            ) {
+                let verification: MenuBarClickVerification?
+                if self.verify {
+                    guard let verifyTarget else {
+                        throw PeekabooError
+                            .operationError(message: "Menu bar verification requested but no target resolved")
+                    }
+                    verification = try await verifier.verifyClick(
+                        target: verifyTarget,
+                        preFocus: focusSnapshot,
+                        clickLocation: result.location
+                    )
+                } else {
+                    verification = nil
                 }
-                verification = try await verifier.verifyClick(
-                    target: verifyTarget,
-                    preFocus: focusSnapshot,
-                    clickLocation: result.location
-                )
-            } else {
-                verification = nil
-            }
+                let outputOutcome = verification?.verified == true
+                    ? canonicalActionOutcomeAfterSuccessfulVerification(actionResult.outcome)
+                    : actionResult.outcome
 
-            if self.jsonOutput {
-                let output = ClickJSONOutput(
-                    success: true,
-                    clicked: result.elementDescription,
-                    executionTime: Date().timeIntervalSince(startTime),
-                    verified: verification?.verified
-                )
-                outputSuccessCodable(
-                    data: output,
-                    effect: verification?.verified == true ? .confirmed : .unverifiable,
-                    logger: self.outputLogger
-                )
-            } else {
-                print("✅ Clicked menu bar item: \(result.elementDescription)")
-                if let verification {
-                    print("🔎 Verified menu bar click (\(verification.method))")
-                }
-                if self.isVerbose {
-                    print("⏱️  Completed in \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s")
+                if self.jsonOutput {
+                    let output = ClickJSONOutput(
+                        success: true,
+                        clicked: result.elementDescription,
+                        executionTime: Date().timeIntervalSince(startTime),
+                        verified: verification?.verified,
+                        selectedLeafEvidence: actionResult.selectedLeafEvidence
+                    )
+                    outputSuccessCodable(
+                        data: output,
+                        effect: verification?.verified == true ? .confirmed : .unverifiable,
+                        outcome: outputOutcome,
+                        targetIdentity: resultTargetIdentity,
+                        logger: self.outputLogger
+                    )
+                } else if let outputOutcome {
+                    print(ActionOutcomeHumanRenderer.statusLine(for: outputOutcome, operation: "Menu bar click"))
+                } else {
+                    print("✅ Clicked menu bar item: \(result.elementDescription)")
+                    if let verification {
+                        print("🔎 Verified menu bar click (\(verification.method))")
+                    }
+                    if self.isVerbose {
+                        print("⏱️  Completed in \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s")
+                    }
                 }
             }
         } catch {
@@ -160,7 +216,7 @@ struct MenuBarActionCommand: ErrorHandlingCommand, OutputFormattable, InjectedRu
         }
     }
 
-    private func resolveClickTarget() async throws -> MenuBarItemInfo {
+    private func resolveClickTarget() async throws -> ResolvedMenuBarClickTarget {
         let requestedName: String?
         if self.index == nil {
             guard let name = self.itemName?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -184,24 +240,45 @@ struct MenuBarActionCommand: ErrorHandlingCommand, OutputFormattable, InjectedRu
         )
 
         if let idx = self.index {
-            guard let item = items.first(where: { $0.index == idx }) else {
+            let selection: DeterministicDesktopLeafSelector.Selection<MenuBarItemInfo>
+            do {
+                selection = try MenuBarItemSelector.select(index: idx, from: items)
+            } catch {
                 throw MenuBarClickPreflight.itemNotFound(
                     "index \(idx)",
                     hint: "Run 'peekaboo menubar list' and retry with a current index."
                 )
             }
-            return item
-        }
-
-        let name = requestedName ?? ""
-        guard let item = matchMenuBarItem(named: name, items: items) else {
-            throw MenuBarClickPreflight.itemNotFound(
-                name,
-                hint: "Run 'peekaboo menubar list' and retry with an exact current name or index."
+            return ResolvedMenuBarClickTarget(
+                item: selection.candidate.value,
+                normalizedSelector: selection.normalizedSelector,
+                matchKind: selection.matchKind
             )
         }
 
-        return item
+        let name = requestedName ?? ""
+        let selection: DeterministicDesktopLeafSelector.Selection<MenuBarItemInfo>
+        do {
+            selection = try MenuBarItemSelector.select(named: name, from: items)
+        } catch let error as DesktopLeafSelectionError {
+            if case .notFound = error {
+                throw MenuBarClickPreflight.itemNotFound(
+                    name,
+                    hint: "Run 'peekaboo menubar list' and retry with an exact current name or index."
+                )
+            }
+            throw PreDispatchActionError(
+                message: error.localizedDescription,
+                code: .VALIDATION_ERROR,
+                hint: "Use an exact current item name or --index.",
+                reason: .invalidRequest
+            )
+        }
+        return ResolvedMenuBarClickTarget(
+            item: selection.candidate.value,
+            normalizedSelector: selection.normalizedSelector,
+            matchKind: selection.matchKind
+        )
     }
 
     private static func makeVerificationTarget(from item: MenuBarItemInfo) -> MenuBarVerifyTarget {
@@ -220,6 +297,7 @@ private struct ClickJSONOutput: Codable {
     let clicked: String
     let executionTime: TimeInterval
     let verified: Bool?
+    let selectedLeafEvidence: [DesktopSelectedLeafEvidence]?
 }
 
 @MainActor

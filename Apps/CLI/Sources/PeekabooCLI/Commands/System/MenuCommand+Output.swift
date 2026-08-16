@@ -136,6 +136,10 @@ enum MenuErrorOutputSupport {
         details: String,
         logger: Logger
     ) {
+        if error is DesktopActionFailure || error is any ResultEnvelopeError {
+            handleGenericError(error, jsonOutput: jsonOutput, logger: logger)
+            return
+        }
         if jsonOutput {
             outputError(
                 message: error.localizedDescription,

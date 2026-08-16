@@ -9,7 +9,7 @@ extension SeeCommand {
         imageData: Data,
         windowContext: WindowContext?,
         snapshotID: String? = nil
-    ) async throws -> ElementDetectionResult {
+    ) async throws -> UIAutomationActionResult<ElementDetectionResult> {
         self.logger.operationStart("element_detection")
         defer { self.logger.operationComplete("element_detection") }
 
@@ -19,7 +19,7 @@ extension SeeCommand {
         )
 
         do {
-            return try await Self.detectElements(
+            return try await Self.detectElementsResult(
                 automation: self.services.automation,
                 imageData: imageData,
                 windowContext: windowContext,
@@ -27,6 +27,15 @@ extension SeeCommand {
                 snapshotID: snapshotID,
                 interactionMutationTracker: self.resolvedRuntime.observationTimeoutMutationTracker
             )
+        } catch is TimeoutError where windowContext?.shouldFocusWebContent == true {
+            throw DesktopActionFailure.indeterminate(
+                route: self.resolvedRuntime.selectedRemoteSocketPath == nil ? .local : .bridge,
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                evidence: .completionUnknown,
+                message: "Element detection timed out after web-content focus may have been dispatched.",
+                hint: "Observe the target before retrying with --web-focus.",
+                causeDescription: CaptureError.detectionTimedOut(timeoutSeconds).localizedDescription
+            ).attributed(to: SeeExecutionReceipt.targetReceipt(from: windowContext))
         } catch is TimeoutError {
             throw CaptureError.detectionTimedOut(timeoutSeconds)
         }
@@ -51,23 +60,33 @@ extension SeeCommand {
         snapshotID: String? = nil,
         interactionMutationTracker: InteractionMutationTracker? = nil
     ) async throws -> ElementDetectionResult {
+        try await self.detectElementsResult(
+            automation: automation,
+            imageData: imageData,
+            windowContext: windowContext,
+            timeoutSeconds: timeoutSeconds,
+            snapshotID: snapshotID,
+            interactionMutationTracker: interactionMutationTracker
+        ).payload
+    }
+
+    static func detectElementsResult(
+        automation: any UIAutomationServiceProtocol,
+        imageData: Data,
+        windowContext: WindowContext?,
+        timeoutSeconds: TimeInterval,
+        snapshotID: String? = nil,
+        interactionMutationTracker: InteractionMutationTracker? = nil
+    ) async throws -> UIAutomationActionResult<ElementDetectionResult> {
         try await withWallClockTimeout(
             seconds: timeoutSeconds,
             interactionMutationTracker: interactionMutationTracker
         ) {
-            if let timeoutAdjustingAutomation = automation as? any DetectElementsRequestTimeoutAdjusting {
-                return try await timeoutAdjustingAutomation.detectElements(
-                    in: imageData,
-                    snapshotId: snapshotID,
-                    windowContext: windowContext,
-                    requestTimeoutSec: Self.remoteDetectionRequestTimeoutSeconds(for: timeoutSeconds)
-                )
-            }
-            return try await AutomationServiceBridge.detectElements(
-                automation: automation,
-                imageData: imageData,
+            try await automation.detectElementsResult(
+                in: imageData,
                 snapshotId: snapshotID,
-                windowContext: windowContext
+                windowContext: windowContext,
+                requestTimeoutSec: Self.remoteDetectionRequestTimeoutSeconds(for: timeoutSeconds)
             )
         }
     }

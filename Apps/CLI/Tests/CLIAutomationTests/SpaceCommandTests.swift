@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomation
 @testable import PeekabooCLI
@@ -36,6 +37,7 @@ struct SpaceCommandReadTests {
         let output = try await self.runPeekaboo(["space", "switch", "--help"])
         #expect(output.contains("Switch to a different Space"))
         #expect(output.contains("--to"))
+        #expect(output.contains("--foreground"))
     }
 
     @Test
@@ -97,11 +99,25 @@ struct SpaceCommandReadTests {
             "--app", "Finder",
             "--to", "3",
             "--follow",
+            "--foreground",
         ])
 
         #expect(command.app == "Finder")
         #expect(command.to == 3)
         #expect(command.follow == true)
+        #expect(command.foreground == true)
+    }
+
+    @Test
+    func `space move-window parses exact window ID without an application`() throws {
+        var command = try MoveWindowSubcommand.parse([
+            "--window-id", "42",
+            "--to-current",
+        ])
+
+        try command.validate()
+        #expect(command.windowId == 42)
+        #expect(command.app == nil)
     }
 
     private func runPeekaboo(_ arguments: [String]) async throws -> String {
@@ -140,6 +156,7 @@ extension SpaceCommandReadTests {
         [
             ServiceApplicationInfo(
                 processIdentifier: 101,
+                processStartIdentity: 1001,
                 bundleIdentifier: "com.apple.finder",
                 name: "Finder",
                 bundlePath: "/System/Library/CoreServices/Finder.app",
@@ -149,6 +166,7 @@ extension SpaceCommandReadTests {
             ),
             ServiceApplicationInfo(
                 processIdentifier: 202,
+                processStartIdentity: 2002,
                 bundleIdentifier: "com.apple.TextEdit",
                 name: "TextEdit",
                 bundlePath: "/System/Applications/TextEdit.app",
@@ -179,7 +197,13 @@ extension SpaceCommandReadTests {
             spaceID: 1,
             spaceName: "Desktop 1",
             screenIndex: 0,
-            screenName: "Built-in"
+            screenName: "Built-in",
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 1,
+                ownerProcessIdentifier: 101,
+                ownerProcessStartIdentity: 1001,
+                capturedBounds: CGRect(x: 0, y: 0, width: 800, height: 600)
+            )
         )
     }
 
@@ -196,7 +220,13 @@ extension SpaceCommandReadTests {
             spaceID: 2,
             spaceName: "Desktop 2",
             screenIndex: 0,
-            screenName: "Built-in"
+            screenName: "Built-in",
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 2,
+                ownerProcessIdentifier: 202,
+                ownerProcessStartIdentity: 2002,
+                capturedBounds: CGRect(x: 100, y: 100, width: 700, height: 500)
+            )
         )
     }
 
@@ -243,6 +273,7 @@ struct SpaceCommandActionTests {
         let result = try await self.runSpaceCommand([
             "space", "switch",
             "--to", "1",
+            "--foreground",
             "--json",
         ], context: context)
         #expect(result.exitStatus == 0)
@@ -251,8 +282,53 @@ struct SpaceCommandActionTests {
             from: Data(self.output(from: result).utf8)
         )
         #expect(response.success)
+        let outcome = try #require(response.outcome)
+        #expect(outcome.state == .dispatchedUnverified)
+        #expect(outcome.deliveryMechanism == .nativeFramework)
+        #expect(outcome.deliveryMode == .foreground)
+        #expect(outcome.dispatchState == .dispatched(unitCount: .one))
+        #expect(outcome.retrySafety == .unsafe)
+        #expect(outcome.mutationDispatched)
+        #expect(!outcome.retrySafe)
         let switchCalls = await self.spaceState(context) { $0.switchCalls }
         #expect(switchCalls.contains(1))
+    }
+
+    @Test
+    func `space switch post-dispatch failure preserves indeterminate JSON receipt`() async throws {
+        let context = await self.makeSpaceContext()
+        await MainActor.run {
+            context.spaceService.switchFailure = .indeterminate(
+                delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "Space switch was dispatched, but post-dispatch settling failed."
+            )
+        }
+
+        let result = try await self.runSpaceCommand([
+            "space", "switch",
+            "--to", "1",
+            "--foreground",
+            "--json",
+        ], context: context)
+
+        #expect(result.exitStatus == 1)
+        let response = try JSONDecoder().decode(
+            SpaceActionResponse.self,
+            from: Data(self.output(from: result).utf8)
+        )
+        #expect(!response.success)
+        let outcome = try #require(response.outcome)
+        #expect(outcome.state == .indeterminate)
+        #expect(outcome.deliveryMechanism == .nativeFramework)
+        #expect(outcome.deliveryMode == .foreground)
+        #expect(outcome.dispatchState == .mayHaveDispatched(unitCount: .one))
+        #expect(outcome.retrySafety == .unsafe)
+        #expect(outcome.mutationDispatched)
+        #expect(!outcome.retrySafe)
+        #expect(response.error?.mutation_dispatched == true)
+        #expect(response.error?.retry_safe == false)
     }
 
     @Test
@@ -282,6 +358,7 @@ struct SpaceCommandActionTests {
             "--app", "TextEdit",
             "--to", "1",
             "--follow",
+            "--foreground",
             "--json",
         ], context: context)
         #expect(result.exitStatus == 0)
@@ -292,6 +369,171 @@ struct SpaceCommandActionTests {
         #expect(response.success)
         let moveCalls = await self.spaceState(context) { $0.moveWindowCalls }
         #expect(moveCalls.contains { $0.spaceID == 1 })
+    }
+
+    @Test
+    func `space move-window rejects a returned non-success move outcome`() async throws {
+        let context = await self.makeSpaceContext()
+        await MainActor.run {
+            context.spaceService.moveOutcome = .refused(reason: .targetUnavailable)
+        }
+
+        let result = try await self.runSpaceCommand([
+            "space", "move-window", "--app", "Finder", "--to-current", "--json",
+        ], context: context)
+
+        #expect(result.exitStatus == 1)
+        let response = try JSONDecoder().decode(JSONResponse.self, from: Data(self.output(from: result).utf8))
+        #expect(!response.success)
+        #expect(response.outcome?.state == .refused)
+    }
+
+    @Test
+    func `space move-window rejects a contradictory foreground service receipt`() async throws {
+        let context = await self.makeSpaceContext()
+        await MainActor.run {
+            context.spaceService.moveOutcome = .confirmedChange(
+                delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                unitCount: .one
+            )
+        }
+
+        let result = try await self.runSpaceCommand([
+            "space", "move-window", "--app", "Finder", "--to-current", "--json",
+        ], context: context)
+
+        #expect(result.exitStatus == 1)
+        let response = try JSONDecoder().decode(JSONResponse.self, from: Data(self.output(from: result).utf8))
+        #expect(response.outcome?.state == .indeterminate)
+        #expect(response.outcome?.deliveryMode == .foreground)
+        #expect(response.outcome?.dispatchedUnitCount == .one)
+        #expect(response.error?.mutation_dispatched == true)
+        #expect(response.error?.retry_safe == false)
+    }
+
+    @Test
+    func `space move-window follow rejects a returned non-success switch outcome`() async throws {
+        let context = await self.makeSpaceContext()
+        await MainActor.run {
+            context.spaceService.switchOutcome = .refused(reason: .targetUnavailable)
+        }
+
+        let result = try await self.runSpaceCommand([
+            "space", "move-window", "--app", "TextEdit", "--to", "1", "--follow", "--foreground", "--json",
+        ], context: context)
+
+        #expect(result.exitStatus == 1)
+        let response = try JSONDecoder().decode(JSONResponse.self, from: Data(self.output(from: result).utf8))
+        #expect(!response.success)
+        #expect(response.error?.mutation_dispatched == true)
+        #expect(response.outcome?.state == .indeterminate)
+        #expect(response.outcome?.dispatchedUnitCount == .one)
+        let moveCalls = await self.spaceState(context) { $0.moveWindowCalls }
+        let switchCalls = await self.spaceState(context) { $0.switchCalls }
+        #expect(moveCalls.count == 1)
+        #expect(switchCalls == [1])
+    }
+
+    @Test
+    func `space move-window follow preserves a partial switch outcome and both dispatch units`() async throws {
+        let context = await self.makeSpaceContext()
+        await MainActor.run {
+            context.spaceService.switchOutcome = .partial(
+                delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                unitCount: .one
+            )
+        }
+
+        let result = try await self.runSpaceCommand([
+            "space", "move-window", "--app", "TextEdit", "--to", "1", "--follow", "--foreground", "--json",
+        ], context: context)
+
+        #expect(result.exitStatus == 1)
+        let response = try JSONDecoder().decode(JSONResponse.self, from: Data(self.output(from: result).utf8))
+        #expect(!response.success)
+        #expect(response.outcome?.state == .partial)
+        #expect(response.outcome?.dispatchedUnitCount == DesktopActionOutcome.DispatchUnitCount(2))
+        #expect(response.error?.mutation_dispatched == true)
+        #expect(response.error?.retry_safe == false)
+    }
+
+    @Test
+    func `space move-window rejects every conflicting selector pair before dispatch`() async throws {
+        let selectorPairs = [
+            ["--window-id", "301", "--window-title", "Draft"],
+            ["--window-id", "301", "--window-index", "0"],
+            ["--window-title", "Draft", "--window-index", "0"],
+        ]
+
+        for selectors in selectorPairs {
+            let context = await self.makeSpaceSelectionContext(titles: ["Draft", "Notes"])
+            let result = try await self.runSpaceCommand(
+                ["space", "move-window", "--app", "Fixture"] + selectors + ["--to-current", "--json"],
+                context: context
+            )
+
+            #expect(result.exitStatus == 1)
+            #expect((result.stdout + result.stderr).contains("Provide only one of"))
+            let moveCalls = await self.spaceState(context) { $0.moveToCurrentCalls }
+            #expect(moveCalls.isEmpty)
+        }
+    }
+
+    @Test
+    func `space move-window rejects duplicate exact titles before dispatch`() async throws {
+        let context = await self.makeSpaceSelectionContext(titles: ["Draft", "Draft"])
+
+        let result = try await self.runSpaceCommand([
+            "space", "move-window", "--app", "Fixture", "--window-title", "Draft",
+            "--to-current", "--json",
+        ], context: context)
+
+        #expect(result.exitStatus == 1)
+        #expect((result.stdout + result.stderr).localizedCaseInsensitiveContains("ambiguous"))
+        let moveCalls = await self.spaceState(context) { $0.moveToCurrentCalls }
+        #expect(moveCalls.isEmpty)
+    }
+
+    @Test
+    func `space move-window rejects duplicate partial titles before dispatch`() async throws {
+        let context = await self.makeSpaceSelectionContext(titles: ["Draft One", "Draft Two"])
+
+        let result = try await self.runSpaceCommand([
+            "space", "move-window", "--app", "Fixture", "--window-title", "Draft",
+            "--to-current", "--json",
+        ], context: context)
+
+        #expect(result.exitStatus == 1)
+        #expect((result.stdout + result.stderr).localizedCaseInsensitiveContains("ambiguous"))
+        let moveCalls = await self.spaceState(context) { $0.moveToCurrentCalls }
+        #expect(moveCalls.isEmpty)
+    }
+
+    @Test
+    func `space move-window dispatches to a unique partial title match`() async throws {
+        let context = await self.makeSpaceSelectionContext(titles: ["Draft One", "Release Notes"])
+
+        let result = try await self.runSpaceCommand([
+            "space", "move-window", "--app", "Fixture", "--window-title", "Notes",
+            "--to-current", "--json",
+        ], context: context)
+
+        #expect(result.exitStatus == 0)
+        let moveCalls = await self.spaceState(context) { $0.moveToCurrentCalls }
+        #expect(moveCalls == [302])
+    }
+
+    @Test
+    func `space move-window dispatches an exact ID without application lookup`() async throws {
+        let context = await self.makeSpaceSelectionContext(titles: ["Draft One", "Release Notes"])
+
+        let result = try await self.runSpaceCommand([
+            "space", "move-window", "--window-id", "302", "--to-current", "--json",
+        ], context: context)
+
+        #expect(result.exitStatus == 0)
+        let moveCalls = await self.spaceState(context) { $0.moveToCurrentCalls }
+        #expect(moveCalls == [302])
     }
 
     private func runSpaceCommand(
@@ -313,6 +555,42 @@ struct SpaceCommandActionTests {
         let spaces = await base.spaceService.getAllSpaces()
         let spaceService = StubSpaceService(spaces: spaces, windowSpaces: [:])
         let services = base.services
+        return SpaceHarnessContext(services: services, spaceService: spaceService)
+    }
+
+    @MainActor
+    private func makeSpaceSelectionContext(titles: [String]) async -> SpaceHarnessContext {
+        let appName = "Fixture"
+        let appInfo = ServiceApplicationInfo(
+            processIdentifier: 101,
+            processStartIdentity: 1001,
+            bundleIdentifier: "dev.fixture",
+            name: appName
+        )
+        let windows = titles.enumerated().map { offset, title in
+            let bounds = CGRect(x: CGFloat(offset * 20), y: CGFloat(offset * 20), width: 640, height: 480)
+            return ServiceWindowInfo(
+                windowID: 301 + offset,
+                title: title,
+                bounds: bounds,
+                isMainWindow: offset == 0,
+                index: offset,
+                mutationIdentity: WindowMutationIdentity(
+                    windowID: 301 + offset,
+                    ownerProcessIdentifier: 101,
+                    ownerProcessStartIdentity: 1001,
+                    capturedBounds: bounds
+                )
+            )
+        }
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(
+                applications: [appInfo],
+                windowsByApp: [appName: windows]
+            ),
+            windows: StubWindowService(windowsByApp: [appName: windows])
+        )
+        let spaceService = StubSpaceService(spaces: SpaceCommandReadTests.spaceInfos())
         return SpaceHarnessContext(services: services, spaceService: spaceService)
     }
 
@@ -356,8 +634,10 @@ private struct SpaceData: Codable {
 
 private struct SpaceActionResponse: Codable {
     let success: Bool
+    let effect: ActionEffect?
+    let outcome: DesktopActionOutcome.Projection?
     let data: SpaceActionData?
-    let error: String?
+    let error: ErrorInfo?
 }
 
 private struct SpaceActionData: Codable {

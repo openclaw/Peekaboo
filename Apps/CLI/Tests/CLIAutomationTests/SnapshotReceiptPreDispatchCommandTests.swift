@@ -19,7 +19,7 @@ struct SnapshotReceiptPreDispatchCommandTests {
         )
         let actionArguments = [
             ["set-value", "updated", "--on", "E1"],
-            ["action", "AXPress", "--on", "B1"],
+            ["action", "AXIncrement", "--on", "B1"],
             ["scroll", "--direction", "down", "--amount", "1", "--on", "B1"],
             ["click", "--on", "B1"],
         ]

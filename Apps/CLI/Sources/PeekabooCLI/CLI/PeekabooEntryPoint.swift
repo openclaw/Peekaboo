@@ -105,7 +105,10 @@ private func printGenericError(_ error: any Error, jsonOutput: Bool) {
             effect: actionMetadata.effect,
             retrySafe: actionMetadata.retrySafe,
             mutationDispatched: actionMetadata.mutationDispatched,
+            actionOutcome: actionMetadata.outcome,
             actionFailure: actionFailure,
+            targetReceipt: actionMetadata.targetReceipt,
+            targetIdentity: actionMetadata.targetIdentity,
             logger: logger
         )
     }

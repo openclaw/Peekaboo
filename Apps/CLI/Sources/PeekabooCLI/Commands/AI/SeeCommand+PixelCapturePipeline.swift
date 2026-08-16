@@ -8,6 +8,7 @@ import PeekabooFoundation
 @MainActor
 extension SeeCommand {
     func performPixelCapture(snapshotID: String? = nil) async throws -> [ImageCapturedFile] {
+        try Self.requireSupportedPixelCaptureFocus(self.captureFocus, target: .frontmost)
         if let appName = self.app?.lowercased() {
             switch appName {
             case "menubar":
@@ -50,12 +51,13 @@ extension SeeCommand {
 
     private func captureWindowById(_ windowId: Int, snapshotID: String?) async throws -> [ImageCapturedFile] {
         let target = try self.observationTargetForExactWindowCapture(windowId)
-        let observation = try await self.captureObservation(
+        let result = try await self.captureObservation(
             target: target,
             preferredName: "window-\(windowId)",
             index: nil,
             snapshotID: snapshotID
         )
+        let observation = result.observation
 
         let title = observation.capture.metadata.windowInfo?.title
         let preferredName = if let title, !title.isEmpty {
@@ -66,7 +68,7 @@ extension SeeCommand {
 
         return try [
             self.capturedFile(
-                from: observation,
+                from: result,
                 preferredName: preferredName,
                 windowIndex: nil,
                 snapshotID: snapshotID
@@ -76,14 +78,14 @@ extension SeeCommand {
 
     private func captureScreens(allScreens: Bool) async throws -> [ImageCapturedFile] {
         if let index = self.screenIndex ?? (allScreens ? nil : 0) {
-            let observation = try await self.captureObservation(
+            let result = try await self.captureObservation(
                 target: .screen(index: index),
                 preferredName: "screen\(index)",
                 index: nil
             )
             return try [
                 self.capturedFile(
-                    from: observation,
+                    from: result,
                     preferredName: "screen\(index)",
                     windowIndex: nil
                 ),
@@ -95,13 +97,13 @@ extension SeeCommand {
 
         var savedFiles: [ImageCapturedFile] = []
         for (ordinal, displayIndex) in indexes.indexed() {
-            let observation = try await self.captureObservation(
+            let result = try await self.captureObservation(
                 target: .screen(index: displayIndex),
                 preferredName: "screen\(displayIndex)",
                 index: ordinal
             )
             try savedFiles.append(self.capturedFile(
-                from: observation,
+                from: result,
                 preferredName: "screen\(displayIndex)",
                 windowIndex: nil
             ))
@@ -122,16 +124,17 @@ extension SeeCommand {
 
     private func captureApplicationWindow(_ target: ImageWindowObservationTarget) async throws -> [ImageCapturedFile] {
         try await self.focusIfNeeded(appIdentifier: target.focusIdentifier)
-        let observation = try await self.captureObservation(
+        let result = try await self.captureObservation(
             target: target.target,
             preferredName: target.preferredName,
             index: nil
         )
+        let observation = result.observation
         let resolvedWindow = observation.target.window
         let resolvedTitle = resolvedWindow?.title.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let saved = try self.capturedFile(
-            from: observation,
+            from: result,
             preferredName: self.windowTitle ?? (resolvedTitle?.isEmpty == false ? resolvedTitle : nil) ?? target
                 .preferredName,
             windowIndex: resolvedWindow?.index
@@ -156,14 +159,14 @@ extension SeeCommand {
 
         var savedFiles: [ImageCapturedFile] = []
         for (ordinal, window) in filtered.indexed() {
-            let observation = try await self.captureObservation(
+            let result = try await self.captureObservation(
                 target: .windowID(CGWindowID(window.windowID)),
                 preferredName: window.title,
                 index: ordinal
             )
 
             let saved = try self.capturedFile(
-                from: observation,
+                from: result,
                 preferredName: window.title,
                 windowIndex: window.index
             )
@@ -174,14 +177,14 @@ extension SeeCommand {
     }
 
     private func captureFrontmost() async throws -> [ImageCapturedFile] {
-        let observation = try await self.captureObservation(
+        let result = try await self.captureObservation(
             target: .frontmost,
             preferredName: "frontmost",
             index: nil
         )
         return try [
             self.capturedFile(
-                from: observation,
+                from: result,
                 preferredName: "frontmost",
                 windowIndex: nil
             ),
@@ -190,14 +193,14 @@ extension SeeCommand {
 
     private func captureArea() async throws -> [ImageCapturedFile] {
         let rect = try self.areaCaptureRect()
-        let observation = try await self.captureObservation(
+        let result = try await self.captureObservation(
             target: .area(rect),
             preferredName: "area",
             index: nil
         )
         return try [
             self.capturedFile(
-                from: observation,
+                from: result,
                 preferredName: "area",
                 windowIndex: nil
             ),
@@ -231,14 +234,14 @@ extension SeeCommand {
     }
 
     private func captureMenuBar() async throws -> [ImageCapturedFile] {
-        let observation = try await self.captureObservation(
+        let result = try await self.captureObservation(
             target: .menubar,
             preferredName: "menubar",
             index: nil
         )
         return try [
             self.capturedFile(
-                from: observation,
+                from: result,
                 preferredName: "menubar",
                 windowIndex: nil
             ),
@@ -250,13 +253,45 @@ extension SeeCommand {
         preferredName: String?,
         index: Int?,
         snapshotID: String? = nil
-    ) async throws -> DesktopObservationResult {
+    ) async throws -> SeeObservationActionResult {
+        try Self.requireSupportedPixelCaptureFocus(self.captureFocus, target: target)
         let url = self.makeOutputURL(preferredName: preferredName, index: index)
-
-        return try await self.services.desktopObservation.observe(self.makePixelObservationRequest(
+        let request = self.makePixelObservationRequest(
             target: target,
             outputURL: url,
             snapshotID: snapshotID
-        ))
+        )
+        let actionResult = try await self.services.desktopObservation.observeResult(request)
+        let requiresTarget = switch target {
+        case .app, .pid, .windowID, .frontmost:
+            true
+        case .screen, .allScreens, .area, .menubar, .menubarPopover:
+            false
+        }
+        let receipt = try SeeExecutionReceipt.validated(
+            actionResult,
+            operation: "See pixel capture",
+            requiresOutcome: false,
+            requiresTarget: requiresTarget
+        )
+        return SeeObservationActionResult(observation: actionResult.payload, receipt: receipt)
+    }
+
+    static func requireSupportedPixelCaptureFocus(
+        _ focus: PeekabooCore.CaptureFocus,
+        target: DesktopObservationTargetRequest
+    ) throws {
+        guard focus != .background else { return }
+        let targetDescription = switch target {
+        case .windowID, .app(_, .id), .pid(_, .id):
+            "exact-window"
+        default:
+            "pixel"
+        }
+        throw DesktopActionFailure.preDispatchRefusal(
+            reason: .operationUnsupported,
+            message: "See \(targetDescription) capture is background-only.",
+            hint: "Use a background see capture; foreground focus is not dispatched without a selected-host receipt."
+        )
     }
 }

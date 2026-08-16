@@ -1,6 +1,7 @@
 import Commander
 import Foundation
 import PeekabooCore
+import PeekabooFoundation
 import Testing
 @testable import PeekabooCLI
 
@@ -30,6 +31,59 @@ struct ObservationPolicyDefaultsTests {
         #expect(try configured.makeObservationRequest(target: .frontmost).timeout.overall == 45)
         #expect(try configured.makeObservationRequest(target: .frontmost).timeout.detection == 45)
         #expect(try analyzed.makeObservationRequest(target: .frontmost).timeout.overall == 60)
+    }
+
+    @Test
+    func `See menu timeout projection preserves exact mutation receipt`() throws {
+        var command = try SeeCommand.parse(["--menubar"])
+        command.runtime = CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
+            services: PeekabooServices()
+        )
+        let target = DesktopActionTargetReceipt(
+            processIdentifier: 321,
+            processStartIdentity: 654,
+            windowID: 700
+        )
+        let progress = DesktopObservationActionProgressReceipt(
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: DesktopActionOutcome.DispatchUnitCount(3)
+            ),
+            targetReceipt: target
+        )
+
+        let failure = try #require(command.failurePreservingConditionalTimeout(
+            CaptureError.detectionTimedOut(0.5),
+            progress: progress
+        ) as? DesktopActionFailure)
+
+        #expect(failure.outcome.state == .indeterminate)
+        #expect(failure.outcome.delivery?.mechanism == .windowTargetedEvents)
+        #expect(failure.outcome.dispatchState.unitCount?.rawValue == 3)
+        #expect(failure.outcome.retrySafety == .unsafe)
+        #expect(failure.targetReceipt == target)
+    }
+
+    @Test
+    func `See web timeout before dispatch remains a raw safe timeout`() throws {
+        var command = try SeeCommand.parse(["--web-focus"])
+        command.runtime = CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
+            services: PeekabooServices()
+        )
+
+        let projected = command.failurePreservingConditionalTimeout(
+            CaptureError.detectionTimedOut(0.5),
+            progress: nil
+        )
+
+        guard case let CaptureError.detectionTimedOut(seconds) = projected else {
+            Issue.record("Expected the pre-dispatch web timeout to remain a CaptureError")
+            return
+        }
+        #expect(seconds == 0.5)
     }
 
     @Test

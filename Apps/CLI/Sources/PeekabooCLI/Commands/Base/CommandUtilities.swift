@@ -1,3 +1,4 @@
+import Commander
 import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
@@ -226,24 +227,76 @@ func withMainActorCommandTimeout<T: Sendable>(
 
 // MARK: - Window Target Extensions
 
+@discardableResult
+func validatedMutationSelector(
+    _ selector: InteractionTargetSelector,
+    allowMissingTarget: Bool = false,
+    missingTargetMessage: String = "Either --app, --pid, or --window-id must be specified",
+    multipleWindowSelectorsMessage: String =
+        "Provide only one of --window-id, --window-title, or --window-index"
+) throws
+-> InteractionTargetSelector {
+    if !selector.hasAnyInput {
+        guard allowMissingTarget else {
+            throw Commander.ValidationError(missingTargetMessage)
+        }
+        return selector
+    }
+
+    do {
+        try selector.validate(policy: .mutationSafe)
+        return selector
+    } catch let error as InteractionTargetSelector.ValidationError {
+        switch error {
+        case .invalidWindowID:
+            throw Commander.ValidationError("--window-id must be a valid positive CoreGraphics window ID")
+        case .missingTarget:
+            throw Commander.ValidationError(missingTargetMessage)
+        case .invalidWindowIndex:
+            throw Commander.ValidationError("--window-index must be 0 or greater")
+        case .invalidProcessIdentifier:
+            throw Commander.ValidationError("--pid must be a valid positive process ID")
+        case let .conflictingProcessIdentifiers(applicationPID, explicitPID):
+            throw Commander.ValidationError(
+                "Conflicting PIDs: --app specifies PID \(applicationPID) but --pid is \(explicitPID)"
+            )
+        case .invalidApplicationProcessIdentifier:
+            throw Commander.ValidationError("Invalid PID format in --app")
+        case .applicationAndProcessIdentifier:
+            throw Commander.ValidationError("Provide the application either with --app or --pid, not both")
+        case .multipleWindowSelectors:
+            throw Commander.ValidationError(multipleWindowSelectorsMessage)
+        case .windowSelectorRequiresApplication:
+            throw Commander.ValidationError("--window-title and --window-index require --app or --pid")
+        case .emptyApplication:
+            throw Commander.ValidationError("--app must not be empty")
+        case .emptyWindowTitle:
+            throw Commander.ValidationError("--window-title must not be empty")
+        }
+    }
+}
+
 extension WindowIdentificationOptions {
     /// Create a window target from options
     func createTarget() throws -> WindowTarget {
         try self.toWindowTarget()
     }
 
-    /// Select a window from a list based on options
+    /// Select exactly one mutation target from a full application inventory.
+    ///
+    /// Exact title matches take precedence over partial matches, but neither form is allowed to
+    /// choose arbitrarily when multiple windows match. Indexes use the canonical inventory index
+    /// carried by each window rather than the array's incidental ordering.
     @MainActor
-    func selectWindow(from windows: [ServiceWindowInfo]) -> ServiceWindowInfo? {
-        if let windowId {
-            windows.first(where: { $0.windowID == windowId })
-        } else if let title = windowTitle {
-            windows.first { $0.title.localizedCaseInsensitiveContains(title) }
-        } else if let index = windowIndex {
-            windows.indices.contains(index) ? windows[index] : nil
-        } else {
-            ObservationTargetResolver.bestWindow(from: windows)
-        }
+    func selectMutationWindow(
+        from windows: [ServiceWindowInfo],
+        operation: String
+    ) throws -> ServiceWindowInfo {
+        try ExactWindowSelectorResolver.select(
+            from: windows,
+            selector: self.selector,
+            operation: operation
+        )
     }
 
     /// Re-fetch the window info after a mutation so callers report fresh bounds.
@@ -253,7 +306,7 @@ extension WindowIdentificationOptions {
         logger: Logger,
         context: StaticString
     ) async -> ServiceWindowInfo? {
-        guard let target = try? self.toWindowTarget() else {
+        guard let target = try? self.toWindowSelectionTarget() else {
             logger.warn("Failed to refetch window info (\(context)): invalid target")
             return nil
         }
@@ -263,11 +316,101 @@ extension WindowIdentificationOptions {
                 windows: services.windows,
                 target: target
             )
-            return self.selectWindow(from: refreshedWindows)
+            return try self.selectMutationWindow(
+                from: refreshedWindows,
+                operation: "Window \(context) readback"
+            )
         } catch {
             logger.warn("Failed to refetch window info (\(context)): \(error.localizedDescription)")
             return nil
         }
+    }
+}
+
+/// Shared strict selector used by CLI surfaces that must freeze one exact window before work starts.
+enum ExactWindowSelectorResolver {
+    @MainActor
+    static func select(
+        from windows: [ServiceWindowInfo],
+        selector: InteractionTargetSelector,
+        operation: String
+    ) throws -> ServiceWindowInfo {
+        let selection = try selector.normalizedWindowSelector(policy: .mutationSafe)
+        switch selection {
+        case nil:
+            guard let window = ObservationTargetResolver.bestWindow(from: windows) else {
+                throw ExactWindowSelectorResolutionError(
+                    message: "\(operation) found no eligible window. Refresh the window inventory before retrying."
+                )
+            }
+            return window
+
+        case let .id(windowID):
+            let matches = windows.filter { $0.windowID == windowID }
+            guard matches.count == 1, let window = matches.first else {
+                let detail = matches.isEmpty ? "does not identify a window" : "identifies multiple windows"
+                throw ExactWindowSelectorResolutionError(
+                    message: "\(operation) --window-id \(windowID) \(detail). " +
+                        "Refresh the window inventory before retrying."
+                )
+            }
+            return window
+
+        case let .title(title):
+            let exactMatches = windows.filter {
+                $0.title.compare(title, options: .caseInsensitive) == .orderedSame
+            }
+            if exactMatches.count == 1, let window = exactMatches.first {
+                return window
+            }
+            if exactMatches.count > 1 {
+                throw Self.ambiguousTitle(title, matches: exactMatches, operation: operation)
+            }
+
+            let partialMatches = windows.filter { $0.title.localizedCaseInsensitiveContains(title) }
+            guard partialMatches.count == 1, let window = partialMatches.first else {
+                if partialMatches.isEmpty {
+                    throw ExactWindowSelectorResolutionError(
+                        message: "\(operation) found no window whose title matches '\(title)'. " +
+                            "Refresh the inventory and select a --window-id or valid --window-index."
+                    )
+                }
+                throw Self.ambiguousTitle(title, matches: partialMatches, operation: operation)
+            }
+            return window
+
+        case let .index(index):
+            let matches = windows.filter { $0.index == index }
+            guard matches.count == 1, let window = matches.first else {
+                let detail = matches.isEmpty ? "is not present" : "is ambiguous"
+                throw ExactWindowSelectorResolutionError(
+                    message: "\(operation) --window-index \(index) \(detail). " +
+                        "Refresh the inventory and select a --window-id."
+                )
+            }
+            return window
+        }
+    }
+
+    private static func ambiguousTitle(
+        _ title: String,
+        matches: [ServiceWindowInfo],
+        operation: String
+    ) -> ExactWindowSelectorResolutionError {
+        let candidates = matches.prefix(5).map { "id=\($0.windowID) index=\($0.index) '\($0.title)'" }
+            .joined(separator: "; ")
+        return ExactWindowSelectorResolutionError(
+            message: "\(operation) window title '\(title)' is ambiguous (\(candidates)). " +
+                "Select one --window-id or --window-index explicitly."
+        )
+    }
+}
+
+struct ExactWindowSelectorResolutionError: Error, LocalizedError, Sendable, Equatable {
+    let message: String
+
+    var errorDescription: String? {
+        self.message
     }
 }
 

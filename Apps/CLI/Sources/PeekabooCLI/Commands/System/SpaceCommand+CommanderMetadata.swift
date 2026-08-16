@@ -23,6 +23,13 @@ extension SwitchSubcommand: CommanderSignatureProviding {
                     help: "Space number to switch to (1-based)",
                     long: "to"
                 ),
+            ],
+            flags: [
+                .commandFlag(
+                    "foreground",
+                    help: "Required explicit consent to switch the visible Space",
+                    long: "foreground"
+                ),
             ]
         )
     }
@@ -41,6 +48,11 @@ extension MoveWindowSubcommand: CommanderSignatureProviding {
                     "pid",
                     help: "Target application by process ID",
                     long: "pid"
+                ),
+                .commandOption(
+                    "windowId",
+                    help: "Target window by CoreGraphics window ID",
+                    long: "window-id"
                 ),
                 .commandOption(
                     "windowTitle",
@@ -68,6 +80,11 @@ extension MoveWindowSubcommand: CommanderSignatureProviding {
                     "follow",
                     help: "Switch to the target Space after moving",
                     long: "follow"
+                ),
+                .commandFlag(
+                    "foreground",
+                    help: "Required explicit consent when --follow switches the visible Space",
+                    long: "foreground"
                 ),
             ]
         )

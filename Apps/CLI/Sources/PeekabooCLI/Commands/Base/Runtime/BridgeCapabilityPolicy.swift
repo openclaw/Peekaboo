@@ -185,6 +185,10 @@ enum BridgeCapabilityPolicy {
            !self.supportsProcessGenerationPinnedApplicationActivation(for: handshake) {
             return false
         }
+        if options.requiresProcessGenerationPinnedApplicationHide,
+           !self.supportsProcessGenerationPinnedApplicationHide(for: handshake) {
+            return false
+        }
         if options.requiresTargetedFocusedElement, !self.supportsTargetedFocusedElement(for: handshake) {
             return false
         }
@@ -248,7 +252,7 @@ enum BridgeCapabilityPolicy {
     ) -> Set<PeekabooBridgePermissionKind> {
         var required: Set<PeekabooBridgePermissionKind> = []
         for operation in self.requiredRemoteOperations(options: options) {
-            required.formUnion(handshake.permissionTags[operation.rawValue] ?? Array(operation.requiredPermissions))
+            required.formUnion(self.requiredPermissions(for: operation, handshake: handshake))
         }
         return required
     }
@@ -388,6 +392,19 @@ enum BridgeCapabilityPolicy {
         self.supportsOperation(.activateApplication, for: handshake) &&
             handshake.hostCapabilities?.contains(
                 PeekabooBridgeHostCapability.processGenerationPinnedApplicationActivation
+            ) == true
+    }
+
+    static func supportsProcessGenerationPinnedApplicationHide(
+        for handshake: PeekabooBridgeHandshakeResponse
+    ) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeConstants.processGenerationPinnedApplicationHideVersion &&
+            self.supportsOperation(.hideApplication, for: handshake) &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.attestedOperationReceipts
+            ) == true &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.processGenerationPinnedApplicationHide
             ) == true
     }
 
@@ -681,11 +698,25 @@ enum BridgeCapabilityPolicy {
         for operation: PeekabooBridgeOperation,
         handshake: PeekabooBridgeHandshakeResponse
     ) -> Set<PeekabooBridgePermissionKind> {
-        let requiredPermissions = Set(
-            handshake.permissionTags[operation.rawValue] ?? Array(operation.requiredPermissions)
-        )
+        let requiredPermissions = self.requiredPermissions(for: operation, handshake: handshake)
         let grantedPermissions = grantedPermissions(from: handshake.permissions)
         return requiredPermissions.subtracting(grantedPermissions)
+    }
+
+    static func requiredPermissions(
+        for operation: PeekabooBridgeOperation,
+        handshake: PeekabooBridgeHandshakeResponse
+    ) -> Set<PeekabooBridgePermissionKind> {
+        if let tagged = handshake.permissionTags[operation.rawValue] {
+            return Set(tagged)
+        }
+        guard operation == .exactDialogEnterText else {
+            return operation.requiredPermissions
+        }
+        let usesAttestedReceipts = handshake.negotiatedVersion >=
+            PeekabooBridgeConstants.attestedOperationReceiptVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true
+        return usesAttestedReceipts ? [.accessibility] : [.accessibility, .postEvent]
     }
 
     static func missingPermissionNames(_ permissions: Set<PeekabooBridgePermissionKind>) -> [String] {

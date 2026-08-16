@@ -35,13 +35,8 @@ struct ScrollCommandTests {
     }
 
     @Test
-    func `Scroll forwards parameters to automation service`() async throws {
-        let snapshotId = "snapshot-42"
+    func `Scroll forwards foreground parameters to automation service`() async throws {
         let context = await self.makeContext()
-        try await context.snapshots.storeDetectionResult(
-            snapshotId: snapshotId,
-            result: Self.detectionResult(snapshotId: snapshotId, element: Self.buttonElement(id: "B1"))
-        )
 
         let result = try await self.runScroll(
             arguments: [
@@ -49,8 +44,6 @@ struct ScrollCommandTests {
                 "--amount", "5",
                 "--delay", "10",
                 "--smooth",
-                "--snapshot", snapshotId,
-                "--on", "B1",
                 "--foreground",
                 "--json",
             ],
@@ -65,8 +58,8 @@ struct ScrollCommandTests {
         #expect(call.request.amount == 5)
         #expect(call.request.delay == 10)
         #expect(call.request.smooth == true)
-        #expect(call.request.target == "B1")
-        #expect(call.request.snapshotId == "snapshot-42")
+        #expect(call.request.target == nil)
+        #expect(call.request.snapshotId == nil)
         #expect(call.request.foreground)
 
         let payloadData = try #require(self.output(from: result).data(using: .utf8))
@@ -149,6 +142,53 @@ struct ScrollCommandTests {
         #expect(call.request.snapshotId == nil)
         #expect(call.request.amount == 2)
         #expect(call.request.foreground)
+    }
+
+    @Test
+    @MainActor
+    func `Targeted foreground scroll refuses unconfirmed focus before global events`() async throws {
+        let windows = InputFocusWindowService(
+            focusOutcome: .suspectedNoop(
+                route: .bridge,
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                unitCount: .one
+            )
+        )
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = InputFocusFixtures.typeOutcome
+        let services = InputExecutionHostServices(
+            host: .remote,
+            base: TestServicesFactory.makePeekabooServices(windows: windows, automation: automation)
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "scroll", "--direction", "down",
+                "--window-id", String(InputFocusFixtures.windowID),
+                "--foreground",
+                "--json",
+            ],
+            services: services
+        )
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: Data(result.stdout.utf8))
+
+        #expect(result.exitStatus == 1)
+        #expect(windows.pinnedFocusCalls.count == 1)
+        #expect(automation.scrollCalls.isEmpty)
+        #expect(payload.outcome?.state == .suspectedNoop)
+        #expect(payload.target_receipt?.windowID == InputFocusFixtures.windowID)
+    }
+
+    @Test
+    func `Targetless foreground scroll remains allowed with automatic focus disabled`() async throws {
+        let context = await self.makeContext()
+        let result = try await self.runScroll(
+            arguments: ["--direction", "down", "--foreground", "--no-auto-focus"],
+            context: context
+        )
+
+        #expect(result.exitStatus == 0)
+        #expect(await self.automationState(context) { $0.scrollCalls }.count == 1)
     }
 
     @Test

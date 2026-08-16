@@ -18,7 +18,8 @@ extension MCPCommand {
             discussion: """
             Starts Peekaboo as an MCP server, exposing all its tools via the
             Model Context Protocol. This allows AI clients like Claude to use
-            Peekaboo's automation capabilities.
+            Peekaboo's automation capabilities. The server is always background-only:
+            foreground actions and ambient browser auto-connect are refused before dispatch.
 
             USAGE WITH CLAUDE CODE:
               claude mcp add peekaboo -- peekaboo mcp
@@ -110,6 +111,7 @@ extension MCPCommand {
                 services: services,
                 snapshotMutationCoordinator: snapshotMutationCoordinator,
                 snapshotExecutionGate: snapshotExecutionGate,
+                executionPolicy: .backgroundOnly,
                 capturePreflightRefusal: capturePreflightRefusal
             )
         }

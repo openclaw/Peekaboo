@@ -97,10 +97,10 @@ RuntimeOptionsConfigurable {
             self.resolvedRuntime.beginInteractionMutation()
             let parsedChords = try self.parsedChords()
             var completedPresses = 0
-            var sequence = DesktopActionSequenceAccumulator()
+            let actionSequence = CommandActionSequenceAccumulator()
             let deliveryPlan = try await self.resolveDeliveryPlan(observation: observation)
-            if deliveryPlan.foregroundSetupMayHaveMutated {
-                sequence.record(.mayHaveDispatched(route: nil, delivery: nil, unitCount: .one))
+            if let focusResult = deliveryPlan.focusResult {
+                try actionSequence.record(focusResult, operation: "Key press setup focus")
             }
             let deliveryTarget = deliveryPlan.target
 
@@ -109,79 +109,71 @@ RuntimeOptionsConfigurable {
                     do {
                         try Task.checkCancellation()
                     } catch {
-                        guard let failure = sequence.cancellationFailure(
+                        let failure = actionSequence.preservingFailure(
+                            error,
                             fallbackRoute: self.sequenceRoute,
                             message: Self.indeterminateSequenceMessage(completedPresses: completedPresses),
-                            hint: Self.sequenceObservationHint,
-                            causeDescription: error.localizedDescription
+                            hint: Self.sequenceObservationHint
                         )
-                        else { throw error }
-                        await self.invalidateAfterFailedMutation(failure)
                         throw failure
                     }
-                    let actionResult: UIAutomationActionResult<Void>
                     do {
-                        actionResult = try await AutomationServiceBridge.hotkey(
+                        let actionResult = try await AutomationServiceBridge.hotkey(
                             automation: self.services.automation,
                             keys: chord.serviceKeys,
                             holdDuration: self.hold.roundedMilliseconds,
                             target: deliveryTarget
                         )
-                        try DesktopActionFailure.requireConfirmedIfReported(
-                            actionResult.outcome,
-                            operation: "Raw chord \(chord.displayValue)"
+                        let receiptlessStep = DesktopActionSequenceAccumulator.Step.dispatched(
+                            route: self.sequenceRoute,
+                            delivery: Self.delivery(for: deliveryTarget),
+                            unitCount: .one
                         )
+                        if deliveryTarget.processIdentifier == nil {
+                            try actionSequence.recordExactTargetLeaf(
+                                outcome: actionResult.outcome,
+                                targetIdentity: actionResult.targetIdentity,
+                                operation: "Raw chord \(chord.displayValue)",
+                                receiptlessStep: receiptlessStep
+                            )
+                        } else {
+                            try actionSequence.record(
+                                actionResult,
+                                operation: "Raw chord \(chord.displayValue)",
+                                receiptlessStep: receiptlessStep
+                            )
+                        }
                     } catch let failure as DesktopActionFailure {
-                        let composed = sequence.failure(
-                            combining: failure,
+                        let composed = actionSequence.preservingFailure(
+                            failure,
+                            fallbackRoute: self.sequenceRoute,
                             message: Self.sequenceFailureMessage(
                                 completedPresses: completedPresses,
                                 detail: failure.message
                             ),
                             hint: Self.sequenceObservationHint
                         )
-                        await self.invalidateAfterFailedMutation(composed)
                         throw composed
                     } catch let error as InputDeliveryIndeterminateError {
                         let failure = error.desktopActionFailure(
                             delivery: Self.delivery(for: deliveryTarget),
                             route: self.sequenceRoute
                         )
-                        let composed = sequence.failure(
-                            combining: failure,
+                        let composed = actionSequence.preservingFailure(
+                            failure,
+                            fallbackRoute: self.sequenceRoute,
                             message: Self.indeterminateSequenceMessage(completedPresses: completedPresses),
-                            hint: Self.sequenceObservationHint,
-                            causeDescription: error.causeDescription ?? error.localizedDescription
+                            hint: Self.sequenceObservationHint
                         )
-                        await self.invalidateAfterFailedMutation(composed)
                         throw composed
                     } catch {
-                        guard sequence.mutationDisposition.mutationDispatched else { throw error }
-                        let leaf = DesktopActionFailure.preDispatchRefusal(
-                            route: self.sequenceRoute,
-                            reason: .operationUnsupported,
-                            message: error.localizedDescription
-                        )
-                        let composed = sequence.failure(
-                            combining: leaf,
+                        let composed = actionSequence.preservingFailure(
+                            error,
+                            fallbackRoute: self.sequenceRoute,
                             message: Self.indeterminateSequenceMessage(completedPresses: completedPresses),
-                            hint: Self.sequenceObservationHint,
-                            causeDescription: error.localizedDescription
+                            hint: Self.sequenceObservationHint
                         )
-                        await self.invalidateAfterFailedMutation(composed)
                         throw composed
-                    }
-                    if let outcome = actionResult.outcome {
-                        sequence.record(.reportedOutcome(
-                            outcome,
-                            defaultDispatchedUnitCount: .one
-                        ))
-                    } else {
-                        sequence.record(.dispatched(
-                            route: self.sequenceRoute,
-                            delivery: Self.delivery(for: deliveryTarget),
-                            unitCount: .one
-                        ))
                     }
                     completedPresses += 1
 
@@ -196,14 +188,12 @@ RuntimeOptionsConfigurable {
                             try await Task.sleep(for: .seconds(self.delay.seconds))
                         }
                     } catch {
-                        guard let failure = sequence.cancellationFailure(
+                        let failure = actionSequence.preservingFailure(
+                            error,
                             fallbackRoute: self.sequenceRoute,
                             message: Self.indeterminateSequenceMessage(completedPresses: completedPresses),
-                            hint: Self.sequenceObservationHint,
-                            causeDescription: error.localizedDescription
+                            hint: Self.sequenceObservationHint
                         )
-                        else { throw error }
-                        await self.invalidateAfterFailedMutation(failure)
                         throw failure
                     }
                 }
@@ -212,12 +202,15 @@ RuntimeOptionsConfigurable {
             await self.finishSuccess(
                 parsedChords: parsedChords,
                 completedPresses: completedPresses,
-                sequence: sequence,
+                actionSequence: actionSequence,
                 deliveryTarget: deliveryTarget,
                 startTime: startTime
             )
 
         } catch {
+            if let failure = error as? DesktopActionFailure {
+                await self.invalidateAfterFailedMutation(failure)
+            }
             self.handleError(error)
             throw ExitCode.failure
         }
@@ -226,7 +219,7 @@ RuntimeOptionsConfigurable {
     private func finishSuccess(
         parsedChords: [KeyboardChord],
         completedPresses: Int,
-        sequence: DesktopActionSequenceAccumulator,
+        actionSequence: CommandActionSequenceAccumulator,
         deliveryTarget: UIAutomationTarget,
         startTime: Date
     ) async {
@@ -246,9 +239,14 @@ RuntimeOptionsConfigurable {
             targetWindowID: deliveryTarget.exactWindow?.identity.windowID,
             executionTime: Date().timeIntervalSince(startTime)
         )
-        let actionOutcome = sequence.successResolution().outcome
-        self.output(pressResult, effect: .unverifiable, outcome: actionOutcome) {
-            if let actionOutcome {
+        let actionResult = actionSequence.result(payload: pressResult)
+        self.output(
+            actionResult.payload,
+            effect: .unverifiable,
+            outcome: actionResult.outcome,
+            targetIdentity: actionResult.targetIdentity
+        ) {
+            if let actionOutcome = actionResult.outcome {
                 print(ActionOutcomeHumanRenderer.statusLine(for: actionOutcome, operation: "Key press"))
             } else {
                 print("✅ Key press dispatched")
@@ -266,7 +264,7 @@ RuntimeOptionsConfigurable {
                 print("🪟 Window: \(targetWindowID)")
             }
             print("📊 Total presses: \(completedPresses)")
-            if actionOutcome == nil {
+            if actionResult.outcome == nil {
                 print("⚠️  Effect: unverifiable; observe the target before continuing")
             }
             print("⏱️  Completed in \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s")
@@ -312,16 +310,17 @@ RuntimeOptionsConfigurable {
         observation: InteractionObservationContext
     ) async throws -> PressDeliveryPlan {
         if self.focusOptions.foreground {
-            try await ensureFocused(
-                snapshotId: observation.focusSnapshotId(for: self.target),
+            let focusSnapshotID = observation.focusSnapshotId(for: self.target)
+            let focusResult = try await ensureConfirmedForegroundFocus(
+                snapshotId: focusSnapshotID,
                 target: self.target,
                 options: self.focusOptions,
-                services: self.services
+                services: self.services,
+                operation: "Key press setup focus"
             )
             return PressDeliveryPlan(
                 target: .foreground,
-                foregroundSetupMayHaveMutated: self.target.hasAnyTarget ||
-                    observation.focusSnapshotId(for: self.target) != nil
+                focusResult: focusResult
             )
         }
 
@@ -369,7 +368,7 @@ RuntimeOptionsConfigurable {
         }
         do {
             let pinnedTarget = try await target.pinningCurrentFocusedElement(using: self.services.automation)
-            return PressDeliveryPlan(target: pinnedTarget, foregroundSetupMayHaveMutated: false)
+            return PressDeliveryPlan(target: pinnedTarget, focusResult: nil)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -388,7 +387,7 @@ RuntimeOptionsConfigurable {
     }
 
     private var sequenceRoute: DesktopActionOutcome.Route {
-        self.services.automation is RemoteUIAutomationService ? .bridge : .local
+        commandActionRoute(for: self.services)
     }
 
     private func invalidateAfterFailedMutation(_ failure: DesktopActionFailure) async {
@@ -411,7 +410,7 @@ RuntimeOptionsConfigurable {
 
 private struct PressDeliveryPlan {
     let target: UIAutomationTarget
-    let foregroundSetupMayHaveMutated: Bool
+    let focusResult: UIAutomationActionResult<Void>?
 }
 
 struct PressResult: Codable {

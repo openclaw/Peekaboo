@@ -17,6 +17,116 @@ struct DialogCommand: ParsableCommand {
         let windowTitle: String?
         let appHint: String?
         let target: DialogTargetSelector
+        let actionSequence: CommandActionSequenceAccumulator
+    }
+
+    static func targetReceipt(_ target: UIAutomationTarget.ExactWindow) -> DesktopActionTargetReceipt {
+        DesktopActionTargetReceipt(
+            processIdentifier: target.identity.ownerProcessIdentifier,
+            processStartIdentity: target.identity.ownerProcessStartIdentity,
+            windowID: target.identity.windowID
+        )
+    }
+
+    static func exactResultTargetIdentity(
+        from result: DialogActionResult,
+        matching selector: DialogTargetSelector? = nil,
+        expectedTarget: UIAutomationTarget.ExactWindow? = nil
+    ) throws -> DesktopTargetIdentity? {
+        let receipt = result.targetReceipt
+        let hasEvidence = receipt != nil || result.targetWindowIdentity != nil ||
+            result.targetWindowBounds != nil || result.resolvedTarget != nil
+        guard hasEvidence else { return nil }
+
+        let processIdentity = receipt.map {
+            ApplicationProcessIdentity(
+                processIdentifier: $0.processIdentifier,
+                processStartIdentity: $0.processStartIdentity
+            )
+        }
+        var evidence = [DesktopTargetIdentity.Evidence(
+            processIdentifier: receipt?.processIdentifier,
+            processIdentity: processIdentity,
+            windowID: receipt?.windowID,
+            windowIdentity: result.targetWindowIdentity,
+            windowBounds: result.targetWindowBounds,
+            focusedElement: result.focusedElement
+        )]
+        if let resolvedTarget = result.resolvedTarget {
+            evidence.append(.init(target: DesktopTargetIdentity(exactWindow: resolvedTarget.target)))
+        }
+        if let expectedTarget {
+            evidence.append(.init(target: DesktopTargetIdentity(exactWindow: expectedTarget)))
+        }
+        guard let target = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve(evidence),
+              target.exactWindow != nil
+        else {
+            throw DesktopTargetIdentityError.incompleteExactWindow
+        }
+        if let selector, selector.hasTarget {
+            try self.validateResultTarget(
+                target,
+                result: result,
+                matches: selector
+            )
+        }
+        return target
+    }
+
+    private static func validateResultTarget(
+        _ target: DesktopTargetIdentity,
+        result: DialogActionResult,
+        matches selector: DialogTargetSelector
+    ) throws {
+        if let resolvedTarget = result.resolvedTarget {
+            guard resolvedTarget.matches(selector) else {
+                throw PeekabooError.serviceUnavailable(
+                    "Dialog action returned exact target evidence that does not match the requested selector"
+                )
+            }
+            return
+        }
+
+        guard let exactWindow = target.exactWindow,
+              result.targetReceipt != nil || result.targetWindowIdentity != nil,
+              selector.windowTitle == nil,
+              selector.windowIndex == nil,
+              selector.processIdentifier.map({ $0 == exactWindow.identity.ownerProcessIdentifier }) ?? true,
+              selector.windowID.map({ $0 == exactWindow.identity.windowID }) ?? true,
+              selector.applicationIdentifier.map({ identifier in
+                  ApplicationIdentifierMatcher.matches(
+                      .init(
+                          processIdentifier: exactWindow.identity.ownerProcessIdentifier,
+                          bundleIdentifier: nil,
+                          name: "",
+                          allowsFuzzyMatching: false
+                      ),
+                      identifier: identifier
+                  )
+              }) ?? true
+        else {
+            throw PeekabooError.serviceUnavailable(
+                "Dialog action returned exact target evidence that does not match the requested selector"
+            )
+        }
+    }
+
+    static func exactListTargetIdentity(
+        from elements: DialogElements,
+        matching selector: DialogTargetSelector
+    ) throws -> DesktopTargetIdentity? {
+        guard selector.hasTarget else {
+            guard elements.resolvedTarget == nil else {
+                throw DesktopTargetIdentityError.contradictoryWindowIdentifier
+            }
+            return nil
+        }
+        guard let resolved = elements.resolvedTarget,
+              resolved.matches(selector)
+        else {
+            throw DesktopTargetIdentityError.incompleteExactWindow
+        }
+        return DesktopTargetIdentity(exactWindow: resolved.target)
     }
 
     static let commandDescription = CommandDescription(
@@ -30,7 +140,7 @@ struct DialogCommand: ParsableCommand {
           peekaboo dialog click --button "Don't Save" --window-id 12345
 
           # Type in a dialog text field
-          peekaboo dialog input --text "password123" --field "Password" --foreground
+          peekaboo dialog input --text "hello" --field "Name" --app TextEdit
 
           # Handle file dialogs
           peekaboo dialog file --app TextEdit --path "/Users/me/Documents" \
@@ -126,86 +236,105 @@ struct DialogCommand: ParsableCommand {
         let logger = runtime.logger
         let jsonOutput = runtime.configuration.jsonOutput
         logger.setJsonOutputMode(jsonOutput)
+        let actionSequence = CommandActionSequenceAccumulator()
+        let actionRoute = commandActionRoute(for: runtime.services)
 
         do {
-            try target.validate()
-            try validate()
-            let dialogTarget = try target.dialogTargetSelector()
-            try await prepareBeforeFocus?(ExecutionContext(
-                services: runtime.services,
-                windowTitle: nil,
-                appHint: nil,
-                target: dialogTarget
-            ))
+            do {
+                try target.validate()
+                try validate()
+                let dialogTarget = try target.dialogTargetSelector()
+                try await prepareBeforeFocus?(ExecutionContext(
+                    services: runtime.services,
+                    windowTitle: nil,
+                    appHint: nil,
+                    target: dialogTarget,
+                    actionSequence: actionSequence
+                ))
 
-            switch focus {
-            case .none:
-                break
-            case let .whenRequested(foreground, options):
-                if foreground {
-                    if options.autoFocus {
+                switch focus {
+                case .none:
+                    break
+                case let .whenRequested(foreground, options):
+                    if foreground {
+                        if options.autoFocus {
+                            runtime.beginInteractionMutation()
+                        }
+                        let focusResult = try await ensureFocused(
+                            snapshotId: nil,
+                            target: target,
+                            options: options,
+                            services: runtime.services
+                        )
+                        try actionSequence.record(
+                            focusResult,
+                            operation: "Dialog setup focus",
+                            receiptlessStep: options.autoFocus && target.hasAnyTarget
+                                ? .dispatched(
+                                    route: actionRoute,
+                                    delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                                    unitCount: .one
+                                )
+                                : nil
+                        )
+                    }
+                case let .required(options):
+                    if options.autoFocus, target.hasAnyTarget {
                         runtime.beginInteractionMutation()
                     }
-                    try await ensureFocused(
+                    if let focusResult = try await ensureConfirmedForegroundFocus(
                         snapshotId: nil,
                         target: target,
                         options: options,
-                        services: runtime.services
-                    )
+                        services: runtime.services,
+                        operation: "Dialog setup focus"
+                    ) {
+                        try actionSequence.record(
+                            focusResult,
+                            operation: "Dialog setup focus"
+                        )
+                    }
                 }
-            case let .required(options):
-                if options.autoFocus {
+
+                let windowTitle: String? = if resolveWindowTitle {
+                    try await target.resolveWindowTitleOptional(services: runtime.services)
+                } else {
+                    nil
+                }
+                let appHint = try await self.resolveDialogAppHintIfRequested(
+                    resolveAppHint,
+                    target: target,
+                    services: runtime.services,
+                    refusalRoute: actionRoute
+                )
+
+                if beginsInteractionMutation {
                     runtime.beginInteractionMutation()
                 }
-                try await ensureFocused(
-                    snapshotId: nil,
-                    target: target,
-                    options: options,
-                    services: runtime.services
+                try await operation(
+                    ExecutionContext(
+                        services: runtime.services,
+                        windowTitle: windowTitle,
+                        appHint: appHint,
+                        target: dialogTarget,
+                        actionSequence: actionSequence
+                    )
+                )
+            } catch {
+                throw actionSequence.preservingFailure(
+                    error,
+                    fallbackRoute: actionRoute,
+                    message: "Dialog action failed after foreground focus may have changed desktop state.",
+                    hint: "Observe the exact dialog before deciding whether to retry the action."
                 )
             }
-
-            let windowTitle: String? = if resolveWindowTitle {
-                try await target.resolveWindowTitleOptional(services: runtime.services)
-            } else {
-                nil
-            }
-            let appHint = try await self.resolveDialogAppHintIfRequested(
-                resolveAppHint,
-                target: target,
-                services: runtime.services,
-                refusalRoute: runtime.selectedRemoteSocketPath == nil ? .local : .bridge
-            )
-
-            if beginsInteractionMutation {
-                runtime.beginInteractionMutation()
-            }
-            try await operation(
-                ExecutionContext(
-                    services: runtime.services,
-                    windowTitle: windowTitle,
-                    appHint: appHint,
-                    target: dialogTarget
-                )
-            )
         } catch let failure as DesktopActionFailure {
-            if jsonOutput {
-                outputError(
-                    message: failure.message,
-                    code: .INTERACTION_FAILED,
-                    hint: failure.hint,
-                    details: failure.causeDescription,
-                    actionFailure: failure,
-                    logger: logger
-                )
-            } else {
-                let statusLine = ActionOutcomeHumanRenderer.statusLine(
-                    for: failure.outcome,
-                    operation: "Dialog action"
-                )
-                fputs("\(statusLine)\n", stderr)
-                fputs("Error: \(failure.localizedDescription)\n", stderr)
-            }
+            renderDesktopActionFailure(
+                failure,
+                jsonOutput: jsonOutput,
+                logger: logger,
+                operation: "Dialog action"
+            )
             throw ExitCode(1)
         } catch let error as Commander.ValidationError {
             if handlesValidationError {

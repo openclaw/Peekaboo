@@ -24,14 +24,14 @@ struct PreDispatchActionEnvelopeTests {
             ValidationCase(
                 name: "action binding validation",
                 arguments: [
-                    "action", "AXPress", "--on", "button", "--app", "Example", "--pid", "123", "--json",
+                    "action", "AXIncrement", "--on", "button", "--app", "Example", "--pid", "123", "--json",
                 ],
                 errorCode: .VALIDATION_ERROR
             ),
             ValidationCase(
                 name: "action window selector binding validation",
                 arguments: [
-                    "action", "AXPress", "--on", "button", "--app", "Example",
+                    "action", "AXIncrement", "--on", "button", "--app", "Example",
                     "--window-title", "Main", "--window-index", "0", "--json",
                 ],
                 errorCode: .VALIDATION_ERROR
@@ -94,7 +94,7 @@ struct PreDispatchActionEnvelopeTests {
                 ),
                 (
                     "snapshotless action",
-                    ["action", "AXPress", "--on", "B1", "--json"],
+                    ["action", "AXIncrement", "--on", "B1", "--json"],
                     .SNAPSHOT_NOT_FOUND,
                     .targetUnavailable
                 ),

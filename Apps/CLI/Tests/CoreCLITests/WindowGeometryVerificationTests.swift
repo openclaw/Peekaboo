@@ -65,6 +65,25 @@ struct WindowGeometryVerificationTests {
 
     // MARK: - Command-flow regressions (mutate -> read back -> verify)
 
+    @Test
+    func `observed frame change distinguishes idempotence mutation and unavailable readback`() {
+        let original = ServiceWindowInfo(
+            windowID: 1,
+            title: "Original",
+            bounds: CGRect(x: 10, y: 20, width: 640, height: 480)
+        )
+        let unchanged = ServiceWindowInfo(windowID: 1, title: "Same", bounds: original.bounds)
+        let changed = ServiceWindowInfo(
+            windowID: 1,
+            title: "Changed",
+            bounds: CGRect(x: 30, y: 40, width: 800, height: 600)
+        )
+
+        #expect(observedWindowFrameChange(original: original, verified: unchanged) == false)
+        #expect(observedWindowFrameChange(original: original, verified: changed) == true)
+        #expect(observedWindowFrameChange(original: original, verified: nil) == nil)
+    }
+
     @Test func `clamped resize reports the actual clamped frame with a warning`() async throws {
         let service = ClampingWindowService(
             frame: CGRect(x: 300, y: 200, width: 1500, height: 900),

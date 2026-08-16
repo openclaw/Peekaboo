@@ -1,5 +1,6 @@
 import Commander
 import PeekabooCore
+import PeekabooFoundation
 
 extension DockCommand {
     // MARK: - Right-Click Dock Item
@@ -33,10 +34,15 @@ extension DockCommand {
                 }
                 let dockItem = try await DockServiceBridge.findDockItem(dock: self.services.dock, name: self.app)
                 self.resolvedRuntime.beginInteractionMutation()
-                try await DockServiceBridge.rightClickDockItem(
+                let actionResult = try await DockServiceBridge.rightClickDockItem(
                     dock: self.services.dock,
                     appName: self.app,
                     menuItem: self.select
+                )
+                let resultTargetIdentity = try validatedSuccessfulActionResult(
+                    actionResult,
+                    operation: "Dock right-click",
+                    requiresTarget: self.services.dock is any DockServiceActionResultProviding
                 )
                 let selectionDescription = self.select ?? "context-only"
                 AutomationEventLogger.log(.dock, "right_click app=\(dockItem.title) selection=\(selectionDescription)")
@@ -46,14 +52,24 @@ extension DockCommand {
                         let action: String
                         let app: String
                         let selectedItem: String
+                        let selectedLeafEvidence: [DesktopSelectedLeafEvidence]?
                     }
 
                     let outputData = DockRightClickResult(
                         action: "dock_right_click",
                         app: dockItem.title,
-                        selectedItem: self.select ?? ""
+                        selectedItem: self.select ?? "",
+                        selectedLeafEvidence: actionResult.selectedLeafEvidence
                     )
-                    outputSuccessCodable(data: outputData, effect: .confirmed, logger: self.outputLogger)
+                    outputSuccessCodable(
+                        data: outputData,
+                        effect: .confirmed,
+                        outcome: actionResult.outcome,
+                        targetIdentity: resultTargetIdentity,
+                        logger: self.outputLogger
+                    )
+                } else if let outcome = actionResult.outcome {
+                    print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Dock right-click"))
                 } else if let selected = self.select {
                     print("✓ Right-clicked \(dockItem.title) and selected '\(selected)'")
                 } else {

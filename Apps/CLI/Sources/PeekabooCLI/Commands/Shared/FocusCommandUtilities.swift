@@ -1,6 +1,7 @@
 import Commander
 import CoreGraphics
 import PeekabooCore
+import PeekabooFoundation
 
 enum FocusTargetRequest: Equatable {
     case windowId(CGWindowID)
@@ -94,19 +95,154 @@ enum FocusFailurePolicy {
     }
 }
 
+typealias FocusResultProvider = @MainActor (
+    CGWindowID,
+    FocusManagementService.FocusOptions,
+    WindowMutationIdentity
+) async throws -> DesktopActionOutcome
+
+@MainActor
+private func performFocusResult(
+    windowID: CGWindowID,
+    options: FocusManagementService.FocusOptions,
+    identity: WindowMutationIdentity,
+    provider: FocusResultProvider?,
+    focusService: FocusManagementActor
+) async throws -> DesktopActionOutcome {
+    if let provider {
+        return try await provider(windowID, options, identity)
+    }
+    return try await focusService.focusWindowResult(
+        windowID: windowID,
+        options: options,
+        expectedIdentity: identity
+    )
+}
+
+struct PreparedFocusSelection {
+    let target: WindowTarget
+    let identity: WindowMutationIdentity
+    let targetIdentity: DesktopTargetIdentity
+
+    init(window: ServiceWindowInfo) throws {
+        guard let identity = window.mutationIdentity,
+              identity.windowID == window.windowID,
+              let bounds = identity.capturedBounds,
+              bounds == window.bounds
+        else {
+            throw PeekabooError.windowNotFound(
+                criteria: "Focus target window \(window.windowID) has no consistent process-generation receipt"
+            )
+        }
+        let exactWindow = try UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds)
+        self.target = .windowId(window.windowID)
+        self.identity = identity
+        self.targetIdentity = DesktopTargetIdentity(exactWindow: exactWindow)
+    }
+
+    init(target: WindowTarget, identity: WindowMutationIdentity, targetIdentity: DesktopTargetIdentity) {
+        self.target = target
+        self.identity = identity
+        self.targetIdentity = targetIdentity
+    }
+}
+
+@MainActor
+private func prepareFocusSelection(
+    target: WindowTarget,
+    windows: any WindowManagementServiceProtocol,
+    requireUniqueWindowTitle: Bool = false
+) async throws -> PreparedFocusSelection {
+    let matches = try await WindowServiceBridge.listWindows(
+        windows: windows,
+        target: target
+    )
+    if requireUniqueWindowTitle, matches.count != 1 {
+        throw DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "Foreground window-title targeting must resolve exactly one window.",
+            hint: "Use a more specific title or select the window by ID after refreshing the window inventory."
+        )
+    }
+    guard let selected = matches.first,
+          let identity = selected.mutationIdentity,
+          identity.windowID == selected.windowID,
+          let bounds = identity.capturedBounds,
+          bounds == selected.bounds
+    else {
+        throw PeekabooError.windowNotFound(
+            criteria: "Focus target \(target) has no consistent process-generation receipt"
+        )
+    }
+    let exactWindow = try UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds)
+    return PreparedFocusSelection(
+        target: .windowId(selected.windowID),
+        identity: identity,
+        targetIdentity: DesktopTargetIdentity(exactWindow: exactWindow)
+    )
+}
+
+@MainActor
+private func prepareExplicitTitleSelection(
+    windowTitle: String?,
+    targetRequest: FocusTargetRequest?,
+    windows: any WindowManagementServiceProtocol
+) async throws -> PreparedFocusSelection? {
+    guard windowTitle != nil,
+          case let .bestWindow(applicationName, .some(resolvedWindowTitle)) = targetRequest
+    else {
+        return nil
+    }
+    return try await prepareFocusSelection(
+        target: .applicationAndTitle(app: applicationName, title: resolvedWindowTitle),
+        windows: windows,
+        requireUniqueWindowTitle: true
+    )
+}
+
+@MainActor
+private func prepareExplicitTitleSelection(
+    unless prepared: PreparedFocusSelection?,
+    windowTitle: String?,
+    targetRequest: FocusTargetRequest?,
+    windows: any WindowManagementServiceProtocol
+) async throws -> PreparedFocusSelection? {
+    guard prepared == nil else { return nil }
+    return try await prepareExplicitTitleSelection(
+        windowTitle: windowTitle,
+        targetRequest: targetRequest,
+        windows: windows
+    )
+}
+
+@MainActor
+private func prepareFocusSelection(
+    preferring prepared: PreparedFocusSelection?,
+    target: WindowTarget,
+    windows: any WindowManagementServiceProtocol
+) async throws -> PreparedFocusSelection {
+    if let prepared {
+        return prepared
+    }
+    return try await prepareFocusSelection(target: target, windows: windows)
+}
+
 /// Ensure the target window is focused before executing a command.
 @MainActor
+@discardableResult
 func ensureFocused(
     snapshotId: String? = nil,
     windowID: CGWindowID? = nil,
     applicationName: String? = nil,
     windowTitle: String? = nil,
     options: any FocusOptionsProtocol,
-    services: any PeekabooServiceProviding
-) async throws {
+    services: any PeekabooServiceProviding,
+    focusResultProvider: FocusResultProvider? = nil,
+    preparedSelection: PreparedFocusSelection? = nil
+) async throws -> UIAutomationActionResult<Void> {
     try Task.checkCancellation()
     guard options.autoFocus else {
-        return
+        return UIAutomationActionResult(payload: (), outcome: nil)
     }
 
     let focusService = FocusManagementActor.shared
@@ -127,9 +263,6 @@ func ensureFocused(
         try Task.checkCancellation()
     }
 
-    let resolvedApplicationName = applicationName
-        ?? snapshot?.applicationBundleId ?? snapshot?.applicationName
-        ?? windowContext?.applicationBundleId ?? windowContext?.applicationName
     let targetRequest = FocusTargetResolver.resolve(
         windowID: windowID,
         snapshot: snapshot,
@@ -137,16 +270,54 @@ func ensureFocused(
         applicationName: applicationName,
         windowTitle: windowTitle
     )
+    let explicitTitleSelection = try await prepareExplicitTitleSelection(
+        unless: preparedSelection,
+        windowTitle: windowTitle,
+        targetRequest: targetRequest,
+        windows: services.windows
+    )
+    let retainedSelection = preparedSelection ?? explicitTitleSelection
 
-    let targetWindow: CGWindowID? = switch targetRequest {
-    case let .windowId(windowID):
-        windowID
-    case let .bestWindow(applicationName, windowTitle):
-        try await FocusFailurePolicy.flatteningOptional {
-            try await focusService.findBestWindow(applicationName: applicationName, windowTitle: windowTitle)
+    if services.executionHost == .remote {
+        let selectionTarget: WindowTarget = switch targetRequest {
+        case let .windowId(windowID):
+            .windowId(Int(windowID))
+        case let .bestWindow(applicationName, windowTitle):
+            if let windowTitle {
+                .applicationAndTitle(app: applicationName, title: windowTitle)
+            } else {
+                .application(applicationName)
+            }
+        case nil:
+            throw PeekabooError.windowNotFound(
+                criteria: "Remote foreground focus requires an exact resolvable window"
+            )
         }
-    case nil:
-        nil
+        let selection = try await prepareFocusSelection(
+            preferring: retainedSelection,
+            target: selectionTarget,
+            windows: services.windows
+        )
+        return try await WindowServiceBridge.focusWindow(
+            windows: services.windows,
+            target: selection.target,
+            expectedIdentity: selection.identity
+        )
+    }
+
+    let targetWindow: CGWindowID? = if let retainedSelection {
+        CGWindowID(exactly: retainedSelection.identity.windowID)
+    } else {
+        switch targetRequest {
+        case let .windowId(windowID):
+            windowID
+        case let .bestWindow(applicationName, windowTitle):
+            try await FocusFailurePolicy.flatteningOptional {
+                try await focusService.findBestWindow(applicationName: applicationName, windowTitle: windowTitle)
+            }
+        case nil:
+            nil
+        }
     }
 
     guard let windowID = targetWindow else {
@@ -158,7 +329,7 @@ func ensureFocused(
             )
             try Task.checkCancellation()
         }
-        return
+        return UIAutomationActionResult(payload: (), outcome: nil)
     }
 
     let focusOptions = FocusManagementService.FocusOptions(
@@ -169,37 +340,36 @@ func ensureFocused(
     )
 
     try Task.checkCancellation()
+    let selection = try await prepareFocusSelection(
+        preferring: retainedSelection,
+        target: .windowId(Int(windowID)),
+        windows: services.windows
+    )
     do {
-        try await focusService.focusWindow(windowID: windowID, options: focusOptions)
-        try Task.checkCancellation()
+        let outcome = try await performFocusResult(
+            windowID: windowID,
+            options: focusOptions,
+            identity: selection.identity,
+            provider: focusResultProvider,
+            focusService: focusService
+        )
+        return UIAutomationActionResult(
+            payload: (),
+            outcome: outcome,
+            targetIdentity: selection.targetIdentity
+        )
     } catch let error as FocusError {
         switch error {
         case .windowNotFound, .axElementNotFound:
             var fallbackErrors: [any Error] = []
-            var fallbackTargets: [WindowTarget] = [.windowId(Int(windowID))]
-            if let resolvedApplicationName {
-                fallbackTargets.append(.application(resolvedApplicationName))
-            }
-            fallbackTargets.append(.frontmost)
-
-            for target in fallbackTargets {
+            for target in [WindowTarget.windowId(Int(windowID))] {
                 try Task.checkCancellation()
                 do {
-                    try await WindowServiceBridge.focusWindow(windows: services.windows, target: target)
-                    try Task.checkCancellation()
-                    return
-                } catch {
-                    try FocusFailurePolicy.rethrowCancellation(error)
-                    fallbackErrors.append(error)
-                }
-            }
-
-            if let appName = resolvedApplicationName {
-                try Task.checkCancellation()
-                do {
-                    try await services.applications.activateApplication(identifier: appName)
-                    try Task.checkCancellation()
-                    return
+                    return try await WindowServiceBridge.focusWindow(
+                        windows: services.windows,
+                        target: target,
+                        expectedIdentity: selection.identity
+                    )
                 } catch {
                     try FocusFailurePolicy.rethrowCancellation(error)
                     fallbackErrors.append(error)
@@ -213,17 +383,44 @@ func ensureFocused(
     }
 }
 
+/// Focus a window that was already resolved and generation-pinned by the caller.
+@MainActor
+@discardableResult
+func ensureFocused(
+    preparedWindow: ServiceWindowInfo,
+    applicationName: String? = nil,
+    windowTitle: String? = nil,
+    options: any FocusOptionsProtocol,
+    services: any PeekabooServiceProviding,
+    focusResultProvider: FocusResultProvider? = nil
+) async throws -> UIAutomationActionResult<Void> {
+    let selection = try PreparedFocusSelection(window: preparedWindow)
+    guard let windowID = CGWindowID(exactly: preparedWindow.windowID) else {
+        throw PeekabooError.windowNotFound(criteria: "Focus target has an invalid WindowServer identifier")
+    }
+    return try await ensureFocused(
+        windowID: windowID,
+        applicationName: applicationName,
+        windowTitle: windowTitle,
+        options: options,
+        services: services,
+        focusResultProvider: focusResultProvider,
+        preparedSelection: selection
+    )
+}
+
 /// Ensure focus using shared interaction target flags (`--app/--pid/--window-title/--window-index`).
 @MainActor
+@discardableResult
 func ensureFocused(
     snapshotId: String? = nil,
     target: InteractionTargetOptions,
     options: any FocusOptionsProtocol,
     services: any PeekabooServiceProviding
-) async throws {
+) async throws -> UIAutomationActionResult<Void> {
     let windowID = try await target.resolveWindowID(services: services)
     let appIdentifier = try target.resolveApplicationIdentifierOptional()
-    try await ensureFocused(
+    return try await ensureFocused(
         snapshotId: snapshotId,
         windowID: windowID,
         applicationName: appIdentifier,
@@ -231,6 +428,88 @@ func ensureFocused(
         options: options,
         services: services
     )
+}
+
+/// Resolves and confirms one exact foreground focus before a command is allowed to send global input.
+/// A genuinely targetless foreground command bypasses setup focus and remains explicitly global.
+@MainActor
+func ensureConfirmedForegroundFocus(
+    snapshotId: String?,
+    target: InteractionTargetOptions,
+    options: any FocusOptionsProtocol,
+    services: any PeekabooServiceProviding,
+    operation: String
+) async throws -> UIAutomationActionResult<Void>? {
+    let requiresTargetedFocus = target.hasAnyTarget || snapshotId != nil
+    guard requiresTargetedFocus else { return nil }
+    guard options.autoFocus else {
+        throw DesktopActionFailure.preDispatchRefusal(
+            reason: .invalidRequest,
+            message: "\(operation) has a target but automatic foreground focus is disabled.",
+            hint: "Remove the target for intentional global input, or allow Peekaboo to focus the exact target."
+        )
+    }
+
+    let result = try await ensureFocused(
+        snapshotId: snapshotId,
+        target: target,
+        options: options,
+        services: services
+    )
+    return try validatedConfirmedForegroundFocusResult(result, operation: operation)
+}
+
+func validatedConfirmedForegroundFocusResult(
+    _ result: UIAutomationActionResult<Void>,
+    operation: String
+) throws -> UIAutomationActionResult<Void> {
+    let targetReceipt = result.targetIdentity.flatMap(focusTargetReceipt)
+    guard let targetIdentity = result.targetIdentity,
+          targetIdentity.exactWindow != nil
+    else {
+        throw DesktopActionFailure.indeterminate(
+            route: result.outcome?.route ?? .local,
+            delivery: result.outcome?.delivery,
+            evidence: .completionUnknown,
+            unitCount: result.outcome?.dispatchState.unitCount,
+            message: "\(operation) returned without an exact focused-window identity.",
+            hint: "Observe the target before retrying and update the runtime host."
+        ).attributed(to: targetReceipt)
+    }
+    guard let outcome = result.outcome else {
+        throw DesktopActionFailure.indeterminate(
+            evidence: .completionUnknown,
+            message: "\(operation) returned without a canonical focus outcome.",
+            hint: "Observe the target before retrying and update the runtime host."
+        ).attributed(to: focusTargetReceipt(targetIdentity))
+    }
+    guard outcome.isConfirmed else {
+        guard let failure = DesktopActionFailure(
+            outcome: outcome,
+            message: "\(operation) did not confirm exact foreground focus.",
+            hint: "Do not send global input until the exact target focus is confirmed.",
+            targetReceipt: focusTargetReceipt(targetIdentity)
+        ) else {
+            preconditionFailure("A non-confirmed focus outcome must construct a failure")
+        }
+        throw failure
+    }
+    if outcome.dispatchState.mutationDispatched,
+       outcome.delivery?.mode != .foreground {
+        throw DesktopActionFailure.indeterminate(
+            route: outcome.route,
+            delivery: outcome.delivery,
+            evidence: .completionUnknown,
+            unitCount: outcome.dispatchState.unitCount,
+            message: "\(operation) confirmed a dispatched focus without foreground delivery.",
+            hint: "Do not send global input until the exact target focus is confirmed in the foreground."
+        ).attributed(to: focusTargetReceipt(targetIdentity))
+    }
+    return result
+}
+
+private func focusTargetReceipt(_ identity: DesktopTargetIdentity) -> DesktopActionTargetReceipt {
+    identity.actionTargetReceipt
 }
 
 @MainActor
@@ -243,7 +522,15 @@ final class FocusManagementActor {
         try await self.inner.findBestWindow(applicationName: applicationName, windowTitle: windowTitle)
     }
 
-    func focusWindow(windowID: CGWindowID, options: FocusManagementService.FocusOptions) async throws {
-        try await self.inner.focusWindow(windowID: windowID, options: options)
+    func focusWindowResult(
+        windowID: CGWindowID,
+        options: FocusManagementService.FocusOptions,
+        expectedIdentity: WindowMutationIdentity? = nil
+    ) async throws -> DesktopActionOutcome {
+        try await self.inner.focusWindowResult(
+            windowID: windowID,
+            options: options,
+            expectedIdentity: expectedIdentity
+        )
     }
 }

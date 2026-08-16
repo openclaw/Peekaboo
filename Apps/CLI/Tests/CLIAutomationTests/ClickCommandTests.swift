@@ -23,7 +23,6 @@ struct ClickCommandTests {
             ["click", "--at", "100,200", "--foreground", "--json"],
             services: context.services
         )
-
         #expect(result.exitStatus == 0)
         let calls = await automationState(context) { $0.clickCalls }
         let call = try #require(calls.first)
@@ -172,8 +171,7 @@ struct ClickCommandTests {
             ],
             services: context.services
         )
-
-        #expect(result.exitStatus == 0)
+        #expect(result.exitStatus == 0, "Unexpected click refusal: \(result.combinedOutput)")
         let calls = await automationState(context) { $0.targetedClickCalls }
         let call = try #require(calls.first)
         if case let .coordinates(point) = call.target {
@@ -596,7 +594,7 @@ struct ClickCommandTests {
 
         #expect(result.exitStatus == 1)
         let applications = try #require(context.services.applications as? StubApplicationService)
-        #expect(applications.activateCalls == [application.name])
+        #expect(applications.activateCalls == ["PID:\(application.processIdentifier)"])
         #expect(context.snapshots.invalidationCutoffs.count == 1)
         #expect(await context.snapshots.getMostRecentSnapshot() == nil)
     }
@@ -645,6 +643,12 @@ struct ClickCommandTests {
         windows: [ServiceWindowInfo] = []
     ) async -> TestServicesFactory.AutomationTestContext {
         await MainActor.run {
+            let automation = OutcomeStubAutomationService()
+            automation.actionOutcome = .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .one
+            )
             let resolvedApplication = application ?? Self.makeApplication()
             let applications = [resolvedApplication]
             var windowsByApp: [String: [ServiceWindowInfo]] = [:]
@@ -654,6 +658,7 @@ struct ClickCommandTests {
                 windowsByApp[bundleIdentifier] = windows
             }
             return TestServicesFactory.makeAutomationTestContext(
+                automation: automation,
                 applications: StubApplicationService(applications: applications, windowsByApp: windowsByApp),
                 windows: StubWindowService(windowsByApp: windowsByApp)
             )
@@ -668,11 +673,30 @@ struct ClickCommandTests {
         in snapshots: StubSnapshotManager
     ) async throws -> String {
         let snapshotId = try await snapshots.createSnapshot()
+        let windowBounds = windowID == nil ? nil : CGRect(x: 10, y: 20, width: 400, height: 300)
         let mutationIdentity: WindowMutationIdentity? = if includeMutationIdentity, let windowID {
             WindowMutationIdentity(
                 windowID: windowID,
                 ownerProcessIdentifier: 12345,
-                ownerProcessStartIdentity: 7
+                ownerProcessStartIdentity: 7,
+                capturedBounds: windowBounds
+            )
+        } else {
+            nil
+        }
+        let captureCoordinateContext: CaptureCoordinateContext? = if let windowID, let windowBounds {
+            CaptureCoordinateContext(
+                metadata: CaptureMetadata(
+                    size: windowBounds.size,
+                    mode: .window,
+                    windowInfo: ServiceWindowInfo(
+                        windowID: windowID,
+                        title: windowTitle ?? "",
+                        bounds: windowBounds,
+                        mutationIdentity: mutationIdentity
+                    )
+                ),
+                referenceID: snapshotId
             )
         } else {
             nil
@@ -691,9 +715,11 @@ struct ClickCommandTests {
                     applicationProcessId: 12345,
                     windowTitle: windowTitle,
                     windowID: windowID,
-                    windowBounds: windowID == nil ? nil : CGRect(x: 10, y: 20, width: 400, height: 300),
+                    windowBounds: windowBounds,
                     windowMutationIdentity: mutationIdentity
-                )
+                ),
+                truncationInfo: nil,
+                captureCoordinateContext: captureCoordinateContext
             )
         )
         try await snapshots.storeDetectionResult(snapshotId: snapshotId, result: detection)
@@ -713,16 +739,18 @@ struct ClickCommandTests {
     }
 
     private static func makeWindow(id: Int, title: String, index: Int) -> ServiceWindowInfo {
-        ServiceWindowInfo(
+        let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
+        return ServiceWindowInfo(
             windowID: id,
             title: title,
-            bounds: CGRect(x: 10, y: 20, width: 400, height: 300),
+            bounds: bounds,
             isMainWindow: index == 0,
             index: index,
             mutationIdentity: WindowMutationIdentity(
                 windowID: id,
                 ownerProcessIdentifier: 12345,
-                ownerProcessStartIdentity: 7
+                ownerProcessStartIdentity: 7,
+                capturedBounds: bounds
             )
         )
     }

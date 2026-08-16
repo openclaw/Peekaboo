@@ -34,11 +34,11 @@ extension DialogCommand {
             try await DialogCommand.execute(
                 runtime: runtime,
                 target: self.target,
-                focus: self.force && dialogTarget.hasTarget
-                    ? .none
+                focus: self.force
+                    ? .required(self.focusOptions)
                     : .whenRequested(self.foreground, self.focusOptions),
                 resolveWindowTitle: self.force && !dialogTarget.hasTarget,
-                resolveAppHint: !(self.force && dialogTarget.hasTarget),
+                resolveAppHint: self.force && !dialogTarget.hasTarget,
                 validate: {
                     guard !self.force || self.foreground else {
                         throw ValidationError("dialog dismiss --force sends global Escape and requires --foreground")
@@ -60,6 +60,7 @@ extension DialogCommand {
                 operation: { context in
                     let result: DialogActionResult
                     let outcome: DesktopActionOutcome
+                    var targetIdentity: DesktopTargetIdentity?
                     if self.force {
                         if context.target.hasTarget {
                             result = try await context.services.dialogs.forceDismissDialog(
@@ -84,6 +85,25 @@ extension DialogCommand {
                         outcome = result.foregroundOutcomeOrUnverified(
                             route: context.services.dialogs.foregroundOutcomeRoute
                         )
+                        if context.target.hasTarget {
+                            do {
+                                guard let exactTarget = try DialogCommand.exactResultTargetIdentity(
+                                    from: result,
+                                    matching: context.target
+                                )
+                                else {
+                                    throw DesktopTargetIdentityError.incompleteExactWindow
+                                }
+                                targetIdentity = exactTarget
+                            } catch {
+                                try context.actionSequence.recordExactTargetLeaf(
+                                    outcome: outcome,
+                                    targetIdentity: nil,
+                                    operation: "Dialog dismissal"
+                                )
+                                throw error
+                            }
+                        }
                     } else {
                         let receipt: PreparedDialogActionReceipt
                         if let preparedReceipt {
@@ -99,8 +119,36 @@ extension DialogCommand {
                             receipt = try await context.services.dialogs.prepareDialogAction(request)
                         }
                         result = try await context.services.dialogs.performPreparedDialogAction(receipt)
-                        outcome = try result.requiredPreparedOutcome(kind: .dismiss)
+                        do {
+                            outcome = try result.requiredPreparedOutcome(kind: .dismiss)
+                        } catch let failure as DesktopActionFailure {
+                            throw failure.attributed(to: DialogCommand.targetReceipt(receipt.target))
+                        }
+                        do {
+                            guard let exactTarget = try DialogCommand.exactResultTargetIdentity(
+                                from: result,
+                                matching: context.target,
+                                expectedTarget: receipt.target
+                            )
+                            else {
+                                throw DesktopTargetIdentityError.incompleteExactWindow
+                            }
+                            targetIdentity = exactTarget
+                        } catch {
+                            try context.actionSequence.recordExactTargetLeaf(
+                                outcome: outcome,
+                                targetIdentity: nil,
+                                operation: "Dialog dismissal"
+                            )
+                            throw error
+                        }
                     }
+                    try context.actionSequence.record(
+                        outcome: outcome,
+                        targetIdentity: targetIdentity,
+                        operation: "Dialog dismissal"
+                    )
+                    let compositeResult = context.actionSequence.result(payload: ())
 
                     if self.jsonOutput {
                         let outputData = DialogDismissResult(
@@ -114,11 +162,15 @@ extension DialogCommand {
                         )
                         outputSuccessCodable(
                             data: outputData,
-                            outcome: outcome,
+                            outcome: compositeResult.outcome,
+                            targetIdentity: compositeResult.targetIdentity,
                             logger: self.outputLogger
                         )
                     } else {
-                        print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Dialog dismissal"))
+                        print(ActionOutcomeHumanRenderer.statusLine(
+                            for: compositeResult.outcome ?? outcome,
+                            operation: "Dialog dismissal"
+                        ))
                     }
                     let method = result.details["method"] ?? (self.force ? "escape" : "button")
                     let dismissedButton = result.details["button"] ?? "none"
@@ -156,6 +208,7 @@ extension DialogCommand {
                 target: self.target,
                 focus: .none,
                 resolveWindowTitle: false,
+                resolveAppHint: false,
                 beginsInteractionMutation: false,
                 handlesValidationError: false,
                 operation: { context in
@@ -172,6 +225,10 @@ extension DialogCommand {
                             )
                         }
                     }
+                    let targetIdentity = try DialogCommand.exactListTargetIdentity(
+                        from: elements,
+                        matching: context.target
+                    )
 
                     if self.jsonOutput {
                         let textFields = elements.textFields.map { field in
@@ -188,7 +245,11 @@ extension DialogCommand {
                             textFields: textFields,
                             textElements: elements.staticTexts
                         )
-                        outputSuccessCodable(data: outputData, logger: self.outputLogger)
+                        outputSuccessCodable(
+                            data: outputData,
+                            targetIdentity: targetIdentity,
+                            logger: self.outputLogger
+                        )
                     } else {
                         print("Dialog: \(elements.dialogInfo.title)")
 

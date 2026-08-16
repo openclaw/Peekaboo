@@ -34,7 +34,7 @@ extension DialogCommand.InputSubcommand: CommanderSignatureProviding {
                 .commandFlag("clear", help: "Clear existing text first", long: "clear"),
                 .commandFlag(
                     "foreground",
-                    help: "Focus the dialog before sending keyboard input",
+                    help: "Use foreground keyboard input; exact targeted input defaults to background AXValue",
                     long: "foreground"
                 ),
             ],

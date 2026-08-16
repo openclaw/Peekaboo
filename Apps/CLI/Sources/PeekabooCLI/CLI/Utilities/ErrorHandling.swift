@@ -23,6 +23,41 @@ private func emitError(
 // Callers should use handleGenericError instead
 
 func handleGenericError(_ error: any Error, jsonOutput: Bool, logger: Logger) {
+    let envelopeError = error as? any ResultEnvelopeError
+    if let failure = (error as? DesktopActionFailure)
+        ?? envelopeError?.envelopeActionFailure {
+        renderDesktopActionFailure(
+            failure,
+            jsonOutput: jsonOutput,
+            logger: logger,
+            targetIdentity: envelopeError?.envelopeTargetIdentity
+        )
+        return
+    }
+    if let envelopeError {
+        let metadata = actionErrorEnvelopeMetadata(for: error, isActionCommand: true)
+        if jsonOutput {
+            outputError(
+                message: error.localizedDescription,
+                code: envelopeError.envelopeCode ?? .INTERACTION_FAILED,
+                hint: envelopeError.envelopeHint,
+                effect: metadata.effect,
+                retrySafe: metadata.retrySafe,
+                mutationDispatched: metadata.mutationDispatched,
+                actionOutcome: metadata.outcome,
+                targetReceipt: metadata.targetReceipt,
+                targetIdentity: metadata.targetIdentity,
+                logger: logger
+            )
+        } else {
+            if let outcome = metadata.outcome {
+                let statusLine = ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Action")
+                fputs("\(statusLine)\n", stderr)
+            }
+            fputs("Error: \(error.localizedDescription)\n", stderr)
+        }
+        return
+    }
     emitError(
         message: error.localizedDescription,
         code: genericErrorCode(for: error),
@@ -31,7 +66,40 @@ func handleGenericError(_ error: any Error, jsonOutput: Bool, logger: Logger) {
     )
 }
 
+func renderDesktopActionFailure(
+    _ failure: DesktopActionFailure,
+    jsonOutput: Bool,
+    logger: Logger,
+    operation: String = "Action",
+    targetIdentity: DesktopTargetIdentity? = nil
+) {
+    if jsonOutput {
+        outputError(
+            message: failure.message,
+            code: .INTERACTION_FAILED,
+            hint: failure.hint,
+            details: failure.causeDescription,
+            actionFailure: failure,
+            targetIdentity: targetIdentity,
+            logger: logger
+        )
+    } else {
+        fputs("\(ActionOutcomeHumanRenderer.statusLine(for: failure.outcome, operation: operation))\n", stderr)
+        let hint = failure.hint.map { " Hint: \($0)" } ?? ""
+        fputs("Error: \(failure.message)\(hint)\n", stderr)
+        if let cause = failure.causeDescription {
+            fputs("Cause: \(cause)\n", stderr)
+        }
+    }
+}
+
 func genericErrorCode(for error: any Error) -> ErrorCode {
+    if error is DesktopActionFailure {
+        return .INTERACTION_FAILED
+    }
+    if let envelopeError = error as? any ResultEnvelopeError {
+        return envelopeError.envelopeCode ?? .INTERACTION_FAILED
+    }
     guard let bridgeError = error as? PeekabooBridgeErrorEnvelope else {
         return .UNKNOWN_ERROR
     }

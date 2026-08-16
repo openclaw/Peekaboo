@@ -373,7 +373,7 @@ The following subsections spell out the concrete steps, required Playground surf
 - **Test cases**:
   1. `peekaboo space list --detailed --json-output`.
   2. `peekaboo space switch --to 1` (happy path) and expect error for `--to 2` when only one Space exists.
-  3. `peekaboo space move-window --app Playground --window-index 0 --to 1 --follow`.
+  3. `peekaboo space move-window --app Playground --window-index 0 --to 1 --follow --foreground`.
 - **2025-11-16 run**:
   - Latest artifacts: `.artifacts/playground-tools/20251116-205527-space-list.json`, `...205532-space-list-detailed.json`, `...205536-space-switch-1.json`, `...205541-space-move-window.json`, plus `...195602-space-switch-2.json` for the expected validation error.
   - AutomationEventLogger now emits `[Space]` entries (list count + actions) captured via `.artifacts/playground-tools/20251116-205548-space.log`.

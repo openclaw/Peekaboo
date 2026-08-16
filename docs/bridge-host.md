@@ -123,6 +123,9 @@ those app-only services are injected separately; moving them into the embedded r
 - Shutdown removes the socket only when its filesystem identity still matches the listener that created it.
 - Connect, request read, and response write paths are nonblocking and deadline-bound so abandoned clients release their
   connection tasks instead of exhausting the host.
+- Authenticated connections acquire one bounded request admission before the host reads or decodes their body. The
+  default limit is 32 concurrent requests (`maximumConcurrentRequests`), and draining or saturated listeners close the
+  connection without allocating a max-sized JSON payload or invoking the decoder.
 - Listener acceptance is kernel-readiness-driven: one coalesced notification drains the queued connection backlog to
   `EAGAIN`, while source cancellation owns descriptor closure and bounded shutdown waits for queued handlers to drain.
 
@@ -189,6 +192,65 @@ and run its default backend. `auto` remains compatible, and request-scoped selec
 the long-lived daemon's fallback policy.
 
 Protocol `1.22` adds process-generation receipts to process-targeted typing and clicks. Current CLI, Agent, and MCP background input retain the application discovery receipt through Bridge admission and native dispatch. Typing revalidates it before every emitted unit; clicks validate before dispatch and report a retry-unsafe indeterminate outcome if the generation changes after dispatch. Process-targeted Cmd+V uses the generation-pinned hotkey contract introduced in 1.19. New clients refuse older hosts before sending these inputs because an older decoder could otherwise ignore the optional receipt and route input using only a reusable PID. Legacy raw-PID payloads remain decodable for old clients, but current user-facing paths never select them.
+
+Protocol `1.29` adds listener-signed operation receipts without imposing a lifetime request limit on a long-running
+host. The handshake returns a stable ephemeral listener attestation and a peer-bound logical operation-session
+attestation. The session binds the listener, client-instance UUID, exact peer process generation and CDHash, bounded
+request capacity, and optional predecessor session. Protocol 1.28 and older handshakes omit both attestations and keep
+their existing raw, receiptless request/response behavior.
+
+The client does not treat the response-carried, self-signed listener as provenance by itself. It captures the connected
+socket peer's audit token and requires exact PID/PID-version, process-start, live kernel CDHash, Apple-anchored signing
+identity, trusted team membership, and listener-host agreement before installing a 1.29 session. Bundled Peekaboo
+socket paths use the release-team migration allowlist. Custom socket clients must pass `trustedHostTeamIDs`; omitting
+that policy caps the handshake at receiptless protocol 1.28 so an arbitrary same-user Developer ID process cannot
+replace the socket and mint a trusted-looking receipt chain.
+
+Each protocol 1.29 request reserves one decimal-string sequence in its logical session and carries a deterministic
+RFC 9562 version-8 request UUID derived from the full `(session ID, sequence)` tuple. Replay protection retains the
+tuple in a fixed-size bitset and accepts previously unused slots out of order, so concurrent requests do not depend on
+arrival order. A successful terminal response is inseparable from its Ed25519 receipt: it binds the listener and
+session attestations, exact request and response digests, peer identity, canonical target attribution, desktop-action
+outcome when present, remaining session capacity, and timestamps. A missing or invalid receipt invalidates that client
+session. For a mutating operation, losing the response or receipt after dispatch yields an indeterminate,
+retry-unsafe result rather than a speculative retry.
+
+Window and frontmost capture receipts bind the exact process/window identity returned by capture metadata; a missing
+target or a window ID that contradicts the request is rejected. Screen and area captures remain targetless global reads.
+
+Browser execution is bound atomically to the connection receipt observed before dispatch. Protocol 1.29 requires an
+explicit DevTools URL resolved to the complete normalized browser URL, WebSocket debugger URL, DevTools browser ID,
+browser version, protocol version, and channel. Channel auto-connect and isolated-profile children remain functional
+for unbound and protocol 1.28 calls, but are refused for receipt-bound execution until the MCP child can attest its
+actual browser identity. The response carries the same endpoint receipt, and any endpoint or channel drift refuses
+before the first tool call. Browser batches also sign separate completed and dispatched-or-accepted call
+counts. If a later call fails, the typed partial or indeterminate outcome preserves that exact prefix and is
+retry-unsafe, so a client cannot safely replay the whole batch.
+
+The current client renews before consuming the final ordinary slot. A successor handshake names and retires its
+predecessor while leaving already-claimed operations able to finish and sign against their captured session. If a
+previously unclaimed request reaches a retired or exhausted session, the listener returns a separate signed rollover
+refusal. That refusal binds the exact attested request and successor attestation and states
+`mutation_dispatched=false` and `retry_safe=true`. The client verifies every field and signature before installing the
+successor, and automatically retries that request at most once. Claimed-slot replay is rejected rather than converted
+to rollover; an invalid refusal, failed successor installation, or second refusal stops before redispatch. A late
+valid receipt from the predecessor still completes its original caller, but cannot regress the current session budget
+or replace the latest-receipt cache.
+
+The listener archive is private and bounded by listener and logical-session retention, with retired session
+directories quarantined before asynchronous cleanup. `PEEKABOO_OPERATION_RECEIPT_DIRECTORY` optionally exports the
+complete verification bundle for each terminal protocol 1.29 request. The export is sensitive and intended for
+private certification. The Swift `validateIntegrity()` API proves canonical encoding, signature-chain integrity, and
+operation semantics, but not listener provenance: the bundle carries its own self-signed listener. Certification uses
+`validate(trustAnchor:)` with an exact listener attestation, public key, or digest obtained from an independently
+authenticated live handshake. A public CLI wrapper for that anchored verification is still pending; the dual-controller
+physical harness remains disabled until it can verify every exported bundle rather than infer validity from JSON shape.
+
+Protocol 1.29 result validation is driven by one exhaustive semantic plan shared by server finalization and receipt
+verification. It classifies the response family, allowed delivery/mode alternatives, fixed or operation-dependent unit
+counts, allowed terminal states and result values, and whether target evidence must come from the request, response, or
+execution handler. Offline verification therefore never feeds a claimed response-resolved target back into its own
+proof, accepts a success for an error-only protocol 1.29 operation, or permits a prepared-dialog kind/target to drift.
 
 ## Security
 

@@ -54,7 +54,7 @@ For deterministic local tests or custom Chrome endpoints:
 The CLI exposes the safer request-carried equivalent:
 
 ```bash
-peekaboo browser connect --browser-url http://127.0.0.1:9222 --json
+peekaboo browser connect --browser-url http://127.0.0.1:9222 --foreground --json
 ```
 
 Only loopback HTTP endpoints are accepted. Peekaboo resolves `/json/version`, pins the returned browser WebSocket
@@ -75,22 +75,32 @@ authorization remains the caller's responsibility.
 
 Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionManager`.
 
-- In a local MCP process, the browser tool uses the `BrowserMCPService` from `MCPToolContext`.
+- In a local MCP process, the browser tool uses the `BrowserMCPService` from `MCPToolContext`. Public MCP and
+  standalone Browser contexts default to background-only and require an existing live exact connection receipt;
+  they never auto-connect implicitly.
 - In daemon-backed mode, `RemotePeekabooServices` forwards browser status/connect/execute calls over the Bridge socket.
 - The daemon owns the `chrome-devtools-mcp` child process and per-page snapshot UID state.
 - Separate CLI invocations require the same current-build reusable daemon. Peekaboo.app and older Bridge hosts are not
   eligible for browser session routing because they cannot attest the exact persistent connection receipt.
-- A first page action may connect only when exactly one process exists for the selected channel. Once connected, the
-  channel/process generation or explicit DevTools identity remains locked until `disconnect`.
+- Channel `--auto-connect` and isolated-profile children remain available for unbound and protocol 1.28 browser calls,
+  but they are not eligible for protocol 1.29 receipt-bound execution because the MCP child cannot yet attest which
+  browser it actually selected.
 - Child-process loss, PID reuse, endpoint restart, or an attempted retarget fails closed with reconnect guidance. Peekaboo
   never silently rediscovers another same-channel profile.
+- Receipt-bound execution requires an explicit CLI or environment DevTools URL, resolves it to a complete WebSocket
+  browser identity, and compares that identity inside the browser execution gate before the first call. Protocol 1.29
+  signs the full explicit endpoint receipt; it never infers the MCP child's attachment from ambient Chrome processes.
+  Multi-call responses retain exact completed and dispatched-or-accepted counts;
+  a later failure returns a typed retry-unsafe outcome so callers resume only after observation, never by replaying the
+  whole batch.
 - Active upload cancellation terminates the exact MCP child before deleting its private transfer root; an operation ID
   prevents delayed cancellation cleanup from terminating a newer browser session.
 - Peekaboo enables Chrome DevTools MCP's page-ID routing. Every page-scoped action requires `page_id` and is
   routed directly to that page instead of relying on the process-global selected page. The upstream MCP server
   serializes calls with its FIFO tool mutex, so concurrent agents cannot redirect one another between selection
   and execution.
-- This lets separate `peekaboo mcp serve` stdio sessions reuse the same browser connection.
+- Separate `peekaboo mcp serve` stdio sessions reuse one browser connection only when each server is explicitly routed
+  to the same reusable daemon Bridge socket. A process-local MCP server has its own browser state.
 
 Use `peekaboo daemon status` to see browser connection state, tool count, and detected Chrome channels.
 
@@ -138,8 +148,8 @@ CLI:
 
 ```bash
 peekaboo browser status --json
-peekaboo browser connect --channel stable
-peekaboo browser connect --browser-url http://127.0.0.1:9222
+peekaboo browser connect --channel stable --foreground
+peekaboo browser connect --browser-url http://127.0.0.1:9222 --foreground
 peekaboo browser new-page --url https://example.com
 peekaboo browser navigate --page-id 2 --url https://example.com/docs
 peekaboo browser snapshot --page-id 2 --path /tmp/page.txt
@@ -155,6 +165,19 @@ MCP JSON:
 ```json
 { "action": "connect", "channel": "stable" }
 ```
+
+The MCP server is background-only and refuses that `connect` request before dispatch. To share a connection, route
+both the explicit foreground CLI connection and the MCP server to the same reusable daemon:
+
+```bash
+peekaboo daemon start
+peekaboo browser connect --channel stable --foreground \
+  --bridge-socket "$HOME/Library/Application Support/Peekaboo/daemon.sock"
+peekaboo mcp serve \
+  --bridge-socket "$HOME/Library/Application Support/Peekaboo/daemon.sock"
+```
+
+A default process-local `peekaboo mcp serve` cannot reuse browser state created by a separate CLI process.
 
 ```json
 { "action": "snapshot", "page_id": 2 }

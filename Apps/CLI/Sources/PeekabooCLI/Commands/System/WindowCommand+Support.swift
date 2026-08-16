@@ -82,6 +82,12 @@ struct WindowIdentificationOptions: CommanderParsable, ApplicationResolvable {
         }
     }
 
+    /// Validate selectors used to choose a window for mutation. Unlike the compatibility grammar,
+    /// this rejects redundant owner channels and selector precedence before inventory lookup.
+    func validateMutation(allowMissingTarget: Bool = false) throws {
+        _ = try validatedMutationSelector(self.selector, allowMissingTarget: allowMissingTarget)
+    }
+
     /// Convert to WindowTarget for service layer
     func toWindowTarget() throws -> WindowTarget {
         // Convert to WindowTarget for service layer
@@ -101,11 +107,10 @@ struct WindowIdentificationOptions: CommanderParsable, ApplicationResolvable {
         }
     }
 
-    /// Resolve the inventory used to pin an exact mutation receipt. When an owner and exact ID are
-    /// both present, enumerate only that owner; AX-backed inventory retains minimized windows that
-    /// WindowServer omits.
+    /// Resolve the full owner inventory used to pin an exact mutation receipt. Pre-filtering by a
+    /// title or index would hide ambiguity before the strict selector resolver can reject it.
     func toWindowSelectionTarget() throws -> WindowTarget {
-        if self.windowId != nil, self.app != nil || self.pid != nil {
+        if self.app != nil || self.pid != nil {
             return try .application(self.resolveApplicationIdentifier())
         }
         return try self.toWindowTarget()
@@ -116,8 +121,16 @@ struct WindowIdentificationOptions: CommanderParsable, ApplicationResolvable {
         expectedApplication: ServiceApplicationInfo?,
         action: String
     ) throws -> ServiceWindowInfo {
-        guard let window = self.selectWindow(from: windows) else {
-            throw PeekabooError.windowNotFound(criteria: "No matching window found to \(action)")
+        let window: ServiceWindowInfo
+        do {
+            window = try self.selectMutationWindow(from: windows, operation: "Window \(action)")
+        } catch {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: error.localizedDescription,
+                hint: "Refresh the window inventory and select one exact --window-id.",
+                causeDescription: String(describing: error)
+            )
         }
         if let expectedApplication {
             guard let expectedProcessStartIdentity = expectedApplication.processStartIdentity,
@@ -125,13 +138,45 @@ struct WindowIdentificationOptions: CommanderParsable, ApplicationResolvable {
                   identity.ownerProcessIdentifier == expectedApplication.processIdentifier,
                   identity.ownerProcessStartIdentity == expectedProcessStartIdentity
             else {
-                throw PeekabooError.windowNotFound(
-                    criteria: "Window \(window.windowID) is not owned by the selected application process"
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "Window \(window.windowID) is not owned by the selected application process.",
+                    hint: "Refresh the application and window inventories before retrying."
                 )
             }
         }
+        guard let identity = window.mutationIdentity,
+              let capturedBounds = identity.capturedBounds,
+              capturedBounds == window.bounds
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Window \(window.windowID) has inconsistent bounds provenance.",
+                hint: "Refresh the window inventory before retrying."
+            )
+        }
         return window
     }
+}
+
+func validatedPostMutationWindowReadback(
+    _ window: ServiceWindowInfo,
+    expectedIdentity: WindowMutationIdentity,
+    operation: String
+) throws -> ServiceWindowInfo {
+    guard window.windowID == expectedIdentity.windowID,
+          let returnedIdentity = window.mutationIdentity,
+          returnedIdentity.windowID == expectedIdentity.windowID,
+          returnedIdentity.ownerProcessIdentifier == expectedIdentity.ownerProcessIdentifier,
+          returnedIdentity.ownerProcessStartIdentity == expectedIdentity.ownerProcessStartIdentity,
+          let returnedBounds = returnedIdentity.capturedBounds,
+          returnedBounds == window.bounds
+    else {
+        throw PeekabooError.windowNotFound(
+            criteria: "\(operation) readback no longer matches the original exact-window receipt"
+        )
+    }
+    return window
 }
 
 extension WindowIdentificationOptions {

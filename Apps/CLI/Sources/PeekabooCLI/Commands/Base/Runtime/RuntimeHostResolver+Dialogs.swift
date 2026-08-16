@@ -16,6 +16,9 @@ extension RuntimeHostResolver {
         let legacyInputFocusPolicy =
             handshake.negotiatedVersion >= PeekabooBridgeConstants.dialogInputFocusPolicyVersion &&
             handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.dialogInputFocusPolicy) == true
+        let usesAttestedReceipts =
+            handshake.negotiatedVersion >= PeekabooBridgeConstants.attestedOperationReceiptVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true
         return RemoteDialogCapabilities(
             backgroundButtonClick: BridgeCapabilityPolicy.supportsOperation(
                 .backgroundDialogClickButton,
@@ -26,6 +29,8 @@ extension RuntimeHostResolver {
             exactClick: BridgeCapabilityPolicy.supportsOperation(.exactDialogClickButton, for: handshake),
             exactDismiss: BridgeCapabilityPolicy.supportsOperation(.exactDialogDismiss, for: handshake),
             exactInput: exactInput &&
+                BridgeCapabilityPolicy.supportsOperation(.exactDialogEnterText, for: handshake),
+            backgroundExactInput: usesAttestedReceipts && exactInput &&
                 BridgeCapabilityPolicy.supportsOperation(.exactDialogEnterText, for: handshake),
             exactForceDismiss: exactForceDismiss &&
                 BridgeCapabilityPolicy.supportsOperation(.exactDialogForceDismiss, for: handshake),

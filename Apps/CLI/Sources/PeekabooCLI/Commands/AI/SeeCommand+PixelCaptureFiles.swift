@@ -5,24 +5,33 @@ import PeekabooFoundation
 @MainActor
 extension SeeCommand {
     func capturedFile(
-        from observation: DesktopObservationResult,
+        from result: SeeObservationActionResult,
         preferredName: String?,
         windowIndex: Int?,
         snapshotID: String? = nil
     ) throws -> ImageCapturedFile {
-        try ImageCapturedFile(
-            file: self.savedFile(
-                from: observation,
-                preferredName: preferredName,
-                windowIndex: windowIndex
-            ),
-            observation: ImageObservationDiagnostics(
-                timings: observation.timings,
-                diagnostics: observation.diagnostics,
-                capture: observation.capture
-            ),
-            snapshotID: snapshotID
-        )
+        let observation = result.observation
+        do {
+            return try ImageCapturedFile(
+                file: self.savedFile(
+                    from: observation,
+                    preferredName: preferredName,
+                    windowIndex: windowIndex
+                ),
+                imageData: observation.files.rawScreenshotPath == nil
+                    ? observation.verifiedCaptureImageData()
+                    : observation.verifiedRawScreenshotData(),
+                observation: ImageObservationDiagnostics(
+                    timings: observation.timings,
+                    diagnostics: observation.diagnostics,
+                    capture: observation.capture
+                ),
+                snapshotID: snapshotID,
+                receipt: result.receipt
+            )
+        } catch {
+            throw result.receipt.preservingFailure(error, operation: "see capture result preparation")
+        }
     }
 
     func makeOutputURL(preferredName: String?, index: Int?) -> URL {
@@ -37,7 +46,9 @@ extension SeeCommand {
             let expanded = (explicit as NSString).expandingTildeInPath
             if ObservationOutputPathResolver.isDirectoryLike(expanded) {
                 return URL(fileURLWithPath: expanded, isDirectory: true)
-                    .appendingPathComponent(self.defaultOutputFilename(preferredName: preferredName, index: index))
+                    .appendingPathComponent(
+                        self.defaultOutputFilename(preferredName: preferredName, index: index)
+                    )
             }
 
             var url = URL(fileURLWithPath: expanded)
@@ -58,7 +69,9 @@ extension SeeCommand {
         }
 
         return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent(self.defaultOutputFilename(preferredName: preferredName, index: index))
+            .appendingPathComponent(
+                self.defaultOutputFilename(preferredName: preferredName, index: index)
+            )
     }
 
     private func savedFile(
@@ -103,10 +116,11 @@ extension SeeCommand {
 
     private func sanitizeFilenameComponent(_ value: String) -> String {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
-        return value
-            .components(separatedBy: allowed.inverted)
-            .filter { !$0.isEmpty }
-            .joined(separator: "-")
+        return
+            value
+                .components(separatedBy: allowed.inverted)
+                .filter { !$0.isEmpty }
+                .joined(separator: "-")
     }
 
     private static let imageFilenameDateFormatter: ISO8601DateFormatter = {

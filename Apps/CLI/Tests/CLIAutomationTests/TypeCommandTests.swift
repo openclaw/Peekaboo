@@ -1,5 +1,6 @@
 import Commander
 import Foundation
+import PeekabooAutomation
 import PeekabooCore
 import PeekabooFoundation
 import Testing
@@ -401,6 +402,45 @@ struct TypeCommandTests {
     }
 
     @Test
+    @MainActor
+    func `Foreground type refuses zero or ambiguous partial title matches before focus and input`() async throws {
+        let pid: Int32 = 2468
+        for title in ["Missing", "Document"] {
+            let applicationService = StubApplicationService(applications: [ServiceApplicationInfo(
+                processIdentifier: pid,
+                processStartIdentity: 71,
+                bundleIdentifier: "com.apple.TextEdit",
+                name: "TextEdit"
+            )])
+            let windows = StubWindowService(windowsByApp: ["TextEdit": [
+                self.window(windowID: 901, pid: pid, generation: 71),
+                self.window(windowID: 902, pid: pid, generation: 71),
+            ]])
+            let automation = OutcomeStubAutomationService()
+            let context = await self.makeContext(
+                automation: automation,
+                applications: applicationService,
+                windows: windows
+            )
+
+            let result = try await self.runType(
+                arguments: [
+                    "Hello", "--app", "TextEdit", "--window-title", title, "--foreground", "--json",
+                ],
+                context: context
+            )
+
+            #expect(result.exitStatus != 0)
+            #expect(result.combinedOutput.contains("must resolve exactly one window"))
+            #expect(windows.focusCalls.isEmpty)
+            #expect(applicationService.activateCalls.isEmpty)
+            #expect(automation.typeActionsCalls.isEmpty)
+            #expect(automation.targetedTypeActionsCalls.isEmpty)
+            #expect(automation.exactTypeActionsCalls.isEmpty)
+        }
+    }
+
+    @Test
     func `Type refuses an unpinned background process before delivery`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
@@ -423,7 +463,7 @@ struct TypeCommandTests {
     }
 
     @Test
-    func `Type foreground flag opts out of background process delivery`() async throws {
+    func `Type foreground target refuses when exact focus cannot be proven`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
             processStartIdentity: 71,
@@ -440,57 +480,76 @@ struct TypeCommandTests {
             context: context
         )
 
-        #expect(result.exitStatus == 0)
+        #expect(result.exitStatus == 1)
         let targetedCalls = await self.automationState(context) { $0.targetedTypeActionsCalls }
         #expect(targetedCalls.isEmpty)
-        let call = try #require(await self.automationState(context) { $0.typeActionsCalls.first })
-        #expect(call.snapshotId == nil)
+        #expect(await self.automationState(context) { $0.typeActionsCalls.isEmpty })
+        let payload = try ExternalCommandRunner.decodeJSONResponse(from: result, as: JSONResponse.self)
+        #expect(payload.success == false)
+    }
+
+    @Test
+    func `Foreground setup retains a confirmed no-change global leaf without target attribution`() async throws {
+        let windows = await MainActor.run {
+            InputFocusWindowService(focusOutcome: InputFocusFixtures.focusOutcome)
+        }
+        let automation = await MainActor.run {
+            let automation = OutcomeStubAutomationService()
+            automation.actionOutcome = .confirmedNoChange(route: .bridge)
+            return automation
+        }
+        let services = await MainActor.run {
+            InputExecutionHostServices(
+                host: .remote,
+                base: TestServicesFactory.makePeekabooServices(windows: windows, automation: automation)
+            )
+        }
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "type", "Hello",
+                "--window-id", String(InputFocusFixtures.windowID),
+                "--foreground", "--json",
+            ],
+            services: services
+        )
         let payload = try ExternalCommandRunner.decodeJSONResponse(
             from: result,
             as: CodableJSONResponse<TypeCommandResult>.self
         )
-        #expect(payload.data.deliveryMode == "foreground")
-        #expect(payload.data.targetPID == nil)
-    }
-
-    @Test
-    func `Foreground setup suppresses a no-dispatch typing leaf`() async throws {
-        let windows = await MainActor.run { StubWindowService(windowsByApp: [:]) }
-        let automation = await MainActor.run {
-            let automation = OutcomeStubAutomationService()
-            automation.actionOutcome = .confirmedNoChange()
-            return automation
-        }
-        let context = await self.makeContext(automation: automation, windows: windows)
-
-        let result = try await self.runType(
-            arguments: ["Hello", "--window-id", "777", "--foreground", "--json"],
-            context: context
-        )
-        let object = try #require(
-            JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
-        )
 
         #expect(result.exitStatus == 0)
-        #expect(object["effect"] as? String == "unverifiable")
-        #expect(object["outcome"] == nil)
-        let focusCalls = await MainActor.run { windows.focusCalls }
-        #expect(!focusCalls.isEmpty)
+        #expect(payload.outcome?.state == .confirmedChange)
+        #expect(payload.outcome?.dispatchedUnitCount == .one)
+        #expect(payload.target_identity == nil)
+        #expect(payload.target_receipt == nil)
+        #expect(await MainActor.run { windows.pinnedFocusCalls.count } == 1)
     }
 
     @Test
     func `Foreground setup makes a refused typing leaf indeterminate`() async throws {
-        let windows = await MainActor.run { StubWindowService(windowsByApp: [:]) }
+        let windows = await MainActor.run {
+            InputFocusWindowService(focusOutcome: InputFocusFixtures.focusOutcome)
+        }
         let automation = await MainActor.run {
             let automation = OutcomeStubAutomationService()
-            automation.actionOutcome = .refused(reason: .permissionDenied)
+            automation.actionOutcome = .refused(route: .bridge, reason: .permissionDenied)
             return automation
         }
-        let context = await self.makeContext(automation: automation, windows: windows)
+        let services = await MainActor.run {
+            InputExecutionHostServices(
+                host: .remote,
+                base: TestServicesFactory.makePeekabooServices(windows: windows, automation: automation)
+            )
+        }
 
-        let result = try await self.runType(
-            arguments: ["Hello", "--window-id", "777", "--foreground", "--json"],
-            context: context
+        let result = try await InProcessCommandRunner.run(
+            [
+                "type", "Hello",
+                "--window-id", String(InputFocusFixtures.windowID),
+                "--foreground", "--json",
+            ],
+            services: services
         )
         let object = try #require(
             JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
@@ -505,32 +564,43 @@ struct TypeCommandTests {
         #expect(outcome["retry_safe"] as? Bool == false)
         #expect(outcome["requires_fresh_observation"] as? Bool == true)
         #expect(error["mutation_dispatched"] as? Bool == true)
-        let focusCalls = await MainActor.run { windows.focusCalls }
-        #expect(!focusCalls.isEmpty)
+        #expect(await MainActor.run { windows.pinnedFocusCalls.count } == 1)
     }
 
     @Test
-    func `Returned dispatched typing failure invalidates prior observations`() async throws {
-        let windows = await MainActor.run { StubWindowService(windowsByApp: [:]) }
+    func `Returned unverified typing receipt invalidates prior observations`() async throws {
+        let windows = await MainActor.run {
+            InputFocusWindowService(focusOutcome: InputFocusFixtures.focusOutcome)
+        }
         let automation = await MainActor.run {
             let automation = OutcomeStubAutomationService()
             automation.actionOutcome = .dispatchedUnverified(
+                route: .bridge,
                 delivery: .init(mechanism: .globalEvents, mode: .foreground),
                 evidence: .deliveryAccepted
             )
             return automation
         }
-        let context = await self.makeContext(automation: automation, windows: windows)
-        _ = try await context.snapshots.createSnapshot()
+        let base = await MainActor.run {
+            TestServicesFactory.makeAutomationTestContext(automation: automation, windows: windows)
+        }
+        let services = await MainActor.run {
+            InputExecutionHostServices(host: .remote, base: base.services)
+        }
+        _ = try await base.snapshots.createSnapshot()
 
-        let result = try await self.runType(
-            arguments: ["Hello", "--window-id", "777", "--foreground", "--json"],
-            context: context
+        let result = try await InProcessCommandRunner.run(
+            [
+                "type", "Hello",
+                "--window-id", String(InputFocusFixtures.windowID),
+                "--foreground", "--json",
+            ],
+            services: services
         )
 
-        #expect(result.exitStatus == 1)
-        #expect(context.snapshots.invalidationCutoffs.count == 1)
-        #expect(await context.snapshots.getMostRecentSnapshot() == nil)
+        #expect(result.exitStatus == 0)
+        #expect(base.snapshots.invalidationCutoffs.count == 1)
+        #expect(await base.snapshots.getMostRecentSnapshot() == nil)
     }
 
     @Test
@@ -561,6 +631,253 @@ struct TypeCommandTests {
         #expect(payload.error?.message.contains("no matching window") == true)
         let targetedCalls = await self.automationState(context) { $0.targetedTypeActionsCalls }
         #expect(targetedCalls.isEmpty)
+    }
+
+    @Test(arguments: [DesktopActionOutcome.Route.local, .bridge])
+    @MainActor
+    func `Targeted foreground focus rejects suspected noop on every route`(
+        route: DesktopActionOutcome.Route
+    ) throws {
+        let target = try InputFocusFixtures.targetIdentity()
+        let result = UIAutomationActionResult(
+            payload: (),
+            outcome: .suspectedNoop(
+                route: route,
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                unitCount: .one
+            ),
+            targetIdentity: target
+        )
+
+        do {
+            _ = try validatedConfirmedForegroundFocusResult(result, operation: "Typing setup focus")
+            Issue.record("Expected suspected-noop focus to be rejected")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .suspectedNoop)
+            #expect(failure.outcome.route == route)
+            #expect(failure.targetReceipt?.windowID == InputFocusFixtures.windowID)
+        }
+    }
+
+    @Test(arguments: [DesktopActionOutcome.Route.local, .bridge])
+    @MainActor
+    func `Targeted foreground focus rejects confirmed background dispatch on every route`(
+        route: DesktopActionOutcome.Route
+    ) throws {
+        let target = try InputFocusFixtures.targetIdentity()
+        let result = UIAutomationActionResult(
+            payload: (),
+            outcome: .confirmedChange(
+                route: route,
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                unitCount: .one
+            ),
+            targetIdentity: target
+        )
+
+        do {
+            _ = try validatedConfirmedForegroundFocusResult(result, operation: "Typing setup focus")
+            Issue.record("Expected background-delivered focus to be rejected")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.route == route)
+            #expect(failure.targetReceipt?.windowID == InputFocusFixtures.windowID)
+        }
+    }
+
+    @Test(arguments: [DesktopActionOutcome.Route.local, .bridge])
+    @MainActor
+    func `Targeted foreground focus accepts confirmed no change for an exact target`(
+        route: DesktopActionOutcome.Route
+    ) throws {
+        let target = try InputFocusFixtures.targetIdentity()
+        let result = UIAutomationActionResult(
+            payload: (),
+            outcome: .confirmedNoChange(route: route),
+            targetIdentity: target
+        )
+
+        let validated = try validatedConfirmedForegroundFocusResult(
+            result,
+            operation: "Typing setup focus"
+        )
+
+        #expect(validated.outcome?.state == .confirmedNoChange)
+        #expect(validated.targetIdentity == target)
+    }
+
+    @Test
+    @MainActor
+    func `Generation-pinned focus bridge rejects substituted returned bounds`() async throws {
+        let expectedIdentity = InputFocusFixtures.identity()
+        let substitutedBounds = InputFocusFixtures.bounds.offsetBy(dx: 25, dy: 15)
+        let substitutedIdentity = WindowMutationIdentity(
+            windowID: expectedIdentity.windowID,
+            ownerProcessIdentifier: expectedIdentity.ownerProcessIdentifier,
+            ownerProcessStartIdentity: expectedIdentity.ownerProcessStartIdentity,
+            capturedBounds: substitutedBounds
+        )
+        let windows = InputFocusWindowService(focusOutcome: InputFocusFixtures.focusOutcome)
+        windows.returnedTargetIdentity = try DesktopTargetIdentity(exactWindow: .init(
+            identity: substitutedIdentity,
+            bounds: substitutedBounds
+        ))
+
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await WindowServiceBridge.focusWindow(
+                windows: windows,
+                target: .windowId(expectedIdentity.windowID),
+                expectedIdentity: expectedIdentity
+            )
+        }
+
+        #expect(windows.pinnedFocusCalls.count == 1)
+    }
+
+    @Test
+    @MainActor
+    func `Remote targeted foreground type refuses suspected noop before global input`() async throws {
+        let windows = InputFocusWindowService(
+            focusOutcome: .suspectedNoop(
+                route: .bridge,
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                unitCount: .one
+            )
+        )
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = .confirmedChange(
+            route: .bridge,
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            unitCount: .one
+        )
+        let services = InputExecutionHostServices(
+            host: .remote,
+            base: TestServicesFactory.makePeekabooServices(
+                windows: windows,
+                automation: automation
+            )
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "type", "Hello",
+                "--window-id", String(InputFocusFixtures.windowID),
+                "--foreground",
+                "--json",
+            ],
+            services: services
+        )
+        let payload = try ExternalCommandRunner.decodeJSONResponse(from: result, as: JSONResponse.self)
+
+        #expect(result.exitStatus == 1)
+        #expect(windows.pinnedFocusCalls.count == 1)
+        #expect(automation.typeActionsCalls.isEmpty)
+        #expect(payload.outcome?.state == .suspectedNoop)
+        #expect(payload.target_receipt?.windowID == InputFocusFixtures.windowID)
+    }
+
+    @Test
+    @MainActor
+    func `Remote targeted foreground type stops before input on mismatched focus receipt`() async throws {
+        let windows = InputFocusWindowService(focusOutcome: InputFocusFixtures.focusOutcome)
+        windows.returnedTargetIdentity = try InputFocusFixtures.targetIdentity(
+            windowID: InputFocusFixtures.windowID + 1
+        )
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = InputFocusFixtures.typeOutcome
+        let services = InputExecutionHostServices(
+            host: .remote,
+            base: TestServicesFactory.makePeekabooServices(
+                windows: windows,
+                automation: automation
+            )
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "type", "Hello",
+                "--window-id", String(InputFocusFixtures.windowID),
+                "--foreground",
+                "--json",
+            ],
+            services: services
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(windows.pinnedFocusCalls.count == 1)
+        #expect(automation.typeActionsCalls.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `Remote targeted foreground type composes exact focus and leaf receipts`() async throws {
+        let windows = InputFocusWindowService(focusOutcome: InputFocusFixtures.focusOutcome)
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = InputFocusFixtures.typeOutcome
+        automation.actionOutcomeTargetIdentity = try InputFocusFixtures.targetIdentity()
+        let services = InputExecutionHostServices(
+            host: .remote,
+            base: TestServicesFactory.makePeekabooServices(
+                windows: windows,
+                automation: automation
+            )
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "type", "Hello",
+                "--window-id", String(InputFocusFixtures.windowID),
+                "--foreground",
+                "--json",
+            ],
+            services: services
+        )
+        let payload = try ExternalCommandRunner.decodeJSONResponse(
+            from: result,
+            as: CodableJSONResponse<TypeCommandResult>.self
+        )
+
+        #expect(result.exitStatus == 0)
+        #expect(payload.outcome?.state == .confirmedChange)
+        #expect(payload.outcome?.route == .bridge)
+        #expect(payload.outcome?.deliveryMechanism == .composite)
+        #expect(payload.outcome?.deliveryMode == .foreground)
+        #expect(payload.outcome?.dispatchedUnitCount == DesktopActionOutcome.DispatchUnitCount(2))
+        #expect(payload.target_receipt?.windowID == InputFocusFixtures.windowID)
+    }
+
+    @Test
+    @MainActor
+    func `Remote targeted foreground type rejects a mismatched leaf target`() async throws {
+        let windows = InputFocusWindowService(focusOutcome: InputFocusFixtures.focusOutcome)
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = InputFocusFixtures.typeOutcome
+        automation.actionOutcomeTargetIdentity = try InputFocusFixtures.targetIdentity(windowID: 902)
+        let services = InputExecutionHostServices(
+            host: .remote,
+            base: TestServicesFactory.makePeekabooServices(
+                windows: windows,
+                automation: automation
+            )
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "type", "Hello",
+                "--window-id", String(InputFocusFixtures.windowID),
+                "--foreground",
+                "--json",
+            ],
+            services: services
+        )
+        let payload = try ExternalCommandRunner.decodeJSONResponse(from: result, as: JSONResponse.self)
+
+        #expect(result.exitStatus == 1)
+        #expect(automation.typeActionsCalls.count == 1)
+        #expect(payload.outcome?.state == .indeterminate)
+        #expect(payload.outcome?.dispatchedUnitCount == DesktopActionOutcome.DispatchUnitCount(2))
+        #expect(payload.target_identity == nil)
+        #expect(payload.target_receipt == nil)
     }
 
     @Test
@@ -736,7 +1053,8 @@ struct TypeCommandTests {
         applications: any ApplicationServiceProtocol = StubApplicationService(applications: []),
         windows: any WindowManagementServiceProtocol = StubWindowService(windowsByApp: [:]),
         configure: ((StubAutomationService, StubSnapshotManager) -> Void)? = nil
-    ) async -> TestServicesFactory.AutomationTestContext {
+    ) async -> TestServicesFactory
+    .AutomationTestContext {
         await MainActor.run {
             let context = TestServicesFactory.makeAutomationTestContext(
                 automation: automation,
@@ -775,5 +1093,171 @@ struct TypeCommandTests {
         await MainActor.run {
             operation(context.automation)
         }
+    }
+}
+
+@MainActor
+enum InputFocusFixtures {
+    static let windowID = 901
+    static let processIdentifier: Int32 = 4201
+    static let processStartIdentity: UInt64 = 71
+    static let bounds = CGRect(x: 20, y: 30, width: 500, height: 400)
+
+    static let focusOutcome = DesktopActionOutcome.confirmedChange(
+        route: .bridge,
+        delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+        unitCount: .one
+    )
+    static let typeOutcome = DesktopActionOutcome.confirmedChange(
+        route: .bridge,
+        delivery: .init(mechanism: .globalEvents, mode: .foreground),
+        unitCount: .one
+    )
+
+    static func window(windowID: Int = InputFocusFixtures.windowID) -> ServiceWindowInfo {
+        let identity = self.identity(windowID: windowID)
+        return ServiceWindowInfo(
+            windowID: windowID,
+            title: "Input Fixture",
+            bounds: identity.capturedBounds ?? self.bounds,
+            mutationIdentity: identity
+        )
+    }
+
+    static func identity(windowID: Int = InputFocusFixtures.windowID) -> WindowMutationIdentity {
+        WindowMutationIdentity(
+            windowID: windowID,
+            ownerProcessIdentifier: self.processIdentifier,
+            ownerProcessStartIdentity: self.processStartIdentity,
+            capturedBounds: self.bounds
+        )
+    }
+
+    static func targetIdentity(windowID: Int = InputFocusFixtures.windowID) throws -> DesktopTargetIdentity {
+        try DesktopTargetIdentity(exactWindow: .init(
+            identity: self.identity(windowID: windowID),
+            bounds: self.bounds
+        ))
+    }
+}
+
+@MainActor
+final class InputFocusWindowService: StubWindowService, WindowManagementPinnedFocusActionResultProviding {
+    let focusOutcome: DesktopActionOutcome
+    var returnedTargetIdentity: DesktopTargetIdentity?
+    private(set) var pinnedFocusCalls: [(WindowTarget, WindowMutationIdentity)] = []
+
+    init(focusOutcome: DesktopActionOutcome) {
+        self.focusOutcome = focusOutcome
+        super.init(windowsByApp: ["InputFixture": [InputFocusFixtures.window()]])
+    }
+
+    @MainActor
+    func focusWindowActionResult(target: WindowTarget) async throws -> UIAutomationActionResult<Void> {
+        let windows = try await self.listWindows(target: target)
+        guard let identity = windows.first?.mutationIdentity else {
+            throw PeekabooError.windowNotFound(criteria: target.description)
+        }
+        return try await self.focusWindowActionResult(target: .windowId(identity.windowID), expectedIdentity: identity)
+    }
+
+    @MainActor
+    func focusWindowActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity
+    ) async throws -> UIAutomationActionResult<Void> {
+        self.pinnedFocusCalls.append((target, expectedIdentity))
+        return try UIAutomationActionResult(
+            payload: (),
+            outcome: self.focusOutcome,
+            targetIdentity: self.returnedTargetIdentity ?? InputFocusFixtures.targetIdentity()
+        )
+    }
+}
+
+@MainActor
+final class InputExecutionHostServices: PeekabooServiceProviding {
+    let executionHost: PeekabooServiceExecutionHost
+    private let base: PeekabooServices
+
+    init(host: PeekabooServiceExecutionHost, base: PeekabooServices) {
+        self.executionHost = host
+        self.base = base
+    }
+
+    var logging: any LoggingServiceProtocol {
+        self.base.logging
+    }
+
+    var desktopObservation: any DesktopObservationServiceProtocol {
+        self.base.desktopObservation
+    }
+
+    var screenCapture: any ScreenCaptureServiceProtocol {
+        self.base.screenCapture
+    }
+
+    var applications: any ApplicationServiceProtocol {
+        self.base.applications
+    }
+
+    var automation: any UIAutomationServiceProtocol {
+        self.base.automation
+    }
+
+    var windows: any WindowManagementServiceProtocol {
+        self.base.windows
+    }
+
+    var menu: any MenuServiceProtocol {
+        self.base.menu
+    }
+
+    var dock: any DockServiceProtocol {
+        self.base.dock
+    }
+
+    var dialogs: any DialogServiceProtocol {
+        self.base.dialogs
+    }
+
+    var snapshots: any SnapshotManagerProtocol {
+        self.base.snapshots
+    }
+
+    var files: any FileServiceProtocol {
+        self.base.files
+    }
+
+    var clipboard: any ClipboardServiceProtocol {
+        self.base.clipboard
+    }
+
+    var configuration: PeekabooAutomation.ConfigurationManager {
+        self.base.configuration
+    }
+
+    var permissions: PermissionsService {
+        self.base.permissions
+    }
+
+    var audioInput: AudioInputService {
+        self.base.audioInput
+    }
+
+    var screens: any ScreenServiceProtocol {
+        self.base.screens
+    }
+
+    var browser: any BrowserMCPClientProviding {
+        self.base.browser
+    }
+
+    var agent: (any AgentServiceProtocol)? {
+        self.base.agent
+    }
+
+    func ensureVisualizerConnection() {
+        self.base.ensureVisualizerConnection()
     }
 }

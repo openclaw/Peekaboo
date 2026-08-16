@@ -33,7 +33,7 @@ extension WindowCommand {
                     fallbackToLatest: false,
                     snapshots: self.services.snapshots
                 )
-                try self.windowOptions.validate(allowMissingTarget: observation.hasSnapshot)
+                try self.windowOptions.validateMutation(allowMissingTarget: observation.hasSnapshot)
                 try await observation.validateIfExplicit(using: self.services.snapshots)
                 self.logger.debug("Window options validated")
                 let hasWindowTarget = self.windowOptions.app != nil ||
@@ -50,16 +50,7 @@ extension WindowCommand {
                 let appName: String
                 let snapshotContext = try await self.resolveSnapshotContextIfNeeded(observation)
                 if hasWindowTarget {
-                    let windows = try await WindowServiceBridge.listWindows(
-                        windows: self.services.windows,
-                        target: self.windowOptions.toWindowTarget()
-                    )
-                    self.logger.debug("Found \(windows.count) windows")
-                    guard !windows.isEmpty else {
-                        let displayName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: nil)
-                        throw PeekabooError.windowNotFound(criteria: "No windows found for \(displayName)")
-                    }
-                    windowInfo = self.windowOptions.selectWindow(from: windows)
+                    windowInfo = try await self.resolvePreparedWindow(appInfo: appInfo)
                     appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: windowInfo)
                 } else if let snapshotContext {
                     windowInfo = await self.refetchWindowInfo(
@@ -76,23 +67,27 @@ extension WindowCommand {
 
                 // Use enhanced focus with space support
                 self.resolvedRuntime.beginInteractionMutation()
-                if let windowID = windowInfo?.windowID {
-                    try await ensureFocused(
-                        windowID: CGWindowID(windowID),
+                let actionResult: UIAutomationActionResult<Void>
+                if let windowInfo {
+                    actionResult = try await ensureFocused(
+                        preparedWindow: windowInfo,
                         applicationName: appName,
                         windowTitle: self.windowOptions.windowTitle,
                         options: self.focusOptions.asFocusOptions,
                         services: self.services
                     )
                 } else if let snapshotContext {
-                    try await ensureFocused(
+                    actionResult = try await ensureFocused(
                         snapshotId: snapshotContext.snapshotId,
                         options: self.focusOptions.asFocusOptions,
                         services: self.services
                     )
                 } else if let target {
                     // Fallback to regular focus if no window ID
-                    try await WindowServiceBridge.focusWindow(windows: self.services.windows, target: target)
+                    actionResult = try await WindowServiceBridge.focusWindow(
+                        windows: self.services.windows,
+                        target: target
+                    )
                 } else {
                     throw ValidationError("Either --app, --pid, --window-id, or --snapshot must be specified")
                 }
@@ -101,48 +96,80 @@ extension WindowCommand {
                     logger: self.logger,
                     reason: "window focus"
                 )
-
-                let refreshedWindowInfo: ServiceWindowInfo? = if hasWindowTarget {
-                    await self.windowOptions.refetchWindowInfo(
-                        services: self.services,
-                        logger: self.logger,
-                        context: "window-focus"
-                    )
-                } else if let snapshotContext {
-                    await self.refetchWindowInfo(
-                        target: snapshotContext.target,
-                        context: "window-focus"
-                    )
-                } else {
-                    nil
-                }
-                let finalWindowInfo = refreshedWindowInfo ?? windowInfo
-
-                if self.verify {
-                    try await self.verifyFocus(
-                        expectedWindowId: finalWindowInfo?.windowID,
-                        expectedTitle: self.windowOptions.windowTitle,
-                        expectedApp: appInfo
-                    )
-                }
-                logWindowAction(
-                    action: "focus",
-                    appName: appName,
-                    windowInfo: finalWindowInfo
+                let targetIdentity = try validatedSuccessfulActionResult(
+                    actionResult,
+                    operation: "Window focus",
+                    requiresTarget: true
                 )
 
-                let data = createWindowActionResult(
-                    action: "focus",
-                    windowInfo: finalWindowInfo,
-                    appName: appName
-                )
-
-                output(data, effect: self.verify ? .confirmed : .unverifiable) {
-                    var message = "Successfully focused window '\(finalWindowInfo?.title ?? "Untitled")' of \(appName)"
-                    if self.focusOptions.bringToCurrentSpace {
-                        message += " (moved to current Space)"
+                try await withPreservedActionResultOnFailure(
+                    actionResult,
+                    targetIdentity: targetIdentity,
+                    operation: "Window focus"
+                ) {
+                    guard let expectedIdentity = targetIdentity?.exactWindow?.identity else {
+                        throw PeekabooError.windowNotFound(
+                            criteria: "Window focus result lost its exact-window receipt"
+                        )
                     }
-                    print(message)
+                    let refreshedWindowInfo: ServiceWindowInfo? = if hasWindowTarget {
+                        await self.windowOptions.refetchWindowInfo(
+                            services: self.services,
+                            logger: self.logger,
+                            context: "window-focus"
+                        )
+                    } else if let snapshotContext {
+                        await self.refetchWindowInfo(
+                            target: snapshotContext.target,
+                            context: "window-focus"
+                        )
+                    } else {
+                        nil
+                    }
+                    let validatedRefreshed = try refreshedWindowInfo.map {
+                        try validatedPostMutationWindowReadback(
+                            $0,
+                            expectedIdentity: expectedIdentity,
+                            operation: "Window focus"
+                        )
+                    }
+                    let finalWindowInfo = validatedRefreshed ?? windowInfo
+
+                    if self.verify {
+                        try await self.verifyFocus(
+                            expectedWindowId: finalWindowInfo?.windowID,
+                            expectedTitle: self.windowOptions.windowTitle,
+                            expectedApp: appInfo,
+                            expectedIdentity: expectedIdentity
+                        )
+                    }
+                    let outputOutcome = self.verify
+                        ? canonicalActionOutcomeAfterSuccessfulVerification(actionResult.outcome)
+                        : actionResult.outcome
+                    logWindowAction(
+                        action: "focus",
+                        appName: appName,
+                        windowInfo: finalWindowInfo
+                    )
+
+                    let data = createWindowActionResult(
+                        action: "focus",
+                        windowInfo: finalWindowInfo,
+                        appName: appName
+                    )
+                    output(
+                        data,
+                        effect: self.verify ? .confirmed : .unverifiable,
+                        outcome: outputOutcome,
+                        targetIdentity: targetIdentity
+                    ) {
+                        var message = "Successfully focused window " +
+                            "'\(finalWindowInfo?.title ?? "Untitled")' of \(appName)"
+                        if self.focusOptions.bringToCurrentSpace {
+                            message += " (moved to current Space)"
+                        }
+                        print(message)
+                    }
                 }
 
             } catch {
@@ -151,9 +178,32 @@ extension WindowCommand {
             }
         }
 
+        private func resolvePreparedWindow(
+            appInfo: ServiceApplicationInfo?
+        ) async throws -> ServiceWindowInfo {
+            let windows = try await WindowServiceBridge.listWindows(
+                windows: self.services.windows,
+                target: self.windowOptions.toWindowSelectionTarget()
+            )
+            self.logger.debug("Found \(windows.count) windows")
+            guard !windows.isEmpty else {
+                let displayName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: nil)
+                throw PeekabooError.windowNotFound(criteria: "No windows found for \(displayName)")
+            }
+            return try self.windowOptions.requireMutationWindow(
+                from: windows,
+                expectedApplication: appInfo,
+                action: "focus"
+            )
+        }
+
         private func resolveSnapshotContextIfNeeded(
             _ observation: InteractionObservationContext
-        ) async throws -> (snapshotId: String, target: WindowTarget, appName: String)? {
+        ) async throws -> (
+            snapshotId: String,
+            target: WindowTarget,
+            appName: String
+        )? {
             guard let snapshotId = observation.snapshotId else {
                 return nil
             }
@@ -186,7 +236,8 @@ extension WindowCommand {
         private func verifyFocus(
             expectedWindowId: Int?,
             expectedTitle: String?,
-            expectedApp: ServiceApplicationInfo?
+            expectedApp: ServiceApplicationInfo?,
+            expectedIdentity: WindowMutationIdentity
         ) async throws {
             let deadline = Date().addingTimeInterval(1.5)
             while Date() < deadline {
@@ -206,20 +257,25 @@ extension WindowCommand {
                     }
                 }
 
-                if let expectedWindowId,
-                   let focused = try await self.services.windows.getFocusedWindow(),
-                   focused.windowID != expectedWindowId {
+                guard let focused = try await self.services.windows.getFocusedWindow() else {
                     try await Task.sleep(nanoseconds: 120_000_000)
                     continue
                 }
-
+                if let expectedWindowId, focused.windowID != expectedWindowId {
+                    try await Task.sleep(nanoseconds: 120_000_000)
+                    continue
+                }
                 if expectedWindowId == nil,
                    let expectedTitle,
-                   let focused = try await self.services.windows.getFocusedWindow(),
                    !focused.title.localizedCaseInsensitiveContains(expectedTitle) {
                     try await Task.sleep(nanoseconds: 120_000_000)
                     continue
                 }
+                _ = try validatedPostMutationWindowReadback(
+                    focused,
+                    expectedIdentity: expectedIdentity,
+                    operation: "Window focus"
+                )
 
                 return
             }

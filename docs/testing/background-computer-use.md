@@ -103,11 +103,20 @@ generation exit still refuses immediately. Each target starts as a stopped direc
 and process generation are recorded durably before resume, then the live executable path is verified after `exec`;
 cleanup never infers ownership from an ambient application-inventory delta or a response that can be interrupted.
 
-Live execution is deliberately reserved until the CLI exposes an opaque host receipt from `bridge status` and validates
-that receipt on the same authenticated connection that performs every operation. The current command refuses before UI
-setup; its deterministic contract/self-test is landable infrastructure, not signed-live certification. After the receipt
-owner lands, the opt-in invocation will require a clean source tree, matching stamped CLI/host source commits, one exact
-signed Bridge host, and an already-running sentinel receipt:
+Protocol 1.29 now validates a stable listener identity, a peer-bound logical operation session, and a signed terminal
+receipt on the same authenticated request connection. Bounded sessions roll over without restarting the listener:
+each request uses a decimal-string session sequence and deterministic request UUID, while the only automatic retry is
+one request backed by a fully verified signed refusal proving `mutation_dispatched=false` and `retry_safe=true` and
+carrying the successor session. Protocol 1.28 remains receiptless.
+
+Live overlap execution is still deliberately reserved because the CLI does not yet expose a public first-party
+`bridge receipt validate` command that the shell harness can use for every exported verification bundle, including
+session and predecessor/successor linkage. `bridge status` host identity and structural `jq` checks are not substitutes
+for Ed25519 and canonical-digest validation. The current command therefore refuses before UI setup; its deterministic
+contract/self-test is landable infrastructure, while physical signed-live proof remains pending. Once that verifier is
+available, the opt-in invocation will require a clean source tree, matching stamped CLI/host source commits, one exact
+signed Bridge host, an already-running sentinel receipt, and a private
+`PEEKABOO_OPERATION_RECEIPT_DIRECTORY` whose expected terminal bundles all validate:
 
 ```bash
 PEEKABOO_RUN_DUAL_CONTROLLER_OVERLAP=1 \

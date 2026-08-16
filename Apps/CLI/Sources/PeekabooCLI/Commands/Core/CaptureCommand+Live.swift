@@ -19,7 +19,8 @@ InjectedRuntimeBackedCommand {
     @Option(name: .long, help: "Region to capture as x,y,width,height (global display coordinates)") var region: String?
     @Option(
         name: .long,
-        help: "Focus behavior: background (default), foreground (activate target), or legacy auto"
+        help: "Focus behavior: background (default), foreground (activate target), " +
+            "or legacy auto"
     ) var captureFocus: LiveCaptureFocus =
         .background
     @Option(
@@ -52,7 +53,8 @@ InjectedRuntimeBackedCommand {
     @Option(name: .long, help: "Diff strategy: fast|quality (default fast)") var diffStrategy: String?
     @Option(
         name: .customLong("diff-budget"),
-        help: "Diff time budget in milliseconds before falling back to fast (default 30 when quality)"
+        help: "Diff time budget in milliseconds before falling back to fast " +
+            "(default 30 when quality)"
     ) var diffBudget: CLIDuration?
 
     /// Output
@@ -81,7 +83,11 @@ InjectedRuntimeBackedCommand {
             let scope = try await resolveScope()
             let options = try buildOptions()
             if scope.kind == .window, let identifier = scope.applicationIdentifier {
-                try await focusIfNeeded(appIdentifier: identifier)
+                try await focusIfNeeded(
+                    appIdentifier: identifier,
+                    windowID: scope.windowId,
+                    windowMutationIdentity: scope.windowMutationIdentity
+                )
             }
             let outputDir = try resolveOutputDirectory()
             let deps = WatchCaptureDependencies(

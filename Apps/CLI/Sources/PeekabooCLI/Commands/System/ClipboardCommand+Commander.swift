@@ -128,27 +128,39 @@ extension ClipboardCommand {
             self.logger.setJsonOutputMode(self.jsonOutput)
 
             do {
-                self.resolvedRuntime.beginInteractionMutation()
                 let request = try makeClipboardWriteRequest(from: self)
-                let result = try self.services.clipboard.set(request)
-                let verification = try verifyClipboardWriteIfNeeded(
-                    request: request,
-                    verify: self.verify,
-                    clipboard: self.services.clipboard
+                self.resolvedRuntime.beginInteractionMutation()
+                let actionResult = try self.services.clipboard.setResult(request)
+                let outcome = try ClipboardMutationResultSemantics.requireSuccessfulOutcome(
+                    actionResult.outcome,
+                    operation: "Clipboard set"
                 )
+                let verification: ClipboardVerifyResult?
+                do {
+                    verification = try verifyClipboardWriteIfNeeded(
+                        request: request,
+                        verify: self.verify,
+                        clipboard: self.services.clipboard
+                    )
+                } catch {
+                    throw ClipboardMutationResultSemantics.postWriteFailure(error, operation: "Clipboard set")
+                }
                 let payload = ClipboardCommandResult(
                     action: "set",
-                    uti: result.utiIdentifier,
-                    size: result.data.count,
+                    uti: actionResult.payload.utiIdentifier,
+                    size: actionResult.payload.data.count,
                     filePath: nil,
                     slot: nil,
                     text: nil,
-                    textPreview: result.textPreview,
+                    textPreview: actionResult.payload.textPreview,
                     dataBase64: nil,
                     verification: verification
                 )
-                self.output(payload, effect: verification == nil ? .unverifiable : .confirmed) {
-                    print("✅ Set clipboard (\(result.utiIdentifier), \(result.data.count) bytes)")
+                self.output(payload, outcome: outcome) {
+                    print(
+                        "✅ Set clipboard " +
+                            "(\(actionResult.payload.utiIdentifier), \(actionResult.payload.data.count) bytes)"
+                    )
                     printClipboardVerificationSummary(verification)
                 }
             } catch {
@@ -168,21 +180,30 @@ extension ClipboardCommand {
             self.runtime = runtime
             self.logger.setJsonOutputMode(self.jsonOutput)
 
-            self.resolvedRuntime.beginInteractionMutation()
-            self.services.clipboard.clear()
-            let payload = ClipboardCommandResult(
-                action: "clear",
-                uti: nil,
-                size: nil,
-                filePath: nil,
-                slot: nil,
-                text: nil,
-                textPreview: nil,
-                dataBase64: nil,
-                verification: nil
-            )
-            self.output(payload) {
-                print("🧹 Cleared clipboard")
+            do {
+                self.resolvedRuntime.beginInteractionMutation()
+                let actionResult = try self.services.clipboard.clearResult()
+                let outcome = try ClipboardMutationResultSemantics.requireSuccessfulOutcome(
+                    actionResult.outcome,
+                    operation: "Clipboard clear"
+                )
+                let payload = ClipboardCommandResult(
+                    action: "clear",
+                    uti: nil,
+                    size: nil,
+                    filePath: nil,
+                    slot: nil,
+                    text: nil,
+                    textPreview: nil,
+                    dataBase64: nil,
+                    verification: nil
+                )
+                self.output(payload, outcome: outcome) {
+                    print("🧹 Cleared clipboard")
+                }
+            } catch {
+                self.handleError(error)
+                throw ExitCode.failure
             }
         }
     }
@@ -248,20 +269,27 @@ extension ClipboardCommand {
             do {
                 self.resolvedRuntime.beginInteractionMutation()
                 let slotName = self.slot ?? "0"
-                let result = try self.services.clipboard.restore(slot: slotName)
+                let actionResult = try self.services.clipboard.restoreResult(slot: slotName)
+                let outcome = try ClipboardMutationResultSemantics.requireSuccessfulOutcome(
+                    actionResult.outcome,
+                    operation: "Clipboard restore"
+                )
                 let payload = ClipboardCommandResult(
                     action: "restore",
-                    uti: result.utiIdentifier,
-                    size: result.data.count,
+                    uti: actionResult.payload.utiIdentifier,
+                    size: actionResult.payload.data.count,
                     filePath: nil,
                     slot: slotName,
                     text: nil,
-                    textPreview: result.textPreview,
+                    textPreview: actionResult.payload.textPreview,
                     dataBase64: nil,
                     verification: nil
                 )
-                self.output(payload) {
-                    print("♻️  Restored slot \"\(slotName)\" (\(result.utiIdentifier), \(result.data.count) bytes)")
+                self.output(payload, outcome: outcome) {
+                    print(
+                        "♻️  Restored slot \"\(slotName)\" " +
+                            "(\(actionResult.payload.utiIdentifier), \(actionResult.payload.data.count) bytes)"
+                    )
                 }
             } catch {
                 self.handleError(error)
@@ -383,7 +411,8 @@ private func verifyClipboardWriteIfNeeded(
 
         if isTextClipboardUTI(representation.utiIdentifier) {
             guard let expected = normalizedClipboardTextData(representation.data),
-                  let actual = normalizedClipboardTextData(readBack.data) else {
+                  let actual = normalizedClipboardTextData(readBack.data)
+            else {
                 throw ValidationError(
                     "Clipboard verify failed: unable to decode text for \(representation.utiIdentifier)"
                 )

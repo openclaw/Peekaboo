@@ -98,8 +98,10 @@ extension AppCommand {
                     let action: String
                     let app_name: String
                     let old_pid: Int32
+                    let previous_process_start_identity_decimal: String
                     let new_pid: Int32
                     let new_process_start_identity: UInt64?
+                    let new_process_start_identity_decimal: String?
                     let bundle_id: String?
                     let quit_forced: Bool
                     let wait_time: TimeInterval
@@ -110,8 +112,10 @@ extension AppCommand {
                     action: "relaunch",
                     app_name: appInfo.name,
                     old_pid: originalPID,
+                    previous_process_start_identity_decimal: String(originalProcessIdentity.processStartIdentity),
                     new_pid: launchedApp.processIdentifier,
                     new_process_start_identity: launchedApp.processStartIdentity,
+                    new_process_start_identity_decimal: launchedApp.processStartIdentity.map(String.init),
                     bundle_id: appInfo.bundleIdentifier,
                     quit_forced: self.force,
                     wait_time: self.wait.seconds,

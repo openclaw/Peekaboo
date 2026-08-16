@@ -10,16 +10,21 @@ const routingContractURL = new URL(
   "../Core/PeekabooCore/Sources/PeekabooAgentRuntime/Browser/BrowserMCPPageRoutingContract.swift",
   import.meta.url,
 );
+const semanticsContractURL = new URL(
+  "../Core/PeekabooFoundation/Sources/PeekabooFoundation/BrowserToolActionSemantics.swift",
+  import.meta.url,
+);
 const rootPackage = JSON.parse(readFileSync(rootPackageURL, "utf8"));
 const dependencyPackage = JSON.parse(readFileSync(dependencyPackageURL, "utf8"));
 const routingContract = readFileSync(routingContractURL, "utf8");
+const semanticsContract = readFileSync(semanticsContractURL, "utf8");
 const declaredVersion = rootPackage.devDependencies?.["chrome-devtools-mcp"];
 
-function namesInContractSection(name) {
+function namesInContractSection(name, source = routingContract) {
   const expression = new RegExp(
     `chrome-devtools-mcp-contract:${name}-begin([\\s\\S]*?)chrome-devtools-mcp-contract:${name}-end`,
   );
-  const section = routingContract.match(expression)?.[1];
+  const section = source.match(expression)?.[1];
   assert.ok(section, `missing ${name} section in Swift routing contract`);
   return [...section.matchAll(/"([^"]+)"/g)].map((match) => match[1]).sort();
 }
@@ -29,6 +34,9 @@ const expectedPageScopedNames = namesInContractSection("page-scoped");
 const expectedExplicitPageTargetNames = namesInContractSection("explicit-page-target");
 const expectedGlobalNames = namesInContractSection("global");
 const expectedBlockedSelectedPageNames = namesInContractSection("blocked-selected-page");
+const expectedReadOnlyNames = namesInContractSection("semantic-read-only", semanticsContract);
+const expectedMutatingNames = namesInContractSection("semantic-mutating", semanticsContract);
+const expectedArgumentDependentNames = namesInContractSection("semantic-argument-dependent", semanticsContract);
 
 assert.equal(declaredVersion, "1.6.0", "keep the audited browser routing contract pinned exactly");
 assert.equal(dependencyPackage.version, declaredVersion, "installed Chrome DevTools MCP must match the pin");
@@ -91,6 +99,16 @@ assert.deepEqual(
   tools.map((tool) => tool.name).sort(),
   auditedNames,
   "audited routing categories must partition the complete upstream tool catalog",
+);
+assert.deepEqual(
+  [...expectedReadOnlyNames, ...expectedMutatingNames, ...expectedArgumentDependentNames].sort(),
+  auditedNames,
+  "audited browser action semantics must partition the complete upstream tool catalog",
+);
+assert.equal(
+  new Set([...expectedReadOnlyNames, ...expectedMutatingNames, ...expectedArgumentDependentNames]).size,
+  auditedNames.length,
+  "audited browser action semantic categories must be disjoint",
 );
 for (const tool of pageScopedTools) {
   const handler = handlers.get(tool.name);

@@ -95,32 +95,37 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             }
 
             let expectedPIDIdentity = try self.explicitPIDIdentity()
-            let outcome = try await self.withInteractionMutationInvalidation {
-                try await ClipboardPasteTransactionGate.withExclusiveTransaction {
-                    let deliveryTarget = try await self.preDispatchBackgroundTarget(
-                        expectedPIDIdentity: expectedPIDIdentity
-                    )
-                    if deliveryTarget == nil {
-                        try await ensureFocused(
-                            snapshotId: nil,
-                            target: self.target,
-                            options: self.focusOptions,
-                            services: self.services
+            let actionSequence = CommandActionSequenceAccumulator()
+            let actionRoute = commandActionRoute(for: self.services)
+            let outcome = try await self.preservingPasteSequence(actionSequence, route: actionRoute) {
+                try await self.withInteractionMutationInvalidation {
+                    try await ClipboardPasteTransactionGate.withExclusiveTransaction {
+                        let deliveryTarget = try await self.preDispatchBackgroundTarget(
+                            expectedPIDIdentity: expectedPIDIdentity
+                        )
+                        if deliveryTarget == nil {
+                            try await self.ensureForegroundFocus(
+                                recordingIn: actionSequence,
+                                route: actionRoute
+                            )
+                        }
+                        return try await self.performClipboardPasteTransaction(
+                            request: request,
+                            target: deliveryTarget ?? .foreground,
+                            actionSequence: deliveryTarget == nil ? actionSequence : nil,
+                            actionRoute: actionRoute
                         )
                     }
-                    return try await self.performClipboardPasteTransaction(
-                        request: request,
-                        target: deliveryTarget ?? .foreground
-                    )
                 }
             }
             if Task.isCancelled {
-                throw ClipboardPasteOutcomeError(
+                let error = ClipboardPasteOutcomeError(
                     kind: .indeterminate,
                     causeDescription: "The caller cancelled after Cmd+V dispatch completed.",
                     clipboardRestoreAttempted: true,
                     clipboardRestoreErrorDescription: outcome.restoreErrorDescription
                 )
+                throw self.preservedPasteFailure(error, sequence: actionSequence, route: actionRoute)
             }
 
             let result = PasteResult(
@@ -138,14 +143,26 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 targetPID: outcome.targetPID.map(Int.init),
                 targetWindowID: outcome.targetWindowID
             )
+            let actionResult = actionSequence.result(payload: result)
+            let outputOutcome = Self.outputOutcome(
+                actionResult.outcome,
+                mutationDisposition: actionSequence.mutationDisposition,
+                restoreErrorDescription: outcome.restoreErrorDescription,
+                fallbackRoute: actionRoute
+            )
 
             self.output(
-                result,
-                effect: outcome.restoreErrorDescription == nil ? .unverifiable : .partial
+                actionResult.payload,
+                effect: outcome.restoreErrorDescription == nil ? .unverifiable :
+                    (outputOutcome?.effect ?? .unverifiable),
+                outcome: outputOutcome,
+                targetIdentity: outputOutcome == nil ? nil : actionResult.targetIdentity
             ) {
                 if outcome.restoreErrorDescription != nil {
                     print("⚠️  Pasted, but clipboard restoration failed. Do not retry the paste; " +
                         "the previous clipboard contents may be unavailable.")
+                } else if let outputOutcome {
+                    print(ActionOutcomeHumanRenderer.statusLine(for: outputOutcome, operation: "Paste"))
                 } else {
                     print("✅ Pasted and restored clipboard")
                 }
@@ -175,7 +192,9 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
 
     private func performClipboardPasteTransaction(
         request: ClipboardWriteRequest,
-        target: UIAutomationTarget
+        target: UIAutomationTarget,
+        actionSequence: CommandActionSequenceAccumulator?,
+        actionRoute: DesktopActionOutcome.Route
     ) async throws -> ClipboardPasteTransactionOutcome {
         if target.exactWindow != nil {
             _ = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
@@ -245,15 +264,10 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         let dispatchFailure: DesktopActionFailure?
         let dispatchErrorDescription: String?
         do {
-            let result = try await AutomationServiceBridge.hotkey(
-                automation: self.services.automation,
-                keys: "cmd,v",
-                holdDuration: 50,
-                target: target
-            )
-            try DesktopActionFailure.requireConfirmedIfReported(
-                result.outcome,
-                operation: "Paste hotkey"
+            try await self.dispatchPasteHotkey(
+                target: target,
+                recordingIn: actionSequence,
+                route: actionRoute
             )
             dispatchFailure = nil
             dispatchErrorDescription = nil
@@ -282,7 +296,7 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
 
         if let dispatchFailure {
             guard let restoreErrorDescription else { throw dispatchFailure }
-            throw ClipboardPasteOutcomeError(
+            let error = ClipboardPasteOutcomeError(
                 kind: .indeterminate,
                 causeDescription: "\(dispatchFailure.localizedDescription); clipboard restoration also failed: " +
                     restoreErrorDescription,
@@ -290,24 +304,30 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 clipboardRestoreErrorDescription: restoreErrorDescription,
                 targetProcessIdentifier: target.processIdentifier
             )
+            throw self.postDispatchPasteFailure(error, target: target, route: actionRoute)
         }
         if dispatchErrorDescription != nil || Task.isCancelled {
-            throw ClipboardPasteOutcomeError(
+            let error = ClipboardPasteOutcomeError(
                 kind: .indeterminate,
                 causeDescription: dispatchErrorDescription ?? "The caller cancelled after Cmd+V dispatch began.",
                 clipboardRestoreAttempted: true,
                 clipboardRestoreErrorDescription: restoreErrorDescription,
                 targetProcessIdentifier: target.processIdentifier
             )
+            if dispatchErrorDescription != nil || actionSequence?.mutationDisposition.mutationDispatched != true {
+                throw self.postDispatchPasteFailure(error, target: target, route: actionRoute)
+            }
+            throw error
         }
         if target.processIdentifier != nil {
-            throw ClipboardPasteOutcomeError(
+            let error = ClipboardPasteOutcomeError(
                 kind: .unverified,
                 causeDescription: "The targeted event API does not acknowledge receiver consumption.",
                 clipboardRestoreAttempted: true,
                 clipboardRestoreErrorDescription: restoreErrorDescription,
                 targetProcessIdentifier: target.processIdentifier
             )
+            throw self.postDispatchPasteFailure(error, target: target, route: actionRoute)
         }
 
         return ClipboardPasteTransactionOutcome(
@@ -337,10 +357,11 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 target: target
             )
         }
-        try DesktopActionFailure.requireConfirmedIfReported(
-            actionResult.outcome,
-            operation: "Background text paste"
+        let resultTargetIdentity = try Self.validateBackgroundTextResult(
+            actionResult,
+            authorizedTarget: target
         )
+        let resultTarget = resultTargetIdentity.target
 
         let result = PasteResult(
             pastedUti: setResult.utiIdentifier,
@@ -353,17 +374,21 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             restoreError: nil,
             restoreDelayMs: 0,
             deliveryMode: KeyboardDeliveryMode.background.rawValue,
-            targetPID: target.processIdentifier.map(Int.init),
-            targetWindowID: target.exactWindow?.identity.windowID
+            targetPID: resultTarget.processIdentifier.map(Int.init),
+            targetWindowID: resultTarget.exactWindow?.identity.windowID
         )
 
-        self.output(result, outcome: actionResult.outcome) {
+        self.output(
+            result,
+            outcome: actionResult.outcome,
+            targetIdentity: resultTargetIdentity
+        ) {
             print("✅ Pasted text")
             print("📋 Pasted: \(setResult.utiIdentifier) (\(setResult.data.count) bytes)")
-            if let processIdentifier = target.processIdentifier {
+            if let processIdentifier = resultTarget.processIdentifier {
                 print("🎯 Mode: background to PID \(processIdentifier)")
             }
-            if let windowID = target.exactWindow?.identity.windowID {
+            if let windowID = resultTarget.exactWindow?.identity.windowID {
                 print("🪟 Window: \(windowID)")
             }
         }
@@ -428,79 +453,91 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     }
 
     private func pasteCurrentClipboard(expectedPIDIdentity: UInt64?) async throws {
-        let outcome = try await self.withInteractionMutationInvalidation {
-            try await ClipboardPasteTransactionGate.withExclusiveTransaction {
-                let deliveryTarget = try await self.preDispatchBackgroundTarget(
-                    expectedPIDIdentity: expectedPIDIdentity
-                )
-                if deliveryTarget == nil {
-                    try await ensureFocused(
-                        snapshotId: nil,
-                        target: self.target,
-                        options: self.focusOptions,
-                        services: self.services
+        let actionSequence = CommandActionSequenceAccumulator()
+        let actionRoute = commandActionRoute(for: self.services)
+        let outcome = try await self.preservingPasteSequence(actionSequence, route: actionRoute) {
+            let outcome = try await self.withInteractionMutationInvalidation {
+                try await ClipboardPasteTransactionGate.withExclusiveTransaction {
+                    let deliveryTarget = try await self.preDispatchBackgroundTarget(
+                        expectedPIDIdentity: expectedPIDIdentity
+                    )
+                    if deliveryTarget == nil {
+                        try await self.ensureForegroundFocus(
+                            recordingIn: actionSequence,
+                            route: actionRoute
+                        )
+                    }
+                    let currentClipboard = try self.services.clipboard.get(prefer: nil)
+                    try Task.checkCancellation()
+                    let dispatchFailure: DesktopActionFailure?
+                    let dispatchErrorDescription: String?
+                    do {
+                        try await self.dispatchPasteHotkey(
+                            target: deliveryTarget ?? .foreground,
+                            recordingIn: deliveryTarget == nil ? actionSequence : nil,
+                            route: actionRoute
+                        )
+                        dispatchFailure = nil
+                        dispatchErrorDescription = nil
+                    } catch let failure as DesktopActionFailure {
+                        dispatchFailure = failure
+                        dispatchErrorDescription = nil
+                    } catch {
+                        dispatchFailure = nil
+                        dispatchErrorDescription = error.localizedDescription
+                    }
+                    await ClipboardPasteTransactionGate.waitForPasteConsumption(
+                        milliseconds: self.resolvedRestoreDelayMs
+                    )
+                    if let dispatchFailure {
+                        throw dispatchFailure
+                    }
+                    if dispatchErrorDescription != nil || Task.isCancelled {
+                        let error = ClipboardPasteOutcomeError(
+                            kind: .indeterminate,
+                            causeDescription: dispatchErrorDescription ??
+                                "The caller cancelled after Cmd+V dispatch began.",
+                            clipboardRestoreAttempted: false,
+                            targetProcessIdentifier: deliveryTarget?.processIdentifier
+                        )
+                        if dispatchErrorDescription != nil ||
+                            !actionSequence.mutationDisposition.mutationDispatched {
+                            throw self.postDispatchPasteFailure(
+                                error,
+                                target: deliveryTarget ?? .foreground,
+                                route: actionRoute
+                            )
+                        }
+                        throw error
+                    }
+                    if let deliveryTarget {
+                        let error = ClipboardPasteOutcomeError(
+                            kind: .unverified,
+                            causeDescription: "The targeted event API does not acknowledge receiver consumption.",
+                            clipboardRestoreAttempted: false,
+                            targetProcessIdentifier: deliveryTarget.processIdentifier
+                        )
+                        throw self.postDispatchPasteFailure(
+                            error,
+                            target: deliveryTarget,
+                            route: actionRoute
+                        )
+                    }
+                    return CurrentClipboardPasteOutcome(
+                        clipboard: currentClipboard,
+                        targetPID: deliveryTarget?.processIdentifier,
+                        targetWindowID: deliveryTarget?.exactWindow?.identity.windowID
                     )
                 }
-                let currentClipboard = try self.services.clipboard.get(prefer: nil)
-                try Task.checkCancellation()
-                let dispatchFailure: DesktopActionFailure?
-                let dispatchErrorDescription: String?
-                do {
-                    let result = try await AutomationServiceBridge.hotkey(
-                        automation: self.services.automation,
-                        keys: "cmd,v",
-                        holdDuration: 50,
-                        target: deliveryTarget ?? .foreground
-                    )
-                    try DesktopActionFailure.requireConfirmedIfReported(
-                        result.outcome,
-                        operation: "Paste hotkey"
-                    )
-                    dispatchFailure = nil
-                    dispatchErrorDescription = nil
-                } catch let failure as DesktopActionFailure {
-                    dispatchFailure = failure
-                    dispatchErrorDescription = nil
-                } catch {
-                    dispatchFailure = nil
-                    dispatchErrorDescription = error.localizedDescription
-                }
-                await ClipboardPasteTransactionGate.waitForPasteConsumption(
-                    milliseconds: self.resolvedRestoreDelayMs
-                )
-                if let dispatchFailure {
-                    throw dispatchFailure
-                }
-                if dispatchErrorDescription != nil || Task.isCancelled {
-                    throw ClipboardPasteOutcomeError(
-                        kind: .indeterminate,
-                        causeDescription: dispatchErrorDescription ??
-                            "The caller cancelled after Cmd+V dispatch began.",
-                        clipboardRestoreAttempted: false,
-                        targetProcessIdentifier: deliveryTarget?.processIdentifier
-                    )
-                }
-                if deliveryTarget != nil {
-                    throw ClipboardPasteOutcomeError(
-                        kind: .unverified,
-                        causeDescription: "The targeted event API does not acknowledge receiver consumption.",
-                        clipboardRestoreAttempted: false,
-                        targetProcessIdentifier: deliveryTarget?.processIdentifier
-                    )
-                }
-                return CurrentClipboardPasteOutcome(
-                    clipboard: currentClipboard,
-                    targetPID: deliveryTarget?.processIdentifier,
-                    targetWindowID: deliveryTarget?.exactWindow?.identity.windowID
+            }
+            if Task.isCancelled {
+                throw ClipboardPasteOutcomeError(
+                    kind: .indeterminate,
+                    causeDescription: "The caller cancelled after Cmd+V dispatch completed.",
+                    clipboardRestoreAttempted: false
                 )
             }
-        }
-        if Task.isCancelled {
-            throw ClipboardPasteOutcomeError(
-                kind: .indeterminate,
-                causeDescription: "The caller cancelled after Cmd+V dispatch completed.",
-                clipboardRestoreAttempted: false
-            )
+            return outcome
         }
 
         let result = PasteResult(
@@ -522,9 +559,19 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             targetPID: outcome.targetPID.map(Int.init),
             targetWindowID: outcome.targetWindowID
         )
+        let actionResult = actionSequence.result(payload: result)
 
-        self.output(result) {
-            print("✅ Pasted current clipboard")
+        self.output(
+            actionResult.payload,
+            effect: .unverifiable,
+            outcome: actionResult.outcome,
+            targetIdentity: actionResult.targetIdentity
+        ) {
+            if let actionOutcome = actionResult.outcome {
+                print(ActionOutcomeHumanRenderer.statusLine(for: actionOutcome, operation: "Paste"))
+            } else {
+                print("✅ Pasted current clipboard")
+            }
             if let targetPID = outcome.targetPID {
                 print("🎯 Mode: background to PID \(targetPID)")
             } else {
@@ -533,6 +580,140 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             if let targetWindowID = outcome.targetWindowID {
                 print("🪟 Window: \(targetWindowID)")
             }
+        }
+    }
+
+    private func dispatchPasteHotkey(
+        target: UIAutomationTarget,
+        recordingIn actionSequence: CommandActionSequenceAccumulator?,
+        route: DesktopActionOutcome.Route
+    ) async throws {
+        let result = try await AutomationServiceBridge.hotkey(
+            automation: self.services.automation,
+            keys: "cmd,v",
+            holdDuration: 50,
+            target: target
+        )
+        try DesktopActionFailure.requireConfirmedIfReported(
+            result.outcome,
+            operation: "Paste hotkey"
+        )
+        if let actionSequence {
+            try actionSequence.recordExactTargetLeaf(
+                outcome: result.outcome,
+                targetIdentity: nil,
+                operation: "Paste hotkey",
+                receiptlessStep: .dispatched(
+                    route: route,
+                    delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                    unitCount: .one
+                )
+            )
+        }
+    }
+
+    private func preservingPasteSequence<T: Sendable>(
+        _ actionSequence: CommandActionSequenceAccumulator,
+        route: DesktopActionOutcome.Route,
+        operation: @MainActor () async throws -> T
+    ) async throws -> T {
+        do {
+            return try await operation()
+        } catch {
+            throw self.preservedPasteFailure(error, sequence: actionSequence, route: route)
+        }
+    }
+
+    private func preservedPasteFailure(
+        _ error: any Error,
+        sequence: CommandActionSequenceAccumulator,
+        route: DesktopActionOutcome.Route
+    ) -> any Error {
+        sequence.preservingFailure(
+            error,
+            fallbackRoute: route,
+            message: error.localizedDescription,
+            hint: "Observe the target and clipboard before deciding whether to retry the paste."
+        )
+    }
+
+    private func postDispatchPasteFailure(
+        _ error: ClipboardPasteOutcomeError,
+        target: UIAutomationTarget,
+        route: DesktopActionOutcome.Route
+    ) -> DesktopActionFailure {
+        let delivery = Self.pasteDelivery(for: target)
+        let failure: DesktopActionFailure = switch error.kind {
+        case .unverified:
+            .dispatchedUnverified(
+                route: route,
+                delivery: delivery,
+                evidence: .deliveryAccepted,
+                unitCount: .one,
+                message: error.localizedDescription,
+                hint: "Observe the exact target before deciding how to continue.",
+                causeDescription: error.causeDescription
+            )
+        case .indeterminate:
+            .indeterminate(
+                route: route,
+                delivery: delivery,
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: error.localizedDescription,
+                hint: "Observe the exact target before deciding how to continue.",
+                causeDescription: error.causeDescription
+            )
+        }
+        return failure.attributed(to: Self.pasteTargetReceipt(for: target))
+    }
+
+    private func ensureForegroundFocus(
+        recordingIn actionSequence: CommandActionSequenceAccumulator,
+        route _: DesktopActionOutcome.Route
+    ) async throws {
+        guard let focusResult = try await ensureConfirmedForegroundFocus(
+            snapshotId: nil,
+            target: self.target,
+            options: self.focusOptions,
+            services: self.services,
+            operation: "Paste setup focus"
+        ) else { return }
+        try actionSequence.record(focusResult, operation: "Paste setup focus")
+    }
+
+    private static func outputOutcome(
+        _ actionOutcome: DesktopActionOutcome?,
+        mutationDisposition: DesktopActionMutationDisposition,
+        restoreErrorDescription: String?,
+        fallbackRoute: DesktopActionOutcome.Route
+    ) -> DesktopActionOutcome? {
+        guard restoreErrorDescription != nil else { return actionOutcome }
+        guard mutationDisposition.mutationDispatched else { return actionOutcome }
+        let route = actionOutcome?.route ?? fallbackRoute
+        switch mutationDisposition {
+        case .none:
+            return actionOutcome
+        case .definite:
+            if let delivery = actionOutcome?.delivery {
+                return .partial(
+                    route: route,
+                    delivery: delivery,
+                    unitCount: mutationDisposition.unitCount
+                )
+            }
+            return .indeterminate(
+                route: route,
+                evidence: .completionUnknown,
+                unitCount: mutationDisposition.unitCount
+            )
+        case .possible:
+            return .indeterminate(
+                route: route,
+                delivery: actionOutcome?.delivery,
+                evidence: .completionUnknown,
+                unitCount: mutationDisposition.unitCount
+            )
         }
     }
 

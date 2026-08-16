@@ -39,6 +39,8 @@ RuntimeBackedCommand {
         self.runtime = runtime
         let startTime = Date()
         self.logger.setJsonOutputMode(self.jsonOutput)
+        let actionSequence = CommandActionSequenceAccumulator()
+        let actionRoute = commandActionRoute(for: runtime.services)
 
         do {
             let scrollDirection = try self.validatedScrollDirection()
@@ -67,14 +69,10 @@ RuntimeBackedCommand {
             }
 
             self.resolvedRuntime.beginInteractionMutation()
-            if self.focusOptions.foreground {
-                try await ensureFocused(
-                    snapshotId: observation.focusSnapshotId(for: self.target),
-                    target: self.target,
-                    options: self.focusOptions,
-                    services: self.services
-                )
-            }
+            try await self.recordSetupFocus(
+                observation: observation,
+                sequence: actionSequence
+            )
 
             // Perform scroll using the service
             let scrollRequest = ScrollRequest(
@@ -97,6 +95,30 @@ RuntimeBackedCommand {
                 },
                 outcome: { $0.outcome }
             )
+            let scrollDelivery = DesktopActionOutcome.Delivery(
+                mechanism: self.focusOptions.foreground ? .globalEvents : .accessibilityAction,
+                mode: self.focusOptions.foreground ? .foreground : .background
+            )
+            let receiptlessStep = DesktopActionSequenceAccumulator.Step.dispatched(
+                route: actionRoute,
+                delivery: scrollDelivery,
+                unitCount: .one
+            )
+            if self.focusOptions.foreground {
+                try actionSequence.recordExactTargetLeaf(
+                    outcome: actionResult.outcome,
+                    targetIdentity: actionResult.targetIdentity,
+                    operation: "Scroll",
+                    receiptlessStep: receiptlessStep
+                )
+            } else {
+                try actionSequence.record(
+                    actionResult,
+                    operation: "Scroll",
+                    receiptlessStep: receiptlessStep
+                )
+            }
+            let compositeResult = actionSequence.result(payload: ())
             await InteractionObservationInvalidator.invalidateAfterMutation(
                 targets: self.resolvedRuntime.interactionMutationTargets,
                 logger: self.logger,
@@ -154,9 +176,10 @@ RuntimeBackedCommand {
             output(
                 outputPayload,
                 effect: self.focusOptions.foreground ? .unverifiable : .confirmed,
-                outcome: actionResult.outcome
+                outcome: compositeResult.outcome,
+                targetIdentity: compositeResult.targetIdentity
             ) {
-                if let outcome = actionResult.outcome {
+                if let outcome = compositeResult.outcome {
                     print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Scroll"))
                 } else {
                     print("✅ Scroll completed")
@@ -184,9 +207,31 @@ RuntimeBackedCommand {
             } else {
                 error
             }
-            self.handleError(presentedError)
+            let preservedError = actionSequence.preservingFailure(
+                presentedError,
+                fallbackRoute: actionRoute,
+                message: "Scroll failed after foreground focus may have changed desktop state.",
+                hint: "Observe the exact target before deciding whether to retry scrolling."
+            )
+            self.handleError(preservedError)
             throw ExitCode.failure
         }
+    }
+
+    private func recordSetupFocus(
+        observation: InteractionObservationContext,
+        sequence: CommandActionSequenceAccumulator
+    ) async throws {
+        guard self.focusOptions.foreground else { return }
+        let focusSnapshotID = observation.focusSnapshotId(for: self.target)
+        guard let focusResult = try await ensureConfirmedForegroundFocus(
+            snapshotId: focusSnapshotID,
+            target: self.target,
+            options: self.focusOptions,
+            services: self.services,
+            operation: "Scroll setup focus"
+        ) else { return }
+        try sequence.record(focusResult, operation: "Scroll setup focus")
     }
 
     private func validateDeliveryMode() throws {

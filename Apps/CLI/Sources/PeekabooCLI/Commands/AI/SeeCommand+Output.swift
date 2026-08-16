@@ -1,16 +1,54 @@
 import Foundation
 import PeekabooCore
+import PeekabooFoundation
 
 @available(macOS 14.0, *)
 @MainActor
 extension SeeCommand {
     func renderResults(context: SeeCommandRenderContext) throws {
         try Task.checkCancellation()
+        try Self.requireCurrentObservationArtifacts(context)
+        try context.receipt.requirePublishableOutcome(
+            operation: "See",
+            requiresOutcome: self.webFocus || self.menubar
+        )
         if self.jsonOutput {
             try self.outputJSONResults(context: context)
         } else {
             try self.outputTextResults(context: context)
         }
+    }
+
+    private static func requireCurrentObservationArtifacts(_ context: SeeCommandRenderContext) throws {
+        try self.requireCurrentArtifact(
+            path: context.screenshotPath,
+            verifiedData: context.screenshotData,
+            label: "screenshot"
+        )
+        if let annotatedPath = context.annotatedPath, annotatedPath != context.screenshotPath {
+            try self.requireCurrentArtifact(
+                path: annotatedPath,
+                verifiedData: context.annotatedData,
+                label: "annotated screenshot"
+            )
+        }
+    }
+
+    private static func requireCurrentArtifact(path: String, verifiedData: Data?, label: String) throws {
+        guard !path.isEmpty else { return }
+        guard let verifiedData else {
+            throw CaptureError.captureFailure("\(label.capitalized) has no verified content before publication")
+        }
+        let current: Data
+        do {
+            current = try Data(contentsOf: URL(fileURLWithPath: path))
+        } catch {
+            throw CaptureError.captureFailure("Verified \(label) could not be read before publication")
+        }
+        try DesktopObservationContentDigest.verify(
+            current,
+            expectedSHA256: DesktopObservationContentDigest.sha256(verifiedData)
+        )
     }
 
     /// Fetches the menu bar summary only when verbose output is requested, with a short timeout.
@@ -49,9 +87,9 @@ extension SeeCommand {
         )
     }
 
-    func performAnalysisDetailed(imagePath: String, prompt: String) async throws -> SeeAnalysisData {
+    func performAnalysisDetailed(imageData: Data, prompt: String) async throws -> SeeAnalysisData {
         let ai = PeekabooAIService()
-        let res = try await ai.analyzeImageFileDetailed(at: imagePath, question: prompt, model: nil)
+        let res = try await ai.analyzeImageDetailed(imageData: imageData, question: prompt, model: nil)
         return SeeAnalysisData(provider: res.provider, model: res.model, text: res.text)
     }
 
@@ -100,7 +138,7 @@ extension SeeCommand {
             coordinate_context: context.coordinateContext
         )
 
-        outputSuccessCodable(data: output, logger: self.outputLogger)
+        try self.outputSeeSuccessJSON(data: output, receipt: context.receipt)
     }
 
     private func getMenuBarItemsSummary() async -> MenuBarSummary {
@@ -122,7 +160,7 @@ extension SeeCommand {
                         title: extra.title,
                         enabled: true,
                         keyboard_shortcut: nil
-                    )
+                    ),
                 ]
             )
         }
@@ -151,7 +189,9 @@ extension SeeCommand {
         print("📊 UI elements detected: \(context.metadata.elementCount)")
         print("⚙️  Interactable elements: \(context.elements.all.count(where: \.isActionable))")
         if let truncationInfo = context.metadata.truncationInfo, truncationInfo.isTruncated {
-            print("⚠️  \(truncationInfo.remediationMessage(budget: context.metadata.windowContext?.traversalBudget))")
+            print(
+                "⚠️  \(truncationInfo.remediationMessage(budget: context.metadata.windowContext?.traversalBudget))"
+            )
         }
         let formattedDuration = String(format: "%.2f", context.executionTime)
         print("⏱️  Execution time: \(formattedDuration)s")
@@ -165,7 +205,8 @@ extension SeeCommand {
         } else if context.metadata.elementCount > 0 {
             print("\n🔍 Element Summary")
             for element in context.elements.all.prefix(10) {
-                let summaryLabel = element.label ?? element.attributes["title"] ?? element.value ?? "Untitled"
+                let summaryLabel =
+                    element.label ?? element.attributes["title"] ?? element.value ?? "Untitled"
                 print("• \(element.id) (\(element.type.rawValue)) - \(summaryLabel)")
             }
 
@@ -179,6 +220,7 @@ extension SeeCommand {
         }
 
         print("\nSnapshot ID: \(context.snapshotId)")
+        self.printSeeExecutionReceipt(context.receipt)
 
         let terminalCapabilities = TerminalDetector.detectCapabilities()
         if terminalCapabilities.recommendedOutputMode == .minimal {
@@ -208,5 +250,57 @@ extension SeeCommand {
             annotated: publishesScreenshotPaths ? context.annotatedPath ?? "" : "",
             map: self.services.snapshots.getSnapshotStoragePath() + "/\(context.snapshotId)/snapshot.json"
         )
+    }
+
+    func outputSeeSuccessJSON(
+        data: some Codable,
+        receipt: SeeExecutionReceipt
+    ) throws {
+        try receipt.requirePublishableOutcome(
+            operation: "See",
+            requiresOutcome: self.webFocus || self.menubar
+        )
+        var response = makeSuccessEnvelope(
+            data: data,
+            outcome: receipt.outcome,
+            debugLogs: self.outputLogger.getDebugLogs()
+        )
+        response.target_receipt = receipt.targetReceipt
+        outputJSONCodable(response, logger: self.outputLogger)
+    }
+
+    func printSeeExecutionReceipt(_ receipt: SeeExecutionReceipt) {
+        if let outcome = receipt.outcome {
+            print(
+                ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "See conditional mutation")
+            )
+        }
+        if let target = receipt.targetReceipt {
+            print(Self.seeTargetReceiptLine(target))
+        }
+    }
+
+    func handleSeeError(_ error: any Error) {
+        self.handleError(error)
+        guard !self.jsonOutput,
+              let failure = (error as? DesktopActionFailure)
+              ?? (error as? any ResultEnvelopeError)?.envelopeActionFailure,
+              let target = failure.targetReceipt
+        else { return }
+        fputs(
+            "\(Self.seeTargetReceiptLine(target))\n",
+            stderr
+        )
+    }
+
+    private static func seeTargetReceiptLine(_ target: DesktopActionTargetReceipt) -> String {
+        var fields = [
+            "Target receipt: pid=\(target.processIdentifier)",
+            "process_start_identity=\(target.processStartIdentity)",
+        ]
+        if let windowID = target.windowID {
+            fields.append("window_id=\(windowID)")
+        }
+        return fields.joined(separator: " ")
     }
 }

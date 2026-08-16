@@ -1,6 +1,16 @@
 import Commander
 import Foundation
 
+struct CLIProcessStartIdentity: ExpressibleFromArgument, Equatable, Sendable {
+    let value: UInt64
+
+    init?(argument: String) {
+        let raw = argument.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value = UInt64(raw), value > 0 else { return nil }
+        self.value = value
+    }
+}
+
 struct CLIDuration: ExpressibleFromArgument, Equatable, Sendable {
     let milliseconds: Double
 

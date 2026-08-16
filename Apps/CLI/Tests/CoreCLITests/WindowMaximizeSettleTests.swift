@@ -59,6 +59,11 @@ private final class FakeMaximizeWindow {
 
 @MainActor
 struct WindowMaximizeSettleTests {
+    private enum PollError: Error {
+        case transient
+        case identityContradiction
+    }
+
     private let userFrame = CGRect(x: 463, y: 179, width: 700, height: 500)
     private let maxFrame = CGRect(x: 0, y: 0, width: 3200, height: 1690)
     /// The maximized frame in the same top-left space as window bounds, as the command would pass it.
@@ -138,6 +143,28 @@ struct WindowMaximizeSettleTests {
         #expect(result.info != nil)
     }
 
+    @Test func `successful exact readback clears an earlier transient inventory error`() {
+        var tracker = MaximizeReadbackErrorTracker()
+        tracker.recordInventoryFailure(PollError.transient)
+        #expect(tracker.unresolvedError != nil)
+
+        tracker.recordSuccessfulExactReadback()
+
+        #expect(tracker.unresolvedError == nil)
+    }
+
+    @Test func `successful readback never clears identity contradiction or cancellation`() {
+        var identityTracker = MaximizeReadbackErrorTracker()
+        identityTracker.recordIdentityContradiction(PollError.identityContradiction)
+        identityTracker.recordSuccessfulExactReadback()
+        #expect(identityTracker.unresolvedError is PollError)
+
+        var cancellationTracker = MaximizeReadbackErrorTracker()
+        cancellationTracker.recordInventoryFailure(CancellationError())
+        cancellationTracker.recordSuccessfulExactReadback()
+        #expect(cancellationTracker.unresolvedError is CancellationError)
+    }
+
     // MARK: - Coordinate conversion & maximized detection
 
     @Test func `AppKit frame flips into the top-left coordinate space`() {
@@ -212,7 +239,7 @@ struct WindowMaximizeSettleTests {
         #expect(outcome.alreadyMaximized)
     }
 
-    @Test func `maximize output publishes only a service-produced action receipt`() {
+    @Test func `maximize output publishes service receipt or canonical idempotent no-change`() {
         let serviceOutcome = DesktopActionOutcome.confirmedChange(
             delivery: .init(mechanism: .accessibilityValue, mode: .background),
             unitCount: .one
@@ -226,11 +253,21 @@ struct WindowMaximizeSettleTests {
         #expect(reportedMaximizeOutcome(
             actionResult: actionResult,
             alreadyMaximized: true
-        ) == nil)
+        ) == .confirmedNoChange())
+        #expect(reportedMaximizeOutcome(
+            actionResult: actionResult,
+            alreadyMaximized: true,
+            noChangeRoute: .bridge
+        ) == .confirmedNoChange(route: .bridge))
         #expect(reportedMaximizeOutcome(
             actionResult: nil,
             alreadyMaximized: false
         ) == nil)
+    }
+
+    @Test func `idempotent maximize route follows selected execution host`() {
+        #expect(maximizeNoChangeRoute(executionHost: .local) == .local)
+        #expect(maximizeNoChangeRoute(executionHost: .remote) == .bridge)
     }
 
     @Test func `maximize twice in a row leaves the window maximized`() async throws {

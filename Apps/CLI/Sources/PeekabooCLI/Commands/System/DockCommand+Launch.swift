@@ -34,23 +34,56 @@ extension DockCommand {
                     )
                 }
                 self.resolvedRuntime.beginInteractionMutation()
-                try await DockServiceBridge.launchFromDock(dock: self.services.dock, appName: self.app)
-                let dockItem = try await DockServiceBridge.findDockItem(dock: self.services.dock, name: self.app)
-                if self.verify {
-                    try await self.verifyLaunch(dockItem: dockItem)
-                }
-                AutomationEventLogger.log(.dock, "launch app=\(dockItem.title)")
-
-                if self.jsonOutput {
-                    struct DockLaunchResult: Codable {
-                        let action: String
-                        let app: String
+                let actionResult = try await DockServiceBridge.launchFromDock(
+                    dock: self.services.dock,
+                    appName: self.app
+                )
+                let resultTargetIdentity = try validatedSuccessfulActionResult(
+                    actionResult,
+                    operation: "Dock launch",
+                    requiresTarget: self.services.dock is any DockServiceActionResultProviding
+                )
+                try await withPreservedActionResultOnFailure(
+                    actionResult,
+                    targetIdentity: resultTargetIdentity,
+                    operation: "Dock launch"
+                ) {
+                    let dockItem = try await DockServiceBridge.findDockItem(
+                        dock: self.services.dock,
+                        name: self.app
+                    )
+                    if self.verify {
+                        try await self.verifyLaunch(dockItem: dockItem)
                     }
+                    let outputOutcome = self.verify
+                        ? canonicalActionOutcomeAfterSuccessfulVerification(actionResult.outcome)
+                        : actionResult.outcome
+                    AutomationEventLogger.log(.dock, "launch app=\(dockItem.title)")
 
-                    let outputData = DockLaunchResult(action: "dock_launch", app: dockItem.title)
-                    outputSuccessCodable(data: outputData, effect: .confirmed, logger: self.outputLogger)
-                } else {
-                    print("✓ Launched \(dockItem.title) from Dock")
+                    if self.jsonOutput {
+                        struct DockLaunchResult: Codable {
+                            let action: String
+                            let app: String
+                            let selectedLeafEvidence: [DesktopSelectedLeafEvidence]?
+                        }
+
+                        let outputData = DockLaunchResult(
+                            action: "dock_launch",
+                            app: dockItem.title,
+                            selectedLeafEvidence: actionResult.selectedLeafEvidence
+                        )
+                        outputSuccessCodable(
+                            data: outputData,
+                            effect: self.verify ? .confirmed : .unverifiable,
+                            outcome: outputOutcome,
+                            targetIdentity: resultTargetIdentity,
+                            logger: self.outputLogger
+                        )
+                    } else if let outputOutcome {
+                        print(ActionOutcomeHumanRenderer.statusLine(for: outputOutcome, operation: "Dock launch"))
+                    } else {
+                        print("✓ Launched \(dockItem.title) from Dock")
+                    }
                 }
             } catch let error as DockError {
                 handleDockServiceError(error, jsonOutput: self.jsonOutput, logger: self.outputLogger)

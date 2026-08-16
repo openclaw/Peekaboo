@@ -460,19 +460,22 @@ enum AutomationServiceBridge {
     static func drag(
         automation: any UIAutomationServiceProtocol,
         request: DragRequest
-    ) async throws {
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
-            try await automation.drag(
-                DragOperationRequest(
-                    from: request.from,
-                    to: request.to,
-                    duration: request.duration,
-                    steps: request.steps,
-                    modifiers: request.modifiers,
-                    button: request.button,
-                    profile: request.profile
-                )
+            let operation = DragOperationRequest(
+                from: request.from,
+                to: request.to,
+                duration: request.duration,
+                steps: request.steps,
+                modifiers: request.modifiers,
+                button: request.button,
+                profile: request.profile
             )
+            if let results = automation as? any UIAutomationGlobalPointerActionResultProviding {
+                return try await results.dragWithOutcome(operation)
+            }
+            try await automation.drag(operation)
+            return UIAutomationActionResult(payload: (), outcome: nil)
         }.value
     }
 
@@ -482,10 +485,51 @@ enum AutomationServiceBridge {
         duration: Int,
         steps: Int,
         profile: MouseMovementProfile
-    ) async throws {
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
+            if let results = automation as? any UIAutomationGlobalPointerActionResultProviding {
+                return try await results.moveMouseWithOutcome(
+                    to: point,
+                    duration: duration,
+                    steps: steps,
+                    profile: profile
+                )
+            }
             try await automation.moveMouse(to: point, duration: duration, steps: steps, profile: profile)
+            return UIAutomationActionResult(payload: (), outcome: nil)
         }.value
+    }
+
+    /// Preserves an exact setup-focus result without attributing the following shared-pointer
+    /// mutation to that window. Current result providers return the leaf's canonical global
+    /// outcome; legacy providers intentionally keep their receiptless compatibility behavior.
+    static func composeGlobalPointerResult(
+        setupFocus: UIAutomationActionResult<Void>,
+        pointerAction: UIAutomationActionResult<Void>,
+        operation: String,
+        route: DesktopActionOutcome.Route
+    ) throws -> UIAutomationActionResult<Void> {
+        if pointerAction.outcome != nil {
+            _ = try validatedSuccessfulActionResult(
+                pointerAction,
+                operation: operation,
+                requiresTarget: false
+            )
+        }
+
+        let sequence = CommandActionSequenceAccumulator()
+        try sequence.record(setupFocus, operation: "\(operation) setup focus")
+        try sequence.recordExactTargetLeaf(
+            outcome: pointerAction.outcome,
+            targetIdentity: nil,
+            operation: operation,
+            receiptlessStep: .dispatched(
+                route: route,
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                unitCount: .one
+            )
+        )
+        return sequence.result(payload: ())
     }
 
     static func detectElements(
@@ -532,7 +576,12 @@ enum ApplicationServiceBridge {
         request: ApplicationLaunchRequest
     ) async throws -> DesktopActionResult<ServiceApplicationInfo> {
         try await self.perform {
-            try await applications.launchApplicationResult(request: request)
+            let result = try await applications.launchApplicationResult(request: request)
+            try ApplicationActionResultSemantics.requireSuccessfulOutcome(
+                result.outcome,
+                operation: "Application launch"
+            )
+            return result
         }
     }
 
@@ -541,7 +590,12 @@ enum ApplicationServiceBridge {
         request: ApplicationRelaunchRequest
     ) async throws -> DesktopActionResult<ServiceApplicationInfo> {
         try await self.perform {
-            try await applications.relaunchApplicationResult(request: request)
+            let result = try await applications.relaunchApplicationResult(request: request)
+            try ApplicationActionResultSemantics.requireSuccessfulOutcome(
+                result.outcome,
+                operation: "Application relaunch"
+            )
+            return result
         }
     }
 
@@ -550,7 +604,12 @@ enum ApplicationServiceBridge {
         request: ApplicationActivationRequest
     ) async throws -> DesktopActionResult<Void> {
         try await self.perform {
-            try await applications.activateApplicationResult(request: request)
+            let result = try await applications.activateApplicationResult(request: request)
+            try ApplicationActionResultSemantics.requireSuccessfulOutcome(
+                result.outcome,
+                operation: "Application activation"
+            )
+            return result
         }
     }
 
@@ -559,16 +618,45 @@ enum ApplicationServiceBridge {
         request: ApplicationQuitRequest
     ) async throws -> DesktopActionResult<Bool> {
         try await self.perform {
-            try await applications.quitApplicationResult(request: request)
+            guard let expectedIdentity = request.expectedIdentity else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .invalidRequest,
+                    message: "Application quit requires a process-generation identity.",
+                    hint: "Refresh the application inventory before retrying."
+                )
+            }
+            let result = try await applications.quitApplicationResult(request: request)
+            try ApplicationActionResultSemantics.requireConsistentQuitResult(
+                result,
+                expectedIdentity: expectedIdentity,
+                operation: "Application quit"
+            )
+            return result
         }
     }
 
     static func hideApplication(
         applications: any ApplicationServiceProtocol,
-        identifier: String
-    ) async throws -> DesktopActionResult<Void> {
+        application: ServiceApplicationInfo
+    ) async throws -> UIAutomationActionResult<Void> {
         try await self.perform {
-            try await applications.hideApplicationResult(identifier: identifier)
+            guard let expectedIdentity = application.processIdentity else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "Application discovery did not return a process-generation identity for exact hide.",
+                    hint: "Refresh the application inventory before retrying."
+                )
+            }
+            let result = try await applications.hideApplicationTargetedResult(request: .init(
+                identifier: "PID:\(expectedIdentity.processIdentifier)",
+                expectedIdentity: expectedIdentity
+            ))
+            try ApplicationActionResultSemantics.requireSuccessfulExactProcessResult(
+                result,
+                expectedIdentity: expectedIdentity,
+                operation: "Application hide"
+            )
+            return result
         }
     }
 
@@ -595,20 +683,26 @@ enum WindowServiceBridge {
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity? = nil,
         allowForegroundFallback: Bool = false
-    ) async throws -> DesktopActionResult<Void> {
+    ) async throws -> UIAutomationActionResult<Void> {
         let operation = Task { @MainActor in
             if let expectedIdentity {
-                return try await windows.closeWindowResult(
+                try windows.requireWindowMutationResultProvider(operation: "Window close")
+                let result = try await windows.closeWindowResult(
                     target: target,
                     expectedIdentity: expectedIdentity,
                     allowForegroundFallback: allowForegroundFallback
+                )
+                return try windows.validatedWindowMutationResult(
+                    result,
+                    expectedIdentity: expectedIdentity,
+                    operation: "Window close"
                 )
             }
             try await windows.closeWindow(
                 target: target,
                 allowForegroundFallback: allowForegroundFallback
             )
-            return DesktopActionResult(outcome: nil)
+            return UIAutomationActionResult(payload: (), outcome: nil)
         }
 
         return try await withTaskCancellationHandler {
@@ -623,16 +717,22 @@ enum WindowServiceBridge {
         windows: any WindowManagementServiceProtocol,
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity? = nil
-    ) async throws -> DesktopActionResult<Void> {
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
             if let expectedIdentity {
-                return try await windows.minimizeWindowResult(
+                try windows.requireWindowMutationResultProvider(operation: "Window minimize")
+                let result = try await windows.minimizeWindowResult(
                     target: target,
                     expectedIdentity: expectedIdentity
                 )
+                return try windows.validatedWindowMutationResult(
+                    result,
+                    expectedIdentity: expectedIdentity,
+                    operation: "Window minimize"
+                )
             }
             try await windows.minimizeWindow(target: target)
-            return DesktopActionResult(outcome: nil)
+            return UIAutomationActionResult(payload: (), outcome: nil)
         }.value
     }
 
@@ -641,16 +741,22 @@ enum WindowServiceBridge {
         windows: any WindowManagementServiceProtocol,
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity? = nil
-    ) async throws -> DesktopActionResult<Void> {
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
             if let expectedIdentity {
-                return try await windows.restoreWindowResult(
+                try windows.requireWindowMutationResultProvider(operation: "Window restore")
+                let result = try await windows.restoreWindowResult(
                     target: target,
                     expectedIdentity: expectedIdentity
                 )
+                return try windows.validatedWindowMutationResult(
+                    result,
+                    expectedIdentity: expectedIdentity,
+                    operation: "Window restore"
+                )
             }
             try await windows.restoreWindow(target: target)
-            return DesktopActionResult(outcome: nil)
+            return UIAutomationActionResult(payload: (), outcome: nil)
         }.value
     }
 
@@ -659,16 +765,22 @@ enum WindowServiceBridge {
         windows: any WindowManagementServiceProtocol,
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity? = nil
-    ) async throws -> DesktopActionResult<Void> {
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
             if let expectedIdentity {
-                return try await windows.maximizeWindowResult(
+                try windows.requireWindowMutationResultProvider(operation: "Window maximize")
+                let result = try await windows.maximizeWindowResult(
                     target: target,
                     expectedIdentity: expectedIdentity
                 )
+                return try windows.validatedWindowMutationResult(
+                    result,
+                    expectedIdentity: expectedIdentity,
+                    operation: "Window maximize"
+                )
             }
             try await windows.maximizeWindow(target: target)
-            return DesktopActionResult(outcome: nil)
+            return UIAutomationActionResult(payload: (), outcome: nil)
         }.value
     }
 
@@ -678,17 +790,23 @@ enum WindowServiceBridge {
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity? = nil,
         to origin: CGPoint
-    ) async throws -> DesktopActionResult<Void> {
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
             if let expectedIdentity {
-                return try await windows.moveWindowResult(
+                try windows.requireWindowMutationResultProvider(operation: "Window move")
+                let result = try await windows.moveWindowResult(
                     target: target,
                     expectedIdentity: expectedIdentity,
                     to: origin
                 )
+                return try windows.validatedWindowMutationResult(
+                    result,
+                    expectedIdentity: expectedIdentity,
+                    operation: "Window move"
+                )
             }
             try await windows.moveWindow(target: target, to: origin)
-            return DesktopActionResult(outcome: nil)
+            return UIAutomationActionResult(payload: (), outcome: nil)
         }.value
     }
 
@@ -698,17 +816,23 @@ enum WindowServiceBridge {
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity? = nil,
         to size: CGSize
-    ) async throws -> DesktopActionResult<Void> {
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
             if let expectedIdentity {
-                return try await windows.resizeWindowResult(
+                try windows.requireWindowMutationResultProvider(operation: "Window resize")
+                let result = try await windows.resizeWindowResult(
                     target: target,
                     expectedIdentity: expectedIdentity,
                     to: size
                 )
+                return try windows.validatedWindowMutationResult(
+                    result,
+                    expectedIdentity: expectedIdentity,
+                    operation: "Window resize"
+                )
             }
             try await windows.resizeWindow(target: target, to: size)
-            return DesktopActionResult(outcome: nil)
+            return UIAutomationActionResult(payload: (), outcome: nil)
         }.value
     }
 
@@ -718,23 +842,50 @@ enum WindowServiceBridge {
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity? = nil,
         bounds: CGRect
-    ) async throws -> DesktopActionResult<Void> {
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
             if let expectedIdentity {
-                return try await windows.setWindowBoundsResult(
+                try windows.requireWindowMutationResultProvider(operation: "Window set bounds")
+                let result = try await windows.setWindowBoundsResult(
                     target: target,
                     expectedIdentity: expectedIdentity,
                     bounds: bounds
                 )
+                return try windows.validatedWindowMutationResult(
+                    result,
+                    expectedIdentity: expectedIdentity,
+                    operation: "Window set bounds"
+                )
             }
             try await windows.setWindowBounds(target: target, bounds: bounds)
-            return DesktopActionResult(outcome: nil)
+            return UIAutomationActionResult(payload: (), outcome: nil)
         }.value
     }
 
-    static func focusWindow(windows: any WindowManagementServiceProtocol, target: WindowTarget) async throws {
+    static func focusWindow(
+        windows: any WindowManagementServiceProtocol,
+        target: WindowTarget
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
-            try await windows.focusWindow(target: target)
+            try await windows.focusWindowResult(target: target)
+        }.value
+    }
+
+    static func focusWindow(
+        windows: any WindowManagementServiceProtocol,
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity
+    ) async throws -> UIAutomationActionResult<Void> {
+        try await Task { @MainActor in
+            let result = try await windows.focusWindowResult(
+                target: target,
+                expectedIdentity: expectedIdentity
+            )
+            return try windows.validatedWindowMutationResult(
+                result,
+                expectedIdentity: expectedIdentity,
+                operation: "Window focus"
+            )
         }.value
     }
 
@@ -761,9 +912,34 @@ enum MenuServiceBridge {
         }.value
     }
 
-    static func clickMenuItem(menu: any MenuServiceProtocol, appIdentifier: String, itemPath: String) async throws {
+    static func clickMenuItem(
+        menu: any MenuServiceProtocol,
+        appIdentifier: String,
+        itemPath: String
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
-            try await menu.clickMenuItem(app: appIdentifier, itemPath: itemPath)
+            try await menu.clickMenuItemResult(app: appIdentifier, itemPath: itemPath)
+        }.value
+    }
+
+    static func clickMenuItem(
+        menu: any MenuServiceProtocol,
+        request: MenuItemActionRequest
+    ) async throws -> UIAutomationActionResult<Void> {
+        try await Task { @MainActor in
+            guard let menu = menu as? any MenuServiceGenerationPinnedActionResultProviding else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .runtimeIncompatible,
+                    message: "Background menu click requires a generation-pinned result provider.",
+                    hint: "Update the selected Peekaboo runtime before retrying."
+                )
+            }
+            let result = try await menu.clickMenuItemActionResult(request: request)
+            return try menu.validatedGenerationPinnedMenuResult(
+                result,
+                expectedIdentity: request.expectedIdentity,
+                operation: "Background menu click"
+            )
         }.value
     }
 
@@ -771,9 +947,30 @@ enum MenuServiceBridge {
         menu: any MenuServiceProtocol,
         appIdentifier: String,
         itemName: String
-    ) async throws {
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
-            try await menu.clickMenuItemByName(app: appIdentifier, itemName: itemName)
+            try await menu.clickMenuItemByNameResult(app: appIdentifier, itemName: itemName)
+        }.value
+    }
+
+    static func clickMenuItemByName(
+        menu: any MenuServiceProtocol,
+        request: MenuItemByNameActionRequest
+    ) async throws -> UIAutomationActionResult<Void> {
+        try await Task { @MainActor in
+            guard let menu = menu as? any MenuServiceGenerationPinnedActionResultProviding else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .runtimeIncompatible,
+                    message: "Background named menu click requires a generation-pinned result provider.",
+                    hint: "Update the selected Peekaboo runtime before retrying."
+                )
+            }
+            let result = try await menu.clickMenuItemByNameActionResult(request: request)
+            return try menu.validatedGenerationPinnedMenuResult(
+                result,
+                expectedIdentity: request.expectedIdentity,
+                operation: "Background named menu click"
+            )
         }.value
     }
 
@@ -794,25 +991,41 @@ enum MenuServiceBridge {
         }.value
     }
 
-    static func clickMenuBarItem(named name: String, menu: any MenuServiceProtocol) async throws -> PeekabooCore
-    .ClickResult {
-        try await Task<PeekabooCore.ClickResult, any Error> { @MainActor in
-            try await menu.clickMenuBarItem(named: name)
+    static func clickMenuBarItem(
+        named name: String,
+        menu: any MenuServiceProtocol
+    ) async throws -> UIAutomationActionResult<PeekabooCore.ClickResult> {
+        try await Task<UIAutomationActionResult<PeekabooCore.ClickResult>, any Error> { @MainActor in
+            try await menu.clickMenuBarItemResult(named: name)
         }.value
     }
 
-    static func clickMenuBarItem(at index: Int, menu: any MenuServiceProtocol) async throws -> PeekabooCore
-    .ClickResult {
-        try await Task<PeekabooCore.ClickResult, any Error> { @MainActor in
-            try await menu.clickMenuBarItem(at: index)
+    static func clickMenuBarItem(
+        at index: Int,
+        menu: any MenuServiceProtocol
+    ) async throws -> UIAutomationActionResult<PeekabooCore.ClickResult> {
+        try await Task<UIAutomationActionResult<PeekabooCore.ClickResult>, any Error> { @MainActor in
+            try await menu.clickMenuBarItemResult(at: index)
+        }.value
+    }
+
+    static func clickMenuBarItem(
+        request: MenuBarItemActionRequest,
+        menu: any MenuServiceProtocol
+    ) async throws -> UIAutomationActionResult<PeekabooCore.ClickResult> {
+        try await Task<UIAutomationActionResult<PeekabooCore.ClickResult>, any Error> { @MainActor in
+            try await menu.clickMenuBarItemResult(request: request)
         }.value
     }
 }
 
 enum DockServiceBridge {
-    static func launchFromDock(dock: any DockServiceProtocol, appName: String) async throws {
+    static func launchFromDock(
+        dock: any DockServiceProtocol,
+        appName: String
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
-            try await dock.launchFromDock(appName: appName)
+            try await dock.launchFromDockResult(appName: appName)
         }.value
     }
 
@@ -822,21 +1035,25 @@ enum DockServiceBridge {
         }.value
     }
 
-    static func rightClickDockItem(dock: any DockServiceProtocol, appName: String, menuItem: String?) async throws {
+    static func rightClickDockItem(
+        dock: any DockServiceProtocol,
+        appName: String,
+        menuItem: String?
+    ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
-            try await dock.rightClickDockItem(appName: appName, menuItem: menuItem)
+            try await dock.rightClickDockItemResult(appName: appName, menuItem: menuItem)
         }.value
     }
 
-    static func hideDock(dock: any DockServiceProtocol) async throws {
+    static func hideDock(dock: any DockServiceProtocol) async throws -> DesktopActionResult<Void> {
         try await Task { @MainActor in
-            try await dock.hideDock()
+            try await dock.hideDockResult()
         }.value
     }
 
-    static func showDock(dock: any DockServiceProtocol) async throws {
+    static func showDock(dock: any DockServiceProtocol) async throws -> DesktopActionResult<Void> {
         try await Task { @MainActor in
-            try await dock.showDock()
+            try await dock.showDockResult()
         }.value
     }
 

@@ -73,6 +73,24 @@ struct MCPWrapperCommandBindingTests {
         let parsed = ParsedValues(positional: [], options: [:], flags: [])
         let command = try CommanderCLIBinder.instantiateCommand(ofType: BrowserCommand.self, parsedValues: parsed)
         #expect(command.action == "status")
+        #expect(command.toolExecutionPolicy == .backgroundOnly)
+        #expect(!BrowserCommand.actionMayMutate("status"))
+    }
+
+    @Test
+    func `Browser command requires explicit foreground authority for connect`() throws {
+        let background = try CommanderCLIBinder.instantiateCommand(
+            ofType: BrowserCommand.self,
+            parsedValues: ParsedValues(positional: ["connect"], options: [:], flags: [])
+        )
+        let foreground = try CommanderCLIBinder.instantiateCommand(
+            ofType: BrowserCommand.self,
+            parsedValues: ParsedValues(positional: ["connect"], options: [:], flags: ["foreground"])
+        )
+
+        #expect(background.toolExecutionPolicy == .backgroundOnly)
+        #expect(foreground.toolExecutionPolicy == .foregroundAllowed)
+        #expect(BrowserCommand.actionMayMutate("connect"))
     }
 
     @Test
@@ -123,6 +141,8 @@ struct MCPWrapperCommandBindingTests {
         #expect(context.snapshotExecutionGate === gate)
         #expect(context.snapshotExecutionGate === agent.snapshotExecutionGate)
         #expect(context.capturePreflightRefusal == refusal)
+        #expect(context.executionPolicy == .backgroundOnly)
         #expect(nestedAgentContext.capturePreflightRefusal == refusal)
+        #expect(nestedAgentContext.executionPolicy == .backgroundOnly)
     }
 }

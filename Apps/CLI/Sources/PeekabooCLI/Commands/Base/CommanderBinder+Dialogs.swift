@@ -83,12 +83,13 @@ extension CommanderCLIBinder {
             }
             try rejectForegroundOptionsWithoutConsent()
         } else if commandType == DialogCommand.InputSubcommand.self {
-            guard values.flag("foreground") else {
+            if !target.hasAnyTarget, !values.flag("foreground") {
                 try refuse(
-                    "Dialog input uses keyboard interaction and requires --foreground.",
-                    hint: "Add --foreground or use a native value-setting command."
+                    "Targetless dialog input uses keyboard interaction and requires --foreground.",
+                    hint: "Add an exact target for background AXValue input or authorize --foreground."
                 )
             }
+            try rejectForegroundOptionsWithoutConsent()
         } else if commandType == DialogCommand.FileSubcommand.self {
             guard values.flag("foreground") else {
                 try refuse(

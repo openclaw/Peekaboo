@@ -60,47 +60,6 @@ struct PasteCommandTests {
 
     @Test
     @MainActor
-    func `Foreground paste sends current clipboard without mutating clipboard`() async throws {
-        let automation = StubAutomationService()
-        let clipboard = StubClipboardService()
-        clipboard.current = ClipboardReadResult(
-            utiIdentifier: "public.utf8-plain-text",
-            data: Data("current".utf8),
-            textPreview: "current"
-        )
-        let services = TestServicesFactory.makePeekabooServices(
-            clipboard: clipboard,
-            automation: automation
-        )
-
-        let result = try await InProcessCommandRunner.run(
-            [
-                "paste",
-                "--foreground",
-                "--json",
-                "--no-remote",
-            ],
-            services: services
-        )
-
-        #expect(result.exitStatus == 0)
-        #expect(automation.hotkeyCalls.map(\.keys) == ["cmd,v"])
-        #expect(automation.targetedHotkeyCalls.isEmpty)
-        #expect(clipboard.current?.textPreview == "current")
-        #expect(clipboard.restoreCallCount == 0)
-        let payload = try ExternalCommandRunner.decodeJSONResponse(
-            from: result,
-            as: CodableJSONResponse<PasteResult>.self
-        )
-        #expect(payload.data.deliveryMode == "foreground")
-        // Ambient clipboard content must not leak into structured output.
-        #expect(payload.data.pastedTextPreview == nil)
-        #expect(payload.data.previousClipboardPresent == true)
-        #expect(payload.data.restoreSucceeded == true)
-    }
-
-    @Test
-    @MainActor
     func `Bare background paste reports unverified receiver consumption`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
@@ -127,6 +86,23 @@ struct PasteCommandTests {
         #expect(result.exitStatus != 0)
         #expect(result.stdout.contains("Background paste delivery could not be verified"))
         #expect(result.stdout.contains("may have pasted; do not retry"))
+        let payload = try ExternalCommandRunner.decodeJSONResponse(
+            from: result,
+            as: JSONResponse.self
+        )
+        #expect(payload.effect == .unverifiable)
+        #expect(payload.outcome?.state == .dispatchedUnverified)
+        #expect(payload.outcome?.route == .local)
+        #expect(payload.outcome?.deliveryMechanism == .processTargetedEvents)
+        #expect(payload.outcome?.deliveryMode == .background)
+        #expect(payload.outcome?.dispatchedUnitCount == .one)
+        #expect(payload.outcome?.mutationDispatched == true)
+        #expect(payload.outcome?.retrySafe == false)
+        #expect(payload.error?.mutation_dispatched == true)
+        #expect(payload.error?.retry_safe == false)
+        #expect(payload.target_receipt?.processIdentifier == 2468)
+        #expect(payload.target_receipt?.processStartIdentity == 71)
+        #expect(payload.target_receipt?.windowID == nil)
         #expect(automation.hotkeyCalls.isEmpty)
         #expect(automation.targetedHotkeyCalls.map(\.keys) == ["cmd,v"])
         #expect(automation.targetedHotkeyCalls.first?.targetProcessIdentifier == 2468)
@@ -145,7 +121,11 @@ struct PasteCommandTests {
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )
-        let automation = StubAutomationService()
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .processTargetedEvents, mode: .background),
+            unitCount: .one
+        )
         let clipboard = StubClipboardService()
         clipboard.current = ClipboardReadResult(
             utiIdentifier: "public.utf8-plain-text",
@@ -193,6 +173,13 @@ struct PasteCommandTests {
         )
         #expect(payload.data.deliveryMode == "background")
         #expect(payload.data.targetPID == 2468)
+        #expect(payload.effect == .confirmed)
+        #expect(payload.outcome?.state == .confirmedChange)
+        #expect(payload.outcome?.deliveryMechanism == .processTargetedEvents)
+        #expect(payload.outcome?.deliveryMode == .background)
+        #expect(payload.target_identity?.kind == .process)
+        #expect(payload.target_identity?.pid == 2468)
+        #expect(payload.target_identity?.process_start_identity_decimal == "71")
     }
 
     @Test
@@ -204,7 +191,11 @@ struct PasteCommandTests {
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )
-        let automation = StubAutomationService()
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .processTargetedEvents, mode: .background),
+            unitCount: .one
+        )
         let services = TestServicesFactory.makePeekabooServices(
             applications: StubApplicationService(applications: [app]),
             automation: automation
@@ -239,7 +230,11 @@ struct PasteCommandTests {
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )
-        let automation = StubAutomationService()
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .processTargetedEvents, mode: .background),
+            unitCount: .one
+        )
         let clipboard = StubClipboardService()
         clipboard.current = ClipboardReadResult(
             utiIdentifier: "public.utf8-plain-text",
@@ -351,7 +346,6 @@ struct PasteCommandTests {
         let jsonResult = try await InProcessCommandRunner.run(
             [
                 "paste",
-                "--app", "TextEdit",
                 "--foreground",
                 "--no-auto-focus",
                 "--data-base64", "aGVsbG8=",
@@ -372,6 +366,12 @@ struct PasteCommandTests {
         )
         #expect(!payload.data.restoreSucceeded)
         #expect(payload.data.restoreError == "Failed to write to clipboard: simulated restore failure")
+        #expect(payload.effect == .partial)
+        #expect(payload.outcome?.state == .partial)
+        #expect(payload.outcome?.deliveryMechanism == .globalEvents)
+        #expect(payload.outcome?.deliveryMode == .foreground)
+        #expect(payload.outcome?.mutationDispatched == true)
+        #expect(payload.outcome?.retrySafe == false)
 
         let plainClipboard = StubClipboardService()
         plainClipboard.current = ClipboardReadResult(
@@ -383,7 +383,6 @@ struct PasteCommandTests {
         let plainResult = try await InProcessCommandRunner.run(
             [
                 "paste",
-                "--app", "TextEdit",
                 "--foreground",
                 "--no-auto-focus",
                 "--data-base64", "aGVsbG8=",
@@ -405,7 +404,7 @@ struct PasteCommandTests {
 
     @Test
     @MainActor
-    func `Paste foreground flag opts out of background process delivery`() async throws {
+    func `Targeted foreground paste refuses disabled exact focus before clipboard mutation`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
             processStartIdentity: 71,
@@ -434,15 +433,15 @@ struct PasteCommandTests {
             services: services
         )
 
-        #expect(result.exitStatus == 0)
+        #expect(result.exitStatus != 0)
         #expect(automation.targetedHotkeyCalls.isEmpty)
-        #expect(automation.hotkeyCalls.map(\.keys) == ["cmd,v"])
-        let payload = try ExternalCommandRunner.decodeJSONResponse(
-            from: result,
-            as: CodableJSONResponse<PasteResult>.self
-        )
-        #expect(payload.data.deliveryMode == "foreground")
-        #expect(payload.data.targetPID == nil)
+        #expect(automation.hotkeyCalls.isEmpty)
+        #expect(clipboard.setCallCount == 0)
+        let payload = try ExternalCommandRunner.decodeJSONResponse(from: result, as: JSONResponse.self)
+        #expect(payload.outcome?.state == .refused)
+        #expect(payload.outcome?.mutationDispatched == false)
+        #expect(payload.outcome?.retrySafe == true)
+        #expect(payload.error?.message.contains("automatic foreground focus is disabled") == true)
     }
 
     @Test
@@ -1141,6 +1140,20 @@ struct PasteCommandTests {
         #expect(result.exitStatus != 0)
         #expect(result.stdout.contains("Paste outcome is indeterminate"))
         #expect(result.stdout.contains("may have pasted; do not retry"))
+        let payload = try ExternalCommandRunner.decodeJSONResponse(
+            from: result,
+            as: JSONResponse.self
+        )
+        #expect(payload.outcome?.state == .indeterminate)
+        #expect(payload.outcome?.deliveryMechanism == .processTargetedEvents)
+        #expect(payload.outcome?.deliveryMode == .background)
+        #expect(payload.outcome?.dispatchedUnitCount == .one)
+        #expect(payload.outcome?.mutationDispatched == true)
+        #expect(payload.outcome?.retrySafe == false)
+        #expect(payload.error?.mutation_dispatched == true)
+        #expect(payload.error?.retry_safe == false)
+        #expect(payload.target_receipt?.processIdentifier == 2468)
+        #expect(payload.target_receipt?.processStartIdentity == 71)
         #expect(clock.now - dispatchedAt >= .milliseconds(150))
         #expect(context.clipboard.current?.textPreview == "prior")
         #expect(context.clipboard.restoreCallCount == 0)

@@ -12,8 +12,10 @@ struct ImageAnalysisData: Codable {
 
 struct ImageCapturedFile {
     let file: SavedFile
+    let imageData: Data
     let observation: ImageObservationDiagnostics
     let snapshotID: String?
+    let receipt: SeeExecutionReceipt
 }
 
 struct ImageObservationDiagnostics: Codable {
@@ -49,9 +51,10 @@ struct ImageCoordinateDiagnostics: Codable {
         self.coordinate_space = "global_display_points"
         self.logical_bounds = metadata.windowInfo?.bounds ?? metadata.displayInfo?.bounds
         self.image_size_pixels = ImageSizeDiagnostics(metadata.size)
-        self.scale_factor = metadata.diagnostics?.outputScale
-            ?? metadata.displayInfo?.scaleFactor
-            ?? Self.inferredScale(imageSize: metadata.size, bounds: self.logical_bounds)
+        self.scale_factor =
+            metadata.diagnostics?.outputScale
+                ?? metadata.displayInfo?.scaleFactor
+                ?? Self.inferredScale(imageSize: metadata.size, bounds: self.logical_bounds)
         self.screen_index = metadata.windowInfo?.screenIndex ?? metadata.displayInfo?.index
         self.screen_name = metadata.windowInfo?.screenName ?? metadata.displayInfo?.name
     }
@@ -110,8 +113,11 @@ enum ImageBlankCaptureDiagnostics {
                     continue
                 }
                 let alpha = Double(color.alphaComponent)
-                let luminance = Double(0.2126 * color.redComponent + 0.7152 * color.greenComponent + 0.0722 * color
-                    .blueComponent)
+                let luminance = Double(
+                    0.2126 * color.redComponent + 0.7152 * color.greenComponent + 0.0722
+                        * color
+                        .blueComponent
+                )
                 alphaSum += alpha
                 luminanceSum += luminance
                 luminanceSquaredSum += luminance * luminance
@@ -127,9 +133,12 @@ enum ImageBlankCaptureDiagnostics {
         }
 
         let luminanceMean = luminanceSum / Double(actualSamples)
-        let variance = max(0, luminanceSquaredSum / Double(actualSamples) - luminanceMean * luminanceMean)
+        let variance = max(
+            0, luminanceSquaredSum / Double(actualSamples) - luminanceMean * luminanceMean
+        )
         if variance < 0.0001, luminanceMean < 0.02 {
-            return "Captured window image appears solid black; target may be occluded, transparent, or non-renderable."
+            return
+                "Captured window image appears solid black; target may be occluded, transparent, or non-renderable."
         }
         if variance < 0.0001, luminanceMean > 0.98 {
             return "Captured window image appears blank white; target may be empty or non-renderable."
@@ -162,11 +171,15 @@ extension SeeCommand {
         guard self.streamsImageToStdout else { return }
 
         if self.jsonOutput {
-            throw ValidationError("Cannot combine --json with --path - because stdout is reserved for image bytes")
+            throw ValidationError(
+                "Cannot combine --json with --path - because stdout is reserved for image bytes"
+            )
         }
 
         if self.analyze != nil {
-            throw ValidationError("Cannot combine --analyze with --path - because stdout is reserved for image bytes")
+            throw ValidationError(
+                "Cannot combine --analyze with --path - because stdout is reserved for image bytes"
+            )
         }
     }
 
@@ -183,28 +196,35 @@ extension SeeCommand {
             )
         }
 
-        let data = try Data(contentsOf: URL(fileURLWithPath: capture.file.path))
-        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(capture.imageData)
     }
 
-    func outputResults(_ captures: [ImageCapturedFile]) {
+    func outputResults(_ captures: [ImageCapturedFile]) throws {
+        try self.validatePixelCaptureForPublishing(captures)
+        let receipt = SeeExecutionReceipt.combining(captures.map(\.receipt))
         let output = ImageCaptureResult(
             files: captures.map(\.file),
             observations: captures.map(\.observation),
             snapshot_id: captures.first?.snapshotID
         )
         if self.jsonOutput {
-            outputSuccessCodable(data: output, logger: self.outputLogger)
+            try self.outputSeeSuccessJSON(data: output, receipt: receipt)
         } else {
             for capture in captures {
                 print("📸 \(self.describeSavedFile(capture.file))")
                 self.printWarnings(capture.observation.warnings)
             }
             self.printSnapshotID(captures.first?.snapshotID)
+            self.printSeeExecutionReceipt(receipt)
         }
     }
 
-    func outputResultsWithAnalysis(_ captures: [ImageCapturedFile], analysis: ImageAnalysisData) {
+    func outputResultsWithAnalysis(
+        _ captures: [ImageCapturedFile],
+        analysis: ImageAnalysisData
+    ) throws {
+        try self.validatePixelCaptureForPublishing(captures)
+        let receipt = SeeExecutionReceipt.combining(captures.map(\.receipt))
         let output = ImageAnalyzeResult(
             files: captures.map(\.file),
             analysis: analysis,
@@ -212,22 +232,36 @@ extension SeeCommand {
             snapshot_id: captures.first?.snapshotID
         )
         if self.jsonOutput {
-            outputSuccessCodable(data: output, logger: self.outputLogger)
+            try self.outputSeeSuccessJSON(data: output, receipt: receipt)
         } else {
             for capture in captures {
                 print("📸 \(self.describeSavedFile(capture.file))")
                 self.printWarnings(capture.observation.warnings)
             }
             self.printSnapshotID(captures.first?.snapshotID)
+            self.printSeeExecutionReceipt(receipt)
             print("\n🤖 Analysis (\(analysis.provider)) - \(analysis.model):")
             print(analysis.text)
         }
     }
 
-    func analyzeImage(at path: String, with prompt: String) async throws -> ImageAnalysisData {
+    func analyzeImage(_ imageData: Data, with prompt: String) async throws -> ImageAnalysisData {
         let aiService = PeekabooAIService()
-        let response = try await aiService.analyzeImageFileDetailed(at: path, question: prompt, model: nil)
-        return ImageAnalysisData(provider: response.provider, model: response.model, text: response.text)
+        let response = try await aiService.analyzeImageDetailed(
+            imageData: imageData, question: prompt, model: nil
+        )
+        return ImageAnalysisData(
+            provider: response.provider, model: response.model, text: response.text
+        )
+    }
+
+    func validatePixelCaptureForPublishing(_ captures: [ImageCapturedFile]) throws {
+        try Self.requireCurrentCaptureArtifacts(captures)
+        let receipt = SeeExecutionReceipt.combining(captures.map(\.receipt))
+        try receipt.requirePublishableOutcome(
+            operation: "See",
+            requiresOutcome: self.webFocus || self.menubar
+        )
     }
 
     private func describeSavedFile(_ file: SavedFile) -> String {
@@ -248,6 +282,21 @@ extension SeeCommand {
     private func printSnapshotID(_ snapshotID: String?) {
         guard let snapshotID else { return }
         print("\nSnapshot ID: \(snapshotID)")
+    }
+
+    static func requireCurrentCaptureArtifacts(_ captures: [ImageCapturedFile]) throws {
+        for capture in captures {
+            let current: Data
+            do {
+                current = try Data(contentsOf: URL(fileURLWithPath: capture.file.path))
+            } catch {
+                throw CaptureError.captureFailure("Verified screenshot could not be read before publication")
+            }
+            try DesktopObservationContentDigest.verify(
+                current,
+                expectedSHA256: DesktopObservationContentDigest.sha256(capture.imageData)
+            )
+        }
     }
 }
 

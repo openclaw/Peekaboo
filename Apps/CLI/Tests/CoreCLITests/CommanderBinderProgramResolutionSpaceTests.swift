@@ -12,7 +12,7 @@ struct CommanderBinderSpaceDialogTests {
             "peekaboo",
             "space",
             "list",
-            "--detailed"
+            "--detailed",
         ])
         let values = invocation.parsedValues
         #expect(values.flags.contains("detailed"))
@@ -27,10 +27,12 @@ struct CommanderBinderSpaceDialogTests {
             "peekaboo",
             "space",
             "switch",
-            "--to", "3"
+            "--to", "3",
+            "--foreground",
         ])
         let values = invocation.parsedValues
         #expect(values.options["to"] == ["3"])
+        #expect(values.flags.contains("foreground"))
     }
 
     @Test
@@ -43,17 +45,49 @@ struct CommanderBinderSpaceDialogTests {
             "space",
             "move-window",
             "--app", "Safari",
+            "--window-id", "42",
             "--window-title", "Inbox",
             "--window-index", "2",
             "--to", "4",
-            "--follow"
+            "--follow",
+            "--foreground",
         ])
         let values = invocation.parsedValues
         #expect(values.options["app"] == ["Safari"])
+        #expect(values.options["windowId"] == ["42"])
         #expect(values.options["windowTitle"] == ["Inbox"])
         #expect(values.options["windowIndex"] == ["2"])
         #expect(values.options["to"] == ["4"])
         #expect(values.flags.contains("follow"))
+        #expect(values.flags.contains("foreground"))
+    }
+
+    @Test
+    @MainActor
+    func `space move-window validation rejects conflicting title and index selectors`() throws {
+        var command = try MoveWindowSubcommand.parse([
+            "--app", "Fixture",
+            "--window-title", "Draft",
+            "--window-index", "0",
+            "--to-current",
+        ])
+
+        #expect(throws: Commander.ValidationError.self) {
+            try command.validate()
+        }
+    }
+
+    @Test
+    @MainActor
+    func `space move-window validation accepts exact window ID without owner`() throws {
+        var command = try MoveWindowSubcommand.parse([
+            "--window-id", "42",
+            "--to-current",
+        ])
+
+        try command.validate()
+        #expect(command.windowId == 42)
+        #expect(command.app == nil)
     }
 
     @Test
@@ -66,7 +100,7 @@ struct CommanderBinderSpaceDialogTests {
             "dialog",
             "click",
             "--button", "OK",
-            "--window-title", "Save"
+            "--window-title", "Save",
         ])
         let values = invocation.parsedValues
         #expect(values.options["button"] == ["OK"])
@@ -83,7 +117,7 @@ struct CommanderBinderSpaceDialogTests {
             "dialog",
             "input",
             "--text", "Report generated",
-            "--window-title", "Export"
+            "--window-title", "Export",
         ])
         let values = invocation.parsedValues
         #expect(values.options["text"] == ["Report generated"])

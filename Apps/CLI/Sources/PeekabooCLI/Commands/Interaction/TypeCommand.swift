@@ -100,12 +100,18 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             }
             let targetPID = deliveryTarget.processIdentifier
             self.resolvedRuntime.beginInteractionMutation()
-            var sequence = DesktopActionSequenceAccumulator()
+            let actionSequence = CommandActionSequenceAccumulator()
+            let actionRoute = commandActionRoute(for: self.services)
             if targetPID == nil {
-                try await self.focusIfNeeded(snapshotId: observation.focusSnapshotId(for: self.target))
-                if self.focusOptions.autoFocus,
-                   self.target.hasAnyTarget || observation.focusSnapshotId(for: self.target) != nil {
-                    sequence.record(.mayHaveDispatched(route: nil, delivery: nil, unitCount: .one))
+                let focusSnapshotID = observation.focusSnapshotId(for: self.target)
+                if let focusResult = try await ensureConfirmedForegroundFocus(
+                    snapshotId: focusSnapshotID,
+                    target: self.target,
+                    options: self.focusOptions,
+                    services: self.services,
+                    operation: "Typing setup focus"
+                ) {
+                    try actionSequence.record(focusResult, operation: "Typing setup focus")
                 }
             }
             let actionResult: UIAutomationActionResult<TypeResult>
@@ -115,65 +121,69 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                     snapshotId: observation.snapshotId,
                     target: deliveryTarget
                 )
-                try DesktopActionFailure.requireConfirmedIfReported(
-                    actionResult.outcome,
-                    operation: "Typing"
+                let receiptlessStep = DesktopActionSequenceAccumulator.Step.dispatched(
+                    route: actionRoute,
+                    delivery: Self.delivery(for: deliveryTarget),
+                    unitCount: .one
                 )
+                if deliveryTarget.processIdentifier == nil {
+                    try actionSequence.recordExactTargetLeaf(
+                        outcome: actionResult.outcome,
+                        targetIdentity: actionResult.targetIdentity,
+                        operation: "Typing",
+                        receiptlessStep: receiptlessStep
+                    )
+                } else {
+                    try actionSequence.record(
+                        actionResult,
+                        operation: "Typing",
+                        receiptlessStep: receiptlessStep
+                    )
+                }
             } catch let failure as DesktopActionFailure {
-                let composed = sequence.failure(
-                    combining: failure,
+                let composed = actionSequence.preservingFailure(
+                    failure,
+                    fallbackRoute: actionRoute,
                     message: "Typing failed after foreground setup may have changed focus.",
                     hint: "Observe the target before deciding whether to retry typing."
                 )
-                await self.invalidateAfterFailedMutation(composed)
                 throw composed
             } catch let error as InputDeliveryIndeterminateError {
                 let delivery = Self.delivery(for: deliveryTarget)
-                let composed = sequence.failure(
-                    combining: error.desktopActionFailure(delivery: delivery, route: self.actionRoute),
+                let composed = actionSequence.preservingFailure(
+                    error.desktopActionFailure(delivery: delivery, route: actionRoute),
+                    fallbackRoute: actionRoute,
                     message: "Typing outcome is indeterminate.",
-                    hint: "Observe the target before deciding whether to retry typing.",
-                    causeDescription: error.causeDescription ?? error.localizedDescription
+                    hint: "Observe the target before deciding whether to retry typing."
                 )
-                await self.invalidateAfterFailedMutation(composed)
                 throw composed
             } catch {
-                guard sequence.mutationDisposition.mutationDispatched else { throw error }
-                let composed = sequence.failure(
-                    combining: .preDispatchRefusal(
-                        route: self.actionRoute,
-                        reason: .operationUnsupported,
-                        message: error.localizedDescription
-                    ),
+                let composed = actionSequence.preservingFailure(
+                    error,
+                    fallbackRoute: actionRoute,
                     message: "Typing failed after foreground setup may have changed focus.",
-                    hint: "Observe the target before deciding whether to retry typing.",
-                    causeDescription: error.localizedDescription
+                    hint: "Observe the target before deciding whether to retry typing."
                 )
-                await self.invalidateAfterFailedMutation(composed)
                 throw composed
-            }
-            if let outcome = actionResult.outcome {
-                sequence.record(.reportedOutcome(outcome, defaultDispatchedUnitCount: .one))
-            } else {
-                sequence.record(.dispatched(
-                    route: self.actionRoute,
-                    delivery: Self.delivery(for: deliveryTarget),
-                    unitCount: .one
-                ))
             }
             await InteractionObservationInvalidator.invalidateAfterMutation(
                 targets: self.resolvedRuntime.interactionMutationTargets,
                 logger: self.logger,
                 reason: "type"
             )
+            let compositeResult = actionSequence.result(payload: actionResult.payload)
             self.renderResult(
-                actionResult.payload,
-                outcome: sequence.successResolution().outcome,
+                compositeResult.payload,
+                outcome: compositeResult.outcome,
+                targetIdentity: compositeResult.targetIdentity,
                 actions: actions,
                 startTime: startTime,
                 target: deliveryTarget
             )
         } catch {
+            if let failure = error as? DesktopActionFailure {
+                await self.invalidateAfterFailedMutation(failure)
+            }
             self.handleError(error)
             throw ExitCode.failure
         }
@@ -236,15 +246,6 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         }
     }
 
-    private func focusIfNeeded(snapshotId: String?) async throws {
-        try await ensureFocused(
-            snapshotId: snapshotId,
-            target: self.target,
-            options: self.focusOptions,
-            services: self.services
-        )
-    }
-
     private func executeTypeActions(
         actions: [TypeAction],
         snapshotId: String?,
@@ -290,6 +291,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
     private func renderResult(
         _ typeResult: TypeResult,
         outcome: DesktopActionOutcome?,
+        targetIdentity: DesktopTargetIdentity?,
         actions: [TypeAction],
         startTime: Date,
         target: UIAutomationTarget
@@ -314,7 +316,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             targetWindowID: targetWindowID
         )
 
-        output(result, outcome: outcome) {
+        output(result, outcome: outcome, targetIdentity: targetIdentity) {
             if let outcome {
                 print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Typing"))
             } else {
@@ -370,10 +372,6 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             logger: self.logger,
             reason: "type failure"
         )
-    }
-
-    private var actionRoute: DesktopActionOutcome.Route {
-        self.services.automation is RemoteUIAutomationService ? .bridge : .local
     }
 }
 

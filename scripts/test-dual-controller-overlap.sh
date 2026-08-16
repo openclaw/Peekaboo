@@ -50,7 +50,9 @@ Runs two independent Peekaboo clients through one exact signed Bridge host.
 Both clients mutate different launch-owned TextEdit windows in the background
 while an independently selected sentinel PID/window must remain foreground.
 
-Live mode is reserved until same-connection opaque Bridge host receipts land.
+Protocol 1.29 receipt carriage is present, but live mode remains reserved until
+the harness can invoke a first-party validator for every exported listener-,
+session-, request-, response-, and rollover-bound receipt artifact.
 The future live invocation will require PEEKABOO_RUN_DUAL_CONTROLLER_OVERLAP=1 and:
   --bin PATH                 Signed current Peekaboo CLI
   --bridge-socket PATH       Exact signed current Bridge socket
@@ -1283,12 +1285,12 @@ if $SELF_TEST_ONLY; then
     exit 0
 fi
 
-live_overlap_receipt_contract_available() {
+live_overlap_receipt_verifier_available() {
     return 1
 }
-if ! live_overlap_receipt_contract_available; then
+if ! live_overlap_receipt_verifier_available; then
     printf '%s\n' \
-        'Live overlap is reserved until every operation carries a same-connection opaque Bridge host receipt.' >&2
+        'Live overlap is reserved until a first-party CLI verifies every exported protocol 1.29 receipt bundle.' >&2
     exit 2
 fi
 

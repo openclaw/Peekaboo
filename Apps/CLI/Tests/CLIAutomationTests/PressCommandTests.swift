@@ -179,6 +179,142 @@ struct PressCommandTests {
     }
 
     @Test
+    @MainActor
+    func `Remote targeted foreground press refuses suspected noop before global input`() async throws {
+        let windows = InputFocusWindowService(
+            focusOutcome: .suspectedNoop(
+                route: .bridge,
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                unitCount: .one
+            )
+        )
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = InputFocusFixtures.typeOutcome
+        let services = InputExecutionHostServices(
+            host: .remote,
+            base: TestServicesFactory.makePeekabooServices(windows: windows, automation: automation)
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "press", "return",
+                "--window-id", String(InputFocusFixtures.windowID),
+                "--foreground",
+                "--json",
+            ],
+            services: services
+        )
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: Data(result.stdout.utf8))
+
+        #expect(result.exitStatus == 1)
+        #expect(windows.pinnedFocusCalls.count == 1)
+        #expect(automation.hotkeyCalls.isEmpty)
+        #expect(payload.outcome?.state == .suspectedNoop)
+        #expect(payload.target_receipt?.windowID == InputFocusFixtures.windowID)
+    }
+
+    @Test
+    @MainActor
+    func `Remote targeted foreground press refuses confirmed background focus before global input`() async throws {
+        let windows = InputFocusWindowService(
+            focusOutcome: .confirmedChange(
+                route: .bridge,
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                unitCount: .one
+            )
+        )
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = InputFocusFixtures.typeOutcome
+        let services = InputExecutionHostServices(
+            host: .remote,
+            base: TestServicesFactory.makePeekabooServices(windows: windows, automation: automation)
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "press", "return",
+                "--window-id", String(InputFocusFixtures.windowID),
+                "--foreground",
+                "--json",
+            ],
+            services: services
+        )
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: Data(result.stdout.utf8))
+
+        #expect(result.exitStatus == 1)
+        #expect(windows.pinnedFocusCalls.count == 1)
+        #expect(automation.hotkeyCalls.isEmpty)
+        #expect(payload.outcome?.state == .indeterminate)
+        #expect(payload.target_receipt?.windowID == InputFocusFixtures.windowID)
+    }
+
+    @Test
+    @MainActor
+    func `Remote targeted foreground press composes exact focus and leaf receipts`() async throws {
+        let windows = InputFocusWindowService(focusOutcome: InputFocusFixtures.focusOutcome)
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = InputFocusFixtures.typeOutcome
+        automation.actionOutcomeTargetIdentity = try InputFocusFixtures.targetIdentity()
+        let services = InputExecutionHostServices(
+            host: .remote,
+            base: TestServicesFactory.makePeekabooServices(windows: windows, automation: automation)
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "press", "return",
+                "--window-id", String(InputFocusFixtures.windowID),
+                "--foreground",
+                "--json",
+            ],
+            services: services
+        )
+        let payload = try JSONDecoder().decode(
+            CodableJSONResponse<PressResult>.self,
+            from: Data(result.stdout.utf8)
+        )
+
+        #expect(result.exitStatus == 0)
+        #expect(payload.outcome?.state == .confirmedChange)
+        #expect(payload.outcome?.route == .bridge)
+        #expect(payload.outcome?.deliveryMechanism == .composite)
+        #expect(payload.outcome?.deliveryMode == .foreground)
+        #expect(payload.outcome?.dispatchedUnitCount == DesktopActionOutcome.DispatchUnitCount(2))
+        #expect(payload.target_receipt?.windowID == InputFocusFixtures.windowID)
+    }
+
+    @Test
+    @MainActor
+    func `Remote targeted foreground press rejects a mismatched leaf target`() async throws {
+        let windows = InputFocusWindowService(focusOutcome: InputFocusFixtures.focusOutcome)
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = InputFocusFixtures.typeOutcome
+        automation.actionOutcomeTargetIdentity = try InputFocusFixtures.targetIdentity(windowID: 902)
+        let services = InputExecutionHostServices(
+            host: .remote,
+            base: TestServicesFactory.makePeekabooServices(windows: windows, automation: automation)
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "press", "return",
+                "--window-id", String(InputFocusFixtures.windowID),
+                "--foreground",
+                "--json",
+            ],
+            services: services
+        )
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: Data(result.stdout.utf8))
+
+        #expect(result.exitStatus == 1)
+        #expect(automation.hotkeyCalls.map(\.keys) == ["return"])
+        #expect(payload.outcome?.state == .indeterminate)
+        #expect(payload.outcome?.dispatchedUnitCount == DesktopActionOutcome.DispatchUnitCount(2))
+        #expect(payload.target_identity == nil)
+        #expect(payload.target_receipt == nil)
+    }
+
+    @Test
     func `Background target resolution cancellation is not projected as a target refusal`() async throws {
         let context = await self.makeContext(windows: CancellingPressWindowService())
 
@@ -236,7 +372,7 @@ struct PressCommandTests {
     }
 
     @Test
-    func `Snapshot argument is forwarded`() async throws {
+    func `Foreground snapshot without an exact target refuses before global input`() async throws {
         let snapshotId = "snapshot-42"
         let context = await self.makeContext()
         let detection = ElementDetectionResult(
@@ -252,10 +388,9 @@ struct PressCommandTests {
             context: context
         )
 
-        #expect(result.exitStatus == 0)
+        #expect(result.exitStatus == 1)
         let calls = await self.automationState(context) { $0.hotkeyCalls }
-        let call = try #require(calls.first)
-        #expect(call.keys == "escape")
+        #expect(calls.isEmpty)
     }
 
     @Test

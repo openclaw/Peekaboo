@@ -5,7 +5,6 @@ import Testing
 @testable import PeekabooCore
 
 private struct DragResult: Codable {
-    let success: Bool
     let from: [String: Int]
     let to: [String: Int]
     let duration: Int
@@ -166,12 +165,23 @@ struct DragCommandTests {
             "--foreground",
         ]
 
-        let context = await self.makeAutomationContext()
+        let windows = await MainActor.run {
+            InputFocusWindowService(focusOutcome: InputFocusFixtures.focusOutcome)
+        }
+        let context = await self.makeAutomationContext(windows: windows)
+        let services = await MainActor.run {
+            InputExecutionHostServices(host: .remote, base: context.services)
+        }
         let detection = ElementDetectionResult(
             snapshotId: snapshotId,
             screenshotPath: "/tmp/screenshot.png",
             elements: DetectedElements(buttons: [element]),
-            metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "stub")
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: 1,
+                method: "stub",
+                windowContext: Self.inputFocusWindowContext
+            )
         )
         try await context.snapshots.storeDetectionResult(snapshotId: snapshotId, result: detection)
         await MainActor.run {
@@ -180,7 +190,7 @@ struct DragCommandTests {
                 for: .elementId("B1")
             )
         }
-        let result = try await InProcessCommandRunner.run(arguments, services: context.services)
+        let result = try await InProcessCommandRunner.run(arguments, services: services)
 
         #expect(result.exitStatus == 0)
         let dragCalls = await self.automationState(context) { $0.dragCalls }
@@ -299,7 +309,7 @@ struct DragCommandTests {
         let (result, context) = try await self.runDragCommandWithContext(arguments)
 
         #expect(result.exitStatus != 0)
-        #expect(self.output(from: result).contains("requires explicit --foreground"))
+        #expect(self.output(from: result).contains("requires explicit consent"))
         #expect(await self.automationState(context) { $0.dragCalls }.isEmpty)
     }
 }
@@ -352,6 +362,17 @@ extension DragCommandTests {
 
     fileprivate func output(from result: CommandRunResult) -> String {
         result.stdout.isEmpty ? result.stderr : result.stdout
+    }
+
+    private static var inputFocusWindowContext: WindowContext {
+        WindowContext(
+            applicationName: "InputFixture",
+            applicationProcessId: InputFocusFixtures.processIdentifier,
+            windowTitle: "Input Fixture",
+            windowID: InputFocusFixtures.windowID,
+            windowBounds: InputFocusFixtures.bounds,
+            windowMutationIdentity: InputFocusFixtures.identity()
+        )
     }
 }
 

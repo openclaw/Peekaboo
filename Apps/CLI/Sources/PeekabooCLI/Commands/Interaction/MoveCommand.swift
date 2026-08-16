@@ -66,7 +66,8 @@ struct MoveCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             let parts = coordString.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
             guard parts.count == 2,
                   Double(parts[0]) != nil,
-                  Double(parts[1]) != nil else {
+                  Double(parts[1]) != nil
+            else {
                 throw ValidationError("Invalid coordinates format. Use: x,y")
             }
         }
@@ -89,7 +90,9 @@ struct MoveCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
 
         do {
             try self.validate()
-            let resolvedTarget = try await self.resolveTarget()
+            let targetResolution = try await self.resolveTarget()
+            let resolvedTarget = targetResolution.target
+            let focusResult = targetResolution.focusResult
             let targetLocation = resolvedTarget.location
             let targetDescription = resolvedTarget.description
 
@@ -106,41 +109,67 @@ struct MoveCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
 
             // Perform the movement
             self.resolvedRuntime.beginInteractionMutation()
-            try await AutomationServiceBridge.moveMouse(
+            let pointerAction = try await AutomationServiceBridge.moveMouse(
                 automation: self.services.automation,
                 to: targetLocation,
                 duration: movement.duration,
                 steps: movement.steps,
                 profile: movement.profile
             )
+            let actionResult = try withPreservedActionResultOnFailure(
+                pointerAction,
+                targetIdentity: pointerAction.targetIdentity,
+                operation: "Cursor move"
+            ) {
+                try AutomationServiceBridge.composeGlobalPointerResult(
+                    setupFocus: focusResult,
+                    pointerAction: pointerAction,
+                    operation: "Cursor move",
+                    route: commandActionRoute(for: self.services)
+                )
+            }
             AutomationEventLogger.log(
                 .cursor,
                 "move target=\(targetDescription) duration=\(movement.duration)ms steps=\(movement.steps) "
                     + "profile=\(movement.profileName)"
             )
 
-            // Output results
-            let result = MoveResult(
-                targetLocation: targetLocation,
-                targetDescription: targetDescription,
-                fromLocation: currentLocation,
-                distance: distance,
-                duration: movement.duration,
-                smooth: movement.smooth,
-                profile: movement.profileName,
-                targetPoint: resolvedTarget.diagnostics,
-                executionTime: Date().timeIntervalSince(startTime)
-            )
-            output(result) {
-                print("✅ Mouse moved successfully")
-                print("🎯 Target: \(targetDescription)")
-                print("📍 Location: (\(Int(targetLocation.x)), \(Int(targetLocation.y)))")
-                print("📏 Distance: \(Int(distance)) pixels")
-                print("🧭 Profile: \(movement.profileName.capitalized)")
-                if movement.smooth {
-                    print("🎬 Animation: \(movement.duration)ms with \(movement.steps) steps")
+            try withPreservedActionResultOnFailure(
+                actionResult,
+                targetIdentity: actionResult.targetIdentity,
+                operation: "Cursor move"
+            ) {
+                try Task.checkCancellation()
+                let result = MoveResult(
+                    targetLocation: targetLocation,
+                    targetDescription: targetDescription,
+                    fromLocation: currentLocation,
+                    distance: distance,
+                    duration: movement.duration,
+                    smooth: movement.smooth,
+                    profile: movement.profileName,
+                    targetPoint: resolvedTarget.diagnostics,
+                    executionTime: Date().timeIntervalSince(startTime)
+                )
+                output(
+                    result,
+                    outcome: actionResult.outcome,
+                    targetIdentity: actionResult.targetIdentity
+                ) {
+                    if let outcome = actionResult.outcome {
+                        print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Cursor move"))
+                    } else {
+                        print("✅ Mouse moved successfully")
+                    }
+                    print("🎯 Target: \(targetDescription)")
+                    print("📍 Location: (\(Int(targetLocation.x)), \(Int(targetLocation.y)))")
+                    print("📏 Distance: \(Int(distance)) pixels")
+                    print("🧭 Profile: \(movement.profileName.capitalized)")
+                    if movement.smooth {
+                        print("🎬 Animation: \(movement.duration)ms with \(movement.steps) steps")
+                    }
+                    print("⏱️  Completed in \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s")
                 }
-                print("⏱️  Completed in \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s")
             }
 
         } catch {
@@ -149,9 +178,9 @@ struct MoveCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         }
     }
 
-    private func resolveTarget() async throws -> MoveTargetResolution {
+    private func resolveTarget() async throws -> MoveExecutionTargetResolution {
         if let coordString = self.at {
-            try await self.focusForCoordinateTarget()
+            let focusResult = try await self.focusForCoordinateTarget()
             let parts = coordString.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
             let x = Double(parts[0])!
             let y = Double(parts[1])!
@@ -163,13 +192,16 @@ struct MoveCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                 forceGlobal: self.global
             )
             let location = resolution.screenPoint
-            return MoveTargetResolution(
-                location: location,
-                description: "Coordinates (\(Int(x)), \(Int(y)))",
-                diagnostics: InteractionTargetPointResolver.coordinate(
-                    location,
-                    source: .coordinates
-                ).diagnostics
+            return MoveExecutionTargetResolution(
+                target: MoveTargetResolution(
+                    location: location,
+                    description: "Coordinates (\(Int(x)), \(Int(y)))",
+                    diagnostics: InteractionTargetPointResolver.coordinate(
+                        location,
+                        source: .coordinates
+                    ).diagnostics
+                ),
+                focusResult: focusResult
             )
         }
 
@@ -180,17 +212,18 @@ struct MoveCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         throw ValidationError("Specify --at or --on")
     }
 
-    private func focusForCoordinateTarget() async throws {
+    private func focusForCoordinateTarget() async throws -> UIAutomationActionResult<Void> {
         self.resolvedRuntime.beginInteractionMutation()
-        try await ensureFocused(
+        return try await ensureConfirmedForegroundFocus(
             snapshotId: nil,
             target: self.target,
             options: self.focusOptions,
-            services: self.services
-        )
+            services: self.services,
+            operation: "Cursor move setup focus"
+        ) ?? UIAutomationActionResult(payload: (), outcome: nil)
     }
 
-    private func resolveElementTarget(elementId: String) async throws -> MoveTargetResolution {
+    private func resolveElementTarget(elementId: String) async throws -> MoveExecutionTargetResolution {
         var observation = await InteractionObservationContext.resolve(
             explicitSnapshot: self.snapshot,
             fallbackToLatest: true,
@@ -207,12 +240,13 @@ struct MoveCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             }
         )
         self.resolvedRuntime.beginInteractionMutation()
-        try await ensureFocused(
+        let focusResult = try await ensureConfirmedForegroundFocus(
             snapshotId: observation.focusSnapshotId(for: self.target),
             target: self.target,
             options: self.focusOptions,
-            services: self.services
-        )
+            services: self.services,
+            operation: "Cursor move setup focus"
+        ) ?? UIAutomationActionResult(payload: (), outcome: nil)
 
         let detectionResult = try await observation.requireDetectionResult(using: self.services.snapshots)
         guard let element = detectionResult.elements.findById(elementId) else {
@@ -225,10 +259,13 @@ struct MoveCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             snapshotId: observation.snapshotId,
             snapshots: self.services.snapshots
         )
-        return MoveTargetResolution(
-            location: resolution.point,
-            description: self.formatElementInfo(element),
-            diagnostics: resolution.diagnostics
+        return MoveExecutionTargetResolution(
+            target: MoveTargetResolution(
+                location: resolution.point,
+                description: self.formatElementInfo(element),
+                diagnostics: resolution.diagnostics
+            ),
+            focusResult: focusResult
         )
     }
 

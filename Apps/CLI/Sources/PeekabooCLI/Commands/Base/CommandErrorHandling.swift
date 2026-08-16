@@ -66,12 +66,24 @@ extension ErrorHandlingCommand {
                             : isActionCommand ? defaultActionErrorEffect(errorCode) : nil),
                     retrySafe: failureReceipt?.retrySafe ?? actionMetadata.retrySafe,
                     mutationDispatched: failureReceipt?.mutationDispatched ?? actionMetadata.mutationDispatched,
+                    actionOutcome: actionMetadata.outcome,
                     actionFailure: actionFailure,
+                    targetReceipt: actionMetadata.targetReceipt,
+                    targetIdentity: actionMetadata.targetIdentity,
                     logger: logger
                 )
             }
         } else {
-            let actionFailure = error as? DesktopActionFailure
+            let actionFailure = (error as? DesktopActionFailure)
+                ?? (error as? any ResultEnvelopeError)?.envelopeActionFailure
+            if let actionFailure {
+                renderDesktopActionFailure(
+                    actionFailure,
+                    jsonOutput: false,
+                    logger: (self as? any OutputFormattable)?.outputLogger ?? Logger.shared
+                )
+                return
+            }
             let errorMessage: String = if let peekabooError = error as? PeekabooError {
                 peekabooError.errorDescription ?? String(describing: error)
             } else if let captureError = error as? CaptureError {
@@ -83,13 +95,7 @@ extension ErrorHandlingCommand {
             } else {
                 error.localizedDescription
             }
-            if let actionFailure {
-                fputs(
-                    "\(ActionOutcomeHumanRenderer.statusLine(for: actionFailure.outcome, operation: "Action"))\n",
-                    stderr
-                )
-            }
-            let hint = (actionFailure?.hint ?? (error as? any ResultEnvelopeError)?.envelopeHint)
+            let hint = (error as? any ResultEnvelopeError)?.envelopeHint
                 .map { " Hint: \($0)" } ?? ""
             fputs("Error: \(errorMessage)\(hint)\n", stderr)
         }

@@ -25,35 +25,13 @@ struct MenuBarFocusSnapshot {
     let windowBounds: CGRect?
 }
 
-func matchMenuBarItem(named name: String, items: [MenuBarItemInfo]) -> MenuBarItemInfo? {
-    let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    let candidates: [(MenuBarItemInfo, [String])] = items.map { item in
-        let fields = [
-            item.title,
-            item.rawTitle,
-            item.identifier,
-            item.axDescription,
-            item.ownerName,
-        ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-        return (item, fields)
+func matchMenuBarItem(named name: String, items: [MenuBarItemInfo]) throws -> MenuBarItemInfo? {
+    do {
+        return try MenuBarItemSelector.select(named: name, from: items).candidate.value
+    } catch let error as DesktopLeafSelectionError {
+        if case .notFound = error {
+            return nil
+        }
+        throw error
     }
-
-    if let exact = candidates.first(where: { _, fields in fields.contains(normalized) })?.0 {
-        return exact
-    }
-
-    let hyphens = "-‐‑‒–—"
-    func foldingHyphens(_ value: String) -> String {
-        String(value.filter { !hyphens.contains($0) })
-    }
-    let foldedName = foldingHyphens(normalized)
-    if let folded = candidates.first(where: { _, fields in
-        fields.contains(where: { foldingHyphens($0) == foldedName })
-    })?.0 {
-        return folded
-    }
-
-    return candidates.first(where: { _, fields in
-        fields.contains(where: { $0.contains(normalized) })
-    })?.0
 }

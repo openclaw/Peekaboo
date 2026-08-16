@@ -60,7 +60,7 @@ struct MoveCommandTests {
 
     @Test
     func `Move by element ID resolves using stored detection results`() async throws {
-        let context = await self.makeContext()
+        let (context, services) = await self.makeExactElementContext()
         let element = DetectedElement(
             id: "B1",
             type: .button,
@@ -71,13 +71,18 @@ struct MoveCommandTests {
             snapshotId: "snapshot-id",
             screenshotPath: "/tmp/screenshot.png",
             elements: DetectedElements(buttons: [element]),
-            metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "stub")
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: 1,
+                method: "stub",
+                windowContext: Self.inputFocusWindowContext
+            )
         )
         try await context.snapshots.storeDetectionResult(snapshotId: "snapshot-id", result: detection)
 
-        let result = try await self.runMove(
-            arguments: ["--on", "B1", "--snapshot", "snapshot-id", "--json", "--foreground"],
-            context: context
+        let result = try await InProcessCommandRunner.run(
+            ["move", "--on", "B1", "--snapshot", "snapshot-id", "--json", "--foreground"],
+            services: services
         )
 
         #expect(result.exitStatus == 0)
@@ -90,7 +95,7 @@ struct MoveCommandTests {
 
     @Test
     func `Move by element ID is repeatable`() async throws {
-        let context = await self.makeContext()
+        let (context, services) = await self.makeExactElementContext()
         let element = DetectedElement(
             id: "B1",
             type: .button,
@@ -101,13 +106,18 @@ struct MoveCommandTests {
             snapshotId: "snapshot-id",
             screenshotPath: "/tmp/screenshot.png",
             elements: DetectedElements(buttons: [element]),
-            metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "stub")
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: 1,
+                method: "stub",
+                windowContext: Self.inputFocusWindowContext
+            )
         )
         try await context.snapshots.storeDetectionResult(snapshotId: "snapshot-id", result: detection)
 
-        let result = try await self.runMove(
-            arguments: ["--on", "B1", "--snapshot", "snapshot-id", "--json", "--foreground"],
-            context: context
+        let result = try await InProcessCommandRunner.run(
+            ["move", "--on", "B1", "--snapshot", "snapshot-id", "--json", "--foreground"],
+            services: services
         )
 
         #expect(result.exitStatus == 0)
@@ -228,7 +238,7 @@ struct MoveCommandTests {
         let result = try await self.runMove(arguments: ["--at", "100,200"], context: context)
 
         #expect(result.exitStatus != 0)
-        #expect(self.output(from: result).contains("requires explicit --foreground"))
+        #expect(self.output(from: result).contains("requires explicit consent"))
         #expect(await self.automationState(context) { $0.moveMouseCalls }.isEmpty)
     }
 
@@ -253,6 +263,31 @@ struct MoveCommandTests {
             configure?(context.automation, context.snapshots)
             return context
         }
+    }
+
+    private func makeExactElementContext() async -> (
+        TestServicesFactory.AutomationTestContext,
+        InputExecutionHostServices
+    ) {
+        await MainActor.run {
+            let windows = InputFocusWindowService(focusOutcome: InputFocusFixtures.focusOutcome)
+            let context = TestServicesFactory.makeAutomationTestContext(windows: windows)
+            return (
+                context,
+                InputExecutionHostServices(host: .remote, base: context.services)
+            )
+        }
+    }
+
+    private static var inputFocusWindowContext: WindowContext {
+        WindowContext(
+            applicationName: "InputFixture",
+            applicationProcessId: InputFocusFixtures.processIdentifier,
+            windowTitle: "Input Fixture",
+            windowID: InputFocusFixtures.windowID,
+            windowBounds: InputFocusFixtures.bounds,
+            windowMutationIdentity: InputFocusFixtures.identity()
+        )
     }
 
     private func automationState<T: Sendable>(

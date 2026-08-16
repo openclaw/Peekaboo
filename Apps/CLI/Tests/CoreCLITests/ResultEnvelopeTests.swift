@@ -90,6 +90,27 @@ struct ResultEnvelopeTests {
         for (outcome, expectedLine) in zip(DesktopActionOutcomeFixtures.canonicalOutcomes, expected) {
             #expect(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Click") == expectedLine)
         }
+
+        let reconnect = DesktopActionOutcome.refused(
+            route: .bridge,
+            reason: .transportSessionUnavailable
+        )
+        #expect(ActionOutcomeHumanRenderer.statusLine(for: reconnect, operation: "Click") ==
+            "⛔ Click refused before dispatch; reconnect the Bridge session before retrying")
+    }
+
+    @Test func `Space switch human detail never claims unverified dispatch completed`() {
+        let dispatched = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one
+        )
+
+        let detail = spaceSwitchCompletionMessage(outcome: dispatched, spaceNumber: 3)
+
+        #expect(detail == "Space switch dispatched to Space 3, but completion was not verified")
+        #expect(!detail.contains("✓"))
+        #expect(!detail.contains("Switched to"))
     }
 
     @Test func `canonical failure envelope carries resolved target receipt without inference`() {
@@ -114,6 +135,55 @@ struct ResultEnvelopeTests {
 
         #expect(envelope.target_receipt == receipt)
         #expect(envelope.outcome == failure.outcome.projection)
+    }
+
+    @Test func `post-result processing preserves every accepted outcome and raw target receipt`() throws {
+        let delivery = DesktopActionOutcome.Delivery(
+            mechanism: .capturePipeline,
+            mode: .background
+        )
+        let outcomes: [DesktopActionOutcome] = [
+            .confirmedChange(route: .bridge, delivery: delivery, unitCount: .one),
+            .confirmedNoChange(route: .bridge),
+            .dispatchedUnverified(
+                route: .bridge,
+                delivery: delivery,
+                evidence: .deliveryAccepted,
+                unitCount: .one
+            ),
+        ]
+        let receipt = DesktopActionTargetReceipt(
+            processIdentifier: 42,
+            processStartIdentity: 9_007_199_254_740_993,
+            windowID: 73
+        )
+
+        for outcome in outcomes {
+            let error = postResultProcessingError(
+                CocoaError(.fileWriteUnknown),
+                outcome: outcome,
+                targetReceipt: receipt,
+                operation: "Fixture publication"
+            )
+            let envelopeError = try #require(error as? any ResultEnvelopeError)
+            let metadata = actionErrorEnvelopeMetadata(for: error, isActionCommand: true)
+            let envelope = makeErrorEnvelope(
+                message: error.localizedDescription,
+                code: .INTERACTION_FAILED,
+                retrySafe: metadata.retrySafe,
+                mutationDispatched: metadata.mutationDispatched,
+                actionOutcome: metadata.outcome,
+                actionFailure: metadata.failure,
+                targetReceipt: metadata.targetReceipt
+            )
+
+            #expect(metadata.outcome == outcome)
+            #expect(metadata.targetReceipt == receipt)
+            #expect(metadata.failure == (outcome.isConfirmed ? nil : envelopeError.envelopeActionFailure))
+            #expect(envelope.outcome == outcome.projection)
+            #expect(envelope.target_receipt == receipt)
+            #expect(envelope.error?.mutation_dispatched == outcome.dispatchState.mutationDispatched)
+        }
     }
 
     @Test func `action envelope includes effect`() throws {

@@ -7,6 +7,11 @@ import Testing
 @testable import PeekabooCLI
 
 struct CaptureLiveBehaviorTests {
+    private enum SelectorSurface: CaseIterable {
+        case live
+        case action
+    }
+
     @Test
     func `resolveMode defaults to window when targeting app pid title or index`() throws {
         var cmd = CaptureLiveCommand()
@@ -69,6 +74,75 @@ struct CaptureLiveBehaviorTests {
         zero.region = "1,2,0,4"
         #expect(throws: PeekabooError.self) {
             _ = try zero.parseRegion()
+        }
+    }
+
+    @Test
+    @MainActor
+    func `capture live and action reject simultaneous title and index selectors`() throws {
+        for surface in SelectorSurface.allCases {
+            #expect(throws: ValidationError.self) {
+                _ = try Self.selector(for: surface, title: "Draft", index: 0)
+            }
+        }
+    }
+
+    @Test
+    @MainActor
+    func `capture live and action reject duplicate exact title matches`() throws {
+        let windows = [
+            Self.window(id: 101, title: "Draft", index: 0),
+            Self.window(id: 102, title: "Draft", index: 1),
+        ]
+
+        for surface in SelectorSurface.allCases {
+            let selector = try Self.selector(for: surface, title: "Draft")
+            #expect(throws: ExactWindowSelectorResolutionError.self) {
+                _ = try ExactWindowSelectorResolver.select(
+                    from: windows,
+                    selector: selector,
+                    operation: "Capture selector test"
+                )
+            }
+        }
+    }
+
+    @Test
+    @MainActor
+    func `capture live and action reject duplicate partial title matches`() throws {
+        let windows = [
+            Self.window(id: 101, title: "Draft One", index: 0),
+            Self.window(id: 102, title: "Draft Two", index: 1),
+        ]
+
+        for surface in SelectorSurface.allCases {
+            let selector = try Self.selector(for: surface, title: "Draft")
+            #expect(throws: ExactWindowSelectorResolutionError.self) {
+                _ = try ExactWindowSelectorResolver.select(
+                    from: windows,
+                    selector: selector,
+                    operation: "Capture selector test"
+                )
+            }
+        }
+    }
+
+    @Test
+    @MainActor
+    func `capture live and action resolve one unique partial title match`() throws {
+        let windows = [
+            Self.window(id: 101, title: "Draft One", index: 0),
+            Self.window(id: 102, title: "Release Notes", index: 1),
+        ]
+
+        for surface in SelectorSurface.allCases {
+            let selector = try Self.selector(for: surface, title: "Notes")
+            let selected = try ExactWindowSelectorResolver.select(
+                from: windows,
+                selector: selector,
+                operation: "Capture selector test"
+            )
+            #expect(selected.windowID == 102)
         }
     }
 
@@ -146,5 +220,44 @@ struct CaptureLiveBehaviorTests {
         #expect(CaptureLiveCommand.formatChangePercent(0) == "0.00")
         #expect(CaptureLiveCommand.formatChangePercent(0.004) == "0.004")
         #expect(CaptureLiveCommand.formatChangePercent(0.012) == "0.01")
+    }
+
+    @MainActor
+    private static func selector(
+        for surface: SelectorSurface,
+        title: String?,
+        index: Int? = nil
+    ) throws -> InteractionTargetSelector {
+        switch surface {
+        case .live:
+            var command = CaptureLiveCommand()
+            command.app = "Fixture"
+            command.windowTitle = title
+            command.windowIndex = index
+            return try command.validatedCaptureWindowSelector()
+        case .action:
+            var command = CaptureActionCommand()
+            command.app = "Fixture"
+            command.windowTitle = title
+            command.windowIndex = index
+            return try command.validatedCaptureWindowSelector()
+        }
+    }
+
+    private static func window(id: Int, title: String, index: Int) -> ServiceWindowInfo {
+        let position = CGFloat(index * 20)
+        let bounds = CGRect(x: position, y: position, width: 640, height: 480)
+        return ServiceWindowInfo(
+            windowID: id,
+            title: title,
+            bounds: bounds,
+            index: index,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: id,
+                ownerProcessIdentifier: 42,
+                ownerProcessStartIdentity: 7,
+                capturedBounds: bounds
+            )
+        )
     }
 }

@@ -24,7 +24,7 @@ extension AppCommand {
             name: .long,
             help: "Require this process-start identity (cleanup safety; requires --pid)"
         )
-        var expectedProcessStartIdentity: Int64?
+        var expectedProcessStartIdentity: CLIProcessStartIdentity?
 
         @Flag(help: "Quit all applications")
         var all = false
@@ -46,16 +46,10 @@ extension AppCommand {
                 try self.validateArguments()
                 let quitApps = try await self.resolveQuitTargets()
 
-                // Quit the apps
-                struct AppQuitInfo: Codable {
-                    let app_name: String
-                    let pid: Int32
-                    let success: Bool
-                }
-
                 var results: [AppQuitInfo] = []
                 var actionOutcomes: [DesktopActionOutcome?] = []
                 var caughtFailureHints: [String?] = []
+                var caughtFailureReceipts: [DesktopActionTargetReceipt?] = []
                 var wasCancelled = false
                 var cancellationInterruptedAttempt = false
                 for target in quitApps {
@@ -72,6 +66,7 @@ extension AppCommand {
                     self.resolvedRuntime.beginInteractionMutation()
                     let success: Bool
                     var caughtFailureHint: String?
+                    var caughtFailureReceipt: DesktopActionTargetReceipt?
                     do {
                         let actionResult = try await ApplicationServiceBridge.quitApplication(
                             applications: self.services.applications,
@@ -91,6 +86,7 @@ extension AppCommand {
                         success = false
                         actionOutcomes.append(failure.outcome)
                         caughtFailureHint = failure.hint
+                        caughtFailureReceipt = failure.targetReceipt
                     } catch {
                         // Preserve legacy per-app failure reporting for services without canonical receipts.
                         success = false
@@ -99,15 +95,11 @@ extension AppCommand {
                     results.append(AppQuitInfo(
                         app_name: target.name,
                         pid: target.pid,
+                        process_start_identity_decimal: String(target.expectedIdentity.processStartIdentity),
                         success: success
                     ))
                     caughtFailureHints.append(caughtFailureHint)
-                }
-
-                struct QuitResult: Codable {
-                    let action: String
-                    let force: Bool
-                    let results: [AppQuitInfo]
+                    caughtFailureReceipts.append(caughtFailureReceipt)
                 }
 
                 let data = QuitResult(
@@ -127,6 +119,7 @@ extension AppCommand {
                 )
                 let aggregateOutcome = batchOutcome.outcome
                 let singleFailureHint = results.count == 1 ? caughtFailureHints[0] : nil
+                let singleFailureReceipt = results.count == 1 ? caughtFailureReceipts[0] : nil
                 let failureHint: String? = if wasCancelled {
                     "The quit batch was cancelled; inspect completed targets before retrying."
                 } else if allSucceeded {
@@ -153,6 +146,7 @@ extension AppCommand {
                                 (wasCancelled || succeededCount > 0 ? .partial : .suspectedNoop)),
                         outcome: aggregateOutcome?.projection,
                         data: data,
+                        target_receipt: singleFailureReceipt,
                         messages: nil,
                         debug_logs: self.outputLogger.getDebugLogs(),
                         error: allSucceeded ? nil : ErrorInfo(
@@ -197,6 +191,19 @@ extension AppCommand {
                 handleError(error)
                 throw ExitCode(1)
             }
+        }
+
+        private struct AppQuitInfo: Codable {
+            let app_name: String
+            let pid: Int32
+            let process_start_identity_decimal: String
+            let success: Bool
+        }
+
+        private struct QuitResult: Codable {
+            let action: String
+            let force: Bool
+            let results: [AppQuitInfo]
         }
 
         private struct BatchOutcome {
@@ -251,10 +258,6 @@ extension AppCommand {
             if self.expectedProcessStartIdentity != nil, self.pid == nil {
                 throw ValidationError("--expected-process-start-identity requires --pid")
             }
-            if let expectedProcessStartIdentity = self.expectedProcessStartIdentity,
-               expectedProcessStartIdentity <= 0 {
-                throw ValidationError("--expected-process-start-identity must be greater than zero")
-            }
             if self.app == nil, self.pid == nil {
                 throw ValidationError("Either --app, --pid, or --all must be specified")
             }
@@ -285,6 +288,8 @@ extension AppCommand {
                     "Refresh the targeted application state before retrying."
                 case .updateRuntime:
                     "Update or select a compatible runtime before retrying."
+                case .reconnectSession:
+                    "Reconnect the Bridge session before retrying."
                 case .recoverSideEffect, .observeBeforeRetry:
                     "Perform a fresh observation of the targeted application state before taking another action."
                 case .none:
@@ -322,7 +327,7 @@ extension AppCommand {
             if let processStartIdentity = self.expectedProcessStartIdentity {
                 return [AppQuitTarget(
                     processIdentifier: pid,
-                    processStartIdentity: UInt64(processStartIdentity)
+                    processStartIdentity: processStartIdentity.value
                 )]
             }
             let appInfo = try await self.services.applications.findApplication(identifier: "PID:\(pid)")
@@ -372,7 +377,7 @@ extension AppCommand.QuitSubcommand: CommanderBindableCommand {
         self.pid = try values.decodeOption("pid", as: Int32.self)
         self.expectedProcessStartIdentity = try values.decodeOption(
             "expectedProcessStartIdentity",
-            as: Int64.self
+            as: CLIProcessStartIdentity.self
         )
         self.all = values.flag("all")
         self.except = values.singleOption("except")

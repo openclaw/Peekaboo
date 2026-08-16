@@ -128,6 +128,14 @@ struct VerifiedWindowActionOutput {
     let effect: ActionEffect
 }
 
+func observedWindowFrameChange(
+    original: ServiceWindowInfo?,
+    verified: ServiceWindowInfo?
+) -> Bool? {
+    guard let original, let verified else { return nil }
+    return original.bounds != verified.bounds
+}
+
 /// Build the action result from the read-back frame, surfacing clamped or unverifiable requests.
 ///
 /// Throws ``WindowGeometryIgnoredError`` when the request changed nothing at all: reporting plain

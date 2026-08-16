@@ -50,13 +50,24 @@ struct AppCommandTests {
 
     @Test
     func `App launch JSON returns the launch-bound process receipt`() async throws {
-        let output = try await runAppCommand(["app", "launch", "TextEdit", "--json"])
+        let generation = UInt64.max - 1
+        let (output, _) = try await runAppCommandWithService(
+            ["app", "launch", "TextEdit", "--json"]
+        ) { service in
+            service.launchResults["TextEdit"] = ServiceApplicationInfo(
+                processIdentifier: 202,
+                processStartIdentity: generation,
+                bundleIdentifier: "com.apple.TextEdit",
+                name: "TextEdit"
+            )
+        }
         let object = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
         let data = try #require(object["data"] as? [String: Any])
         let outcome = try #require(object["outcome"] as? [String: Any])
 
         #expect((data["pid"] as? NSNumber)?.int32Value == 202)
-        #expect((data["process_start_identity"] as? NSNumber)?.uint64Value == 2002)
+        #expect((data["process_start_identity"] as? NSNumber)?.uint64Value == generation)
+        #expect(data["process_start_identity_decimal"] as? String == String(generation))
         #expect(outcome["state"] as? String == "confirmed_change")
         #expect(object["effect"] as? String == outcome["effect"] as? String)
     }
@@ -77,6 +88,7 @@ struct AppCommandTests {
 
         #expect((data["pid"] as? NSNumber)?.int32Value == 303)
         #expect(data["process_start_identity"] == nil || data["process_start_identity"] is NSNull)
+        #expect(data["process_start_identity_decimal"] == nil || data["process_start_identity_decimal"] is NSNull)
     }
 
     @Test
@@ -106,14 +118,23 @@ struct AppCommandTests {
 
     @Test
     func `App relaunch JSON returns the new launch-bound process receipt`() async throws {
-        let output = try await runAppCommand([
-            "app", "relaunch", "TextEdit", "--wait", "0", "--json",
-        ])
+        let generation = UInt64.max - 2
+        let (output, _) = try await runAppCommandWithService([
+            "app", "relaunch", "TextEdit", "--wait", "0", "--foreground", "--json",
+        ]) { service in
+            service.launchResults["com.apple.TextEdit"] = ServiceApplicationInfo(
+                processIdentifier: 202,
+                processStartIdentity: generation,
+                bundleIdentifier: "com.apple.TextEdit",
+                name: "TextEdit"
+            )
+        }
         let object = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
         let data = try #require(object["data"] as? [String: Any])
 
         #expect((data["new_pid"] as? NSNumber)?.int32Value == 202)
-        #expect((data["new_process_start_identity"] as? NSNumber)?.uint64Value == 2002)
+        #expect((data["new_process_start_identity"] as? NSNumber)?.uint64Value == generation)
+        #expect(data["new_process_start_identity_decimal"] as? String == String(generation))
     }
 
     @Test

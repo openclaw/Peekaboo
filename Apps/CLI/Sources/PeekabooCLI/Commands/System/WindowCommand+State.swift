@@ -21,7 +21,7 @@ extension WindowCommand {
             self.logger.setJsonOutputMode(self.jsonOutput)
 
             do {
-                try self.windowOptions.validate()
+                try self.windowOptions.validateMutation()
                 let appInfo = try await self.windowOptions.resolveApplicationInfoIfNeeded(services: self.services)
 
                 // Get window info before action
@@ -29,13 +29,12 @@ extension WindowCommand {
                     windows: self.services.windows,
                     target: self.windowOptions.toWindowSelectionTarget()
                 )
-                let selectedWindowInfo = self.windowOptions.selectWindow(from: windows)
-                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: selectedWindowInfo)
                 let windowInfo = try self.windowOptions.requireMutationWindow(
                     from: windows,
                     expectedApplication: appInfo,
                     action: "close"
                 )
+                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: windowInfo)
                 let exactTarget = WindowTarget.windowId(windowInfo.windowID)
                 guard let mutationIdentity = windowInfo.mutationIdentity else {
                     throw PeekabooError.commandFailed(
@@ -56,20 +55,24 @@ extension WindowCommand {
                     reason: "window close"
                 )
 
-                logWindowAction(
-                    action: "close",
-                    appName: appName,
-                    windowInfo: windowInfo
-                )
-
-                let data = createWindowActionResult(
-                    action: "close",
-                    windowInfo: windowInfo,
-                    appName: appName
-                )
-
-                output(data, outcome: actionResult.outcome) {
-                    print("Successfully closed window '\(windowInfo.title)' of \(appName)")
+                try withPreservedActionResultOnFailure(
+                    actionResult,
+                    targetIdentity: actionResult.targetIdentity,
+                    operation: "Window close"
+                ) {
+                    logWindowAction(action: "close", appName: appName, windowInfo: windowInfo)
+                    let data = createWindowActionResult(
+                        action: "close",
+                        windowInfo: windowInfo,
+                        appName: appName
+                    )
+                    output(
+                        data,
+                        outcome: actionResult.outcome,
+                        targetIdentity: actionResult.targetIdentity
+                    ) {
+                        print("Successfully closed window '\(windowInfo.title)' of \(appName)")
+                    }
                 }
 
             } catch {
@@ -92,7 +95,7 @@ extension WindowCommand {
             self.logger.setJsonOutputMode(self.jsonOutput)
 
             do {
-                try self.windowOptions.validate()
+                try self.windowOptions.validateMutation()
                 let appInfo = try await self.windowOptions.resolveApplicationInfoIfNeeded(services: self.services)
 
                 // Get window info before action
@@ -100,13 +103,12 @@ extension WindowCommand {
                     windows: self.services.windows,
                     target: self.windowOptions.toWindowSelectionTarget()
                 )
-                let selectedWindowInfo = self.windowOptions.selectWindow(from: windows)
-                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: selectedWindowInfo)
                 let windowInfo = try self.windowOptions.requireMutationWindow(
                     from: windows,
                     expectedApplication: appInfo,
                     action: "minimize"
                 )
+                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: windowInfo)
                 let exactTarget = WindowTarget.windowId(windowInfo.windowID)
                 guard let mutationIdentity = windowInfo.mutationIdentity else {
                     throw PeekabooError.commandFailed(
@@ -125,20 +127,24 @@ extension WindowCommand {
                     runtime: self.resolvedRuntime,
                     reason: "window minimize"
                 )
-                logWindowAction(
-                    action: "minimize",
-                    appName: appName,
-                    windowInfo: windowInfo
-                )
-
-                let data = createWindowActionResult(
-                    action: "minimize",
-                    windowInfo: windowInfo,
-                    appName: appName
-                )
-
-                output(data, outcome: actionResult.outcome) {
-                    print("Successfully minimized window '\(windowInfo.title)' of \(appName)")
+                try withPreservedActionResultOnFailure(
+                    actionResult,
+                    targetIdentity: actionResult.targetIdentity,
+                    operation: "Window minimize"
+                ) {
+                    logWindowAction(action: "minimize", appName: appName, windowInfo: windowInfo)
+                    let data = createWindowActionResult(
+                        action: "minimize",
+                        windowInfo: windowInfo,
+                        appName: appName
+                    )
+                    output(
+                        data,
+                        outcome: actionResult.outcome,
+                        targetIdentity: actionResult.targetIdentity
+                    ) {
+                        print("Successfully minimized window '\(windowInfo.title)' of \(appName)")
+                    }
                 }
 
             } catch {
@@ -161,19 +167,18 @@ extension WindowCommand {
             self.logger.setJsonOutputMode(self.jsonOutput)
 
             do {
-                try self.windowOptions.validate()
+                try self.windowOptions.validateMutation()
                 let appInfo = try await self.windowOptions.resolveApplicationInfoIfNeeded(services: self.services)
                 let windows = try await WindowServiceBridge.listWindows(
                     windows: self.services.windows,
                     target: self.windowOptions.toWindowSelectionTarget()
                 )
-                let selectedWindowInfo = self.windowOptions.selectWindow(from: windows)
-                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: selectedWindowInfo)
                 let windowInfo = try self.windowOptions.requireMutationWindow(
                     from: windows,
                     expectedApplication: appInfo,
                     action: "restore"
                 )
+                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: windowInfo)
                 guard let mutationIdentity = windowInfo.mutationIdentity else {
                     throw PeekabooError.commandFailed(
                         "Window \(windowInfo.windowID) did not include a process-generation identity"
@@ -192,24 +197,31 @@ extension WindowCommand {
                     reason: "window restore"
                 )
 
-                let refreshedWindow = await restoredWindowOutputInfo(original: windowInfo) {
-                    try await WindowServiceBridge.listWindows(
-                        windows: self.services.windows,
-                        target: exactTarget
-                    ).first
-                }
-                logWindowAction(
-                    action: "restore",
-                    appName: appName,
-                    windowInfo: refreshedWindow
-                )
-                let data = createWindowActionResult(
-                    action: "restore",
-                    windowInfo: refreshedWindow,
-                    appName: appName
-                )
-                output(data, outcome: actionResult.outcome) {
-                    print("Successfully restored window '\(refreshedWindow?.title ?? windowInfo.title)' of \(appName)")
+                try await withPreservedActionResultOnFailure(
+                    actionResult,
+                    targetIdentity: actionResult.targetIdentity,
+                    operation: "Window restore"
+                ) {
+                    let refreshedWindow = try await validatedRestoredWindowOutputInfo(original: windowInfo) {
+                        try await WindowServiceBridge.listWindows(
+                            windows: self.services.windows,
+                            target: exactTarget
+                        ).first
+                    }
+                    logWindowAction(action: "restore", appName: appName, windowInfo: refreshedWindow)
+                    let data = createWindowActionResult(
+                        action: "restore",
+                        windowInfo: refreshedWindow,
+                        appName: appName
+                    )
+                    output(
+                        data,
+                        outcome: actionResult.outcome,
+                        targetIdentity: actionResult.targetIdentity
+                    ) {
+                        print("Successfully restored window " +
+                            "'\(refreshedWindow?.title ?? windowInfo.title)' of \(appName)")
+                    }
                 }
             } catch {
                 handleError(error)
@@ -231,7 +243,7 @@ extension WindowCommand {
             self.logger.setJsonOutputMode(self.jsonOutput)
 
             do {
-                try self.windowOptions.validate()
+                try self.windowOptions.validateMutation()
                 let appInfo = try await self.windowOptions.resolveApplicationInfoIfNeeded(services: self.services)
 
                 // Get window info before action
@@ -239,13 +251,12 @@ extension WindowCommand {
                     windows: self.services.windows,
                     target: self.windowOptions.toWindowSelectionTarget()
                 )
-                let selectedWindowInfo = self.windowOptions.selectWindow(from: windows)
-                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: selectedWindowInfo)
                 let windowInfo = try self.windowOptions.requireMutationWindow(
                     from: windows,
                     expectedApplication: appInfo,
                     action: "maximize"
                 )
+                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: windowInfo)
                 let exactTarget = WindowTarget.windowId(windowInfo.windowID)
                 guard let mutationIdentity = windowInfo.mutationIdentity else {
                     throw PeekabooError.commandFailed(
@@ -256,15 +267,32 @@ extension WindowCommand {
                 // Quiet per-attempt reader used while polling for the frame to settle. Unlike
                 // `refetchWindowInfo`, it does not log a warning on every poll.
                 let readTarget = exactTarget
+                var readbackErrors = MaximizeReadbackErrorTracker()
                 let readWindow: () async -> ServiceWindowInfo? = { [services = self.services] in
-                    guard let windows = try? await WindowServiceBridge.listWindows(
-                        windows: services.windows,
-                        target: readTarget
-                    )
-                    else {
+                    let readback: ServiceWindowInfo
+                    do {
+                        guard let window = try await WindowServiceBridge.listWindows(
+                            windows: services.windows,
+                            target: readTarget
+                        ).first
+                        else { return nil }
+                        readback = window
+                    } catch {
+                        readbackErrors.recordInventoryFailure(error)
                         return nil
                     }
-                    return windows.first
+                    do {
+                        let validated = try validatedPostMutationWindowReadback(
+                            readback,
+                            expectedIdentity: mutationIdentity,
+                            operation: "Window maximize"
+                        )
+                        readbackErrors.recordSuccessfulExactReadback()
+                        return validated
+                    } catch {
+                        readbackErrors.recordIdentityContradiction(error)
+                        return nil
+                    }
                 }
 
                 // The service applies bounded exact-window geometry without activating the app or
@@ -276,7 +304,7 @@ extension WindowCommand {
                     convertAppKitFrameToTopLeft($0.visibleFrame, primaryDisplayHeight: primaryDisplayHeight)
                 }
                 self.resolvedRuntime.beginInteractionMutation()
-                var actionResult: DesktopActionResult<Void>?
+                var actionResult: UIAutomationActionResult<Void>?
                 let outcome = try await resolveIdempotentMaximize(
                     original: windowInfo,
                     screenVisibleFramesTopLeft: screenVisibleFramesTopLeft,
@@ -293,6 +321,15 @@ extension WindowCommand {
                     },
                     read: readWindow
                 )
+                if let readbackError = readbackErrors.unresolvedError {
+                    guard let actionResult else { throw readbackError }
+                    throw postDispatchActionResultError(
+                        readbackError,
+                        actionResult: actionResult,
+                        targetIdentity: actionResult.targetIdentity,
+                        operation: "Window maximize"
+                    )
+                }
 
                 let finalWindowInfo = outcome.info ?? windowInfo
                 logWindowAction(
@@ -316,7 +353,7 @@ extension WindowCommand {
                 )
 
                 let effect: ActionEffect = if outcome.alreadyMaximized {
-                    .suspectedNoop
+                    .confirmed
                 } else if outcome.info == nil {
                     .unverifiable
                 } else if !outcome.stabilized {
@@ -324,22 +361,48 @@ extension WindowCommand {
                 } else {
                     .confirmed
                 }
-                output(
-                    data,
-                    effect: effect,
-                    outcome: reportedMaximizeOutcome(
-                        actionResult: actionResult,
-                        alreadyMaximized: outcome.alreadyMaximized
+                let targetIdentity = actionResult?.targetIdentity ?? (try? DesktopTargetIdentity(
+                    exactWindow: UIAutomationTarget.ExactWindow(window: windowInfo)
+                ))
+                let rawOutcome = reportedValidatedMaximizeOutcome(
+                    actionResult: actionResult,
+                    alreadyMaximized: outcome.alreadyMaximized,
+                    noChangeRoute: maximizeNoChangeRoute(executionHost: self.services.executionHost)
+                )
+                let outputOutcome = effect == .confirmed
+                    ? canonicalActionOutcomeAfterSuccessfulVerification(
+                        rawOutcome,
+                        observedChange: observedWindowFrameChange(
+                            original: windowInfo,
+                            verified: outcome.info
+                        )
                     )
+                    : rawOutcome
+                let outputResult = UIAutomationActionResult(
+                    payload: (),
+                    outcome: outputOutcome,
+                    targetIdentity: targetIdentity
+                )
+                try withPreservedActionResultOnFailure(
+                    outputResult,
+                    targetIdentity: targetIdentity,
+                    operation: "Window maximize"
                 ) {
-                    let title = finalWindowInfo.title
-                    if outcome.alreadyMaximized {
-                        print("Window '\(title)' of \(appName) is already maximized")
-                    } else {
-                        print("Successfully maximized window '\(title)' of \(appName)")
-                    }
-                    if let warning {
-                        print("Warning: \(warning)")
+                    output(
+                        data,
+                        effect: effect,
+                        outcome: outputOutcome,
+                        targetIdentity: targetIdentity
+                    ) {
+                        let title = finalWindowInfo.title
+                        if outcome.alreadyMaximized {
+                            print("Window '\(title)' of \(appName) is already maximized")
+                        } else {
+                            print("Successfully maximized window '\(title)' of \(appName)")
+                        }
+                        if let warning {
+                            print("Warning: \(warning)")
+                        }
                     }
                 }
 
@@ -351,11 +414,93 @@ extension WindowCommand {
     }
 }
 
+struct MaximizeReadbackErrorTracker {
+    private var transientInventoryError: (any Error)?
+    private var terminalError: (any Error)?
+
+    var unresolvedError: (any Error)? {
+        self.terminalError ?? self.transientInventoryError
+    }
+
+    mutating func recordInventoryFailure(_ error: any Error) {
+        if error is CancellationError || Task.isCancelled {
+            self.terminalError = self.terminalError ?? error
+        } else {
+            self.transientInventoryError = error
+        }
+    }
+
+    mutating func recordIdentityContradiction(_ error: any Error) {
+        self.terminalError = self.terminalError ?? error
+    }
+
+    mutating func recordSuccessfulExactReadback() {
+        self.transientInventoryError = nil
+    }
+}
+
+func maximizeNoChangeRoute(
+    executionHost: PeekabooServiceExecutionHost
+) -> DesktopActionOutcome.Route {
+    executionHost == .remote ? .bridge : .local
+}
+
+func reportedValidatedMaximizeOutcome(
+    actionResult: UIAutomationActionResult<Void>?,
+    alreadyMaximized: Bool,
+    noChangeRoute: DesktopActionOutcome.Route = .local
+) -> DesktopActionOutcome? {
+    alreadyMaximized ? .confirmedNoChange(route: noChangeRoute) : actionResult?.outcome
+}
+
 func reportedMaximizeOutcome(
     actionResult: DesktopActionResult<Void>?,
-    alreadyMaximized: Bool
+    alreadyMaximized: Bool,
+    noChangeRoute: DesktopActionOutcome.Route = .local
 ) -> DesktopActionOutcome? {
-    alreadyMaximized ? nil : actionResult?.outcome
+    alreadyMaximized ? .confirmedNoChange(route: noChangeRoute) : actionResult?.outcome
+}
+
+@MainActor
+func validatedRestoredWindowOutputInfo(
+    original: ServiceWindowInfo,
+    tolerance: CGFloat = 1,
+    refresh: @MainActor () async throws -> ServiceWindowInfo?
+) async throws -> ServiceWindowInfo? {
+    guard let expectedIdentity = original.mutationIdentity,
+          expectedIdentity.windowID == original.windowID,
+          expectedIdentity.isMinimized == original.isMinimized,
+          let expectedBounds = expectedIdentity.capturedBounds,
+          windowFramesMatch(original.bounds, expectedBounds, tolerance: tolerance)
+    else {
+        return nil
+    }
+
+    // The service has already repinned the exact restored window. Public/AX inventory can
+    // still omit it briefly or expose its Dock thumbnail, so accept refresh metadata only
+    // when its complete identity receipt matches the verified restore receipt.
+    guard let refreshed = try await refresh() else { return original }
+    let validated = try validatedPostMutationWindowReadback(
+        refreshed,
+        expectedIdentity: expectedIdentity,
+        operation: "Window restore"
+    )
+    guard let refreshedIdentity = validated.mutationIdentity,
+          validated.windowID == expectedIdentity.windowID,
+          refreshedIdentity.windowID == expectedIdentity.windowID,
+          refreshedIdentity.ownerProcessIdentifier == expectedIdentity.ownerProcessIdentifier,
+          refreshedIdentity.ownerProcessStartIdentity == expectedIdentity.ownerProcessStartIdentity,
+          validated.isMinimized == false,
+          refreshedIdentity.isMinimized == false,
+          let refreshedBounds = refreshedIdentity.capturedBounds,
+          windowFramesMatch(validated.bounds, expectedBounds, tolerance: tolerance),
+          windowFramesMatch(refreshedBounds, expectedBounds, tolerance: tolerance)
+    else {
+        throw PeekabooError.windowNotFound(
+            criteria: "Window restore readback no longer matches the original exact-window receipt"
+        )
+    }
+    return validated
 }
 
 @MainActor
@@ -369,26 +514,10 @@ func restoredWindowOutputInfo(
           expectedIdentity.isMinimized == original.isMinimized,
           let expectedBounds = expectedIdentity.capturedBounds,
           windowFramesMatch(original.bounds, expectedBounds, tolerance: tolerance)
-    else {
-        return nil
-    }
-
-    // The service has already repinned the exact restored window. Public/AX inventory can
-    // still omit it briefly or expose its Dock thumbnail, so accept refresh metadata only
-    // when its complete identity receipt matches the verified restore receipt.
-    guard let refreshed = try? await refresh(),
-          let refreshedIdentity = refreshed.mutationIdentity,
-          refreshed.windowID == expectedIdentity.windowID,
-          refreshedIdentity.windowID == expectedIdentity.windowID,
-          refreshedIdentity.ownerProcessIdentifier == expectedIdentity.ownerProcessIdentifier,
-          refreshedIdentity.ownerProcessStartIdentity == expectedIdentity.ownerProcessStartIdentity,
-          refreshed.isMinimized == false,
-          refreshedIdentity.isMinimized == false,
-          let refreshedBounds = refreshedIdentity.capturedBounds,
-          windowFramesMatch(refreshed.bounds, expectedBounds, tolerance: tolerance),
-          windowFramesMatch(refreshedBounds, expectedBounds, tolerance: tolerance)
-    else {
-        return original
-    }
-    return refreshed
+    else { return nil }
+    return await (try? validatedRestoredWindowOutputInfo(
+        original: original,
+        tolerance: tolerance,
+        refresh: refresh
+    )) ?? original
 }

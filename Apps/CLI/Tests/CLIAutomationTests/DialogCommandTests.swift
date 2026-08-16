@@ -18,6 +18,28 @@ private struct DialogListPayload: Codable {
     let textElements: [String]
 }
 
+private enum TargetedForegroundDialogAction: CaseIterable {
+    case input
+    case file
+    case forceDismiss
+
+    var arguments: [String] {
+        let actionArguments = switch self {
+        case .input:
+            ["dialog", "input", "--text", "hello", "--foreground"]
+        case .file:
+            ["dialog", "file", "--path", "/tmp", "--name", "test.txt", "--foreground"]
+        case .forceDismiss:
+            ["dialog", "dismiss", "--force", "--foreground"]
+        }
+        return actionArguments + [
+            "--pid", String(InputFocusFixtures.processIdentifier),
+            "--window-id", String(InputFocusFixtures.windowID),
+            "--json",
+        ]
+    }
+}
+
 #if !PEEKABOO_SKIP_AUTOMATION
 @Suite(
     .serialized,
@@ -267,7 +289,10 @@ struct DialogCommandTests {
         let services = self.makeTestServices(dialogs: dialogService)
 
         let (output, status) = try await runCommand(
-            ["dialog", "click", "--button", "New Document", "--json"],
+            [
+                "dialog", "click", "--button", "New Document",
+                "--pid", "42", "--window-id", "73", "--json",
+            ],
             services: services
         )
         #expect(status == 0)
@@ -284,11 +309,11 @@ struct DialogCommandTests {
         #expect(response.data.button == "New Document")
         #expect(dialogService.recordedButtonClicks.count == 1)
         #expect(dialogService.recordedButtonClicks.first?.button == "New Document")
-        #expect(dialogService.clickFallbackRequests == [false])
+        #expect(dialogService.clickFallbackRequests.isEmpty)
     }
 
     @Test
-    func `dialog click only permits global fallback in foreground mode`() async throws {
+    func `foreground dialog click retains exact prepared action without global fallback`() async throws {
         let elements = DialogElements(
             dialogInfo: DialogInfo(
                 title: "Alert",
@@ -307,16 +332,19 @@ struct DialogCommandTests {
         let services = self.makeTestServices(dialogs: dialogService)
 
         let result = try await InProcessCommandRunner.run(
-            ["dialog", "click", "--button", "OK", "--foreground", "--json"],
+            [
+                "dialog", "click", "--button", "OK", "--foreground",
+                "--pid", "42", "--window-id", "73", "--no-auto-focus", "--json",
+            ],
             services: services
         )
 
         #expect(result.exitStatus == 0)
-        #expect(dialogService.clickFallbackRequests == [true])
+        #expect(dialogService.clickFallbackRequests.isEmpty)
     }
 
     @Test
-    func `dialog input rejects background mode before calling service`() async throws {
+    func `targetless dialog input rejects background mode before calling service`() async throws {
         let elements = DialogElements(
             dialogInfo: DialogInfo(
                 title: "Alert",
@@ -342,6 +370,180 @@ struct DialogCommandTests {
     }
 
     @Test
+    func `receipt backed dialog target directly validates matching PID and window selectors`() throws {
+        let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
+        let identity = WindowMutationIdentity(
+            windowID: 73,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: 9001,
+            capturedBounds: bounds
+        )
+        let result = DialogActionResult(
+            success: true,
+            action: .enterText,
+            details: [:],
+            outcome: nil,
+            targetReceipt: .init(
+                processIdentifier: 42,
+                processStartIdentity: 9001,
+                windowID: 73
+            ),
+            targetWindowIdentity: identity,
+            targetWindowBounds: bounds,
+            focusedElement: nil
+        )
+        let selector = try DialogTargetSelector(processIdentifier: 42, windowID: 73)
+
+        let target = try #require(try DialogCommand.exactResultTargetIdentity(
+            from: result,
+            matching: selector
+        ))
+
+        #expect(target.exactWindow?.identity == identity)
+    }
+
+    @Test
+    func `receipt backed dialog target refuses another PID or window`() throws {
+        let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
+        let identity = WindowMutationIdentity(
+            windowID: 902,
+            ownerProcessIdentifier: 84,
+            ownerProcessStartIdentity: 9002,
+            capturedBounds: bounds
+        )
+        let result = DialogActionResult(
+            success: true,
+            action: .enterText,
+            details: [:],
+            outcome: nil,
+            targetReceipt: .init(
+                processIdentifier: 84,
+                processStartIdentity: 9002,
+                windowID: 902
+            ),
+            targetWindowIdentity: identity,
+            targetWindowBounds: bounds,
+            focusedElement: nil
+        )
+        let requestedSelectors = try [
+            DialogTargetSelector(processIdentifier: 42, windowID: 902),
+            DialogTargetSelector(processIdentifier: 84, windowID: 73),
+        ]
+
+        for selector in requestedSelectors {
+            #expect(throws: PeekabooError.self) {
+                _ = try DialogCommand.exactResultTargetIdentity(
+                    from: result,
+                    matching: selector
+                )
+            }
+        }
+    }
+
+    @Test
+    func `receipt backed dialog target requires resolved evidence for metadata selectors`() throws {
+        let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
+        let identity = WindowMutationIdentity(
+            windowID: 73,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: 9001,
+            capturedBounds: bounds
+        )
+        let result = DialogActionResult(
+            success: true,
+            action: .enterText,
+            details: [:],
+            outcome: nil,
+            targetReceipt: .init(
+                processIdentifier: 42,
+                processStartIdentity: 9001,
+                windowID: 73
+            ),
+            targetWindowIdentity: identity,
+            targetWindowBounds: bounds,
+            focusedElement: nil
+        )
+        let selector = try DialogTargetSelector(
+            applicationIdentifier: "Dialog Fixture",
+            windowTitle: "Alert"
+        )
+
+        #expect(throws: PeekabooError.self) {
+            _ = try DialogCommand.exactResultTargetIdentity(
+                from: result,
+                matching: selector
+            )
+        }
+    }
+
+    @Test
+    func `exact dialog input defaults to background AXValue and returns its target receipt`() async throws {
+        let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
+        let identity = WindowMutationIdentity(
+            windowID: 73,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: 9001,
+            capturedBounds: bounds
+        )
+        let exactTarget = try UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds)
+        let resolved = try ResolvedDialogTargetEvidence(
+            target: exactTarget,
+            application: .init(
+                processIdentifier: 42,
+                processStartIdentity: 9001,
+                bundleIdentifier: "com.example.DialogFixture",
+                name: "Dialog Fixture"
+            ),
+            window: .init(
+                windowID: 73,
+                title: "Alert",
+                bounds: bounds,
+                mutationIdentity: identity
+            )
+        )
+        let dialogService = StubDialogService(elements: DialogElements(
+            dialogInfo: DialogInfo(title: "Alert", role: "AXSheet", bounds: bounds),
+            textFields: [DialogTextField(index: 0)]
+        ))
+        dialogService.enterTextResult = DialogActionResult(
+            success: true,
+            action: .enterText,
+            details: ["field": "Name", "text_length": "5"],
+            outcome: .confirmedChange(
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                unitCount: .one
+            ),
+            targetReceipt: DialogCommand.targetReceipt(exactTarget),
+            targetWindowIdentity: identity,
+            targetWindowBounds: bounds,
+            focusedElement: nil,
+            resolvedTarget: resolved
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "dialog", "input", "--text", "hello", "--field", "Name",
+                "--pid", "42", "--window-id", "73", "--json",
+            ],
+            services: self.makeTestServices(dialogs: dialogService)
+        )
+
+        #expect(
+            result.exitStatus == 0,
+            "stdout=\(result.stdout) stderr=\(result.stderr)"
+        )
+        #expect(dialogService.exactInputRequests.count == 1)
+        #expect(dialogService.foregroundExactInputRequests.isEmpty)
+        #expect(dialogService.exactInputRequests.first?.focus.autoFocus == false)
+        let object = try #require(JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+        let outcome = try #require(object["outcome"] as? [String: Any])
+        let receipt = try #require(object["target_receipt"] as? [String: Any])
+        #expect(outcome["delivery_mechanism"] as? String == "accessibility_value")
+        #expect(outcome["delivery_mode"] as? String == "background")
+        #expect(receipt["window_id"] as? Int == 73)
+    }
+
+    @Test
     func `dialog input preserves exact selector and focus policy for host execution`() async throws {
         let elements = DialogElements(
             dialogInfo: DialogInfo(
@@ -359,6 +561,22 @@ struct DialogCommandTests {
             ownerProcessStartIdentity: 9001,
             capturedBounds: bounds
         )
+        let exactTarget = try UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds)
+        let resolvedTarget = try ResolvedDialogTargetEvidence(
+            target: exactTarget,
+            application: ServiceApplicationInfo(
+                processIdentifier: 42,
+                processStartIdentity: 9001,
+                bundleIdentifier: "com.example.DialogFixture",
+                name: "Dialog Fixture"
+            ),
+            window: ServiceWindowInfo(
+                windowID: 73,
+                title: "Alert",
+                bounds: bounds,
+                mutationIdentity: identity
+            )
+        )
         dialogService.enterTextResult = DialogActionResult(
             success: true,
             action: .enterText,
@@ -372,9 +590,17 @@ struct DialogCommandTests {
                 processIdentifier: identity.ownerProcessIdentifier,
                 processStartIdentity: identity.ownerProcessStartIdentity,
                 windowID: identity.windowID
-            )
+            ),
+            targetWindowIdentity: identity,
+            targetWindowBounds: bounds,
+            focusedElement: nil,
+            resolvedTarget: resolvedTarget
         )
-        let services = self.makeTestServices(dialogs: dialogService)
+        let services = self.makeConfirmedRemoteTestServices(
+            dialogs: dialogService,
+            identity: identity,
+            title: "Alert"
+        )
 
         let result = try await InProcessCommandRunner.run(
             [
@@ -386,8 +612,8 @@ struct DialogCommandTests {
         )
 
         #expect(result.exitStatus == 0)
-        #expect(dialogService.exactInputRequests.count == 1)
-        let request = try #require(dialogService.exactInputRequests.first)
+        #expect(dialogService.foregroundExactInputRequests.count == 1)
+        let request = try #require(dialogService.foregroundExactInputRequests.first)
         #expect(request.target.processIdentifier == 42)
         #expect(request.target.windowID == 73)
         #expect(request.target.windowTitle == nil)
@@ -403,9 +629,16 @@ struct DialogCommandTests {
             JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
         )
         let data = try #require(object["data"] as? [String: Any])
+        let target = try #require(object["target_identity"] as? [String: Any])
+        let receipt = try #require(object["target_receipt"] as? [String: Any])
         #expect(data["pid"] as? Int == 42)
         #expect(data["window_id"] as? Int == 73)
         #expect(data["process_start_identity_decimal"] as? String == "9001")
+        #expect(target["kind"] as? String == "window")
+        #expect(target["pid"] as? Int == 42)
+        #expect(target["process_start_identity_decimal"] as? String == "9001")
+        #expect(target["window_id"] as? Int == 73)
+        #expect(receipt["window_id"] as? Int == 73)
     }
 
     @Test
@@ -436,7 +669,7 @@ struct DialogCommandTests {
     }
 
     @Test
-    func `forced dialog dismiss preserves exact selector and host owned focus policy`() async throws {
+    func `forced dialog dismiss preserves exact selector after confirmed CLI focus`() async throws {
         let dialogService = StubDialogService(elements: DialogElements(
             dialogInfo: DialogInfo(
                 title: "Alert",
@@ -454,11 +687,22 @@ struct DialogCommandTests {
                 unitCount: .one
             )
         )
-        let services = self.makeTestServices(dialogs: dialogService)
+        let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
+        let identity = WindowMutationIdentity(
+            windowID: 73,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: 9001,
+            capturedBounds: bounds
+        )
+        let services = self.makeConfirmedRemoteTestServices(
+            dialogs: dialogService,
+            identity: identity,
+            title: "Alert"
+        )
 
         let result = try await InProcessCommandRunner.run(
             [
-                "dialog", "dismiss", "--force", "--foreground", "--no-auto-focus",
+                "dialog", "dismiss", "--force", "--foreground",
                 "--pid", "42", "--window-id", "73", "--focus-timeout", "2s",
                 "--focus-retry-count", "4", "--bring-to-current-space", "--json",
             ],
@@ -469,10 +713,62 @@ struct DialogCommandTests {
         let request = try #require(dialogService.exactForcedDismissRequests.first)
         #expect(request.target.processIdentifier == 42)
         #expect(request.target.windowID == 73)
-        #expect(!request.focus.autoFocus)
+        #expect(request.focus.autoFocus)
         #expect(request.focus.timeout == 2)
         #expect(request.focus.retryCount == 4)
         #expect(request.focus.bringToCurrentSpace)
+    }
+
+    @Test
+    @MainActor
+    func `targeted foreground dialog actions refuse unverified focus before leaf dispatch`() async throws {
+        for action in TargetedForegroundDialogAction.allCases {
+            let windows = InputFocusWindowService(
+                focusOutcome: .dispatchedUnverified(
+                    route: .bridge,
+                    delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one
+                )
+            )
+            let dialogs = StubDialogService(elements: self.fileDialogElements())
+            let services = InputExecutionHostServices(
+                host: .remote,
+                base: TestServicesFactory.makePeekabooServices(windows: windows, dialogs: dialogs)
+            )
+
+            let result = try await InProcessCommandRunner.run(action.arguments, services: services)
+            let payload = try JSONDecoder().decode(JSONResponse.self, from: Data(result.stdout.utf8))
+
+            #expect(result.exitStatus == 1)
+            #expect(windows.pinnedFocusCalls.count == 1)
+            self.expectNoDialogLeafDispatch(action, dialogs: dialogs)
+            #expect(payload.outcome?.state == .dispatchedUnverified)
+            #expect(payload.target_receipt?.windowID == InputFocusFixtures.windowID)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `targeted foreground dialog actions refuse mismatched focus before leaf dispatch`() async throws {
+        for action in TargetedForegroundDialogAction.allCases {
+            let windows = InputFocusWindowService(focusOutcome: InputFocusFixtures.focusOutcome)
+            windows.returnedTargetIdentity = try InputFocusFixtures.targetIdentity(windowID: 902)
+            let dialogs = StubDialogService(elements: self.fileDialogElements())
+            let services = InputExecutionHostServices(
+                host: .remote,
+                base: TestServicesFactory.makePeekabooServices(windows: windows, dialogs: dialogs)
+            )
+
+            let result = try await InProcessCommandRunner.run(action.arguments, services: services)
+            let payload = try JSONDecoder().decode(JSONResponse.self, from: Data(result.stdout.utf8))
+
+            #expect(result.exitStatus == 1)
+            #expect(windows.pinnedFocusCalls.count == 1)
+            self.expectNoDialogLeafDispatch(action, dialogs: dialogs)
+            #expect(payload.outcome?.state == .indeterminate)
+            #expect(payload.target_receipt?.windowID == InputFocusFixtures.windowID)
+        }
     }
 
     @Test
@@ -855,6 +1151,60 @@ struct DialogCommandTests {
         dialogs: any DialogServiceProtocol = StubDialogService()
     ) -> PeekabooServices {
         TestServicesFactory.makePeekabooServices(dialogs: dialogs)
+    }
+
+    @MainActor
+    private func makeConfirmedRemoteTestServices(
+        dialogs: any DialogServiceProtocol,
+        identity: WindowMutationIdentity,
+        title: String
+    ) -> InputExecutionHostServices {
+        let window = ServiceWindowInfo(
+            windowID: identity.windowID,
+            title: title,
+            bounds: identity.capturedBounds ?? .zero,
+            mutationIdentity: identity
+        )
+        let windows = OutcomeStubWindowService(windowsByApp: ["Dialog Fixture": [window]])
+        windows.actionOutcome = .confirmedChange(
+            route: .bridge,
+            delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+            unitCount: .one
+        )
+        return InputExecutionHostServices(
+            host: .remote,
+            base: TestServicesFactory.makePeekabooServices(windows: windows, dialogs: dialogs)
+        )
+    }
+
+    @MainActor
+    private func fileDialogElements() -> DialogElements {
+        DialogElements(
+            dialogInfo: DialogInfo(
+                title: "Save",
+                role: "AXWindow",
+                subrole: "AXDialog",
+                isFileDialog: true,
+                bounds: InputFocusFixtures.bounds
+            ),
+            textFields: [DialogTextField(index: 0)]
+        )
+    }
+
+    @MainActor
+    private func expectNoDialogLeafDispatch(
+        _ action: TargetedForegroundDialogAction,
+        dialogs: StubDialogService
+    ) {
+        switch action {
+        case .input:
+            #expect(dialogs.foregroundExactInputRequests.isEmpty)
+            #expect(dialogs.enterTextCallCount == 0)
+        case .file:
+            #expect(dialogs.handleFileDialogCallCount == 0)
+        case .forceDismiss:
+            #expect(dialogs.exactForcedDismissRequests.isEmpty)
+        }
     }
 }
 

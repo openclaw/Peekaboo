@@ -31,6 +31,7 @@ RuntimeBackedCommand {
                 runtime: runtime,
                 snapshot: self.snapshot,
                 invalidationReason: "set-value",
+                deliveryMechanism: .accessibilityValue,
                 target: self.target,
                 focusOptions: self.focusOptions
             ),
@@ -45,8 +46,8 @@ RuntimeBackedCommand {
                     snapshotId: snapshotId
                 )
             },
-            render: { result, outcome, outputPayload, _ in
-                self.output(outputPayload, outcome: outcome) {
+            render: { result, outcome, targetIdentity, outputPayload, _ in
+                self.output(outputPayload, outcome: outcome, targetIdentity: targetIdentity) {
                     if let outcome {
                         print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Set value"))
                         print("🎯 Target: \(result.target)")
@@ -153,6 +154,7 @@ struct ElementActionCommandContext {
     let runtime: CommandRuntime
     let snapshot: String?
     let invalidationReason: String
+    let deliveryMechanism: DesktopActionOutcome.Delivery.Mechanism
     let target: InteractionTargetOptions
     let focusOptions: FocusCommandOptions
 }
@@ -171,6 +173,7 @@ enum ElementActionCommandExecutor {
         render: (
             _ result: ElementActionResult,
             _ outcome: DesktopActionOutcome?,
+            _ targetIdentity: DesktopTargetIdentity?,
             _ output: ElementActionCommandResult,
             _ value: Prepared
         ) -> Void,
@@ -180,6 +183,8 @@ enum ElementActionCommandExecutor {
         let services = runtime.services
         let logger = runtime.logger
         logger.setJsonOutputMode(runtime.configuration.jsonOutput)
+        let actionSequence = CommandActionSequenceAccumulator()
+        let actionRoute = commandActionRoute(for: runtime.services)
 
         do {
             let target = context.target
@@ -216,11 +221,20 @@ enum ElementActionCommandExecutor {
             let startTime = Date()
             runtime.beginInteractionMutation()
             if Self.shouldFocus(target: target, focusOptions: context.focusOptions) {
-                try await ensureFocused(
+                let focusResult = try await ensureFocused(
                     snapshotId: observation.focusSnapshotId(for: target),
                     target: target,
                     options: context.focusOptions,
                     services: services
+                )
+                try actionSequence.record(
+                    focusResult,
+                    operation: "Element action setup focus",
+                    receiptlessStep: .dispatched(
+                        route: actionRoute,
+                        delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                        unitCount: .one
+                    )
                 )
             }
             let actionResult = try await SnapshotMutationCoordinator.perform(
@@ -236,6 +250,19 @@ enum ElementActionCommandExecutor {
                 },
                 outcome: { $0.outcome }
             )
+            try actionSequence.record(
+                actionResult,
+                operation: "Element action",
+                receiptlessStep: .dispatched(
+                    route: actionRoute,
+                    delivery: .init(
+                        mechanism: context.deliveryMechanism,
+                        mode: .background
+                    ),
+                    unitCount: .one
+                )
+            )
+            let compositeResult = actionSequence.result(payload: actionResult.payload)
             await InteractionObservationInvalidator.invalidateAfterMutation(
                 targets: runtime.interactionMutationTargets,
                 logger: logger,
@@ -243,15 +270,27 @@ enum ElementActionCommandExecutor {
             )
 
             let output = ElementActionCommandResult(
-                target: actionResult.payload.target,
-                actionName: actionResult.payload.actionName,
-                oldValue: actionResult.payload.oldValue,
-                newValue: actionResult.payload.newValue,
+                target: compositeResult.payload.target,
+                actionName: compositeResult.payload.actionName,
+                oldValue: compositeResult.payload.oldValue,
+                newValue: compositeResult.payload.newValue,
                 executionTime: Date().timeIntervalSince(startTime)
             )
-            render(actionResult.payload, actionResult.outcome, output, prepared.value)
+            render(
+                compositeResult.payload,
+                compositeResult.outcome,
+                compositeResult.targetIdentity,
+                output,
+                prepared.value
+            )
         } catch {
-            handleError(error)
+            let preservedError = actionSequence.preservingFailure(
+                error,
+                fallbackRoute: actionRoute,
+                message: "Element action failed after foreground focus may have changed desktop state.",
+                hint: "Observe the exact target before deciding whether to retry the element action."
+            )
+            handleError(preservedError)
             throw ExitCode.failure
         }
     }

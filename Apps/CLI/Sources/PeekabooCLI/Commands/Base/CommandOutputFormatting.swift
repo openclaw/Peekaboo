@@ -13,6 +13,7 @@ extension OutputFormattable {
         _ data: some Codable,
         effect: ActionEffect? = nil,
         outcome: DesktopActionOutcome? = nil,
+        targetIdentity: DesktopTargetIdentity? = nil,
         humanReadable: () -> Void
     ) {
         if jsonOutput {
@@ -20,6 +21,7 @@ extension OutputFormattable {
                 data: data,
                 effect: effect ?? (self as? any ActionOutputFormattable)?.defaultEffect,
                 outcome: outcome,
+                targetIdentity: targetIdentity,
                 logger: self.outputLogger
             )
         } else {
@@ -58,6 +60,8 @@ enum ActionOutcomeHumanRenderer {
             "refresh the target before retrying"
         case .updateRuntime:
             "update the runtime before retrying"
+        case .reconnectSession:
+            "reconnect the Bridge session before retrying"
         case .recoverSideEffect:
             "recover the remaining side effect before retrying"
         case .observeBeforeRetry:

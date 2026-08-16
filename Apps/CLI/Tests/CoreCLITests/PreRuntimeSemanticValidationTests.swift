@@ -52,7 +52,7 @@ struct PreRuntimeSemanticValidationTests {
             expectedMessage: "--button must be either 'left' or 'right'"
         ),
         Case(
-            arguments: ["peekaboo", "action", "AXPress", "--json"],
+            arguments: ["peekaboo", "action", "AXIncrement", "--json"],
             expectedMessage: "--on is required"
         ),
         Case(
@@ -118,13 +118,13 @@ struct PreRuntimeSemanticValidationTests {
     @Test
     func `direct element actions reject concrete snapshots with explicit targets before runtime selection`() throws {
         let cases = [
-            ["action", "AXPress", "--on", "B1", "--snapshot", "receipt-1", "--window-id", "42"],
+            ["action", "AXIncrement", "--on", "B1", "--snapshot", "receipt-1", "--window-id", "42"],
             [
                 "set-value", "hello", "--on", "T1", "--snapshot", "receipt-1", "--app", "TextEdit",
                 "--window-title", "Document",
             ],
             [
-                "action", "AXPress", "--on", "B1", "--snapshot", "receipt-1", "--pid", "123",
+                "action", "AXIncrement", "--on", "B1", "--snapshot", "receipt-1", "--pid", "123",
                 "--window-index", "0",
             ],
         ]
@@ -152,7 +152,7 @@ struct PreRuntimeSemanticValidationTests {
             ["--pid", "123", "--window-index", "0"],
         ]
         let commands = [
-            ["action", "AXPress", "--on", "B1"],
+            ["action", "AXIncrement", "--on", "B1"],
             ["set-value", "hello", "--on", "T1"],
         ]
 

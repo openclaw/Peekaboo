@@ -13,13 +13,21 @@ The action is positional and defaults to `status`.
 
 ```bash
 peekaboo browser status --json
-peekaboo browser connect --channel stable
-peekaboo browser connect --browser-url http://127.0.0.1:9222
+peekaboo browser connect --channel stable --foreground
+peekaboo browser connect --browser-url http://127.0.0.1:9222 --foreground
 peekaboo browser new-page --url https://example.com
 peekaboo browser snapshot --page-id 2 --path /tmp/page.txt
 ```
 
 Use `peekaboo browser --help` for the complete action-specific option set. Page-scoped automation should retain the returned page ID and pass `--page-id` on later calls so concurrent browser work cannot redirect it.
+
+The CLI is background-only by default. Read and page actions reuse an existing exact browser connection and never
+auto-connect. `connect` can surface Chrome's remote-debugging permission UI, so it is classified as a foreground
+mutation and requires explicit `--foreground`. The same flag is required for `--bring-to-front` or a foreground new
+page. If no exact live connection exists, default-mode actions fail before dispatch and ask you to connect explicitly.
+In `--json` output, canonical action outcome, effect, retry safety, mutation-dispatch state, and exact desktop target
+metadata are projected into the standard root CLI envelope. The original MCP metadata remains under `data.meta` for
+tool-specific consumers.
 
 Browser state is owned by one current-build reusable daemon across CLI invocations. Channel connection requires exactly
 one running browser process. When more than one process shares a channel, use `--browser-url` with one loopback DevTools

@@ -162,7 +162,7 @@ struct InteractionSnapshotCaptureRequirementTests {
             ["pid": ["123"], "windowIndex": ["0"]],
         ]
         let commands: [(any ParsableCommand.Type, [String])] = [
-            (ActionCommand.self, ["AXPress"]),
+            (ActionCommand.self, ["AXIncrement"]),
             (SetValueCommand.self, ["hello"]),
         ]
 

@@ -63,6 +63,7 @@ enum CommanderCLIBinder {
             commandType == AppCommand.FocusSubcommand.self ||
             commandType == AppCommand.UnhideSubcommand.self ||
             commandType == AppCommand.SwitchSubcommand.self
+        options.requiresProcessGenerationPinnedApplicationHide = commandType == AppCommand.HideSubcommand.self
         options.requiresProcessGenerationPinnedHotkeys = commandType == PressCommand.self &&
             !commandValues.flag("foreground")
         let usesBackgroundInput = !commandValues.flag("foreground")
@@ -349,8 +350,7 @@ enum CommanderCLIBinder {
         }
         if commandType == MoveCommand.self {
             return mayRefreshObservation && (values.singleOption("to") != nil ||
-                values.singleOption("on") != nil
-            )
+                values.singleOption("on") != nil)
         }
         if commandType == SetValueCommand.self || commandType == ActionCommand.self {
             let hasElementReference = values.singleOption("on")?

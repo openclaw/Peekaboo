@@ -27,88 +27,112 @@ extension MenuCommand {
             self.runtime = runtime
             self.logger.setJsonOutputMode(self.jsonOutput)
 
-            var normalizedItem = self.item
-            var normalizedPath = self.path
-            // Agents often copy "File > New" paths from list output into --item. Normalize
-            // that shape here so click execution and enabled-state validation stay aligned.
-            let normalization = normalizeMenuSelection(item: normalizedItem, path: normalizedPath)
-            normalizedItem = normalization.item
-            normalizedPath = normalization.path
+            let (normalizedItem, normalizedPath) = try self.normalizedSelection()
 
-            if normalization.convertedFromItem, let resolvedPath = normalizedPath {
-                let note = "Interpreting --item value as menu path: \(resolvedPath)"
-                if self.jsonOutput {
-                    self.logger.info(note)
-                } else {
-                    print("ℹ️ \(note)")
-                }
-            }
-
-            guard normalizedItem != nil || normalizedPath != nil else {
-                throw ValidationError("Must specify either --item or --path")
-            }
-
-            guard normalizedItem == nil || normalizedPath == nil else {
-                throw ValidationError("Cannot specify both --item and --path")
-            }
-
+            let actionSequence = CommandActionSequenceAccumulator()
+            let actionRoute = commandActionRoute(for: runtime.services)
             do {
-                try self.target.validate()
-                try self.validateForegroundOptions()
-                try self.validateTargetConsent()
-                let appIdentifier = try await self.resolveTargetApplicationIdentifier()
-                if self.foreground {
-                    let windowID = try await self.target.resolveWindowID(services: self.services)
-                    if self.focusOptions.autoFocus {
-                        self.resolvedRuntime.beginInteractionMutation()
+                do {
+                    try self.target.validate()
+                    try self.validateForegroundOptions()
+                    try self.validateTargetConsent()
+                    let appIdentifier = try await self.resolveTargetApplicationIdentifier()
+                    if self.foreground {
+                        let windowID = try await self.target.resolveWindowID(services: self.services)
+                        if self.focusOptions.autoFocus {
+                            self.resolvedRuntime.beginInteractionMutation()
+                        }
+                        if let focusResult = try await ensureFocusIgnoringMissingWindows(
+                            request: FocusIgnoringMissingWindowsRequest(
+                                windowID: windowID,
+                                applicationName: appIdentifier,
+                                windowTitle: self.target.windowTitle
+                            ),
+                            options: self.focusOptions,
+                            services: self.services,
+                            logger: self.logger
+                        ) {
+                            try actionSequence.record(
+                                focusResult,
+                                receiptlessStep: self.focusOptions.autoFocus
+                                    ? .dispatched(
+                                        route: actionRoute,
+                                        delivery: .init(
+                                            mechanism: .accessibilityAction,
+                                            mode: .foreground
+                                        ),
+                                        unitCount: .one
+                                    )
+                                    : nil
+                            )
+                        }
                     }
-                    try await ensureFocusIgnoringMissingWindows(
-                        request: FocusIgnoringMissingWindowsRequest(
-                            windowID: windowID,
-                            applicationName: appIdentifier,
-                            windowTitle: self.target.windowTitle
-                        ),
-                        options: self.focusOptions,
-                        services: self.services,
-                        logger: self.logger
-                    )
-                }
 
-                let canonicalPath: String? = normalizedPath.map(Self.canonicalizeMenuPath)
-                if let canonicalPath {
-                    try await self.ensureMenuItemEnabled(appIdentifier: appIdentifier, menuPath: canonicalPath)
-                }
+                    let canonicalPath: String? = normalizedPath.map(Self.canonicalizeMenuPath)
+                    if let canonicalPath {
+                        try await self.ensureMenuItemEnabled(appIdentifier: appIdentifier, menuPath: canonicalPath)
+                    }
+                    let appInfo = try await self.services.applications.findApplication(identifier: appIdentifier)
+                    let clickedPath = canonicalPath ?? normalizedItem!
 
-                self.resolvedRuntime.beginInteractionMutation()
-                if let itemName = normalizedItem {
-                    try await MenuServiceBridge.clickMenuItemByName(
-                        menu: self.services.menu,
+                    self.resolvedRuntime.beginInteractionMutation()
+                    let actionResult = try await self.performMenuClick(
                         appIdentifier: appIdentifier,
-                        itemName: itemName
+                        appInfo: appInfo,
+                        itemName: normalizedItem,
+                        path: canonicalPath
                     )
-                } else if let path = canonicalPath {
-                    try await MenuServiceBridge.clickMenuItem(
-                        menu: self.services.menu,
-                        appIdentifier: appIdentifier,
-                        itemPath: path
+                    _ = try validatedSuccessfulActionResult(
+                        actionResult,
+                        operation: "Menu click",
+                        requiresTarget: self.services.menu is any MenuServiceActionResultProviding
+                    )
+                    try actionSequence.record(
+                        actionResult,
+                        receiptlessStep: .dispatched(
+                            route: actionRoute,
+                            delivery: .init(
+                                mechanism: .accessibilityAction,
+                                mode: self.foreground ? .foreground : .background
+                            ),
+                            unitCount: .one
+                        )
+                    )
+                    let compositeResult = actionSequence.result(payload: ())
+
+                    try withPreservedActionResultOnFailure(
+                        compositeResult,
+                        targetIdentity: compositeResult.targetIdentity,
+                        operation: "Menu click"
+                    ) {
+                        if self.jsonOutput {
+                            let data = MenuClickResult(
+                                action: "menu_click",
+                                app: appInfo.name,
+                                menu_path: clickedPath,
+                                clicked_item: clickedPath
+                            )
+                            outputSuccessCodable(
+                                data: data,
+                                effect: .confirmed,
+                                outcome: compositeResult.outcome,
+                                targetIdentity: compositeResult.targetIdentity,
+                                logger: self.outputLogger
+                            )
+                        } else if let outcome = compositeResult.outcome {
+                            print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Menu click"))
+                        } else {
+                            print("✓ Clicked menu item: \(clickedPath)")
+                        }
+                    }
+                } catch {
+                    throw actionSequence.preservingFailure(
+                        error,
+                        fallbackRoute: actionRoute,
+                        message: "Menu click failed after foreground focus may have changed desktop state.",
+                        hint: "Observe the exact target before deciding whether to retry the menu action."
                     )
                 }
-
-                let appInfo = try await self.services.applications.findApplication(identifier: appIdentifier)
-                let clickedPath = canonicalPath ?? normalizedItem!
-
-                if self.jsonOutput {
-                    let data = MenuClickResult(
-                        action: "menu_click",
-                        app: appInfo.name,
-                        menu_path: clickedPath,
-                        clicked_item: clickedPath
-                    )
-                    outputSuccessCodable(data: data, effect: .confirmed, logger: self.outputLogger)
-                } else {
-                    print("✓ Clicked menu item: \(clickedPath)")
-                }
-
             } catch let error as Commander.ValidationError {
                 if self.jsonOutput {
                     outputError(message: error.localizedDescription, code: .INVALID_INPUT, logger: self.outputLogger)
@@ -140,6 +164,88 @@ extension MenuCommand {
                 )
                 throw ExitCode(1)
             }
+        }
+
+        private func normalizedSelection() throws -> (item: String?, path: String?) {
+            // Agents often copy "File > New" paths from list output into --item. Normalize that shape so click
+            // execution and enabled-state validation stay aligned.
+            let normalization = normalizeMenuSelection(item: self.item, path: self.path)
+            if normalization.convertedFromItem, let resolvedPath = normalization.path {
+                let note = "Interpreting --item value as menu path: \(resolvedPath)"
+                if self.jsonOutput {
+                    self.logger.info(note)
+                } else {
+                    print("ℹ️ \(note)")
+                }
+            }
+            guard normalization.item != nil || normalization.path != nil else {
+                throw ValidationError("Must specify either --item or --path")
+            }
+            guard normalization.item == nil || normalization.path == nil else {
+                throw ValidationError("Cannot specify both --item and --path")
+            }
+            return (normalization.item, normalization.path)
+        }
+
+        private func performMenuClick(
+            appIdentifier: String,
+            appInfo: ServiceApplicationInfo,
+            itemName: String?,
+            path: String?
+        ) async throws -> UIAutomationActionResult<Void> {
+            if let itemName {
+                guard !self.foreground else {
+                    return try await MenuServiceBridge.clickMenuItemByName(
+                        menu: self.services.menu,
+                        appIdentifier: appIdentifier,
+                        itemName: itemName
+                    )
+                }
+                let identity = try Self.requireBackgroundProcessIdentity(appInfo)
+                return try await MenuServiceBridge.clickMenuItemByName(
+                    menu: self.services.menu,
+                    request: MenuItemByNameActionRequest(
+                        appIdentifier: "PID:\(identity.processIdentifier)",
+                        itemName: itemName,
+                        expectedIdentity: identity,
+                        deliveryMode: .background
+                    )
+                )
+            }
+
+            guard let path else {
+                throw ValidationError("Must specify either --item or --path")
+            }
+            guard !self.foreground else {
+                return try await MenuServiceBridge.clickMenuItem(
+                    menu: self.services.menu,
+                    appIdentifier: appIdentifier,
+                    itemPath: path
+                )
+            }
+            let identity = try Self.requireBackgroundProcessIdentity(appInfo)
+            return try await MenuServiceBridge.clickMenuItem(
+                menu: self.services.menu,
+                request: MenuItemActionRequest(
+                    appIdentifier: "PID:\(identity.processIdentifier)",
+                    itemPath: path,
+                    expectedIdentity: identity,
+                    deliveryMode: .background
+                )
+            )
+        }
+
+        private static func requireBackgroundProcessIdentity(
+            _ application: ServiceApplicationInfo
+        ) throws -> ApplicationProcessIdentity {
+            guard let identity = application.processIdentity else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "Background menu click requires a stable application process receipt.",
+                    hint: "Refresh the application inventory before retrying."
+                )
+            }
+            return identity
         }
 
         private func resolveTargetApplicationIdentifier() async throws -> String {

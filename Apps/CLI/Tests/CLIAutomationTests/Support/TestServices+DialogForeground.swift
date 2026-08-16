@@ -1,4 +1,6 @@
+import CoreGraphics
 import PeekabooCore
+import PeekabooFoundation
 
 @MainActor
 extension StubDialogService {
@@ -18,9 +20,32 @@ extension StubDialogService {
         guard self.dialogElements != nil else {
             throw DialogError.noActiveDialog
         }
-        if let result = self.dismissResult {
-            return result
-        }
-        throw DialogError.noDismissButton
+        let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
+        let identity = WindowMutationIdentity(
+            windowID: request.target.windowID ?? 73,
+            ownerProcessIdentifier: request.target.processIdentifier ?? 42,
+            ownerProcessStartIdentity: 9001,
+            capturedBounds: bounds
+        )
+        let provided = self.dismissResult
+        return DialogActionResult(
+            success: provided?.success ?? true,
+            action: provided?.action ?? .dismiss,
+            details: provided?.details ?? [:],
+            outcome: provided?.outcome ?? .dispatchedUnverified(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .one
+            ),
+            targetReceipt: provided?.targetReceipt ?? .init(
+                processIdentifier: identity.ownerProcessIdentifier,
+                processStartIdentity: identity.ownerProcessStartIdentity,
+                windowID: identity.windowID
+            ),
+            targetWindowIdentity: provided?.targetWindowIdentity ?? identity,
+            targetWindowBounds: provided?.targetWindowBounds ?? bounds,
+            focusedElement: provided?.focusedElement,
+            resolvedTarget: provided?.resolvedTarget
+        )
     }
 }

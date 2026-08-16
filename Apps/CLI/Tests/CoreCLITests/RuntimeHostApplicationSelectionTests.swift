@@ -155,6 +155,34 @@ struct RuntimeHostApplicationSelectionTests {
     }
 
     @Test
+    func `App hide rejects hosts that cannot pin the caller process generation`() {
+        let operations: [PeekabooBridgeOperation] = [.hideApplication]
+        let pinned = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: operations,
+            enabledOperations: operations,
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.attestedOperationReceipts,
+                PeekabooBridgeHostCapability.processGenerationPinnedApplicationHide,
+            ]
+        )
+        let legacy = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 28),
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: operations,
+            enabledOperations: operations
+        )
+        var options = CommandRuntimeOptions()
+        options.requiresProcessGenerationPinnedApplicationHide = true
+
+        #expect(CommandRuntime.supportsRemoteRequirements(for: pinned, options: options))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: options))
+    }
+
+    @Test
     @MainActor
     func `Launch commands prefer GUI host before reusable daemon`() {
         var options = CommandRuntimeOptions()

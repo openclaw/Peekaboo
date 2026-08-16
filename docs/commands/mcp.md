@@ -16,6 +16,12 @@ read_when:
 
 ## Implementation notes
 - `serve` instantiates `PeekabooMCPServer` and maps the transport string to `PeekabooCore.TransportType`. Stdio is the default for Claude Code integrations.
+- Public MCP servers are always background-only. Foreground actions, shared desktop input, browser connection setup,
+  and ambient browser auto-connect fail before dispatch. Establish an exact browser connection separately with
+  `peekaboo browser connect --foreground`; MCP browser calls can then reuse its signed live receipt.
+- Direct-text `paste` is admitted only with an exact generation-pinned app/PID/window authorization and a canonical
+  background result. Targetless, foreground, current-clipboard, and binary paste are refused before dispatch. The
+  nested `agent` tool likewise retains immutable background-only authority and never exposes Shell.
 - HTTP/SSE server transports are reserved but not implemented. Selecting either fails before daemon startup and emits a structured error in JSON mode.
 - The MCP process owns its stdio lifecycle and never hosts a Bridge listener. Support stays process-local by default;
   an explicit `--bridge-socket <path>` uses that existing Bridge host and skips the embedded daemon.

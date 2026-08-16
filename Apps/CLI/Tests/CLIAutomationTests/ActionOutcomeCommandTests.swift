@@ -87,7 +87,7 @@ struct ActionOutcomeCommandTests {
             (["scroll", "--direction", "down", "--amount", "1", "--foreground"], foregroundEvents),
             (["press", "cmd+a", "--foreground"], foregroundEvents),
             (
-                ["action", "AXPress", "--on", "B1"],
+                ["action", "AXIncrement", "--on", "B1"],
                 .init(mechanism: .accessibilityAction, mode: .background)
             ),
             (

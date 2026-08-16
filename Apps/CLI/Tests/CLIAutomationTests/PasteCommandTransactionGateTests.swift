@@ -35,7 +35,7 @@ extension PasteCommandTests {
 
     func makeTransactionGateContext(processIdentifier: pid_t = 2468) -> (
         services: PeekabooServices,
-        automation: StubAutomationService,
+        automation: OutcomeStubAutomationService,
         clipboard: StubClipboardService,
         applications: StubApplicationService
     ) {
@@ -45,7 +45,11 @@ extension PasteCommandTests {
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )
-        let automation = StubAutomationService()
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .processTargetedEvents, mode: .background),
+            unitCount: .one
+        )
         let clipboard = StubClipboardService()
         let applications = StubApplicationService(applications: [app])
         clipboard.current = ClipboardReadResult(

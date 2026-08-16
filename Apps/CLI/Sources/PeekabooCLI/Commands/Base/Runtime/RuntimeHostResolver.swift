@@ -853,6 +853,8 @@ enum RuntimeHostResolver {
             BridgeCapabilityPolicy.supportsProcessGenerationPinnedApplicationQuit(for: handshake),
             supportsProcessGenerationPinnedApplicationActivation:
             BridgeCapabilityPolicy.supportsProcessGenerationPinnedApplicationActivation(for: handshake),
+            supportsProcessGenerationPinnedApplicationHide:
+            BridgeCapabilityPolicy.supportsProcessGenerationPinnedApplicationHide(for: handshake),
             allowLocalApplicationFallback: handshake.hostKind == .onDemand,
             desktopMutationWatermarkStore: DesktopMutationWatermarkStore()
         )

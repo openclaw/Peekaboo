@@ -78,7 +78,11 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
             let options = try buildOptions()
             let timing = try resolveActionTiming(durationLimit: options.duration)
             if scope.kind == .window, let identifier = scope.applicationIdentifier {
-                try await focusIfNeeded(appIdentifier: identifier)
+                try await focusIfNeeded(
+                    appIdentifier: identifier,
+                    windowID: scope.windowId,
+                    windowMutationIdentity: scope.windowMutationIdentity
+                )
             }
 
             let outputDir = try resolveOutputDirectory()
@@ -387,6 +391,7 @@ extension CaptureActionCommand {
 extension CaptureActionCommand {
     func resolveScope() async throws -> CaptureScope {
         let mode = try resolveMode()
+        let selector = try self.validatedCaptureWindowSelector(allowMissingTarget: true)
         switch mode {
         case .screen:
             let displayInfo = try await displayInfo(for: screenIndex)
@@ -402,13 +407,22 @@ extension CaptureActionCommand {
         case .frontmost:
             return CaptureScope(kind: .frontmost)
         case .window:
+            guard selector.hasOwnerInput else {
+                throw ValidationError("Window capture requires --app or --pid")
+            }
             let identifier = try resolveApplicationIdentifier()
-            let windowReference = try await resolveWindowReference(for: identifier)
+            let windowReference = try await resolveExactCaptureWindowReference(
+                selector: selector,
+                applicationIdentifier: identifier,
+                services: self.services,
+                operation: "Capture action"
+            )
             return CaptureScope(
                 kind: .window,
                 screenIndex: nil,
                 displayUUID: nil,
                 windowId: windowReference.windowID,
+                windowMutationIdentity: windowReference.identity,
                 applicationIdentifier: identifier,
                 windowIndex: windowReference.windowIndex,
                 region: nil
@@ -466,49 +480,6 @@ extension CaptureActionCommand {
         return CGRect(x: x, y: y, width: width, height: height)
     }
 
-    mutating func focusIfNeeded(appIdentifier: String) async throws {
-        switch self.captureFocus {
-        case .background:
-            return
-        case .auto:
-            let windowTitle = self.windowTitle
-            let services = self.services
-            let options = FocusOptions(
-                autoFocus: true,
-                focusTimeout: nil,
-                focusRetryCount: nil,
-                spaceSwitch: false,
-                bringToCurrentSpace: false
-            )
-            try await self.withCaptureFocusDispatchReceipt {
-                try await ensureFocused(
-                    applicationName: appIdentifier,
-                    windowTitle: windowTitle,
-                    options: options,
-                    services: services
-                )
-            }
-        case .foreground:
-            let windowTitle = self.windowTitle
-            let services = self.services
-            let options = FocusOptions(
-                autoFocus: true,
-                focusTimeout: nil,
-                focusRetryCount: nil,
-                spaceSwitch: true,
-                bringToCurrentSpace: true
-            )
-            try await self.withCaptureFocusDispatchReceipt {
-                try await ensureFocused(
-                    applicationName: appIdentifier,
-                    windowTitle: windowTitle,
-                    options: options,
-                    services: services
-                )
-            }
-        }
-    }
-
     private func liveCaptureEnginePreference(for scope: CaptureScope) -> CaptureEnginePreference {
         let value = (captureEngine ?? self.resolvedRuntime.configuration.captureEnginePreference)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -531,40 +502,6 @@ extension CaptureActionCommand {
             throw PeekabooError.invalidInput("Screen index \(index) not found")
         }
         return (index, "\(match.displayID)")
-    }
-
-    private func resolveWindowReference(for identifier: String) async throws -> (windowID: UInt32?, windowIndex: Int?) {
-        guard self.windowTitle != nil || self.windowIndex != nil else {
-            return (nil, nil)
-        }
-
-        let windows = try await WindowServiceBridge.listWindows(
-            windows: self.services.windows,
-            target: .application(identifier)
-        )
-        let renderable = ObservationTargetResolver.captureCandidates(from: windows)
-
-        let selectedWindow: ServiceWindowInfo? = if let title = windowTitle?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !title.isEmpty {
-            renderable.first { $0.title.localizedCaseInsensitiveContains(title) }
-        } else if let explicitIndex = windowIndex {
-            renderable.first { $0.index == explicitIndex }
-        } else {
-            nil
-        }
-
-        guard let selectedWindow else {
-            let criteria = self.windowTitle.map { "window title '\($0)' for \(identifier)" }
-                ?? self.windowIndex.map { "window index \($0) for \(identifier)" }
-                ?? "window for \(identifier)"
-            throw PeekabooError.windowNotFound(criteria: criteria)
-        }
-
-        return (
-            windowID: UInt32(exactly: selectedWindow.windowID),
-            windowIndex: selectedWindow.index
-        )
     }
 }
 

@@ -15,6 +15,16 @@ struct ListSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeB
         self.runtime = runtime
         self.logger.setJsonOutputMode(self.jsonOutput)
 
+        do {
+            try SpaceCommandHostOwnership.requireLocalRead(
+                services: self.services,
+                operation: "list Spaces"
+            )
+        } catch {
+            self.handleError(error)
+            throw ExitCode(1)
+        }
+
         let spaceService = SpaceCommandEnvironment.service
         let spaces = await spaceService.getAllSpaces()
         AutomationEventLogger.log(

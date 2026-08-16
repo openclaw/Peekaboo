@@ -8,8 +8,11 @@ import PeekabooFoundation
 
 /// Capture a screenshot and build an interactive UI map
 @available(macOS 14.0, *)
-struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValidatingCommand, RuntimeBackedCommand {
-    @Option(help: "Application name or bundle ID; mutually exclusive with --pid (also: menubar, frontmost)")
+struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValidatingCommand,
+RuntimeBackedCommand {
+    @Option(
+        help: "Application name or bundle ID; mutually exclusive with --pid (also: menubar, frontmost)"
+    )
     var app: String?
 
     @Option(name: .long, help: "Target application by process ID; mutually exclusive with --app")
@@ -23,7 +26,8 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
 
     @Option(
         name: .long,
-        help: "CoreGraphics window ID; may be used without --app/--pid (from `peekaboo window list --json`)"
+        help:
+        "CoreGraphics window ID; may be used without --app/--pid (from `peekaboo window list --json`)"
     )
     var windowId: Int?
 
@@ -43,21 +47,27 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
     var retina = false
 
     @Option(
-        names: [.automatic, .customLong("save"), .customLong("output"), .customShort("o", allowingJoined: false)],
+        names: [
+            .automatic, .customLong("save"), .customLong("output"),
+            .customShort("o", allowingJoined: false),
+        ],
         help: "Output path for screenshot (aliases: --save, --output, -o)"
     )
     var path: String?
 
     @Option(
         name: .long,
-        help: "Specific screen index to capture (0-based). If not specified, captures all screens when in screen mode"
+        help:
+        "Specific screen index to capture (0-based). If not specified, captures all screens when in screen mode"
     )
     var screenIndex: Int?
 
     @Flag(help: "Generate annotated screenshot with interaction markers")
     var annotate = false
 
-    @Flag(help: "Skip element detection; exact --window-id captures still publish a coordinate receipt")
+    @Flag(
+        help: "Skip element detection; exact --window-id captures still publish a coordinate receipt"
+    )
     var noElements = false
 
     @Flag(help: "Add host-local Vision OCR text to the accessibility element map")
@@ -125,6 +135,10 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
         .background
     }
 
+    var requiresExactObservationTarget: Bool {
+        self.pid != nil || self.windowId != nil
+    }
+
     func withCaptureFocusMutation(_ operation: () async throws -> Void) async rethrows {
         try await self.resolvedRuntime.withCaptureFocusMutation(operation)
     }
@@ -138,13 +152,16 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
         let mutationCoordinator = runtime.toolSnapshotMutationCoordinator
         let snapshotManager = runtime.services.snapshots
 
-        logger.operationStart("see_command", metadata: [
-            "app": self.app ?? "none",
-            "mode": self.mode?.rawValue ?? "auto",
-            "annotate": self.annotate,
-            "menubar": self.menubar,
-            "hasAnalyzePrompt": self.analyze != nil,
-        ])
+        logger.operationStart(
+            "see_command",
+            metadata: [
+                "app": self.app ?? "none",
+                "mode": self.mode?.rawValue ?? "auto",
+                "annotate": self.annotate,
+                "menubar": self.menubar,
+                "hasAnalyzePrompt": self.analyze != nil,
+            ]
+        )
 
         do {
             try self.validateBeforeRuntime()
@@ -160,27 +177,31 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
                 return
             }
         } catch {
-            logger.operationComplete("see_command", success: false, metadata: ["error": error.localizedDescription])
-            self.handleError(error)
+            logger.operationComplete(
+                "see_command", success: false, metadata: ["error": error.localizedDescription]
+            )
+            self.handleSeeError(error)
             throw ExitCode.failure
         }
 
         let commandCopy = self
-        let mayFocusWebContent = commandCopy.webFocus
+        let mayMutateDuringObservation = commandCopy.webFocus || commandCopy.menubar
+        let actionProgress = mayMutateDuringObservation ? DesktopObservationActionProgress() : nil
 
         do {
-            if mayFocusWebContent {
+            if mayMutateDuringObservation {
                 runtime.beginInteractionMutation(preservingSnapshotsCreatedAfterBoundary: true)
             }
             let observationStartedAt = Date()
             let observationDeadline = observationStartedAt.addingTimeInterval(overallTimeout)
-            let scope = mayFocusWebContent
-                ? MCPToolSnapshotMutationScope(
-                    toolName: "see",
-                    startedAt: observationStartedAt,
-                    effect: .mutationProducingFreshObservation
-                )
-                : nil
+            let scope =
+                mayMutateDuringObservation
+                    ? MCPToolSnapshotMutationScope(
+                        toolName: "see",
+                        startedAt: observationStartedAt,
+                        effect: .mutationProducingFreshObservation
+                    )
+                    : nil
             let reservationTimeout = try Self.remainingObservationTimeout(
                 until: observationDeadline,
                 overallTimeout: overallTimeout
@@ -201,6 +222,7 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
                 }
             }
             var observationCompleted = false
+            var executionReceipt = SeeExecutionReceipt.none
             do {
                 let preparationTimeout = try Self.remainingObservationTimeout(
                     until: observationDeadline,
@@ -211,14 +233,17 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
                     timeoutErrorSeconds: overallTimeout,
                     interactionMutationTracker: runtime.observationTimeoutMutationTracker
                 ) {
-                    try await commandCopy.prepareResult(
-                        startTime: commandStartedAt,
-                        logger: logger,
-                        snapshotID: snapshotID,
-                        observationTimeoutSeconds: preparationTimeout
-                    )
+                    try await DesktopObservationActionProgressContext.$current.withValue(actionProgress) {
+                        try await commandCopy.prepareResult(
+                            startTime: commandStartedAt,
+                            logger: logger,
+                            snapshotID: snapshotID,
+                            observationTimeoutSeconds: preparationTimeout
+                        )
+                    }
                 }
                 observationCompleted = true
+                executionReceipt = context.receipt
 
                 if let scope {
                     let publicationTimeout = try Self.remainingObservationTimeout(
@@ -250,12 +275,16 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
                 try Task.checkCancellation()
                 try commandCopy.renderResults(context: context)
                 commandCopy.emitAnnotationStatus(context: context)
-                logger.operationComplete("see_command", metadata: [
-                    "executionTimeMs": Int(Date().timeIntervalSince(commandStartedAt) * 1000),
-                    "success": true,
-                ])
+                logger.operationComplete(
+                    "see_command",
+                    metadata: [
+                        "executionTimeMs": Int(Date().timeIntervalSince(commandStartedAt) * 1000),
+                        "success": true,
+                    ]
+                )
             } catch {
-                if scope == nil || observationCompleted || !PendingSnapshotCleanupPolicy
+                if scope == nil || observationCompleted
+                    || !PendingSnapshotCleanupPolicy
                     .shouldPreserveReservation(after: error) {
                     try? await self.services.snapshots.cleanSnapshot(snapshotId: snapshotID)
                 }
@@ -265,7 +294,11 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
                         succeeded: false
                     )
                 }
-                throw error
+                let projected = commandCopy.failurePreservingConditionalTimeout(
+                    error,
+                    progress: actionProgress?.latestReceipt
+                )
+                throw executionReceipt.preservingFailure(projected, operation: "see result publication")
             }
         } catch {
             logger.operationComplete(
@@ -275,13 +308,14 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
                     "error": error.localizedDescription,
                 ]
             )
-            self.handleError(error)
+            self.handleSeeError(error)
             throw ExitCode.failure
         }
     }
 
     var usesPixelOnlyCapture: Bool {
-        self.noElements || self.streamsImageToStdout || self.determineMode() == .multi || self.determineMode() == .area
+        self.noElements || self.streamsImageToStdout || self.determineMode() == .multi
+            || self.determineMode() == .area
     }
 
     func validateMergedOptions() throws {
@@ -295,7 +329,9 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
         )
         try self.validateROIOptions(resolvedMode: resolvedMode)
         try self.validateInteractionTargetSelectors()
-        let windowSelectorCount = [self.windowTitle != nil, self.windowIndex != nil, self.windowId != nil]
+        let windowSelectorCount = [
+            self.windowTitle != nil, self.windowIndex != nil, self.windowId != nil,
+        ]
             .count(where: { $0 })
         try self.validateSpecialCaptureTargets(windowSelectorCount: windowSelectorCount)
         guard !self.menubar else { return }
@@ -319,10 +355,11 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
         guard processIdentifier > 0 else {
             throw ValidationError("--pid must be greater than 0")
         }
-        guard RuntimeHostResolver.remoteIsolationRequested(
-            options: self.runtimeOptions,
-            environment: environment
-        )
+        guard
+            RuntimeHostResolver.remoteIsolationRequested(
+                options: self.runtimeOptions,
+                environment: environment
+            )
         else { return }
         guard let application = NSRunningApplication(processIdentifier: processIdentifier),
               !application.isTerminated
@@ -362,21 +399,27 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
             throw ValidationError("--no-screenshot cannot be combined with --annotate or --analyze")
         }
         if self.noScreenshot,
-           resolvedMode == .screen || forcesPixelOnlyMode || self.screenIndex != nil || self.menubar ||
-           self.app?.lowercased() == "menubar" {
-            throw ValidationError("--no-screenshot supports frontmost or app/window accessibility targets only")
+           resolvedMode == .screen || forcesPixelOnlyMode || self.screenIndex != nil || self.menubar
+           || self.app?.lowercased() == "menubar" {
+            throw ValidationError(
+                "--no-screenshot supports frontmost or app/window accessibility targets only"
+            )
         }
         if self.noElements, self.annotate {
             throw ValidationError("--annotate requires element detection")
         }
         if self.streamsImageToStdout, self.tree || self.annotate || self.noScreenshot || self.menubar {
-            throw ValidationError("--path - is screenshot-only and cannot be combined with tree or annotation output")
+            throw ValidationError(
+                "--path - is screenshot-only and cannot be combined with tree or annotation output"
+            )
         }
         if forcesPixelOnlyMode, self.tree || self.annotate {
             throw ValidationError("area and multi capture modes do not support --tree or --annotate")
         }
         if self.menubar, self.noElements || forcesPixelOnlyMode {
-            throw ValidationError("--menubar requires element detection; use --app menubar for screenshot-only capture")
+            throw ValidationError(
+                "--menubar requires element detection; use --app menubar for screenshot-only capture"
+            )
         }
         if self.region != nil, self.mode != nil, self.mode != .area {
             throw ValidationError("--region can only be combined with --mode area")
@@ -385,18 +428,19 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
 
     private func validateSpecialCaptureTargets(windowSelectorCount: Int) throws {
         if let appAlias = self.app?.lowercased(), appAlias == "frontmost" || appAlias == "menubar" {
-            let allowedModes: Set<PeekabooCore.CaptureMode> = appAlias == "frontmost"
-                ? [.window, .frontmost]
-                : [.window]
+            let allowedModes: Set<PeekabooCore.CaptureMode> =
+                appAlias == "frontmost"
+                    ? [.window, .frontmost]
+                    : [.window]
             let hasConflictingMode = self.mode.map { !allowedModes.contains($0) } ?? false
-            if hasConflictingMode || self.region != nil || self.screenIndex != nil || windowSelectorCount > 0 ||
-                self.menubar {
+            if hasConflictingMode || self.region != nil || self.screenIndex != nil
+                || windowSelectorCount > 0 || self.menubar {
                 throw ValidationError("--app \(appAlias) cannot be combined with another capture target")
             }
         }
         if self.menubar {
-            if self.mode != nil || self.pid != nil || self.region != nil || self.screenIndex != nil ||
-                windowSelectorCount > 0 {
+            if self.mode != nil || self.pid != nil || self.region != nil || self.screenIndex != nil
+                || windowSelectorCount > 0 {
                 throw ValidationError("--menubar cannot be combined with another capture target")
             }
         }
@@ -421,8 +465,8 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
             }
         case .frontmost:
             let usesFrontmostAlias = self.app?.lowercased() == "frontmost"
-            if self.pid != nil || windowSelectorCount > 0 || self.screenIndex != nil || self.region != nil ||
-                (self.app != nil && !usesFrontmostAlias) {
+            if self.pid != nil || windowSelectorCount > 0 || self.screenIndex != nil || self.region != nil
+                || (self.app != nil && !usesFrontmostAlias) {
                 throw ValidationError("frontmost mode cannot be combined with another capture target")
             }
         case .window:
@@ -455,27 +499,31 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
 
     private func runPixelOnlyCapture() async throws {
         try self.validateStdoutStreamingOptions()
-        let coordinateReceiptID: String? = if self.publishesPixelCoordinateReceipt {
-            try await self.services.snapshots.createExplicitSnapshot()
-        } else {
-            nil
-        }
+        let coordinateReceiptID: String? =
+            if self.publishesPixelCoordinateReceipt {
+                try await self.services.snapshots.createExplicitSnapshot()
+            } else {
+                nil
+            }
 
+        var captures: [ImageCapturedFile] = []
         do {
-            let captures = try await self.performPixelCapture(snapshotID: coordinateReceiptID)
+            captures = try await self.performPixelCapture(snapshotID: coordinateReceiptID)
+            try self.validatePixelCaptureForPublishing(captures)
             if self.streamsImageToStdout {
                 try self.outputImageToStdout(captures)
-            } else if let prompt = self.analyze, let firstFile = captures.first?.file {
-                let analysis = try await self.analyzeImage(at: firstFile.path, with: prompt)
-                self.outputResultsWithAnalysis(captures, analysis: analysis)
+            } else if let prompt = self.analyze, let firstCapture = captures.first {
+                let analysis = try await self.analyzeImage(firstCapture.imageData, with: prompt)
+                try self.outputResultsWithAnalysis(captures, analysis: analysis)
             } else {
-                self.outputResults(captures)
+                try self.outputResults(captures)
             }
         } catch {
             if let coordinateReceiptID {
                 try? await self.services.snapshots.cleanSnapshot(snapshotId: coordinateReceiptID)
             }
-            throw error
+            let receipt = SeeExecutionReceipt.combining(captures.map(\.receipt))
+            throw receipt.preservingFailure(error, operation: "see pixel capture")
         }
     }
 
@@ -516,91 +564,117 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
             snapshotID: snapshotID,
             observationTimeoutSeconds: observationTimeoutSeconds
         )
-        try Task.checkCancellation()
-        logger.verbose("Capture completed successfully", category: "Capture", metadata: [
-            "snapshotId": captureResult.snapshotId,
-            "elementCount": captureResult.elements.all.count,
-            "screenshotSize": self.getFileSize(captureResult.screenshotPath) ?? 0,
-        ])
+        try captureResult.receipt.requirePublishableOutcome(
+            operation: "See",
+            requiresOutcome: self.webFocus || self.menubar
+        )
+        SeeCommandPreparationContext.didCapture?()
+        logger.verbose(
+            "Capture completed successfully", category: "Capture",
+            metadata: [
+                "snapshotId": captureResult.snapshotId,
+                "elementCount": captureResult.elements.all.count,
+                "screenshotSize": captureResult.screenshotData?.count ?? 0,
+            ]
+        )
 
-        // Generate annotated screenshot if requested
-        var annotatedPath = captureResult.annotatedPath
-        let annotationsAllowed = self.allowsAnnotationForCurrentCapture()
-        if self.annotate, !annotationsAllowed {
-            self.logger.info("Annotation is disabled for full screen captures due to performance constraints")
-        }
-        if self.annotate, annotatedPath == nil, annotationsAllowed {
-            logger.operationStart("generate_annotations")
-            annotatedPath = try await self.generateAnnotatedScreenshot(
-                snapshotId: captureResult.snapshotId,
-                originalPath: captureResult.screenshotPath
-            )
+        do {
             try Task.checkCancellation()
-            if let annotatedPath,
-               annotatedPath != captureResult.screenshotPath {
-                try await self.services.snapshots.storeAnnotatedScreenshot(
+            // Generate annotated screenshot if requested
+            var annotatedPath = captureResult.annotatedPath
+            var annotatedData = captureResult.annotatedData
+            let annotationsAllowed = self.allowsAnnotationForCurrentCapture()
+            if self.annotate, !annotationsAllowed {
+                self.logger.info(
+                    "Annotation is disabled for full screen captures due to performance constraints"
+                )
+            }
+            if self.annotate, annotatedPath == nil, annotationsAllowed {
+                logger.operationStart("generate_annotations")
+                annotatedPath = try await self.generateAnnotatedScreenshot(
                     snapshotId: captureResult.snapshotId,
-                    annotatedScreenshotPath: annotatedPath
+                    originalPath: captureResult.screenshotPath
                 )
                 try Task.checkCancellation()
+                if let annotatedPath,
+                   annotatedPath != captureResult.screenshotPath {
+                    try await self.services.snapshots.storeAnnotatedScreenshot(
+                        snapshotId: captureResult.snapshotId,
+                        annotatedScreenshotPath: annotatedPath
+                    )
+                    try Task.checkCancellation()
+                    annotatedData = try Data(contentsOf: URL(fileURLWithPath: annotatedPath))
+                }
+                logger.operationComplete(
+                    "generate_annotations",
+                    metadata: [
+                        "annotatedPath": annotatedPath ?? "none",
+                    ]
+                )
             }
-            logger.operationComplete("generate_annotations", metadata: [
-                "annotatedPath": annotatedPath ?? "none",
-            ])
-        }
-        // Perform AI analysis if requested
-        var analysisResult: SeeAnalysisData?
-        if let prompt = analyze {
-            // Pre-analysis diagnostics
-            let fileSize = (try? FileManager.default
-                .attributesOfItem(atPath: captureResult.screenshotPath)[.size] as? Int) ?? 0
-            logger.verbose(
-                "Starting AI analysis",
-                category: "AI",
-                metadata: [
-                    "imagePath": captureResult.screenshotPath,
-                    "imageSizeBytes": fileSize,
-                    "promptLength": prompt.count,
-                ]
-            )
-            logger.operationStart("ai_analysis", metadata: ["promptPreview": String(prompt.prefix(80))])
-            logger.startTimer("ai_generate")
-            analysisResult = try await self.performAnalysisDetailed(
-                imagePath: captureResult.screenshotPath,
-                prompt: prompt
-            )
+            // Perform AI analysis if requested
+            var analysisResult: SeeAnalysisData?
+            if let prompt = analyze {
+                guard let screenshotData = captureResult.screenshotData else {
+                    throw CaptureError.captureFailure(
+                        "Observation completed without verified screenshot bytes"
+                    )
+                }
+                // Pre-analysis diagnostics
+                let fileSize = screenshotData.count
+                logger.verbose(
+                    "Starting AI analysis",
+                    category: "AI",
+                    metadata: [
+                        "imagePath": captureResult.screenshotPath,
+                        "imageSizeBytes": fileSize,
+                        "promptLength": prompt.count,
+                    ]
+                )
+                logger.operationStart("ai_analysis", metadata: ["promptPreview": String(prompt.prefix(80))])
+                logger.startTimer("ai_generate")
+                analysisResult = try await self.performAnalysisDetailed(
+                    imageData: screenshotData,
+                    prompt: prompt
+                )
+                try Task.checkCancellation()
+                logger.stopTimer("ai_generate")
+                logger.operationComplete(
+                    "ai_analysis",
+                    success: analysisResult != nil,
+                    metadata: [
+                        "provider": analysisResult?.provider ?? "unknown",
+                        "model": analysisResult?.model ?? "unknown",
+                    ]
+                )
+            }
+
+            let menuBarSummary = self.jsonOutput ? await self.fetchMenuBarSummaryIfEnabled() : nil
             try Task.checkCancellation()
-            logger.stopTimer("ai_generate")
-            logger.operationComplete(
-                "ai_analysis",
-                success: analysisResult != nil,
-                metadata: [
-                    "provider": analysisResult?.provider ?? "unknown",
-                    "model": analysisResult?.model ?? "unknown",
-                ]
+
+            let executionTime = Date().timeIntervalSince(startTime)
+            let presentationElements = DesktopObservationROIProcessor.presentationElements(
+                captureResult.elements,
+                viewport: captureResult.coordinateContext?.viewport
             )
+            return SeeCommandRenderContext(
+                snapshotId: captureResult.snapshotId,
+                screenshotPath: captureResult.screenshotPath,
+                screenshotData: captureResult.screenshotData,
+                annotatedPath: annotatedPath,
+                annotatedData: annotatedData,
+                metadata: captureResult.metadata,
+                elements: presentationElements,
+                coordinateContext: captureResult.coordinateContext,
+                analysis: analysisResult,
+                executionTime: executionTime,
+                observation: captureResult.observation,
+                menuBar: menuBarSummary,
+                receipt: captureResult.receipt
+            )
+        } catch {
+            throw captureResult.receipt.preservingFailure(error, operation: "see result preparation")
         }
-
-        let menuBarSummary = self.jsonOutput ? await self.fetchMenuBarSummaryIfEnabled() : nil
-        try Task.checkCancellation()
-
-        let executionTime = Date().timeIntervalSince(startTime)
-        let presentationElements = DesktopObservationROIProcessor.presentationElements(
-            captureResult.elements,
-            viewport: captureResult.coordinateContext?.viewport
-        )
-        return SeeCommandRenderContext(
-            snapshotId: captureResult.snapshotId,
-            screenshotPath: captureResult.screenshotPath,
-            annotatedPath: annotatedPath,
-            metadata: captureResult.metadata,
-            elements: presentationElements,
-            coordinateContext: captureResult.coordinateContext,
-            analysis: analysisResult,
-            executionTime: executionTime,
-            observation: captureResult.observation,
-            menuBar: menuBarSummary
-        )
     }
 
     func captureROI() throws -> CaptureRegionOfInterest? {
@@ -634,7 +708,9 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
             throw ValidationError("--roi requires an exact --window-id")
         }
         guard !self.noElements, !self.noScreenshot, !self.streamsImageToStdout else {
-            throw ValidationError("--roi requires a snapshot-producing see capture with element detection")
+            throw ValidationError(
+                "--roi requires a snapshot-producing see capture with element detection"
+            )
         }
         guard resolvedMode == .window, self.region == nil, self.screenIndex == nil, !self.menubar else {
             throw ValidationError("--roi supports exact window capture only")
@@ -646,9 +722,12 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
         let annotationsAllowed = self.allowsAnnotationForCurrentCapture()
         if self.annotate, annotationsAllowed, context.annotatedPath == nil, !self.jsonOutput {
             print("\(AgentDisplayTokens.Status.warning)  No interactive UI elements found to annotate")
-        } else if self.annotate, annotationsAllowed, let annotatedPath = context.annotatedPath, !self.jsonOutput {
+        } else if self.annotate, annotationsAllowed, let annotatedPath = context.annotatedPath,
+                  !self.jsonOutput {
             let interactableElements = context.elements.all.filter(\.isEnabled)
-            print("📝 Created annotated screenshot with \(interactableElements.count) interactive elements")
+            print(
+                "📝 Created annotated screenshot with \(interactableElements.count) interactive elements"
+            )
             self.logger.verbose("Annotated screenshot path: \(annotatedPath)")
         }
     }
@@ -685,16 +764,18 @@ extension SeeCommand: ParsableCommand {
                 usageExamples: [
                     CommandUsageExample(
                         command: "peekaboo see --json --annotate --path /tmp/see.png",
-                        description: "Capture the frontmost window, print structured output, and save annotations."
+                        description:
+                        "Capture the frontmost window, print structured output, and save annotations."
                     ),
                     CommandUsageExample(
-                        command: "peekaboo see --app Safari --window-title \"Login\" --json " +
-                            "--path /tmp/safari-login.png",
-                        description: "Target a specific Safari window to collect fresh element IDs and " +
-                            "keep the capture artifact in /tmp."
+                        command: "peekaboo see --app Safari --window-title \"Login\" --json "
+                            + "--path /tmp/safari-login.png",
+                        description: "Target a specific Safari window to collect fresh element IDs and "
+                            + "keep the capture artifact in /tmp."
                     ),
                     CommandUsageExample(
-                        command: "peekaboo see --mode screen --screen-index 0 --analyze 'Summarize the dashboard'",
+                        command:
+                        "peekaboo see --mode screen --screen-index 0 --analyze 'Summarize the dashboard'",
                         description: "Capture a display and immediately send it to the configured AI provider."
                     ),
                 ],
@@ -706,6 +787,12 @@ extension SeeCommand: ParsableCommand {
 
 extension SeeCommand: AsyncRuntimeCommand {}
 
+extension SeeCommand: ActionOutputFormattable, OutputFormattable {
+    var defaultEffect: ActionEffect? {
+        self.webFocus || self.menubar || self.captureFocus != .background ? .unverifiable : nil
+    }
+}
+
 @MainActor
 extension SeeCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
@@ -714,7 +801,9 @@ extension SeeCommand: CommanderBindableCommand {
         self.windowTitle = values.singleOption("windowTitle")
         self.windowIndex = try values.decodeOption("windowIndex", as: Int.self)
         self.windowId = try values.decodeOption("windowId", as: Int.self)
-        if let parsedMode: PeekabooCore.CaptureMode = try values.decodeOptionEnum("mode", caseInsensitive: false) {
+        if let parsedMode: PeekabooCore.CaptureMode = try values.decodeOptionEnum(
+            "mode", caseInsensitive: false
+        ) {
             self.mode = parsedMode
         }
         self.region = values.singleOption("region")
@@ -727,17 +816,18 @@ extension SeeCommand: CommanderBindableCommand {
         if let path = self.path?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
             let expanded = (path as NSString).expandingTildeInPath
             let ext = URL(fileURLWithPath: expanded).pathExtension.lowercased()
-            let inferred: PeekabooCore.ImageFormat? = switch ext {
-            case "jpg", "jpeg": .jpg
-            case "png": .png
-            default: nil
-            }
+            let inferred: PeekabooCore.ImageFormat? =
+                switch ext {
+                case "jpg", "jpeg": .jpg
+                case "png": .png
+                default: nil
+                }
             if let parsedFormat, let inferred, parsedFormat != inferred {
                 throw CommanderBindingError.invalidArgument(
                     label: "path",
                     value: path,
-                    reason: "Conflicts with --format \(parsedFormat.rawValue). " +
-                        "Use a .\(parsedFormat.fileExtension) path (or omit --format)."
+                    reason: "Conflicts with --format \(parsedFormat.rawValue). "
+                        + "Use a .\(parsedFormat.fileExtension) path (or omit --format)."
                 )
             }
             if parsedFormat == nil, let inferred {

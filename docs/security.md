@@ -28,7 +28,7 @@ Peekaboo ships powerful automation tools (clicking, typing, shell, window manage
   ```jsonc
   {
     "aiProviders": { "providers": "" },
-    "tools": { "deny": ["image", "analyze", "mcp_agent"] }
+    "tools": { "deny": ["image", "analyze", "agent"] }
   }
   ```
   Empty providers short-circuit every AI call, and the deny list keeps AI-only tools off the registry. Combine with `PEEKABOO_ALLOW_TOOLS`/`PEEKABOO_DISABLE_TOOLS` if you need per-run overrides.
@@ -38,14 +38,18 @@ Filters apply everywhere tools are surfaced: CLI `peekaboo tools`, the agent too
 Agent execution adds a stricter runtime boundary. New Agent sessions are immutable background-only sessions unless the
 human starts that session with `peekaboo agent ... --allow-foreground`. The saved value is an immutable maximum, not a
 bearer credential: every resumed process invocation returns to background-only unless the human passes the flag again.
-The policy is checked centrally before lookup, turn-boundary bookkeeping, validation, or dispatch and cannot be changed
-by model output or writable session JSON alone. Foreground authorization never exposes the Shell tool: normal Agent
+Provider-facing and MCP argument validation runs before execution authority is evaluated, so malformed calls remain
+invalid requests instead of being mislabeled as policy refusals. The policy is then checked centrally before dispatch
+and cannot be changed by model output or writable session JSON alone. Foreground authorization never exposes the Shell tool: normal Agent
 toolsets omit `shell`, and the execution boundary refuses it under both Agent policies. Foreground UI authority is not
-a process sandbox; a trusted prompt can operate terminal or scripting apps through their UI. Direct standalone CLI and
-MCP tools keep their existing explicit contracts. Background-only Agent sessions refuse targetless/process-only raw `press`, persistent
-clipboard writes, dialog mutations, browser setup/fronting, and Space switch/follow while retaining dialog/Space
-listing and unfollowed window placement. Agent typing requires an exact non-dialog snapshot/element; Agent paste is
-refused until its ownership receipt can distinguish both dialogs and sheets. Process-only delivery cannot prove that
+a process sandbox; a trusted prompt can operate terminal or scripting apps through their UI. Public MCP servers and
+standalone MCP tool contexts are also background-only. Foreground-capable CLI wrappers require an explicit
+`--foreground`, while `peekaboo mcp serve` never grants foreground authority. Background-only sessions refuse targetless/process-only raw `press`, persistent
+clipboard writes, targetless dialog input, dialog file actions, browser setup/fronting, and Space switch/follow while
+retaining exact prepared dialog actions, dialog/Space listing, and unfollowed window placement. Agent typing requires
+an exact non-dialog snapshot/element. Agent paste admits
+only direct text with a generation-pinned app/PID/window authorization and a canonical background result; targetless,
+foreground, current-clipboard, and binary paste remain refused. Process-only delivery cannot prove that
 the focused target is not modal UI.
 
 ## Desktop context injection (DESKTOP_STATE)
@@ -76,7 +80,7 @@ If you disable the `clipboard` tool via allow/deny filters, the injected DESKTOP
   - `drag`, `move`: manipulate the shared physical cursor, require explicit foreground consent, and need Event Synthesizing.
   - `window`, `app`, `menu_click`, `dock_launch`, `space`: can close apps, move windows, switch spaces.  
   - `permissions`: can prompt/alter macOS permissions flow; disable for locked-down sessions.  
-  - `mcp_agent`: can cascade into other tools via MCP.
+  - `agent`: can cascade into other tools via MCP, but the nested invocation is always background-only and omits Shell.
 - **Low risk / observational**  
   - `see`, `screenshot`, `list_apps`, `list_windows`, `list_screens`, `list_menus`: read-only discovery and capture.  
   - `image`, `analyze`, `sleep`, `done`, `need_info`: informational or control-plane only.

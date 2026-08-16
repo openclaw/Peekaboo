@@ -16,7 +16,12 @@ extension DockCommand {
 
             do {
                 self.resolvedRuntime.beginInteractionMutation()
-                try await DockServiceBridge.hideDock(dock: self.services.dock)
+                let actionResult = try await DockServiceBridge.hideDock(dock: self.services.dock)
+                try validateSuccessfulActionOutcome(
+                    actionResult.outcome,
+                    targetIdentity: nil,
+                    operation: "Dock hide"
+                )
                 AutomationEventLogger.log(.dock, "hide")
 
                 if self.jsonOutput {
@@ -24,8 +29,11 @@ extension DockCommand {
                     outputSuccessCodable(
                         data: DockHideResult(action: "dock_hide"),
                         effect: .confirmed,
+                        outcome: actionResult.outcome,
                         logger: self.outputLogger
                     )
+                } else if let outcome = actionResult.outcome {
+                    print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Dock hide"))
                 } else {
                     print("✓ Dock hidden")
                 }
@@ -53,7 +61,12 @@ extension DockCommand {
 
             do {
                 self.resolvedRuntime.beginInteractionMutation()
-                try await DockServiceBridge.showDock(dock: self.services.dock)
+                let actionResult = try await DockServiceBridge.showDock(dock: self.services.dock)
+                try validateSuccessfulActionOutcome(
+                    actionResult.outcome,
+                    targetIdentity: nil,
+                    operation: "Dock show"
+                )
                 AutomationEventLogger.log(.dock, "show")
 
                 if self.jsonOutput {
@@ -61,8 +74,11 @@ extension DockCommand {
                     outputSuccessCodable(
                         data: DockShowResult(action: "dock_show"),
                         effect: .confirmed,
+                        outcome: actionResult.outcome,
                         logger: self.outputLogger
                     )
+                } else if let outcome = actionResult.outcome {
+                    print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Dock show"))
                 } else {
                     print("✓ Dock shown")
                 }

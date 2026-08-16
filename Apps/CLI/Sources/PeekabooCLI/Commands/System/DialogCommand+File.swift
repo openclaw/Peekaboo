@@ -69,15 +69,44 @@ extension DialogCommand {
                             appName: context.appHint
                         )
                     }
+                    let outcome = result.foregroundOutcomeOrUnverified(
+                        route: context.services.dialogs.foregroundOutcomeRoute
+                    )
+                    let targetIdentity: DesktopTargetIdentity?
+                    do {
+                        targetIdentity = try DialogCommand.exactResultTargetIdentity(
+                            from: result,
+                            matching: context.target
+                        )
+                    } catch {
+                        // The service already returned from the foreground leaf. Preserve that
+                        // dispatch while refusing to project setup focus as the file-panel target.
+                        try context.actionSequence.recordExactTargetLeaf(
+                            outcome: outcome,
+                            targetIdentity: nil,
+                            operation: "File dialog"
+                        )
+                        throw error
+                    }
+                    try context.actionSequence.recordExactTargetLeaf(
+                        outcome: outcome,
+                        targetIdentity: targetIdentity,
+                        operation: "File dialog"
+                    )
+                    let compositeResult = context.actionSequence.result(payload: ())
 
                     if self.jsonOutput {
                         outputSuccessCodable(
                             data: self.makeOutput(from: result),
-                            effect: .confirmed,
+                            outcome: compositeResult.outcome,
+                            targetIdentity: compositeResult.targetIdentity,
                             logger: self.outputLogger
                         )
                     } else {
-                        print("✓ Handled file dialog")
+                        print(ActionOutcomeHumanRenderer.statusLine(
+                            for: compositeResult.outcome ?? outcome,
+                            operation: "File dialog"
+                        ))
                         if let path = result.details["path"] {
                             print("  Path: \(path)")
                         }

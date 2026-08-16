@@ -41,3 +41,8 @@ struct MoveTargetResolution {
     let description: String
     let diagnostics: InteractionTargetPointDiagnostics?
 }
+
+struct MoveExecutionTargetResolution {
+    let target: MoveTargetResolution
+    let focusResult: UIAutomationActionResult<Void>
+}

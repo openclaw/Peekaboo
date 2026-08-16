@@ -26,7 +26,7 @@ extension WindowCommand {
             self.logger.setJsonOutputMode(self.jsonOutput)
 
             do {
-                try self.windowOptions.validate()
+                try self.windowOptions.validateMutation()
                 let appInfo = try await self.windowOptions.resolveApplicationInfoIfNeeded(services: self.services)
 
                 // Get window info
@@ -34,13 +34,12 @@ extension WindowCommand {
                     windows: self.services.windows,
                     target: self.windowOptions.toWindowSelectionTarget()
                 )
-                let selectedWindowInfo = self.windowOptions.selectWindow(from: windows)
-                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: selectedWindowInfo)
                 let windowInfo = try self.windowOptions.requireMutationWindow(
                     from: windows,
                     expectedApplication: appInfo,
                     action: "move"
                 )
+                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: windowInfo)
                 let target = WindowTarget.windowId(windowInfo.windowID)
                 guard let mutationIdentity = windowInfo.mutationIdentity else {
                     throw PeekabooError.commandFailed(
@@ -62,34 +61,54 @@ extension WindowCommand {
                     reason: "window move"
                 )
 
-                // Read the frame back so the report shows what the OS actually applied.
-                let refreshedWindowInfo = try await WindowServiceBridge.listWindows(
-                    windows: self.services.windows,
-                    target: target
-                ).first
-                let verified = try verifiedWindowActionResult(
-                    action: "move",
-                    appName: appName,
-                    requested: WindowGeometryExpectation(origin: newOrigin, size: nil),
-                    originalInfo: windowInfo,
-                    refreshedInfo: refreshedWindowInfo
-                )
-
-                logWindowAction(
-                    action: "move",
-                    appName: appName,
-                    windowInfo: verified.windowInfo
-                )
-
-                output(verified.result, effect: verified.effect, outcome: actionResult.outcome) {
-                    let title = verified.windowInfo?.title ?? "Untitled"
-                    let actualOrigin = verified.windowInfo?.bounds.origin ?? newOrigin
-                    if let warning = verified.warning {
-                        print("Moved window '\(title)' to \(formatWindowPoint(actualOrigin)) " +
-                            "(requested \(formatWindowPoint(newOrigin)))")
-                        print("Warning: \(warning)")
-                    } else {
-                        print("Successfully moved window '\(title)' to \(formatWindowPoint(actualOrigin))")
+                try await withPreservedActionResultOnFailure(
+                    actionResult,
+                    targetIdentity: actionResult.targetIdentity,
+                    operation: "Window move"
+                ) {
+                    let readback = try await WindowServiceBridge.listWindows(
+                        windows: self.services.windows,
+                        target: target
+                    ).first
+                    let refreshedWindowInfo = try readback.map {
+                        try validatedPostMutationWindowReadback(
+                            $0,
+                            expectedIdentity: mutationIdentity,
+                            operation: "Window move"
+                        )
+                    }
+                    let verified = try verifiedWindowActionResult(
+                        action: "move",
+                        appName: appName,
+                        requested: WindowGeometryExpectation(origin: newOrigin, size: nil),
+                        originalInfo: windowInfo,
+                        refreshedInfo: refreshedWindowInfo
+                    )
+                    let outputOutcome = verified.effect == .confirmed
+                        ? canonicalActionOutcomeAfterSuccessfulVerification(
+                            actionResult.outcome,
+                            observedChange: observedWindowFrameChange(
+                                original: windowInfo,
+                                verified: verified.windowInfo
+                            )
+                        )
+                        : actionResult.outcome
+                    logWindowAction(action: "move", appName: appName, windowInfo: verified.windowInfo)
+                    output(
+                        verified.result,
+                        effect: verified.effect,
+                        outcome: outputOutcome,
+                        targetIdentity: actionResult.targetIdentity
+                    ) {
+                        let title = verified.windowInfo?.title ?? "Untitled"
+                        let actualOrigin = verified.windowInfo?.bounds.origin ?? newOrigin
+                        if let warning = verified.warning {
+                            print("Moved window '\(title)' to \(formatWindowPoint(actualOrigin)) " +
+                                "(requested \(formatWindowPoint(newOrigin)))")
+                            print("Warning: \(warning)")
+                        } else {
+                            print("Successfully moved window '\(title)' to \(formatWindowPoint(actualOrigin))")
+                        }
                     }
                 }
 
@@ -124,7 +143,7 @@ extension WindowCommand {
             self.logger.setJsonOutputMode(self.jsonOutput)
 
             do {
-                try self.windowOptions.validate()
+                try self.windowOptions.validateMutation()
                 let appInfo = try await self.windowOptions.resolveApplicationInfoIfNeeded(services: self.services)
 
                 // Get window info
@@ -132,13 +151,12 @@ extension WindowCommand {
                     windows: self.services.windows,
                     target: self.windowOptions.toWindowSelectionTarget()
                 )
-                let selectedWindowInfo = self.windowOptions.selectWindow(from: windows)
-                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: selectedWindowInfo)
                 let windowInfo = try self.windowOptions.requireMutationWindow(
                     from: windows,
                     expectedApplication: appInfo,
                     action: "resize"
                 )
+                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: windowInfo)
                 let target = WindowTarget.windowId(windowInfo.windowID)
                 guard let mutationIdentity = windowInfo.mutationIdentity else {
                     throw PeekabooError.commandFailed(
@@ -160,34 +178,54 @@ extension WindowCommand {
                     reason: "window resize"
                 )
 
-                // Read the frame back: AX accepts resizes the app then clamps (e.g. minimum size).
-                let refreshedWindowInfo = try await WindowServiceBridge.listWindows(
-                    windows: self.services.windows,
-                    target: target
-                ).first
-                let verified = try verifiedWindowActionResult(
-                    action: "resize",
-                    appName: appName,
-                    requested: WindowGeometryExpectation(origin: nil, size: newSize),
-                    originalInfo: windowInfo,
-                    refreshedInfo: refreshedWindowInfo
-                )
-
-                logWindowAction(
-                    action: "resize",
-                    appName: appName,
-                    windowInfo: verified.windowInfo
-                )
-
-                output(verified.result, effect: verified.effect, outcome: actionResult.outcome) {
-                    let title = verified.windowInfo?.title ?? "Untitled"
-                    let actualSize = verified.windowInfo?.bounds.size ?? newSize
-                    if let warning = verified.warning {
-                        print("Resized window '\(title)' to \(formatWindowSize(actualSize)) " +
-                            "(requested \(formatWindowSize(newSize)))")
-                        print("Warning: \(warning)")
-                    } else {
-                        print("Successfully resized window '\(title)' to \(formatWindowSize(actualSize))")
+                try await withPreservedActionResultOnFailure(
+                    actionResult,
+                    targetIdentity: actionResult.targetIdentity,
+                    operation: "Window resize"
+                ) {
+                    let readback = try await WindowServiceBridge.listWindows(
+                        windows: self.services.windows,
+                        target: target
+                    ).first
+                    let refreshedWindowInfo = try readback.map {
+                        try validatedPostMutationWindowReadback(
+                            $0,
+                            expectedIdentity: mutationIdentity,
+                            operation: "Window resize"
+                        )
+                    }
+                    let verified = try verifiedWindowActionResult(
+                        action: "resize",
+                        appName: appName,
+                        requested: WindowGeometryExpectation(origin: nil, size: newSize),
+                        originalInfo: windowInfo,
+                        refreshedInfo: refreshedWindowInfo
+                    )
+                    let outputOutcome = verified.effect == .confirmed
+                        ? canonicalActionOutcomeAfterSuccessfulVerification(
+                            actionResult.outcome,
+                            observedChange: observedWindowFrameChange(
+                                original: windowInfo,
+                                verified: verified.windowInfo
+                            )
+                        )
+                        : actionResult.outcome
+                    logWindowAction(action: "resize", appName: appName, windowInfo: verified.windowInfo)
+                    output(
+                        verified.result,
+                        effect: verified.effect,
+                        outcome: outputOutcome,
+                        targetIdentity: actionResult.targetIdentity
+                    ) {
+                        let title = verified.windowInfo?.title ?? "Untitled"
+                        let actualSize = verified.windowInfo?.bounds.size ?? newSize
+                        if let warning = verified.warning {
+                            print("Resized window '\(title)' to \(formatWindowSize(actualSize)) " +
+                                "(requested \(formatWindowSize(newSize)))")
+                            print("Warning: \(warning)")
+                        } else {
+                            print("Successfully resized window '\(title)' to \(formatWindowSize(actualSize))")
+                        }
                     }
                 }
 
@@ -228,7 +266,7 @@ extension WindowCommand {
             self.logger.setJsonOutputMode(self.jsonOutput)
 
             do {
-                try self.windowOptions.validate()
+                try self.windowOptions.validateMutation()
                 let appInfo = try await self.windowOptions.resolveApplicationInfoIfNeeded(services: self.services)
 
                 // Get window info
@@ -236,13 +274,12 @@ extension WindowCommand {
                     windows: self.services.windows,
                     target: self.windowOptions.toWindowSelectionTarget()
                 )
-                let selectedWindowInfo = self.windowOptions.selectWindow(from: windows)
-                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: selectedWindowInfo)
                 let windowInfo = try self.windowOptions.requireMutationWindow(
                     from: windows,
                     expectedApplication: appInfo,
                     action: "set bounds"
                 )
+                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: windowInfo)
                 let target = WindowTarget.windowId(windowInfo.windowID)
                 guard let mutationIdentity = windowInfo.mutationIdentity else {
                     throw PeekabooError.commandFailed(
@@ -264,38 +301,58 @@ extension WindowCommand {
                     reason: "window set-bounds"
                 )
 
-                // Read the frame back so the report shows what the OS actually applied.
-                let refreshedWindowInfo = try await WindowServiceBridge.listWindows(
-                    windows: self.services.windows,
-                    target: target
-                ).first
-                let verified = try verifiedWindowActionResult(
-                    action: "set-bounds",
-                    appName: appName,
-                    requested: WindowGeometryExpectation(origin: newBounds.origin, size: newBounds.size),
-                    originalInfo: windowInfo,
-                    refreshedInfo: refreshedWindowInfo
-                )
-
-                logWindowAction(
-                    action: "set-bounds",
-                    appName: appName,
-                    windowInfo: verified.windowInfo
-                )
-
-                output(verified.result, effect: verified.effect, outcome: actionResult.outcome) {
-                    let title = verified.windowInfo?.title ?? "Untitled"
-                    let actualBounds = verified.windowInfo?.bounds ?? newBounds
-                    let actualDescription =
-                        "\(formatWindowPoint(actualBounds.origin)) \(formatWindowSize(actualBounds.size))"
-                    if let warning = verified.warning {
-                        let requestedDescription =
-                            "\(formatWindowPoint(newBounds.origin)) \(formatWindowSize(newBounds.size))"
-                        print("Set window '\(title)' bounds to \(actualDescription) " +
-                            "(requested \(requestedDescription))")
-                        print("Warning: \(warning)")
-                    } else {
-                        print("Successfully set window '\(title)' bounds to \(actualDescription)")
+                try await withPreservedActionResultOnFailure(
+                    actionResult,
+                    targetIdentity: actionResult.targetIdentity,
+                    operation: "Window set bounds"
+                ) {
+                    let readback = try await WindowServiceBridge.listWindows(
+                        windows: self.services.windows,
+                        target: target
+                    ).first
+                    let refreshedWindowInfo = try readback.map {
+                        try validatedPostMutationWindowReadback(
+                            $0,
+                            expectedIdentity: mutationIdentity,
+                            operation: "Window set bounds"
+                        )
+                    }
+                    let verified = try verifiedWindowActionResult(
+                        action: "set-bounds",
+                        appName: appName,
+                        requested: WindowGeometryExpectation(origin: newBounds.origin, size: newBounds.size),
+                        originalInfo: windowInfo,
+                        refreshedInfo: refreshedWindowInfo
+                    )
+                    let outputOutcome = verified.effect == .confirmed
+                        ? canonicalActionOutcomeAfterSuccessfulVerification(
+                            actionResult.outcome,
+                            observedChange: observedWindowFrameChange(
+                                original: windowInfo,
+                                verified: verified.windowInfo
+                            )
+                        )
+                        : actionResult.outcome
+                    logWindowAction(action: "set-bounds", appName: appName, windowInfo: verified.windowInfo)
+                    output(
+                        verified.result,
+                        effect: verified.effect,
+                        outcome: outputOutcome,
+                        targetIdentity: actionResult.targetIdentity
+                    ) {
+                        let title = verified.windowInfo?.title ?? "Untitled"
+                        let actualBounds = verified.windowInfo?.bounds ?? newBounds
+                        let actualDescription =
+                            "\(formatWindowPoint(actualBounds.origin)) \(formatWindowSize(actualBounds.size))"
+                        if let warning = verified.warning {
+                            let requestedDescription =
+                                "\(formatWindowPoint(newBounds.origin)) \(formatWindowSize(newBounds.size))"
+                            print("Set window '\(title)' bounds to \(actualDescription) " +
+                                "(requested \(requestedDescription))")
+                            print("Warning: \(warning)")
+                        } else {
+                            print("Successfully set window '\(title)' bounds to \(actualDescription)")
+                        }
                     }
                 }
 

@@ -153,6 +153,7 @@ extension AppCommand {
                 let bundle_id: String
                 let pid: Int32
                 let process_start_identity: UInt64?
+                let process_start_identity_decimal: String?
                 let is_ready: Bool
                 let window_count: Int
                 let window_ready: Bool
@@ -169,6 +170,7 @@ extension AppCommand {
                 bundle_id: app.bundleIdentifier ?? "unknown",
                 pid: app.processIdentifier,
                 process_start_identity: app.processStartIdentity,
+                process_start_identity_decimal: app.processStartIdentity.map(String.init),
                 is_ready: app.isFinishedLaunching ?? !self.waitUntilReady,
                 window_count: refreshedWindowCount,
                 window_ready: refreshedWindowCount > 0,

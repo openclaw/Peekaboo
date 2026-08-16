@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooFoundation
 import Swiftdansi
 import Testing
 @testable import PeekabooCLI
@@ -131,6 +132,7 @@ struct MenuCommandIntegrationTests {
         let bundleID = "com.apple.finder"
         let appInfo = ServiceApplicationInfo(
             processIdentifier: 501,
+            processStartIdentity: 5001,
             bundleIdentifier: bundleID,
             name: appName,
             bundlePath: "/System/Library/CoreServices/Finder.app",
@@ -140,7 +142,7 @@ struct MenuCommandIntegrationTests {
         )
 
         let menuStructure = self.sampleMenuStructure(appInfo: appInfo)
-        let menuService = StubMenuService(menusByApp: [appName: menuStructure])
+        let menuService = GenerationPinnedMenuStub(menusByApp: [appName: menuStructure])
 
         let windows = hasWindows ? [appName: [self.sampleWindowInfo()]] : [:]
         let windowService = StubWindowService(windowsByApp: windows)
@@ -205,6 +207,73 @@ struct MenuCommandIntegrationTests {
         let menuService: StubMenuService
         let windowService: StubWindowService
         let applicationService: StubApplicationService
+    }
+}
+
+@MainActor
+private final class GenerationPinnedMenuStub: StubMenuService, MenuServiceGenerationPinnedActionResultProviding {
+    func clickMenuItemActionResult(app: String, itemPath: String) async throws -> UIAutomationActionResult<Void> {
+        try await self.clickMenuItem(app: app, itemPath: itemPath)
+        return try self.result(app: app, mode: .foreground)
+    }
+
+    func clickMenuItemByNameActionResult(app: String, itemName: String) async throws
+    -> UIAutomationActionResult<Void> {
+        try await self.clickMenuItemByName(app: app, itemName: itemName)
+        return try self.result(app: app, mode: .foreground)
+    }
+
+    func clickMenuItemActionResult(request: MenuItemActionRequest) async throws -> UIAutomationActionResult<Void> {
+        let app = try self.appName(identity: request.expectedIdentity)
+        try await self.clickMenuItem(app: app, itemPath: request.itemPath)
+        return try self.result(app: app, mode: request.deliveryMode)
+    }
+
+    func clickMenuItemByNameActionResult(request: MenuItemByNameActionRequest) async throws
+    -> UIAutomationActionResult<Void> {
+        let app = try self.appName(identity: request.expectedIdentity)
+        try await self.clickMenuItemByName(app: app, itemName: request.itemName)
+        return try self.result(app: app, mode: request.deliveryMode)
+    }
+
+    func clickMenuExtraActionResult(title: String) async throws -> UIAutomationActionResult<Void> {
+        try await self.clickMenuExtra(title: title)
+        throw TestStubError.unimplemented(#function)
+    }
+
+    func clickMenuBarItemActionResult(named _: String) async throws
+    -> UIAutomationActionResult<PeekabooCore.ClickResult> {
+        throw TestStubError.unimplemented(#function)
+    }
+
+    func clickMenuBarItemActionResult(at _: Int) async throws -> UIAutomationActionResult<PeekabooCore.ClickResult> {
+        throw TestStubError.unimplemented(#function)
+    }
+
+    private func appName(identity: ApplicationProcessIdentity) throws -> String {
+        guard let app = self.menusByApp.values.first(where: { $0.application.processIdentity == identity })?
+            .application.name
+        else {
+            throw PeekabooError.appNotFound("PID:\(identity.processIdentifier)")
+        }
+        return app
+    }
+
+    private func result(
+        app: String,
+        mode: DesktopActionOutcome.Delivery.Mode
+    ) throws -> UIAutomationActionResult<Void> {
+        guard let identity = self.menusByApp[app]?.application.processIdentity else {
+            throw PeekabooError.appNotFound(app)
+        }
+        return try UIAutomationActionResult(
+            payload: (),
+            outcome: .confirmedChange(
+                delivery: .init(mechanism: .accessibilityAction, mode: mode),
+                unitCount: .one
+            ),
+            targetIdentity: DesktopTargetIdentity(processIdentity: identity)
+        )
     }
 }
 #endif

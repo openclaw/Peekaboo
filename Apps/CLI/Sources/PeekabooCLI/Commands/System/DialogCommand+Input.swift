@@ -1,6 +1,7 @@
 import Commander
 import Foundation
 import PeekabooCore
+import PeekabooFoundation
 
 extension DialogCommand {
     // MARK: - Input Text in Dialog
@@ -24,7 +25,7 @@ extension DialogCommand {
         @Flag(help: "Clear existing text first")
         var clear = false
 
-        @Flag(help: "Focus the dialog before sending keyboard input")
+        @Flag(help: "Use foreground keyboard input; exact targeted input defaults to background AXValue")
         var foreground = false
 
         @OptionGroup var target: InteractionTargetOptions
@@ -38,14 +39,12 @@ extension DialogCommand {
             try await DialogCommand.execute(
                 runtime: runtime,
                 target: self.target,
-                // DialogService must prepare the exact parent/dialog tuple before focus so an
-                // attached sheet can be verified without widening generic window focus.
-                focus: dialogTarget.hasTarget ? .none : .required(self.focusOptions),
+                focus: self.foreground ? .required(self.focusOptions) : .none,
                 resolveWindowTitle: false,
                 resolveAppHint: false,
                 validate: {
-                    guard self.foreground else {
-                        throw ValidationError("dialog input sends keyboard input and requires --foreground")
+                    guard dialogTarget.hasTarget || self.foreground else {
+                        throw ValidationError("targetless dialog input sends keyboard input and requires --foreground")
                     }
                 },
                 operation: { context in
@@ -58,14 +57,18 @@ extension DialogCommand {
                             fieldIdentifier: fieldIdentifier,
                             clearExisting: self.clear,
                             focus: DialogForegroundFocusPolicy(
-                                autoFocus: self.focusOptions.autoFocus,
+                                autoFocus: self.foreground && self.focusOptions.autoFocus,
                                 timeout: self.focusOptions.focusTimeout ?? 5,
                                 retryCount: self.focusOptions.focusRetryCount ?? 3,
                                 switchSpace: self.focusOptions.spaceSwitch,
                                 bringToCurrentSpace: self.focusOptions.bringToCurrentSpace
                             )
                         )
-                        result = try await context.services.dialogs.enterText(request)
+                        result = if self.foreground {
+                            try await context.services.dialogs.enterTextForegroundCompatible(request)
+                        } else {
+                            try await context.services.dialogs.enterText(request)
+                        }
                     } else {
                         result = try await context.services.dialogs.enterText(DialogLegacyInputExecutionRequest(
                             text: self.text,
@@ -82,9 +85,45 @@ extension DialogCommand {
                             )
                         ))
                     }
-                    let outcome = result.foregroundOutcomeOrUnverified(
+                    let outcome = try self.inputOutcome(
+                        result,
+                        exactBackground: context.target.hasTarget && !self.foreground,
                         route: context.services.dialogs.foregroundOutcomeRoute
                     )
+                    let targetIdentity: DesktopTargetIdentity?
+                    if context.target.hasTarget {
+                        do {
+                            guard let exactTarget = try DialogCommand.exactResultTargetIdentity(
+                                from: result,
+                                matching: context.target
+                            )
+                            else {
+                                throw PeekabooError.serviceUnavailable(
+                                    "Exact dialog input returned without its resolved window target"
+                                )
+                            }
+                            targetIdentity = exactTarget
+                        } catch {
+                            try context.actionSequence.recordExactTargetLeaf(
+                                outcome: outcome,
+                                targetIdentity: nil,
+                                operation: "Dialog input"
+                            )
+                            throw error
+                        }
+                        try context.actionSequence.recordExactTargetLeaf(
+                            outcome: outcome,
+                            targetIdentity: targetIdentity,
+                            operation: "Dialog input"
+                        )
+                    } else {
+                        targetIdentity = nil
+                        try context.actionSequence.record(
+                            outcome: outcome,
+                            operation: "Dialog input"
+                        )
+                    }
+                    let compositeResult = context.actionSequence.result(payload: ())
                     let targetReceipt = result.targetReceipt
 
                     if self.jsonOutput {
@@ -108,11 +147,15 @@ extension DialogCommand {
                         )
                         outputSuccessCodable(
                             data: outputData,
-                            outcome: outcome,
+                            outcome: compositeResult.outcome,
+                            targetIdentity: compositeResult.targetIdentity,
                             logger: self.outputLogger
                         )
                     } else {
-                        print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Dialog input"))
+                        print(ActionOutcomeHumanRenderer.statusLine(
+                            for: compositeResult.outcome ?? outcome,
+                            operation: "Dialog input"
+                        ))
                     }
                     let fieldDescription = result.details["field"]
                         ?? self.field
@@ -128,6 +171,31 @@ extension DialogCommand {
                     )
                 }
             )
+        }
+
+        private func inputOutcome(
+            _ result: DialogActionResult,
+            exactBackground: Bool,
+            route: DesktopActionOutcome.Route
+        ) throws -> DesktopActionOutcome {
+            guard exactBackground else { return result.foregroundOutcomeOrUnverified(route: route) }
+            guard let outcome = result.outcome?.routed(to: route),
+                  result.success,
+                  result.action == .enterText,
+                  outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background),
+                  outcome.isAccepted(by: .confirmedOrDispatched)
+            else {
+                throw DesktopActionFailure.indeterminate(
+                    route: route,
+                    delivery: result.outcome?.delivery,
+                    evidence: .completionUnknown,
+                    unitCount: result.outcome?.dispatchState.unitCount,
+                    message: "Exact background dialog input returned contradictory result semantics.",
+                    hint: "Observe the exact dialog before retrying and update the execution provider."
+                )
+                .attributed(to: result.targetReceipt)
+            }
+            return outcome
         }
     }
 }

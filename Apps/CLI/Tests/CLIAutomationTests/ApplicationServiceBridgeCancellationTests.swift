@@ -143,7 +143,7 @@ private enum LifecycleOperation: String, CaseIterable, Sendable {
         case .hide:
             try await ApplicationServiceBridge.hideApplication(
                 applications: service,
-                identifier: "Fixture"
+                application: service.application
             ).outcome
         }
     }
@@ -151,7 +151,7 @@ private enum LifecycleOperation: String, CaseIterable, Sendable {
 
 @MainActor
 private final class CancellationProbeApplicationService: StubApplicationService,
-ApplicationServiceActionResultProviding {
+ApplicationServiceActionResultProviding, ApplicationServiceTargetedActionResultProviding {
     enum CancellationBehavior {
         case propagate
         case returnReceipt
@@ -162,7 +162,7 @@ ApplicationServiceActionResultProviding {
         unitCount: .one
     )
 
-    private let application: ServiceApplicationInfo
+    let application: ServiceApplicationInfo
     private let cancellationBehavior: CancellationBehavior
     private(set) var started: [LifecycleOperation] = []
     private(set) var cancelled: [LifecycleOperation] = []
@@ -211,6 +211,44 @@ ApplicationServiceActionResultProviding {
     func hideApplicationActionResult(identifier _: String) async throws -> DesktopActionResult<Void> {
         try await self.suspend(.hide)
         return DesktopActionResult(outcome: self.actionOutcome)
+    }
+
+    func activateApplicationTargetedActionResult(
+        request: ApplicationActivationRequest
+    ) async throws -> UIAutomationActionResult<Void> {
+        let result = try await self.activateApplicationActionResult(request: request)
+        let identity = try #require(request.expectedIdentity)
+        return try UIAutomationActionResult(
+            payload: result.payload,
+            outcome: result.outcome,
+            targetIdentity: DesktopTargetIdentity(processIdentity: identity)
+        )
+    }
+
+    func hideApplicationTargetedActionResult(identifier: String) async throws -> UIAutomationActionResult<Void> {
+        throw PeekabooError.notImplemented("Unpinned targeted hide \(identifier)")
+    }
+
+    func hideApplicationTargetedActionResult(
+        request: ApplicationHideRequest
+    ) async throws -> UIAutomationActionResult<Void> {
+        try await self.suspend(.hide)
+        let identity = try #require(self.application.processIdentity)
+        #expect(request.identifier == "PID:\(identity.processIdentifier)")
+        #expect(request.expectedIdentity == identity)
+        return try UIAutomationActionResult(
+            payload: (),
+            outcome: self.actionOutcome,
+            targetIdentity: DesktopTargetIdentity(processIdentity: identity)
+        )
+    }
+
+    func hideOtherApplicationsActionResult(identifier _: String) async throws -> DesktopActionResult<Void> {
+        DesktopActionResult(outcome: self.actionOutcome)
+    }
+
+    func showAllApplicationsActionResult() async throws -> DesktopActionResult<Void> {
+        DesktopActionResult(outcome: self.actionOutcome)
     }
 
     func unhideApplicationActionResult(identifier _: String) async throws -> DesktopActionResult<Void> {

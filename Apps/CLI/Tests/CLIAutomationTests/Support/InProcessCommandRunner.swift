@@ -95,7 +95,7 @@ enum InProcessCommandRunner {
 
     static func run(
         _ arguments: [String],
-        services: PeekabooServices,
+        services: any PeekabooServiceProviding,
         standardInput: String? = nil,
         spaceService: (any SpaceCommandSpaceService)? = nil
     ) async throws -> CommandRunResult {

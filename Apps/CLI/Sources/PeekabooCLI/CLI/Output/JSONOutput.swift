@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooCore
 import PeekabooFoundation
 
 typealias ActionEffect = DesktopActionOutcome.Effect
@@ -25,6 +26,9 @@ nonisolated protocol ResultEnvelopeError: Error, Sendable {
     var envelopeRetrySafe: Bool? { get }
     var envelopeMutationDispatched: Bool? { get }
     var envelopeActionFailure: DesktopActionFailure? { get }
+    var envelopeActionOutcome: DesktopActionOutcome? { get }
+    var envelopeTargetIdentity: DesktopTargetIdentity? { get }
+    var envelopeTargetReceipt: DesktopActionTargetReceipt? { get }
 }
 
 extension ResultEnvelopeError {
@@ -43,13 +47,28 @@ extension ResultEnvelopeError {
     nonisolated var envelopeActionFailure: DesktopActionFailure? {
         nil
     }
+
+    nonisolated var envelopeActionOutcome: DesktopActionOutcome? {
+        self.envelopeActionFailure?.outcome
+    }
+
+    nonisolated var envelopeTargetIdentity: DesktopTargetIdentity? {
+        nil
+    }
+
+    nonisolated var envelopeTargetReceipt: DesktopActionTargetReceipt? {
+        self.envelopeActionFailure?.targetReceipt
+    }
 }
 
 struct ActionErrorEnvelopeMetadata {
     let failure: DesktopActionFailure?
+    let outcome: DesktopActionOutcome?
     let effect: ActionEffect?
     let retrySafe: Bool?
     let mutationDispatched: Bool?
+    let targetIdentity: DesktopTargetIdentity?
+    let targetReceipt: DesktopActionTargetReceipt?
 }
 
 func actionErrorEnvelopeMetadata(
@@ -59,21 +78,115 @@ func actionErrorEnvelopeMetadata(
     guard isActionCommand else {
         return ActionErrorEnvelopeMetadata(
             failure: nil,
+            outcome: nil,
             effect: nil,
             retrySafe: nil,
-            mutationDispatched: nil
+            mutationDispatched: nil,
+            targetIdentity: nil,
+            targetReceipt: nil
         )
     }
 
     let envelopeError = error as? any ResultEnvelopeError
     let failure = (error as? DesktopActionFailure) ?? envelopeError?.envelopeActionFailure
+    let outcome = envelopeError?.envelopeActionOutcome ?? failure?.outcome
     return ActionErrorEnvelopeMetadata(
         failure: failure,
-        effect: failure?.outcome.effect ?? envelopeError?.envelopeEffect,
-        retrySafe: failure.map { $0.outcome.retrySafety == .safe } ?? envelopeError?.envelopeRetrySafe,
-        mutationDispatched: failure?.outcome.dispatchState.mutationDispatched ??
-            envelopeError?.envelopeMutationDispatched
+        outcome: outcome,
+        effect: outcome?.effect ?? envelopeError?.envelopeEffect,
+        retrySafe: envelopeError?.envelopeRetrySafe ?? outcome.map { $0.retrySafety == .safe },
+        mutationDispatched: envelopeError?.envelopeMutationDispatched ??
+            outcome?.dispatchState.mutationDispatched,
+        targetIdentity: envelopeError?.envelopeTargetIdentity,
+        targetReceipt: envelopeError?.envelopeTargetReceipt ?? failure?.targetReceipt
     )
+}
+
+private struct ActionResultEnvelopeFailure: LocalizedError, ResultEnvelopeError {
+    let failure: DesktopActionFailure
+    let targetIdentity: DesktopTargetIdentity?
+
+    nonisolated var errorDescription: String? {
+        self.failure.message
+    }
+
+    nonisolated var envelopeCode: ErrorCode? {
+        .INTERACTION_FAILED
+    }
+
+    nonisolated var envelopeEffect: ActionEffect? {
+        self.failure.outcome.effect
+    }
+
+    nonisolated var envelopeHint: String? {
+        self.failure.hint
+    }
+
+    nonisolated var envelopeRetrySafe: Bool? {
+        self.failure.outcome.retrySafety == .safe
+    }
+
+    nonisolated var envelopeMutationDispatched: Bool? {
+        self.failure.outcome.dispatchState.mutationDispatched
+    }
+
+    nonisolated var envelopeActionFailure: DesktopActionFailure? {
+        self.failure
+    }
+
+    nonisolated var envelopeTargetIdentity: DesktopTargetIdentity? {
+        self.targetIdentity
+    }
+}
+
+private struct PostDispatchActionResultEnvelopeFailure: LocalizedError, ResultEnvelopeError {
+    let outcome: DesktopActionOutcome
+    let failure: DesktopActionFailure?
+    let targetIdentity: DesktopTargetIdentity?
+    let targetReceipt: DesktopActionTargetReceipt?
+    let message: String
+    let hint: String
+    let causeDescription: String
+
+    nonisolated var errorDescription: String? {
+        self.message
+    }
+
+    nonisolated var envelopeCode: ErrorCode? {
+        .INTERACTION_FAILED
+    }
+
+    nonisolated var envelopeEffect: ActionEffect? {
+        self.outcome.effect
+    }
+
+    nonisolated var envelopeHint: String? {
+        self.hint
+    }
+
+    nonisolated var envelopeRetrySafe: Bool? {
+        self.outcome.state == .confirmedNoChange || self.outcome.retrySafety == .safe
+    }
+
+    nonisolated var envelopeMutationDispatched: Bool? {
+        self.outcome.dispatchState.mutationDispatched
+    }
+
+    nonisolated var envelopeActionFailure: DesktopActionFailure? {
+        self.failure
+    }
+
+    nonisolated var envelopeActionOutcome: DesktopActionOutcome? {
+        self.outcome
+    }
+
+    nonisolated var envelopeTargetIdentity: DesktopTargetIdentity? {
+        self.targetIdentity
+    }
+
+    nonisolated var envelopeTargetReceipt: DesktopActionTargetReceipt? {
+        self.targetReceipt
+    }
 }
 
 struct PreDispatchActionError: LocalizedError, ResultEnvelopeError {
@@ -135,6 +248,7 @@ struct ResultEnvelope<Payload> {
     var effect: ActionEffect?
     var outcome: DesktopActionOutcome.Projection?
     let data: Payload
+    var target_identity: DesktopTargetIdentityProjection?
     var target_receipt: DesktopActionTargetReceipt?
     var messages: [String]?
     var debug_logs: [String] = []
@@ -146,6 +260,26 @@ extension ResultEnvelope: Decodable where Payload: Decodable {}
 
 typealias JSONResponse = ResultEnvelope<Empty?>
 typealias CodableJSONResponse<Payload: Codable> = ResultEnvelope<Payload>
+
+struct DesktopTargetIdentityProjection: Codable, Equatable {
+    enum Kind: String, Codable {
+        case process
+        case window
+    }
+
+    let kind: Kind
+    let pid: Int32
+    let process_start_identity_decimal: String
+    let window_id: Int?
+
+    init(_ identity: DesktopTargetIdentity) {
+        let processIdentity = identity.processIdentity
+        self.kind = identity.exactWindow == nil ? .process : .window
+        self.pid = processIdentity.processIdentifier
+        self.process_start_identity_decimal = String(processIdentity.processStartIdentity)
+        self.window_id = identity.exactWindow?.identity.windowID
+    }
+}
 
 struct ErrorInfo: Codable {
     let code: String
@@ -225,6 +359,7 @@ func outputSuccessCodable(
     messages: [String]? = nil,
     effect: ActionEffect? = nil,
     outcome: DesktopActionOutcome? = nil,
+    targetIdentity: DesktopTargetIdentity? = nil,
     logger: Logger
 ) {
     let response = makeSuccessEnvelope(
@@ -232,6 +367,7 @@ func outputSuccessCodable(
         messages: messages,
         effect: effect,
         outcome: outcome,
+        targetIdentity: targetIdentity,
         debugLogs: logger.getDebugLogs()
     )
     outputJSONCodable(response, logger: logger)
@@ -242,6 +378,7 @@ func makeSuccessEnvelope<Payload>(
     messages: [String]? = nil,
     effect: ActionEffect? = nil,
     outcome: DesktopActionOutcome? = nil,
+    targetIdentity: DesktopTargetIdentity? = nil,
     debugLogs: [String] = []
 ) -> ResultEnvelope<Payload> {
     let projection = outcome?.projection
@@ -250,8 +387,194 @@ func makeSuccessEnvelope<Payload>(
         effect: projection?.effect ?? effect,
         outcome: projection,
         data: data,
+        target_identity: targetIdentity.map(DesktopTargetIdentityProjection.init),
+        target_receipt: targetIdentity.flatMap(desktopActionTargetReceipt),
         messages: messages,
         debug_logs: debugLogs
+    )
+}
+
+func validatedActionResultTargetIdentity(
+    _ result: UIAutomationActionResult<some Sendable>,
+    operation: String,
+    requiresTarget: Bool
+) throws -> DesktopTargetIdentity? {
+    try UIAutomationActionResultSemantics.validateTarget(
+        result.targetIdentity,
+        outcome: result.outcome,
+        requirement: requiresTarget ? .required : .optional,
+        operation: operation,
+        message: "\(operation) returned without its resolved target identity."
+    )
+    return result.targetIdentity
+}
+
+func validatedSuccessfulActionResult(
+    _ result: UIAutomationActionResult<some Sendable>,
+    operation: String,
+    requiresTarget: Bool
+) throws -> DesktopTargetIdentity? {
+    let targetIdentity = try validatedActionResultTargetIdentity(
+        result,
+        operation: operation,
+        requiresTarget: requiresTarget
+    )
+    try validateSuccessfulActionOutcome(
+        result.outcome,
+        targetIdentity: targetIdentity,
+        operation: operation
+    )
+    return targetIdentity
+}
+
+func canonicalActionOutcomeAfterSuccessfulVerification(
+    _ outcome: DesktopActionOutcome?,
+    observedChange: Bool? = nil
+) -> DesktopActionOutcome? {
+    guard let outcome else { return nil }
+    switch outcome.state {
+    case .dispatchedUnverified:
+        guard let observedChange else { return outcome }
+        guard let delivery = outcome.delivery else { return outcome }
+        if observedChange {
+            return .confirmedChange(
+                route: outcome.route,
+                delivery: delivery,
+                unitCount: outcome.dispatchState.unitCount
+            )
+        }
+        return .confirmedNoChange(route: outcome.route)
+    case .confirmedChange, .confirmedNoChange:
+        return outcome
+    case .refused, .partial, .suspectedNoop, .indeterminate:
+        return outcome
+    }
+}
+
+func postDispatchActionResultError(
+    _ error: any Error,
+    actionResult: UIAutomationActionResult<some Sendable>,
+    targetIdentity: DesktopTargetIdentity?,
+    operation: String
+) -> any Error {
+    let targetReceipt = targetIdentity?.actionTargetReceipt
+    let outcome = actionResult.outcome ?? DesktopActionOutcome.indeterminate(
+        route: .local,
+        evidence: .completionUnknown,
+        unitCount: nil
+    )
+    return postResultProcessingError(
+        error,
+        outcome: outcome,
+        targetReceipt: targetReceipt,
+        targetIdentity: targetIdentity,
+        operation: operation,
+        message: "\(operation) was dispatched, but post-dispatch processing failed.",
+        hint: "Observe the target before retrying; replaying may repeat the completed action."
+    )
+}
+
+func postResultProcessingError(
+    _ error: any Error,
+    outcome: DesktopActionOutcome,
+    targetReceipt: DesktopActionTargetReceipt?,
+    targetIdentity: DesktopTargetIdentity? = nil,
+    operation: String,
+    message: String? = nil,
+    hint: String? = nil
+) -> any Error {
+    let resolvedMessage = message ?? "\(operation) failed after its canonical action result was returned."
+    let resolvedHint = hint ?? "Observe the target before deciding whether to retry \(operation)."
+    let causeDescription = errorMessage(for: error)
+    let failure = DesktopActionFailure(
+        outcome: outcome,
+        message: resolvedMessage,
+        hint: resolvedHint,
+        causeDescription: causeDescription,
+        targetReceipt: targetReceipt
+    )
+    return PostDispatchActionResultEnvelopeFailure(
+        outcome: outcome,
+        failure: failure,
+        targetIdentity: targetIdentity,
+        targetReceipt: targetReceipt,
+        message: resolvedMessage,
+        hint: resolvedHint,
+        causeDescription: causeDescription
+    )
+}
+
+func withPreservedActionResultOnFailure<Prepared>(
+    _ actionResult: UIAutomationActionResult<some Sendable>,
+    targetIdentity: DesktopTargetIdentity?,
+    operation: String,
+    prepare: () throws -> Prepared
+) throws -> Prepared {
+    do {
+        return try prepare()
+    } catch {
+        throw postDispatchActionResultError(
+            error,
+            actionResult: actionResult,
+            targetIdentity: targetIdentity,
+            operation: operation
+        )
+    }
+}
+
+func withPreservedActionResultOnFailure<Prepared>(
+    _ actionResult: UIAutomationActionResult<some Sendable>,
+    targetIdentity: DesktopTargetIdentity?,
+    operation: String,
+    prepare: () async throws -> Prepared
+) async throws -> Prepared {
+    do {
+        return try await prepare()
+    } catch {
+        throw postDispatchActionResultError(
+            error,
+            actionResult: actionResult,
+            targetIdentity: targetIdentity,
+            operation: operation
+        )
+    }
+}
+
+func validateSuccessfulActionOutcome(
+    _ outcome: DesktopActionOutcome?,
+    targetIdentity: DesktopTargetIdentity?,
+    operation: String
+) throws {
+    guard let outcome else {
+        let failure = DesktopActionFailure.indeterminate(
+            evidence: .completionUnknown,
+            message: "\(operation) returned without a canonical outcome.",
+            hint: "Observe the target before retrying and update the runtime host."
+        )
+        .attributed(to: targetIdentity.flatMap(desktopActionTargetReceipt))
+        throw ActionResultEnvelopeFailure(failure: failure, targetIdentity: targetIdentity)
+    }
+    guard !outcome.isAccepted(by: .confirmedOrDispatched) else { return }
+    guard let failure = DesktopActionFailure(
+        outcome: outcome,
+        message: "\(operation) did not return a successful outcome.",
+        hint: "Follow the canonical escalation metadata before deciding whether to retry.",
+        targetReceipt: targetIdentity.flatMap(desktopActionTargetReceipt)
+    )
+    else {
+        return
+    }
+    throw ActionResultEnvelopeFailure(failure: failure, targetIdentity: targetIdentity)
+}
+
+private func desktopActionTargetReceipt(
+    _ identity: DesktopTargetIdentity
+) -> DesktopActionTargetReceipt? {
+    guard let exactWindow = identity.exactWindow else { return nil }
+    return DesktopActionTargetReceipt(
+        processIdentifier: exactWindow.identity.ownerProcessIdentifier,
+        processStartIdentity: exactWindow.identity.ownerProcessStartIdentity,
+        windowID: exactWindow.identity.windowID
     )
 }
 
@@ -291,7 +614,10 @@ func outputError(
     effect: ActionEffect? = nil,
     retrySafe: Bool? = nil,
     mutationDispatched: Bool? = nil,
+    actionOutcome: DesktopActionOutcome? = nil,
     actionFailure: DesktopActionFailure? = nil,
+    targetReceipt: DesktopActionTargetReceipt? = nil,
+    targetIdentity: DesktopTargetIdentity? = nil,
     logger: Logger
 ) {
     let response = makeErrorEnvelope(
@@ -302,7 +628,10 @@ func outputError(
         effect: effect,
         retrySafe: retrySafe,
         mutationDispatched: mutationDispatched,
+        actionOutcome: actionOutcome,
         actionFailure: actionFailure,
+        targetReceipt: targetReceipt,
+        targetIdentity: targetIdentity,
         debugLogs: logger.getDebugLogs()
     )
     outputJSONCodable(response, logger: logger)
@@ -316,10 +645,13 @@ func makeErrorEnvelope(
     effect: ActionEffect? = nil,
     retrySafe: Bool? = nil,
     mutationDispatched: Bool? = nil,
+    actionOutcome: DesktopActionOutcome? = nil,
     actionFailure: DesktopActionFailure? = nil,
+    targetReceipt: DesktopActionTargetReceipt? = nil,
+    targetIdentity: DesktopTargetIdentity? = nil,
     debugLogs: [String] = []
 ) -> ResultEnvelope<Empty?> {
-    let suppliedOutcome = actionFailure?.outcome.projection
+    let suppliedOutcome = actionOutcome?.projection ?? actionFailure?.outcome.projection
     let resolvedEffect = suppliedOutcome?.effect ?? effect ??
         (ResultEnvelopeContext.isActionCommand ? defaultActionErrorEffect(code) : nil)
     let resolvedOutcome = suppliedOutcome ?? defaultActionRefusalProjection(
@@ -328,20 +660,28 @@ func makeErrorEnvelope(
         retrySafe: retrySafe,
         mutationDispatched: mutationDispatched
     )
+    let resolvedRetrySafe = actionOutcome == nil
+        ? resolvedOutcome?.retrySafe ?? retrySafe
+        : retrySafe ?? resolvedOutcome?.retrySafe
+    let resolvedMutationDispatched = actionOutcome == nil
+        ? resolvedOutcome?.mutationDispatched ?? mutationDispatched
+        : mutationDispatched ?? resolvedOutcome?.mutationDispatched
     return ResultEnvelope(
         success: false,
         effect: resolvedOutcome?.effect ?? resolvedEffect,
         outcome: resolvedOutcome,
         data: nil,
-        target_receipt: actionFailure?.targetReceipt,
+        target_identity: targetIdentity.map(DesktopTargetIdentityProjection.init),
+        target_receipt: actionFailure?.targetReceipt ?? targetReceipt ??
+            targetIdentity.flatMap(desktopActionTargetReceipt),
         debug_logs: debugLogs,
         error: ErrorInfo(
             message: message,
             code: code,
             hint: hint,
             details: details,
-            retrySafe: resolvedOutcome?.retrySafe ?? retrySafe,
-            mutationDispatched: resolvedOutcome?.mutationDispatched ?? mutationDispatched
+            retrySafe: resolvedRetrySafe,
+            mutationDispatched: resolvedMutationDispatched
         )
     )
 }

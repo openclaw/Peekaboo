@@ -143,6 +143,16 @@ struct CommanderBinderAppConfigTests {
     }
 
     @Test
+    func `Background app hide requires a generation-pinned host`() throws {
+        let hide = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: ["Calculator"], options: [:], flags: []),
+            commandType: AppCommand.HideSubcommand.self
+        )
+
+        #expect(hide.requiresProcessGenerationPinnedApplicationHide)
+    }
+
+    @Test
     func `App launch binding with --no-focus`() throws {
         let parsed = ParsedValues(
             positional: ["Calendar"],
@@ -162,7 +172,7 @@ struct CommanderBinderAppConfigTests {
         let parsed = ParsedValues(
             positional: ["Safari"],
             options: [
-                "open": ["https://example.com", "~/Documents/report.pdf"]
+                "open": ["https://example.com", "~/Documents/report.pdf"],
             ],
             flags: ["foreground"]
         )
@@ -179,7 +189,7 @@ struct CommanderBinderAppConfigTests {
         let parsed = ParsedValues(
             positional: [],
             options: [
-                "bundleId": ["com.apple.Notes"]
+                "bundleId": ["com.apple.Notes"],
             ],
             flags: ["noFocus"]
         )
@@ -201,7 +211,7 @@ struct CommanderBinderAppConfigTests {
             options: [
                 "pid": ["123"],
                 "expectedProcessStartIdentity": ["456789"],
-                "except": ["Finder,Terminal"]
+                "except": ["Finder,Terminal"],
             ],
             flags: ["all", "force"]
         )
@@ -211,10 +221,29 @@ struct CommanderBinderAppConfigTests {
         )
         #expect(command.app == "Safari")
         #expect(command.pid == 123)
-        #expect(command.expectedProcessStartIdentity == 456_789)
+        #expect(command.expectedProcessStartIdentity?.value == 456_789)
         #expect(command.all == true)
         #expect(command.except == "Finder,Terminal")
         #expect(command.force == true)
+    }
+
+    @Test
+    func `App quit binding accepts the full UInt64 process generation`() throws {
+        let parsed = ParsedValues(
+            positional: [],
+            options: [
+                "pid": ["123"],
+                "expectedProcessStartIdentity": [String(UInt64.max)],
+            ],
+            flags: []
+        )
+
+        let command = try CommanderCLIBinder.instantiateCommand(
+            ofType: AppCommand.QuitSubcommand.self,
+            parsedValues: parsed
+        )
+
+        #expect(command.expectedProcessStartIdentity?.value == UInt64.max)
     }
 
     @Test
@@ -283,7 +312,7 @@ struct CommanderBinderAppConfigTests {
             positional: ["Safari"],
             options: [
                 "pid": ["456"],
-                "wait": ["3.5s"]
+                "wait": ["3.5s"],
             ],
             flags: ["force", "waitUntilReady", "foreground"]
         )
@@ -339,7 +368,7 @@ struct CommanderBinderAppConfigTests {
                 source: ProviderCredentialSource(type: "env", key: "OPENROUTER_API_KEY"),
                 validation: .failed,
                 message: "stored (env OPENROUTER_API_KEY, validation failed: status 401)"
-            )
+            ),
         ])
 
         let data = try JSONEncoder().encode(summary)
@@ -376,7 +405,7 @@ struct CommanderBinderAppConfigTests {
                 "baseUrl": ["https://openrouter.ai"],
                 "apiKey": ["{env:OPENROUTER_API_KEY}"],
                 "description": ["Multi-provider"],
-                "headers": ["x-demo:yes"]
+                "headers": ["x-demo:yes"],
             ],
             flags: ["force", "dryRun"]
         )
@@ -427,9 +456,10 @@ struct CommanderBinderAppConfigTests {
 
     @Test
     func `Space switch binding`() throws {
-        let parsed = ParsedValues(positional: [], options: ["to": ["3"]], flags: [])
+        let parsed = ParsedValues(positional: [], options: ["to": ["3"]], flags: ["foreground"])
         let command = try CommanderCLIBinder.instantiateCommand(ofType: SwitchSubcommand.self, parsedValues: parsed)
         #expect(command.to == 3)
+        #expect(command.foreground == true)
     }
 
     @Test
@@ -441,9 +471,9 @@ struct CommanderBinderAppConfigTests {
                 "pid": ["123"],
                 "windowTitle": ["Inbox"],
                 "windowIndex": ["456"],
-                "to": ["2"]
+                "to": ["2"],
             ],
-            flags: ["toCurrent", "follow"]
+            flags: ["toCurrent", "follow", "foreground"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: MoveWindowSubcommand.self,
@@ -456,6 +486,7 @@ struct CommanderBinderAppConfigTests {
         #expect(command.to == 2)
         #expect(command.toCurrent == true)
         #expect(command.follow == true)
+        #expect(command.foreground == true)
     }
 
     @Test
@@ -466,7 +497,7 @@ struct CommanderBinderAppConfigTests {
                 "maxSteps": ["7"],
                 "model": ["gpt-5.5"],
                 "resumeSession": ["sess-42"],
-                "audioFile": ["/tmp/input.wav"]
+                "audioFile": ["/tmp/input.wav"],
             ],
             flags: [
                 "debugTerminal",
@@ -478,7 +509,7 @@ struct CommanderBinderAppConfigTests {
                 "allowForeground",
                 "audio",
                 "simple",
-                "noColor"
+                "noColor",
             ]
         )
         let command = try CommanderCLIBinder.instantiateCommand(

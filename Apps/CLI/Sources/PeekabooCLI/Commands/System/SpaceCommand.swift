@@ -2,13 +2,68 @@ import Commander
 import CoreGraphics
 import Foundation
 import PeekabooCore
+import PeekabooFoundation
+
+struct RemoteSpaceReadUnsupportedError: LocalizedError, ResultEnvelopeError {
+    let operation: String
+
+    nonisolated var errorDescription: String? {
+        "Cannot \(self.operation) because the selected execution host is remote and remote Space support is " +
+            "not implemented. No caller-local Space inventory was read."
+    }
+
+    nonisolated var envelopeCode: ErrorCode? {
+        .BRIDGE_UNAVAILABLE
+    }
+
+    nonisolated var envelopeEffect: ActionEffect? {
+        nil
+    }
+
+    nonisolated var envelopeHint: String? {
+        "Re-run with --no-remote to select the caller-local host."
+    }
+}
+
+enum SpaceCommandHostOwnership {
+    static func requireLocalRead(
+        services: any PeekabooServiceProviding,
+        operation: String
+    ) throws {
+        guard services.executionHost == .local else {
+            throw RemoteSpaceReadUnsupportedError(operation: operation)
+        }
+    }
+
+    static func requireLocalMutation(
+        services: any PeekabooServiceProviding,
+        operation: String
+    ) throws {
+        guard services.executionHost == .local else {
+            throw PreDispatchActionError(
+                message: "Cannot \(operation) because the selected execution host is remote and remote Space " +
+                    "support is not implemented. No caller-local Space inventory or mutation was attempted.",
+                code: .BRIDGE_UNAVAILABLE,
+                hint: "Re-run with --no-remote to select the caller-local host.",
+                reason: .operationUnsupported
+            )
+        }
+    }
+}
 
 protocol SpaceCommandSpaceService: Sendable {
     func getAllSpaces() async -> [SpaceInfo]
     func getSpacesForWindow(windowID: CGWindowID) async -> [SpaceInfo]
-    func moveWindowToCurrentSpace(windowID: CGWindowID) async throws
-    func moveWindowToSpace(windowID: CGWindowID, spaceID: CGSSpaceID) async throws
-    func switchToSpace(_ spaceID: CGSSpaceID) async throws
+    func moveWindowToCurrentSpaceResult(
+        windowID: CGWindowID,
+        expectedIdentity: WindowMutationIdentity
+    ) async throws -> UIAutomationActionResult<Void>
+    func moveWindowToSpaceResult(
+        windowID: CGWindowID,
+        expectedIdentity: WindowMutationIdentity,
+        spaceID: CGSSpaceID
+    ) async throws -> UIAutomationActionResult<Void>
+    func switchToSpaceResult(_ spaceID: CGSSpaceID) async throws -> DesktopActionResult<Void>
 }
 
 enum SpaceCommandEnvironment {
@@ -46,20 +101,34 @@ enum SpaceCommandEnvironment {
             }
         }
 
-        func moveWindowToCurrentSpace(windowID: CGWindowID) async throws {
+        func moveWindowToCurrentSpaceResult(
+            windowID: CGWindowID,
+            expectedIdentity: WindowMutationIdentity
+        ) async throws -> UIAutomationActionResult<Void> {
             try await MainActor.run {
-                try Self.actor.moveWindowToCurrentSpace(windowID: windowID)
+                try Self.actor.moveWindowToCurrentSpaceResult(
+                    windowID: windowID,
+                    expectedIdentity: expectedIdentity
+                )
             }
         }
 
-        func moveWindowToSpace(windowID: CGWindowID, spaceID: CGSSpaceID) async throws {
+        func moveWindowToSpaceResult(
+            windowID: CGWindowID,
+            expectedIdentity: WindowMutationIdentity,
+            spaceID: CGSSpaceID
+        ) async throws -> UIAutomationActionResult<Void> {
             try await MainActor.run {
-                try Self.actor.moveWindowToSpace(windowID: windowID, spaceID: spaceID)
+                try Self.actor.moveWindowToSpaceResult(
+                    windowID: windowID,
+                    expectedIdentity: expectedIdentity,
+                    spaceID: spaceID
+                )
             }
         }
 
-        func switchToSpace(_ spaceID: CGSSpaceID) async throws {
-            try await Self.actor.switchToSpace(spaceID)
+        func switchToSpaceResult(_ spaceID: CGSSpaceID) async throws -> DesktopActionResult<Void> {
+            try await Self.actor.switchToSpaceResult(spaceID)
         }
     }
 
@@ -75,16 +144,30 @@ enum SpaceCommandEnvironment {
             self.inner.getSpacesForWindow(windowID: windowID)
         }
 
-        func moveWindowToCurrentSpace(windowID: CGWindowID) throws {
-            try self.inner.moveWindowToCurrentSpace(windowID: windowID)
+        func moveWindowToCurrentSpaceResult(
+            windowID: CGWindowID,
+            expectedIdentity: WindowMutationIdentity
+        ) throws -> UIAutomationActionResult<Void> {
+            try self.inner.moveWindowToCurrentSpaceResult(
+                windowID: windowID,
+                expectedIdentity: expectedIdentity
+            )
         }
 
-        func moveWindowToSpace(windowID: CGWindowID, spaceID: CGSSpaceID) throws {
-            try self.inner.moveWindowToSpace(windowID: windowID, spaceID: spaceID)
+        func moveWindowToSpaceResult(
+            windowID: CGWindowID,
+            expectedIdentity: WindowMutationIdentity,
+            spaceID: CGSSpaceID
+        ) throws -> UIAutomationActionResult<Void> {
+            try self.inner.moveWindowToSpaceResult(
+                windowID: windowID,
+                expectedIdentity: expectedIdentity,
+                spaceID: spaceID
+            )
         }
 
-        func switchToSpace(_ spaceID: CGSSpaceID) async throws {
-            try await self.inner.switchToSpace(spaceID)
+        func switchToSpaceResult(_ spaceID: CGSSpaceID) async throws -> DesktopActionResult<Void> {
+            try await self.inner.switchToSpaceResult(spaceID)
         }
     }
 }
@@ -108,13 +191,16 @@ struct SpaceCommand: ParsableCommand {
           peekaboo space list
 
           # Switch to Space 2
-          peekaboo space switch --to 2
+          peekaboo space switch --to 2 --foreground
 
           # Move window to Space 3
           peekaboo space move-window --app Safari --to 3
 
           # Move window to current Space
           peekaboo space move-window --app Terminal --to-current
+
+          # Move a window and intentionally follow it to Space 3
+          peekaboo space move-window --app Safari --to 3 --follow --foreground
 
         SUBCOMMANDS:
           list          List all Spaces and their windows

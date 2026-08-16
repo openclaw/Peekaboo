@@ -1,3 +1,4 @@
+import PeekabooAutomationKit
 import PeekabooBridge
 import PeekabooBridgeTestSupport
 import Testing
@@ -94,17 +95,63 @@ struct ExactDialogForegroundRuntimeCapabilityTests {
         #expect(RuntimeHostResolver.remoteDialogCapabilities(for: capable).exactForceDismiss)
     }
 
+    @Test
+    func `exact input fallback permissions follow attested receipt mode`() {
+        let permissions = PermissionsStatus(
+            screenRecording: false,
+            accessibility: true,
+            postEvent: false
+        )
+        let attested = Self.handshake(
+            operations: [.exactDialogEnterText],
+            capabilities: [
+                PeekabooBridgeHostCapability.exactDialogInputExecution,
+                PeekabooBridgeHostCapability.attestedOperationReceipts,
+            ],
+            permissions: permissions
+        )
+        let receiptless129 = Self.handshake(
+            operations: [.exactDialogEnterText],
+            capabilities: [PeekabooBridgeHostCapability.exactDialogInputExecution],
+            permissions: permissions
+        )
+        let protocol128 = Self.handshake(
+            version: .init(major: 1, minor: 28),
+            operations: [.exactDialogEnterText],
+            capabilities: [PeekabooBridgeHostCapability.exactDialogInputExecution],
+            permissions: permissions
+        )
+
+        #expect(BridgeCapabilityPolicy.requiredPermissions(
+            for: .exactDialogEnterText,
+            handshake: attested
+        ) == [.accessibility])
+        #expect(BridgeCapabilityPolicy.requiredPermissions(
+            for: .exactDialogEnterText,
+            handshake: receiptless129
+        ) == [.accessibility, .postEvent])
+        #expect(BridgeCapabilityPolicy.requiredPermissions(
+            for: .exactDialogEnterText,
+            handshake: protocol128
+        ) == [.accessibility, .postEvent])
+        #expect(RuntimeHostResolver.remoteDialogCapabilities(for: attested).backgroundExactInput)
+        #expect(!RuntimeHostResolver.remoteDialogCapabilities(for: receiptless129).backgroundExactInput)
+        #expect(!RuntimeHostResolver.remoteDialogCapabilities(for: protocol128).backgroundExactInput)
+    }
+
     private static func handshake(
         version: PeekabooBridgeProtocolVersion = PeekabooBridgeConstants.protocolVersion,
         operations: [PeekabooBridgeOperation],
         enabledOperations: [PeekabooBridgeOperation]? = nil,
-        capabilities: [String]?
+        capabilities: [String]?,
+        permissions: PermissionsStatus? = nil
     ) -> PeekabooBridgeHandshakeResponse {
         BridgeTestFixtures.handshake(
             negotiatedVersion: version,
             hostKind: .gui,
             build: nil,
             supportedOperations: operations,
+            permissions: permissions,
             enabledOperations: enabledOperations ?? operations,
             hostCapabilities: capabilities
         )

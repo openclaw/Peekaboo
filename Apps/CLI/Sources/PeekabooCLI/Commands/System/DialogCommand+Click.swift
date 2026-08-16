@@ -30,6 +30,7 @@ extension DialogCommand {
                 target: self.target,
                 focus: .whenRequested(self.foreground, self.focusOptions),
                 resolveWindowTitle: false,
+                resolveAppHint: false,
                 validate: {
                     guard self.foreground || !self.focusOptions.hasForegroundFocusOverrides else {
                         throw ValidationError("Dialog focus options require --foreground")
@@ -60,7 +61,37 @@ extension DialogCommand {
                         receipt = try await context.services.dialogs.prepareDialogAction(request)
                     }
                     let result = try await context.services.dialogs.performPreparedDialogAction(receipt)
-                    _ = try result.requiredPreparedOutcome(kind: .clickButton)
+                    let outcome: DesktopActionOutcome
+                    do {
+                        outcome = try result.requiredPreparedOutcome(kind: .clickButton)
+                    } catch let failure as DesktopActionFailure {
+                        throw failure.attributed(to: DialogCommand.targetReceipt(receipt.target))
+                    }
+                    let resultTarget: DesktopTargetIdentity
+                    do {
+                        guard let exactTarget = try DialogCommand.exactResultTargetIdentity(
+                            from: result,
+                            matching: context.target,
+                            expectedTarget: receipt.target
+                        )
+                        else {
+                            throw DesktopTargetIdentityError.incompleteExactWindow
+                        }
+                        resultTarget = exactTarget
+                    } catch {
+                        try context.actionSequence.recordExactTargetLeaf(
+                            outcome: outcome,
+                            targetIdentity: nil,
+                            operation: "Dialog click"
+                        )
+                        throw error
+                    }
+                    try context.actionSequence.record(
+                        outcome: outcome,
+                        targetIdentity: resultTarget,
+                        operation: "Dialog click"
+                    )
+                    let compositeResult = context.actionSequence.result(payload: ())
 
                     if self.jsonOutput {
                         let outputData = DialogClickResult(
@@ -71,7 +102,8 @@ extension DialogCommand {
                         )
                         outputSuccessCodable(
                             data: outputData,
-                            outcome: result.outcome,
+                            outcome: compositeResult.outcome,
+                            targetIdentity: compositeResult.targetIdentity,
                             logger: self.outputLogger
                         )
                     } else {

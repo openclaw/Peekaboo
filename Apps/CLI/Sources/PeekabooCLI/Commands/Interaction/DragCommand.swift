@@ -75,12 +75,13 @@ struct DragCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             }
 
             self.resolvedRuntime.beginInteractionMutation()
-            try await ensureFocused(
+            let focusResult = try await ensureConfirmedForegroundFocus(
                 snapshotId: observation.focusSnapshotId(for: self.target),
                 target: self.target,
                 options: self.focusOptions,
-                services: self.services
-            )
+                services: self.services,
+                operation: "Drag setup focus"
+            ) ?? UIAutomationActionResult(payload: (), outcome: nil)
 
             let startResolution = try await self.resolvePoint(
                 elementId: fromInput.element,
@@ -132,7 +133,7 @@ struct DragCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                 button: self.resolvedButton ?? .left,
                 profile: movement.profile
             )
-            try await AutomationServiceBridge.drag(automation: self.services.automation, request: dragRequest)
+            let actionResult = try await self.performDrag(dragRequest, setupFocus: focusResult)
             AutomationEventLogger.log(
                 .drag,
                 "drag from=(\(Int(startPoint.x)),\(Int(startPoint.y))) to=(\(Int(endPoint.x)),\(Int(endPoint.y))) "
@@ -141,42 +142,78 @@ struct DragCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                     + "profile=\(movement.profileName)"
             )
 
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            await InteractionObservationInvalidator.invalidateAfterMutation(
-                targets: self.resolvedRuntime.interactionMutationTargets,
-                logger: self.logger,
-                reason: "drag"
-            )
-            try Task.checkCancellation()
+            try await withPreservedActionResultOnFailure(
+                actionResult,
+                targetIdentity: actionResult.targetIdentity,
+                operation: "Drag"
+            ) {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                await InteractionObservationInvalidator.invalidateAfterMutation(
+                    targets: self.resolvedRuntime.interactionMutationTargets,
+                    logger: self.logger,
+                    reason: "drag"
+                )
+                try Task.checkCancellation()
 
-            let result = DragResult(
-                from: ["x": Int(startPoint.x), "y": Int(startPoint.y)],
-                to: ["x": Int(endPoint.x), "y": Int(endPoint.y)],
-                duration: movement.duration,
-                steps: movement.steps,
-                profile: movement.profileName,
-                modifiers: self.modifiers?.description ?? "none",
-                button: self.button.lowercased(),
-                fromTargetPoint: startResolution.diagnostics,
-                toTargetPoint: endResolution.diagnostics,
-                executionTime: Date().timeIntervalSince(startTime)
-            )
+                let result = DragResult(
+                    from: ["x": Int(startPoint.x), "y": Int(startPoint.y)],
+                    to: ["x": Int(endPoint.x), "y": Int(endPoint.y)],
+                    duration: movement.duration,
+                    steps: movement.steps,
+                    profile: movement.profileName,
+                    modifiers: self.modifiers?.description ?? "none",
+                    button: self.button.lowercased(),
+                    fromTargetPoint: startResolution.diagnostics,
+                    toTargetPoint: endResolution.diagnostics,
+                    executionTime: Date().timeIntervalSince(startTime)
+                )
 
-            output(result) {
-                print("✅ Drag successful")
-                print("📍 From: (\(Int(startPoint.x)), \(Int(startPoint.y)))")
-                print("📍 To: (\(Int(endPoint.x)), \(Int(endPoint.y)))")
-                print("🧭 Profile: \(movement.profileName.capitalized)")
-                print("⏱️  Duration: \(movement.duration)ms with \(movement.steps) steps")
-                if let mods = self.modifiers {
-                    print("⌨️  Modifiers: \(mods)")
+                output(
+                    result,
+                    outcome: actionResult.outcome,
+                    targetIdentity: actionResult.targetIdentity
+                ) {
+                    if let outcome = actionResult.outcome {
+                        print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Drag"))
+                    } else {
+                        print("✅ Drag successful")
+                    }
+                    print("📍 From: (\(Int(startPoint.x)), \(Int(startPoint.y)))")
+                    print("📍 To: (\(Int(endPoint.x)), \(Int(endPoint.y)))")
+                    print("🧭 Profile: \(movement.profileName.capitalized)")
+                    print("⏱️  Duration: \(movement.duration)ms with \(movement.steps) steps")
+                    if let mods = self.modifiers {
+                        print("⌨️  Modifiers: \(mods)")
+                    }
+                    print("🖱️  Button: \(self.button.lowercased())")
+                    print("⏱️  Completed in \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s")
                 }
-                print("🖱️  Button: \(self.button.lowercased())")
-                print("⏱️  Completed in \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s")
             }
         } catch {
             self.handleError(error)
             throw ExitCode.failure
+        }
+    }
+
+    private func performDrag(
+        _ request: DragRequest,
+        setupFocus: UIAutomationActionResult<Void>
+    ) async throws -> UIAutomationActionResult<Void> {
+        let pointerAction = try await AutomationServiceBridge.drag(
+            automation: self.services.automation,
+            request: request
+        )
+        return try withPreservedActionResultOnFailure(
+            pointerAction,
+            targetIdentity: pointerAction.targetIdentity,
+            operation: "Drag"
+        ) {
+            try AutomationServiceBridge.composeGlobalPointerResult(
+                setupFocus: setupFocus,
+                pointerAction: pointerAction,
+                operation: "Drag",
+                route: commandActionRoute(for: self.services)
+            )
         }
     }
 

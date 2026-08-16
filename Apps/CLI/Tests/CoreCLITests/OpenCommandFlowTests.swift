@@ -581,7 +581,7 @@ struct MenuCommandTargetConsentTests {
     }
 
     @Test
-    func `Explicit app preserves background menu dispatch`() async throws {
+    func `Explicit inactive app preserves generation-pinned background menu dispatch`() async throws {
         let fixture = self.makeFixture()
         var command = MenuCommand.ClickSubcommand()
         command.target.app = "Finder"
@@ -594,6 +594,8 @@ struct MenuCommandTargetConsentTests {
         #expect(fixture.menu.clickedItems.count == 1)
         #expect(click.app == "Finder")
         #expect(click.item == "Close")
+        #expect(fixture.menu.requestedDeliveryModes == [.background])
+        #expect(fixture.applications.activateCalls.isEmpty)
     }
 
     @Test
@@ -618,7 +620,8 @@ struct MenuCommandTargetConsentTests {
             processIdentifier: 101,
             processStartIdentity: 1,
             bundleIdentifier: "com.apple.finder",
-            name: "Finder"
+            name: "Finder",
+            isActive: false
         )
         return MenuConsentFixture(
             applications: RecordingApplicationService(applications: [app]),
@@ -802,7 +805,7 @@ private final class RecordingHotkeyAutomationService: MockAutomationService {
 }
 
 @MainActor
-private final class RecordingApplicationService: ApplicationServiceProtocol {
+private final class RecordingApplicationService: ApplicationServiceActionResultProviding {
     let supportsApplicationLaunchOptions = true
     let supportsApplicationRelaunch = true
     let supportsProcessGenerationPinnedApplicationActivation = true
@@ -939,6 +942,73 @@ private final class RecordingApplicationService: ApplicationServiceProtocol {
         return try await self.quitApplication(identifier: request.identifier, force: request.force)
     }
 
+    func launchApplicationActionResult(
+        request: ApplicationLaunchRequest
+    ) async throws -> DesktopActionResult<ServiceApplicationInfo> {
+        let application = try await self.launchApplication(request: request)
+        let outcome: DesktopActionOutcome = request.isSafeBackgroundNoOp
+            ? .confirmedNoChange()
+            : .dispatchedUnverified(
+                delivery: Self.applicationDelivery(mode: request.activates ? .foreground : .background),
+                evidence: .deliveryAccepted,
+                unitCount: .one
+            )
+        return DesktopActionResult(payload: application, outcome: outcome)
+    }
+
+    func relaunchApplicationActionResult(
+        request: ApplicationRelaunchRequest
+    ) async throws -> DesktopActionResult<ServiceApplicationInfo> {
+        let application = try await self.relaunchApplication(request: request)
+        return DesktopActionResult(
+            payload: application,
+            outcome: .dispatchedUnverified(
+                delivery: Self.applicationDelivery(
+                    mode: request.launchRequest.activates ? .foreground : .background
+                ),
+                evidence: .deliveryAccepted,
+                unitCount: .one
+            )
+        )
+    }
+
+    func activateApplicationActionResult(
+        request: ApplicationActivationRequest
+    ) async throws -> DesktopActionResult<Void> {
+        try await self.activateApplication(request: request)
+        return DesktopActionResult(outcome: .confirmedChange(
+            delivery: Self.applicationDelivery(mode: .foreground),
+            unitCount: .one
+        ))
+    }
+
+    func quitApplicationActionResult(
+        request: ApplicationQuitRequest
+    ) async throws -> DesktopActionResult<Bool> {
+        let terminated = try await self.quitApplication(request: request)
+        let delivery = Self.applicationDelivery(mode: .background)
+        let outcome: DesktopActionOutcome = terminated
+            ? .confirmedChange(delivery: delivery, unitCount: .one)
+            : .suspectedNoop(delivery: delivery, unitCount: .one)
+        return DesktopActionResult(payload: terminated, outcome: outcome)
+    }
+
+    func hideApplicationActionResult(identifier: String) async throws -> DesktopActionResult<Void> {
+        try await self.hideApplication(identifier: identifier)
+        return DesktopActionResult(outcome: .confirmedChange(
+            delivery: Self.applicationDelivery(mode: .background),
+            unitCount: .one
+        ))
+    }
+
+    func unhideApplicationActionResult(identifier: String) async throws -> DesktopActionResult<Void> {
+        try await self.unhideApplication(identifier: identifier)
+        return DesktopActionResult(outcome: .confirmedChange(
+            delivery: Self.applicationDelivery(mode: .background),
+            unitCount: .one
+        ))
+    }
+
     func hideApplication(identifier _: String) async throws {}
     func unhideApplication(identifier _: String) async throws {}
     func hideOtherApplications(identifier _: String) async throws {}
@@ -948,12 +1018,19 @@ private final class RecordingApplicationService: ApplicationServiceProtocol {
         guard identifier.uppercased().hasPrefix("PID:") else { return nil }
         return Int32(identifier.dropFirst(4))
     }
+
+    private static func applicationDelivery(
+        mode: DesktopActionOutcome.Delivery.Mode
+    ) -> DesktopActionOutcome.Delivery {
+        DesktopActionOutcome.Delivery(mechanism: .nativeFramework, mode: mode)
+    }
 }
 
 @MainActor
-private final class RecordingMenuConsentService: MenuServiceProtocol {
+private final class RecordingMenuConsentService: MenuServiceGenerationPinnedActionResultProviding {
     private let application: ServiceApplicationInfo
     private(set) var clickedItems: [(app: String, item: String)] = []
+    private(set) var requestedDeliveryModes: [DesktopActionOutcome.Delivery.Mode] = []
     private(set) var operationCallCount = 0
 
     init(application: ServiceApplicationInfo) {
@@ -979,8 +1056,39 @@ private final class RecordingMenuConsentService: MenuServiceProtocol {
         self.clickedItems.append((app, itemName))
     }
 
+    func clickMenuItemActionResult(app: String, itemPath: String) async throws -> UIAutomationActionResult<Void> {
+        try await self.clickMenuItem(app: app, itemPath: itemPath)
+        return try self.actionResult(mode: .foreground)
+    }
+
+    func clickMenuItemByNameActionResult(app: String, itemName: String) async throws
+    -> UIAutomationActionResult<Void> {
+        try await self.clickMenuItemByName(app: app, itemName: itemName)
+        return try self.actionResult(mode: .foreground)
+    }
+
+    func clickMenuItemActionResult(request: MenuItemActionRequest) throws -> UIAutomationActionResult<Void> {
+        self.operationCallCount += 1
+        self.clickedItems.append((self.application.name, request.itemPath))
+        self.requestedDeliveryModes.append(request.deliveryMode)
+        return try self.actionResult(mode: request.deliveryMode)
+    }
+
+    func clickMenuItemByNameActionResult(request: MenuItemByNameActionRequest) throws
+    -> UIAutomationActionResult<Void> {
+        self.operationCallCount += 1
+        self.clickedItems.append((self.application.name, request.itemName))
+        self.requestedDeliveryModes.append(request.deliveryMode)
+        return try self.actionResult(mode: request.deliveryMode)
+    }
+
     func clickMenuExtra(title _: String) async throws {
         self.operationCallCount += 1
+    }
+
+    func clickMenuExtraActionResult(title: String) async throws -> UIAutomationActionResult<Void> {
+        try await self.clickMenuExtra(title: title)
+        return try self.actionResult(mode: .foreground)
     }
 
     func isMenuExtraMenuOpen(title _: String, ownerPID _: pid_t?) async throws -> Bool {
@@ -1008,9 +1116,53 @@ private final class RecordingMenuConsentService: MenuServiceProtocol {
         return PeekabooCore.ClickResult(elementDescription: "unused", location: nil)
     }
 
+    func clickMenuBarItemActionResult(named name: String) async throws
+    -> UIAutomationActionResult<PeekabooCore.ClickResult> {
+        try await UIAutomationActionResult(
+            payload: self.clickMenuBarItem(named: name),
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .one
+            ),
+            targetIdentity: self.processTarget()
+        )
+    }
+
     func clickMenuBarItem(at _: Int) async throws -> PeekabooCore.ClickResult {
         self.operationCallCount += 1
         return PeekabooCore.ClickResult(elementDescription: "unused", location: nil)
+    }
+
+    func clickMenuBarItemActionResult(at index: Int) async throws
+    -> UIAutomationActionResult<PeekabooCore.ClickResult> {
+        try await UIAutomationActionResult(
+            payload: self.clickMenuBarItem(at: index),
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .one
+            ),
+            targetIdentity: self.processTarget()
+        )
+    }
+
+    private func actionResult(mode: DesktopActionOutcome.Delivery.Mode) throws -> UIAutomationActionResult<Void> {
+        try UIAutomationActionResult(
+            payload: (),
+            outcome: .confirmedChange(
+                delivery: .init(mechanism: .accessibilityAction, mode: mode),
+                unitCount: .one
+            ),
+            targetIdentity: self.processTarget()
+        )
+    }
+
+    private func processTarget() throws -> DesktopTargetIdentity {
+        guard let identity = self.application.processIdentity else {
+            throw PeekabooError.serviceUnavailable("Missing fixture process identity")
+        }
+        return try DesktopTargetIdentity(processIdentity: identity)
     }
 }
 

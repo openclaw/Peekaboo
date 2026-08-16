@@ -1,6 +1,265 @@
 import CoreGraphics
 import Foundation
 import PeekabooCore
+import PeekabooFoundation
+
+enum SeeCommandPreparationContext {
+    @TaskLocal static var didCapture: (@Sendable () -> Void)?
+}
+
+struct SeeExecutionReceipt: Equatable, Sendable {
+    static let none = SeeExecutionReceipt(outcome: nil, targetReceipt: nil)
+
+    let outcome: DesktopActionOutcome?
+    let targetReceipt: DesktopActionTargetReceipt?
+
+    init(
+        outcome: DesktopActionOutcome?,
+        targetReceipt: DesktopActionTargetReceipt?
+    ) {
+        self.outcome = outcome
+        self.targetReceipt = targetReceipt
+    }
+
+    init(
+        _ result: UIAutomationActionResult<some Any>,
+        fallbackTargetReceipt: DesktopActionTargetReceipt? = nil
+    ) {
+        let targetReceipt: DesktopActionTargetReceipt? =
+            if let targetIdentity = result.targetIdentity {
+                Self.targetReceipt(from: targetIdentity)
+            } else {
+                fallbackTargetReceipt
+            }
+        self.init(
+            outcome: result.outcome,
+            targetReceipt: targetReceipt
+        )
+    }
+
+    static func validated(
+        _ result: UIAutomationActionResult<ElementDetectionResult>,
+        operation: String,
+        requiresOutcome: Bool,
+        requiresTarget: Bool
+    ) throws -> Self {
+        try ObservationActionResultSemantics.requirePublishableOutcome(
+            result.outcome,
+            targetIdentity: result.targetIdentity,
+            operation: operation,
+            requiresOutcome: requiresOutcome
+        )
+        let target = try ObservationActionResultSemantics.coalescedTarget(
+            actionTarget: result.targetIdentity,
+            payload: result.payload,
+            outcome: result.outcome,
+            operation: operation,
+            requiresTarget: requiresTarget
+        )
+        return Self(
+            outcome: result.outcome,
+            targetReceipt: Self.targetReceipt(from: target)
+        )
+    }
+
+    static func validated(
+        _ result: UIAutomationActionResult<DesktopObservationResult>,
+        operation: String,
+        requiresOutcome: Bool,
+        requiresTarget: Bool
+    ) throws -> Self {
+        try ObservationActionResultSemantics.requirePublishableOutcome(
+            result.outcome,
+            targetIdentity: result.targetIdentity,
+            operation: operation,
+            requiresOutcome: requiresOutcome
+        )
+        let target = try ObservationActionResultSemantics.coalescedTarget(
+            actionTarget: result.targetIdentity,
+            payload: result.payload,
+            outcome: result.outcome,
+            operation: operation,
+            requiresTarget: requiresTarget
+        )
+        return Self(
+            outcome: result.outcome,
+            targetReceipt: Self.targetReceipt(from: target)
+        )
+    }
+
+    static func combining(_ receipts: [Self]) -> Self {
+        guard let first = receipts.first else { return .none }
+        guard receipts.count > 1 else { return first }
+
+        let outcomes = receipts.map(\.outcome)
+        let outcome = DesktopActionSequenceAccumulator.completedBatch(
+            outcomes: outcomes,
+            succeededCount: receipts.count,
+            attemptedCount: receipts.count
+        )
+        let targetReceipt: DesktopActionTargetReceipt? =
+            if let firstTarget = first.targetReceipt,
+            receipts.allSatisfy({
+                $0.targetReceipt == firstTarget
+            }) {
+                firstTarget
+            } else {
+                nil
+            }
+        return Self(outcome: outcome, targetReceipt: targetReceipt)
+    }
+
+    func requirePublishableOutcome(operation: String, requiresOutcome: Bool) throws {
+        try ObservationActionResultSemantics.requirePublishableOutcome(
+            self.outcome,
+            targetReceipt: self.targetReceipt,
+            operation: operation,
+            requiresOutcome: requiresOutcome
+        )
+    }
+
+    func preservingFailure(
+        _ error: any Error,
+        operation: String
+    ) -> any Error {
+        guard let outcome = self.outcome else { return error }
+        if let failure = error as? DesktopActionFailure {
+            var sequence = DesktopActionSequenceAccumulator()
+            sequence.record(.outcome(outcome))
+            let composed = sequence.failure(
+                combining: failure,
+                message: failure.message,
+                hint: failure.hint ?? "Observe the target before deciding whether to retry \(operation).",
+                causeDescription: failure.causeDescription
+            )
+            return composed.attributed(to: self.aggregateTarget(with: failure))
+        }
+
+        return postResultProcessingError(
+            error,
+            outcome: outcome,
+            targetReceipt: self.targetReceipt,
+            operation: operation,
+            message: "\(operation) failed after its conditional desktop mutation result was returned.",
+            hint: "Observe the target before deciding whether to retry \(operation)."
+        )
+    }
+
+    static func targetReceipt(from identity: DesktopTargetIdentity?) -> DesktopActionTargetReceipt? {
+        identity?.actionTargetReceipt
+    }
+
+    static func targetReceipt(from result: DesktopObservationResult) -> DesktopActionTargetReceipt? {
+        self.targetReceipt(from: result.capture.metadata.windowInfo?.mutationIdentity)
+            ?? result.elements.flatMap(self.targetReceipt(from:))
+    }
+
+    static func targetReceipt(from result: ElementDetectionResult) -> DesktopActionTargetReceipt? {
+        self.targetReceipt(from: result.metadata.windowContext)
+    }
+
+    static func targetReceipt(from context: WindowContext?) -> DesktopActionTargetReceipt? {
+        self.targetReceipt(from: context?.windowMutationIdentity)
+    }
+
+    private static func targetReceipt(
+        from identity: WindowMutationIdentity?
+    ) -> DesktopActionTargetReceipt? {
+        guard let identity,
+              identity.ownerProcessIdentifier > 0,
+              identity.ownerProcessStartIdentity > 0,
+              identity.windowID > 0
+        else { return nil }
+        return DesktopActionTargetReceipt(
+            processIdentifier: identity.ownerProcessIdentifier,
+            processStartIdentity: identity.ownerProcessStartIdentity,
+            windowID: identity.windowID
+        )
+    }
+
+    private func aggregateTarget(with laterFailure: DesktopActionFailure)
+    -> DesktopActionTargetReceipt? {
+        guard let outcome = self.outcome else { return laterFailure.targetReceipt }
+        switch (
+            outcome.dispatchState.mutationDispatched,
+            laterFailure.outcome.dispatchState.mutationDispatched
+        ) {
+        case (true, true):
+            guard self.targetReceipt != nil, laterFailure.targetReceipt != nil else { return nil }
+            return Self.compatibleTarget(self.targetReceipt, laterFailure.targetReceipt)
+        case (true, false):
+            return self.targetReceipt
+        case (false, true):
+            return laterFailure.targetReceipt
+        case (false, false):
+            return Self.compatibleTarget(self.targetReceipt, laterFailure.targetReceipt)
+        }
+    }
+
+    private static func compatibleTarget(
+        _ prior: DesktopActionTargetReceipt?,
+        _ later: DesktopActionTargetReceipt?
+    ) -> DesktopActionTargetReceipt? {
+        switch (prior, later) {
+        case let (prior?, later?):
+            guard prior.processIdentifier == later.processIdentifier,
+                  prior.processStartIdentity == later.processStartIdentity
+            else { return nil }
+            if prior.windowID == later.windowID {
+                return prior
+            }
+            guard prior.windowID == nil || later.windowID == nil else { return nil }
+            return DesktopActionTargetReceipt(
+                processIdentifier: prior.processIdentifier,
+                processStartIdentity: prior.processStartIdentity
+            )
+        case (let target?, nil), (nil, let target?):
+            return target
+        case (nil, nil):
+            return nil
+        }
+    }
+}
+
+@MainActor
+extension SeeCommand {
+    func failurePreservingConditionalTimeout(
+        _ error: any Error,
+        progress: DesktopObservationActionProgressReceipt?
+    ) -> any Error {
+        guard let captureError = error as? CaptureError,
+              case .detectionTimedOut = captureError,
+              self.webFocus || self.menubar
+        else { return error }
+
+        if progress == nil, self.webFocus, !self.menubar {
+            return error
+        }
+        if let progress, !progress.outcome.dispatchState.mutationDispatched {
+            return error
+        }
+
+        let outcome = progress?.outcome
+        let route = outcome?.route ??
+            (self.resolvedRuntime.selectedRemoteSocketPath == nil ? .local : .bridge)
+        let failure = DesktopActionFailure.indeterminate(
+            route: route,
+            delivery: outcome?.delivery ?? .init(mechanism: .capturePipeline, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: outcome?.dispatchState.unitCount ?? .one,
+            message: "See timed out after its conditional desktop mutation may have been dispatched.",
+            hint: "Observe the exact target before deciding whether to retry see.",
+            causeDescription: error.localizedDescription
+        )
+        .attributed(to: progress?.targetReceipt)
+        return failure.selectingLeaves(progress?.selectedLeafEvidence)
+    }
+}
+
+struct SeeObservationActionResult: Sendable {
+    let observation: DesktopObservationResult
+    let receipt: SeeExecutionReceipt
+}
 
 struct CaptureContext {
     let captureResult: CaptureResult
@@ -19,11 +278,14 @@ struct MenuBarPopoverCapture {
 struct CaptureAndDetectionResult {
     let snapshotId: String
     let screenshotPath: String
+    let screenshotData: Data?
     let annotatedPath: String?
+    let annotatedData: Data?
     let elements: DetectedElements
     let metadata: DetectionMetadata
     let observation: SeeObservationDiagnostics?
     let coordinateContext: CaptureCoordinateContext?
+    let receipt: SeeExecutionReceipt
 }
 
 struct SnapshotPaths {
@@ -35,7 +297,9 @@ struct SnapshotPaths {
 struct SeeCommandRenderContext {
     let snapshotId: String
     let screenshotPath: String
+    let screenshotData: Data?
     let annotatedPath: String?
+    let annotatedData: Data?
     let metadata: DetectionMetadata
     let elements: DetectedElements
     let coordinateContext: CaptureCoordinateContext?
@@ -43,6 +307,7 @@ struct SeeCommandRenderContext {
     let executionTime: TimeInterval
     let observation: SeeObservationDiagnostics?
     let menuBar: MenuBarSummary?
+    let receipt: SeeExecutionReceipt
 }
 
 struct UIElementSummary: Codable {
@@ -172,7 +437,9 @@ struct SeeTruncationSummary: Codable {
         self.max_children_per_node_reached = truncationInfo.maxChildrenPerNodeReached
         self.deadline_reached = truncationInfo.deadlineReached
         self.incomplete_accessibility_read = truncationInfo.incompleteAccessibilityRead
-        self.warning = truncationInfo.remediationMessage(budget: metadata.windowContext?.traversalBudget)
+        self.warning = truncationInfo.remediationMessage(
+            budget: metadata.windowContext?.traversalBudget
+        )
     }
 }
 

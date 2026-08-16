@@ -75,14 +75,15 @@ struct FocusIgnoringMissingWindowsRequest {
 }
 
 @MainActor
+@discardableResult
 func ensureFocusIgnoringMissingWindows(
     request: FocusIgnoringMissingWindowsRequest,
     options: any FocusOptionsProtocol,
     services: any PeekabooServiceProviding,
     logger: Logger
-) async throws {
+) async throws -> UIAutomationActionResult<Void>? {
     do {
-        try await ensureFocused(
+        return try await ensureFocused(
             windowID: request.windowID,
             applicationName: request.applicationName,
             windowTitle: request.windowTitle,
@@ -93,8 +94,10 @@ func ensureFocusIgnoringMissingWindows(
         switch focusError {
         case .noWindowsFound:
             logger.debug("Skipping focus: no windows found for '\(request.applicationName)'")
+            return nil
         case .windowNotFound, .axElementNotFound:
             logger.debug("Skipping focus: window lookup failed for '\(request.applicationName)': \(focusError)")
+            return nil
         default:
             throw focusError
         }

@@ -41,51 +41,67 @@ extension SeeCommand {
             traversalBudget: self.axTraversalBudget()
         )
 
-        let detectionResult = try await self.detectElements(
+        let detectionActionResult = try await self.detectElements(
             for: captureContext,
             windowContext: windowContext,
             snapshotID: snapshotID
         )
-
-        let resultWithPath = ElementDetectionResult(
-            snapshotId: snapshotID,
-            screenshotPath: outputPath,
-            elements: detectionResult.elements,
-            metadata: detectionResult.metadata
+        let detectionResult = detectionActionResult.payload
+        let receipt = try SeeExecutionReceipt.validated(
+            detectionActionResult,
+            operation: "See element detection",
+            requiresOutcome: self.webFocus || self.menubar,
+            requiresTarget: (self.webFocus || self.menubar) && self.requiresExactObservationTarget
         )
 
-        try await self.services.snapshots.storeScreenshot(
-            SnapshotScreenshotRequest(
+        do {
+            let resultWithPath = ElementDetectionResult(
                 snapshotId: snapshotID,
                 screenshotPath: outputPath,
-                applicationBundleId: captureResult.metadata.applicationInfo?.bundleIdentifier,
-                applicationProcessId: captureResult.metadata.applicationInfo.map { Int32($0.processIdentifier) },
-                applicationName: windowContext.applicationName,
-                windowTitle: windowContext.windowTitle,
-                windowBounds: windowContext.windowBounds,
-                captureCoordinateContext: CaptureCoordinateContext(
-                    metadata: captureResult.metadata,
-                    referenceID: snapshotID
+                elements: detectionResult.elements,
+                metadata: detectionResult.metadata
+            )
+
+            try await self.services.snapshots.storeScreenshot(
+                SnapshotScreenshotRequest(
+                    snapshotId: snapshotID,
+                    screenshotPath: outputPath,
+                    applicationBundleId: captureResult.metadata.applicationInfo?.bundleIdentifier,
+                    applicationProcessId: captureResult.metadata.applicationInfo.map {
+                        Int32($0.processIdentifier)
+                    },
+                    applicationName: windowContext.applicationName,
+                    windowTitle: windowContext.windowTitle,
+                    windowBounds: windowContext.windowBounds,
+                    captureCoordinateContext: CaptureCoordinateContext(
+                        metadata: captureResult.metadata,
+                        referenceID: snapshotID
+                    )
                 )
             )
-        )
 
-        try await self.services.snapshots.storeDetectionResult(
-            snapshotId: snapshotID,
-            result: resultWithPath
-        )
+            try await self.services.snapshots.storeDetectionResult(
+                snapshotId: snapshotID,
+                result: resultWithPath
+            )
 
-        return CaptureAndDetectionResult(
-            snapshotId: snapshotID,
-            screenshotPath: outputPath,
-            annotatedPath: nil,
-            elements: detectionResult.elements,
-            metadata: detectionResult.metadata,
-            observation: nil,
-            coordinateContext: captureResult.metadata.viewport.map { _ in
-                CaptureCoordinateContext(metadata: captureResult.metadata, referenceID: snapshotID)
-            }
-        )
+            return CaptureAndDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: outputPath,
+                screenshotData: captureResult.imageData,
+                annotatedPath: nil,
+                annotatedData: nil,
+                elements: detectionResult.elements,
+                metadata: detectionResult.metadata,
+                observation: nil,
+                coordinateContext: captureResult.metadata.viewport.map { _ in
+                    CaptureCoordinateContext(metadata: captureResult.metadata, referenceID: snapshotID)
+                },
+                receipt: receipt
+            )
+        } catch {
+            throw receipt.preservingFailure(error, operation: "see snapshot publication")
+        }
     }
 
     private func performTreeOnlyDetection(
@@ -96,14 +112,15 @@ extension SeeCommand {
         if self.app != nil, self.pid != nil {
             throw ValidationError("Use either --app or --pid, not both")
         }
-        let appName: String? = if self.app?.lowercased() == "frontmost" {
-            nil
-        } else {
-            self.app
-        }
+        let appName: String? =
+            if self.app?.lowercased() == "frontmost" {
+                nil
+            } else {
+                self.app
+            }
         let windowID = try await self.resolvedTreeWindowID()
         let accessibilityTimeoutSeconds = max(0.001, observationDeadline.timeIntervalSinceNow)
-        let result = try await self.services.automation.inspectAccessibilityTree(
+        let actionResult = try await self.services.automation.inspectAccessibilityTreeResult(
             windowContext: WindowContext(
                 applicationName: appName,
                 applicationProcessId: self.pid,
@@ -114,24 +131,38 @@ extension SeeCommand {
                 accessibilityTimeoutSeconds: accessibilityTimeoutSeconds
             )
         )
-        try self.requireUsableTreeOnlyEvidence(result)
-        try self.requireActionCapableTreeOnlyEvidence(result)
-        let bound = ElementDetectionResult(
-            snapshotId: snapshotID,
-            screenshotPath: "",
-            elements: result.elements,
-            metadata: result.metadata
+        let result = actionResult.payload
+        let receipt = try SeeExecutionReceipt.validated(
+            actionResult,
+            operation: "Tree-only See",
+            requiresOutcome: self.webFocus,
+            requiresTarget: self.webFocus && self.requiresExactObservationTarget
         )
-        try await self.services.snapshots.storeDetectionResult(snapshotId: snapshotID, result: bound)
-        return CaptureAndDetectionResult(
-            snapshotId: snapshotID,
-            screenshotPath: "",
-            annotatedPath: nil,
-            elements: bound.elements,
-            metadata: bound.metadata,
-            observation: nil,
-            coordinateContext: nil
-        )
+        do {
+            try self.requireUsableTreeOnlyEvidence(result)
+            try self.requireActionCapableTreeOnlyEvidence(result)
+            let bound = ElementDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: "",
+                elements: result.elements,
+                metadata: result.metadata
+            )
+            try await self.services.snapshots.storeDetectionResult(snapshotId: snapshotID, result: bound)
+            return CaptureAndDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: "",
+                screenshotData: nil,
+                annotatedPath: nil,
+                annotatedData: nil,
+                elements: bound.elements,
+                metadata: bound.metadata,
+                observation: nil,
+                coordinateContext: nil,
+                receipt: receipt
+            )
+        } catch {
+            throw receipt.preservingFailure(error, operation: "tree-only see")
+        }
     }
 
     private func requireUsableTreeOnlyEvidence(_ result: ElementDetectionResult) throws {
@@ -169,8 +200,8 @@ extension SeeCommand {
               identity.capturedBounds == bounds
         else {
             throw PeekabooError.snapshotStale(
-                "AX-only see could not bind its elements to an exact process-generation, window, and bounds " +
-                    "receipt. Run see again before background input."
+                "AX-only see could not bind its elements to an exact process-generation, window, and bounds "
+                    + "receipt. Run see again before background input."
             )
         }
     }
@@ -206,7 +237,7 @@ extension SeeCommand {
         for captureContext: CaptureContext,
         windowContext: WindowContext,
         snapshotID: String
-    ) async throws -> ElementDetectionResult {
+    ) async throws -> UIAutomationActionResult<ElementDetectionResult> {
         let captureResult = captureContext.captureResult
         let detectionStart = Date()
 
@@ -226,11 +257,14 @@ extension SeeCommand {
                 windowContext: windowContext,
                 isDialog: false
             )
-            return ElementDetectionResult(
-                snapshotId: snapshotID,
-                screenshotPath: "",
-                elements: DetectedElements(other: ocrElements),
-                metadata: metadata
+            return UIAutomationActionResult(
+                payload: ElementDetectionResult(
+                    snapshotId: snapshotID,
+                    screenshotPath: "",
+                    elements: DetectedElements(other: ocrElements),
+                    metadata: metadata
+                ),
+                outcome: nil
             )
         }
 
@@ -239,11 +273,15 @@ extension SeeCommand {
             windowContext: windowContext,
             snapshotID: snapshotID
         )
-        return ElementDetectionResult(
-            snapshotId: snapshotID,
-            screenshotPath: detectionResult.screenshotPath,
-            elements: detectionResult.elements,
-            metadata: detectionResult.metadata
+        return UIAutomationActionResult(
+            payload: ElementDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: detectionResult.payload.screenshotPath,
+                elements: detectionResult.payload.elements,
+                metadata: detectionResult.payload.metadata
+            ),
+            outcome: detectionResult.outcome,
+            targetIdentity: detectionResult.targetIdentity
         )
     }
 
@@ -254,61 +292,93 @@ extension SeeCommand {
             return nil
         }
 
-        self.logger.verbose("Using desktop observation pipeline", category: "Capture", metadata: [
-            "target": self.observationTargetDescription(target),
-        ])
+        self.logger.verbose(
+            "Using desktop observation pipeline", category: "Capture",
+            metadata: [
+                "target": self.observationTargetDescription(target),
+            ]
+        )
         let mode = self.determineMode()
         self.logger.operationStart("capture_phase", metadata: ["mode": mode.rawValue])
 
-        let observation: DesktopObservationResult
+        let observationActionResult: UIAutomationActionResult<DesktopObservationResult>
         do {
-            observation = try await self.services.desktopObservation
-                .observe(self.makeObservationRequest(target: target, snapshotID: snapshotID))
+            observationActionResult = try await self.services.desktopObservation
+                .observeResult(self.makeObservationRequest(target: target, snapshotID: snapshotID))
         } catch DesktopObservationError.targetNotFound(_) where self.menubar {
-            self.logger.verbose("No observation-backed menu bar popover found; falling back", category: "Capture")
-            self.logger.operationComplete("capture_phase", success: false, metadata: [
-                "mode": mode.rawValue,
-                "fallback": "legacy_menubar",
-            ])
+            self.logger.verbose(
+                "No observation-backed menu bar popover found; falling back", category: "Capture"
+            )
+            self.logger.operationComplete(
+                "capture_phase", success: false,
+                metadata: [
+                    "mode": mode.rawValue,
+                    "fallback": "legacy_menubar",
+                ]
+            )
             return nil
         }
+        let observation = observationActionResult.payload
+        let receipt = try SeeExecutionReceipt.validated(
+            observationActionResult,
+            operation: "See observation",
+            requiresOutcome: self.webFocus || self.menubar,
+            requiresTarget: (self.webFocus || self.menubar) && self.requiresExactObservationTarget
+        )
 
-        self.logger.operationComplete("capture_phase", metadata: [
-            "mode": mode.rawValue,
-        ])
+        self.logger.operationComplete(
+            "capture_phase",
+            metadata: [
+                "mode": mode.rawValue,
+            ]
+        )
 
         self.logObservationSpans(observation.timings)
 
-        guard let outputPath = observation.files.rawScreenshotPath else {
-            throw CaptureError.captureFailure("Observation completed without a saved screenshot path")
-        }
-        guard let detectionResult = observation.elements else {
-            throw CaptureError.captureFailure("Observation completed without element detection")
-        }
+        do {
+            guard let outputPath = observation.files.rawScreenshotPath else {
+                throw CaptureError.captureFailure("Observation completed without a saved screenshot path")
+            }
+            guard let detectionResult = observation.elements else {
+                throw CaptureError.captureFailure("Observation completed without element detection")
+            }
+            let screenshotData = try observation.verifiedRawScreenshotData()
+            let annotatedData = try observation.files.annotatedScreenshotPath.map { _ in
+                try observation.verifiedAnnotatedScreenshotData()
+            }
 
-        return CaptureAndDetectionResult(
-            snapshotId: snapshotID,
-            screenshotPath: outputPath,
-            annotatedPath: observation.files.annotatedScreenshotPath,
-            elements: detectionResult.elements,
-            metadata: detectionResult.metadata,
-            observation: SeeObservationDiagnostics(
-                timings: observation.timings,
-                diagnostics: observation.diagnostics
-            ),
-            coordinateContext: CaptureCoordinateContext(
-                metadata: observation.capture.metadata,
-                referenceID: snapshotID
+            return CaptureAndDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: outputPath,
+                screenshotData: screenshotData,
+                annotatedPath: observation.files.annotatedScreenshotPath,
+                annotatedData: annotatedData,
+                elements: detectionResult.elements,
+                metadata: detectionResult.metadata,
+                observation: SeeObservationDiagnostics(
+                    timings: observation.timings,
+                    diagnostics: observation.diagnostics
+                ),
+                coordinateContext: CaptureCoordinateContext(
+                    metadata: observation.capture.metadata,
+                    referenceID: snapshotID
+                ),
+                receipt: receipt
             )
-        )
+        } catch {
+            throw receipt.preservingFailure(error, operation: "see observation result preparation")
+        }
     }
 
     private func logObservationSpans(_ timings: ObservationTimings) {
         for span in timings.spans {
-            self.logger.verbose("Desktop observation span", category: "Performance", metadata: [
-                "span": span.name,
-                "duration_ms": Int(span.durationMS.rounded()),
-            ])
+            self.logger.verbose(
+                "Desktop observation span", category: "Performance",
+                metadata: [
+                    "span": span.name,
+                    "duration_ms": Int(span.durationMS.rounded()),
+                ]
+            )
         }
     }
 }

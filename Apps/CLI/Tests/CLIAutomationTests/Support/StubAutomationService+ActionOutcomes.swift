@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
 import PeekabooAutomationKitTestSupport
@@ -5,7 +6,8 @@ import PeekabooFoundation
 
 @MainActor
 final class OutcomeStubAutomationService: StubAutomationService, ScriptedUIAutomationActionOutcomeProviding,
-ExactWindowTargetedKeyboardServiceProtocol, TargetedFocusedElementServiceProtocol {
+    ExactWindowTargetedKeyboardServiceProtocol, TargetedFocusedElementServiceProtocol,
+    UIAutomationGlobalPointerActionResultProviding {
     struct ExactTypeActionsCall {
         let actions: [TypeAction]
         let target: ExactWindowKeyboardTarget
@@ -22,6 +24,12 @@ ExactWindowTargetedKeyboardServiceProtocol, TargetedFocusedElementServiceProtoco
     var exactTypeActionsCalls: [ExactTypeActionsCall] = []
     var exactHotkeyCalls: [ExactHotkeyCall] = []
     var targetedFocusedElement: UIFocusInfo?
+    var actionOutcomeTargetIdentity: DesktopTargetIdentity?
+    var allowsContradictoryOutcomeTargetIdentityForTesting = false
+
+    var uiAutomationOutcomeTargetIdentity: DesktopTargetIdentity? {
+        self.actionOutcomeTargetIdentity
+    }
 
     var actionOutcome: DesktopActionOutcome? {
         didSet {
@@ -62,5 +70,20 @@ ExactWindowTargetedKeyboardServiceProtocol, TargetedFocusedElementServiceProtoco
     func getFocusedElement(targetProcessIdentifier: pid_t) async -> UIFocusInfo? {
         guard self.targetedFocusedElement?.processId == Int(targetProcessIdentifier) else { return nil }
         return self.targetedFocusedElement
+    }
+
+    func dragWithOutcome(_ request: DragOperationRequest) async throws -> UIAutomationActionResult<Void> {
+        try await super.drag(request)
+        return UIAutomationActionResult(payload: (), outcome: self.actionOutcome)
+    }
+
+    func moveMouseWithOutcome(
+        to: CGPoint,
+        duration: Int,
+        steps: Int,
+        profile: MouseMovementProfile
+    ) async throws -> UIAutomationActionResult<Void> {
+        try await super.moveMouse(to: to, duration: duration, steps: steps, profile: profile)
+        return UIAutomationActionResult(payload: (), outcome: self.actionOutcome)
     }
 }

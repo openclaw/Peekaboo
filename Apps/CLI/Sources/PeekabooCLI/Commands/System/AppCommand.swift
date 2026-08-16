@@ -76,16 +76,38 @@ struct AppCommand: ParsableCommand {
                 self.resolvedRuntime.beginInteractionMutation()
                 let actionResult = try await ApplicationServiceBridge.hideApplication(
                     applications: self.services.applications,
-                    identifier: appIdentifier
+                    application: appInfo
                 )
 
-                let data = [
-                    "action": "hide",
-                    "app_name": appInfo.name,
-                    "bundle_id": appInfo.bundleIdentifier ?? "unknown"
-                ]
+                struct HideResult: Codable {
+                    let action: String
+                    let app_name: String
+                    let bundle_id: String
+                    let pid: Int32
+                    let process_start_identity_decimal: String
+                }
 
-                output(data, outcome: actionResult.outcome) {
+                guard let processIdentity = actionResult.targetIdentity?.processIdentity else {
+                    throw PeekabooError.serviceUnavailable(
+                        "Application hide lost its validated process-generation target"
+                    )
+                }
+                let data = HideResult(
+                    action: "hide",
+                    app_name: appInfo.name,
+                    bundle_id: appInfo.bundleIdentifier ?? "unknown",
+                    pid: processIdentity.processIdentifier,
+                    process_start_identity_decimal: String(processIdentity.processStartIdentity)
+                )
+
+                if self.jsonOutput {
+                    outputSuccessCodable(
+                        data: data,
+                        outcome: actionResult.outcome,
+                        targetIdentity: actionResult.targetIdentity,
+                        logger: self.outputLogger
+                    )
+                } else {
                     print("✓ Hidden \(appInfo.name)")
                 }
                 AutomationEventLogger.log(
@@ -219,51 +241,84 @@ struct AppCommand: ParsableCommand {
                         logger: self.logger,
                         reason: "app switch cycle"
                     )
+                    try ApplicationActionResultSemantics.requireSuccessfulOutcome(
+                        actionResult.outcome,
+                        operation: "Application switch cycle"
+                    )
                     output(data, outcome: actionResult.outcome) {
                         print("✓ Cycled to next application")
                     }
                     AutomationEventLogger.log(.app, "switch action=cycle success=true")
                 } else if let targetApp = to {
                     let appInfo = try await resolveApplication(targetApp, services: self.services)
+                    guard let processIdentity = appInfo.processIdentity else {
+                        throw DesktopActionFailure.preDispatchRefusal(
+                            reason: .targetUnavailable,
+                            message: "Application discovery did not return a process-generation identity " +
+                                "for app switch.",
+                            hint: "Refresh the application inventory before retrying."
+                        )
+                    }
+                    let activationRequest = ApplicationActivationRequest(
+                        identifier: "PID:\(processIdentity.processIdentifier)",
+                        expectedIdentity: processIdentity
+                    )
+                    let targetIdentity = try DesktopTargetIdentity(processIdentity: processIdentity)
                     self.resolvedRuntime.beginInteractionMutation()
                     let actionResult = try await ApplicationServiceBridge.activateApplication(
                         applications: self.services.applications,
-                        request: ApplicationActivationRequest(application: appInfo)
+                        request: activationRequest
+                    )
+                    let resultCarrier = UIAutomationActionResult(
+                        payload: (),
+                        outcome: actionResult.outcome,
+                        targetIdentity: targetIdentity
                     )
                     await InteractionObservationInvalidator.invalidateAfterMutation(
                         targets: self.resolvedRuntime.interactionMutationTargets,
                         logger: self.logger,
                         reason: "app switch"
                     )
-                    if self.verify {
-                        try await self.verifyFrontmostApp(expected: appInfo)
-                    }
-
-                    struct SwitchResult: Codable {
-                        let action: String
-                        let app_name: String
-                        let bundle_id: String
-                        let success: Bool
-                    }
-
-                    let data = SwitchResult(
-                        action: "switch",
-                        app_name: appInfo.name,
-                        bundle_id: appInfo.bundleIdentifier ?? "unknown",
-                        success: true
-                    )
-
-                    output(
-                        data,
-                        effect: self.verify ? .confirmed : .unverifiable,
-                        outcome: actionResult.outcome
+                    try await withPreservedActionResultOnFailure(
+                        resultCarrier,
+                        targetIdentity: targetIdentity,
+                        operation: "App switch"
                     ) {
-                        print("✓ Switched to \(appInfo.name)")
+                        if self.verify {
+                            try await self.verifyFrontmostApp(expected: appInfo)
+                        }
+                        let outputOutcome = self.verify
+                            ? canonicalActionOutcomeAfterSuccessfulVerification(actionResult.outcome)
+                            : actionResult.outcome
+
+                        struct SwitchResult: Codable {
+                            let action: String
+                            let app_name: String
+                            let bundle_id: String
+                            let success: Bool
+                        }
+
+                        let data = SwitchResult(
+                            action: "switch",
+                            app_name: appInfo.name,
+                            bundle_id: appInfo.bundleIdentifier ?? "unknown",
+                            success: true
+                        )
+
+                        output(
+                            data,
+                            effect: self.verify ? .confirmed : .unverifiable,
+                            outcome: outputOutcome,
+                            targetIdentity: targetIdentity
+                        ) {
+                            print("✓ Switched to \(appInfo.name)")
+                        }
+                        AutomationEventLogger.log(
+                            .app,
+                            "switch app=\(appInfo.name) " +
+                                "bundle=\(appInfo.bundleIdentifier ?? "unknown") success=true"
+                        )
                     }
-                    AutomationEventLogger.log(
-                        .app,
-                        "switch app=\(appInfo.name) bundle=\(appInfo.bundleIdentifier ?? "unknown") success=true"
-                    )
                 } else {
                     throw ValidationError("Either --to or --cycle must be specified")
                 }
