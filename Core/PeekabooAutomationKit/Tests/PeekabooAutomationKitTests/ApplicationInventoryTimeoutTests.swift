@@ -1,11 +1,148 @@
 import CoreGraphics
 import Foundation
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
 @Suite(.serialized)
 struct ApplicationInventoryTimeoutTests {
+    @Test
+    @MainActor
+    func `omitted and identity-incomplete live processes make inventory partial`() async throws {
+        let changedPID: pid_t = 40001
+        let missingIdentityPID: pid_t = 40002
+        let changedGeneration = AutomationTestLockedValue<UInt64>(70)
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            processStartIdentityProvider: { pid in
+                pid == changedPID ? changedGeneration.value : nil
+            },
+            runningApplicationProcessIdentifiersProvider: { [changedPID, missingIdentityPID] },
+            applicationWindowCatalogProvider: { [] },
+            applicationMetadataProvider: { pid, _, _ in
+                if pid == changedPID {
+                    changedGeneration.value = 71
+                }
+                return Self.metadata(name: "App \(pid)")
+            })
+
+        let output = try await service.listApplications()
+
+        #expect(output.data.applications.map(\.processIdentifier) == [missingIdentityPID])
+        #expect(output.summary.status == .partial)
+        #expect(output.summary.counts["omittedApplications"] == 1)
+        #expect(output.metadata.warnings.contains { $0.contains("changed process generation") })
+        #expect(output.metadata.warnings.contains { $0.contains("Process-generation identity was unavailable") })
+    }
+
+    @Test
+    @MainActor
+    func `metadata without a usable name records an omitted inventory row`() async throws {
+        let pid: pid_t = 40003
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            processStartIdentityProvider: { _ in 73 },
+            runningApplicationProcessIdentifiersProvider: { [pid] },
+            applicationWindowCatalogProvider: { [] },
+            applicationMetadataProvider: { _, _, _ in
+                DetachedApplicationMetadata(
+                    bundleIdentifier: "com.example.unnamed",
+                    name: nil,
+                    bundlePath: nil,
+                    isHidden: false,
+                    activationPolicy: .regular,
+                    isFinishedLaunching: true)
+            })
+
+        let output = try await service.listApplications()
+
+        #expect(output.data.applications.isEmpty)
+        #expect(output.summary.status == .partial)
+        #expect(output.summary.counts["omittedApplications"] == 1)
+        #expect(output.metadata.warnings == ["Application PID \(pid) metadata lacked a usable name and was omitted."])
+    }
+
+    @Test
+    @MainActor
+    func `mutation inventory uses only selector fields and skips presentation enrichment`() async throws {
+        let pid: pid_t = 40004
+        let application = ServiceApplicationInfo(
+            processIdentifier: pid,
+            processStartIdentity: 74,
+            bundleIdentifier: "com.example.fixture",
+            name: "Editor")
+        var windowCatalogReadCount = 0
+        let metadataReadCount = AutomationTestLockedValue(0)
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            applicationMutationCandidateProvider: { _ in
+                ApplicationIdentifierMatcher.Candidate(
+                    processIdentifier: pid,
+                    bundleIdentifier: "com.example.fixture",
+                    name: "Editor",
+                    isRegularApplication: true)
+            },
+            processStartIdentityProvider: { _ in 74 },
+            runningApplicationProcessIdentifiersProvider: { [pid] },
+            applicationWindowCatalogProvider: {
+                windowCatalogReadCount += 1
+                return nil
+            },
+            applicationMetadataProvider: { _, _, _ in
+                metadataReadCount.withValue { $0 += 1 }
+                return Self.metadata(name: "Editor")
+            })
+        let planner = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: { try await service.applicationMutationInventory() },
+            exactIdentifierProvider: { _ in application })
+
+        let byName = try await planner.plan(identifier: "Editor")
+        let byBundle = try await planner.plan(identifier: "com.example.fixture")
+
+        #expect(byName.processIdentity == application.processIdentity)
+        #expect(byBundle.processIdentity == application.processIdentity)
+        #expect(windowCatalogReadCount == 0)
+        #expect(metadataReadCount.value == 0)
+    }
+
+    @Test
+    @MainActor
+    func `mutation inventory reports missing and drifting process generations as partial`() async throws {
+        let stablePID: pid_t = 40005
+        let missingPID: pid_t = 40006
+        let driftingPID: pid_t = 40007
+        var driftingReads = 0
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            applicationMutationCandidateProvider: { pid in
+                ApplicationIdentifierMatcher.Candidate(
+                    processIdentifier: pid,
+                    bundleIdentifier: "com.example.\(pid)",
+                    name: "App \(pid)")
+            },
+            processStartIdentityProvider: { pid -> UInt64? in
+                switch pid {
+                case stablePID: return 75
+                case missingPID: return nil
+                case driftingPID:
+                    driftingReads += 1
+                    return driftingReads == 1 ? 76 : 77
+                default: return nil
+                }
+            },
+            runningApplicationProcessIdentifiersProvider: { [stablePID, missingPID, driftingPID] })
+
+        let inventory = try await service.applicationMutationInventory()
+
+        #expect(inventory.items.map(\.processIdentifier) == [stablePID])
+        #expect(!inventory.isComplete)
+        #expect(inventory.warnings == [
+            "Application PID \(missingPID) lacked process-generation identity and was omitted.",
+            "Application PID \(driftingPID) changed process generation during inventory and was omitted.",
+        ])
+    }
+
     @Test
     @MainActor
     func `one timed out process returns truthful partial inventory without dropping other apps`() async throws {

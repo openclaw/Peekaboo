@@ -42,8 +42,8 @@ import PeekabooFoundation
  * - Since: PeekabooCore 1.0.0
  */
 @MainActor
-public final class ApplicationService: ApplicationServiceProtocol, ApplicationServiceActionResultProviding,
-    ApplicationServiceTargetedActionResultProviding
+public final class ApplicationService: ApplicationServiceProtocol, ApplicationMutationInventoryProviding,
+    ApplicationServiceActionResultProviding, ApplicationServiceTargetedActionResultProviding
 {
     public let supportsApplicationLaunchOptions = true
     public let supportsSafeBackgroundApplicationLaunchNoOp = true
@@ -107,6 +107,8 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationSe
         _ configuration: NSWorkspace.OpenConfiguration) async throws -> NSRunningApplication
     typealias RunningApplicationsForURLProvider = @MainActor (_ applicationURL: URL) -> [NSRunningApplication]
     typealias ApplicationSelectorCandidatesProvider = @MainActor () -> [ApplicationIdentifierMatcher.Candidate]
+    typealias ApplicationMutationCandidateProvider = @MainActor (_ processIdentifier: pid_t)
+        -> ApplicationIdentifierMatcher.Candidate?
     typealias RelaunchTargetResolver = @MainActor (_ identifier: String) async throws -> ServiceApplicationInfo
     typealias RelaunchQuitHandler = @MainActor (_ request: ApplicationQuitRequest) async throws
         -> ApplicationQuitAttempt
@@ -146,6 +148,7 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationSe
     let defaultApplicationOpenHandler: DefaultApplicationOpenHandler
     let runningApplicationsForURLProvider: RunningApplicationsForURLProvider
     let applicationSelectorCandidatesProvider: ApplicationSelectorCandidatesProvider
+    let applicationMutationCandidateProvider: ApplicationMutationCandidateProvider
     let relaunchTargetResolver: RelaunchTargetResolver?
     let relaunchQuitHandler: RelaunchQuitHandler?
     let relaunchRunningHandler: RelaunchRunningHandler?
@@ -227,6 +230,12 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationSe
                 .filter { !$0.isTerminated }
                 .map(ApplicationService.identifierCandidate)
         },
+        applicationMutationCandidateProvider: @escaping ApplicationMutationCandidateProvider = { pid in
+            guard let application = NSRunningApplication(processIdentifier: pid), !application.isTerminated else {
+                return nil
+            }
+            return ApplicationService.identifierCandidate(application)
+        },
         relaunchTargetResolver: RelaunchTargetResolver? = nil,
         relaunchQuitHandler: RelaunchQuitHandler? = nil,
         relaunchRunningHandler: RelaunchRunningHandler? = nil,
@@ -291,6 +300,7 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationSe
         self.defaultApplicationOpenHandler = defaultApplicationOpenHandler
         self.runningApplicationsForURLProvider = runningApplicationsForURLProvider
         self.applicationSelectorCandidatesProvider = applicationSelectorCandidatesProvider
+        self.applicationMutationCandidateProvider = applicationMutationCandidateProvider
         self.relaunchTargetResolver = relaunchTargetResolver
         self.relaunchQuitHandler = relaunchQuitHandler
         self.relaunchRunningHandler = relaunchRunningHandler

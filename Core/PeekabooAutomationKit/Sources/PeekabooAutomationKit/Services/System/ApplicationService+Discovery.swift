@@ -26,6 +26,56 @@ private struct ApplicationInventoryRead: Sendable {
 
 @MainActor
 extension ApplicationService {
+    public func applicationMutationInventory() async throws
+        -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo>
+    {
+        let processIdentifiers = Array(Set(self.runningApplicationProcessIdentifiersProvider()))
+            .filter { $0 > 0 }
+            .sorted()
+        var applications: [ServiceApplicationInfo] = []
+        var warnings: [String] = []
+        for processIdentifier in processIdentifiers {
+            guard let generation = self.processStartIdentityProvider(processIdentifier),
+                  generation > 0
+            else {
+                warnings.append(
+                    "Application PID \(processIdentifier) lacked process-generation identity and was omitted.")
+                continue
+            }
+            guard let candidate = self.applicationMutationCandidateProvider(processIdentifier) else {
+                warnings.append(
+                    "Application PID \(processIdentifier) metadata was unavailable and was omitted.")
+                continue
+            }
+            guard candidate.processIdentifier == processIdentifier,
+                  self.processStartIdentityProvider(processIdentifier) == generation
+            else {
+                warnings.append(
+                    "Application PID \(processIdentifier) changed process generation during inventory and was omitted.")
+                continue
+            }
+            let activationPolicy: ServiceApplicationActivationPolicy = if !candidate.allowsFuzzyMatching {
+                .prohibited
+            } else if candidate.isRegularApplication {
+                .regular
+            } else {
+                .accessory
+            }
+            applications.append(ServiceApplicationInfo(
+                processIdentifier: processIdentifier,
+                processStartIdentity: generation,
+                bundleIdentifier: candidate.bundleIdentifier,
+                name: candidate.name,
+                bundlePath: candidate.bundlePath,
+                executablePath: candidate.executablePath,
+                activationPolicy: activationPolicy))
+        }
+        return DesktopTargetPlanning.Inventory(
+            items: applications,
+            completeness: warnings.isEmpty ? .complete : .partial,
+            warnings: warnings)
+    }
+
     public func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
         let startTime = Date()
         self.logger.info("Listing all running applications")
@@ -111,19 +161,29 @@ extension ApplicationService {
         }
         try Task.checkCancellation()
 
-        let applications = reads.compactMap { read -> ServiceApplicationInfo? in
+        var applications: [ServiceApplicationInfo] = []
+        var omissionWarnings: [String] = []
+        for read in reads {
             if let expectedGeneration = read.candidate.processStartIdentity,
                self.processStartIdentityProvider(read.candidate.processIdentifier) != expectedGeneration
             {
-                return nil
+                omissionWarnings.append(
+                    "Application PID \(read.candidate.processIdentifier) changed process generation during inventory " +
+                        "and was omitted.")
+                continue
             }
-            return self.applicationInfo(from: read)
-        }.sorted { app1, app2 -> Bool in
+            if let application = self.applicationInfo(from: read) {
+                applications.append(application)
+            } else {
+                omissionWarnings.append(Self.applicationOmissionWarning(read))
+            }
+        }
+        applications.sort { app1, app2 -> Bool in
             app1.name == app2.name
                 ? app1.processIdentifier < app2.processIdentifier
                 : app1.name < app2.name
         }
-        let warnings = Self.uniqueWarnings(in: applications)
+        let warnings = Array(Set(Self.uniqueWarnings(in: applications) + omissionWarnings)).sorted()
 
         self.logger.info("Returning \(applications.count) applications")
 
@@ -151,7 +211,9 @@ extension ApplicationService {
                     "applications": applications.count,
                     "appsWithWindows": appsWithWindows.count,
                     "totalWindows": totalWindows,
-                    "incompleteApplications": applications.count(where: { !($0.metadataWarnings ?? []).isEmpty }),
+                    "incompleteApplications":
+                        applications.count(where: { !($0.metadataWarnings ?? []).isEmpty }) + omissionWarnings.count,
+                    "omittedApplications": omissionWarnings.count,
                 ],
                 highlights: highlights),
             metadata: UnifiedToolOutput.Metadata(
@@ -166,6 +228,10 @@ extension ApplicationService {
         var warnings: [String] = candidate.windowCatalogAvailable
             ? []
             : ["Window inventory was unavailable for PID \(candidate.processIdentifier)"]
+        if candidate.processStartIdentity == nil {
+            warnings.append(
+                "Process-generation identity was unavailable for PID \(candidate.processIdentifier)")
+        }
 
         switch read.outcome {
         case let .metadata(metadata):
@@ -249,6 +315,21 @@ extension ApplicationService {
             for warning in application.metadataWarnings ?? [] where !result.contains(warning) {
                 result.append(warning)
             }
+        }
+    }
+
+    private static func applicationOmissionWarning(_ read: ApplicationInventoryRead) -> String {
+        let pid = read.candidate.processIdentifier
+        guard read.candidate.processStartIdentity != nil else {
+            return "Application PID \(pid) lacked process-generation identity and was omitted."
+        }
+        switch read.outcome {
+        case .processChanged:
+            return "Application PID \(pid) changed process generation during metadata discovery and was omitted."
+        case let .metadata(metadata) where metadata.name?.isEmpty != false:
+            return "Application PID \(pid) metadata lacked a usable name and was omitted."
+        default:
+            return "Application PID \(pid) could not be represented in the inventory and was omitted."
         }
     }
 

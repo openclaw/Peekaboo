@@ -38,6 +38,7 @@ import PeekabooFoundation
  */
 @MainActor
 public final class WindowManagementService: WindowManagementServiceProtocol,
+    WindowMutationInventoryProviding,
     WindowManagementActionOutcomeProviding,
     WindowManagementActionResultProviding,
     WindowManagementPinnedFocusActionResultProviding

@@ -382,6 +382,32 @@ public protocol ApplicationServiceProtocol: Sendable {
     func showAllApplications() async throws
 }
 
+/// Additive catalog capability for exact mutation target selection.
+///
+/// The inventory covers process identity and exact application membership. Optional window or
+/// presentation metadata must not make an otherwise complete application catalog look incomplete.
+public protocol ApplicationMutationInventoryProviding: ApplicationServiceProtocol {
+    func applicationMutationInventory() async throws
+        -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo>
+}
+
+extension ApplicationServiceProtocol {
+    /// Returns application rows together with explicit completeness evidence.
+    ///
+    /// Legacy conformers expose rows only. Mutation planners therefore treat their broad catalog as
+    /// partial while still allowing a direct exact-PID lookup through `findApplication`.
+    public func mutationApplicationInventory() async throws
+        -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo>
+    {
+        if let provider = self as? any ApplicationMutationInventoryProviding {
+            return try await provider.applicationMutationInventory()
+        }
+        return try await .partial(
+            self.listApplications().data.applications,
+            warnings: ["Application mutation inventory completeness was not reported by this service."])
+    }
+}
+
 /// Additive capability for application mutations that return the shared action-result carrier.
 ///
 /// Requirement names intentionally differ from the public `*Result` adapters below. Keeping the

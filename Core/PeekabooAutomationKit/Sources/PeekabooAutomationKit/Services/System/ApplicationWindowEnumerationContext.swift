@@ -11,6 +11,12 @@ struct WindowEnumerationContext {
 
     struct CGSnapshot {
         let windows: [ServiceWindowInfo]
+        let omittedOwnerRowCount: Int
+
+        init(windows: [ServiceWindowInfo], omittedOwnerRowCount: Int = 0) {
+            self.windows = windows
+            self.omittedOwnerRowCount = omittedOwnerRowCount
+        }
     }
 
     /// MainActor-owned descriptor used by the existing CG/AX merge contract. Detached workers return
@@ -144,6 +150,8 @@ struct WindowEnumerationContext {
 
         var windowIndex = 0
         var windows: [ServiceWindowInfo] = []
+        var ownerRowCount = 0
+        var omittedOwnerRowCount = 0
         let screenService = ScreenService()
         let spaceService = SpaceManagementService()
 
@@ -153,6 +161,7 @@ struct WindowEnumerationContext {
             else {
                 continue
             }
+            ownerRowCount += 1
 
             guard let windowInfo = self.snapshotWindowInfo(
                 from: windowInfo,
@@ -160,6 +169,7 @@ struct WindowEnumerationContext {
                 screenService: screenService,
                 spaceService: spaceService)
             else {
+                omittedOwnerRowCount += 1
                 continue
             }
 
@@ -172,12 +182,12 @@ struct WindowEnumerationContext {
             windowIndex += 1
         }
 
-        guard !windows.isEmpty else {
+        guard ownerRowCount > 0 else {
             return nil
         }
 
         self.logger.debug("CGWindowList found \(windows.count) windows for \(self.app.name)")
-        return CGSnapshot(windows: windows)
+        return CGSnapshot(windows: windows, omittedOwnerRowCount: omittedOwnerRowCount)
     }
 
     private func snapshotWindowInfo(
@@ -289,7 +299,7 @@ struct WindowEnumerationContext {
             axResult: axResult,
             cgWindowIDs: Set(snapshot.windows.map(\.windowID)))
 
-        let merged = Self.mergeWindows(cgWindows: snapshot.windows, axDescriptors: descriptors)
+        let merge = Self.mergeWindowInventory(cgWindows: snapshot.windows, axDescriptors: descriptors)
 
         if axResult.timedOut {
             warnings.append("Window enumeration timed out after \(self.axTimeout)s, results may be incomplete")
@@ -302,9 +312,19 @@ struct WindowEnumerationContext {
                 "Accessibility reported \(axResult.reportedWindowCount) windows; " +
                     "enriched \(descriptors.count) before the bounded deadline")
         }
+        if snapshot.omittedOwnerRowCount > 0 {
+            warnings.append(
+                "CoreGraphics omitted \(snapshot.omittedOwnerRowCount) owner window " +
+                    "row\(snapshot.omittedOwnerRowCount == 1 ? "" : "s") without complete identity evidence")
+        }
+        if merge.unmaterializedAXDescriptorCount > 0 {
+            warnings.append(
+                "Accessibility omitted \(merge.unmaterializedAXDescriptorCount) unmatched window " +
+                    "row\(merge.unmaterializedAXDescriptorCount == 1 ? "" : "s") without stable identity")
+        }
 
         return self.service.buildWindowListOutput(
-            windows: merged,
+            windows: merge.windows,
             app: self.app,
             startTime: self.startTime,
             warnings: warnings)
@@ -389,21 +409,55 @@ struct WindowEnumerationContext {
     /// Every decision uses only reliable signals — an exact `CGWindowID`, or a CG-snapshot
     /// title+bounds — never a synthesized ID, so same-titled windows keep distinct positions and
     /// `--window-index` stays aligned with the printed list.
+    struct WindowMergeResult: Sendable {
+        let windows: [ServiceWindowInfo]
+        let unmaterializedAXDescriptorCount: Int
+    }
+
     nonisolated static func mergeWindows(
         cgWindows: [ServiceWindowInfo],
         axDescriptors: [AXWindowDescriptor]) -> [ServiceWindowInfo]
+    {
+        self.mergeWindowInventory(cgWindows: cgWindows, axDescriptors: axDescriptors).windows
+    }
+
+    nonisolated static func mergeWindowInventory(
+        cgWindows: [ServiceWindowInfo],
+        axDescriptors: [AXWindowDescriptor]) -> WindowMergeResult
     {
         // Exact CGWindowID → title is one-to-one (CG windows are deduplicated by ID): an unambiguous
         // enrichment source for the untitled CG window carrying that id.
         var axTitleByID: [Int: String] = [:]
         var axDescriptorByID: [Int: AXWindowDescriptor] = [:]
-        for descriptor in axDescriptors {
+        let cgWindowIDs = Set(cgWindows.map(\.windowID))
+        var coveredDescriptorIndices = Set<Int>()
+        for (index, descriptor) in axDescriptors.enumerated() {
             guard let id = descriptor.windowID else { continue }
+            if cgWindowIDs.contains(id) || descriptor.standaloneInfo != nil {
+                coveredDescriptorIndices.insert(index)
+            }
             if axDescriptorByID[id] == nil {
                 axDescriptorByID[id] = descriptor
             }
             if !descriptor.title.isEmpty, axTitleByID[id] == nil {
                 axTitleByID[id] = descriptor.title
+            }
+        }
+        var claimedExactCGWindowIDs = Set(axDescriptors.compactMap { descriptor -> Int? in
+            guard let windowID = descriptor.windowID, cgWindowIDs.contains(windowID) else { return nil }
+            return windowID
+        })
+        for (index, descriptor) in axDescriptors.enumerated()
+            where descriptor.windowID == nil && !descriptor.title.isEmpty
+        {
+            guard let bounds = descriptor.bounds else { continue }
+            let exactRows = cgWindows.filter {
+                !claimedExactCGWindowIDs.contains($0.windowID) &&
+                    $0.title == descriptor.title && Self.boundsMatch($0.bounds, bounds)
+            }
+            if exactRows.count == 1, let matched = exactRows.first {
+                claimedExactCGWindowIDs.insert(matched.windowID)
+                coveredDescriptorIndices.insert(index)
             }
         }
 
@@ -450,6 +504,7 @@ struct WindowEnumerationContext {
                     in: cgWindows)
             }) {
                 consumedFallbacks.insert(descriptorIndex)
+                coveredDescriptorIndices.insert(descriptorIndex)
                 merged.append(enrichedWindow.withTitle(axDescriptors[descriptorIndex].title))
                 continue
             }
@@ -458,14 +513,17 @@ struct WindowEnumerationContext {
         }
 
         // Append AX-only windows that resolved to a reliable CGWindowID absent from the CG snapshot.
-        for descriptor in axDescriptors {
+        for (index, descriptor) in axDescriptors.enumerated() {
             guard let info = descriptor.standaloneInfo, seenWindowIDs.insert(info.windowID).inserted else {
                 continue
             }
+            coveredDescriptorIndices.insert(index)
             merged.append(info)
         }
 
-        return merged
+        return WindowMergeResult(
+            windows: merged,
+            unmaterializedAXDescriptorCount: axDescriptors.count - coveredDescriptorIndices.count)
     }
 
     /// Whether a titled CG window other than `windowID` already claims this AX title at these bounds,
@@ -508,6 +566,7 @@ struct WindowEnumerationContext {
         var warnings: [String] = []
         let descriptors = self.materializeStandaloneWindows(axResult: axResult, cgWindowIDs: [])
         let windowInfos = descriptors.compactMap(\.standaloneInfo)
+        let unmaterializedDescriptorCount = descriptors.count - windowInfos.count
 
         if axResult.timedOut {
             warnings.append("Window enumeration timed out, results may be incomplete")
@@ -519,16 +578,22 @@ struct WindowEnumerationContext {
             warnings.append(
                 "Only processed \(descriptors.count) of \(axResult.reportedWindowCount) accessible windows")
         }
-
-        if !self.hasScreenRecording {
-            warnings.append("Screen recording permission not granted - window listing may be slower")
+        if unmaterializedDescriptorCount > 0 {
+            warnings.append(
+                "Accessibility omitted \(unmaterializedDescriptorCount) window " +
+                    "row\(unmaterializedDescriptorCount == 1 ? "" : "s") without stable window identity")
         }
+
+        let additionalHints = self.hasScreenRecording
+            ? []
+            : ["Screen recording permission not granted - window listing may be slower"]
 
         return self.service.buildWindowListOutput(
             windows: windowInfos,
             app: self.app,
             startTime: self.startTime,
-            warnings: warnings)
+            warnings: warnings,
+            additionalHints: additionalHints)
     }
 }
 

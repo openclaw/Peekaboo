@@ -63,6 +63,37 @@ struct WindowListIndexNormalizationTests {
     }
 
     @Test
+    func `missing AX ID inference requires one unique CG sibling`() {
+        let bounds = CGRect(x: 10, y: 20, width: 640, height: 480)
+        let first = ApplicationService.WindowIDInferenceCandidate(
+            windowID: 111,
+            ownerProcessIdentifier: 42,
+            title: "Duplicate",
+            bounds: bounds)
+        let second = ApplicationService.WindowIDInferenceCandidate(
+            windowID: 222,
+            ownerProcessIdentifier: 42,
+            title: "Duplicate",
+            bounds: bounds)
+
+        #expect(ApplicationService.uniqueMatchingWindowID(
+            pid: 42,
+            title: "Duplicate",
+            bounds: bounds,
+            candidates: [first]) == 111)
+        #expect(ApplicationService.uniqueMatchingWindowID(
+            pid: 42,
+            title: "Duplicate",
+            bounds: bounds,
+            candidates: [first, second]) == nil)
+        #expect(ApplicationService.uniqueMatchingWindowID(
+            pid: 42,
+            title: "Duplicate",
+            bounds: bounds,
+            candidates: [second, first]) == nil)
+    }
+
+    @Test
     func `hybrid merge restores a missing CG receipt from exact AX ownership`() throws {
         let cgWindow = ServiceWindowInfo(
             windowID: 333,
@@ -125,5 +156,64 @@ struct WindowListIndexNormalizationTests {
         #expect(window.windowID == 444)
         #expect(window.isMinimized)
         #expect(window.mutationIdentity == receipt)
+    }
+
+    @Test
+    func `matching titled CG row accounts for an AX descriptor without window ID`() {
+        let bounds = CGRect(x: 40, y: 50, width: 700, height: 500)
+        let cgWindow = ServiceWindowInfo(windowID: 445, title: "Fixture", bounds: bounds)
+        let descriptor = WindowEnumerationContext.AXWindowDescriptor(
+            windowID: nil,
+            title: cgWindow.title,
+            bounds: bounds,
+            standaloneInfo: nil)
+
+        let merged = WindowEnumerationContext.mergeWindowInventory(
+            cgWindows: [cgWindow],
+            axDescriptors: [descriptor])
+
+        #expect(merged.windows == [cgWindow])
+        #expect(merged.unmaterializedAXDescriptorCount == 0)
+    }
+
+    @Test
+    func `one titled CG row cannot account for two AX descriptors without IDs`() {
+        let bounds = CGRect(x: 40, y: 50, width: 700, height: 500)
+        let cgWindow = ServiceWindowInfo(windowID: 446, title: "Fixture", bounds: bounds)
+        let descriptor = WindowEnumerationContext.AXWindowDescriptor(
+            windowID: nil,
+            title: cgWindow.title,
+            bounds: bounds,
+            standaloneInfo: nil)
+
+        let merged = WindowEnumerationContext.mergeWindowInventory(
+            cgWindows: [cgWindow],
+            axDescriptors: [descriptor, descriptor])
+
+        #expect(merged.windows == [cgWindow])
+        #expect(merged.unmaterializedAXDescriptorCount == 1)
+    }
+
+    @Test
+    func `exact ID and unidentified AX rows cannot both claim one CG window`() {
+        let bounds = CGRect(x: 40, y: 50, width: 700, height: 500)
+        let cgWindow = ServiceWindowInfo(windowID: 447, title: "Fixture", bounds: bounds)
+        let exact = WindowEnumerationContext.AXWindowDescriptor(
+            windowID: cgWindow.windowID,
+            title: cgWindow.title,
+            bounds: bounds,
+            standaloneInfo: nil)
+        let unidentified = WindowEnumerationContext.AXWindowDescriptor(
+            windowID: nil,
+            title: cgWindow.title,
+            bounds: bounds,
+            standaloneInfo: nil)
+
+        let merged = WindowEnumerationContext.mergeWindowInventory(
+            cgWindows: [cgWindow],
+            axDescriptors: [exact, unidentified])
+
+        #expect(merged.windows == [cgWindow])
+        #expect(merged.unmaterializedAXDescriptorCount == 1)
     }
 }

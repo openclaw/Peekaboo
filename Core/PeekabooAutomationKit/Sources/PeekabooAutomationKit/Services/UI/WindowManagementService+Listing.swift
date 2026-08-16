@@ -6,6 +6,26 @@ import PeekabooFoundation
 
 @MainActor
 extension WindowManagementService {
+    public func windowMutationInventory(
+        target: WindowTarget) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo>
+    {
+        switch target {
+        case let .application(appIdentifier):
+            return try await self.inventoryForApplication(appIdentifier)
+        case let .applicationAndTitle(appIdentifier, _), let .index(appIdentifier, _):
+            return try await self.inventoryForApplication(appIdentifier)
+        case let .windowId(id):
+            return try await .complete(self.windowById(id))
+        case .title:
+            return try await .partial(
+                self.listWindows(target: target),
+                warnings: ["Global title lookup spans independently bounded application inventories."])
+        case .frontmost:
+            let application = try await self.applicationService.getFrontmostApplication()
+            return try await self.inventoryForApplication("PID:\(application.processIdentifier)")
+        }
+    }
+
     public func listWindows(target: WindowTarget) async throws -> [ServiceWindowInfo] {
         switch target {
         case let .application(appIdentifier):
@@ -34,6 +54,13 @@ extension WindowManagementService {
         case let .windowId(id):
             return try await self.windowById(id)
         }
+    }
+
+    private func inventoryForApplication(
+        _ identifier: String) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo>
+    {
+        let output = try await self.applicationService.listWindows(for: identifier, timeout: nil)
+        return .windowOutput(output)
     }
 
     public func getFocusedWindow() async throws -> ServiceWindowInfo? {

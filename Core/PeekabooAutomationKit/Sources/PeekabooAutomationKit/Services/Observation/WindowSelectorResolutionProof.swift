@@ -73,6 +73,9 @@ public enum WindowSelectorResolutionProof {
     {
         switch selection {
         case .automatic:
+            guard ObservationTargetResolver.bestWindow(from: candidates)?.windowID == selected.windowID else {
+                return nil
+            }
             return (.automaticWindowRank, 1)
         case let .index(index):
             let explicit = candidates.filter { $0.index == index }

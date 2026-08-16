@@ -63,6 +63,7 @@ struct WindowSelectorResolutionProofTests {
         let candidates = [safari, preview, mail]
 
         for (selection, selected) in [
+            (WindowSelection.automatic, preview),
             (WindowSelection.id(70), preview),
             (.index(0), preview),
             (.title("Safari"), preview),

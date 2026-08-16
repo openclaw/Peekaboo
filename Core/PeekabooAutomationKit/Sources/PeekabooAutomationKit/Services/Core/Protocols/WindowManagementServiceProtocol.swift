@@ -88,6 +88,21 @@ public protocol WindowManagementServiceProtocol: Sendable {
 }
 
 extension WindowManagementServiceProtocol {
+    /// Returns window rows together with explicit completeness evidence.
+    ///
+    /// Legacy conformers expose rows only, so broad selectors cannot infer uniqueness from them. An
+    /// exact window-ID lookup may still use those rows as direct identity proof.
+    public func mutationInventory(
+        target: WindowTarget) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo>
+    {
+        if let provider = self as? any WindowMutationInventoryProviding {
+            return try await provider.windowMutationInventory(target: target)
+        }
+        return try await .partial(
+            self.listWindows(target: target),
+            warnings: ["Window mutation inventory completeness was not reported by this service."])
+    }
+
     public func requireWindowMutationResultProvider(operation: String) throws {
         guard self is any WindowManagementActionResultProviding ||
             self is any WindowManagementActionOutcomeProviding
@@ -159,6 +174,12 @@ extension WindowManagementServiceProtocol {
         PeekabooError.serviceUnavailable(
             "This window service does not support process-generation-pinned mutations; update the runtime host")
     }
+}
+
+/// Additive inventory capability for mutation planners that must prove catalog completeness.
+public protocol WindowMutationInventoryProviding: WindowManagementServiceProtocol {
+    func windowMutationInventory(
+        target: WindowTarget) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo>
 }
 
 /// Additive capability for exact-window mutations that can report their canonical execution outcome.
@@ -513,7 +534,7 @@ extension WindowManagementServiceProtocol {
 }
 
 /// Options for targeting a window
-public enum WindowTarget: Sendable, CustomStringConvertible, Codable {
+public enum WindowTarget: Sendable, CustomStringConvertible, Codable, Equatable, Hashable {
     /// Target by application name or bundle ID
     case application(String)
 

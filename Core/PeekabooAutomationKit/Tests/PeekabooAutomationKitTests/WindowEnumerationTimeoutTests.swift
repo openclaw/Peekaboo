@@ -9,6 +9,170 @@ import Testing
 @MainActor
 struct WindowEnumerationTimeoutTests {
     @Test
+    func `AX rows without stable window identity make an AX-only inventory partial`() async throws {
+        let identity = ApplicationProcessIdentity(processIdentifier: 40, processStartIdentity: 5)
+        let service = Self.makeService { _ in identity.processStartIdentity }
+        let context = WindowEnumerationContext(
+            service: service,
+            app: Self.application(identity: identity),
+            startTime: Date(),
+            axTimeout: 0.05,
+            hasScreenRecording: true,
+            logger: Self.logger,
+            processIdentity: identity,
+            cgSnapshotProvider: { nil },
+            applicationRunningProvider: { true },
+            axEnumerator: { _, _ in
+                DetachedAXWindowEnumerationResult(
+                    descriptors: [DetachedAXWindowDescriptor(
+                        windowID: nil,
+                        title: "Unidentified",
+                        bounds: CGRect(x: 10, y: 20, width: 800, height: 600))],
+                    focusedWindowID: nil,
+                    timedOut: false,
+                    incomplete: false,
+                    reportedWindowCount: 1)
+            })
+
+        let output = try await context.run()
+        let inventory: DesktopTargetPlanning.Inventory<ServiceWindowInfo> = .windowOutput(output)
+
+        #expect(output.data.windows.isEmpty)
+        #expect(output.summary.status == .partial)
+        #expect(output.metadata.warnings == [
+            "Accessibility omitted 1 window row without stable window identity",
+        ])
+        #expect(!inventory.isComplete)
+    }
+
+    @Test
+    func `missing screen recording notice does not poison complete AX selector inventory`() {
+        let identity = ApplicationProcessIdentity(processIdentifier: 39, processStartIdentity: 4)
+        let service = Self.makeService { _ in identity.processStartIdentity }
+        let window = ServiceWindowInfo(
+            windowID: 331,
+            title: "AX Window",
+            bounds: CGRect(x: 10, y: 20, width: 800, height: 600),
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 331,
+                ownerProcessIdentifier: identity.processIdentifier,
+                ownerProcessStartIdentity: identity.processStartIdentity,
+                capturedBounds: CGRect(x: 10, y: 20, width: 800, height: 600)))
+        let output = service.buildWindowListOutput(
+            windows: [window],
+            app: Self.application(identity: identity),
+            startTime: Date(),
+            warnings: [],
+            additionalHints: ["Screen recording permission not granted - window listing may be slower"])
+        let inventory: DesktopTargetPlanning.Inventory<ServiceWindowInfo> = .windowOutput(output)
+
+        #expect(output.summary.status == .success)
+        #expect(output.metadata.warnings.isEmpty)
+        #expect(output.metadata.hints.contains(
+            "Screen recording permission not granted - window listing may be slower"))
+        #expect(inventory.isComplete)
+        #expect(inventory.warnings.isEmpty)
+        #expect(inventory.items.map(\.windowID) == [331])
+    }
+
+    @Test
+    func `successful presentation output with incomplete row identity remains partial for mutation`() {
+        let identity = ApplicationProcessIdentity(processIdentifier: 37, processStartIdentity: 2)
+        let service = Self.makeService { _ in identity.processStartIdentity }
+        let incomplete = ServiceWindowInfo(
+            windowID: 329,
+            title: "Incomplete",
+            bounds: CGRect(x: 10, y: 20, width: 800, height: 600))
+        let output = service.buildWindowListOutput(
+            windows: [incomplete],
+            app: Self.application(identity: identity),
+            startTime: Date(),
+            warnings: [])
+
+        let inventory: DesktopTargetPlanning.Inventory<ServiceWindowInfo> = .windowOutput(output)
+
+        #expect(output.summary.status == .success)
+        #expect(!inventory.isComplete)
+        #expect(inventory.warnings == [
+            "Window 329 did not include a process-generation mutation receipt.",
+        ])
+    }
+
+    @Test
+    func `unmaterialized CoreGraphics owner rows make inventory partial`() async throws {
+        let identity = ApplicationProcessIdentity(processIdentifier: 41, processStartIdentity: 6)
+        let service = Self.makeService { _ in identity.processStartIdentity }
+        let cgWindow = ServiceWindowInfo(
+            windowID: 332,
+            title: "CG Window",
+            bounds: CGRect(x: 10, y: 20, width: 800, height: 600))
+        let context = WindowEnumerationContext(
+            service: service,
+            app: Self.application(identity: identity),
+            startTime: Date(),
+            axTimeout: 0.05,
+            hasScreenRecording: true,
+            logger: Self.logger,
+            processIdentity: identity,
+            cgSnapshotProvider: { .init(windows: [cgWindow], omittedOwnerRowCount: 1) },
+            applicationRunningProvider: { true },
+            axEnumerator: { _, _ in
+                DetachedAXWindowEnumerationResult(
+                    descriptors: [],
+                    focusedWindowID: nil,
+                    timedOut: false,
+                    incomplete: false,
+                    reportedWindowCount: 0)
+            })
+
+        let output = try await context.run()
+
+        #expect(output.summary.status == .partial)
+        #expect(output.metadata.warnings == [
+            "CoreGraphics omitted 1 owner window row without complete identity evidence",
+        ])
+    }
+
+    @Test
+    func `unmatched AX rows without stable identity make hybrid inventory partial`() async throws {
+        let identity = ApplicationProcessIdentity(processIdentifier: 38, processStartIdentity: 3)
+        let service = Self.makeService { _ in identity.processStartIdentity }
+        let cgWindow = ServiceWindowInfo(
+            windowID: 330,
+            title: "CG Window",
+            bounds: CGRect(x: 10, y: 20, width: 800, height: 600))
+        let context = WindowEnumerationContext(
+            service: service,
+            app: Self.application(identity: identity),
+            startTime: Date(),
+            axTimeout: 0.05,
+            hasScreenRecording: true,
+            logger: Self.logger,
+            processIdentity: identity,
+            cgSnapshotProvider: { .init(windows: [cgWindow]) },
+            applicationRunningProvider: { true },
+            axEnumerator: { _, _ in
+                DetachedAXWindowEnumerationResult(
+                    descriptors: [DetachedAXWindowDescriptor(
+                        windowID: nil,
+                        title: "Unmatched AX Window",
+                        bounds: CGRect(x: 1200, y: 20, width: 500, height: 400))],
+                    focusedWindowID: nil,
+                    timedOut: false,
+                    incomplete: false,
+                    reportedWindowCount: 1)
+            })
+
+        let output = try await context.run()
+
+        #expect(output.data.windows.map(\.windowID) == [cgWindow.windowID])
+        #expect(output.summary.status == .partial)
+        #expect(output.metadata.warnings == [
+            "Accessibility omitted 1 unmatched window row without stable identity",
+        ])
+    }
+
+    @Test
     func `CG inventory survives an AX hard timeout as partial output`() async throws {
         let identity = ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 7)
         let service = Self.makeService { _ in identity.processStartIdentity }
