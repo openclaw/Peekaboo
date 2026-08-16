@@ -453,7 +453,7 @@ extension DesktopTargetPlanning {
                 (!lhs.isMinimized, !rhs.isMinimized),
                 (!lhs.isOffScreen, !rhs.isOffScreen),
                 (lhs.isOnScreen, rhs.isOnScreen),
-                (lhs.layer == 0, rhs.layer == 0),
+                (lhs.windowLevel == 0, rhs.windowLevel == 0),
                 (!lhs.title.isEmpty, !rhs.title.isEmpty),
             ])
             for (left, right) in preferences where left != right {

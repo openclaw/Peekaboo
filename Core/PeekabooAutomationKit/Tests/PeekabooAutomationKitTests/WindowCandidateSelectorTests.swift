@@ -118,6 +118,28 @@ struct WindowCandidateSelectorTests {
     }
 
     @Test
+    func `automatic mutation ranking prefers normal window level`() throws {
+        let bounds = CGRect(x: 10, y: 20, width: 640, height: 480)
+        let normal = ServiceWindowInfo(
+            windowID: 305,
+            title: "Normal",
+            bounds: bounds,
+            windowLevel: 0,
+            mutationIdentity: AutomationTestFixtures.windowIdentity(windowID: 305, bounds: bounds))
+        let elevated = ServiceWindowInfo(
+            windowID: 306,
+            title: "Elevated",
+            bounds: bounds,
+            windowLevel: 10,
+            mutationIdentity: AutomationTestFixtures.windowIdentity(windowID: 306, bounds: bounds))
+
+        #expect(try DesktopTargetPlanning.WindowCandidateSelector.select(
+            candidates: [elevated, normal],
+            selector: nil,
+            policy: .preferredMutationWindow(.general)).windowID == normal.windowID)
+    }
+
+    @Test
     func `identity validation refuses missing bounds wrong IDs and wrong owners`() {
         let process = AutomationTestFixtures.processIdentity()
         let missing = AutomationTestFixtures.window(includesMutationIdentity: false)
