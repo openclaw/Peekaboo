@@ -64,6 +64,28 @@ deltas; result contracts cover the remaining cases. Unrelated app windows and co
 directories must be new or empty so a rerun cannot reuse old summaries, images, or logs. Results go under
 `.artifacts/background-computer-use/<UTC>/`.
 
+The native monitor has one authorization-epoch state machine for producer publication and all input, activation, and
+focused-window callbacks. Each callback is admitted on one atomic cutoff and retains that epoch plus the PID,
+process-start identity, and focused window sampled during the callback. Publishing a higher producer revision closes the
+old epoch before the new epoch can admit evidence; heartbeat closure uses the same cutoff, so there is no separate
+drain-to-heartbeat interval. Every higher revision is a transition barrier, including a producer-only update or an
+unchanged foreground target. Its acknowledgement advertises the new revision and target but cannot advance
+`lastCleanSequence`; the next fully closed stable epoch may do so. Repeating the current revision is idempotent only when
+the exact producer set (ignoring array order) and optional foreground payload are unchanged.
+
+The producer document may label one exact process generation with role `foreground-controller` and pair it with
+`foreground: {active: true, target: {pid, startIdentity, windowID}}`. A foreground grant requires exactly one such
+controller and at least one ordinary Bridge producer; inactive policy permits neither a controller nor a target. The
+baseline focus observer remains installed, a new granted-target observer is installed before publication, and observers
+for prior targets remain alive through transition closure. They retire only after the acknowledgement has consumed the
+old epoch. Observer installation/removal failure, controller recycling, or current/deferred target generation or window
+drift disables attribution. Hardware-origin mouse movement may be recorded as observational when the harness opts in;
+other user input still makes the attempt indeterminate.
+
+This state machine is deterministic infrastructure only in the current slice. The dual-controller command continues to
+refuse before UI setup: no physical foreground grant/revoke coordinator is enabled, and these epoch contracts alone are
+not concurrent certification.
+
 The 34 required CLI cases are source-controlled in `scripts/background-computer-use-catalog.json`. Each row declares
 its exit contract and, where applicable, its effect, delivery, refusal code, allowed outcome tuples, and named checks.
 The catalog is the canonical list of monitored invariant families and projects their names into the native probe,
