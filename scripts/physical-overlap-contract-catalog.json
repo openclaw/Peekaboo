@@ -93,7 +93,8 @@
     "private-hashed-host-archive-retention-consistent",
     "complete-anchored-first-party-verdict-set",
     "first-party-offline-bundle-bijection",
-    "exact-operation-request-session-binding"
+    "exact-operation-request-session-binding",
+    "catalog-derived-exact-operation-manifest"
   ],
   "foreground_attribution_requirements": {
     "minimum_event_count": 1,

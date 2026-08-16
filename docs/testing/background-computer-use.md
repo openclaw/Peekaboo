@@ -146,6 +146,14 @@ then validates the exported receipts with
 adapter: the protocol decoder owns the producer's wire spelling, while the certification policy owns the normalized
 identity, target, timing, and outcome checks. A producer format change therefore cannot silently weaken certification.
 
+Receipt completeness is not inferred from the mutable report. Version 2 of the overlap catalog defines the exact
+mutation, observation, route, and restoration-checkpoint slots. The reporter derives a canonical operation manifest
+from those independently hashed catalog bytes, binds each slot to one exact client/request/session/digest receipt,
+emits that mapping as a separate owner-private file, and writes its SHA-256 into the version-2 receipt-validation
+summary before final validation. Every report reference must equal its frozen manifest row byte-for-byte, and every row
+must have exactly one first-party verdict and offline bundle. Missing, duplicate, substituted, or unmanifested auxiliary
+operations fail certification even if every summary count and hash is recomputed afterward.
+
 The run-specific contract pins the exact audited protocol source, including its Darwin audit-token, PID-version,
 effective-UID, and CDHash peer-binding owners. It also pins the signed listener instance and public key, Bridge and client
 process generations and CDHashes, exact socket device/inode, Peekaboo's exact window-generation target, a distinct

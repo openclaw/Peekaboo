@@ -2240,12 +2240,19 @@ jq -n \
                     (.bundle_sha256 | type) == "string") and
                 ([$operationReceipts[].request_id] | unique | length) ==
                     ($operationReceipts | length)
+            ),
+            catalog_derived_exact_operation_manifest: (
+                ($receiptValidation[0].contract_sha256 | type) == "string"
             )
         }
     }
 ' > "$ARTIFACT_ROOT/observed.json"
 
 node "$REPORTER" --catalog "$CATALOG" --report "$ARTIFACT_ROOT/observed.json" \
+    --finalize-operation-manifest "$ARTIFACT_ROOT/operation-manifest.json" \
+    > "$ARTIFACT_ROOT/operation-manifest-finalization.json"
+node "$REPORTER" --catalog "$CATALOG" --report "$ARTIFACT_ROOT/observed.json" \
+    --operation-manifest "$ARTIFACT_ROOT/operation-manifest.json" \
     --output "$ARTIFACT_ROOT/certification.json"
 jq -n \
     --slurpfile certification "$ARTIFACT_ROOT/certification.json" \

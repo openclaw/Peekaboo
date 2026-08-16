@@ -54,6 +54,118 @@ export function receiptValidationResultSHA256(result) {
   return canonicalSHA256(result);
 }
 
+function mutationOperation(command) {
+  return command === 'press' ? 'exactWindowTargetedHotkey' : 'exactWindowTargetedTypeActions';
+}
+
+export function expectedOperationManifest(catalog) {
+  const slots = [];
+  const add = (slot) => slots.push({
+    ...slot,
+    slot_id: [
+      slot.kind,
+      slot.controller_id ?? slot.after_controller,
+      slot.index,
+      slot.target_controller ?? '-',
+      slot.channel,
+    ].join(':'),
+  });
+  for (const controller of catalog.controllers ?? []) {
+    const commands = [...(controller.workflow_commands ?? []), controller.restoration_command];
+    commands.forEach((command, index) => add({
+      kind: 'mutation',
+      controller_id: controller.id,
+      index: index + 1,
+      target_controller: null,
+      channel: 'primary',
+      operation: mutationOperation(command),
+    }));
+    for (let index = 1; index <= (controller.observation_count ?? 0); index += 1) {
+      add({
+        kind: 'observation', controller_id: controller.id, index,
+        target_controller: null, channel: 'primary', operation: 'desktopObservation',
+      });
+      add({
+        kind: 'observation', controller_id: controller.id, index,
+        target_controller: null, channel: 'route', operation: 'listWindows',
+      });
+    }
+  }
+  for (const afterController of ['A', 'B']) {
+    for (const [targetIndex, targetController] of ['A', 'B'].entries()) {
+      add({
+        kind: 'restoration_checkpoint',
+        after_controller: afterController,
+        controller_id: null,
+        index: targetIndex + 1,
+        target_controller: targetController,
+        channel: 'primary',
+        operation: 'desktopObservation',
+      });
+      add({
+        kind: 'restoration_checkpoint',
+        after_controller: afterController,
+        controller_id: null,
+        index: targetIndex + 1,
+        target_controller: targetController,
+        channel: 'route',
+        operation: 'listWindows',
+      });
+    }
+  }
+  return { version: 1, slots };
+}
+
+export function makeOperationManifest(catalog, report) {
+  const template = expectedOperationManifest(catalog);
+  return {
+    version: 1,
+    catalog_sha256: report.catalog_sha256,
+    slots: template.slots.map((slot) => {
+      const operation = operationForManifestSlot(report, slot);
+      const receipts = operation?.operation_receipts;
+      if (!exactOperationReceiptReferences(receipts, slot.operation)) {
+        throw new TypeError(`Cannot manifest incomplete operation slot: ${slot.slot_id}`);
+      }
+      return {
+        ...slot,
+        client_pid: operation.client_pid,
+        client_start_identity: operation.client_start_identity,
+        receipt: structuredClone(receipts[0]),
+      };
+    }),
+  };
+}
+
+export function operationManifestSHA256(manifest) {
+  return canonicalSHA256(manifest);
+}
+
+function validateOperationManifest(catalog, report, manifest) {
+  const template = expectedOperationManifest(catalog);
+  if (!exactKeys(manifest, ['version', 'catalog_sha256', 'slots'])
+      || manifest.version !== 1
+      || manifest.catalog_sha256 !== report.catalog_sha256
+      || !Array.isArray(manifest.slots)
+      || manifest.slots.length !== template.slots.length) return false;
+  const requestIDs = [];
+  for (let index = 0; index < template.slots.length; index += 1) {
+    const expected = template.slots[index];
+    const actual = manifest.slots[index];
+    if (!exactKeys(actual, [
+      ...Object.keys(expected), 'client_pid', 'client_start_identity', 'receipt',
+    ]) || Object.keys(expected).some((key) => actual[key] !== expected[key])
+        || !validProcessFields({
+          pid: actual.client_pid,
+          start_identity: actual.client_start_identity,
+        })
+        || !exactOperationReceiptReference(actual.receipt)
+        || actual.receipt.operation !== expected.operation) return false;
+    requestIDs.push(actual.receipt.request_id);
+  }
+  return new Set(requestIDs).size === requestIDs.length;
+}
+
 function positiveInteger(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
@@ -86,18 +198,18 @@ function validateCatalog(catalog) {
   const failures = [];
   if (!exactKeys(catalog, [
     'version', 'controllers', 'invariants', 'cursor_policy', 'required_evidence',
-  ]) || catalog?.version !== 1) {
-    return [failure('catalog_schema', 'Catalog must be one closed version-1 object')];
+  ]) || catalog?.version !== 2) {
+    return [failure('catalog_schema', 'Catalog must be one closed version-2 object')];
   }
   if (!Array.isArray(catalog.controllers) || catalog.controllers.length !== 2
       || catalog.controllers.map((entry) => entry?.id).join(',') !== 'A,B'
       || catalog.controllers.some((entry) => !exactKeys(
         entry,
-        ['id', 'workflow_commands', 'restoration_command', 'minimum_observations'],
+        ['id', 'workflow_commands', 'restoration_command', 'observation_count'],
       ) || !Array.isArray(entry.workflow_commands) || entry.workflow_commands.length === 0
         || entry.workflow_commands.some((command) => !['type', 'press'].includes(command))
         || !['type', 'press'].includes(entry.restoration_command)
-        || !positiveInteger(entry.minimum_observations))) {
+        || !positiveInteger(entry.observation_count))) {
     failures.push(failure('catalog_controllers', 'Catalog must define exact A and B controller requirements'));
   }
   for (const field of ['invariants', 'required_evidence']) {
@@ -151,38 +263,43 @@ function exactOperationReceiptReference(value) {
 
 function exactOperationReceiptReferences(values, primaryOperation) {
   return Array.isArray(values)
-    && values.length > 0
+    && values.length === 1
     && values.every(exactOperationReceiptReference)
-    && values.filter((entry) => entry.operation === primaryOperation).length === 1;
+    && values[0].operation === primaryOperation;
 }
 
-function operationReceiptRequirements(report) {
-  const requirements = [];
-  const add = (operation) => {
-    for (const receipt of operation?.operation_receipts ?? []) {
-      requirements.push({
-        client_pid: operation?.client_pid,
-        client_start_identity: operation?.client_start_identity,
-        receipt,
-      });
-    }
-  };
-  for (const controller of report.controllers ?? []) {
-    for (const mutation of controller.mutations ?? []) {
-      add(mutation);
-    }
-    for (const observation of controller.observations ?? []) {
-      add(observation);
-      add(observation.route_receipt);
-    }
+function operationForManifestSlot(report, slot) {
+  if (slot.kind === 'mutation' || slot.kind === 'observation') {
+    const controller = (report.controllers ?? []).find((entry) => entry?.id === slot.controller_id);
+    const entries = slot.kind === 'mutation' ? controller?.mutations : controller?.observations;
+    const operation = entries?.[slot.index - 1];
+    return slot.channel === 'route' ? operation?.route_receipt : operation;
   }
-  for (const checkpoint of report.restoration_checkpoints ?? []) {
-    for (const observation of checkpoint.observations ?? []) {
-      add(observation);
-      add(observation.route_receipt);
-    }
+  if (slot.kind === 'restoration_checkpoint') {
+    const checkpoint = (report.restoration_checkpoints ?? []).find((entry) => (
+      entry?.after_controller === slot.after_controller
+    ));
+    const operation = checkpoint?.observations?.[slot.index - 1];
+    return slot.channel === 'route' ? operation?.route_receipt : operation;
   }
-  return requirements;
+  return null;
+}
+
+function operationReceiptRequirements(report, manifest) {
+  return manifest.slots.map((manifestSlot) => {
+    const operation = operationForManifestSlot(report, manifestSlot);
+    const receipts = operation?.operation_receipts;
+    if (!exactOperationReceiptReferences(receipts, manifestSlot.operation)
+        || operation.client_pid !== manifestSlot.client_pid
+        || operation.client_start_identity !== manifestSlot.client_start_identity
+        || JSON.stringify(receipts[0]) !== JSON.stringify(manifestSlot.receipt)) return null;
+    return {
+      slot_id: manifestSlot.slot_id,
+      client_pid: operation.client_pid,
+      client_start_identity: operation.client_start_identity,
+      receipt: manifestSlot.receipt,
+    };
+  });
 }
 
 function validCanonicalUInt64(value) {
@@ -276,13 +393,14 @@ function receiptReferenceMatchesResult(requirement, result) {
     && result.bundle_sha256 === receipt.bundle_sha256;
 }
 
-function validateReceiptCertification(report, failures) {
+function validateReceiptCertification(catalog, report, operationManifest, failures) {
   const validation = report.receipt_validation;
   const results = validation?.first_party_results;
   const offlineResult = validation?.offline_result;
   const offlineReceipts = offlineResult?.receipts;
-  const requirements = operationReceiptRequirements(report);
-  const requiredClientGenerations = new Set(requirements.map((entry) => (
+  const manifestSHA256 = operationManifestSHA256(operationManifest);
+  const requirements = operationReceiptRequirements(report, operationManifest);
+  const requiredClientGenerations = new Set(requirements.filter(Boolean).map((entry) => (
     `${entry.client_pid}:${entry.client_start_identity}`
   )));
   const canonicalOrder = Array.isArray(results)
@@ -319,6 +437,7 @@ function validateReceiptCertification(report, failures) {
   }
   const unmatchedResults = Array.isArray(results) ? [...results] : [];
   const requirementsMatch = requirements.every((requirement) => {
+    if (requirement === null) return false;
     const matchingIndexes = unmatchedResults.flatMap((result, index) => (
       receiptReferenceMatchesResult(requirement, result) ? [index] : []
     ));
@@ -337,7 +456,7 @@ function validateReceiptCertification(report, failures) {
     'first_party_executable_sha256', 'first_party_result_set_sha256',
     'first_party_result_count', 'first_party_results', 'adapter_id', 'adapter_sha256',
     'contract_sha256', 'result_sha256', 'offline_result', 'receipt_count', 'session_count',
-  ]) || validation?.version !== 1
+  ]) || validation?.version !== 2
       || validation.success !== true
       || validation.first_party_validator_id !== 'peekaboo-bridge-receipt-validate-v1'
       || validation.first_party_trust_source !== 'authenticated_live_listener'
@@ -351,7 +470,7 @@ function validateReceiptCertification(report, failures) {
       || validation.first_party_result_count !== validation.receipt_count
       || validation.adapter_id !== 'peekaboo-bridge-operation-receipt-bundle-1.29-logical-session-v1'
       || !hex64.test(validation.adapter_sha256 ?? '')
-      || !hex64.test(validation.contract_sha256 ?? '')
+      || validation.contract_sha256 !== manifestSHA256
       || !hex64.test(validation.result_sha256 ?? '')
       || validation.result_sha256 !== offlineResultSHA256
       || !validateOfflineResult(offlineResult, validation)
@@ -551,8 +670,13 @@ function validateController(observed, expected, other, runID, cli, host, failure
       failures.push(failure('mutation_timing', `Controller ${expected.id} workflow is not ordered before restoration`, expected.id));
     }
   }
-  if (!Array.isArray(observed.observations) || observed.observations.length - 1 < expected.minimum_observations) {
-    failures.push(failure('observation_count', `Controller ${expected.id} did not complete enough observations`, expected.id));
+  if (!Array.isArray(observed.observations)
+      || observed.observations.length !== expected.observation_count) {
+    failures.push(failure(
+      'observation_count',
+      `Controller ${expected.id} did not complete the exact observation manifest`,
+      expected.id,
+    ));
   } else {
     observed.observations.forEach((entry, index) => (
       validateObservation(entry, expected.id, observed.target, cli, host, index + 1, failures)
@@ -674,7 +798,12 @@ function validateRestorationCheckpoints(report, failures) {
   });
 }
 
-export function validateOverlapCertification(catalog, report, expectedCatalogSHA256 = null) {
+export function validateOverlapCertification(
+  catalog,
+  report,
+  expectedCatalogSHA256 = null,
+  operationManifest = null,
+) {
   const failures = validateCatalog(catalog);
   if (!exactKeys(report, [
     'version', 'catalog_sha256', 'run_id', 'source_commit', 'cli', 'host', 'sentinel',
@@ -687,6 +816,12 @@ export function validateOverlapCertification(catalog, report, expectedCatalogSHA
   if (!hex64.test(report.catalog_sha256 ?? '')
       || (expectedCatalogSHA256 !== null && report.catalog_sha256 !== expectedCatalogSHA256)) {
     failures.push(failure('catalog_hash', 'Report is not bound to the exact catalog bytes'));
+  }
+  if (!validateOperationManifest(catalog, report, operationManifest)) {
+    failures.push(failure(
+      'operation_manifest',
+      'Report is not bound to one independent exact slot-to-request manifest',
+    ));
   }
   if (typeof report.run_id !== 'string' || !/^overlap-[0-9a-f-]{36}$/.test(report.run_id)) {
     failures.push(failure('run_id', 'Run ID must be one exact overlap UUID'));
@@ -749,7 +884,9 @@ export function validateOverlapCertification(catalog, report, expectedCatalogSHA
 
   const [controllerA, controllerB] = report.controllers ?? [];
   validateRestorationCheckpoints(report, failures);
-  validateReceiptCertification(report, failures);
+  if (validateOperationManifest(catalog, report, operationManifest)) {
+    validateReceiptCertification(catalog, report, operationManifest, failures);
+  }
   const workflowMutationsA = (controllerA?.mutations ?? []).filter((entry) => entry?.phase === 'workflow');
   const workflowMutationsB = (controllerB?.mutations ?? []).filter((entry) => entry?.phase === 'workflow');
   const overlap = report.overlap;
@@ -997,8 +1134,14 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
       cross_target_clear: true,
     };
   };
-  const controllerA = controller(catalog.controllers[0], 301, target(101, '10100', 201), 10, 15, 4);
-  const controllerB = controller(catalog.controllers[1], 302, target(202, '20200', 302), 9, 16, 5);
+  const controllerA = controller(
+    catalog.controllers[0], 301, target(101, '10100', 201), 10, 15,
+    catalog.controllers[0].observation_count,
+  );
+  const controllerB = controller(
+    catalog.controllers[1], 302, target(202, '20200', 302), 9, 16,
+    catalog.controllers[1].observation_count,
+  );
   const restorationA = controllerA.mutations.at(-1);
   const restorationB = controllerB.mutations.at(-1);
   restorationB.started_at = 12.5;
@@ -1193,7 +1336,7 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
       { id: 'B', pid: 202, start_identity: '20200', gone: true },
     ],
     receipt_validation: {
-      version: 1,
+      version: 2,
       success: true,
       first_party_validator_id: 'peekaboo-bridge-receipt-validate-v1',
       first_party_trust_source: 'authenticated_live_listener',
@@ -1203,7 +1346,7 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
       first_party_results: firstPartyResults,
       adapter_id: 'peekaboo-bridge-operation-receipt-bundle-1.29-logical-session-v1',
       adapter_sha256: '1'.repeat(64),
-      contract_sha256: '2'.repeat(64),
+      contract_sha256: '0'.repeat(64),
       result_sha256: receiptValidationResultSHA256(offlineResult),
       offline_result: offlineResult,
       receipt_count: firstPartyResults.length,
@@ -1211,12 +1354,19 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
     },
     evidence: Object.fromEntries(catalog.required_evidence.map((name) => [name, true])),
   };
+  report.receipt_validation.contract_sha256 = operationManifestSHA256(
+    makeOperationManifest(catalog, report),
+  );
   return report;
 }
 
 export function runOverlapContractSelfTest(catalog, catalogSHA256) {
   const passing = makePassingOverlapReport(catalog, catalogSHA256);
-  assert.equal(validateOverlapCertification(catalog, passing, catalogSHA256).success, true);
+  const manifest = makeOperationManifest(catalog, passing);
+  assert.equal(
+    validateOverlapCertification(catalog, passing, catalogSHA256, manifest).success,
+    true,
+  );
   const corruptions = [
     ['missing controller', (report) => report.controllers.pop(), 'controllers'],
     ['reused target', (report) => { report.controllers[1].target.pid = report.controllers[0].target.pid; }, 'target_isolation'],
@@ -1271,6 +1421,9 @@ export function runOverlapContractSelfTest(catalog, catalogSHA256) {
     ['unversioned receipt summary', (report) => {
       delete report.receipt_validation.version;
     }, 'receipt_validation'],
+    ['unbound operation manifest', (report) => {
+      report.receipt_validation.contract_sha256 = '0'.repeat(64);
+    }, 'receipt_validation'],
     ['offline result changed after digest', (report) => {
       report.receipt_validation.offline_result.receipts[0].operation_id = 'rewritten';
     }, 'receipt_validation'],
@@ -1279,11 +1432,16 @@ export function runOverlapContractSelfTest(catalog, catalogSHA256) {
         report.controllers[0].mutations[0].operation_receipts,
       );
     }, 'receipt_validation'],
+    ['unmanifested auxiliary operation', (report) => {
+      report.controllers[0].mutations[0].operation_receipts.push(structuredClone(
+        report.controllers[0].mutations[0].operation_receipts[0],
+      ));
+    }, 'mutation_contract'],
   ];
   for (const [name, mutate, expectedRule] of corruptions) {
     const report = structuredClone(passing);
     mutate(report);
-    const result = validateOverlapCertification(catalog, report, catalogSHA256);
+    const result = validateOverlapCertification(catalog, report, catalogSHA256, manifest);
     assert.equal(result.success, false, name);
     assert.ok(result.failures.some((entry) => entry.rule === expectedRule), name);
   }
@@ -1295,8 +1453,12 @@ function parseArguments(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === '--self-test') result.selfTest = true;
-    else if (['--catalog', '--report', '--output'].includes(value) && argv[index + 1]) {
-      result[value.slice(2)] = argv[index + 1];
+    else if ([
+      '--catalog', '--report', '--output', '--operation-manifest',
+      '--finalize-operation-manifest',
+    ].includes(value) && argv[index + 1]) {
+      const key = value.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+      result[key] = argv[index + 1];
       index += 1;
     } else throw new Error(`Unknown or incomplete argument: ${value}`);
   }
@@ -1318,7 +1480,31 @@ function runCLI() {
   const catalog = JSON.parse(catalogBytes);
   const report = JSON.parse(fs.readFileSync(args.report, 'utf8'));
   const catalogSHA256 = createHash('sha256').update(catalogBytes).digest('hex');
-  const result = validateOverlapCertification(catalog, report, catalogSHA256);
+  if (args.finalizeOperationManifest) {
+    const manifest = makeOperationManifest(catalog, report);
+    report.receipt_validation.version = 2;
+    report.receipt_validation.contract_sha256 = operationManifestSHA256(manifest);
+    fs.writeFileSync(args.finalizeOperationManifest, `${JSON.stringify(manifest, null, 2)}\n`, {
+      mode: 0o400,
+      flag: 'wx',
+    });
+    fs.writeFileSync(args.report, `${JSON.stringify(report, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({
+      success: true,
+      operation_manifest_sha256: report.receipt_validation.contract_sha256,
+    })}\n`);
+    return;
+  }
+  if (!args.operationManifest) {
+    throw new Error('--operation-manifest is required when validating a report');
+  }
+  const operationManifest = JSON.parse(fs.readFileSync(args.operationManifest, 'utf8'));
+  const result = validateOverlapCertification(
+    catalog,
+    report,
+    catalogSHA256,
+    operationManifest,
+  );
   const output = `${JSON.stringify(result, null, 2)}\n`;
   if (args.output) fs.writeFileSync(args.output, output);
   else process.stdout.write(output);

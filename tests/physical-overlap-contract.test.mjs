@@ -66,6 +66,7 @@ function validate(value) {
     'complete-anchored-first-party-verdict-set',
     'first-party-offline-bundle-bijection',
     'exact-operation-request-session-binding',
+    'catalog-derived-exact-operation-manifest',
   ];
   if (mandatoryReceiptRequirements.some((entry) => !value.receipt_requirements.includes(entry))) {
     failures.push('receipt_verdict_set');

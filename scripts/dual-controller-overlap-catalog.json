@@ -1,8 +1,8 @@
 {
-  "version": 1,
+  "version": 2,
   "controllers": [
-    {"id":"A","workflow_commands":["type","press","type"],"restoration_command":"type","minimum_observations":3},
-    {"id":"B","workflow_commands":["type","type","type","type"],"restoration_command":"type","minimum_observations":4}
+    {"id":"A","workflow_commands":["type","press","type"],"restoration_command":"type","observation_count":4},
+    {"id":"B","workflow_commands":["type","type","type","type"],"restoration_command":"type","observation_count":5}
   ],
   "invariants": [
     "signed_host_generation",
@@ -24,6 +24,7 @@
     "signed_operation_receipts",
     "complete_anchored_receipt_verdict_set",
     "first_party_offline_bundle_bijection",
-    "exact_operation_request_session_binding"
+    "exact_operation_request_session_binding",
+    "catalog_derived_exact_operation_manifest"
   ]
 }
