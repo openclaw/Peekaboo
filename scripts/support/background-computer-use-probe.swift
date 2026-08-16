@@ -157,6 +157,17 @@ private struct InvariantEvaluationContext {
     let projection: InvariantProjection
 }
 
+private struct InputAttributionEpoch: Equatable {
+    let revision: UInt64
+    let producerReceipts: [Int32: String]
+    let foreground: AllowedForegroundActivity
+
+    static let unconfigured = InputAttributionEpoch(
+        revision: 0,
+        producerReceipts: [:],
+        foreground: AllowedForegroundActivity(active: false, target: nil))
+}
+
 private struct InputEventBatch {
     let producerEventCount: Int
     let producerSourcePIDs: [Int32]
@@ -168,11 +179,35 @@ private struct InputEventBatch {
     let externalSourcePIDs: [Int32]
     let externalEventTypes: [UInt32]
     let attributionFailed: Bool
+    let attributionEpoch: InputAttributionEpoch
+
+    var hasEvidence: Bool {
+        self.producerEventCount > 0 || self.foregroundEventCount > 0 || self.externalEventCount > 0 ||
+            self.attributionFailed
+    }
+}
+
+/// External activity is deliberately aggregated without an attribution epoch.
+/// Producer and foreground accounting must consume the original per-epoch batches first.
+private struct AggregatedExternalInput {
+    let eventCount: Int
+    let sourcePIDs: [Int32]
+    let eventTypes: [UInt32]
+
+    init(_ batches: [InputEventBatch]) {
+        self.eventCount = batches.reduce(0) { $0 + $1.externalEventCount }
+        self.sourcePIDs = Set(batches.flatMap(\.externalSourcePIDs)).sorted()
+        self.eventTypes = Set(batches.flatMap(\.externalEventTypes)).sorted()
+    }
+}
+
+private func physicalInputIsObservational(_ input: AggregatedExternalInput, enabled: Bool) -> Bool {
+    enabled && input.eventCount > 0 && input.sourcePIDs == [0] &&
+        input.eventTypes == [CGEventType.mouseMoved.rawValue]
 }
 
 private func physicalInputIsObservational(_ batch: InputEventBatch, enabled: Bool) -> Bool {
-    enabled && batch.externalEventCount > 0 && batch.externalSourcePIDs == [0] &&
-        batch.externalEventTypes == [CGEventType.mouseMoved.rawValue]
+    physicalInputIsObservational(AggregatedExternalInput([batch]), enabled: enabled)
 }
 
 private enum AllowedEventProducerRole: String, Codable {
@@ -258,6 +293,8 @@ private final class InputEventTracker {
 
     private let lock = NSLock()
     private var allowedProducerRoles: [Int32: AllowedEventProducerRole] = [:]
+    private var attributionEpoch = InputAttributionEpoch.unconfigured
+    private var queuedEpochBatches: [InputEventBatch] = []
     private var producerEventCount = 0
     private var producerSourcePIDs = Set<Int32>()
     private var producerEventTypes = Set<UInt32>()
@@ -359,6 +396,10 @@ private final class InputEventTracker {
         let sourcePID = sourcePIDValue > 0 && sourcePIDValue <= Int64(Int32.max)
             ? Int32(sourcePIDValue)
             : 0
+        self.record(type: type, sourcePID: sourcePID)
+    }
+
+    func record(type: CGEventType, sourcePID: Int32) {
         self.lock.lock()
         if self.allowedProducerRoles[sourcePID] == .bridge {
             self.producerEventCount += 1
@@ -385,24 +426,58 @@ private final class InputEventTracker {
         self.lock.unlock()
     }
 
-    func updateAllowedProducerRoles(_ roles: [Int32: AllowedEventProducerRole]) {
+    func updateAllowedProducers(
+        _ producers: [AllowedEventProducer],
+        foreground: AllowedForegroundActivity,
+        revision: UInt64)
+    {
+        let roles = Dictionary(uniqueKeysWithValues: producers.map { ($0.pid, $0.effectiveRole) })
+        let nextEpoch = InputAttributionEpoch(
+            revision: revision,
+            producerReceipts: Dictionary(uniqueKeysWithValues: producers.map { ($0.pid, $0.startIdentity) }),
+            foreground: foreground)
         self.lock.lock()
+        if self.attributionEpoch != nextEpoch {
+            let priorEpochBatch = self.makeBatchLocked()
+            if priorEpochBatch.hasEvidence {
+                self.queuedEpochBatches.append(priorEpochBatch)
+            }
+            self.resetBatchLocked()
+        }
         self.allowedProducerRoles = roles
+        self.attributionEpoch = nextEpoch
         self.lock.unlock()
     }
 
-    func drain() -> InputEventBatch {
+    func drain() -> [InputEventBatch] {
         self.lock.lock()
-        let producerEventCount = self.producerEventCount
-        let producerSourcePIDs = self.producerSourcePIDs.sorted()
-        let producerEventTypes = self.producerEventTypes.sorted()
-        let foregroundEventCount = self.foregroundEventCount
-        let foregroundSourcePIDs = self.foregroundSourcePIDs.sorted()
-        let foregroundEventTypes = self.foregroundEventTypes.sorted()
-        let externalEventCount = self.externalEventCount
-        let externalSourcePIDs = self.externalSourcePIDs.sorted()
-        let externalEventTypes = self.externalEventTypes.sorted()
-        let attributionFailed = self.attributionFailed
+        let currentEpochBatch = self.makeBatchLocked()
+        var batches = self.queuedEpochBatches
+        self.queuedEpochBatches.removeAll(keepingCapacity: true)
+        if currentEpochBatch.hasEvidence || batches.isEmpty {
+            batches.append(currentEpochBatch)
+        }
+        self.resetBatchLocked()
+        self.lock.unlock()
+        return batches
+    }
+
+    private func makeBatchLocked() -> InputEventBatch {
+        InputEventBatch(
+            producerEventCount: self.producerEventCount,
+            producerSourcePIDs: self.producerSourcePIDs.sorted(),
+            producerEventTypes: self.producerEventTypes.sorted(),
+            foregroundEventCount: self.foregroundEventCount,
+            foregroundSourcePIDs: self.foregroundSourcePIDs.sorted(),
+            foregroundEventTypes: self.foregroundEventTypes.sorted(),
+            externalEventCount: self.externalEventCount,
+            externalSourcePIDs: self.externalSourcePIDs.sorted(),
+            externalEventTypes: self.externalEventTypes.sorted(),
+            attributionFailed: self.attributionFailed,
+            attributionEpoch: self.attributionEpoch)
+    }
+
+    private func resetBatchLocked() {
         self.producerEventCount = 0
         self.producerSourcePIDs.removeAll(keepingCapacity: true)
         self.producerEventTypes.removeAll(keepingCapacity: true)
@@ -413,18 +488,6 @@ private final class InputEventTracker {
         self.externalSourcePIDs.removeAll(keepingCapacity: true)
         self.externalEventTypes.removeAll(keepingCapacity: true)
         self.attributionFailed = false
-        self.lock.unlock()
-        return InputEventBatch(
-            producerEventCount: producerEventCount,
-            producerSourcePIDs: producerSourcePIDs,
-            producerEventTypes: producerEventTypes,
-            foregroundEventCount: foregroundEventCount,
-            foregroundSourcePIDs: foregroundSourcePIDs,
-            foregroundEventTypes: foregroundEventTypes,
-            externalEventCount: externalEventCount,
-            externalSourcePIDs: externalSourcePIDs,
-            externalEventTypes: externalEventTypes,
-            attributionFailed: attributionFailed)
     }
 }
 
@@ -836,7 +899,6 @@ private struct WatchState {
     private var contaminationState = AttemptContaminationState()
     private var inputAttributionAvailable = true
     private var allowedProducerRevision: UInt64?
-    private var allowedProducerReceipts: [Int32: String] = [:]
     private var allowedForeground = AllowedForegroundActivity(active: false, target: nil)
     private var pendingFocusEvents = PendingFocusEvents()
     private var cursorMovementObserved = false
@@ -846,7 +908,9 @@ private struct WatchState {
 
     mutating func applyProducerSet(
         _ producerSet: AllowedEventProducerSet,
-        to tracker: InputEventTracker) throws
+        to tracker: InputEventTracker,
+        processIdentity: (Int32) -> UInt64? = processStartIdentity(pid:),
+        foregroundTargetValidator: (AllowedForegroundTarget) -> Bool = foregroundTargetIsLive) throws
     {
         guard self.allowedProducerRevision != producerSet.revision else { return }
         if let currentRevision = self.allowedProducerRevision,
@@ -862,7 +926,7 @@ private struct WatchState {
         }
         let producerPIDs = producerSet.producers.map(\.pid)
         let validatedPIDs = Set(producerSet.producers.compactMap { producer -> Int32? in
-            guard let currentStartIdentity = processStartIdentity(pid: producer.pid),
+            guard let currentStartIdentity = processIdentity(producer.pid),
                   producer.startIdentity == String(currentStartIdentity)
             else {
                 return nil
@@ -889,7 +953,7 @@ private struct WatchState {
         let foregroundContractValid = foregroundControllerCardinalityIsValid(
             producers: producerSet.producers,
             foreground: foreground) &&
-            (!foreground.active || foreground.target.map(foregroundTargetIsLive) == true)
+            (!foreground.active || foreground.target.map(foregroundTargetValidator) == true)
         guard foregroundContractValid else {
             try self.block(
                 reason: "blocked_foreground_contract",
@@ -899,12 +963,10 @@ private struct WatchState {
                 countsRetry: false)
             return
         }
-        tracker.updateAllowedProducerRoles(Dictionary(uniqueKeysWithValues: producerSet.producers.map {
-            ($0.pid, $0.effectiveRole)
-        }))
-        self.allowedProducerReceipts = Dictionary(uniqueKeysWithValues: producerSet.producers.map {
-            ($0.pid, $0.startIdentity)
-        })
+        tracker.updateAllowedProducers(
+            producerSet.producers,
+            foreground: foreground,
+            revision: producerSet.revision)
         self.pendingFocusEvents.clearOnForegroundTransition(
             from: self.allowedForeground,
             to: foreground)
@@ -915,9 +977,10 @@ private struct WatchState {
     mutating func observe(
         current: SystemSample,
         phase: String,
-        inputBatch: InputEventBatch,
+        inputBatches: [InputEventBatch],
         unexpectedActivations: [Int32],
-        focusedWindowChanged: Bool) throws -> WatchHeartbeat
+        focusedWindowChanged: Bool,
+        processIdentity: (Int32) -> UInt64? = processStartIdentity(pid:)) throws -> WatchHeartbeat
     {
         if abs(current.cursor.x - self.interactiveBaseline.cursor.x) > 0.5 ||
             abs(current.cursor.y - self.interactiveBaseline.cursor.y) > 0.5
@@ -929,58 +992,69 @@ private struct WatchState {
             activations: unexpectedActivations,
             focusedWindowChanged: focusedWindowChanged)
 
-        if inputBatch.attributionFailed {
-            try self.block(
-                reason: "blocked_attribution",
-                sourcePIDs: [],
-                eventTypes: [],
-                attributionFailed: true,
-                countsRetry: false)
+        var inputViolations = Set<Violation>()
+        for attributedBatch in inputBatches {
+            if attributedBatch.attributionFailed {
+                try self.block(
+                    reason: "blocked_attribution",
+                    sourcePIDs: [],
+                    eventTypes: [],
+                    attributionFailed: true,
+                    countsRetry: false)
+            }
+            let producerEventsValid = producerEventsMatchReceipts(
+                batch: attributedBatch,
+                receipts: attributedBatch.attributionEpoch.producerReceipts,
+                processIdentity: processIdentity)
+            if !producerEventsValid {
+                try self.block(
+                    reason: "blocked_producer_generation_drift",
+                    sourcePIDs: Set(
+                        attributedBatch.producerSourcePIDs + attributedBatch.foregroundSourcePIDs).sorted(),
+                    eventTypes: Set(
+                        attributedBatch.producerEventTypes + attributedBatch.foregroundEventTypes).sorted(),
+                    attributionFailed: true,
+                    countsRetry: false)
+            }
+            let foregroundAttributionValid = producerEventsValid && !attributedBatch.attributionFailed
+            if shouldCreditForegroundAttribution(
+                batch: attributedBatch,
+                attributionValid: foregroundAttributionValid,
+                foregroundActive: attributedBatch.attributionEpoch.foreground.active)
+            {
+                self.attributedForegroundEventCount += attributedBatch.foregroundEventCount
+                self.attributedForegroundSourcePIDs.formUnion(attributedBatch.foregroundSourcePIDs)
+                self.foregroundActivityObserved = true
+            } else if attributedBatch.foregroundEventCount > 0,
+                      foregroundAttributionValid,
+                      !attributedBatch.attributionEpoch.foreground.active
+            {
+                try self.block(
+                    reason: "blocked_unpermitted_foreground_input",
+                    sourcePIDs: attributedBatch.foregroundSourcePIDs,
+                    eventTypes: attributedBatch.foregroundEventTypes,
+                    attributionFailed: true,
+                    countsRetry: false)
+            }
+            if producerEventsValid,
+               let inputViolation = producerInputViolation(batch: attributedBatch, projection: self.projection)
+            {
+                inputViolations.insert(inputViolation)
+            }
         }
-        let producerEventsValid = producerEventsMatchReceipts(
-            batch: inputBatch,
-            receipts: self.allowedProducerReceipts,
-            processIdentity: processStartIdentity(pid:))
-        if !producerEventsValid {
-            try self.block(
-                reason: "blocked_producer_generation_drift",
-                sourcePIDs: Set(inputBatch.producerSourcePIDs + inputBatch.foregroundSourcePIDs).sorted(),
-                eventTypes: Set(inputBatch.producerEventTypes + inputBatch.foregroundEventTypes).sorted(),
-                attributionFailed: true,
-                countsRetry: false)
-        }
-        let foregroundAttributionValid = producerEventsValid && !inputBatch.attributionFailed
-        if shouldCreditForegroundAttribution(
-            batch: inputBatch,
-            attributionValid: foregroundAttributionValid,
-            foregroundActive: self.allowedForeground.active)
-        {
-            self.attributedForegroundEventCount += inputBatch.foregroundEventCount
-            self.attributedForegroundSourcePIDs.formUnion(inputBatch.foregroundSourcePIDs)
-            self.foregroundActivityObserved = true
-        } else if inputBatch.foregroundEventCount > 0,
-                  foregroundAttributionValid,
-                  !self.allowedForeground.active
-        {
-            try self.block(
-                reason: "blocked_unpermitted_foreground_input",
-                sourcePIDs: inputBatch.foregroundSourcePIDs,
-                eventTypes: inputBatch.foregroundEventTypes,
-                attributionFailed: true,
-                countsRetry: false)
-        }
+        let externalInput = AggregatedExternalInput(inputBatches)
         let observesPhysicalInput = physicalInputIsObservational(
-            inputBatch,
+            externalInput,
             enabled: self.physicalInputObservational)
-        if inputBatch.externalEventCount > 0, !observesPhysicalInput {
+        if externalInput.eventCount > 0, !observesPhysicalInput {
             try self.block(
                 reason: phase == "setup" ? "blocked_setup_attempt" : "blocked_active_attempt",
-                sourcePIDs: inputBatch.externalSourcePIDs,
-                eventTypes: inputBatch.externalEventTypes,
+                sourcePIDs: externalInput.sourcePIDs,
+                eventTypes: externalInput.eventTypes,
                 attributionFailed: false,
                 countsRetry: true)
         }
-        let externalInputPermitsEvaluation = observesPhysicalInput || inputBatch.externalEventCount == 0
+        let externalInputPermitsEvaluation = observesPhysicalInput || externalInput.eventCount == 0
         let evaluateInteractive = externalInputPermitsEvaluation && !self.allowedForeground.active &&
             unexpectedActivations.isEmpty && !focusedWindowChanged && self.inputAttributionAvailable &&
             self.contaminationState.permitsInteractiveEvaluation
@@ -1005,18 +1079,14 @@ private struct WatchState {
         if self.contaminationState.permitsInteractiveEvaluation {
             if !self.allowedForeground.active {
                 currentViolations.formUnion(transientFocusViolations(
-                    externalEventCount: observesPhysicalInput ? 0 : inputBatch.externalEventCount,
+                    externalEventCount: observesPhysicalInput ? 0 : externalInput.eventCount,
                     unexpectedActivations: deferredFocusEvents.activations,
                     focusedWindowChanged: deferredFocusEvents.focusedWindowChanged,
                     baseline: self.interactiveBaseline,
                     projection: self.projection))
             }
         }
-        if producerEventsValid,
-           let inputViolation = producerInputViolation(batch: inputBatch, projection: self.projection)
-        {
-            currentViolations.insert(inputViolation)
-        }
+        currentViolations.formUnion(inputViolations)
         for violation in currentViolations.subtracting(self.recorded) {
             try appendJSONLine(violation, to: self.outputPath)
             self.recorded.insert(violation)
@@ -1174,12 +1244,12 @@ private func runWatch(arguments: [String]) throws -> Never {
         guard ["setup", "running", "complete"].contains(phase) else {
             throw ProbeError.invalidArguments("watch phase must be setup, running, or complete")
         }
-        let inputBatch = inputTracker.drain()
+        let inputBatches = inputTracker.drain()
         let unexpectedActivations = activationTracker.drain()
         let heartbeat = try watchState.observe(
             current: current,
             phase: phase,
-            inputBatch: inputBatch,
+            inputBatches: inputBatches,
             unexpectedActivations: unexpectedActivations,
             focusedWindowChanged: focusedWindowTracker.drain())
         try writeJSON(
@@ -1268,7 +1338,8 @@ private func foregroundGenerationDriftCannotBeCredited() -> Bool {
         externalEventCount: 0,
         externalSourcePIDs: [],
         externalEventTypes: [],
-        attributionFailed: false)
+        attributionFailed: false,
+        attributionEpoch: .unconfigured)
     let receipts = [Int32(42): "4200"]
     let valid = producerEventsMatchReceipts(
         batch: batch,
@@ -1292,6 +1363,167 @@ private func foregroundGenerationDriftCannotBeCredited() -> Bool {
             foregroundActive: false)
 }
 
+private func foregroundProducerTransitionsSnapshotOldEpoch() -> Bool {
+    let bridge = AllowedEventProducer(pid: 41, startIdentity: "4100", role: .bridge)
+    let foreground = AllowedEventProducer(pid: 42, startIdentity: "4200", role: .foregroundController)
+    let firstTarget = AllowedForegroundActivity(
+        active: true,
+        target: AllowedForegroundTarget(pid: 51, startIdentity: "5100", windowID: 52))
+    let secondTarget = AllowedForegroundActivity(
+        active: true,
+        target: AllowedForegroundTarget(pid: 53, startIdentity: "5300", windowID: 54))
+    let inactive = AllowedForegroundActivity(active: false, target: nil)
+    let tracker = InputEventTracker()
+    tracker.updateAllowedProducers([bridge, foreground], foreground: firstTarget, revision: 1)
+    tracker.record(type: .keyDown, sourcePID: foreground.pid)
+    tracker.record(type: .keyDown, sourcePID: bridge.pid)
+
+    tracker.updateAllowedProducers([bridge], foreground: inactive, revision: 2)
+    let revokedBatches = tracker.drain()
+    guard revokedBatches.count == 1,
+          let priorGrant = revokedBatches.first,
+          priorGrant.attributionEpoch.revision == 1,
+          priorGrant.attributionEpoch.foreground == firstTarget,
+          priorGrant.foregroundEventCount == 1,
+          priorGrant.foregroundSourcePIDs == [foreground.pid],
+          priorGrant.producerEventCount == 1,
+          priorGrant.producerSourcePIDs == [bridge.pid],
+          producerEventsMatchReceipts(
+              batch: priorGrant,
+              receipts: priorGrant.attributionEpoch.producerReceipts,
+              processIdentity: { pid in pid == bridge.pid ? 4100 : 4200 }),
+          shouldCreditForegroundAttribution(
+              batch: priorGrant,
+              attributionValid: true,
+              foregroundActive: priorGrant.attributionEpoch.foreground.active)
+    else { return false }
+
+    tracker.record(type: .keyDown, sourcePID: foreground.pid)
+    let postRevokeBatches = tracker.drain()
+    guard postRevokeBatches.count == 1,
+          let postRevoke = postRevokeBatches.first,
+          postRevoke.attributionEpoch.revision == 2,
+          !postRevoke.attributionEpoch.foreground.active,
+          postRevoke.foregroundEventCount == 0,
+          postRevoke.externalEventCount == 1,
+          postRevoke.externalSourcePIDs == [foreground.pid]
+    else { return false }
+
+    tracker.updateAllowedProducers([bridge, foreground], foreground: firstTarget, revision: 3)
+    tracker.record(type: .keyDown, sourcePID: foreground.pid)
+    tracker.updateAllowedProducers([bridge, foreground], foreground: secondTarget, revision: 4)
+    let retargetedBatches = tracker.drain()
+    guard retargetedBatches.count == 1,
+          let priorTarget = retargetedBatches.first,
+          priorTarget.attributionEpoch.revision == 3,
+          priorTarget.attributionEpoch.foreground == firstTarget,
+          priorTarget.foregroundEventCount == 1
+    else { return false }
+
+    tracker.record(type: .keyDown, sourcePID: foreground.pid)
+    tracker.updateAllowedProducers([
+        bridge,
+        AllowedEventProducer(pid: foreground.pid, startIdentity: "4201", role: .foregroundController),
+    ], foreground: secondTarget, revision: 5)
+    let recycledBatches = tracker.drain()
+    guard recycledBatches.count == 1,
+          let priorGeneration = recycledBatches.first,
+          priorGeneration.attributionEpoch.revision == 4,
+          priorGeneration.attributionEpoch.producerReceipts[foreground.pid] == foreground.startIdentity,
+          priorGeneration.foregroundEventCount == 1
+    else { return false }
+
+    tracker.record(type: .keyDown, sourcePID: foreground.pid)
+    tracker.updateAllowedProducers([
+        bridge,
+        AllowedEventProducer(pid: foreground.pid, startIdentity: "4201", role: .foregroundController),
+    ], foreground: secondTarget, revision: 5)
+    let sameEpochBatches = tracker.drain()
+    return sameEpochBatches.count == 1 && sameEpochBatches[0].foregroundEventCount == 1
+}
+
+private func foregroundGrantRevokeWatchStateIsClean(
+    baseline: SystemSample,
+    interactiveBaseline: InteractiveBaseline,
+    projection: InvariantProjection) throws -> Bool
+{
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "peekaboo-foreground-epoch-self-test-\(UUID().uuidString)",
+        isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let violationsPath = root.appendingPathComponent("violations.jsonl").path
+    let contaminationPath = root.appendingPathComponent("contamination.jsonl").path
+
+    let bridge = AllowedEventProducer(pid: 41, startIdentity: "4100", role: .bridge)
+    let controller = AllowedEventProducer(pid: 42, startIdentity: "4200", role: .foregroundController)
+    let target = AllowedForegroundActivity(
+        active: true,
+        target: AllowedForegroundTarget(pid: 51, startIdentity: "5100", windowID: 52))
+    let inactive = AllowedForegroundActivity(active: false, target: nil)
+    let identities: [Int32: UInt64] = [41: 4100, 42: 4200, 51: 5100]
+    let identity: (Int32) -> UInt64? = { identities[$0] }
+    let tracker = InputEventTracker()
+    var state = WatchState(
+        baseline: baseline,
+        interactiveBaseline: interactiveBaseline,
+        allowClipboardMutation: false,
+        physicalInputObservational: true,
+        cursorObservational: true,
+        projection: projection,
+        outputPath: violationsPath,
+        contaminationOutputPath: contaminationPath)
+
+    try state.applyProducerSet(
+        AllowedEventProducerSet(revision: 1, producers: [bridge, controller], foreground: target),
+        to: tracker,
+        processIdentity: identity,
+        foregroundTargetValidator: { _ in true })
+    tracker.record(type: .keyDown, sourcePID: controller.pid)
+    let grantHeartbeat = try state.observe(
+        current: baseline,
+        phase: "running",
+        inputBatches: tracker.drain(),
+        unexpectedActivations: target.target.map { [$0.pid] } ?? [],
+        focusedWindowChanged: true,
+        processIdentity: identity)
+    guard grantHeartbeat.foregroundActive,
+          grantHeartbeat.allowedProducerRevision == 1,
+          grantHeartbeat.attributedForegroundEventCount == 1,
+          grantHeartbeat.attributedForegroundSourcePIDs == [controller.pid],
+          grantHeartbeat.pendingActivationCount == 1,
+          grantHeartbeat.pendingFocusedWindowChange
+    else { return false }
+
+    tracker.record(type: .keyDown, sourcePID: controller.pid)
+    try state.applyProducerSet(
+        AllowedEventProducerSet(revision: 2, producers: [bridge], foreground: inactive),
+        to: tracker,
+        processIdentity: identity,
+        foregroundTargetValidator: { _ in true })
+    let revokeHeartbeat = try state.observe(
+        current: baseline,
+        phase: "running",
+        inputBatches: tracker.drain(),
+        unexpectedActivations: [],
+        focusedWindowChanged: false,
+        processIdentity: identity)
+    let evidenceFilesAreEmpty = [violationsPath, contaminationPath].allSatisfy { path in
+        (try? Data(contentsOf: URL(fileURLWithPath: path)).isEmpty) ?? true
+    }
+    return !revokeHeartbeat.foregroundActive &&
+        revokeHeartbeat.allowedProducerRevision == 2 &&
+        revokeHeartbeat.attributedForegroundEventCount == 2 &&
+        revokeHeartbeat.attributedForegroundSourcePIDs == [controller.pid] &&
+        revokeHeartbeat.foregroundActivityObserved &&
+        revokeHeartbeat.pendingActivationCount == 0 &&
+        !revokeHeartbeat.pendingFocusedWindowChange &&
+        revokeHeartbeat.inputAttributionAvailable &&
+        !revokeHeartbeat.contaminationBlocked &&
+        revokeHeartbeat.lastCleanSequence == revokeHeartbeat.sequence &&
+        evidenceFilesAreEmpty
+}
+
 private func physicalInputPolicyIsSafe() -> Bool {
     let physicalBatch = InputEventBatch(
         producerEventCount: 0,
@@ -1303,7 +1535,8 @@ private func physicalInputPolicyIsSafe() -> Bool {
         externalEventCount: 1,
         externalSourcePIDs: [0],
         externalEventTypes: [CGEventType.mouseMoved.rawValue],
-        attributionFailed: false)
+        attributionFailed: false,
+        attributionEpoch: .unconfigured)
     let processBatch = InputEventBatch(
         producerEventCount: 0,
         producerSourcePIDs: [],
@@ -1314,7 +1547,8 @@ private func physicalInputPolicyIsSafe() -> Bool {
         externalEventCount: 1,
         externalSourcePIDs: [4242],
         externalEventTypes: [CGEventType.keyDown.rawValue],
-        attributionFailed: false)
+        attributionFailed: false,
+        attributionEpoch: .unconfigured)
     let physicalKeyBatch = InputEventBatch(
         producerEventCount: 0,
         producerSourcePIDs: [],
@@ -1325,7 +1559,8 @@ private func physicalInputPolicyIsSafe() -> Bool {
         externalEventCount: 1,
         externalSourcePIDs: [0],
         externalEventTypes: [CGEventType.keyDown.rawValue],
-        attributionFailed: false)
+        attributionFailed: false,
+        attributionEpoch: .unconfigured)
     let physicalClickBatch = InputEventBatch(
         producerEventCount: 0,
         producerSourcePIDs: [],
@@ -1336,7 +1571,8 @@ private func physicalInputPolicyIsSafe() -> Bool {
         externalEventCount: 1,
         externalSourcePIDs: [0],
         externalEventTypes: [CGEventType.leftMouseDown.rawValue],
-        attributionFailed: false)
+        attributionFailed: false,
+        attributionEpoch: .unconfigured)
     let physicalScrollBatch = InputEventBatch(
         producerEventCount: 0,
         producerSourcePIDs: [],
@@ -1347,7 +1583,8 @@ private func physicalInputPolicyIsSafe() -> Bool {
         externalEventCount: 1,
         externalSourcePIDs: [0],
         externalEventTypes: [CGEventType.scrollWheel.rawValue],
-        attributionFailed: false)
+        attributionFailed: false,
+        attributionEpoch: .unconfigured)
     let mixedPhysicalBatch = InputEventBatch(
         producerEventCount: 0,
         producerSourcePIDs: [],
@@ -1358,7 +1595,8 @@ private func physicalInputPolicyIsSafe() -> Bool {
         externalEventCount: 2,
         externalSourcePIDs: [0],
         externalEventTypes: [CGEventType.mouseMoved.rawValue, CGEventType.keyDown.rawValue],
-        attributionFailed: false)
+        attributionFailed: false,
+        attributionEpoch: .unconfigured)
     let unattributedBatch = InputEventBatch(
         producerEventCount: 0,
         producerSourcePIDs: [],
@@ -1369,7 +1607,8 @@ private func physicalInputPolicyIsSafe() -> Bool {
         externalEventCount: 1,
         externalSourcePIDs: [],
         externalEventTypes: [CGEventType.keyDown.rawValue],
-        attributionFailed: false)
+        attributionFailed: false,
+        attributionEpoch: .unconfigured)
     return physicalInputIsObservational(physicalBatch, enabled: true) &&
         !physicalInputIsObservational(physicalKeyBatch, enabled: true) &&
         !physicalInputIsObservational(physicalClickBatch, enabled: true) &&
@@ -1480,7 +1719,8 @@ private func runSelfTest() throws {
         externalEventCount: 0,
         externalSourcePIDs: [],
         externalEventTypes: [],
-        attributionFailed: false)
+        attributionFailed: false,
+        attributionEpoch: .unconfigured)
     guard producerInputViolation(batch: producerBatch, projection: projection)?.kind ==
         projection[.globalInputEvent]
     else {
@@ -1511,7 +1751,8 @@ private func runSelfTest() throws {
         externalEventCount: 0,
         externalSourcePIDs: [],
         externalEventTypes: [],
-        attributionFailed: false)
+        attributionFailed: false,
+        attributionEpoch: .unconfigured)
     guard let selfIdentity = processStartIdentity(pid: getpid()),
           producerEventsMatchReceipts(
               batch: foregroundBatch,
@@ -1544,6 +1785,18 @@ private func runSelfTest() throws {
     guard foregroundGenerationDriftCannotBeCredited() else {
         throw ProbeError.invalidArguments(
             "recycled foreground controller PIDs must not receive attribution credit")
+    }
+    guard foregroundProducerTransitionsSnapshotOldEpoch() else {
+        throw ProbeError.invalidArguments(
+            "foreground producer transitions must retain an exact prior attribution epoch")
+    }
+    guard try foregroundGrantRevokeWatchStateIsClean(
+        baseline: baseline,
+        interactiveBaseline: interactiveBaseline,
+        projection: projection)
+    else {
+        throw ProbeError.invalidArguments(
+            "grant input and deferred focus must survive revoke into a clean post-revoke heartbeat")
     }
     let transientKinds = Set(transientFocusViolations(
         externalEventCount: 0,
@@ -1610,7 +1863,7 @@ private func runSelfTest() throws {
         throw ProbeError.invalidArguments("unattributed foreground focus did not fail closed")
     }
 
-    try writeJSON(SelfTestResult(success: true, tests: 21), to: nil)
+    try writeJSON(SelfTestResult(success: true, tests: 23), to: nil)
 }
 
 private func findApp(arguments: [String]) throws {
