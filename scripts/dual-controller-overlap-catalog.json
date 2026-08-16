@@ -21,6 +21,7 @@
     "overlapping_intervals",
     "restoration",
     "generation_pinned_cleanup",
-    "signed_operation_receipts"
+    "signed_operation_receipts",
+    "complete_anchored_receipt_verdict_set"
   ]
 }

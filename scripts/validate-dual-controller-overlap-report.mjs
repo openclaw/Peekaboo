@@ -10,6 +10,10 @@ import { fileURLToPath } from 'node:url';
 const hex40 = /^[0-9a-f]{40}$/;
 const hex64 = /^[0-9a-f]{64}$/;
 const decimalIdentity = /^[1-9][0-9]*$/;
+const canonicalUInt64 = /^(0|[1-9][0-9]*)$/;
+const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const uuidV8 = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const uint64Maximum = 0xffff_ffff_ffff_ffffn;
 
 function failure(rule, message, controller = null) {
   return { rule, message, controller };
@@ -20,6 +24,26 @@ function exactKeys(value, expected) {
   const actual = Object.keys(value).sort();
   const wanted = [...expected].sort();
   return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
+}
+
+function canonicalValue(value) {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || Object.is(value, -0)
+        || (Number.isInteger(value) && !Number.isSafeInteger(value))) {
+      throw new TypeError('canonical JSON only accepts finite lossless numbers');
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (!value || typeof value !== 'object') {
+    throw new TypeError('canonical JSON only accepts plain JSON values');
+  }
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalValue(value[key])]));
+}
+
+export function firstPartyResultSetSHA256(results) {
+  return createHash('sha256').update(JSON.stringify(canonicalValue(results))).digest('hex');
 }
 
 function positiveInteger(value) {
@@ -103,36 +127,151 @@ function validateHost(report, failures) {
   }
 }
 
+function operationClientRequirements(report) {
+  const requirements = new Map();
+  const add = (operation, primaryOperation) => {
+    const key = `${operation?.client_pid}:${operation?.client_start_identity}`;
+    requirements.set(key, { primaryOperation });
+  };
+  for (const controller of report.controllers ?? []) {
+    for (const mutation of controller.mutations ?? []) {
+      const primaryOperation = mutation.command === 'press'
+        ? 'exactWindowTargetedHotkey'
+        : 'exactWindowTargetedTypeActions';
+      add(mutation, primaryOperation);
+    }
+    for (const observation of controller.observations ?? []) {
+      add(observation, 'desktopObservation');
+      add(observation.route_receipt, 'listWindows');
+    }
+  }
+  for (const checkpoint of report.restoration_checkpoints ?? []) {
+    for (const observation of checkpoint.observations ?? []) {
+      add(observation, 'desktopObservation');
+      add(observation.route_receipt, 'listWindows');
+    }
+  }
+  return requirements;
+}
+
+function validCanonicalUInt64(value) {
+  return typeof value === 'string'
+    && canonicalUInt64.test(value)
+    && BigInt(value) <= uint64Maximum;
+}
+
+function validateFirstPartyResult(result, report, requirements) {
+  if (!exactKeys(result, [
+    'valid', 'validator_id', 'trust_source', 'minimum_protocol_version', 'request_id',
+    'session_id', 'session_sequence', 'predecessor_session_id', 'operation',
+    'listener_instance_id', 'listener_public_key_sha256', 'host', 'client_instance_id',
+    'client', 'request_sha256', 'response_sha256', 'bundle_sha256',
+    'terminal_receipt_attested', 'target_attested', 'outcome_attested', 'retention_basis',
+  ]) || result.valid !== true
+      || result.validator_id !== 'peekaboo-bridge-receipt-validate-v1'
+      || result.trust_source !== 'authenticated_live_listener'
+      || result.minimum_protocol_version !== '1.29'
+      || typeof result.request_id !== 'string' || !uuidV8.test(result.request_id)
+      || typeof result.session_id !== 'string' || !uuidV4.test(result.session_id)
+      || !validCanonicalUInt64(result.session_sequence)
+      || (result.predecessor_session_id !== null
+        && (typeof result.predecessor_session_id !== 'string'
+          || !uuidV4.test(result.predecessor_session_id)))
+      || typeof result.operation !== 'string' || result.operation.length === 0
+      || typeof result.listener_instance_id !== 'string'
+      || !uuidV4.test(result.listener_instance_id)
+      || !hex64.test(result.listener_public_key_sha256 ?? '')
+      || !exactKeys(result.host, ['pid', 'start_identity', 'code_signature_hash'])
+      || result.host.pid !== report.host?.pid
+      || result.host.start_identity !== report.host?.start_identity
+      || result.host.code_signature_hash !== report.host?.code_signature_hash
+      || typeof result.client_instance_id !== 'string' || !uuidV4.test(result.client_instance_id)
+      || !exactKeys(result.client, ['pid', 'start_identity', 'code_signature_hash'])
+      || !validProcessFields(result.client)
+      || result.client.code_signature_hash !== report.cli?.code_signature_hash
+      || !hex64.test(result.request_sha256 ?? '')
+      || !hex64.test(result.response_sha256 ?? '')
+      || !hex64.test(result.bundle_sha256 ?? '')
+      || result.terminal_receipt_attested !== true
+      || typeof result.target_attested !== 'boolean'
+      || typeof result.outcome_attested !== 'boolean'
+      || result.retention_basis !== 'exported_bundle') {
+    return false;
+  }
+  const requirement = requirements.get(`${result.client.pid}:${result.client.start_identity}`);
+  if (!requirement) return false;
+  if (['exactWindowTargetedHotkey', 'exactWindowTargetedTypeActions'].includes(result.operation)) {
+    return result.target_attested === true && result.outcome_attested === true;
+  }
+  if (result.operation === 'desktopObservation') return result.target_attested === true;
+  return true;
+}
+
 function validateReceiptCertification(report, failures) {
   const validation = report.receipt_validation;
-  const trackedOperationCount = (report.controllers ?? []).reduce((total, controller) => (
-    total + (controller.mutations?.length ?? 0) + (controller.observations?.length ?? 0)
-  ), 0) + (report.restoration_checkpoints ?? []).reduce((total, checkpoint) => (
-    total + (checkpoint.observations?.length ?? 0)
-  ), 0);
+  const results = validation?.first_party_results;
+  const requirements = operationClientRequirements(report);
+  const canonicalOrder = Array.isArray(results)
+    ? [...results].sort((left, right) => (
+      `${left?.request_id ?? ''}`.localeCompare(`${right?.request_id ?? ''}`)
+    ))
+    : [];
+  const requestIDs = Array.isArray(results) ? results.map((entry) => entry?.request_id) : [];
+  const bundleSHA256s = Array.isArray(results) ? results.map((entry) => entry?.bundle_sha256) : [];
+  const sessionClaims = Array.isArray(results)
+    ? results.map((entry) => `${entry?.session_id}:${entry?.session_sequence}`)
+    : [];
+  const sessionIDs = new Set(Array.isArray(results) ? results.map((entry) => entry?.session_id) : []);
+  const listenerIdentities = new Set(Array.isArray(results) ? results.map((entry) => (
+    `${entry?.listener_instance_id}:${entry?.listener_public_key_sha256}`
+  )) : []);
+  const resultClients = new Map();
+  for (const result of results ?? []) {
+    const key = `${result?.client?.pid}:${result?.client?.start_identity}`;
+    if (!resultClients.has(key)) resultClients.set(key, new Set());
+    resultClients.get(key).add(result?.operation);
+  }
+  let resultSetSHA256 = null;
+  try {
+    if (Array.isArray(results)) resultSetSHA256 = firstPartyResultSetSHA256(results);
+  } catch {
+    resultSetSHA256 = null;
+  }
   if (!exactKeys(validation, [
     'success', 'first_party_validator_id', 'first_party_trust_source',
     'first_party_executable_sha256', 'first_party_result_set_sha256',
-    'first_party_result_count', 'adapter_id', 'adapter_sha256', 'contract_sha256',
-    'result_sha256', 'receipt_count', 'session_count',
+    'first_party_result_count', 'first_party_results', 'adapter_id', 'adapter_sha256',
+    'contract_sha256', 'result_sha256', 'receipt_count', 'session_count',
   ]) || validation?.success !== true
       || validation.first_party_validator_id !== 'peekaboo-bridge-receipt-validate-v1'
       || validation.first_party_trust_source !== 'authenticated_live_listener'
       || !hex64.test(validation.first_party_executable_sha256 ?? '')
+      || validation.first_party_executable_sha256 !== report.cli?.executable_sha256
       || !hex64.test(validation.first_party_result_set_sha256 ?? '')
+      || validation.first_party_result_set_sha256 !== resultSetSHA256
       || !positiveInteger(validation.first_party_result_count)
+      || !Array.isArray(results) || results.length === 0
+      || validation.first_party_result_count !== results.length
       || validation.first_party_result_count !== validation.receipt_count
       || validation.adapter_id !== 'peekaboo-bridge-operation-receipt-bundle-1.29-logical-session-v1'
       || !hex64.test(validation.adapter_sha256 ?? '')
       || !hex64.test(validation.contract_sha256 ?? '')
       || !hex64.test(validation.result_sha256 ?? '')
       || !positiveInteger(validation.receipt_count)
-      || validation.receipt_count < trackedOperationCount
       || !positiveInteger(validation.session_count)
-      || validation.session_count > validation.receipt_count) {
+      || validation.session_count !== sessionIDs.size
+      || JSON.stringify(results) !== JSON.stringify(canonicalOrder)
+      || new Set(requestIDs).size !== results.length
+      || new Set(bundleSHA256s).size !== results.length
+      || new Set(sessionClaims).size !== results.length
+      || listenerIdentities.size !== 1
+      || results.some((result) => !validateFirstPartyResult(result, report, requirements))
+      || [...requirements].some(([key, requirement]) => (
+        !resultClients.get(key)?.has(requirement.primaryOperation)
+      ))) {
     failures.push(failure(
       'receipt_validation',
-      'Overlap report is not bound to a successful complete protocol-1.29 signed-receipt verdict',
+      'Overlap report lacks one complete independently checked authenticated verdict set',
     ));
   }
 }
@@ -769,7 +908,61 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
       ],
     },
   ];
-  return {
+  const receiptClient = (operation, primaryOperation) => ({
+    pid: operation.client_pid,
+    start_identity: operation.client_start_identity,
+    operation: primaryOperation,
+  });
+  const observationReceiptClients = (observationEntry) => [
+    receiptClient(observationEntry, 'desktopObservation'),
+    receiptClient(observationEntry.route_receipt, 'listWindows'),
+  ];
+  const expectedReceiptClients = [controllerA, controllerB].flatMap((controllerEntry) => [
+    ...controllerEntry.mutations.map((entry) => receiptClient(
+      entry,
+      entry.command === 'press' ? 'exactWindowTargetedHotkey' : 'exactWindowTargetedTypeActions',
+    )),
+    ...controllerEntry.observations.flatMap(observationReceiptClients),
+  ]).concat(restorationCheckpoints.flatMap((checkpoint) => (
+    checkpoint.observations.flatMap(observationReceiptClients)
+  )));
+  const digest = (value) => createHash('sha256').update(value).digest('hex');
+  const paddedHex = (value) => value.toString(16).padStart(12, '0');
+  const firstPartyResults = expectedReceiptClients.map((client, index) => {
+    const ordinal = index + 1;
+    return {
+      valid: true,
+      validator_id: 'peekaboo-bridge-receipt-validate-v1',
+      trust_source: 'authenticated_live_listener',
+      minimum_protocol_version: '1.29',
+      request_id: `00000000-0000-8000-8000-${paddedHex(ordinal)}`,
+      session_id: `00000000-0000-4000-8000-${paddedHex(ordinal)}`,
+      session_sequence: '0',
+      predecessor_session_id: null,
+      operation: client.operation,
+      listener_instance_id: '11111111-1111-4111-8111-111111111111',
+      listener_public_key_sha256: '6'.repeat(64),
+      host: {
+        pid: 401,
+        start_identity: '40100',
+        code_signature_hash: 'a'.repeat(40),
+      },
+      client_instance_id: `22222222-2222-4222-8222-${paddedHex(ordinal)}`,
+      client: {
+        pid: client.pid,
+        start_identity: client.start_identity,
+        code_signature_hash: 'd'.repeat(40),
+      },
+      request_sha256: digest(`request-${ordinal}`),
+      response_sha256: digest(`response-${ordinal}`),
+      bundle_sha256: digest(`bundle-${ordinal}`),
+      terminal_receipt_attested: true,
+      target_attested: client.operation !== 'listWindows',
+      outcome_attested: !['desktopObservation', 'listWindows'].includes(client.operation),
+      retention_basis: 'exported_bundle',
+    };
+  });
+  const report = {
     version: 2,
     catalog_sha256: catalogSHA256,
     run_id: runID,
@@ -861,18 +1054,20 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
       success: true,
       first_party_validator_id: 'peekaboo-bridge-receipt-validate-v1',
       first_party_trust_source: 'authenticated_live_listener',
-      first_party_executable_sha256: '4'.repeat(64),
-      first_party_result_set_sha256: '5'.repeat(64),
-      first_party_result_count: 22,
+      first_party_executable_sha256: 'c'.repeat(64),
+      first_party_result_set_sha256: firstPartyResultSetSHA256(firstPartyResults),
+      first_party_result_count: firstPartyResults.length,
+      first_party_results: firstPartyResults,
       adapter_id: 'peekaboo-bridge-operation-receipt-bundle-1.29-logical-session-v1',
       adapter_sha256: '1'.repeat(64),
       contract_sha256: '2'.repeat(64),
       result_sha256: '3'.repeat(64),
-      receipt_count: 22,
-      session_count: 22,
+      receipt_count: firstPartyResults.length,
+      session_count: new Set(firstPartyResults.map((entry) => entry.session_id)).size,
     },
     evidence: Object.fromEntries(catalog.required_evidence.map((name) => [name, true])),
   };
+  return report;
 }
 
 export function runOverlapContractSelfTest(catalog, catalogSHA256) {

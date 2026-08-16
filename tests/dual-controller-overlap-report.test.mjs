@@ -5,6 +5,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  firstPartyResultSetSHA256,
   makePassingOverlapReport,
   validateOverlapCertification,
 } from '../scripts/validate-dual-controller-overlap-report.mjs';
@@ -21,6 +22,14 @@ function validate(report) {
 
 function rules(result) {
   return new Set(result.failures.map((entry) => entry.rule));
+}
+
+function refreshFirstPartySummary(report) {
+  const { first_party_results: results } = report.receipt_validation;
+  report.receipt_validation.first_party_result_count = results.length;
+  report.receipt_validation.receipt_count = results.length;
+  report.receipt_validation.session_count = new Set(results.map((entry) => entry.session_id)).size;
+  report.receipt_validation.first_party_result_set_sha256 = firstPartyResultSetSHA256(results);
 }
 
 test('passing report proves exact targets and bidirectional overlap', () => {
@@ -232,6 +241,46 @@ test('synthetic overlap evidence cannot replace signed protocol 1.29 receipt val
   const legacyProtocol = makePassingOverlapReport(catalog);
   legacyProtocol.host.protocol_minor = 28;
   assert.ok(rules(validate(legacyProtocol)).has('host_receipt'));
+});
+
+test('anchored per-bundle verdicts are retained and independently checked', () => {
+  const missingVerdict = makePassingOverlapReport(catalog);
+  missingVerdict.receipt_validation.first_party_results.shift();
+  refreshFirstPartySummary(missingVerdict);
+  assert.ok(rules(validate(missingVerdict)).has('receipt_validation'));
+
+  const rewrittenHost = makePassingOverlapReport(catalog);
+  rewrittenHost.receipt_validation.first_party_results[0].host.pid += 1;
+  refreshFirstPartySummary(rewrittenHost);
+  assert.ok(rules(validate(rewrittenHost)).has('receipt_validation'));
+
+  const rewrittenOperation = makePassingOverlapReport(catalog);
+  rewrittenOperation.receipt_validation.first_party_results[0].operation = 'permissionsStatus';
+  refreshFirstPartySummary(rewrittenOperation);
+  assert.ok(rules(validate(rewrittenOperation)).has('receipt_validation'));
+
+  const duplicateBundle = makePassingOverlapReport(catalog);
+  duplicateBundle.receipt_validation.first_party_results[1].bundle_sha256 =
+    duplicateBundle.receipt_validation.first_party_results[0].bundle_sha256;
+  refreshFirstPartySummary(duplicateBundle);
+  assert.ok(rules(validate(duplicateBundle)).has('receipt_validation'));
+
+  const reordered = makePassingOverlapReport(catalog);
+  reordered.receipt_validation.first_party_results.reverse();
+  refreshFirstPartySummary(reordered);
+  assert.ok(rules(validate(reordered)).has('receipt_validation'));
+
+  const untrackedClient = makePassingOverlapReport(catalog);
+  const extra = structuredClone(untrackedClient.receipt_validation.first_party_results.at(-1));
+  extra.request_id = 'ffffffff-ffff-8fff-bfff-ffffffffffff';
+  extra.session_id = 'ffffffff-ffff-4fff-bfff-ffffffffffff';
+  extra.client_instance_id = 'eeeeeeee-eeee-4eee-aeee-eeeeeeeeeeee';
+  extra.bundle_sha256 = 'e'.repeat(64);
+  extra.client.pid = 99999;
+  extra.client.start_identity = '9999900';
+  untrackedClient.receipt_validation.first_party_results.push(extra);
+  refreshFirstPartySummary(untrackedClient);
+  assert.ok(rules(validate(untrackedClient)).has('receipt_validation'));
 });
 
 test('controller token namespaces are run-bound and disjoint', () => {

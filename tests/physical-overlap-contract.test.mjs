@@ -45,6 +45,9 @@ function validate(value) {
     if (!Array.isArray(value[key]) || value[key].length === 0
         || new Set(value[key]).size !== value[key].length) failures.push(key);
   }
+  if (!value.receipt_requirements.includes('complete-anchored-first-party-verdict-set')) {
+    failures.push('receipt_verdict_set');
+  }
   if (value.cursor_policy !== 'observational') failures.push('cursor');
   const prohibited = new Set(value.prohibited_mechanisms ?? []);
   for (const mechanism of ['virtualization', 'lume', 'vnc', 'applescript', 'jxa']) {
@@ -144,4 +147,10 @@ test('catalog cannot weaken mode attribution restoration or prohibited mechanism
   const duplicate = structuredClone(catalog);
   duplicate.invariants[1] = duplicate.invariants[0];
   assert.ok(validate(duplicate).includes('invariants'));
+
+  const summaryOnlyReceipts = structuredClone(catalog);
+  summaryOnlyReceipts.receipt_requirements = summaryOnlyReceipts.receipt_requirements.filter(
+    (entry) => entry !== 'complete-anchored-first-party-verdict-set',
+  );
+  assert.ok(validate(summaryOnlyReceipts).includes('receipt_verdict_set'));
 });

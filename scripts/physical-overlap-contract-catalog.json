@@ -80,7 +80,8 @@
     "attribution-failure-absent",
     "private-export-complete",
     "private-export-complete-across-retention",
-    "private-hashed-host-archive-retention-consistent"
+    "private-hashed-host-archive-retention-consistent",
+    "complete-anchored-first-party-verdict-set"
   ],
   "foreground_attribution_requirements": {
     "minimum_event_count": 1,

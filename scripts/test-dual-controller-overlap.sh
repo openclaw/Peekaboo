@@ -2209,7 +2209,13 @@ jq -n \
             overlapping_intervals: ($overlap[0].seconds > 0),
             restoration: true,
             generation_pinned_cleanup: ($aGone and $bGone),
-            signed_operation_receipts: ($receiptValidation[0].success == true)
+            signed_operation_receipts: ($receiptValidation[0].success == true),
+            complete_anchored_receipt_verdict_set: (
+                $receiptValidation[0].success == true and
+                ($receiptValidation[0].first_party_results | type) == "array" and
+                ($receiptValidation[0].first_party_results | length) ==
+                    $receiptValidation[0].first_party_result_count
+            )
         }
     }
 ' > "$ARTIFACT_ROOT/observed.json"
