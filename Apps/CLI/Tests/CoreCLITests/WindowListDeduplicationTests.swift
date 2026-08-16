@@ -134,10 +134,10 @@ struct WindowListDeduplicationTests {
     }
 
     @Test
-    func `Bounds fallback title is consumed once so identical frames are not all relabeled`() {
+    func `Bounds fallback refuses one descriptor shared by identical frames`() {
         // Two untitled CG windows share an identical frame (stacked/maximized). A single AX
-        // descriptor without a resolvable CGWindowID matches that frame. It must relabel exactly one
-        // window; the other stays untitled rather than borrowing the same title and mislabeling.
+        // descriptor without a resolvable CGWindowID matches both. Neither identity is unique, so
+        // both windows stay untitled and the descriptor remains visibly unmaterialized.
         let frame = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let cgWindows = [
             Self.window(id: 11, title: "", index: 0, bounds: frame),
@@ -145,14 +145,18 @@ struct WindowListDeduplicationTests {
         ]
         let axDescriptors = [Self.descriptor(id: nil, title: "Document", bounds: frame)]
 
-        let merged = WindowEnumerationContext.mergeWindows(cgWindows: cgWindows, axDescriptors: axDescriptors)
+        let merged = WindowEnumerationContext.mergeWindowInventory(
+            cgWindows: cgWindows,
+            axDescriptors: axDescriptors
+        )
 
-        #expect(merged.map(\.windowID) == [11, 12])
-        #expect(merged.map(\.title) == ["Document", ""])
+        #expect(merged.windows.map(\.windowID) == [11, 12])
+        #expect(merged.windows.map(\.title) == ["", ""])
+        #expect(merged.unmaterializedAXDescriptorCount == 1)
     }
 
     @Test
-    func `Bounds fallback assigns distinct titles to identically framed windows in order`() {
+    func `Bounds fallback refuses order-dependent pairing for identical frames`() {
         let frame = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let cgWindows = [
             Self.window(id: 11, title: "", index: 0, bounds: frame),
@@ -163,10 +167,14 @@ struct WindowListDeduplicationTests {
             Self.descriptor(id: nil, title: "Second", bounds: frame),
         ]
 
-        let merged = WindowEnumerationContext.mergeWindows(cgWindows: cgWindows, axDescriptors: axDescriptors)
+        let merged = WindowEnumerationContext.mergeWindowInventory(
+            cgWindows: cgWindows,
+            axDescriptors: axDescriptors
+        )
 
-        #expect(merged.map(\.windowID) == [11, 12])
-        #expect(merged.map(\.title) == ["First", "Second"])
+        #expect(merged.windows.map(\.windowID) == [11, 12])
+        #expect(merged.windows.map(\.title) == ["", ""])
+        #expect(merged.unmaterializedAXDescriptorCount == 2)
     }
 
     @Test
