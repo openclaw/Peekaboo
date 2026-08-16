@@ -54,10 +54,10 @@ struct PeekabooBridgeOperationRoutingTests {
         #expect(!PeekabooBridgeRequest.dialogFindActive(.init(
             windowTitle: nil,
             appName: "Calculator")).mayMutateDesktop)
-        #expect(PeekabooBridgeRequest.dialogFindActive(.init(
+        #expect(!PeekabooBridgeRequest.dialogFindActive(.init(
             windowTitle: "Save",
             appName: nil)).mayMutateDesktop)
-        #expect(PeekabooBridgeRequest.dialogListElements(.init(
+        #expect(!PeekabooBridgeRequest.dialogListElements(.init(
             windowTitle: "Open",
             appName: nil)).mayMutateDesktop)
     }
@@ -65,6 +65,10 @@ struct PeekabooBridgeOperationRoutingTests {
     @Test
     @MainActor
     func `desktop observation bridge operation forwards request without returning image bytes`() async throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-bridge-routing-\(UUID().uuidString).png")
+        try StubScreenCaptureService.sampleData.write(to: outputURL)
+        defer { try? FileManager.default.removeItem(at: outputURL) }
         let services = StubServices()
         let server = PeekabooBridgeServer(
             services: services,
@@ -77,7 +81,7 @@ struct PeekabooBridgeOperationRoutingTests {
         let request = DesktopObservationRequest(
             target: .screen(index: 0),
             detection: DesktopDetectionOptions(mode: .none),
-            output: DesktopObservationOutputOptions(path: "/tmp/stub.png", saveRawScreenshot: true))
+            output: DesktopObservationOutputOptions(path: outputURL.path, saveRawScreenshot: true))
         let requestData = try JSONEncoder.peekabooBridgeEncoder()
             .encode(PeekabooBridgeRequest.desktopObservation(request))
         let response = try await self.decode(server.decodeAndHandle(requestData, peer: nil))
@@ -88,8 +92,8 @@ struct PeekabooBridgeOperationRoutingTests {
         }
 
         #expect(services.desktopObservationStub.lastRequest == request)
-        #expect(result.capture.savedPath == "/tmp/stub.png")
-        #expect(result.files.rawScreenshotPath == "/tmp/stub.png")
+        #expect(result.capture.savedPath == outputURL.path)
+        #expect(result.files.rawScreenshotPath == outputURL.path)
         #expect(result.capture.imageData.isEmpty)
     }
 
@@ -146,7 +150,10 @@ struct PeekabooBridgeOperationRoutingTests {
             services: services,
             allowlistedTeams: [],
             allowlistedBundles: [],
-            allowedOperations: [.browserStatus, .browserConnect, .browserExecute])
+            allowedOperations: [.browserStatus, .browserConnect, .browserExecute],
+            processStartIdentityProvider: { processIdentifier in
+                processIdentifier == 42 ? 10042 : nil
+            })
 
         let statusRequest = PeekabooBridgeRequest.browserStatus(.init(channel: "stable"))
         let statusData = try JSONEncoder.peekabooBridgeEncoder().encode(statusRequest)
@@ -186,8 +193,10 @@ struct PeekabooBridgeOperationRoutingTests {
             return
         }
         #expect(toolResponse.isError == false)
+        #expect(toolResponse.connectionReceipt == nil)
         #expect(services.lastBrowserExecute?.toolName == "list_pages")
         #expect(services.lastBrowserExecute?.channel == "canary")
+        #expect(services.lastExpectedBrowserConnectionReceipt == nil)
 
         let sequenceRequest = PeekabooBridgeRequest.browserExecute(.init(calls: [
             .init(toolName: "click", arguments: ["uid": .string("2_1")]),
@@ -198,12 +207,237 @@ struct PeekabooBridgeOperationRoutingTests {
         #expect(services.lastBrowserExecute?.resolvedCalls.map(\.toolName) == ["click", "type_text"])
     }
 
+    @Test
+    @MainActor
+    func `daemon activity ends once after successful routing`() async throws {
+        let daemonControl = CountingConditionalDaemonControl(shouldAdmit: true)
+        let server = self.makeServer(
+            services: StubServices(),
+            allowedOperations: [.permissionsStatus],
+            daemonControl: daemonControl)
+
+        let handled = try await server.route(.permissionsStatus, peer: nil)
+
+        guard case .permissionsStatus = handled.response else {
+            Issue.record("Expected permissions status response")
+            return
+        }
+        #expect(daemonControl.admissionCount == 1)
+        #expect(daemonControl.admittedCount == 1)
+        #expect(daemonControl.startCount == 0)
+        #expect(daemonControl.endCount == 1)
+        #expect(daemonControl.activeCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `daemon activity ends once when finalization rejects a missing exact target`() async {
+        let daemonControl = CountingConditionalDaemonControl(shouldAdmit: true)
+        let server = self.makeServer(
+            services: StubServices(),
+            allowedOperations: [.click],
+            daemonControl: daemonControl)
+        let request = PeekabooBridgeRequest.click(.init(
+            target: .elementId("B1"),
+            clickType: .single))
+
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            try await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(true) {
+                try await server.route(request, peer: nil)
+            }
+        }
+
+        #expect(daemonControl.admissionCount == 1)
+        #expect(daemonControl.admittedCount == 1)
+        #expect(daemonControl.startCount == 0)
+        #expect(daemonControl.endCount == 1)
+        #expect(daemonControl.activeCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `legacy daemon activity ends once when the handler throws`() async {
+        let services = StubServices()
+        services.browserStatusError = PeekabooBridgeErrorEnvelope(
+            code: .operationNotSupported,
+            message: "Injected browser status failure")
+        let daemonControl = CountingLegacyDaemonControl()
+        let server = self.makeServer(
+            services: services,
+            allowedOperations: [.browserStatus],
+            daemonControl: daemonControl)
+
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            try await server.route(.browserStatus(.init(channel: "stable")), peer: nil)
+        }
+
+        #expect(daemonControl.startCount == 1)
+        #expect(daemonControl.endCount == 1)
+        #expect(daemonControl.activeCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `daemon activity ends once when the handler is cancelled`() async {
+        let services = StubServices()
+        services.browserStatusError = CancellationError()
+        let daemonControl = CountingConditionalDaemonControl(shouldAdmit: true)
+        let server = self.makeServer(
+            services: services,
+            allowedOperations: [.browserStatus],
+            daemonControl: daemonControl)
+
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            try await server.route(.browserStatus(.init(channel: "stable")), peer: nil)
+        }
+
+        #expect(daemonControl.admissionCount == 1)
+        #expect(daemonControl.admittedCount == 1)
+        #expect(daemonControl.startCount == 0)
+        #expect(daemonControl.endCount == 1)
+        #expect(daemonControl.activeCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `daemon admission refusal does not end unstarted activity`() async {
+        let services = StubServices()
+        let daemonControl = CountingConditionalDaemonControl(shouldAdmit: false)
+        let server = self.makeServer(
+            services: services,
+            allowedOperations: [.browserStatus],
+            daemonControl: daemonControl)
+
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            try await server.route(.browserStatus(.init(channel: "stable")), peer: nil)
+        }
+
+        #expect(services.lastBrowserStatusChannel == nil)
+        #expect(daemonControl.admissionCount == 1)
+        #expect(daemonControl.admittedCount == 0)
+        #expect(daemonControl.startCount == 0)
+        #expect(daemonControl.endCount == 0)
+        #expect(daemonControl.activeCount == 0)
+    }
+
+    @MainActor
+    private func makeServer(
+        services: any PeekabooBridgeServiceProviding,
+        allowedOperations: Set<PeekabooBridgeOperation>,
+        daemonControl: any PeekabooDaemonControlProviding) -> PeekabooBridgeServer
+    {
+        PeekabooBridgeServer(
+            services: services,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: allowedOperations,
+            daemonControl: daemonControl,
+            permissionStatusEvaluator: { _ in
+                PermissionsStatus(
+                    screenRecording: true,
+                    accessibility: true,
+                    appleScript: true,
+                    postEvent: true)
+            })
+    }
+
     private static func mutatingObservationRequest(snapshotID: String) -> DesktopObservationRequest {
         DesktopObservationRequest(
             target: .screen(index: 0),
             capture: DesktopCaptureOptions(focus: .background),
             detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: true),
             output: DesktopObservationOutputOptions(snapshotID: snapshotID))
+    }
+}
+
+@MainActor
+private final class CountingConditionalDaemonControl: PeekabooConditionalDaemonControlProviding {
+    private let shouldAdmit: Bool
+    private(set) var admissionCount = 0
+    private(set) var admittedCount = 0
+    private(set) var startCount = 0
+    private(set) var endCount = 0
+    private(set) var activeCount = 0
+
+    init(shouldAdmit: Bool) {
+        self.shouldAdmit = shouldAdmit
+    }
+
+    func daemonStatus() async -> PeekabooDaemonStatus {
+        Self.status(activeRequests: self.activeCount)
+    }
+
+    func requestStop() async -> Bool {
+        true
+    }
+
+    func requestStop(expectedPID _: pid_t) async -> Bool {
+        true
+    }
+
+    func admitActivity(operation _: PeekabooBridgeOperation) async -> Bool {
+        self.admissionCount += 1
+        guard self.shouldAdmit else { return false }
+        self.admittedCount += 1
+        self.activeCount += 1
+        return true
+    }
+
+    func recordActivityStart(operation _: PeekabooBridgeOperation) async {
+        self.startCount += 1
+        self.activeCount += 1
+    }
+
+    func recordActivityEnd(operation _: PeekabooBridgeOperation) async {
+        self.endCount += 1
+        self.activeCount -= 1
+    }
+
+    private static func status(activeRequests: Int) -> PeekabooDaemonStatus {
+        PeekabooDaemonStatus(
+            running: true,
+            pid: ProcessInfo.processInfo.processIdentifier,
+            startedAt: Date(),
+            mode: .manual,
+            activity: .init(
+                activeRequests: activeRequests,
+                lastActivityAt: Date(),
+                idleTimeoutSeconds: nil,
+                idleExitAt: nil))
+    }
+}
+
+@MainActor
+private final class CountingLegacyDaemonControl: PeekabooDaemonControlProviding {
+    private(set) var startCount = 0
+    private(set) var endCount = 0
+    private(set) var activeCount = 0
+
+    func daemonStatus() async -> PeekabooDaemonStatus {
+        PeekabooDaemonStatus(
+            running: true,
+            pid: ProcessInfo.processInfo.processIdentifier,
+            startedAt: Date(),
+            mode: .manual,
+            activity: .init(
+                activeRequests: self.activeCount,
+                lastActivityAt: Date(),
+                idleTimeoutSeconds: nil,
+                idleExitAt: nil))
+    }
+
+    func requestStop() async -> Bool {
+        true
+    }
+
+    func recordActivityStart(operation _: PeekabooBridgeOperation) async {
+        self.startCount += 1
+        self.activeCount += 1
+    }
+
+    func recordActivityEnd(operation _: PeekabooBridgeOperation) async {
+        self.endCount += 1
+        self.activeCount -= 1
     }
 }
 

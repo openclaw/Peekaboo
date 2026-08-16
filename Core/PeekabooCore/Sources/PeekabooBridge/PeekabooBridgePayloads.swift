@@ -396,6 +396,12 @@ public struct PeekabooBridgeAppIdentifierRequest: Codable, Sendable {
         self.identifier = identifier
         self.expectedIdentity = expectedIdentity
     }
+
+    public init(_ request: ApplicationHideRequest) {
+        self.init(
+            identifier: request.identifier,
+            expectedIdentity: request.expectedIdentity)
+    }
 }
 
 public struct PeekabooBridgeQuitAppRequest: Codable, Sendable {
@@ -432,19 +438,101 @@ public struct PeekabooBridgeMenuListRequest: Codable, Sendable {
 public struct PeekabooBridgeMenuClickRequest: Codable, Sendable {
     public let appIdentifier: String
     public let itemPath: String
+    public let expectedIdentity: ApplicationProcessIdentity?
+    public let deliveryMode: DesktopActionOutcome.Delivery.Mode?
+
+    public init(
+        appIdentifier: String,
+        itemPath: String,
+        expectedIdentity: ApplicationProcessIdentity? = nil,
+        deliveryMode: DesktopActionOutcome.Delivery.Mode = .background)
+    {
+        self.appIdentifier = appIdentifier
+        self.itemPath = itemPath
+        self.expectedIdentity = expectedIdentity
+        self.deliveryMode = deliveryMode
+    }
+
+    public init(_ request: MenuItemActionRequest) {
+        self.init(
+            appIdentifier: request.appIdentifier,
+            itemPath: request.itemPath,
+            expectedIdentity: request.expectedIdentity,
+            deliveryMode: request.deliveryMode)
+    }
+
+    static func legacyReceiptless(appIdentifier: String, itemPath: String) -> Self {
+        Self(
+            legacyAppIdentifier: appIdentifier,
+            itemPath: itemPath)
+    }
+
+    private init(legacyAppIdentifier: String, itemPath: String) {
+        self.appIdentifier = legacyAppIdentifier
+        self.itemPath = itemPath
+        self.expectedIdentity = nil
+        self.deliveryMode = nil
+    }
 }
 
 public struct PeekabooBridgeMenuClickByNameRequest: Codable, Sendable {
     public let appIdentifier: String
     public let itemName: String
+    public let expectedIdentity: ApplicationProcessIdentity?
+    public let deliveryMode: DesktopActionOutcome.Delivery.Mode?
+
+    public init(
+        appIdentifier: String,
+        itemName: String,
+        expectedIdentity: ApplicationProcessIdentity? = nil,
+        deliveryMode: DesktopActionOutcome.Delivery.Mode = .background)
+    {
+        self.appIdentifier = appIdentifier
+        self.itemName = itemName
+        self.expectedIdentity = expectedIdentity
+        self.deliveryMode = deliveryMode
+    }
+
+    public init(_ request: MenuItemByNameActionRequest) {
+        self.init(
+            appIdentifier: request.appIdentifier,
+            itemName: request.itemName,
+            expectedIdentity: request.expectedIdentity,
+            deliveryMode: request.deliveryMode)
+    }
+
+    static func legacyReceiptless(appIdentifier: String, itemName: String) -> Self {
+        Self(
+            legacyAppIdentifier: appIdentifier,
+            itemName: itemName)
+    }
+
+    private init(legacyAppIdentifier: String, itemName: String) {
+        self.appIdentifier = legacyAppIdentifier
+        self.itemName = itemName
+        self.expectedIdentity = nil
+        self.deliveryMode = nil
+    }
 }
 
 public struct PeekabooBridgeMenuBarClickByNameRequest: Codable, Sendable {
     public let name: String
+    public let expectedLeafEvidence: DesktopSelectedLeafEvidence?
+
+    public init(name: String, expectedLeafEvidence: DesktopSelectedLeafEvidence? = nil) {
+        self.name = name
+        self.expectedLeafEvidence = expectedLeafEvidence
+    }
 }
 
 public struct PeekabooBridgeMenuBarClickByIndexRequest: Codable, Sendable {
     public let index: Int
+    public let expectedLeafEvidence: DesktopSelectedLeafEvidence?
+
+    public init(index: Int, expectedLeafEvidence: DesktopSelectedLeafEvidence? = nil) {
+        self.index = index
+        self.expectedLeafEvidence = expectedLeafEvidence
+    }
 }
 
 public struct PeekabooBridgeMenuExtraOpenRequest: Codable, Sendable {

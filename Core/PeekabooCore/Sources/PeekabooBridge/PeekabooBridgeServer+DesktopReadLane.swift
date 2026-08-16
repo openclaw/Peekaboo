@@ -64,78 +64,34 @@ extension PeekabooBridgeServer {
         for request: PeekabooBridgeRequest,
         proposed: (scope: DesktopOperationScope, access: DesktopOperationAccess)) -> DesktopReadLaneResolution
     {
-        if let exactScope = self.exactDesktopReadScope(for: request) {
+        let plan = PeekabooBridgeOperationResultSemantics.semanticPlan(for: request)
+        if let exactTarget = plan.exactReadTarget,
+           let exactScope = self.exactDesktopReadScope(for: exactTarget)
+        {
             return .lane(scope: exactScope, access: .read, validatesIdentity: true)
         }
-        if self.requiresExactDesktopReadIdentity(request) {
+        if plan.exactReadTarget != nil {
             return .exactIdentityUnavailable
         }
         return .lane(scope: proposed.scope, access: proposed.access, validatesIdentity: false)
     }
 
-    private func exactDesktopReadScope(for request: PeekabooBridgeRequest) -> DesktopOperationScope? {
-        if let identity = request.exactWindowReadIdentity {
-            return .window(identity)
-        }
-
-        switch request {
-        case let .captureWindow(payload):
-            if let rawWindowID = payload.windowId,
-               let windowID = CGWindowID(exactly: rawWindowID)
-            {
-                return self.currentExactWindowReadScope(windowID: windowID)
-            }
-            guard let processIdentifier = Self.explicitProcessIdentifier(payload.appIdentifier) else {
-                return nil
-            }
+    private func exactDesktopReadScope(
+        for target: PeekabooBridgeOperationResultSemantics.ExactReadTarget) -> DesktopOperationScope?
+    {
+        switch target {
+        case let .process(processIdentifier):
             return self.currentExactProcessReadScope(processIdentifier: processIdentifier)
-        case let .desktopObservation(observation):
-            switch observation.target {
-            case let .windowID(windowID):
-                return self.currentExactWindowReadScope(windowID: windowID)
-            case let .pid(processIdentifier, selection):
-                if case let .id(windowID)? = selection {
-                    guard case let .window(identity)? = self.currentExactWindowReadScope(windowID: windowID),
-                          identity.ownerProcessIdentifier == processIdentifier
-                    else {
-                        return nil
-                    }
-                    return .window(identity)
-                }
-                return self.currentExactProcessReadScope(processIdentifier: processIdentifier)
-            case let .app(_, selection):
-                guard case let .id(windowID)? = selection else { return nil }
-                return self.currentExactWindowReadScope(windowID: windowID)
-            case .allScreens, .area, .frontmost, .menubar, .menubarPopover, .screen:
+        case let .window(rawWindowID, expectedOwner):
+            guard let windowID = CGWindowID(exactly: rawWindowID),
+                  case let .window(identity)? = self.currentExactWindowReadScope(windowID: windowID),
+                  expectedOwner.map({ $0 == identity.ownerProcessIdentifier }) ?? true
+            else {
                 return nil
             }
-        default:
-            return nil
-        }
-    }
-
-    private func requiresExactDesktopReadIdentity(_ request: PeekabooBridgeRequest) -> Bool {
-        if request.exactWindowReadIdentity != nil {
-            return true
-        }
-        switch request {
-        case let .captureWindow(payload):
-            return payload.windowId != nil || Self.explicitProcessIdentifier(payload.appIdentifier) != nil
-        case let .desktopObservation(observation):
-            return switch observation.target {
-            case .pid, .windowID:
-                true
-            case let .app(_, selection):
-                if case .id? = selection {
-                    true
-                } else {
-                    false
-                }
-            case .allScreens, .area, .frontmost, .menubar, .menubarPopover, .screen:
-                false
-            }
-        default:
-            return false
+            return .window(identity)
+        case let .validatedWindow(identity):
+            return .window(identity)
         }
     }
 
@@ -187,17 +143,6 @@ extension PeekabooBridgeServer {
                 self.processStartIdentityProvider(identity.ownerProcessIdentifier) ==
                 identity.ownerProcessStartIdentity
         }
-    }
-
-    private static func explicitProcessIdentifier(_ identifier: String) -> pid_t? {
-        let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.uppercased().hasPrefix("PID:"),
-              let processIdentifier = pid_t(trimmed.dropFirst("PID:".count)),
-              processIdentifier > 0
-        else {
-            return nil
-        }
-        return processIdentifier
     }
 
     private static func exactDesktopReadTargetChangedError() -> PeekabooBridgeErrorEnvelope {

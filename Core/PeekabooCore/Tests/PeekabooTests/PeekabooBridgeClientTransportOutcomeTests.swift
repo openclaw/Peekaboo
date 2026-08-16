@@ -12,8 +12,9 @@ import Testing
 struct PeekabooBridgeClientTransportOutcomeTests {
     @Test
     func `mutation response timeout is indeterminate and retry unsafe`() async throws {
-        let peer = try ScriptedBridgePeer(steps: [.idle(seconds: 0.15)])
+        let peer = try Self.receiptlessPeer(steps: [.idle(seconds: 0.15)])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 0.05)
+        try await Self.negotiateReceiptless(client)
 
         do {
             try await client.sendExpectOK(Self.clickRequest)
@@ -26,8 +27,9 @@ struct PeekabooBridgeClientTransportOutcomeTests {
 
     @Test
     func `read-only response timeout remains an ordinary transport failure`() async throws {
-        let peer = try ScriptedBridgePeer(steps: [.idle(seconds: 0.15)])
+        let peer = try Self.receiptlessPeer(steps: [.idle(seconds: 0.15)])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 0.05)
+        try await Self.negotiateReceiptless(client)
 
         do {
             _ = try await client.send(.permissionsStatus)
@@ -47,7 +49,7 @@ struct PeekabooBridgeClientTransportOutcomeTests {
             [.delay(seconds: 0.3), .respond(versionMismatch)],
             [.idle(seconds: 5)],
         ])
-        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        let client = TrustedBridgeClientFixture.make(socketPath: peer.socketPath, requestTimeoutSec: 1)
         let identity = PeekabooBridgeClientIdentity(
             bundleIdentifier: "dev.peekaboo.tests",
             teamIdentifier: nil,
@@ -119,8 +121,9 @@ struct PeekabooBridgeClientTransportOutcomeTests {
 
     @Test
     func `mutation response EOF is indeterminate and retry unsafe`() async throws {
-        let peer = try ScriptedBridgePeer(steps: [.close])
+        let peer = try Self.receiptlessPeer(steps: [.close])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        try await Self.negotiateReceiptless(client)
 
         do {
             try await client.sendExpectOK(Self.clickRequest)
@@ -133,8 +136,9 @@ struct PeekabooBridgeClientTransportOutcomeTests {
 
     @Test
     func `read-only response EOF remains retry safe`() async throws {
-        let peer = try ScriptedBridgePeer(steps: [.close])
+        let peer = try Self.receiptlessPeer(steps: [.close])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        try await Self.negotiateReceiptless(client)
 
         do {
             _ = try await client.send(.permissionsStatus)
@@ -148,8 +152,9 @@ struct PeekabooBridgeClientTransportOutcomeTests {
 
     @Test
     func `mutation malformed response is indeterminate and retry unsafe`() async throws {
-        let peer = try ScriptedBridgePeer(steps: [.respondData(Data("not-json".utf8))])
+        let peer = try Self.receiptlessPeer(steps: [.respondData(Data("not-json".utf8))])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        try await Self.negotiateReceiptless(client)
 
         do {
             try await client.sendExpectOK(Self.clickRequest)
@@ -161,9 +166,11 @@ struct PeekabooBridgeClientTransportOutcomeTests {
     }
 
     @Test
-    func `mutation connect failure remains retry safe`() async {
-        let socketPath = "/tmp/pb-missing-\(UUID().uuidString).sock"
-        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 0.05)
+    func `mutation connect failure remains retry safe`() async throws {
+        let peer = try ScriptedBridgePeer(responses: [.handshake(Self.receiptlessHandshake)])
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 0.05)
+        try await Self.negotiateReceiptless(client)
+        await peer.waitUntilFinished()
 
         do {
             try await client.sendExpectOK(Self.clickRequest)
@@ -180,9 +187,11 @@ struct PeekabooBridgeClientTransportOutcomeTests {
     @Test
     @MainActor
     func `remote targeted click maps response loss to retry-unsafe delivery`() async throws {
-        let peer = try ScriptedBridgePeer(steps: [.idle(seconds: 0.15)])
+        let peer = try Self.receiptlessPeer(steps: [.idle(seconds: 0.15)])
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 0.05)
+        try await Self.negotiateReceiptless(client)
         let remote = RemoteUIAutomationService(
-            client: PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 0.05),
+            client: client,
             supportsTargetedClicks: true)
 
         do {
@@ -243,8 +252,9 @@ struct PeekabooBridgeClientTransportOutcomeTests {
 
         for expected in failures {
             let response = BridgeTestFixtures.actionFailureResponse(failure: expected)
-            let peer = try ScriptedBridgePeer(steps: [.respond(response)])
+            let peer = try Self.receiptlessPeer(steps: [.respond(response)])
             let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+            try await Self.negotiateReceiptless(client)
 
             do {
                 try await client.sendExpectOK(Self.clickRequest)
@@ -263,8 +273,9 @@ struct PeekabooBridgeClientTransportOutcomeTests {
             message: "Legacy host could not verify completion",
             details: "legacy detail",
             operationMayHaveCompleted: true)
-        let peer = try ScriptedBridgePeer(steps: [.respond(response)])
+        let peer = try Self.receiptlessPeer(steps: [.respond(response)])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        try await Self.negotiateReceiptless(client)
 
         do {
             try await client.sendExpectOK(Self.clickRequest)
@@ -288,8 +299,9 @@ struct PeekabooBridgeClientTransportOutcomeTests {
             evidence: .completionUnknown,
             message: "Fixture action failure on a read-only request")
         let response = BridgeTestFixtures.actionFailureResponse(failure: failure)
-        let peer = try ScriptedBridgePeer(steps: [.respond(response)])
+        let peer = try Self.receiptlessPeer(steps: [.respond(response)])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        try await Self.negotiateReceiptless(client)
 
         let actual = try await client.send(.permissionsStatus)
         guard case let .error(envelope) = actual else {
@@ -329,9 +341,304 @@ struct PeekabooBridgeClientTransportOutcomeTests {
         #expect(!PeekabooBridgeRequest.permissionsStatus.mayMutateDesktop)
     }
 
+    @Test
+    func `receiptless projection accepts a request-matched successful outcome`() async throws {
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let peer = try Self.projectedReceiptlessPeer(response: .projectedAction(.init(
+            response: .ok,
+            outcome: outcome.projection)))
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        try await Self.negotiateReceiptless(client)
+
+        try await client.sendExpectOK(Self.moveMouseRequest)
+        await peer.waitUntilFinished()
+    }
+
+    @Test
+    func `receiptless projection keeps an absent legacy outcome compatible`() async throws {
+        let peer = try Self.projectedReceiptlessPeer(response: .projectedAction(.init(
+            response: .ok,
+            outcome: nil)))
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        try await Self.negotiateReceiptless(client)
+
+        try await client.sendExpectOK(Self.moveMouseRequest)
+        await peer.waitUntilFinished()
+    }
+
+    @Test
+    func `receiptless projection accepts an exact request-pinned target`() async throws {
+        let identity = WindowMutationIdentity(
+            windowID: 77,
+            ownerProcessIdentifier: 420,
+            ownerProcessStartIdentity: 9001,
+            capturedBounds: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let request = PeekabooBridgeRequest.focusWindow(.init(
+            target: .windowId(identity.windowID),
+            expectedIdentity: identity))
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let peer = try Self.projectedReceiptlessPeer(response: .projectedAction(.init(
+            response: .ok,
+            outcome: outcome.projection)))
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        try await Self.negotiateReceiptless(client)
+
+        try await client.sendExpectOK(request)
+        await peer.waitUntilFinished()
+    }
+
+    @Test
+    func `legacy hide projection stays unpinned without claiming a receipt`() async throws {
+        let outcome = DesktopActionOutcome.confirmedChange(
+            route: .bridge,
+            delivery: .init(mechanism: .nativeFramework, mode: .background),
+            unitCount: .one)
+        let peer = try ScriptedBridgePeer(responses: [
+            .handshake(Self.projectedReceiptlessHandshake),
+            .projectedAction(.init(response: .ok, outcome: outcome.projection)),
+        ])
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        try await Self.negotiateReceiptless(client)
+
+        let result = try await client.hideApplicationTargetedResult(identifier: "Fixture")
+        await peer.waitUntilFinished()
+
+        #expect(result.outcome == outcome)
+        #expect(result.targetIdentity == nil)
+        let requests = await peer.requests
+        let hideRequest = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeRequest.self,
+            from: requests[1])
+        guard case let .projectedAction(projected) = hideRequest,
+              case let .hideApplication(payload) = projected.request
+        else {
+            Issue.record("Expected projected legacy application hide")
+            return
+        }
+        #expect(payload.identifier == "Fixture")
+        #expect(payload.expectedIdentity == nil)
+    }
+
+    @Test
+    func `receiptless projection validates browser progress and connection target`() async throws {
+        let receipt = Self.browserConnectionReceipt
+        let request = PeekabooBridgeRequest.browserExecute(.init(
+            calls: [.init(toolName: "fixture", arguments: [:])],
+            channel: receipt.channel,
+            expectedConnectionReceipt: receipt))
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let response = PeekabooBridgeBrowserToolResponse(
+            content: [],
+            isError: false,
+            meta: nil,
+            connectionReceipt: receipt,
+            completedCallCount: 1,
+            dispatchedCallCount: 1)
+        let peer = try Self.projectedReceiptlessPeer(response: .projectedAction(.init(
+            response: .browserToolResponse(response),
+            outcome: outcome.projection)))
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        try await Self.negotiateReceiptless(client)
+
+        let reply = try await client.sendCarryingActionOutcome(request)
+        #expect(reply.outcome == outcome.projection)
+        await peer.waitUntilFinished()
+    }
+
+    @Test
+    func `receiptless browser connect projection binds its exact endpoint and channel`() async throws {
+        let request = PeekabooBridgeRequest.browserConnect(.init(
+            channel: "stable",
+            browserURL: "HTTP://LOCALHOST:9222"))
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .browserProtocol, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let validReceipt = PeekabooBridgeBrowserConnectionReceipt(
+            channel: "stable",
+            browserURL: "http://localhost:9222/",
+            webSocketDebuggerURL: "ws://localhost:9222/devtools/browser/browser-a",
+            devToolsBrowserID: "browser-a",
+            browserVersion: "Chrome/151.0",
+            protocolVersion: "1.3")
+
+        func projected(_ receipt: PeekabooBridgeBrowserConnectionReceipt) -> PeekabooBridgeResponse {
+            .projectedAction(.init(
+                response: .browserStatus(.init(
+                    isConnected: true,
+                    toolCount: 1,
+                    detectedBrowsers: [],
+                    connectionReceipt: receipt)),
+                outcome: outcome.projection))
+        }
+
+        let validPeer = try Self.projectedReceiptlessPeer(response: projected(validReceipt))
+        let validClient = PeekabooBridgeClient(socketPath: validPeer.socketPath, requestTimeoutSec: 1)
+        try await Self.negotiateReceiptless(validClient)
+        let validReply = try await validClient.sendCarryingActionOutcome(request)
+        #expect(validReply.outcome == outcome.projection)
+        await validPeer.waitUntilFinished()
+
+        let wrongReceipts = [
+            PeekabooBridgeBrowserConnectionReceipt(
+                channel: "stable",
+                browserURL: "http://localhost:9333/",
+                webSocketDebuggerURL: "ws://localhost:9333/devtools/browser/browser-a",
+                devToolsBrowserID: "browser-a",
+                browserVersion: "Chrome/151.0",
+                protocolVersion: "1.3"),
+            PeekabooBridgeBrowserConnectionReceipt(
+                channel: "canary",
+                browserURL: "http://localhost:9222/",
+                webSocketDebuggerURL: "ws://localhost:9222/devtools/browser/browser-a",
+                devToolsBrowserID: "browser-a",
+                browserVersion: "Chrome/151.0",
+                protocolVersion: "1.3"),
+            PeekabooBridgeBrowserConnectionReceipt(
+                channel: "stable",
+                processIdentifier: 42,
+                processStartIdentity: 9001,
+                bundleIdentifier: "com.google.Chrome"),
+        ]
+        for receipt in wrongReceipts {
+            let peer = try Self.projectedReceiptlessPeer(response: projected(receipt))
+            let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+            try await Self.negotiateReceiptless(client)
+            do {
+                _ = try await client.sendCarryingActionOutcome(request)
+                Issue.record("Expected receiptless browser target substitution to be response loss")
+            } catch let failure as DesktopActionFailure {
+                Self.expectResponseLostFailure(failure)
+            }
+            await peer.waitUntilFinished()
+        }
+    }
+
+    @Test(arguments: [
+        ReceiptlessProjectedMismatch.okWithRefusal,
+        .wrongResponseFamily,
+        .wrongRoute,
+        .wrongDelivery,
+        .wrongDispatchCount,
+        .browserProgressCountMismatch,
+        .missingHandlerTarget,
+        .contradictoryRequestPinnedTarget,
+    ])
+    func `receiptless projected outcome contradictions fail as response loss`(
+        mismatch: ReceiptlessProjectedMismatch) async throws
+    {
+        let fixture = try mismatch.fixture()
+        let peer = try Self.projectedReceiptlessPeer(response: fixture.response)
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        try await Self.negotiateReceiptless(client)
+
+        do {
+            try await client.sendExpectOK(fixture.request)
+            Issue.record("Expected receiptless projected response validation to fail")
+        } catch let failure as DesktopActionFailure {
+            Self.expectResponseLostFailure(failure)
+            #expect(failure.causeDescription?.contains(
+                "Receiptless Bridge action projection validation failed") == true)
+        }
+        await peer.waitUntilFinished()
+    }
+
+    @Test
+    func `receiptless projected refusal preserves its canonical action failure`() async throws {
+        let failure = DesktopActionFailure.preDispatchRefusal(
+            route: .bridge,
+            reason: .permissionDenied,
+            message: "Accessibility permission was refused")
+        let envelope = PeekabooBridgeErrorEnvelope(code: .permissionDenied, actionFailure: failure)
+        let peer = try Self.projectedReceiptlessPeer(response: .projectedAction(.init(
+            response: .error(envelope),
+            outcome: failure.outcome.projection)))
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        try await Self.negotiateReceiptless(client)
+
+        do {
+            try await client.sendExpectOK(Self.moveMouseRequest)
+            Issue.record("Expected the projected refusal")
+        } catch let actual as DesktopActionFailure {
+            #expect(actual == failure)
+        }
+        await peer.waitUntilFinished()
+    }
+
     private static let clickRequest = PeekabooBridgeRequest.click(.init(
         target: .coordinates(CGPoint(x: 10, y: 20)),
         clickType: .single))
+
+    private static let moveMouseRequest = PeekabooBridgeRequest.moveMouse(.init(
+        to: CGPoint(x: 10, y: 20),
+        duration: 0,
+        steps: 1,
+        profile: .linear))
+
+    private static let browserConnectionReceipt = PeekabooBridgeBrowserConnectionReceipt(
+        channel: "chrome",
+        processIdentifier: 42,
+        processStartIdentity: 9001,
+        bundleIdentifier: "com.google.Chrome")
+
+    private static let receiptlessProtocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 28)
+
+    private static let receiptlessHandshake = BridgeTestFixtures.handshake(
+        negotiatedVersion: Self.receiptlessProtocolVersion,
+        supportedOperations: [
+            .click,
+            .permissionsStatus,
+            .targetedClick,
+            .moveMouse,
+            .browserConnect,
+            .browserExecute,
+            .hideApplication,
+            .unhideApplication,
+            .focusWindow,
+        ])
+
+    private static let projectedReceiptlessHandshake = BridgeTestFixtures.handshake(
+        negotiatedVersion: Self.receiptlessProtocolVersion,
+        supportedOperations: Self.receiptlessHandshake.supportedOperations,
+        hostCapabilities: [PeekabooBridgeHostCapability.desktopActionOutcomeProjection])
+
+    private static func receiptlessPeer(steps: [ScriptedBridgePeer.Step]) throws -> ScriptedBridgePeer {
+        try ScriptedBridgePeer(scripts: [
+            [.respond(.handshake(self.receiptlessHandshake))],
+            steps,
+        ])
+    }
+
+    private static func projectedReceiptlessPeer(
+        response: PeekabooBridgeResponse) throws -> ScriptedBridgePeer
+    {
+        try ScriptedBridgePeer(responses: [
+            .handshake(self.projectedReceiptlessHandshake),
+            response,
+        ])
+    }
+
+    private static func negotiateReceiptless(_ client: PeekabooBridgeClient) async throws {
+        _ = try await client.handshake(
+            client: .init(
+                bundleIdentifier: "dev.peekaboo.tests",
+                teamIdentifier: nil,
+                processIdentifier: getpid()),
+            protocolVersion: self.receiptlessProtocolVersion)
+    }
 
     private static func expectResponseLostFailure(_ failure: DesktopActionFailure) {
         #expect(failure.outcome.route == .bridge)
@@ -342,6 +649,125 @@ struct PeekabooBridgeClientTransportOutcomeTests {
         #expect(failure.message.contains("indeterminate"))
         #expect(failure.message.contains("do not retry"))
         #expect(PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: failure))
+    }
+
+    enum ReceiptlessProjectedMismatch: CaseIterable {
+        case okWithRefusal
+        case wrongResponseFamily
+        case wrongRoute
+        case wrongDelivery
+        case wrongDispatchCount
+        case browserProgressCountMismatch
+        case missingHandlerTarget
+        case contradictoryRequestPinnedTarget
+
+        func fixture() throws -> (request: PeekabooBridgeRequest, response: PeekabooBridgeResponse) {
+            let globalDelivery = DesktopActionOutcome.Delivery(
+                mechanism: .globalEvents,
+                mode: .foreground)
+            let successfulGlobal = DesktopActionOutcome.dispatchedUnverified(
+                route: .bridge,
+                delivery: globalDelivery,
+                evidence: .deliveryAccepted,
+                unitCount: .one)
+            switch self {
+            case .okWithRefusal:
+                let refusal = DesktopActionOutcome.refused(
+                    route: .bridge,
+                    reason: .permissionDenied)
+                return (
+                    PeekabooBridgeClientTransportOutcomeTests.moveMouseRequest,
+                    .projectedAction(.init(response: .ok, outcome: refusal.projection)))
+            case .wrongResponseFamily:
+                return (
+                    PeekabooBridgeClientTransportOutcomeTests.moveMouseRequest,
+                    .projectedAction(.init(response: .bool(true), outcome: successfulGlobal.projection)))
+            case .wrongRoute:
+                let local = DesktopActionOutcome.dispatchedUnverified(
+                    delivery: globalDelivery,
+                    evidence: .deliveryAccepted,
+                    unitCount: .one)
+                return (
+                    PeekabooBridgeClientTransportOutcomeTests.moveMouseRequest,
+                    .projectedAction(.init(response: .ok, outcome: local.projection)))
+            case .wrongDelivery:
+                let wrongDelivery = DesktopActionOutcome.dispatchedUnverified(
+                    route: .bridge,
+                    delivery: .init(mechanism: .nativeFramework, mode: .background),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one)
+                return (
+                    PeekabooBridgeClientTransportOutcomeTests.moveMouseRequest,
+                    .projectedAction(.init(response: .ok, outcome: wrongDelivery.projection)))
+            case .wrongDispatchCount:
+                let twoUnits = try #require(DesktopActionOutcome.DispatchUnitCount(2))
+                let wrongCount = DesktopActionOutcome.dispatchedUnverified(
+                    route: .bridge,
+                    delivery: globalDelivery,
+                    evidence: .deliveryAccepted,
+                    unitCount: twoUnits)
+                return (
+                    PeekabooBridgeClientTransportOutcomeTests.moveMouseRequest,
+                    .projectedAction(.init(response: .ok, outcome: wrongCount.projection)))
+            case .browserProgressCountMismatch:
+                let receipt = PeekabooBridgeClientTransportOutcomeTests.browserConnectionReceipt
+                let request = PeekabooBridgeRequest.browserExecute(.init(
+                    calls: [.init(toolName: "fixture", arguments: [:])],
+                    channel: receipt.channel,
+                    expectedConnectionReceipt: receipt))
+                let twoUnits = try #require(DesktopActionOutcome.DispatchUnitCount(2))
+                let outcome = DesktopActionOutcome.dispatchedUnverified(
+                    route: .bridge,
+                    delivery: .init(mechanism: .browserProtocol, mode: .background),
+                    evidence: .deliveryAccepted,
+                    unitCount: twoUnits)
+                let response = PeekabooBridgeBrowserToolResponse(
+                    content: [],
+                    isError: false,
+                    meta: nil,
+                    connectionReceipt: receipt,
+                    completedCallCount: 1,
+                    dispatchedCallCount: 2)
+                return (
+                    request,
+                    .projectedAction(.init(
+                        response: .browserToolResponse(response),
+                        outcome: outcome.projection)))
+            case .missingHandlerTarget:
+                let request = PeekabooBridgeRequest.unhideApplication(.init(identifier: "TextEdit"))
+                let outcome = DesktopActionOutcome.dispatchedUnverified(
+                    route: .bridge,
+                    delivery: .init(mechanism: .nativeFramework, mode: .background),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one)
+                return (request, .projectedAction(.init(response: .ok, outcome: outcome.projection)))
+            case .contradictoryRequestPinnedTarget:
+                let identity = WindowMutationIdentity(
+                    windowID: 77,
+                    ownerProcessIdentifier: 420,
+                    ownerProcessStartIdentity: 9001,
+                    capturedBounds: CGRect(x: 0, y: 0, width: 100, height: 100))
+                let request = PeekabooBridgeRequest.focusWindow(.init(
+                    target: .windowId(identity.windowID),
+                    expectedIdentity: identity))
+                let failure = DesktopActionFailure.indeterminate(
+                    route: .bridge,
+                    delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                    evidence: .completionUnknown,
+                    unitCount: .one,
+                    message: "Focus completion is uncertain")
+                    .attributed(to: .init(
+                        processIdentifier: identity.ownerProcessIdentifier,
+                        processStartIdentity: identity.ownerProcessStartIdentity,
+                        windowID: identity.windowID + 1))
+                let envelope = PeekabooBridgeErrorEnvelope(code: .internalError, actionFailure: failure)
+                return (
+                    request,
+                    .projectedAction(.init(
+                        response: .error(envelope),
+                        outcome: failure.outcome.projection)))
+            }
+        }
     }
 
     private static func connectRawClient(to socketPath: String) throws -> Int32 {

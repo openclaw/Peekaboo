@@ -13,7 +13,7 @@ extension PeekabooBridgeServer {
     func handleHandshake(
         _ payload: PeekabooBridgeHandshake,
         peer: PeekabooBridgePeer?,
-        permissions: PermissionsStatus) throws -> PeekabooBridgeResponse
+        permissions: PermissionsStatus) async throws -> PeekabooBridgeResponse
     {
         let resolvedBundle = peer?.bundleIdentifier ?? payload.client.bundleIdentifier
         let resolvedTeam = peer?.teamIdentifier ?? payload.client.teamIdentifier
@@ -48,22 +48,23 @@ extension PeekabooBridgeServer {
         }
 
         if let pid = peer?.processIdentifier {
-            let bundleDescription = resolvedBundle ?? "<unknown>"
-            self.logger
-                .debug(
-                    "bridge handshake ok pid=\(pid, privacy: .public) bundle=\(bundleDescription, privacy: .public)")
+            self.logger.debug("bridge handshake ok pid=\(pid, privacy: .public)")
         }
 
         let negotiated = min(
             max(payload.protocolVersion, self.supportedVersions.lowerBound),
             self.supportedVersions.upperBound)
+        let supportsAttestedOperationReceipts =
+            negotiated >= PeekabooBridgeConstants.attestedOperationReceiptVersion &&
+            operationReceiptAuthority != nil &&
+            self.hostCapabilities.contains(PeekabooBridgeHostCapability.desktopActionOutcomeProjection)
 
-        var advertisedOps = Array(self.operationsCompatibleWithNegotiatedVersion(
-            self.allowedOperationsToAdvertise(),
-            negotiated)).sorted { $0.rawValue < $1.rawValue }
-        var enabledOps = self.operationsCompatibleWithNegotiatedVersion(
-            self.effectiveAllowedOperations(permissions: permissions),
-            negotiated)
+        let compatibleOperations = self.handshakeOperations(
+            negotiated: negotiated,
+            permissions: permissions,
+            usesAttestedOperationReceipts: supportsAttestedOperationReceipts)
+        var advertisedOps = compatibleOperations.advertised.sorted { $0.rawValue < $1.rawValue }
+        var enabledOps = compatibleOperations.enabled
         if negotiated >= PeekabooBridgeConstants.attestedOperationReceiptVersion,
            !advertisedOps.contains(.listWindows)
         {
@@ -90,6 +91,12 @@ extension PeekabooBridgeServer {
             uniqueKeysWithValues: advertisedOps.map { op in
                 (op.rawValue, Array(op.requiredPermissions).sorted { $0.rawValue < $1.rawValue })
             })
+        Self.applyExactDialogInputPermissionContract(
+            supportsAttestedOperationReceipts: supportsAttestedOperationReceipts,
+            advertisedOperations: advertisedOps,
+            permissions: permissions,
+            enabledOperations: &enabledOps,
+            permissionTags: &permissionTags)
         let requestAwareTargetedClickVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 9)
         if negotiated < requestAwareTargetedClickVersion,
            advertisedOps.contains(.targetedClick)
@@ -112,12 +119,43 @@ extension PeekabooBridgeServer {
             """)
 
         var advertisedCapabilities = self.hostCapabilities
-        let supportsAttestedOperationReceipts =
-            negotiated >= PeekabooBridgeConstants.attestedOperationReceiptVersion &&
-            operationReceiptAuthority != nil &&
-            advertisedCapabilities.contains(PeekabooBridgeHostCapability.desktopActionOutcomeProjection)
         if supportsAttestedOperationReceipts {
             advertisedCapabilities.insert(PeekabooBridgeHostCapability.attestedOperationReceipts)
+        }
+        let operationSessionAttestation: PeekabooBridgeOperationSessionAttestation?
+        if supportsAttestedOperationReceipts {
+            guard let peer,
+                  let clientInstanceID = payload.operationClientInstanceID
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .unauthorizedClient,
+                    message: "Protocol 1.29 requires a peer-bound operation client instance")
+            }
+            do {
+                operationSessionAttestation = try await operationReceiptAuthority?.createSession(
+                    clientInstanceID: clientInstanceID,
+                    peer: peer,
+                    replacing: payload.replacingOperationSessionID)
+            } catch let error as PeekabooBridgeOperationReceiptError {
+                let code: PeekabooBridgeErrorCode = switch error {
+                case .operationSessionMismatch:
+                    .invalidRequest
+                case .operationSessionRegistryExhausted, .archiveWriteFailed,
+                     .invalidOperationSessionConfiguration:
+                    .serverBusy
+                case .peerIdentityMismatch, .clientIdentityMismatch:
+                    .unauthorizedClient
+                default:
+                    .internalError
+                }
+                throw PeekabooBridgeErrorEnvelope(
+                    code: code,
+                    message: error.localizedDescription,
+                    details: "\(error)",
+                    context: "bridge_operation_session:handshake")
+            }
+        } else {
+            operationSessionAttestation = nil
         }
         let response = PeekabooBridgeHandshakeResponse(
             negotiatedVersion: negotiated,
@@ -131,15 +169,61 @@ extension PeekabooBridgeServer {
             hostCapabilities: advertisedCapabilities.sorted(),
             operationAttestation: supportsAttestedOperationReceipts
                 ? operationReceiptAuthority?.attestation
-                : nil)
+                : nil,
+            operationSessionAttestation: operationSessionAttestation)
         return .handshake(response)
+    }
+
+    private static func applyExactDialogInputPermissionContract(
+        supportsAttestedOperationReceipts: Bool,
+        advertisedOperations: [PeekabooBridgeOperation],
+        permissions: PermissionsStatus,
+        enabledOperations: inout Set<PeekabooBridgeOperation>,
+        permissionTags: inout [String: [PeekabooBridgePermissionKind]])
+    {
+        guard advertisedOperations.contains(.exactDialogEnterText) else { return }
+
+        let requiredPermissions: Set<PeekabooBridgePermissionKind> = supportsAttestedOperationReceipts
+            ? [.accessibility]
+            : [.accessibility, .postEvent]
+        permissionTags[PeekabooBridgeOperation.exactDialogEnterText.rawValue] = requiredPermissions
+            .sorted { $0.rawValue < $1.rawValue }
+        if requiredPermissions.isSubset(of: self.grantedPermissions(from: permissions)) {
+            enabledOperations.insert(.exactDialogEnterText)
+        } else {
+            enabledOperations.remove(.exactDialogEnterText)
+        }
+    }
+
+    private func handshakeOperations(
+        negotiated: PeekabooBridgeProtocolVersion,
+        permissions: PermissionsStatus,
+        usesAttestedOperationReceipts: Bool)
+        -> (advertised: [PeekabooBridgeOperation], enabled: Set<PeekabooBridgeOperation>)
+    {
+        let advertised = self.operationsCompatibleWithNegotiatedVersion(
+            self.allowedOperationsToAdvertise(),
+            negotiated,
+            usesAttestedOperationReceipts: usesAttestedOperationReceipts)
+        let enabled = self.operationsCompatibleWithNegotiatedVersion(
+            self.effectiveAllowedOperations(permissions: permissions),
+            negotiated,
+            usesAttestedOperationReceipts: usesAttestedOperationReceipts)
+        return (Array(advertised), enabled)
     }
 
     func operationsCompatibleWithNegotiatedVersion(
         _ operations: Set<PeekabooBridgeOperation>,
-        _ negotiated: PeekabooBridgeProtocolVersion) -> Set<PeekabooBridgeOperation>
+        _ negotiated: PeekabooBridgeProtocolVersion,
+        usesAttestedOperationReceipts: Bool) -> Set<PeekabooBridgeOperation>
     {
-        PeekabooBridgeOperation.compatible(operations, with: negotiated)
+        var compatible = PeekabooBridgeOperation.compatible(operations, with: negotiated)
+        if usesAttestedOperationReceipts,
+           !self.services.dialogs.supportsBackgroundExactDialogInput
+        {
+            compatible.remove(.exactDialogEnterText)
+        }
+        return compatible
     }
 
     func allowedOperationsToAdvertise() -> Set<PeekabooBridgeOperation> {
@@ -216,6 +300,35 @@ extension PeekabooBridgeServer {
             operations.remove(.exactWindowTargetedClick)
         }
         return operations
+    }
+
+    func effectiveAllowedOperations(
+        for request: PeekabooBridgeRequest,
+        permissions: PermissionsStatus) -> Set<PeekabooBridgeOperation>
+    {
+        var operations = self.effectiveAllowedOperations(permissions: permissions)
+        let operation = request.operation
+        let advertisedOperations = self.allowedOperationsToAdvertise()
+        if PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
+           operation == .exactDialogEnterText
+        {
+            if advertisedOperations.contains(operation),
+               self.services.dialogs.supportsBackgroundExactDialogInput,
+               permissions.accessibility
+            {
+                // Protocol 1.29 executes exact dialog input through AXValue, so only its
+                // legacy PostEvent requirement is waived. Host allowlisting and service
+                // advertisement remain authoritative.
+                operations.insert(operation)
+            } else {
+                operations.remove(operation)
+            }
+        } else if operation == .exactDialogEnterText,
+                  !permissions.accessibility || !permissions.postEvent
+        {
+            operations.remove(operation)
+        }
+        return operations.intersection(advertisedOperations)
     }
 
     static func grantedPermissions(from permissions: PermissionsStatus) -> Set<PeekabooBridgePermissionKind> {

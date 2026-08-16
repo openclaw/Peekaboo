@@ -12,7 +12,7 @@ import Testing
 struct PeekabooBridgeActionOutcomeProjectionTests {
     @Test
     @MainActor
-    func `application actions carry every canonical service outcome across Bridge`() async throws {
+    func `receiptless activation projects successful outcomes and rejects every non-success state`() async throws {
         let applications = StubApplicationService()
         let server = PeekabooBridgeServer(
             services: StubServices(applications: applications),
@@ -23,24 +23,41 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             postEventAccessEvaluator: { false },
             postEventAccessRequester: { false },
             permissionStatusEvaluator: { _ in Self.grantedPermissions })
-        let request = PeekabooBridgeRequest.activateApplication(.init(
-            identifier: "PID:123",
-            expectedIdentity: .init(processIdentifier: 123, processStartIdentity: 456)))
+        let request = PeekabooBridgeRequest.activateApplication(.init(identifier: "StubApp"))
+        let delivery = DesktopActionOutcome.Delivery(mechanism: .nativeFramework, mode: .foreground)
+        let outcomes: [DesktopActionOutcome] = [
+            .confirmedChange(delivery: delivery, unitCount: .one),
+            .confirmedNoChange(),
+            .dispatchedUnverified(delivery: delivery, evidence: .deliveryAccepted, unitCount: .one),
+            .refused(reason: .targetUnavailable),
+            .partial(delivery: delivery, unitCount: .one),
+            .suspectedNoop(delivery: delivery, unitCount: .one),
+            .indeterminate(delivery: delivery, evidence: .completionUnknown, unitCount: .one),
+        ]
 
-        for expected in DesktopActionOutcomeFixtures.canonicalOutcomes {
+        for expected in outcomes {
             applications.actionOutcome = expected
             let response = try await Self.send(.projectedAction(.init(request: request)), to: server)
             guard case let .projectedAction(projected) = response else {
                 Issue.record("Expected projected application response")
                 continue
             }
-            if expected.isConfirmed {
+            let projectedOutcome = expected.routed(to: .bridge).projection
+            switch expected.state {
+            case .confirmedChange, .confirmedNoChange, .dispatchedUnverified:
                 guard case .ok = projected.response else {
-                    Issue.record("Expected ok payload inside confirmed projected response")
+                    Issue.record("Expected successful activation response for \(expected.state.rawValue)")
                     continue
                 }
+                #expect(projected.outcome == projectedOutcome)
+            case .refused, .partial, .suspectedNoop, .indeterminate:
+                guard case let .error(envelope) = projected.response else {
+                    Issue.record("Expected activation error for \(expected.state.rawValue)")
+                    continue
+                }
+                #expect(projected.outcome == projectedOutcome)
+                #expect(envelope.actionOutcome == projectedOutcome)
             }
-            #expect(projected.outcome == expected.routed(to: .bridge).projection)
         }
     }
 
@@ -121,17 +138,57 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             unitCount: .one,
             message: "The quit request may have been dispatched.",
             hint: "Observe the target before retrying.")
+            .attributed(to: DesktopActionTargetReceipt(
+                processIdentifier: 123,
+                processStartIdentity: 456))
         applications.quitResultError = unsafeFailure
-        let unsafeResponse = try await Self.send(
-            .projectedAction(.init(request: Self.quitRequest)),
-            to: server)
+        let projectedQuitRequest = PeekabooBridgeRequest.projectedAction(.init(request: Self.quitRequest))
+        let unsafeData = try await Self.sendRaw(projectedQuitRequest, to: server, peer: nil)
+        let unsafeResponse = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeResponse.self,
+            from: unsafeData)
         guard case let .projectedAction(projected) = unsafeResponse,
-              case .error = projected.response
+              case let .error(envelope) = projected.response
         else {
             Issue.record("Expected unsafe quit failure to remain an error")
             return
         }
         #expect(projected.outcome == unsafeFailure.outcome.routed(to: .bridge).projection)
+        #expect(envelope.operationMayHaveCompleted)
+        #expect(envelope.actionOutcome == projected.outcome)
+        #expect(envelope.actionTargetReceipt == nil)
+
+        let legacy = try JSONDecoder.peekabooBridgeDecoder().decode(
+            LegacyProtocol128BridgeResponse.self,
+            from: unsafeData)
+        guard case let .projectedAction(legacyProjected) = legacy,
+              case let .error(legacyEnvelope) = legacyProjected.response
+        else {
+            Issue.record("Expected protocol 1.28 to decode the projected quit failure")
+            return
+        }
+        #expect(legacyProjected.outcome?.state == "indeterminate")
+        #expect(legacyProjected.outcome?.mutationDispatched == true)
+        #expect(legacyProjected.outcome?.retrySafe == false)
+        #expect(legacyEnvelope.operationMayHaveCompleted == true)
+        #expect(legacyEnvelope.actionOutcome == legacyProjected.outcome)
+        #expect(legacyEnvelope.actionTargetReceipt == nil)
+
+        let currentEnvelope = PeekabooBridgeErrorEnvelope(
+            code: .internalError,
+            actionFailure: unsafeFailure.routed(to: .bridge))
+        let currentResponse = PeekabooBridgeResponse.projectedActionForCurrentRequestVocabulary(
+            response: .error(currentEnvelope),
+            outcome: currentEnvelope.actionOutcome,
+            usesCurrentVocabulary: true)
+        guard case let .projectedAction(currentProjected) = currentResponse,
+              case let .error(preservedEnvelope) = currentProjected.response
+        else {
+            Issue.record("Expected protocol 1.29 projected quit failure")
+            return
+        }
+        #expect(preservedEnvelope.actionTargetReceipt == unsafeFailure.targetReceipt)
+        #expect(preservedEnvelope.actionOutcome == currentProjected.outcome)
     }
 
     @Test
@@ -171,7 +228,11 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             return
         }
         #expect(projectedGranted)
-        #expect(projectedPayload.outcome == nil)
+        #expect(projectedPayload.outcome?.state == .dispatchedUnverified)
+        #expect(projectedPayload.outcome?.outcome.delivery == .init(
+            mechanism: .nativeFramework,
+            mode: .foreground))
+        #expect(projectedPayload.outcome?.outcome.dispatchState == .dispatched(unitCount: .one))
 
         let handshakeResponse = try await Self.send(.handshake(.init(
             protocolVersion: PeekabooBridgeConstants.protocolVersion,
@@ -385,8 +446,20 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             .setValue(.init(target: "B1", value: .string("x"), snapshotId: "snapshot")),
             .performAction(.init(target: "B1", actionName: "AXPress", snapshotId: "snapshot")),
         ]
+        let bounds = CGRect(x: 0, y: 0, width: 640, height: 480)
+        let exactTarget = try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+            identity: .init(
+                windowID: 73,
+                ownerProcessIdentifier: 123,
+                ownerProcessStartIdentity: 456,
+                capturedBounds: bounds),
+            bounds: bounds))
 
         for request in requests {
+            services.automationStub.uiAutomationOutcomeTargetIdentity = switch request.operation {
+            case .setValue, .performAction: exactTarget
+            default: nil
+            }
             let handled = try await server.handleAuthorized(
                 request,
                 peer: nil,
@@ -399,7 +472,7 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
     func `remote automation preserves current outcomes and legacy absence`() async throws {
         let currentOutcome = DesktopActionOutcome.confirmedChange(
             route: .bridge,
-            delivery: .init(mechanism: .accessibilityAction, mode: .background))
+            delivery: .init(mechanism: .globalEvents, mode: .foreground))
         let currentHandshake = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.desktopActionOutcomeProjectionVersion,
             supportedOperations: [.click],
@@ -440,7 +513,7 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
     func `remote automation preserves canonical current failures before legacy mapping`() async throws {
         let expected = DesktopActionFailure.partial(
             route: .bridge,
-            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
             unitCount: DesktopActionOutcome.DispatchUnitCount(2),
             message: "The target changed but cleanup failed",
             hint: "Recover the remaining side effect.",
@@ -481,12 +554,24 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             message: "The application launched but readiness verification failed",
             hint: "Observe the application before attempting another launch.",
             causeDescription: "the host could not acquire a readiness receipt")
+        let handshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: Self.receiptlessProtocolVersion,
+            supportedOperations: [.launchApplicationWithOptions],
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.desktopActionOutcomeProjection,
+                PeekabooBridgeHostCapability.safeBackgroundApplicationLaunchNoOp,
+            ])
         let peer = try ScriptedBridgePeer(responses: [
+            .handshake(handshake),
             BridgeTestFixtures.actionFailureResponse(failure: expected),
         ])
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        _ = try await client.handshake(
+            client: Self.clientIdentity,
+            protocolVersion: Self.receiptlessProtocolVersion)
         let remote = await MainActor.run {
             RemoteApplicationService(
-                client: PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1),
+                client: client,
                 supportsLaunchOptions: true,
                 supportsSafeBackgroundLaunchNoOp: true)
         }
@@ -720,6 +805,132 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
             try PeekabooBridgeRequestPreflight.validate(arbitraryPayloadData)
         }
     }
+}
+
+extension PeekabooBridgeActionOutcomeProjectionTests {
+    @Test
+    @MainActor
+    func `protocol 1 28 decoder accepts unauthorized cancellation and daemon shutdown failures`() async throws {
+        let unauthorizedServer = PeekabooBridgeServer(
+            services: StubServices(),
+            allowlistedTeams: [],
+            allowlistedBundles: ["dev.peekaboo.allowed"],
+            permissionStatusEvaluator: { _ in Self.grantedPermissions })
+        let unauthorizedPeer = PeekabooBridgePeer(
+            processIdentifier: getpid(),
+            userIdentifier: getuid(),
+            bundleIdentifier: "dev.peekaboo.untrusted",
+            teamIdentifier: nil)
+        let unauthorizedData = try await Self.sendRaw(
+            .projectedAction(.init(request: Self.moveMouseRequest)),
+            to: unauthorizedServer,
+            peer: unauthorizedPeer)
+        let unauthorized = try Self.decodeLegacyProjectedFailure(unauthorizedData)
+        #expect(unauthorized.envelope.actionOutcome?.refusalReason == .runtimeIncompatible)
+        #expect(unauthorized.envelope.actionOutcome?.escalation == .updateRuntime)
+        #expect(unauthorized.outcome == unauthorized.envelope.actionOutcome)
+        Self.expectNoReceiptOnlyFailureVocabulary(in: unauthorizedData)
+
+        let cancellationServer = PeekabooBridgeServer(
+            services: StubServices(),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            permissionStatusEvaluator: { _ in Self.grantedPermissions })
+        let disconnectedProbe: @Sendable () -> Bool = { false }
+        let cancellationData = try await PeekabooBridgeRequestContext.$clientConnectionProbe.withValue(
+            disconnectedProbe)
+        {
+            try await Self.sendRaw(
+                .projectedAction(.init(request: Self.moveMouseRequest)),
+                to: cancellationServer,
+                peer: nil)
+        }
+        let cancellation = try Self.decodeLegacyProjectedFailure(cancellationData)
+        #expect(cancellation.envelope.actionOutcome == nil)
+        #expect(cancellation.outcome == nil)
+        Self.expectNoReceiptOnlyFailureVocabulary(in: cancellationData)
+
+        let daemonServer = PeekabooBridgeServer(
+            services: StubServices(),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            daemonControl: RejectingConditionalDaemonControl(),
+            permissionStatusEvaluator: { _ in Self.grantedPermissions })
+        let daemonData = try await Self.sendRaw(
+            .projectedAction(.init(request: Self.moveMouseRequest)),
+            to: daemonServer,
+            peer: nil)
+        let daemon = try Self.decodeLegacyProjectedFailure(daemonData)
+        #expect(daemon.envelope.actionOutcome?.refusalReason == .runtimeIncompatible)
+        #expect(daemon.envelope.actionOutcome?.escalation == .updateRuntime)
+        #expect(daemon.outcome == daemon.envelope.actionOutcome)
+        Self.expectNoReceiptOnlyFailureVocabulary(in: daemonData)
+    }
+
+    @Test
+    @MainActor
+    func `signed protocol 1 29 failures retain exact transport and cancellation semantics`() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "peekaboo-attested-failure-vocabulary-\(UUID().uuidString)",
+            isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let authority = try PeekabooBridgeOperationReceiptAuthority(
+            socketPath: root.appendingPathComponent("bridge.sock").path)
+        let session = try await OperationReceiptSessionFixture.make(authority: authority)
+
+        let unauthorizedServer = PeekabooBridgeServer(
+            services: StubServices(),
+            allowlistedTeams: [],
+            allowlistedBundles: ["dev.peekaboo.allowed"],
+            permissionStatusEvaluator: { _ in Self.grantedPermissions })
+        let unauthorized = try await Self.sendAttestedProjectedFailure(
+            sequence: 0,
+            server: unauthorizedServer,
+            authority: authority,
+            session: session)
+        Self.expectCurrentAttestedFailure(
+            unauthorized,
+            reason: .transportSessionUnavailable,
+            escalation: .reconnectSession,
+            authority: authority,
+            session: session)
+
+        let cancellationServer = PeekabooBridgeServer(
+            services: StubServices(),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            permissionStatusEvaluator: { _ in Self.grantedPermissions })
+        let cancellation = try await Self.sendAttestedProjectedFailure(
+            sequence: 1,
+            server: cancellationServer,
+            authority: authority,
+            session: session,
+            connectionProbe: { false })
+        Self.expectCurrentAttestedFailure(
+            cancellation,
+            reason: .requestCancelled,
+            escalation: .none,
+            authority: authority,
+            session: session)
+
+        let daemonServer = PeekabooBridgeServer(
+            services: StubServices(),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            daemonControl: RejectingConditionalDaemonControl(),
+            permissionStatusEvaluator: { _ in Self.grantedPermissions })
+        let daemon = try await Self.sendAttestedProjectedFailure(
+            sequence: 2,
+            server: daemonServer,
+            authority: authority,
+            session: session)
+        Self.expectCurrentAttestedFailure(
+            daemon,
+            reason: .transportSessionUnavailable,
+            escalation: .reconnectSession,
+            authority: authority,
+            session: session)
+    }
 
     @Test
     func `current protocol 1 29 preserves projection capability introduced at 1 23`() {
@@ -738,6 +949,98 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
         #expect(handshake.hostCapabilities == ["desktopActionOutcomeProjection"])
     }
 
+    @Test(arguments: [23, 28])
+    func `legacy projected wire omits composite success and failure outcomes`(minorVersion: Int) throws {
+        let version = PeekabooBridgeProtocolVersion(major: 1, minor: minorVersion)
+        #expect(version >= PeekabooBridgeConstants.desktopActionOutcomeProjectionVersion)
+        #expect(version < PeekabooBridgeConstants.attestedOperationReceiptVersion)
+        let units = try #require(DesktopActionOutcome.DispatchUnitCount(2))
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .composite, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: units)
+
+        let success = PeekabooBridgeResponse.projectedActionForCurrentRequestVocabulary(
+            response: .ok,
+            outcome: outcome.projection)
+        let successData = try JSONEncoder.peekabooBridgeEncoder().encode(success)
+        guard case let .projectedAction(successProjection) = try JSONDecoder.peekabooBridgeDecoder().decode(
+            LegacyProtocol128BridgeResponse.self,
+            from: successData)
+        else {
+            Issue.record("Expected legacy projected success")
+            return
+        }
+        #expect(successProjection.outcome == nil)
+
+        let failure = DesktopActionFailure.indeterminate(
+            route: .bridge,
+            delivery: .init(mechanism: .composite, mode: .foreground),
+            evidence: .completionUnknown,
+            unitCount: units,
+            message: "Mixed delivery completion is unknown")
+        let failureResponse = PeekabooBridgeResponse.projectedActionForCurrentRequestVocabulary(
+            response: .error(.init(code: .internalError, actionFailure: failure)),
+            outcome: failure.outcome.projection)
+        let failureData = try JSONEncoder.peekabooBridgeEncoder().encode(failureResponse)
+        let decodedFailure = try Self.decodeLegacyProjectedFailure(failureData)
+        #expect(decodedFailure.outcome == nil)
+        #expect(decodedFailure.envelope.actionOutcome == nil)
+        #expect(decodedFailure.envelope.operationMayHaveCompleted == true)
+        #expect(successData.range(of: Data("composite".utf8)) == nil)
+        #expect(failureData.range(of: Data("composite".utf8)) == nil)
+    }
+
+    @Test(arguments: [23, 28])
+    func `legacy projected dialog strips process-only target receipt`(minorVersion: Int) throws {
+        let version = PeekabooBridgeProtocolVersion(major: 1, minor: minorVersion)
+        #expect(version >= PeekabooBridgeConstants.desktopActionOutcomeProjectionVersion)
+        #expect(version < PeekabooBridgeConstants.attestedOperationReceiptVersion)
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let processReceipt = DesktopActionTargetReceipt(
+            processIdentifier: 42,
+            processStartIdentity: 1001)
+        let result = DialogActionResult(
+            success: true,
+            action: .clickButton,
+            outcome: outcome,
+            targetReceipt: processReceipt)
+
+        let legacy = PeekabooBridgeResponse.projectedActionForCurrentRequestVocabulary(
+            response: .dialogResult(result),
+            outcome: outcome.projection,
+            usesCurrentVocabulary: false)
+        let data = try JSONEncoder.peekabooBridgeEncoder().encode(legacy)
+        guard case let .projectedAction(projected) = try JSONDecoder.peekabooBridgeDecoder().decode(
+            LegacyProtocol128BridgeResponse.self,
+            from: data),
+            case let .dialogResult(decoded) = projected.response
+        else {
+            Issue.record("Expected protocol 1.28 to decode the projected dialog response")
+            return
+        }
+        #expect(decoded.targetReceipt == nil)
+
+        let current = PeekabooBridgeResponse.projectedActionForCurrentRequestVocabulary(
+            response: .dialogResult(result),
+            outcome: outcome.projection,
+            usesCurrentVocabulary: true)
+        guard case let .projectedAction(currentProjected) = current,
+              case let .dialogResult(currentResult) = currentProjected.response
+        else {
+            Issue.record("Expected current projected dialog response")
+            return
+        }
+        #expect(currentResult.targetReceipt == processReceipt)
+    }
+}
+
+extension PeekabooBridgeActionOutcomeProjectionTests {
     private func expectInvalidProjectedRequest(_ request: PeekabooBridgeProjectedActionRequest) {
         do {
             _ = try request.validatedRequest()
@@ -846,6 +1149,98 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
         return try #require(projectedCase["_0"] as? [String: Any])
     }
 
+    private static func decodeLegacyProjectedFailure(
+        _ data: Data) throws
+        -> (envelope: LegacyProtocol128ErrorEnvelope, outcome: LegacyProtocol128ActionOutcome?)
+    {
+        let response = try JSONDecoder.peekabooBridgeDecoder().decode(
+            LegacyProtocol128BridgeResponse.self,
+            from: data)
+        guard case let .projectedAction(projected) = response,
+              case let .error(envelope) = projected.response
+        else {
+            throw LegacyProtocol128TestError.expectedProjectedFailure
+        }
+        return (envelope, projected.outcome)
+    }
+
+    private static func expectNoReceiptOnlyFailureVocabulary(in data: Data) {
+        let wire = String(bytes: data, encoding: .utf8) ?? ""
+        #expect(!wire.contains("transport_session_unavailable"))
+        #expect(!wire.contains("request_cancelled"))
+        #expect(!wire.contains("reconnect_session"))
+    }
+
+    @MainActor
+    private static func sendRaw(
+        _ request: PeekabooBridgeRequest,
+        to server: PeekabooBridgeServer,
+        peer: PeekabooBridgePeer?) async throws -> Data
+    {
+        let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(request)
+        return await server.decodeAndHandle(requestData, peer: peer)
+    }
+
+    @MainActor
+    private static func sendAttestedProjectedFailure(
+        sequence: UInt64,
+        server: PeekabooBridgeServer,
+        authority: PeekabooBridgeOperationReceiptAuthority,
+        session: OperationReceiptSessionFixture,
+        connectionProbe: @escaping @Sendable () -> Bool = { true }) async throws
+        -> PeekabooBridgeAttestedOperationResponse
+    {
+        let projectedRequest = PeekabooBridgeRequest.projectedAction(.init(request: Self.moveMouseRequest))
+        let payload = session.request(
+            authority: authority,
+            sequence: sequence,
+            request: projectedRequest)
+        let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(
+            PeekabooBridgeRequest.attestedOperation(payload))
+        let responseData = await PeekabooBridgeRequestContext.$operationReceiptAuthority.withValue(authority) {
+            await PeekabooBridgeRequestContext.$clientConnectionProbe.withValue(connectionProbe) {
+                await server.decodeAndHandle(requestData, peer: session.peer)
+            }
+        }
+        let response = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeResponse.self,
+            from: responseData)
+        guard case let .attestedOperation(attested) = response else {
+            throw LegacyProtocol128TestError.expectedAttestedFailure
+        }
+        let bundle = try OperationReceiptSessionFixture.bundle(
+            authority: authority,
+            sessionAttestation: session.attestation,
+            receipt: attested.receipt,
+            request: projectedRequest,
+            response: attested.response)
+        try bundle.validate()
+        return attested
+    }
+
+    private static func expectCurrentAttestedFailure(
+        _ attested: PeekabooBridgeAttestedOperationResponse,
+        reason: DesktopActionOutcome.RefusalReason,
+        escalation: DesktopActionOutcome.Escalation,
+        authority: PeekabooBridgeOperationReceiptAuthority,
+        session: OperationReceiptSessionFixture)
+    {
+        guard case let .projectedAction(projected) = attested.response,
+              case let .error(envelope) = projected.response
+        else {
+            Issue.record("Expected signed projected failure")
+            return
+        }
+        #expect(projected.outcome == envelope.actionOutcome)
+        #expect(projected.outcome?.outcome.refusalReason == reason)
+        #expect(projected.outcome?.outcome.escalation == escalation)
+        #expect(attested.receipt.payload.outcome == projected.outcome)
+        #expect(attested.receipt.payload.sessionID == session.attestation.sessionID)
+        #expect(throws: Never.self) {
+            try attested.receipt.validateSignature(publicKey: authority.attestation.publicKey)
+        }
+    }
+
     @MainActor
     private static func send(
         _ request: PeekabooBridgeRequest,
@@ -869,6 +1264,12 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
         target: .coordinates(CGPoint(x: 17, y: 29)),
         clickType: .single))
 
+    private static let moveMouseRequest = PeekabooBridgeRequest.moveMouse(.init(
+        to: CGPoint(x: 17, y: 29),
+        duration: 0,
+        steps: 1,
+        profile: .linear))
+
     private static let quitRequest = PeekabooBridgeRequest.quitApplication(.init(
         identifier: "PID:123",
         force: false,
@@ -880,6 +1281,8 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
         processIdentifier: getpid(),
         hostname: nil)
 
+    private static let receiptlessProtocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 28)
+
     private static let grantedPermissions = PermissionsStatus(
         screenRecording: true,
         accessibility: true,
@@ -890,3 +1293,139 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
 }
 
 extension StubAutomationService: ScriptedUIAutomationActionOutcomeProviding {}
+
+private enum LegacyProtocol128BridgeResponse: Decodable {
+    case projectedAction(LegacyProtocol128ProjectedActionResponse)
+}
+
+private struct LegacyProtocol128ProjectedActionResponse: Decodable {
+    let response: LegacyProtocol128NestedResponse
+    let outcome: LegacyProtocol128ActionOutcome?
+}
+
+private enum LegacyProtocol128NestedResponse: Decodable {
+    case ok
+    case error(LegacyProtocol128ErrorEnvelope)
+    case dialogResult(LegacyProtocol128DialogActionResult)
+}
+
+private struct LegacyProtocol128DialogActionResult: Decodable {
+    let targetReceipt: LegacyProtocol128ActionTargetReceipt?
+}
+
+private struct LegacyProtocol128ErrorEnvelope: Decodable {
+    let code: String
+    let message: String
+    let details: String?
+    let permission: String?
+    let kind: String?
+    let context: String?
+    let actionOutcome: LegacyProtocol128ActionOutcome?
+    let operationMayHaveCompleted: Bool?
+    let actionFailureHint: String?
+    let actionFailureCauseDescription: String?
+    let actionTargetReceipt: LegacyProtocol128ActionTargetReceipt?
+}
+
+private struct LegacyProtocol128ActionOutcome: Decodable, Equatable {
+    let state: String
+    let effect: String
+    let route: String
+    let deliveryMechanism: LegacyProtocol128DeliveryMechanism?
+    let deliveryMode: String?
+    let evidence: String
+    let dispatchState: String
+    let dispatchedUnitCount: Int?
+    let retrySafety: String
+    let escalation: LegacyProtocol128Escalation
+    let refusalReason: LegacyProtocol128RefusalReason?
+    let mutationDispatched: Bool
+    let retrySafe: Bool
+    let requiresFreshObservation: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case state
+        case effect
+        case route
+        case deliveryMechanism = "delivery_mechanism"
+        case deliveryMode = "delivery_mode"
+        case evidence
+        case dispatchState = "dispatch_state"
+        case dispatchedUnitCount = "dispatched_unit_count"
+        case retrySafety = "retry_safety"
+        case escalation
+        case refusalReason = "refusal_reason"
+        case mutationDispatched = "mutation_dispatched"
+        case retrySafe = "retry_safe"
+        case requiresFreshObservation = "requires_fresh_observation"
+    }
+}
+
+private struct LegacyProtocol128ActionTargetReceipt: Decodable, Equatable {
+    let processIdentifier: Int32
+    let processStartIdentity: UInt64
+    let processStartIdentityDecimal: String?
+    let windowID: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case processIdentifier = "pid"
+        case processStartIdentity = "process_start_identity"
+        case processStartIdentityDecimal = "process_start_identity_decimal"
+        case windowID = "window_id"
+    }
+}
+
+private enum LegacyProtocol128DeliveryMechanism: String, Decodable, Equatable {
+    case accessibilityAction = "accessibility_action"
+    case accessibilityValue = "accessibility_value"
+    case processTargetedEvents = "process_targeted_events"
+    case windowTargetedEvents = "window_targeted_events"
+    case globalEvents = "global_events"
+    case clipboardTransaction = "clipboard_transaction"
+    case nativeFramework = "native_framework"
+    case browserProtocol = "browser_protocol"
+    case capturePipeline = "capture_pipeline"
+}
+
+private enum LegacyProtocol128Escalation: String, Decodable, Equatable {
+    case none
+    case correctRequest = "correct_request"
+    case grantPermission = "grant_permission"
+    case refreshTarget = "refresh_target"
+    case updateRuntime = "update_runtime"
+    case recoverSideEffect = "recover_side_effect"
+    case observeBeforeRetry = "observe_before_retry"
+}
+
+private enum LegacyProtocol128RefusalReason: String, Decodable, Equatable {
+    case invalidRequest = "invalid_request"
+    case permissionDenied = "permission_denied"
+    case targetUnavailable = "target_unavailable"
+    case runtimeIncompatible = "runtime_incompatible"
+    case foregroundConsentRequired = "foreground_consent_required"
+    case operationUnsupported = "operation_unsupported"
+}
+
+private enum LegacyProtocol128TestError: Error {
+    case expectedProjectedFailure
+    case expectedAttestedFailure
+}
+
+@MainActor
+private final class RejectingConditionalDaemonControl: PeekabooConditionalDaemonControlProviding {
+    func daemonStatus() async -> PeekabooDaemonStatus {
+        PeekabooDaemonStatus(running: true)
+    }
+
+    func requestStop() async -> Bool {
+        true
+    }
+
+    func requestStop(expectedPID _: pid_t) async -> Bool {
+        true
+    }
+
+    func admitActivity(operation _: PeekabooBridgeOperation) async -> Bool {
+        false
+    }
+}

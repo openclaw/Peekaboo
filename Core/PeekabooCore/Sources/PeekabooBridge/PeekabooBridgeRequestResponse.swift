@@ -227,6 +227,7 @@ extension PeekabooBridgeRequest {
 
 public enum PeekabooBridgeResponse: Codable, Sendable {
     indirect case attestedOperation(PeekabooBridgeAttestedOperationResponse)
+    case operationSessionRollover(PeekabooBridgeOperationSessionRefusal)
     indirect case projectedAction(PeekabooBridgeProjectedActionResponse)
     case handshake(PeekabooBridgeHandshakeResponse)
     case permissionsStatus(PermissionsStatus)

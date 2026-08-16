@@ -17,15 +17,49 @@ extension PeekabooBridgeClient {
     }
 
     public func focusWindow(target: WindowTarget) async throws {
+        _ = try await self.focusWindowResult(target: target)
+    }
+
+    public func focusWindowResult(target: WindowTarget) async throws -> UIAutomationActionResult<Void> {
         guard self.operationAttestation != nil else {
-            _ = try await self.sendExpectOKCarryingActionOutcome(
-                .focusWindow(PeekabooBridgeWindowTargetRequest(target: target)))
-            return
+            return try await self.actionResult(
+                for: .focusWindow(PeekabooBridgeWindowTargetRequest(target: target)),
+                expectedResponse: "focusWindow")
+            { response in
+                switch response {
+                case .ok, .window: ()
+                default: nil
+                }
+            }
         }
         let pinned = try await self.resolvedPinnedWindowMutation(target: target)
-        _ = try await self.sendExpectOKCarryingActionOutcome(.focusWindow(PeekabooBridgeWindowTargetRequest(
+        return try await self.focusWindowResult(
             target: pinned.target,
-            expectedIdentity: pinned.identity)))
+            expectedIdentity: pinned.identity)
+    }
+
+    public func focusWindowResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> UIAutomationActionResult<Void>
+    {
+        guard self.operationAttestation != nil else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "The selected Bridge protocol cannot bind focus to an exact window receipt.",
+                hint: "Update the runtime host or use the explicit legacy unpinned focus API.")
+        }
+        return try await self.actionResult(
+            for: .focusWindow(PeekabooBridgeWindowTargetRequest(
+                target: target,
+                expectedIdentity: expectedIdentity)),
+            expectedResponse: "focusWindow")
+        { response in
+            switch response {
+            case .ok, .window: ()
+            default: nil
+            }
+        }
     }
 
     public func moveWindow(target: WindowTarget, to position: CGPoint) async throws {
@@ -63,7 +97,7 @@ extension PeekabooBridgeClient {
         expectedIdentity: WindowMutationIdentity,
         to position: CGPoint) async throws -> DesktopActionResult<Void>
     {
-        let outcome = try await self.sendExpectOKCarryingActionOutcome(.moveWindow(PeekabooBridgeWindowMoveRequest(
+        let outcome = try await self.windowMutationOutcome(.moveWindow(PeekabooBridgeWindowMoveRequest(
             target: target,
             expectedIdentity: expectedIdentity,
             position: position)))
@@ -102,7 +136,7 @@ extension PeekabooBridgeClient {
         expectedIdentity: WindowMutationIdentity,
         to size: CGSize) async throws -> DesktopActionResult<Void>
     {
-        let outcome = try await self.sendExpectOKCarryingActionOutcome(.resizeWindow(PeekabooBridgeWindowResizeRequest(
+        let outcome = try await self.windowMutationOutcome(.resizeWindow(PeekabooBridgeWindowResizeRequest(
             target: target,
             expectedIdentity: expectedIdentity,
             size: size)))
@@ -145,7 +179,7 @@ extension PeekabooBridgeClient {
         bounds: CGRect) async throws -> DesktopActionResult<Void>
     {
         let outcome = try await self
-            .sendExpectOKCarryingActionOutcome(.setWindowBounds(PeekabooBridgeWindowBoundsRequest(
+            .windowMutationOutcome(.setWindowBounds(PeekabooBridgeWindowBoundsRequest(
                 target: target,
                 expectedIdentity: expectedIdentity,
                 bounds: bounds)))
@@ -191,12 +225,13 @@ extension PeekabooBridgeClient {
         allowForegroundFallback: Bool) async throws -> DesktopActionResult<Void>
     {
         if allowForegroundFallback {
-            try await self.sendExpectOK(.closeWindow(PeekabooBridgeWindowTargetRequest(
-                target: target,
-                expectedIdentity: expectedIdentity)))
-            return DesktopActionResult(outcome: nil)
+            let outcome = try await self.windowMutationOutcome(.closeWindow(
+                PeekabooBridgeWindowTargetRequest(
+                    target: target,
+                    expectedIdentity: expectedIdentity)))
+            return DesktopActionResult(outcome: outcome)
         }
-        let outcome = try await self.sendExpectOKCarryingActionOutcome(.backgroundCloseWindow(.init(
+        let outcome = try await self.windowMutationOutcome(.backgroundCloseWindow(.init(
             target: target,
             expectedIdentity: expectedIdentity)))
         return DesktopActionResult(outcome: outcome)
@@ -223,7 +258,7 @@ extension PeekabooBridgeClient {
         expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
     {
         let outcome = try await self
-            .sendExpectOKCarryingActionOutcome(.minimizeWindow(PeekabooBridgeWindowTargetRequest(
+            .windowMutationOutcome(.minimizeWindow(PeekabooBridgeWindowTargetRequest(
                 target: target,
                 expectedIdentity: expectedIdentity)))
         return DesktopActionResult(outcome: outcome)
@@ -249,7 +284,7 @@ extension PeekabooBridgeClient {
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
     {
-        let outcome = try await self.sendExpectOKCarryingActionOutcome(.restoreWindow(PeekabooBridgeWindowTargetRequest(
+        let outcome = try await self.windowMutationOutcome(.restoreWindow(PeekabooBridgeWindowTargetRequest(
             target: target,
             expectedIdentity: expectedIdentity)))
         return DesktopActionResult(outcome: outcome)
@@ -276,7 +311,7 @@ extension PeekabooBridgeClient {
         expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
     {
         let outcome = try await self
-            .sendExpectOKCarryingActionOutcome(.maximizeWindow(PeekabooBridgeWindowTargetRequest(
+            .windowMutationOutcome(.maximizeWindow(PeekabooBridgeWindowTargetRequest(
                 target: target,
                 expectedIdentity: expectedIdentity)))
         return DesktopActionResult(outcome: outcome)
@@ -380,8 +415,16 @@ extension PeekabooBridgeClient {
     public func launchApplicationResult(
         request: ApplicationLaunchRequest) async throws -> DesktopActionResult<ServiceApplicationInfo>
     {
-        try await self.sendApplicationAction(
-            .launchApplicationWithOptions(request),
+        let bridgeRequest = PeekabooBridgeRequest.launchApplicationWithOptions(request)
+        let carriedRequest: PeekabooBridgeRequest = if request.isSafeBackgroundNoOp,
+                                                       self.operationAttestation != nil
+        {
+            .projectedAction(.init(request: bridgeRequest))
+        } else {
+            bridgeRequest
+        }
+        return try await self.sendApplicationAction(
+            carriedRequest,
             timeoutSec: Self.applicationLaunchRequestTimeout(
                 defaultTimeoutSec: self.requestTimeoutSec,
                 waitUntilReady: request.waitUntilReady,
@@ -461,22 +504,33 @@ extension PeekabooBridgeClient {
     public func activateApplicationResult(
         request: ApplicationActivationRequest) async throws -> DesktopActionResult<Void>
     {
+        try await self.activateApplicationTargetedResult(request: request).desktopActionResult
+    }
+
+    public func activateApplicationTargetedResult(
+        request: ApplicationActivationRequest) async throws -> UIAutomationActionResult<Void>
+    {
         if self.operationAttestation != nil, request.expectedIdentity == nil {
             let application = try await self.findApplication(identifier: request.identifier)
             guard let expectedIdentity = application.processIdentity else {
                 throw PeekabooBridgeErrorEnvelope(
                     code: .operationNotSupported,
-                    message: "Bridge host did not return a stable process-generation identity for \(request.identifier)")
+                    message: "Bridge host did not return a stable process-generation identity for " +
+                        request.identifier)
             }
-            return try await self.activateApplicationResult(request: .init(
+            return try await self.activateApplicationTargetedResult(request: .init(
                 identifier: "PID:\(application.processIdentifier)",
                 expectedIdentity: expectedIdentity))
         }
-        let outcome = try await self.sendExpectOKCarryingActionOutcome(.activateApplication(
-            PeekabooBridgeAppIdentifierRequest(
+        return try await self.actionResult(
+            for: .activateApplication(PeekabooBridgeAppIdentifierRequest(
                 identifier: request.identifier,
-                expectedIdentity: request.expectedIdentity)))
-        return DesktopActionResult(outcome: outcome)
+                expectedIdentity: request.expectedIdentity)),
+            expectedResponse: "activateApplication")
+        { response in
+            guard case .ok = response else { return nil }
+            return ()
+        }
     }
 
     public func quitApplication(
@@ -541,9 +595,44 @@ extension PeekabooBridgeClient {
     }
 
     public func hideApplicationResult(identifier: String) async throws -> DesktopActionResult<Void> {
-        let outcome = try await self.sendExpectOKCarryingActionOutcome(
-            .hideApplication(PeekabooBridgeAppIdentifierRequest(identifier: identifier)))
-        return DesktopActionResult(outcome: outcome)
+        try await self.hideApplicationTargetedResult(identifier: identifier).desktopActionResult
+    }
+
+    public func hideApplicationTargetedResult(
+        identifier: String) async throws -> UIAutomationActionResult<Void>
+    {
+        guard self.operationAttestation != nil else {
+            return try await self.actionResult(
+                for: .hideApplication(PeekabooBridgeAppIdentifierRequest(identifier: identifier)),
+                expectedResponse: "hideApplication")
+            { response in
+                guard case .ok = response else { return nil }
+                return ()
+            }
+        }
+        let application = try await self.findApplication(identifier: identifier)
+        guard let identity = application.processIdentity else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge host did not return a stable process-generation identity for \(identifier)")
+        }
+        let request = try ApplicationHideRequest(
+            identifier: "PID:\(identity.processIdentifier)",
+            expectedIdentity: identity)
+        return try await self.hideApplicationTargetedResult(request: request)
+    }
+
+    public func hideApplicationTargetedResult(
+        request: ApplicationHideRequest) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.actionResult(
+            for: .hideApplication(PeekabooBridgeAppIdentifierRequest(request)),
+            expectedResponse: "hideApplication",
+            operationReceiptRequirement: .required)
+        { response in
+            guard case .ok = response else { return nil }
+            return ()
+        }
     }
 
     public func unhideApplication(identifier: String) async throws {
@@ -557,11 +646,22 @@ extension PeekabooBridgeClient {
     }
 
     public func hideOtherApplications(identifier: String) async throws {
-        try await self.sendExpectOK(.hideOtherApplications(PeekabooBridgeAppIdentifierRequest(identifier: identifier)))
+        _ = try await self.hideOtherApplicationsResult(identifier: identifier)
+    }
+
+    public func hideOtherApplicationsResult(identifier: String) async throws -> DesktopActionResult<Void> {
+        let outcome = try await self.sendExpectOKCarryingActionOutcome(
+            .hideOtherApplications(PeekabooBridgeAppIdentifierRequest(identifier: identifier)))
+        return DesktopActionResult(outcome: outcome)
     }
 
     public func showAllApplications() async throws {
-        try await self.sendExpectOK(.showAllApplications)
+        _ = try await self.showAllApplicationsResult()
+    }
+
+    public func showAllApplicationsResult() async throws -> DesktopActionResult<Void> {
+        let outcome = try await self.sendExpectOKCarryingActionOutcome(.showAllApplications)
+        return DesktopActionResult(outcome: outcome)
     }
 
     private func sendApplicationAction<Payload: Sendable>(
@@ -580,5 +680,19 @@ extension PeekabooBridgeClient {
                 message: "Unexpected \(operation) response")
         }
         return DesktopActionResult(payload: value, outcome: reply.outcome?.outcome)
+    }
+
+    private func windowMutationOutcome(_ request: PeekabooBridgeRequest) async throws -> DesktopActionOutcome? {
+        let reply = try await self.sendCarryingActionOutcome(request)
+        switch reply.response {
+        case .ok, .window:
+            return reply.outcome?.outcome
+        case let .error(envelope):
+            try Self.throwActionFailureOrEnvelope(envelope)
+        default:
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Unexpected response for window mutation")
+        }
     }
 }

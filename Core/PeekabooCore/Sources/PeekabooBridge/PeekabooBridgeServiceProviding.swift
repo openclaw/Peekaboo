@@ -1,4 +1,5 @@
 import PeekabooAutomationKit
+import PeekabooFoundation
 
 /// Narrow service surface required by `PeekabooBridgeServer`.
 ///
@@ -29,6 +30,17 @@ public protocol PeekabooBridgeServiceProviding: AnyObject, Sendable {
     func browserDisconnect() async throws
     func browserExecute(_ request: PeekabooBridgeBrowserExecuteRequest) async throws
         -> PeekabooBridgeBrowserToolResponse
+    func browserExecute(
+        _ request: PeekabooBridgeBrowserExecuteRequest,
+        expectedConnectionReceipt: PeekabooBridgeBrowserConnectionReceipt) async throws
+        -> PeekabooBridgeBrowserExecutionResult
+}
+
+@MainActor
+public protocol PeekabooBridgeBrowserConnectionResultProviding: PeekabooBridgeServiceProviding {
+    func browserConnectResult(
+        channel: String?,
+        browserURL: String?) async throws -> DesktopActionResult<PeekabooBridgeBrowserStatus>
 }
 
 @MainActor
@@ -77,5 +89,16 @@ extension PeekabooBridgeServiceProviding {
         throw PeekabooBridgeErrorEnvelope(
             code: .operationNotSupported,
             message: "Browser MCP is not supported by this bridge host")
+    }
+
+    public func browserExecute(
+        _: PeekabooBridgeBrowserExecuteRequest,
+        expectedConnectionReceipt _: PeekabooBridgeBrowserConnectionReceipt) async throws
+        -> PeekabooBridgeBrowserExecutionResult
+    {
+        throw DesktopActionFailure.preDispatchRefusal(
+            reason: .operationUnsupported,
+            message: "This Bridge browser provider cannot bind execution to an exact connection receipt.",
+            hint: "Update the runtime host before retrying target-attested browser execution.")
     }
 }

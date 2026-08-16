@@ -228,10 +228,11 @@ struct PeekabooBridgeCancellationTests {
         await observations.waitUntilFirstObservationStarted()
 
         let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 0.05)
+        try await Self.negotiateLegacyTransport(client)
         let queuedRequest = PeekabooBridgeRequest.desktopObservation(
             Self.mutatingObservationRequest(snapshotID: "S2"))
         let queuedTask = Task { try await client.send(queuedRequest) }
-        await admissions.waitUntilRequestCount(2)
+        await admissions.waitUntilRequestCount(3)
 
         do {
             _ = try await queuedTask.value
@@ -306,10 +307,11 @@ struct PeekabooBridgeCancellationTests {
         try await host.startChecked()
 
         let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 0.05)
+        try await Self.negotiateLegacyTransport(client)
         let request = PeekabooBridgeRequest.desktopObservation(
             Self.mutatingObservationRequest(snapshotID: "blocked"))
         let requestTask = Task { try await client.send(request) }
-        await admissions.waitUntilRequestCount(1)
+        await admissions.waitUntilRequestCount(2)
         #expect(try await Self.waitForActiveRequestCount(1, activity: activity))
 
         do {
@@ -322,6 +324,7 @@ struct PeekabooBridgeCancellationTests {
         }
 
         let followUpClient = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1)
+        try await Self.negotiateLegacyTransport(followUpClient)
         let followUp = try await followUpClient.send(.permissionsStatus)
         guard case .permissionsStatus = followUp else {
             Issue.record("Expected the bridge MainActor to remain responsive while the flock is held")
@@ -377,6 +380,7 @@ struct PeekabooBridgeCancellationTests {
         try await host.startChecked()
 
         let timedOutClient = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 0.25)
+        try await Self.negotiateLegacyTransport(timedOutClient)
         let firstRequest = PeekabooBridgeRequest.desktopObservation(
             Self.mutatingObservationRequest(snapshotID: "blocked"))
         let firstTask = Task { try await timedOutClient.send(firstRequest) }
@@ -401,6 +405,7 @@ struct PeekabooBridgeCancellationTests {
         #expect(await host.activeRequestCountForTesting() == 1)
 
         let followUpClient = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1)
+        try await Self.negotiateLegacyTransport(followUpClient)
         let followUpResponse = try await followUpClient.send(.permissionsStatus)
         guard case .permissionsStatus = followUpResponse else {
             Issue.record("Expected follow-up response while the old mutation task remained blocked")
@@ -472,6 +477,7 @@ struct PeekabooBridgeCancellationTests {
         try await host.startChecked()
 
         let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 30)
+        try await Self.negotiateLegacyTransport(client)
         let requestTask = Task { try await client.send(.desktopObservation(
             Self.nonmutatingObservationRequest(snapshotID: "active"))) }
         await observations.waitUntilFirstObservationStarted()
@@ -522,6 +528,7 @@ struct PeekabooBridgeCancellationTests {
         try await host.startChecked()
 
         let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 30)
+        try await Self.negotiateLegacyTransport(client)
         var requestFinished = false
         var receivedCancellation = false
         let requestTask = Task { @MainActor in
@@ -572,6 +579,16 @@ struct PeekabooBridgeCancellationTests {
             capture: DesktopCaptureOptions(focus: .background),
             detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: false),
             output: DesktopObservationOutputOptions(snapshotID: snapshotID))
+    }
+
+    private static func negotiateLegacyTransport(_ client: PeekabooBridgeClient) async throws {
+        _ = try await client.handshake(
+            client: PeekabooBridgeClientIdentity(
+                bundleIdentifier: "dev.peekaboo.cancellation-tests",
+                teamIdentifier: nil,
+                processIdentifier: getpid(),
+                hostname: nil),
+            protocolVersion: .init(major: 1, minor: 28))
     }
 
     private static func waitForActiveRequestCount(

@@ -38,7 +38,7 @@ public enum PeekabooBridgeJSONValue: Codable, Sendable, Equatable {
         case let .int(value):
             try container.encode(value)
         case let .double(value):
-            try container.encode(value)
+            try container.encode(value == 0 ? 0.0 : value)
         case let .string(value):
             try container.encode(value)
         case let .array(value):

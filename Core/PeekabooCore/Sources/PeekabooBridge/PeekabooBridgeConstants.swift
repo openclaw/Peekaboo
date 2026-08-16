@@ -27,6 +27,42 @@ public enum PeekabooBridgeConstants {
         self.applicationSupportSocketPath(appDirectoryName: "clawdbot", socketName: self.socketName)
     }
 
+    /// Default host-signing policy for sockets owned by bundled Peekaboo runtimes.
+    ///
+    /// Arbitrary socket paths deliberately return `nil`: protocol 1.29 callers must name the
+    /// teams they trust instead of treating possession of a per-user filesystem path as host
+    /// authentication.
+    static func defaultTrustedHostTeamIDs(socketPath: String) -> Set<String>? {
+        let standardized = NSString(string: socketPath).standardizingPath
+        let exactPaths = [
+            self.peekabooSocketPath,
+            self.daemonSocketPath,
+            self.claudeSocketPath,
+            self.clawdbotSocketPath,
+        ].map { NSString(string: $0).standardizingPath }
+        if exactPaths.contains(standardized) {
+            return self.trustedReleaseTeamIDs
+        }
+
+        let url = URL(fileURLWithPath: standardized)
+        let daemonDirectory = URL(fileURLWithPath: self.daemonSocketPath)
+            .deletingLastPathComponent().standardizedFileURL.path
+        let filename = url.lastPathComponent
+        let prefix = "daemon-"
+        let suffix = ".sock"
+        guard url.deletingLastPathComponent().standardizedFileURL.path == daemonDirectory,
+              filename.hasPrefix(prefix),
+              filename.hasSuffix(suffix)
+        else { return nil }
+        let hashStart = filename.index(filename.startIndex, offsetBy: prefix.count)
+        let hashEnd = filename.index(filename.endIndex, offsetBy: -suffix.count)
+        let hash = filename[hashStart..<hashEnd]
+        guard hash.count == 16,
+              hash.allSatisfy(\.isHexDigit)
+        else { return nil }
+        return self.trustedReleaseTeamIDs
+    }
+
     /// Current protocol version supported by this build.
     public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 29)
 
@@ -83,6 +119,10 @@ public enum PeekabooBridgeConstants {
     /// First protocol that carries an application process-generation receipt with quit requests.
     public static let processGenerationPinnedApplicationQuitVersion =
         PeekabooBridgeProtocolVersion(major: 1, minor: 16)
+
+    /// First protocol that signs caller-pinned application hide requests and results.
+    public static let processGenerationPinnedApplicationHideVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 29)
 
     /// First protocol that carries a process-generation receipt with targeted hotkey requests.
     public static let processGenerationPinnedHotkeyVersion =

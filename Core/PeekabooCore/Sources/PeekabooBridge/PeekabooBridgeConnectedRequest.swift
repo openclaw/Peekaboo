@@ -161,9 +161,14 @@ final class PeekabooBridgeRequestTracker: @unchecked Sendable {
     }
 
     private let lock = NSLock()
+    private let maximumActiveRequestCount: Int
     private var acceptingRequests = true
     private var requests: [UUID: PeekabooBridgeTrackedRequest] = [:]
     private var idleContinuations: [CheckedContinuation<Void, Never>] = []
+
+    init(maximumActiveRequestCount: Int = 32) {
+        self.maximumActiveRequestCount = max(1, maximumActiveRequestCount)
+    }
 
     var activeCount: Int {
         self.lock.lock()
@@ -191,7 +196,9 @@ final class PeekabooBridgeRequestTracker: @unchecked Sendable {
 
     func begin() -> PeekabooBridgeTrackedRequest? {
         self.lock.lock()
-        guard self.acceptingRequests else {
+        guard self.acceptingRequests,
+              self.requests.count < self.maximumActiveRequestCount
+        else {
             self.lock.unlock()
             return nil
         }
@@ -240,6 +247,42 @@ final class PeekabooBridgeRequestTracker: @unchecked Sendable {
     }
 }
 
+/// Synchronous capacity gate for connection, request-body, and refusal-signing lanes.
+final class PeekabooBridgeCapacityLimiter: @unchecked Sendable {
+    private let lock = NSLock()
+    let maximumCount: Int
+    private var active = 0
+    private var peak = 0
+
+    init(maximumCount: Int) {
+        self.maximumCount = max(1, maximumCount)
+    }
+
+    var activeCount: Int {
+        self.lock.withLock { self.active }
+    }
+
+    var peakActiveCount: Int {
+        self.lock.withLock { self.peak }
+    }
+
+    func begin() -> Bool {
+        self.lock.withLock {
+            guard self.active < self.maximumCount else { return false }
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            return true
+        }
+    }
+
+    func finish() {
+        self.lock.withLock {
+            precondition(self.active > 0)
+            self.active -= 1
+        }
+    }
+}
+
 enum PeekabooBridgeConnectedRequest {
     struct Context: @unchecked Sendable {
         let server: PeekabooBridgeServer
@@ -247,6 +290,8 @@ enum PeekabooBridgeConnectedRequest {
         let connection: PeekabooBridgeConnectionLiveness
         let requestTracker: PeekabooBridgeRequestTracker
         let operationReceiptAuthority: PeekabooBridgeOperationReceiptAuthority?
+        let operationSessionAuthorizationPin:
+            PeekabooBridgeOperationReceiptAuthority.SessionAuthorizationPin?
     }
 
     private enum Result: Sendable {
@@ -327,31 +372,31 @@ enum PeekabooBridgeConnectedRequest {
     }
 
     static func handle(
-        requestData: Data,
+        request: PeekabooBridgeRequest,
+        trackedRequest: PeekabooBridgeTrackedRequest,
         context: Context) async -> Data?
     {
-        guard let trackedRequest = context.requestTracker.begin() else {
-            context.connection.markDisconnected()
-            return nil
-        }
         let race = CompletionRace()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 guard race.install(continuation) else {
+                    context.operationSessionAuthorizationPin?.release()
                     context.requestTracker.finish(trackedRequest)
                     return
                 }
 
                 let requestTask = Task {
                     guard await trackedRequest.awaitActivation() else {
+                        context.operationSessionAuthorizationPin?.release()
                         context.requestTracker.finish(trackedRequest)
                         return
                     }
+                    defer { context.operationSessionAuthorizationPin?.release() }
                     let connectionProbe: @Sendable () -> Bool = {
                         context.connection.canReceiveResponse()
                     }
                     let operation: @Sendable () async -> Data = {
-                        await context.server.decodeAndHandle(requestData, peer: context.peer)
+                        await context.server.handleDecoded(request, peer: context.peer)
                     }
                     let response = await PeekabooBridgeRequestContext.$operationReceiptAuthority.withValue(
                         context.operationReceiptAuthority)

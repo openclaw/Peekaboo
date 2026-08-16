@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
 import PeekabooBridge
+import PeekabooBridgeTestSupport
 import PeekabooCore
 import PeekabooFoundation
 import Testing
@@ -12,9 +13,26 @@ struct PeekabooBridgeTargetedClickTests {
         ownerProcessIdentifier: 9001,
         ownerProcessStartIdentity: 1)
     private let exactBounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+    private static let clientIdentity = PeekabooBridgeClientIdentity(
+        bundleIdentifier: "dev.peekaboo.targeted-click-tests",
+        teamIdentifier: nil,
+        processIdentifier: getpid())
+    private static let legacyUnprojectedProtocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 22)
+    private static let legacyUnprojectedHandshake = BridgeTestFixtures.handshake(
+        negotiatedVersion: Self.legacyUnprojectedProtocolVersion,
+        supportedOperations: [.targetedClick])
 
     private func decode(_ data: Data) throws -> PeekabooBridgeResponse {
         try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeResponse.self, from: data)
+    }
+
+    private func legacyUnprojectedClient(socketPath: String) async throws -> PeekabooBridgeClient {
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        // Targeted click exists in 1.22, the final version before canonical outcome projection.
+        _ = try await client.handshake(
+            client: Self.clientIdentity,
+            protocolVersion: Self.legacyUnprojectedProtocolVersion)
+        return client
     }
 
     @Test
@@ -219,35 +237,23 @@ struct PeekabooBridgeTargetedClickTests {
     @Test
     @MainActor
     func `remote targeted click restores snapshot errors from bridge envelopes`() async throws {
-        let cases: [(PeekabooError, PeekabooBridgeErrorKind)] = [
-            (.snapshotStale("window moved"), .snapshotStale),
-            (.snapshotNotFound("expired"), .snapshotNotFound),
+        let cases: [(PeekabooError, PeekabooBridgeErrorCode, PeekabooBridgeErrorKind, String)] = [
+            (.snapshotStale("window moved"), .invalidRequest, .snapshotStale, "window moved"),
+            (.snapshotNotFound("expired"), .notFound, .snapshotNotFound, "expired"),
         ]
-        for (sourceError, expectedKind) in cases {
-            let socketPath = "/tmp/peekaboo-bridge-snapshot-error-\(UUID().uuidString).sock"
-            let services = StubServices()
-            services.automationStub.targetedClickError = sourceError
-            let server = PeekabooBridgeServer(
-                services: services,
-                hostKind: .gui,
-                allowlistedTeams: [],
-                allowlistedBundles: [],
-                permissionStatusEvaluator: { _ in
-                    PermissionsStatus(
-                        screenRecording: false,
-                        accessibility: true,
-                        appleScript: false,
-                        postEvent: false)
-                })
-            let host = PeekabooBridgeHost(
-                socketPath: socketPath,
-                server: server,
-                allowedTeamIDs: [],
-                requestTimeoutSec: 2)
-            try await host.startChecked()
-            defer { Task { await host.stop() } }
+        for (sourceError, code, expectedKind, context) in cases {
+            let peer = try ScriptedBridgePeer(responses: [
+                .handshake(Self.legacyUnprojectedHandshake),
+                BridgeTestFixtures.errorResponse(
+                    code: code,
+                    message: sourceError.localizedDescription,
+                    details: "\(sourceError)",
+                    kind: expectedKind,
+                    context: context),
+            ])
+            let client = try await self.legacyUnprojectedClient(socketPath: peer.socketPath)
             let remote = RemoteUIAutomationService(
-                client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
+                client: client,
                 supportsTargetedClicks: true)
 
             do {
@@ -269,12 +275,13 @@ struct PeekabooBridgeTargetedClickTests {
             } catch {
                 Issue.record("Unexpected bridge error: \(error)")
             }
+            await peer.waitUntilFinished()
         }
     }
 
     @Test
     @MainActor
-    func `real click service preserves stale snapshot through bridge facade`() async throws {
+    func `real click service preserves stale snapshot diagnostic through bridge facade`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-real-stale-\(UUID().uuidString).sock"
         let services = PeekabooServices(
             snapshotManager: InMemorySnapshotManager(),
@@ -298,8 +305,9 @@ struct PeekabooBridgeTargetedClickTests {
             requestTimeoutSec: 2)
         try await host.startChecked()
         defer { Task { await host.stop() } }
+        let client = try await self.legacyUnprojectedClient(socketPath: socketPath)
         let remote = RemoteUIAutomationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
+            client: client,
             supportsTargetedClicks: true,
             supportsExactWindowTargetedClicks: true)
 
@@ -310,8 +318,11 @@ struct PeekabooBridgeTargetedClickTests {
                 snapshotId: "expired-snapshot",
                 targetProcessIdentifier: getpid())
             Issue.record("Expected stale snapshot error")
-        } catch let PeekabooError.snapshotStale(reason) {
-            #expect(reason.contains("no longer available"))
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.message.contains("target element is no longer available"))
+            #expect(failure.causeDescription == #"snapshotStale("target element is no longer available")"#)
         } catch {
             Issue.record("Unexpected bridge error: \(error)")
         }
@@ -596,9 +607,10 @@ struct PeekabooBridgeTargetedClickTests {
             requestTimeoutSec: 2)
         try await host.startChecked()
         defer { Task { await host.stop() } }
+        let client = try await self.legacyUnprojectedClient(socketPath: socketPath)
 
         let remote = RemoteUIAutomationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
+            client: client,
             supportsTargetedClicks: true,
             targetedClickRequiresEventSynthesizingPermission: true)
 
@@ -613,7 +625,7 @@ struct PeekabooBridgeTargetedClickTests {
 
     @Test
     @MainActor
-    func `remote element right click maps synthetic fallback permission denial`() async throws {
+    func `remote element right click preserves synthetic permission denial in canonical failure`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-right-click-\(UUID().uuidString).sock"
         let services = StubServices()
         services.automationStub.targetedClickError = PeekabooError.permissionDeniedEventSynthesizing
@@ -637,9 +649,10 @@ struct PeekabooBridgeTargetedClickTests {
             requestTimeoutSec: 2)
         try await host.startChecked()
         defer { Task { await host.stop() } }
+        let client = try await self.legacyUnprojectedClient(socketPath: socketPath)
 
         let remote = RemoteUIAutomationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
+            client: client,
             supportsTargetedClicks: true,
             targetedClickRequiresEventSynthesizingPermission: true)
 
@@ -650,8 +663,11 @@ struct PeekabooBridgeTargetedClickTests {
                 snapshotId: "snapshot",
                 targetProcessIdentifier: 9001)
             Issue.record("Expected Event Synthesizing permission error")
-        } catch PeekabooError.permissionDeniedEventSynthesizing {
-            // Expected after the AX path falls back to synthetic input.
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.message == PeekabooError.permissionDeniedEventSynthesizing.localizedDescription)
+            #expect(failure.causeDescription == "permissionDeniedEventSynthesizing")
         }
     }
 

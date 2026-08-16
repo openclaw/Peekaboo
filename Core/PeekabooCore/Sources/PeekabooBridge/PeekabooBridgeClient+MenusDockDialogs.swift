@@ -24,15 +24,96 @@ extension PeekabooBridgeClient {
     }
 
     public func clickMenuItem(appIdentifier: String, itemPath: String) async throws {
-        try await self.sendExpectOK(.clickMenuItem(PeekabooBridgeMenuClickRequest(
-            appIdentifier: appIdentifier,
-            itemPath: itemPath)))
+        if self.usesExplicitReceiptlessTransport() {
+            try await self.sendExpectOK(.clickMenuItem(.legacyReceiptless(
+                appIdentifier: appIdentifier,
+                itemPath: itemPath)))
+            return
+        }
+        _ = try await self.clickMenuItemResult(appIdentifier: appIdentifier, itemPath: itemPath)
+    }
+
+    public func clickMenuItemResult(
+        appIdentifier: String,
+        itemPath: String) async throws -> UIAutomationActionResult<Void>
+    {
+        try self.requireAttestedMenuResultTransport(expectedResponse: "menu item click")
+        let application = try await self.findApplication(identifier: appIdentifier)
+        guard let expectedIdentity = application.processIdentity else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .targetUnavailable,
+                message: "The selected menu application has no stable process-generation identity.",
+                hint: "Refresh the application inventory before retrying.")
+        }
+        return try await self.clickMenuItemResult(request: MenuItemActionRequest(
+            appIdentifier: "PID:\(expectedIdentity.processIdentifier)",
+            itemPath: itemPath,
+            expectedIdentity: expectedIdentity))
+    }
+
+    public func clickMenuItemResult(
+        request: MenuItemActionRequest) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.actionResult(
+            for: .clickMenuItem(PeekabooBridgeMenuClickRequest(request)),
+            expectedResponse: "menu item click",
+            requiresTargetIdentity: true)
+        { response in
+            guard case .ok = response else { return nil }
+            return ()
+        }
     }
 
     public func clickMenuItemByName(appIdentifier: String, itemName: String) async throws {
-        try await self.sendExpectOK(.clickMenuItemByName(PeekabooBridgeMenuClickByNameRequest(
-            appIdentifier: appIdentifier,
-            itemName: itemName)))
+        if self.usesExplicitReceiptlessTransport() {
+            try await self.sendExpectOK(.clickMenuItemByName(.legacyReceiptless(
+                appIdentifier: appIdentifier,
+                itemName: itemName)))
+            return
+        }
+        _ = try await self.clickMenuItemByNameResult(appIdentifier: appIdentifier, itemName: itemName)
+    }
+
+    public func clickMenuItemByNameResult(
+        appIdentifier: String,
+        itemName: String) async throws -> UIAutomationActionResult<Void>
+    {
+        try self.requireAttestedMenuResultTransport(expectedResponse: "named menu item click")
+        let application = try await self.findApplication(identifier: appIdentifier)
+        guard let expectedIdentity = application.processIdentity else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .targetUnavailable,
+                message: "The selected menu application has no stable process-generation identity.",
+                hint: "Refresh the application inventory before retrying.")
+        }
+        return try await self.clickMenuItemByNameResult(request: MenuItemByNameActionRequest(
+            appIdentifier: "PID:\(expectedIdentity.processIdentifier)",
+            itemName: itemName,
+            expectedIdentity: expectedIdentity))
+    }
+
+    public func clickMenuItemByNameResult(
+        request: MenuItemByNameActionRequest) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.actionResult(
+            for: .clickMenuItemByName(PeekabooBridgeMenuClickByNameRequest(request)),
+            expectedResponse: "named menu item click",
+            requiresTargetIdentity: true)
+        { response in
+            guard case .ok = response else { return nil }
+            return ()
+        }
+    }
+
+    private func requireAttestedMenuResultTransport(expectedResponse: String) throws {
+        guard self.usesExplicitReceiptlessTransport() else { return }
+        throw DesktopActionFailure.preDispatchRefusal(
+            route: .bridge,
+            reason: .runtimeIncompatible,
+            message: "\(expectedResponse) requires an attested exact-target result.",
+            hint: "Update the Bridge host to protocol 1.29 before retrying this mutation.")
     }
 
     public func listMenuExtras() async throws -> [MenuExtraInfo] {
@@ -45,7 +126,22 @@ extension PeekabooBridgeClient {
     }
 
     public func clickMenuExtra(title: String) async throws {
-        try await self.sendExpectOK(.clickMenuExtra(PeekabooBridgeMenuBarClickByNameRequest(name: title)))
+        if self.usesExplicitReceiptlessTransport() {
+            try await self.sendExpectOK(.clickMenuExtra(PeekabooBridgeMenuBarClickByNameRequest(name: title)))
+            return
+        }
+        _ = try await self.clickMenuExtraResult(title: title)
+    }
+
+    public func clickMenuExtraResult(title: String) async throws -> UIAutomationActionResult<Void> {
+        try await self.actionResult(
+            for: .clickMenuExtra(PeekabooBridgeMenuBarClickByNameRequest(name: title)),
+            expectedResponse: "menu extra click",
+            requiresTargetIdentity: true)
+        { response in
+            guard case .ok = response else { return nil }
+            return ()
+        }
     }
 
     public func menuExtraOpenMenuFrame(title: String, ownerPID: pid_t?) async throws -> CGRect? {
@@ -68,21 +164,134 @@ extension PeekabooBridgeClient {
     }
 
     public func clickMenuBarItem(named name: String) async throws -> ClickResult {
-        let response = try await self.send(.clickMenuBarItemNamed(PeekabooBridgeMenuBarClickByNameRequest(name: name)))
-        switch response {
-        case let .clickResult(result): return result
-        case let .error(envelope): throw envelope
-        default: throw PeekabooBridgeErrorEnvelope(code: .invalidRequest, message: "Unexpected menu bar click response")
+        if self.usesExplicitReceiptlessTransport() {
+            return try await self.legacyMenuBarClick(
+                request: .clickMenuBarItemNamed(PeekabooBridgeMenuBarClickByNameRequest(name: name)),
+                expectedResponse: "named menu bar click")
+        }
+        return try await self.clickMenuBarItemResult(named: name).payload
+    }
+
+    public func clickMenuBarItemResult(named name: String) async throws -> UIAutomationActionResult<ClickResult> {
+        try self.requireAttestedMenuResultTransport(expectedResponse: "named menu bar click")
+        let items = try await self.listMenuBarItems(includeRaw: true)
+        let selection = try Self.resolveMenuBarSelection(named: name, items: items)
+        guard let baseEvidence = selection.candidate.value.selectionEvidence else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .targetUnavailable,
+                message: "The selected menu bar item has no exact leaf evidence.",
+                hint: "Refresh the menu bar inventory and update the Bridge host before retrying.")
+        }
+        let evidence = try baseEvidence.selecting(
+            normalizedSelector: selection.normalizedSelector,
+            matchKind: selection.matchKind)
+        return try await self.clickMenuBarItemResult(request: MenuBarItemActionRequest(
+            named: name,
+            expectedLeafEvidence: evidence))
+    }
+
+    public func clickMenuBarItemResult(request: MenuBarItemActionRequest) async throws
+        -> UIAutomationActionResult<ClickResult>
+    {
+        let payload: PeekabooBridgeMenuBarClickByNameRequest
+        guard let name = request.name else {
+            guard let index = request.index else {
+                throw PeekabooError.invalidInput("Menu bar action request has no selector")
+            }
+            return try await self.actionResult(
+                for: .clickMenuBarItemIndex(PeekabooBridgeMenuBarClickByIndexRequest(
+                    index: index,
+                    expectedLeafEvidence: request.expectedLeafEvidence)),
+                expectedResponse: "indexed menu bar click",
+                requiresTargetIdentity: true)
+            { response in
+                guard case let .clickResult(result) = response else { return nil }
+                return result
+            }
+        }
+        payload = PeekabooBridgeMenuBarClickByNameRequest(
+            name: name,
+            expectedLeafEvidence: request.expectedLeafEvidence)
+        return try await self.actionResult(
+            for: .clickMenuBarItemNamed(payload),
+            expectedResponse: "named menu bar click",
+            requiresTargetIdentity: true)
+        { response in
+            guard case let .clickResult(result) = response else { return nil }
+            return result
         }
     }
 
     public func clickMenuBarItem(at index: Int) async throws -> ClickResult {
-        let response = try await self
-            .send(.clickMenuBarItemIndex(PeekabooBridgeMenuBarClickByIndexRequest(index: index)))
+        if self.usesExplicitReceiptlessTransport() {
+            return try await self.legacyMenuBarClick(
+                request: .clickMenuBarItemIndex(PeekabooBridgeMenuBarClickByIndexRequest(index: index)),
+                expectedResponse: "indexed menu bar click")
+        }
+        return try await self.clickMenuBarItemResult(at: index).payload
+    }
+
+    public func clickMenuBarItemResult(at index: Int) async throws -> UIAutomationActionResult<ClickResult> {
+        try self.requireAttestedMenuResultTransport(expectedResponse: "indexed menu bar click")
+        let items = try await self.listMenuBarItems(includeRaw: true)
+        let selection: DeterministicDesktopLeafSelector.Selection<MenuBarItemInfo>
+        do {
+            selection = try MenuBarItemSelector.select(index: index, from: items)
+        } catch {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .targetUnavailable,
+                message: "Menu bar item index \(index) is no longer present.",
+                hint: "Refresh the menu bar inventory before retrying.",
+                causeDescription: error.localizedDescription)
+        }
+        guard let evidence = selection.candidate.value.selectionEvidence else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .targetUnavailable,
+                message: "Menu bar item index \(index) has no exact leaf evidence.",
+                hint: "Refresh the menu bar inventory and update the Bridge host before retrying.")
+        }
+        return try await self.clickMenuBarItemResult(request: MenuBarItemActionRequest(
+            index: index,
+            expectedLeafEvidence: evidence))
+    }
+
+    private nonisolated static func resolveMenuBarSelection(
+        named name: String,
+        items: [MenuBarItemInfo]) throws
+        -> DeterministicDesktopLeafSelector.Selection<MenuBarItemInfo>
+    {
+        do {
+            return try MenuBarItemSelector.select(named: name, from: items)
+        } catch let error as DesktopLeafSelectionError {
+            let reason: DesktopActionOutcome.RefusalReason = switch error {
+            case .ambiguous: .invalidRequest
+            case .notFound, .invalidIndex: .targetUnavailable
+            }
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: reason,
+                message: error.localizedDescription,
+                hint: "Use an exact current status-item name or list index.")
+        }
+    }
+
+    private func legacyMenuBarClick(
+        request: PeekabooBridgeRequest,
+        expectedResponse: String) async throws -> ClickResult
+    {
+        let response = try await self.send(request)
         switch response {
-        case let .clickResult(result): return result
-        case let .error(envelope): throw envelope
-        default: throw PeekabooBridgeErrorEnvelope(code: .invalidRequest, message: "Unexpected menu bar click response")
+        case let .clickResult(result):
+            return result
+        case let .error(envelope):
+            throw envelope
+        default:
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Unexpected \(expectedResponse) response")
         }
     }
 
@@ -96,21 +305,70 @@ extension PeekabooBridgeClient {
     }
 
     public func launchDockItem(appName: String) async throws {
-        try await self.sendExpectOK(.launchDockItem(PeekabooBridgeDockLaunchRequest(appName: appName)))
+        if self.usesExplicitReceiptlessTransport() {
+            try await self.sendExpectOK(.launchDockItem(PeekabooBridgeDockLaunchRequest(appName: appName)))
+            return
+        }
+        _ = try await self.launchDockItemResult(appName: appName)
+    }
+
+    public func launchDockItemResult(appName: String) async throws -> UIAutomationActionResult<Void> {
+        try await self.actionResult(
+            for: .launchDockItem(PeekabooBridgeDockLaunchRequest(appName: appName)),
+            expectedResponse: "Dock item launch",
+            requiresTargetIdentity: true)
+        { response in
+            guard case .ok = response else { return nil }
+            return ()
+        }
     }
 
     public func rightClickDockItem(appName: String, menuItem: String?) async throws {
-        try await self.sendExpectOK(.rightClickDockItem(PeekabooBridgeDockRightClickRequest(
-            appName: appName,
-            menuItem: menuItem)))
+        if self.usesExplicitReceiptlessTransport() {
+            try await self.sendExpectOK(.rightClickDockItem(PeekabooBridgeDockRightClickRequest(
+                appName: appName,
+                menuItem: menuItem)))
+            return
+        }
+        _ = try await self.rightClickDockItemResult(appName: appName, menuItem: menuItem)
+    }
+
+    public func rightClickDockItemResult(
+        appName: String,
+        menuItem: String?) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.actionResult(
+            for: .rightClickDockItem(PeekabooBridgeDockRightClickRequest(
+                appName: appName,
+                menuItem: menuItem)),
+            expectedResponse: "Dock item context click",
+            requiresTargetIdentity: true)
+        { response in
+            guard case .ok = response else { return nil }
+            return ()
+        }
     }
 
     public func hideDock() async throws {
-        try await self.sendExpectOK(.hideDock)
+        _ = try await self.hideDockResult()
+    }
+
+    public func hideDockResult() async throws -> DesktopActionResult<Void> {
+        try await self.actionResult(for: .hideDock, expectedResponse: "hide Dock") { response in
+            guard case .ok = response else { return nil }
+            return ()
+        }.desktopActionResult
     }
 
     public func showDock() async throws {
-        try await self.sendExpectOK(.showDock)
+        _ = try await self.showDockResult()
+    }
+
+    public func showDockResult() async throws -> DesktopActionResult<Void> {
+        try await self.actionResult(for: .showDock, expectedResponse: "show Dock") { response in
+            guard case .ok = response else { return nil }
+            return ()
+        }.desktopActionResult
     }
 
     public func isDockHidden() async throws -> Bool {
@@ -253,7 +511,8 @@ extension PeekabooBridgeClient {
                 targetReceipt: targetReceipt,
                 targetWindowIdentity: result.targetWindowIdentity,
                 targetWindowBounds: result.targetWindowBounds,
-                focusedElement: result.focusedElement)
+                focusedElement: result.focusedElement,
+                resolvedTarget: result.resolvedTarget)
         case let .error(envelope):
             if let failure = envelope.desktopActionFailure ?? reply.outcome.flatMap({ projection in
                 DesktopActionFailure(
@@ -335,7 +594,8 @@ extension PeekabooBridgeClient {
                 targetReceipt: targetReceipt,
                 targetWindowIdentity: result.targetWindowIdentity,
                 targetWindowBounds: result.targetWindowBounds,
-                focusedElement: result.focusedElement)
+                focusedElement: result.focusedElement,
+                resolvedTarget: result.resolvedTarget)
         case let .error(envelope):
             if let failure = envelope.desktopActionFailure ?? reply.outcome.flatMap({ projection in
                 DesktopActionFailure(
@@ -458,7 +718,8 @@ extension PeekabooBridgeClient {
                 targetReceipt: result.targetReceipt,
                 targetWindowIdentity: result.targetWindowIdentity,
                 targetWindowBounds: result.targetWindowBounds,
-                focusedElement: result.focusedElement)
+                focusedElement: result.focusedElement,
+                resolvedTarget: result.resolvedTarget)
         case let .error(envelope):
             if let failure = envelope.desktopActionFailure ?? reply.outcome.flatMap({ projection in
                 DesktopActionFailure(

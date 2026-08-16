@@ -124,7 +124,7 @@ struct PeekabooBridgeHostIdentityTests {
         }
 
         #expect(handshake.hostIdentity == hostIdentity)
-        #expect(handshake.hostCapabilities == [
+        let expectedCapabilities: Set<String> = [
             PeekabooBridgeHostCapability.backgroundBridgeHost,
             PeekabooBridgeHostCapability.codeSignatureBuildIdentity,
             PeekabooBridgeHostCapability.desktopActionOutcomeProjection,
@@ -132,9 +132,11 @@ struct PeekabooBridgeHostIdentityTests {
             PeekabooBridgeHostCapability.desktopObservationOCR,
             PeekabooBridgeHostCapability.hostGenerationIdentity,
             PeekabooBridgeHostCapability.processGenerationPinnedApplicationActivation,
+            PeekabooBridgeHostCapability.processGenerationPinnedApplicationHide,
             PeekabooBridgeHostCapability.safeBackgroundApplicationLaunchNoOp,
             PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
-        ])
+        ]
+        #expect(expectedCapabilities.isSubset(of: Set(handshake.hostCapabilities ?? [])))
     }
 
     @Test

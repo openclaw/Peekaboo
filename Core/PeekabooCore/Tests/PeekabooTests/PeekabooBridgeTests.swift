@@ -3,6 +3,7 @@ import Foundation
 import PeekabooAutomation
 import PeekabooAutomationKit
 import PeekabooAutomationKitTestSupport
+import PeekabooBridgeTestSupport
 import PeekabooCore
 import PeekabooFoundation
 import Testing
@@ -269,7 +270,7 @@ struct PeekabooBridgeTests {
             teamIdentifier: "TEAMID",
             processIdentifier: getpid(),
             hostname: Host.current().name)
-        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
 
         let handshake = try await client.handshake(client: identity)
 
@@ -302,7 +303,7 @@ struct PeekabooBridgeTests {
             teamIdentifier: "TEAMID",
             processIdentifier: getpid(),
             hostname: Host.current().name)
-        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
 
         let handshake = try await client.handshake(client: identity)
 
@@ -1257,6 +1258,23 @@ struct PeekabooBridgeTests {
 }
 
 extension PeekabooBridgeTests {
+    private static let remoteClientIdentity = PeekabooBridgeClientIdentity(
+        bundleIdentifier: "dev.peeka.cli",
+        teamIdentifier: "TEAMID",
+        processIdentifier: getpid())
+    private static let legacyUnprojectedVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 22)
+    private static let legacyProjectedVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 28)
+
+    private static func negotiatedTrustedClient(
+        socketPath: String,
+        protocolVersion: PeekabooBridgeProtocolVersion = PeekabooBridgeConstants.protocolVersion) async throws
+        -> PeekabooBridgeClient
+    {
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.remoteClientIdentity, protocolVersion: protocolVersion)
+        return client
+    }
+
     @Test
     func `remote automation queries focus inside target PID`() async throws {
         let targetProcessIdentifier = getpid()
@@ -1314,6 +1332,10 @@ extension PeekabooBridgeTests {
     @Test
     func `atomic exact window keyboard blocks concurrent retarget request`() async throws {
         let socketPath = "/tmp/peekaboo-atomic-keyboard-\(UUID().uuidString).sock"
+        let targetProcessIdentifier = getpid()
+        let targetProcessGeneration = try #require(
+            SystemIdentityResolver.processStartIdentity(targetProcessIdentifier))
+        let targetBounds = CGRect(x: 0, y: 0, width: 800, height: 600)
         let services = await MainActor.run { StubServices() }
         await MainActor.run {
             services.automationStub.exactKeyboardDelayNanoseconds = 150_000_000
@@ -1325,7 +1347,10 @@ extension PeekabooBridgeTests {
                 hostKind: .gui,
                 allowlistedTeams: [],
                 allowlistedBundles: [],
-                postEventAccessEvaluator: { true })
+                postEventAccessEvaluator: { true },
+                windowOwnerProcessIdentifierProvider: { _ in targetProcessIdentifier },
+                windowBoundsProvider: { _ in targetBounds },
+                processStartIdentityProvider: { _ in targetProcessGeneration })
         }
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
@@ -1335,8 +1360,10 @@ extension PeekabooBridgeTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
-        let typeClient = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
-        let clickClient = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        let typeClient = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        let clickClient = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await typeClient.handshake(client: Self.remoteClientIdentity)
+        _ = try await clickClient.handshake(client: Self.remoteClientIdentity)
         let typeTask = Task {
             try await typeClient.typeActions(
                 [.text("atomic")],
@@ -1344,9 +1371,10 @@ extension PeekabooBridgeTests {
                 snapshotId: "snapshot",
                 expectedWindowIdentity: WindowMutationIdentity(
                     windowID: 999_999,
-                    ownerProcessIdentifier: 4242,
-                    ownerProcessStartIdentity: 1),
-                expectedWindowBounds: CGRect(x: 0, y: 0, width: 800, height: 600))
+                    ownerProcessIdentifier: targetProcessIdentifier,
+                    ownerProcessStartIdentity: targetProcessGeneration,
+                    capturedBounds: targetBounds),
+                expectedWindowBounds: targetBounds)
         }
 
         for _ in 0..<100 {
@@ -1365,9 +1393,10 @@ extension PeekabooBridgeTests {
                 snapshotId: "snapshot",
                 expectedWindowIdentity: WindowMutationIdentity(
                     windowID: 888_888,
-                    ownerProcessIdentifier: 4242,
-                    ownerProcessStartIdentity: 1),
-                expectedWindowBounds: CGRect(x: 0, y: 0, width: 800, height: 600))
+                    ownerProcessIdentifier: targetProcessIdentifier,
+                    ownerProcessStartIdentity: targetProcessGeneration,
+                    capturedBounds: targetBounds),
+                expectedWindowBounds: targetBounds)
         }
 
         _ = try await typeTask.value
@@ -1386,6 +1415,7 @@ extension PeekabooBridgeTests {
                 hostKind: .gui,
                 allowlistedTeams: [],
                 allowlistedBundles: [],
+                supportedVersions: Self.legacyUnprojectedVersion...Self.legacyUnprojectedVersion,
                 postEventAccessEvaluator: { postEventAccess.value })
         }
         let host = PeekabooBridgeHost(
@@ -1397,14 +1427,10 @@ extension PeekabooBridgeTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
-        let identity = PeekabooBridgeClientIdentity(
-            bundleIdentifier: "dev.peeka.cli",
-            teamIdentifier: "TEAMID",
-            processIdentifier: getpid(),
-            hostname: Host.current().name)
-        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
-
-        let handshake = try await client.handshake(client: identity)
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        let handshake = try await client.handshake(
+            client: Self.remoteClientIdentity,
+            protocolVersion: Self.legacyUnprojectedVersion)
         #expect(handshake.enabledOperations?.contains(.targetedHotkey) == true)
 
         postEventAccess.value = false
@@ -1421,7 +1447,7 @@ extension PeekabooBridgeTests {
     }
 
     @Test
-    func `remote targeted hotkey preserves service permission errors`() async throws {
+    func `remote targeted hotkey preserves service permission failures conservatively`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-client-\(UUID().uuidString).sock"
         let stub = await MainActor.run { StubServices() }
         await MainActor.run {
@@ -1433,6 +1459,7 @@ extension PeekabooBridgeTests {
                 hostKind: .gui,
                 allowlistedTeams: [],
                 allowlistedBundles: [],
+                supportedVersions: Self.legacyUnprojectedVersion...Self.legacyUnprojectedVersion,
                 postEventAccessEvaluator: { true })
         }
         let host = PeekabooBridgeHost(
@@ -1444,22 +1471,29 @@ extension PeekabooBridgeTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
+        let client = try await Self.negotiatedTrustedClient(
+            socketPath: socketPath,
+            protocolVersion: Self.legacyUnprojectedVersion)
         let remote = await MainActor.run {
             RemoteUIAutomationService(
-                client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
+                client: client,
                 supportsTargetedHotkeys: true)
         }
 
         do {
             try await remote.hotkey(keys: "cmd,l", holdDuration: 50, targetProcessIdentifier: 9001)
             Issue.record("Expected Accessibility permission error")
-        } catch PeekabooError.permissionDeniedAccessibility {
-            // Expected.
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.evidence == .completionUnknown)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.message == PeekabooError.permissionDeniedAccessibility.localizedDescription)
+            #expect(failure.causeDescription?.contains("permissionDeniedAccessibility") == true)
         }
     }
 
     @Test
-    func `remote targeted hotkey maps invalid request envelope`() async throws {
+    func `remote targeted hotkey preserves post-dispatch invalid request conservatively`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-client-\(UUID().uuidString).sock"
         let stub = await MainActor.run { StubServices() }
         await MainActor.run {
@@ -1472,6 +1506,7 @@ extension PeekabooBridgeTests {
                 hostKind: .gui,
                 allowlistedTeams: [],
                 allowlistedBundles: [],
+                supportedVersions: Self.legacyUnprojectedVersion...Self.legacyUnprojectedVersion,
                 postEventAccessEvaluator: { true })
         }
         let host = PeekabooBridgeHost(
@@ -1483,17 +1518,24 @@ extension PeekabooBridgeTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
+        let client = try await Self.negotiatedTrustedClient(
+            socketPath: socketPath,
+            protocolVersion: Self.legacyUnprojectedVersion)
         let remote = await MainActor.run {
             RemoteUIAutomationService(
-                client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
+                client: client,
                 supportsTargetedHotkeys: true)
         }
 
         do {
             try await remote.hotkey(keys: "cmd,l", holdDuration: 50, targetProcessIdentifier: 9001)
             Issue.record("Expected invalid input error")
-        } catch let PeekabooError.invalidInput(message) {
-            #expect(message == "Target process identifier is not running: 9001")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.evidence == .completionUnknown)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.message == "Target process identifier is not running: 9001")
+            #expect(failure.causeDescription?.contains("invalidInput") == true)
         }
     }
 
@@ -1506,6 +1548,7 @@ extension PeekabooBridgeTests {
                 hostKind: .gui,
                 allowlistedTeams: [],
                 allowlistedBundles: [],
+                supportedVersions: Self.legacyUnprojectedVersion...Self.legacyUnprojectedVersion,
                 postEventAccessEvaluator: { true })
         }
         let host = PeekabooBridgeHost(
@@ -1517,9 +1560,12 @@ extension PeekabooBridgeTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
+        let client = try await Self.negotiatedTrustedClient(
+            socketPath: socketPath,
+            protocolVersion: Self.legacyUnprojectedVersion)
         let remote = await MainActor.run {
             RemoteUIAutomationService(
-                client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
+                client: client,
                 supportsTargetedHotkeys: true)
         }
 
@@ -1534,33 +1580,38 @@ extension PeekabooBridgeTests {
     @Test
     func `remote targeted and exact input conservatively adapt legacy indeterminate delivery errors`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-input-indeterminate-\(UUID().uuidString).sock"
-        let targetedTypeSourceError = InputDeliveryIndeterminateError(
+        let targetedTypeFailure = Self.operationValidLegacyIndeterminateFailure(
             operation: .type,
+            delivery: .processTargetedEvents,
             emittedUnitCount: 2,
             causeDescription: "targeted type destination drifted")
-        let exactTypeSourceError = InputDeliveryIndeterminateError(
+        let exactTypeFailure = Self.operationValidLegacyIndeterminateFailure(
             operation: .type,
+            delivery: .windowTargetedEvents,
             emittedUnitCount: 3,
             causeDescription: "exact type destination drifted")
-        let targetedHotkeySourceError = InputDeliveryIndeterminateError(
+        let targetedHotkeyFailure = Self.operationValidLegacyIndeterminateFailure(
             operation: .hotkey,
+            delivery: .processTargetedEvents,
             emittedUnitCount: 4,
             causeDescription: "targeted hotkey destination drifted")
-        let exactHotkeySourceError = InputDeliveryIndeterminateError(
+        let exactHotkeyFailure = Self.operationValidLegacyIndeterminateFailure(
             operation: .hotkey,
+            delivery: .windowTargetedEvents,
             emittedUnitCount: 5,
             causeDescription: "exact hotkey destination drifted")
-        let clickSourceError = InputDeliveryIndeterminateError(
+        let clickFailure = Self.operationValidLegacyIndeterminateFailure(
             operation: .click,
+            delivery: .windowTargetedEvents,
             emittedUnitCount: 3,
             causeDescription: "exact click destination drifted")
         let stub = await MainActor.run { StubServices() }
         await MainActor.run {
-            stub.automationStub.targetedTypeError = targetedTypeSourceError
-            stub.automationStub.exactTypeError = exactTypeSourceError
-            stub.automationStub.targetedHotkeyError = targetedHotkeySourceError
-            stub.automationStub.exactHotkeyError = exactHotkeySourceError
-            stub.automationStub.targetedClickError = clickSourceError
+            stub.automationStub.targetedTypeError = targetedTypeFailure
+            stub.automationStub.exactTypeError = exactTypeFailure
+            stub.automationStub.targetedHotkeyError = targetedHotkeyFailure
+            stub.automationStub.exactHotkeyError = exactHotkeyFailure
+            stub.automationStub.targetedClickError = clickFailure
         }
         let server = await MainActor.run {
             PeekabooBridgeServer(
@@ -1568,7 +1619,11 @@ extension PeekabooBridgeTests {
                 hostKind: .gui,
                 allowlistedTeams: [],
                 allowlistedBundles: [],
-                postEventAccessEvaluator: { true })
+                supportedVersions: Self.legacyProjectedVersion...Self.legacyProjectedVersion,
+                postEventAccessEvaluator: { true },
+                windowOwnerProcessIdentifierProvider: { _ in 4242 },
+                windowBoundsProvider: { _ in CGRect(x: 0, y: 0, width: 800, height: 600) },
+                processStartIdentityProvider: { _ in 1 })
         }
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
@@ -1579,11 +1634,16 @@ extension PeekabooBridgeTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
+        let client = try await Self.negotiatedTrustedClient(
+            socketPath: socketPath,
+            protocolVersion: Self.legacyProjectedVersion)
         let remote = await MainActor.run {
             RemoteUIAutomationService(
-                client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
+                client: client,
                 supportsTargetedHotkeys: true,
+                supportsProcessGenerationPinnedHotkeys: true,
                 supportsTargetedTypeActions: true,
+                supportsProcessGenerationPinnedTypeActions: true,
                 supportsTargetedClicks: true,
                 supportsExactWindowTargetedClicks: true,
                 supportsExactWindowTargetedKeyboard: true)
@@ -1591,8 +1651,12 @@ extension PeekabooBridgeTests {
         let expectedWindowIdentity = WindowMutationIdentity(
             windowID: 999_999,
             ownerProcessIdentifier: 4242,
-            ownerProcessStartIdentity: 1)
+            ownerProcessStartIdentity: 1,
+            capturedBounds: CGRect(x: 0, y: 0, width: 800, height: 600))
         let expectedWindowBounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let expectedProcessIdentity = ApplicationProcessIdentity(
+            processIdentifier: 4242,
+            processStartIdentity: 1)
 
         do {
             try await remote.click(
@@ -1603,7 +1667,7 @@ extension PeekabooBridgeTests {
                 expectedWindowBounds: expectedWindowBounds)
             Issue.record("Expected exact click outcome to be indeterminate")
         } catch let failure as DesktopActionFailure {
-            Self.expectLegacyIndeterminateFailure(failure, source: clickSourceError)
+            Self.expectLegacyIndeterminateFailure(failure, expected: clickFailure)
         } catch {
             Issue.record("Expected exact click indeterminate error, got \(error)")
         }
@@ -1613,10 +1677,10 @@ extension PeekabooBridgeTests {
                 [.text("targeted")],
                 cadence: .fixed(milliseconds: 0),
                 snapshotId: "snapshot",
-                targetProcessIdentifier: 4242)
+                expectedProcessIdentity: expectedProcessIdentity)
             Issue.record("Expected targeted type outcome to be indeterminate")
         } catch let failure as DesktopActionFailure {
-            Self.expectLegacyIndeterminateFailure(failure, source: targetedTypeSourceError)
+            Self.expectLegacyIndeterminateFailure(failure, expected: targetedTypeFailure)
         } catch {
             Issue.record("Expected targeted type indeterminate error, got \(error)")
         }
@@ -1630,16 +1694,19 @@ extension PeekabooBridgeTests {
                 expectedWindowBounds: expectedWindowBounds)
             Issue.record("Expected exact type outcome to be indeterminate")
         } catch let failure as DesktopActionFailure {
-            Self.expectLegacyIndeterminateFailure(failure, source: exactTypeSourceError)
+            Self.expectLegacyIndeterminateFailure(failure, expected: exactTypeFailure)
         } catch {
             Issue.record("Expected exact type indeterminate error, got \(error)")
         }
 
         do {
-            try await remote.hotkey(keys: "cmd,l", holdDuration: 50, targetProcessIdentifier: 4242)
+            try await remote.hotkey(
+                keys: "cmd,l",
+                holdDuration: 50,
+                expectedProcessIdentity: expectedProcessIdentity)
             Issue.record("Expected targeted hotkey outcome to be indeterminate")
         } catch let failure as DesktopActionFailure {
-            Self.expectLegacyIndeterminateFailure(failure, source: targetedHotkeySourceError)
+            Self.expectLegacyIndeterminateFailure(failure, expected: targetedHotkeyFailure)
         } catch {
             Issue.record("Expected targeted hotkey indeterminate error, got \(error)")
         }
@@ -1652,23 +1719,36 @@ extension PeekabooBridgeTests {
                 expectedWindowBounds: expectedWindowBounds)
             Issue.record("Expected exact hotkey outcome to be indeterminate")
         } catch let failure as DesktopActionFailure {
-            Self.expectLegacyIndeterminateFailure(failure, source: exactHotkeySourceError)
+            Self.expectLegacyIndeterminateFailure(failure, expected: exactHotkeyFailure)
         } catch {
             Issue.record("Expected exact hotkey indeterminate error, got \(error)")
         }
     }
 
+    private static func operationValidLegacyIndeterminateFailure(
+        operation: InputDeliveryIndeterminateError.Operation,
+        delivery: DesktopActionOutcome.Delivery.Mechanism,
+        emittedUnitCount: Int,
+        causeDescription: String) -> DesktopActionFailure
+    {
+        let source = InputDeliveryIndeterminateError(
+            operation: operation,
+            emittedUnitCount: emittedUnitCount,
+            causeDescription: causeDescription)
+        return DesktopActionFailure.indeterminate(
+            delivery: .init(mechanism: delivery, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(emittedUnitCount),
+            message: source.localizedDescription,
+            hint: "Observe the target before taking another action.",
+            causeDescription: causeDescription)
+    }
+
     private static func expectLegacyIndeterminateFailure(
         _ failure: DesktopActionFailure,
-        source: InputDeliveryIndeterminateError)
+        expected: DesktopActionFailure)
     {
-        #expect(failure.outcome.route == .bridge)
-        #expect(failure.outcome.state == .indeterminate)
-        #expect(failure.outcome.evidence == .completionUnknown)
-        #expect(failure.outcome.dispatchState.unitCount == nil)
-        #expect(failure.outcome.retrySafety == .unsafe)
-        #expect(failure.outcome.projection.requiresFreshObservation)
-        #expect(failure.message == source.localizedDescription)
+        #expect(failure == expected.routed(to: .bridge))
     }
 
     @Test
@@ -1689,6 +1769,17 @@ extension PeekabooBridgeTests {
     func `bridge setValue forwards to automation service`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-set-value-\(UUID().uuidString).sock"
         let services = await MainActor.run { StubServices() }
+        let processGeneration = try #require(SystemIdentityResolver.processStartIdentity(getpid()))
+        await MainActor.run {
+            services.automationStub.actionOutcome = .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .one)
+            services.automationStub.uiAutomationOutcomeTargetIdentity = try? DesktopTargetIdentity(
+                processIdentity: .init(
+                    processIdentifier: getpid(),
+                    processStartIdentity: processGeneration))
+        }
         let server = await MainActor.run {
             PeekabooBridgeServer(
                 services: services,
@@ -1705,9 +1796,10 @@ extension PeekabooBridgeTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
+        let client = try await Self.negotiatedTrustedClient(socketPath: socketPath)
         let remote = await MainActor.run {
             RemoteElementActionUIAutomationService(
-                client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2))
+                client: client)
         }
         let result = try await remote.setValue(target: "T1", value: .string("hello"), snapshotId: "S1")
 
@@ -1722,6 +1814,17 @@ extension PeekabooBridgeTests {
     func `bridge performAction forwards to automation service`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-perform-action-\(UUID().uuidString).sock"
         let services = await MainActor.run { StubServices() }
+        let processGeneration = try #require(SystemIdentityResolver.processStartIdentity(getpid()))
+        await MainActor.run {
+            services.automationStub.actionOutcome = .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .one)
+            services.automationStub.uiAutomationOutcomeTargetIdentity = try? DesktopTargetIdentity(
+                processIdentity: .init(
+                    processIdentifier: getpid(),
+                    processStartIdentity: processGeneration))
+        }
         let server = await MainActor.run {
             PeekabooBridgeServer(
                 services: services,
@@ -1738,9 +1841,10 @@ extension PeekabooBridgeTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
+        let client = try await Self.negotiatedTrustedClient(socketPath: socketPath)
         let remote = await MainActor.run {
             RemoteElementActionUIAutomationService(
-                client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2))
+                client: client)
         }
         let result = try await remote.performAction(target: "B1", actionName: "AXPress", snapshotId: "S1")
 
@@ -1752,7 +1856,7 @@ extension PeekabooBridgeTests {
     }
 
     @Test
-    func `remote automation restores snapshot errors for foreground clicks and element actions`() async throws {
+    func `remote automation preserves snapshot failures conservatively`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-snapshot-actions-\(UUID().uuidString).sock"
         let services = await MainActor.run { StubServices() }
         let server = await MainActor.run {
@@ -1761,6 +1865,7 @@ extension PeekabooBridgeTests {
                 hostKind: .gui,
                 allowlistedTeams: [],
                 allowlistedBundles: [],
+                supportedVersions: Self.legacyUnprojectedVersion...Self.legacyUnprojectedVersion,
                 permissionStatusEvaluator: { _ in
                     PermissionsStatus(
                         screenRecording: false,
@@ -1777,7 +1882,9 @@ extension PeekabooBridgeTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
-        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        let client = try await Self.negotiatedTrustedClient(
+            socketPath: socketPath,
+            protocolVersion: Self.legacyUnprojectedVersion)
         let remote = await MainActor.run { RemoteUIAutomationService(client: client) }
         await MainActor.run {
             services.automationStub.clickError = PeekabooError.snapshotStale("window moved")
@@ -1785,8 +1892,11 @@ extension PeekabooBridgeTests {
         do {
             try await remote.click(target: .elementId("B1"), clickType: .single, snapshotId: "S1")
             Issue.record("Expected stale snapshot error")
-        } catch let PeekabooError.snapshotStale(reason) {
-            #expect(reason == "window moved")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.message.contains("window moved"))
+            #expect(failure.causeDescription?.contains("snapshotStale") == true)
         }
 
         let elementActions = await MainActor.run { RemoteElementActionUIAutomationService(client: client) }
@@ -1796,8 +1906,11 @@ extension PeekabooBridgeTests {
         do {
             _ = try await elementActions.setValue(target: "T1", value: .string("hello"), snapshotId: "S1")
             Issue.record("Expected missing snapshot error")
-        } catch let PeekabooError.snapshotNotFound(snapshotId) {
-            #expect(snapshotId == "expired")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.message.contains("expired"))
+            #expect(failure.causeDescription?.contains("snapshotNotFound") == true)
         }
 
         await MainActor.run {
@@ -1806,8 +1919,11 @@ extension PeekabooBridgeTests {
         do {
             _ = try await elementActions.performAction(target: "B404", actionName: "AXPress", snapshotId: "S1")
             Issue.record("Expected missing element error")
-        } catch let PeekabooError.elementNotFound(identifier) {
-            #expect(identifier == "B404")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.message.contains("B404"))
+            #expect(failure.causeDescription?.contains("elementNotFound") == true)
         }
     }
 
@@ -1866,16 +1982,38 @@ final class StubServices: PeekabooBridgeServiceProviding {
     var lastBrowserStatusChannel: String?
     var lastBrowserConnectTarget: (channel: String?, browserURL: String?)?
     var lastBrowserExecute: PeekabooBridgeBrowserExecuteRequest?
+    var lastExpectedBrowserConnectionReceipt: PeekabooBridgeBrowserConnectionReceipt?
+    var browserActionFailure: DesktopActionFailure?
+    var browserRawIsError = false
+    var browserStatusError: (any Error)?
+    var browserExecutionError: (any Error)?
+    var browserExecutionErrorAfterDispatch: (any Error)?
+    var browserCompletedCallCount: Int?
+    var browserDispatchedCallCount: Int?
+    var preservesBrowserReceiptChannel = false
+    var browserResponseContent: [PeekabooBridgeJSONValue] = [
+        .object([
+            "type": .string("text"),
+            "text": .string("ok"),
+        ]),
+    ]
+    var browserConnectionReceipt = PeekabooBridgeBrowserConnectionReceipt(
+        channel: "stable",
+        processIdentifier: 42,
+        processStartIdentity: 10042,
+        bundleIdentifier: "com.google.Chrome",
+        browserVersion: "144.0")
 
     init(
         applications: any ApplicationServiceProtocol = StubApplicationService(),
+        automation: (any UIAutomationServiceProtocol)? = nil,
         windows: any WindowManagementServiceProtocol = StubWindowService(),
         snapshots: any SnapshotManagerProtocol = SnapshotManager(),
         desktopObservation: (any DesktopObservationServiceProtocol)? = nil)
     {
         let desktopObservationStub = StubDesktopObservationService()
         self.screenCapture = self.screenCaptureStub
-        self.automation = self.automationStub
+        self.automation = automation ?? self.automationStub
         self.applications = applications
         self.windows = windows
         self.snapshots = snapshots
@@ -1884,7 +2022,11 @@ final class StubServices: PeekabooBridgeServiceProviding {
     }
 
     func browserStatus(channel: String?) async throws -> PeekabooBridgeBrowserStatus {
+        if let browserStatusError {
+            throw browserStatusError
+        }
         self.lastBrowserStatusChannel = channel
+        let resolvedChannel = channel ?? "stable"
         return PeekabooBridgeBrowserStatus(
             isConnected: true,
             toolCount: 1,
@@ -1894,14 +2036,21 @@ final class StubServices: PeekabooBridgeServiceProviding {
                     bundleIdentifier: "com.google.Chrome",
                     processIdentifier: 42,
                     version: "144.0",
-                    channel: "stable"),
+                    channel: resolvedChannel),
             ],
-            connectionReceipt: PeekabooBridgeBrowserConnectionReceipt(
-                channel: "stable",
-                processIdentifier: 42,
-                processStartIdentity: 10042,
-                bundleIdentifier: "com.google.Chrome",
-                browserVersion: "144.0"))
+            connectionReceipt: self.preservesBrowserReceiptChannel ||
+                self.browserConnectionReceipt.channel == resolvedChannel
+                ? self.browserConnectionReceipt
+                : PeekabooBridgeBrowserConnectionReceipt(
+                    channel: resolvedChannel,
+                    processIdentifier: self.browserConnectionReceipt.processIdentifier,
+                    processStartIdentity: self.browserConnectionReceipt.processStartIdentity,
+                    bundleIdentifier: self.browserConnectionReceipt.bundleIdentifier,
+                    browserURL: self.browserConnectionReceipt.browserURL,
+                    webSocketDebuggerURL: self.browserConnectionReceipt.webSocketDebuggerURL,
+                    devToolsBrowserID: self.browserConnectionReceipt.devToolsBrowserID,
+                    browserVersion: self.browserConnectionReceipt.browserVersion,
+                    protocolVersion: self.browserConnectionReceipt.protocolVersion))
     }
 
     func browserConnect(channel: String?, browserURL: String?) async throws -> PeekabooBridgeBrowserStatus {
@@ -1913,14 +2062,34 @@ final class StubServices: PeekabooBridgeServiceProviding {
     -> PeekabooBridgeBrowserToolResponse {
         self.lastBrowserExecute = request
         return PeekabooBridgeBrowserToolResponse(
-            content: [
-                .object([
-                    "type": .string("text"),
-                    "text": .string("ok"),
-                ]),
-            ],
-            isError: false,
+            content: self.browserResponseContent,
+            isError: self.browserRawIsError,
             meta: nil)
+    }
+
+    func browserExecute(
+        _ request: PeekabooBridgeBrowserExecuteRequest,
+        expectedConnectionReceipt: PeekabooBridgeBrowserConnectionReceipt) async throws
+        -> PeekabooBridgeBrowserExecutionResult
+    {
+        if let browserExecutionError {
+            throw browserExecutionError
+        }
+        self.lastExpectedBrowserConnectionReceipt = expectedConnectionReceipt
+        let response = try await self.browserExecute(request)
+        if let browserExecutionErrorAfterDispatch {
+            throw browserExecutionErrorAfterDispatch
+        }
+        let actionFailure = self.browserActionFailure
+        return PeekabooBridgeBrowserExecutionResult(
+            response: PeekabooBridgeBrowserToolResponse(
+                content: response.content,
+                isError: actionFailure != nil || response.isError,
+                meta: response.meta),
+            connectionReceipt: expectedConnectionReceipt,
+            completedCallCount: self.browserCompletedCallCount ?? request.resolvedCalls.count,
+            dispatchedCallCount: self.browserDispatchedCallCount ?? request.resolvedCalls.count,
+            actionFailure: actionFailure)
     }
 }
 
@@ -1964,17 +2133,18 @@ final class StubDesktopObservationService: DesktopObservationServiceProtocol {
 
     func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
         self.lastRequest = request
+        let outputPath = request.output.saveRawScreenshot ? request.output.path : nil
         return DesktopObservationResult(
             target: ResolvedObservationTarget(kind: .screen(index: 0)),
             capture: CaptureResult(
                 imageData: StubScreenCaptureService.sampleData,
-                savedPath: "/tmp/stub.png",
+                savedPath: outputPath,
                 metadata: CaptureMetadata(
                     size: .init(width: 1, height: 1),
                     mode: .screen,
                     timestamp: Date())),
             elements: nil,
-            files: DesktopObservationFiles(rawScreenshotPath: "/tmp/stub.png"))
+            files: DesktopObservationFiles(rawScreenshotPath: outputPath))
     }
 }
 
@@ -2050,6 +2220,7 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
     ElementActionAutomationServiceProtocol, TargetedFocusedElementServiceProtocol,
     ExactWindowTargetedKeyboardServiceProtocol
 {
+    var dragError: (any Error)?
     let supportsProcessGenerationPinnedHotkeys = true
     let supportsProcessGenerationPinnedTypeActions = true
     let supportsProcessGenerationPinnedClicks = true
@@ -2099,6 +2270,7 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
     private(set) var lastProcessTargetedHotkey: TargetedHotkey?
     private(set) var lastProcessTargetedClick: TargetedClick?
     private(set) var lastProcessTargetedTypeIdentity: ApplicationProcessIdentity?
+    private(set) var lastTypeActions: [TypeAction]?
     private(set) var lastSetValue: SetValue?
     private(set) var lastPerformAction: PerformAction?
     var clickError: (any Error)?
@@ -2114,6 +2286,7 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
     let uiAutomationOutcomeScript = UIAutomationOutcomeScript(
         defaultResponse: .outcome(StubAutomationService.defaultActionOutcome))
     var uiAutomationOutcomeTargetIdentity: DesktopTargetIdentity?
+    var allowsContradictoryOutcomeTargetIdentityForTesting = false
     var actionOutcome = StubAutomationService.defaultActionOutcome {
         didSet {
             self.uiAutomationOutcomeScript.setDefaultOutcome(self.actionOutcome)
@@ -2210,7 +2383,8 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
     func typeActions(_ actions: [TypeAction], cadence _: TypingCadence, snapshotId _: String?) async throws
         -> TypeResult
     {
-        TypeResult(totalCharacters: actions.count, keyPresses: actions.count)
+        self.lastTypeActions = actions
+        return BridgeTestFixtures.typeResult(for: actions)
     }
 
     func typeActions(
@@ -2222,7 +2396,7 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
         if let targetedTypeError {
             throw targetedTypeError
         }
-        return TypeResult(totalCharacters: actions.count, keyPresses: actions.count)
+        return BridgeTestFixtures.typeResult(for: actions)
     }
 
     func typeActions(
@@ -2235,7 +2409,7 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
             throw targetedTypeError
         }
         self.lastProcessTargetedTypeIdentity = expectedProcessIdentity
-        return TypeResult(totalCharacters: actions.count, keyPresses: actions.count)
+        return BridgeTestFixtures.typeResult(for: actions)
     }
 
     func typeActions(
@@ -2256,7 +2430,7 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
             try await Task.sleep(nanoseconds: self.exactKeyboardDelayNanoseconds)
         }
         self.exactKeyboardEvents.append("type-end")
-        return TypeResult(totalCharacters: actions.count, keyPresses: actions.count)
+        return BridgeTestFixtures.typeResult(for: actions)
     }
 
     func hotkey(
@@ -2377,7 +2551,11 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
         WaitForElementResult(found: true, element: nil, waitTime: 0)
     }
 
-    func drag(_: DragOperationRequest) async throws {}
+    func drag(_: DragOperationRequest) async throws {
+        if let dragError {
+            throw dragError
+        }
+    }
 
     func moveMouse(to _: CGPoint, duration _: Int, steps _: Int, profile _: MouseMovementProfile) async throws {}
 
@@ -2391,7 +2569,8 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
 }
 
 @MainActor
-private final class StubNonTargetedAutomationService: UIAutomationServiceProtocol {
+final class StubNonTargetedAutomationService: UIAutomationServiceProtocol {
+    private(set) var actionCount = 0
     func detectElements(in _: Data, snapshotId _: String?, windowContext _: WindowContext?) async throws
         -> ElementDetectionResult
     {
@@ -2408,7 +2587,9 @@ private final class StubNonTargetedAutomationService: UIAutomationServiceProtoco
                 isDialog: false))
     }
 
-    func click(target _: ClickTarget, clickType _: ClickType, snapshotId _: String?) async throws {}
+    func click(target _: ClickTarget, clickType _: ClickType, snapshotId _: String?) async throws {
+        self.actionCount += 1
+    }
 
     func type(text _: String, target _: String?, clearExisting _: Bool, typingDelay _: Int, snapshotId _: String?) async
     throws {}
@@ -2416,7 +2597,7 @@ private final class StubNonTargetedAutomationService: UIAutomationServiceProtoco
     func typeActions(_ actions: [TypeAction], cadence _: TypingCadence, snapshotId _: String?) async throws
         -> TypeResult
     {
-        TypeResult(totalCharacters: actions.count, keyPresses: actions.count)
+        BridgeTestFixtures.typeResult(for: actions)
     }
 
     func scroll(_ request: ScrollRequest) async throws {

@@ -266,15 +266,21 @@ public struct PeekabooBridgeHandshake: Codable, Sendable {
     public let protocolVersion: PeekabooBridgeProtocolVersion
     public let client: PeekabooBridgeClientIdentity
     public let requestedHostKind: PeekabooBridgeHostKind?
+    public let operationClientInstanceID: UUID?
+    public let replacingOperationSessionID: UUID?
 
     public init(
         protocolVersion: PeekabooBridgeProtocolVersion,
         client: PeekabooBridgeClientIdentity,
-        requestedHostKind: PeekabooBridgeHostKind? = nil)
+        requestedHostKind: PeekabooBridgeHostKind? = nil,
+        operationClientInstanceID: UUID? = nil,
+        replacingOperationSessionID: UUID? = nil)
     {
         self.protocolVersion = protocolVersion
         self.client = client
         self.requestedHostKind = requestedHostKind
+        self.operationClientInstanceID = operationClientInstanceID
+        self.replacingOperationSessionID = replacingOperationSessionID
     }
 }
 
@@ -327,6 +333,8 @@ public enum PeekabooBridgeHostCapability {
     public static let safeBackgroundApplicationLaunchNoOp = "safeBackgroundApplicationLaunchNoOp"
     public static let processGenerationPinnedApplicationActivation =
         "processGenerationPinnedApplicationActivation"
+    public static let processGenerationPinnedApplicationHide =
+        "processGenerationPinnedApplicationHide"
     public static let desktopActionOutcomeProjection = "desktopActionOutcomeProjection"
     public static let explicitSnapshotPublication = "explicitSnapshotPublication"
     public static let browserConnectionReceipts = "browserConnectionReceipts"
@@ -353,6 +361,8 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
     public let hostCapabilities: [String]?
     /// Ephemeral identity of the exact listener that served this handshake.
     public let operationAttestation: PeekabooBridgeListenerAttestation?
+    /// Listener-signed, peer-bound replay session for protocol 1.29 requests.
+    public let operationSessionAttestation: PeekabooBridgeOperationSessionAttestation?
 
     public init(
         negotiatedVersion: PeekabooBridgeProtocolVersion,
@@ -364,7 +374,8 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         permissionTags: [String: [PeekabooBridgePermissionKind]] = [:],
         hostIdentity: PeekabooBridgeHostIdentity? = nil,
         hostCapabilities: [String]? = nil,
-        operationAttestation: PeekabooBridgeListenerAttestation? = nil)
+        operationAttestation: PeekabooBridgeListenerAttestation? = nil,
+        operationSessionAttestation: PeekabooBridgeOperationSessionAttestation? = nil)
     {
         self.negotiatedVersion = negotiatedVersion
         self.hostKind = hostKind
@@ -376,6 +387,7 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         self.hostIdentity = hostIdentity
         self.hostCapabilities = hostCapabilities
         self.operationAttestation = operationAttestation
+        self.operationSessionAttestation = operationSessionAttestation
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -389,6 +401,7 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         case hostIdentity
         case hostCapabilities
         case operationAttestation
+        case operationSessionAttestation
     }
 
     public init(from decoder: any Decoder) throws {
@@ -409,6 +422,9 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         self.operationAttestation = try container.decodeIfPresent(
             PeekabooBridgeListenerAttestation.self,
             forKey: .operationAttestation)
+        self.operationSessionAttestation = try container.decodeIfPresent(
+            PeekabooBridgeOperationSessionAttestation.self,
+            forKey: .operationSessionAttestation)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -427,6 +443,9 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
             try container.encode(hostCapabilities, forKey: .hostCapabilities)
         }
         try container.encodeIfPresent(self.operationAttestation, forKey: .operationAttestation)
+        try container.encodeIfPresent(
+            self.operationSessionAttestation,
+            forKey: .operationSessionAttestation)
     }
 }
 
@@ -470,6 +489,7 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
     public let actionFailureHint: String?
     public let actionFailureCauseDescription: String?
     public let actionTargetReceipt: DesktopActionTargetReceipt?
+    public let actionSelectedLeafEvidence: [DesktopSelectedLeafEvidence]?
 
     private enum CodingKeys: String, CodingKey {
         case code
@@ -483,6 +503,7 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         case actionFailureHint
         case actionFailureCauseDescription
         case actionTargetReceipt
+        case actionSelectedLeafEvidence
     }
 
     public init(
@@ -505,6 +526,7 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         self.actionFailureHint = nil
         self.actionFailureCauseDescription = nil
         self.actionTargetReceipt = nil
+        self.actionSelectedLeafEvidence = nil
     }
 
     public init(
@@ -526,6 +548,7 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         self.actionFailureHint = actionFailure.hint
         self.actionFailureCauseDescription = actionFailure.causeDescription
         self.actionTargetReceipt = actionFailure.targetReceipt
+        self.actionSelectedLeafEvidence = actionFailure.selectedLeafEvidence
     }
 
     public init(from decoder: any Decoder) throws {
@@ -550,12 +573,19 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         self.actionTargetReceipt = try container.decodeIfPresent(
             DesktopActionTargetReceipt.self,
             forKey: .actionTargetReceipt)
+        self.actionSelectedLeafEvidence = try container.decodeIfPresent(
+            [DesktopSelectedLeafEvidence].self,
+            forKey: .actionSelectedLeafEvidence)
         if let actionOutcome = self.actionOutcome {
-            guard !actionOutcome.outcome.isConfirmed else {
+            guard !actionOutcome.outcome.isConfirmed,
+                  self.actionSelectedLeafEvidence == nil || actionOutcome.mutationDispatched,
+                  self.actionSelectedLeafEvidence?.isEmpty != true,
+                  self.actionSelectedLeafEvidence?.allSatisfy(\.isCanonical) != false
+            else {
                 throw DecodingError.dataCorruptedError(
                     forKey: .actionOutcome,
                     in: container,
-                    debugDescription: "A Bridge error envelope cannot carry a confirmed desktop action outcome")
+                    debugDescription: "A Bridge error envelope carries inconsistent action failure evidence")
             }
             let expected = actionOutcome.mutationDispatched
             if let encodedOperationMayHaveCompleted,
@@ -570,7 +600,8 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         } else {
             guard self.actionFailureHint == nil,
                   self.actionFailureCauseDescription == nil,
-                  self.actionTargetReceipt == nil
+                  self.actionTargetReceipt == nil,
+                  self.actionSelectedLeafEvidence == nil
             else {
                 throw DecodingError.dataCorruptedError(
                     forKey: .actionOutcome,
@@ -598,6 +629,9 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
             self.actionFailureCauseDescription,
             forKey: .actionFailureCauseDescription)
         try container.encodeIfPresent(self.actionTargetReceipt, forKey: .actionTargetReceipt)
+        try container.encodeIfPresent(
+            self.actionSelectedLeafEvidence,
+            forKey: .actionSelectedLeafEvidence)
     }
 
     public var errorDescription: String? {
@@ -618,7 +652,8 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
             message: self.message,
             hint: self.actionFailureHint,
             causeDescription: self.actionFailureCauseDescription,
-            targetReceipt: self.actionTargetReceipt)
+            targetReceipt: self.actionTargetReceipt,
+            selectedLeafEvidence: self.actionSelectedLeafEvidence)
     }
 }
 

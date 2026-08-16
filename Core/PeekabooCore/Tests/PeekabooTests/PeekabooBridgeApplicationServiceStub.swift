@@ -3,7 +3,9 @@ import PeekabooAutomationKit
 import PeekabooFoundation
 
 @MainActor
-class StubApplicationService: ApplicationServiceProtocol, ApplicationServiceActionResultProviding {
+class StubApplicationService: ApplicationServiceProtocol, ApplicationServiceActionResultProviding,
+    ApplicationServiceTargetedActionResultProviding
+{
     let supportsApplicationLaunchOptions: Bool
     let supportsApplicationRelaunch: Bool
     var supportsProcessGenerationPinnedApplicationQuit: Bool {
@@ -14,13 +16,28 @@ class StubApplicationService: ApplicationServiceProtocol, ApplicationServiceActi
         true
     }
 
+    var supportsProcessGenerationPinnedApplicationHide: Bool {
+        true
+    }
+
+    var supportsSafeBackgroundApplicationLaunchNoOp: Bool {
+        false
+    }
+
     private(set) var relaunchRequests: [ApplicationRelaunchRequest] = []
     private(set) var quitRequests: [ApplicationQuitRequest] = []
     private(set) var activationRequests: [ApplicationActivationRequest] = []
+    private(set) var targetedActivationResultCount = 0
+    private(set) var hideResultCount = 0
+    private(set) var targetedHideResultCount = 0
+    private(set) var targetedHideRequests: [ApplicationHideRequest] = []
     var actionOutcome: DesktopActionOutcome? = .confirmedChange(
         delivery: .init(mechanism: .nativeFramework, mode: .background),
         unitCount: .one)
     var quitResultError: (any Error)?
+    var quitResultPayload = true
+    var targetedHideError: DesktopActionFailure?
+    var relaunchResult: ServiceApplicationInfo?
 
     private let app = ServiceApplicationInfo(
         processIdentifier: 123,
@@ -46,8 +63,8 @@ class StubApplicationService: ApplicationServiceProtocol, ApplicationServiceActi
             metadata: .init(duration: 0))
     }
 
-    func findApplication(identifier _: String) async throws -> ServiceApplicationInfo {
-        self.app
+    func findApplication(identifier: String) async throws -> ServiceApplicationInfo {
+        self.app.withUniqueTestSelectorProof(for: identifier)
     }
 
     func listWindows(for _: String, timeout _: Float?) async throws -> UnifiedToolOutput<ServiceWindowListData> {
@@ -75,6 +92,9 @@ class StubApplicationService: ApplicationServiceProtocol, ApplicationServiceActi
 
     func relaunchApplication(request: ApplicationRelaunchRequest) async throws -> ServiceApplicationInfo {
         self.relaunchRequests.append(request)
+        if let relaunchResult {
+            return relaunchResult
+        }
         return try await self.launchApplication(request: request.launchRequest)
     }
 
@@ -89,7 +109,7 @@ class StubApplicationService: ApplicationServiceProtocol, ApplicationServiceActi
 
     func quitApplication(request: ApplicationQuitRequest) async throws -> Bool {
         self.quitRequests.append(request)
-        return true
+        return self.quitResultPayload
     }
 
     func hideApplication(identifier _: String) async throws {}
@@ -127,6 +147,7 @@ class StubApplicationService: ApplicationServiceProtocol, ApplicationServiceActi
     }
 
     func hideApplicationActionResult(identifier: String) async throws -> DesktopActionResult<Void> {
+        self.hideResultCount += 1
         try await self.hideApplication(identifier: identifier)
         return DesktopActionResult(outcome: self.actionOutcome)
     }
@@ -134,5 +155,77 @@ class StubApplicationService: ApplicationServiceProtocol, ApplicationServiceActi
     func unhideApplicationActionResult(identifier: String) async throws -> DesktopActionResult<Void> {
         try await self.unhideApplication(identifier: identifier)
         return DesktopActionResult(outcome: self.actionOutcome)
+    }
+
+    func activateApplicationTargetedActionResult(
+        request: ApplicationActivationRequest) async throws -> UIAutomationActionResult<Void>
+    {
+        self.targetedActivationResultCount += 1
+        let result = try await self.activateApplicationActionResult(request: request)
+        return try UIAutomationActionResult(
+            payload: result.payload,
+            outcome: result.outcome,
+            targetIdentity: self.targetIdentity())
+    }
+
+    func hideApplicationTargetedActionResult(identifier: String) async throws -> UIAutomationActionResult<Void> {
+        self.targetedHideResultCount += 1
+        let result = try await self.hideApplicationActionResult(identifier: identifier)
+        return try UIAutomationActionResult(
+            payload: result.payload,
+            outcome: result.outcome,
+            targetIdentity: self.targetIdentity())
+    }
+
+    func hideApplicationTargetedActionResult(
+        request: ApplicationHideRequest) async throws -> UIAutomationActionResult<Void>
+    {
+        self.targetedHideResultCount += 1
+        self.targetedHideRequests.append(request)
+        if let targetedHideError {
+            throw targetedHideError
+        }
+        let result = try await self.hideApplicationActionResult(identifier: request.identifier)
+        return try UIAutomationActionResult(
+            payload: result.payload,
+            outcome: result.outcome,
+            targetIdentity: DesktopTargetIdentity(processIdentity: request.expectedIdentity))
+    }
+
+    func hideOtherApplicationsActionResult(identifier: String) async throws -> DesktopActionResult<Void> {
+        try await self.hideOtherApplications(identifier: identifier)
+        return DesktopActionResult(outcome: self.actionOutcome)
+    }
+
+    func showAllApplicationsActionResult() async throws -> DesktopActionResult<Void> {
+        try await self.showAllApplications()
+        return DesktopActionResult(outcome: self.actionOutcome)
+    }
+
+    private func targetIdentity() throws -> DesktopTargetIdentity {
+        guard let processIdentity = self.app.processIdentity else {
+            throw PeekabooError.commandFailed("Stub application has no process-generation identity")
+        }
+        return try DesktopTargetIdentity(processIdentity: processIdentity)
+    }
+}
+
+extension ServiceApplicationInfo {
+    func withUniqueTestSelectorProof(for identifier: String) -> ServiceApplicationInfo {
+        guard let processIdentity = self.processIdentity,
+              let matchKind = ApplicationIdentifierMatcher.matchKind(
+                  for: .init(self),
+                  identifier: identifier)
+        else { return self }
+        return self.withSelectorResolutionProofs([SelectorResolutionProof(
+            scope: .application,
+            normalizedSelector: ApplicationIdentifierMatcher.normalized(identifier),
+            matchKind: matchKind,
+            matchPrecedence: matchKind.precedence,
+            selectedProcessIdentity: processIdentity,
+            candidateSetSHA256: String(repeating: "a", count: 64),
+            candidateCount: 1,
+            winningCandidateCount: 1,
+            hasWinningTie: false)])
     }
 }

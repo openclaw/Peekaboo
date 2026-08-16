@@ -326,12 +326,43 @@ extension PeekabooBridgeClient {
         }
     }
 
-    private func actionResult<Payload: Sendable>(
+    func actionResult<Payload: Sendable>(
         for request: PeekabooBridgeRequest,
         expectedResponse: String,
+        requiresTargetIdentity: Bool = false,
+        timeoutSec: TimeInterval? = nil,
+        operationReceiptRequirement: PeekabooBridgeOperationReceiptRequirement = .whenAvailable,
         extract: (PeekabooBridgeResponse) -> Payload?) async throws -> UIAutomationActionResult<Payload>
     {
-        let reply = try await self.sendCarryingActionOutcome(request)
+        try await self.actionResultWithTransportProvenance(
+            for: request,
+            expectedResponse: expectedResponse,
+            requiresTargetIdentity: requiresTargetIdentity,
+            timeoutSec: timeoutSec,
+            operationReceiptRequirement: operationReceiptRequirement,
+            extract: extract).result
+    }
+
+    func actionResultWithTransportProvenance<Payload: Sendable>(
+        for request: PeekabooBridgeRequest,
+        expectedResponse: String,
+        requiresTargetIdentity: Bool = false,
+        timeoutSec: TimeInterval? = nil,
+        operationReceiptRequirement: PeekabooBridgeOperationReceiptRequirement = .whenAvailable,
+        extract: (PeekabooBridgeResponse) -> Payload?) async throws
+        -> PeekabooBridgeActionResultWithTransportProvenance<Payload>
+    {
+        if requiresTargetIdentity, self.usesExplicitReceiptlessTransport() {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "\(expectedResponse) requires an attested exact-target result.",
+                hint: "Update the Bridge host to protocol 1.29 before retrying this mutation.")
+        }
+        let reply = try await self.sendCarryingActionOutcome(
+            request,
+            timeoutSec: timeoutSec,
+            operationReceiptRequirement: operationReceiptRequirement)
         if case let .error(envelope) = reply.response {
             try Self.throwActionFailureOrEnvelope(envelope)
         }
@@ -340,9 +371,26 @@ extension PeekabooBridgeClient {
                 code: .invalidRequest,
                 message: "Unexpected \(expectedResponse) response")
         }
-        return UIAutomationActionResult(
-            payload: payload,
-            outcome: reply.outcome?.outcome,
-            targetIdentity: reply.targetIdentity)
+        if requiresTargetIdentity, reply.targetIdentity == nil {
+            throw DesktopActionFailure.indeterminate(
+                route: reply.outcome?.outcome.route ?? .bridge,
+                delivery: reply.outcome?.outcome.delivery,
+                evidence: .completionUnknown,
+                unitCount: reply.outcome?.outcome.dispatchState.unitCount,
+                message: "\(expectedResponse) returned without its attested exact target.",
+                hint: "Observe the target before retrying and update the Bridge host.")
+        }
+        return PeekabooBridgeActionResultWithTransportProvenance(
+            result: UIAutomationActionResult(
+                payload: payload,
+                outcome: reply.outcome?.outcome,
+                targetIdentity: reply.targetIdentity,
+                selectedLeafEvidence: reply.selectedLeafEvidence),
+            hasVerifiedOperationReceipt: reply.hasVerifiedOperationReceipt)
     }
+}
+
+struct PeekabooBridgeActionResultWithTransportProvenance<Payload: Sendable>: Sendable {
+    let result: UIAutomationActionResult<Payload>
+    let hasVerifiedOperationReceipt: Bool
 }

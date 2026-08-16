@@ -31,7 +31,11 @@ struct PeekabooBridgeWindowEnumerationTimeoutTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
-        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1)
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 1)
+        _ = try await client.handshake(client: PeekabooBridgeClientIdentity(
+            bundleIdentifier: "dev.peekaboo.window-enumeration-timeout-tests",
+            teamIdentifier: nil,
+            processIdentifier: ProcessInfo.processInfo.processIdentifier))
         let remote = RemoteWindowManagementService(client: client)
         let startedAt = ContinuousClock.now
         let result = try await remote.listWindows(target: .application("Fixture"))

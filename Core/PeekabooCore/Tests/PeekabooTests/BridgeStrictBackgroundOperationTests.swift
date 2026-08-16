@@ -210,6 +210,27 @@ struct BridgeStrictBackgroundOperationTests {
     }
 
     @Test
+    func `current remote exact dialog input rejects dishonest foreground compatibility`() async throws {
+        let client = PeekabooBridgeClient(socketPath: "/nonexistent/peekaboo-test.sock")
+        let service = RemoteDialogService(
+            client: client,
+            capabilities: .init(exactInput: true, backgroundExactInput: true))
+        let request = try DialogInputExecutionRequest(
+            target: .init(processIdentifier: 123, windowID: 700),
+            text: "must not dispatch")
+
+        do {
+            _ = try await service.enterTextForegroundCompatible(request)
+            Issue.record("Expected current background-only exact provider to reject foreground compatibility")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.route == .bridge)
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .runtimeIncompatible)
+            #expect(failure.outcome.dispatchState == .none)
+        }
+    }
+
+    @Test
     func `remote foreground dialog additions refuse before transport when capability is missing`() async throws {
         let client = PeekabooBridgeClient(socketPath: "/nonexistent/peekaboo-test.sock")
         let service = RemoteDialogService(client: client)
@@ -266,6 +287,20 @@ struct BridgeStrictBackgroundOperationTests {
     }
 
     @Test
+    func `remote authority errors retain transport-session refusal semantics`() {
+        for code in [PeekabooBridgeErrorCode.unauthorizedClient, .serverBusy, .timeout] {
+            let failure = RemoteDialogService.preDispatchFailure(for: .init(
+                code: code,
+                message: "Dialog authority unavailable"))
+
+            #expect(failure.outcome.route == .bridge)
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .transportSessionUnavailable)
+            #expect(failure.outcome.dispatchState == .none)
+        }
+    }
+
+    @Test
     func `remote prepared action may-complete errors remain indeterminate and retry unsafe`() {
         let envelope = PeekabooBridgeErrorEnvelope(
             code: .internalError,
@@ -290,7 +325,9 @@ struct BridgeStrictBackgroundOperationTests {
             message: "Dialog input response was lost",
             details: "response lost after keyboard delivery",
             operationMayHaveCompleted: true)
-        let failure = RemoteDialogService.inputActionFailure(for: envelope)
+        let failure = RemoteDialogService.inputActionFailure(
+            for: envelope,
+            delivery: .init(mechanism: .globalEvents, mode: .foreground))
 
         #expect(failure.outcome.route == .bridge)
         #expect(failure.outcome.state == .indeterminate)

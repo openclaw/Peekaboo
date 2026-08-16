@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import PeekabooAutomationKit
 
 struct PeekabooBridgePeerAuditIdentity {
     let token: audit_token_t
@@ -12,7 +13,71 @@ struct PeekabooBridgePeerAuditIdentity {
     }
 }
 
+/// Exact kernel identity captured from one connected UNIX-domain socket peer.
+///
+/// The audit token is deliberately retained only in bounded in-memory operation-session state. It is never encoded,
+/// persisted, or logged.
+struct PeekabooBridgeLivePeerIdentity: Equatable, Hashable, Sendable {
+    let auditToken: Data
+    let processIdentifier: pid_t
+    let processIdentifierVersion: Int32
+    let effectiveUserIdentifier: uid_t
+    let processStartIdentity: UInt64
+    /// Optional only for cold legacy authorization; protocol 1.29 sessions require a stable nonempty kernel hash.
+    let codeSignatureHash: String?
+
+    init(
+        auditIdentity: PeekabooBridgePeerAuditIdentity,
+        processStartIdentity: UInt64,
+        codeSignatureHash: String?)
+    {
+        self.auditToken = auditIdentity.tokenData
+        self.processIdentifier = auditIdentity.processIdentifier
+        self.processIdentifierVersion = auditIdentity.processIdentifierVersion
+        self.effectiveUserIdentifier = auditIdentity.effectiveUserIdentifier
+        self.processStartIdentity = processStartIdentity
+        self.codeSignatureHash = codeSignatureHash
+    }
+
+    init(
+        auditToken: Data,
+        processIdentifier: pid_t,
+        processIdentifierVersion: Int32,
+        effectiveUserIdentifier: uid_t,
+        processStartIdentity: UInt64,
+        codeSignatureHash: String?)
+    {
+        self.auditToken = auditToken
+        self.processIdentifier = processIdentifier
+        self.processIdentifierVersion = processIdentifierVersion
+        self.effectiveUserIdentifier = effectiveUserIdentifier
+        self.processStartIdentity = processStartIdentity
+        self.codeSignatureHash = codeSignatureHash
+    }
+
+    var auditIdentity: PeekabooBridgePeerAuditIdentity? {
+        guard self.auditToken.count == MemoryLayout<audit_token_t>.size else { return nil }
+        var token = audit_token_t()
+        _ = withUnsafeMutableBytes(of: &token) { buffer in
+            self.auditToken.copyBytes(to: buffer)
+        }
+        guard audit_token_to_pid(token) == self.processIdentifier,
+              audit_token_to_pidversion(token) == self.processIdentifierVersion,
+              audit_token_to_euid(token) == self.effectiveUserIdentifier
+        else {
+            return nil
+        }
+        return PeekabooBridgePeerAuditIdentity(
+            token: token,
+            processIdentifier: self.processIdentifier,
+            processIdentifierVersion: self.processIdentifierVersion,
+            effectiveUserIdentifier: self.effectiveUserIdentifier)
+    }
+}
+
 enum PeekabooBridgeSocketIO {
+    typealias ProcessStartIdentityProvider = @Sendable (pid_t) -> UInt64?
+
     static func peerAuditIdentity(fd: Int32) throws -> PeekabooBridgePeerAuditIdentity {
         var token = audit_token_t()
         var size = socklen_t(MemoryLayout<audit_token_t>.size)
@@ -32,6 +97,35 @@ enum PeekabooBridgeSocketIO {
             processIdentifier: processIdentifier,
             processIdentifierVersion: processIdentifierVersion,
             effectiveUserIdentifier: audit_token_to_euid(token))
+    }
+
+    /// Captures the exact peer generation without consulting executable-path metadata.
+    static func livePeerIdentity(
+        fd: Int32,
+        processStartIdentityProvider: ProcessStartIdentityProvider = {
+            SystemIdentityResolver.processStartIdentity($0)
+        },
+        codeSignatureHashProvider: (PeekabooBridgePeerAuditIdentity) -> String? = {
+            PeekabooBridgeCodeSignatureIdentity.codeSignatureHash(auditIdentity: $0)
+        }) throws -> PeekabooBridgeLivePeerIdentity
+    {
+        let auditIdentity = try self.peerAuditIdentity(fd: fd)
+        guard let processStartIdentityBefore = processStartIdentityProvider(auditIdentity.processIdentifier),
+              processStartIdentityBefore > 0
+        else {
+            throw POSIXError(.EPROTO)
+        }
+        let capturedCodeSignatureHash = codeSignatureHashProvider(auditIdentity)
+        let codeSignatureHash = capturedCodeSignatureHash?.isEmpty == false
+            ? capturedCodeSignatureHash
+            : nil
+        guard processStartIdentityProvider(auditIdentity.processIdentifier) == processStartIdentityBefore else {
+            throw POSIXError(.EPROTO)
+        }
+        return PeekabooBridgeLivePeerIdentity(
+            auditIdentity: auditIdentity,
+            processStartIdentity: processStartIdentityBefore,
+            codeSignatureHash: codeSignatureHash)
     }
 
     static func configureConnectedSocket(_ fd: Int32) throws {

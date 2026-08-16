@@ -4,7 +4,6 @@ import Darwin
 import Foundation
 import PeekabooAutomationKit
 import PeekabooFoundation
-import Security
 
 /// Stable process-generation evidence used by protocol 1.29 operation receipts.
 public struct PeekabooBridgeOperationProcessIdentity: Codable, Equatable, Sendable {
@@ -60,6 +59,7 @@ public enum PeekabooBridgeOperationTargetReceipt: Codable, Equatable, Sendable {
     case global
     case process(ApplicationProcessIdentity)
     case window(WindowMutationIdentity)
+    case browser(PeekabooBridgeBrowserConnectionReceipt)
 
     private enum CodingKeys: String, CodingKey {
         case kind
@@ -68,12 +68,14 @@ public enum PeekabooBridgeOperationTargetReceipt: Codable, Equatable, Sendable {
         case windowID
         case capturedBounds
         case isMinimized
+        case browserConnectionReceipt
     }
 
     private enum Kind: String, Codable {
         case global
         case process
         case window
+        case browser
     }
 
     public init(from decoder: any Decoder) throws {
@@ -105,6 +107,17 @@ public enum PeekabooBridgeOperationTargetReceipt: Codable, Equatable, Sendable {
                 ownerProcessStartIdentity: process.processStartIdentity,
                 capturedBounds: capturedBounds,
                 isMinimized: isMinimized))
+        case .browser:
+            let receipt = try container.decode(
+                PeekabooBridgeBrowserConnectionReceipt.self,
+                forKey: .browserConnectionReceipt)
+            guard receipt.isCanonicalExternalTarget else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .browserConnectionReceipt,
+                    in: container,
+                    debugDescription: "Bridge browser target receipt is incomplete or inconsistent")
+            }
+            self = .browser(receipt)
         }
     }
 
@@ -129,6 +142,16 @@ public enum PeekabooBridgeOperationTargetReceipt: Codable, Equatable, Sendable {
             try container.encode(identity.windowID, forKey: .windowID)
             try container.encode(capturedBounds, forKey: .capturedBounds)
             try container.encodeIfPresent(identity.isMinimized, forKey: .isMinimized)
+        case let .browser(receipt):
+            guard receipt.isCanonicalExternalTarget else {
+                throw EncodingError.invalidValue(
+                    receipt,
+                    .init(
+                        codingPath: container.codingPath,
+                        debugDescription: "Bridge browser target receipt is incomplete or inconsistent"))
+            }
+            try container.encode(Kind.browser, forKey: .kind)
+            try container.encode(receipt, forKey: .browserConnectionReceipt)
         }
     }
 
@@ -432,268 +455,142 @@ public struct PeekabooBridgeListenerAttestation: Codable, Equatable, Sendable {
     }
 }
 
-/// One unique, listener-bound operation request.
-public struct PeekabooBridgeAttestedOperationRequest: Codable, Sendable {
-    public let requestID: UUID
-    public let expectedListenerInstanceID: UUID
-    public let client: PeekabooBridgeOperationProcessIdentity
-    public let request: PeekabooBridgeRequest
-
-    public init(
-        requestID: UUID,
-        expectedListenerInstanceID: UUID,
-        client: PeekabooBridgeOperationProcessIdentity,
-        request: PeekabooBridgeRequest)
-    {
-        self.requestID = requestID
-        self.expectedListenerInstanceID = expectedListenerInstanceID
-        self.client = client
-        self.request = request
-    }
-
-    func validatedRequest() throws -> PeekabooBridgeRequest {
-        try self.request.validateAttestedOperationCarriage()
-        return self.request
-    }
-}
-
-extension PeekabooBridgeRequest {
-    fileprivate func validateAttestedOperationCarriage() throws {
-        switch self {
-        case .attestedOperation:
-            throw PeekabooBridgeErrorEnvelope(
-                code: .invalidRequest,
-                message: "Attested Bridge operation requests cannot be nested")
-        case .handshake:
-            throw PeekabooBridgeErrorEnvelope(
-                code: .invalidRequest,
-                message: "Bridge handshakes cannot use operation receipt carriage")
-        case let .projectedAction(payload):
-            let nested = try payload.validatedRequest()
-            if case .attestedOperation = nested {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .invalidRequest,
-                    message: "Attested Bridge operation requests cannot be nested inside action carriage")
-            }
-        case _ where self.mayMutateDesktop:
-            throw PeekabooBridgeErrorEnvelope(
-                code: .invalidRequest,
-                message: "Mutating attested Bridge operations require action outcome carriage")
-        default:
-            break
-        }
-    }
-}
-
-/// Canonical facts signed by the serving listener after one operation reaches a terminal response.
-public struct PeekabooBridgeOperationReceiptPayload: Codable, Equatable, Sendable {
+/// A listener-signed, peer-bound replay domain for a bounded sequence of operations.
+///
+/// The listener identity remains stable for the socket lifetime. Sessions can therefore roll over
+/// without invalidating receipts that an older session is still completing.
+public struct PeekabooBridgeOperationSessionAttestation: Codable, Equatable, Sendable {
     public let schemaVersion: Int
-    public let requestID: UUID
+    public let sessionID: UUID
     public let listenerInstanceID: UUID
     public let listenerPublicKeySHA256: String
-    public let host: PeekabooBridgeOperationProcessIdentity
+    public let clientInstanceID: UUID
     public let client: PeekabooBridgeOperationProcessIdentity
-    public let operation: PeekabooBridgeOperation
-    public let requestSHA256: String
-    public let responseSHA256: String
-    public let target: PeekabooBridgeOperationTargetReceipt?
-    public let focusedElement: FocusedElementIdentity?
-    public let targetAttributionFailure: PeekabooBridgeTargetAttributionFailure?
-    public let targetAttributionEvidence: [PeekabooBridgeOperationTargetEvidence]?
-    public let outcome: DesktopActionOutcome.Projection?
-    public let startedAtUnixMilliseconds: Int64
-    public let completedAtUnixMilliseconds: Int64
-
-    public init(
-        requestID: UUID,
-        listenerInstanceID: UUID,
-        listenerPublicKeySHA256: String,
-        host: PeekabooBridgeOperationProcessIdentity,
-        client: PeekabooBridgeOperationProcessIdentity,
-        operation: PeekabooBridgeOperation,
-        requestSHA256: String,
-        responseSHA256: String,
-        target: PeekabooBridgeOperationTargetReceipt?,
-        focusedElement: FocusedElementIdentity? = nil,
-        targetAttributionFailure: PeekabooBridgeTargetAttributionFailure? = nil,
-        targetAttributionEvidence: [PeekabooBridgeOperationTargetEvidence]? = nil,
-        outcome: DesktopActionOutcome.Projection?,
-        startedAtUnixMilliseconds: Int64,
-        completedAtUnixMilliseconds: Int64)
-    {
-        precondition((target == nil) != (targetAttributionFailure == nil))
-        precondition((targetAttributionFailure == nil) == (targetAttributionEvidence == nil))
-        if focusedElement != nil {
-            guard case .window = target else {
-                preconditionFailure("Focused operation receipt requires an exact-window target")
-            }
-        }
-        self.schemaVersion = 1
-        self.requestID = requestID
-        self.listenerInstanceID = listenerInstanceID
-        self.listenerPublicKeySHA256 = listenerPublicKeySHA256
-        self.host = host
-        self.client = client
-        self.operation = operation
-        self.requestSHA256 = requestSHA256
-        self.responseSHA256 = responseSHA256
-        self.target = target
-        self.focusedElement = focusedElement
-        self.targetAttributionFailure = targetAttributionFailure
-        self.targetAttributionEvidence = targetAttributionEvidence
-        self.outcome = outcome
-        self.startedAtUnixMilliseconds = startedAtUnixMilliseconds
-        self.completedAtUnixMilliseconds = completedAtUnixMilliseconds
-    }
-
-    func validateTargetState() throws {
-        guard (self.target == nil) != (self.targetAttributionFailure == nil) else {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution state")
-        }
-        guard (self.targetAttributionFailure == nil) == (self.targetAttributionEvidence == nil) else {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution evidence state")
-        }
-        guard let target = self.target else {
-            guard self.focusedElement == nil else {
-                throw PeekabooBridgeOperationReceiptError.receiptMismatch("failed target focus")
-            }
-            return
-        }
-        let identity = try self.resolvedTargetIdentity()
-        if target != .global, identity == nil {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch("stable target identity")
-        }
-    }
-
-    func resolvedTargetIdentity() throws -> DesktopTargetIdentity? {
-        guard let target = self.target else { return nil }
-        switch target {
-        case .global:
-            guard self.focusedElement == nil else {
-                throw PeekabooBridgeOperationReceiptError.receiptMismatch("global target focus")
-            }
-            return nil
-        case let .process(process):
-            guard self.focusedElement == nil else {
-                throw PeekabooBridgeOperationReceiptError.receiptMismatch("process target focus")
-            }
-            return try DesktopTargetIdentity(processIdentity: process)
-        case let .window(window):
-            return try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
-                PeekabooBridgeOperationTargetEvidenceAdapter.exactWindow(
-                    identity: window,
-                    bounds: window.capturedBounds ?? .null,
-                    focusedElement: self.focusedElement),
-            ])
-        }
-    }
-}
-
-/// Durable proof emitted by one listener. The signature covers every payload field.
-public struct PeekabooBridgeOperationReceipt: Codable, Equatable, Sendable {
-    public let payload: PeekabooBridgeOperationReceiptPayload
+    public let maximumRequestCount: Int
+    public let remainingClaimCount: Int
+    public let predecessorSessionID: UUID?
+    public let createdAtUnixMilliseconds: Int64
     public let signature: Data
 
-    public init(payload: PeekabooBridgeOperationReceiptPayload, signature: Data) {
-        self.payload = payload
+    init(
+        sessionID: UUID,
+        listenerInstanceID: UUID,
+        listenerPublicKeySHA256: String,
+        clientInstanceID: UUID,
+        client: PeekabooBridgeOperationProcessIdentity,
+        maximumRequestCount: Int,
+        remainingClaimCount: Int,
+        predecessorSessionID: UUID?,
+        createdAtUnixMilliseconds: Int64,
+        signature: Data)
+    {
+        self.schemaVersion = 1
+        self.sessionID = sessionID
+        self.listenerInstanceID = listenerInstanceID
+        self.listenerPublicKeySHA256 = listenerPublicKeySHA256
+        self.clientInstanceID = clientInstanceID
+        self.client = client
+        self.maximumRequestCount = maximumRequestCount
+        self.remainingClaimCount = remainingClaimCount
+        self.predecessorSessionID = predecessorSessionID
+        self.createdAtUnixMilliseconds = createdAtUnixMilliseconds
         self.signature = signature
     }
 
-    public func validateSignature(publicKey: Data) throws {
-        try self.payload.validateTargetState()
+    public func validateSignature(listenerAttestation: PeekabooBridgeListenerAttestation) throws {
+        try listenerAttestation.validateSignature()
+        guard self.schemaVersion == 1,
+              self.listenerInstanceID == listenerAttestation.listenerInstanceID,
+              self.listenerPublicKeySHA256 == PeekabooBridgeOperationReceiptCoding.sha256(
+                  listenerAttestation.publicKey),
+              self.client.processIdentifier > 0,
+              self.client.processStartIdentity > 0,
+              !self.client.codeSignatureHash.isEmpty,
+              self.maximumRequestCount > 0,
+              self.remainingClaimCount >= 0,
+              self.remainingClaimCount <= self.maximumRequestCount,
+              self.predecessorSessionID != self.sessionID,
+              self.createdAtUnixMilliseconds > 0
+        else {
+            throw PeekabooBridgeOperationReceiptError.invalidOperationSessionAttestation
+        }
         let key: Curve25519.Signing.PublicKey
         do {
-            key = try Curve25519.Signing.PublicKey(rawRepresentation: publicKey)
+            key = try Curve25519.Signing.PublicKey(rawRepresentation: listenerAttestation.publicKey)
         } catch {
             throw PeekabooBridgeOperationReceiptError.invalidListenerAttestation
         }
         guard try key.isValidSignature(
             self.signature,
-            for: PeekabooBridgeOperationReceiptCoding.canonicalData(self.payload))
+            for: PeekabooBridgeOperationReceiptCoding.canonicalData(self.unsignedPayload))
         else {
-            throw PeekabooBridgeOperationReceiptError.invalidOperationSignature
+            throw PeekabooBridgeOperationReceiptError.invalidOperationSessionSignature
         }
+    }
+
+    var unsignedPayload: UnsignedPayload {
+        UnsignedPayload(
+            schemaVersion: self.schemaVersion,
+            sessionID: self.sessionID,
+            listenerInstanceID: self.listenerInstanceID,
+            listenerPublicKeySHA256: self.listenerPublicKeySHA256,
+            clientInstanceID: self.clientInstanceID,
+            client: self.client,
+            maximumRequestCount: self.maximumRequestCount,
+            remainingClaimCount: self.remainingClaimCount,
+            predecessorSessionID: self.predecessorSessionID,
+            createdAtUnixMilliseconds: self.createdAtUnixMilliseconds)
+    }
+
+    struct UnsignedPayload: Codable, Equatable, Sendable {
+        let schemaVersion: Int
+        let sessionID: UUID
+        let listenerInstanceID: UUID
+        let listenerPublicKeySHA256: String
+        let clientInstanceID: UUID
+        let client: PeekabooBridgeOperationProcessIdentity
+        let maximumRequestCount: Int
+        let remainingClaimCount: Int
+        let predecessorSessionID: UUID?
+        let createdAtUnixMilliseconds: Int64
     }
 }
 
-/// Opt-in audit export that makes both signed digests independently reproducible.
+/// Lossless wire representation of a protocol-1.29 operation sequence number.
 ///
-/// Unlike the privacy-minimized host archive, this bundle contains the complete canonical request
-/// and response bytes. Callers must treat it as sensitive command data.
-public struct PeekabooBridgeOperationReceiptBundle: Codable, Equatable, Sendable {
-    public let operationAttestation: PeekabooBridgeListenerAttestation
-    public let receipt: PeekabooBridgeOperationReceipt
-    public let canonicalListenerAttestationPayload: Data
-    public let canonicalReceiptPayload: Data
-    public let canonicalRequest: Data
-    public let canonicalResponse: Data
+/// JSON numbers do not preserve every `UInt64`, so the canonical wire value is a decimal string.
+public struct PeekabooBridgeOperationSessionSequence: Codable, Equatable, Hashable, Sendable, Comparable {
+    public let value: UInt64
 
-    public init(
-        operationAttestation: PeekabooBridgeListenerAttestation,
-        receipt: PeekabooBridgeOperationReceipt,
-        canonicalListenerAttestationPayload: Data,
-        canonicalReceiptPayload: Data,
-        canonicalRequest: Data,
-        canonicalResponse: Data)
-    {
-        self.operationAttestation = operationAttestation
-        self.receipt = receipt
-        self.canonicalListenerAttestationPayload = canonicalListenerAttestationPayload
-        self.canonicalReceiptPayload = canonicalReceiptPayload
-        self.canonicalRequest = canonicalRequest
-        self.canonicalResponse = canonicalResponse
+    public init(_ value: UInt64) {
+        self.value = value
     }
 
-    public func validate() throws {
-        guard try self.canonicalListenerAttestationPayload == (PeekabooBridgeOperationReceiptCoding.canonicalData(
-            self.operationAttestation.unsignedPayload)),
-            try self.canonicalReceiptPayload == (PeekabooBridgeOperationReceiptCoding.canonicalData(
-                self.receipt.payload))
-        else {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch("the exported signature payload bytes")
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let decimal = try container.decode(String.self)
+        guard let value = PeekabooBridgeOperationReceiptCoding.uint64(decimal: decimal) else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Bridge operation session sequence is not canonical")
         }
-        try self.operationAttestation.validateSignature()
-        try self.receipt.validateSignature(publicKey: self.operationAttestation.publicKey)
-        let request: PeekabooBridgeRequest
-        let response: PeekabooBridgeResponse
-        do {
-            request = try JSONDecoder.peekabooBridgeDecoder().decode(
-                PeekabooBridgeRequest.self,
-                from: self.canonicalRequest)
-            response = try JSONDecoder.peekabooBridgeDecoder().decode(
-                PeekabooBridgeResponse.self,
-                from: self.canonicalResponse)
-            try request.validateAttestedOperationCarriage()
-        } catch {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch("the exported request or response bytes")
-        }
-        let payload = self.receipt.payload
-        guard try self.canonicalRequest == PeekabooBridgeOperationReceiptCoding.canonicalData(request),
-              try self.canonicalResponse == PeekabooBridgeOperationReceiptCoding.canonicalData(response),
-              payload.schemaVersion == 1,
-              payload.listenerInstanceID == self.operationAttestation.listenerInstanceID,
-              self.receipt.payload.listenerPublicKeySHA256 == PeekabooBridgeOperationReceiptCoding.sha256(
-                  self.operationAttestation.publicKey),
-              payload.host == self.operationAttestation.host,
-              payload.client.processIdentifier > 0,
-              payload.client.processStartIdentity > 0,
-              !payload.client.codeSignatureHash.isEmpty,
-              payload.operation == request.operation,
-              payload.requestSHA256 == PeekabooBridgeOperationReceiptCoding.sha256(
-                  self.canonicalRequest),
-              payload.responseSHA256 == PeekabooBridgeOperationReceiptCoding.sha256(self.canonicalResponse),
-              payload.outcome == PeekabooBridgeOperationReceiptSemantics.outcome(in: response),
-              payload.startedAtUnixMilliseconds > 0,
-              payload.completedAtUnixMilliseconds >= payload.startedAtUnixMilliseconds
-        else {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch("the exported verification bundle")
-        }
-        try PeekabooBridgeOperationReceiptSemantics.validateTargetAttribution(
-            payload,
-            request: request,
-            response: response)
+        self.init(value)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(String(self.value))
+    }
+
+    public static func < (
+        lhs: PeekabooBridgeOperationSessionSequence,
+        rhs: PeekabooBridgeOperationSessionSequence) -> Bool
+    {
+        lhs.value < rhs.value
     }
 }
+
+// One unique, listener-bound operation request.
 
 public struct PeekabooBridgeAttestedOperationResponse: Codable, Sendable {
     public let response: PeekabooBridgeResponse
@@ -705,14 +602,149 @@ public struct PeekabooBridgeAttestedOperationResponse: Codable, Sendable {
     }
 }
 
-enum PeekabooBridgeOperationReceiptError: Error, LocalizedError, Equatable {
+/// Listener-signed proof that an operation was refused before dispatch and must use a successor session.
+public struct PeekabooBridgeOperationSessionRefusal: Codable, Equatable, Sendable {
+    public enum Disposition: String, Codable, Sendable {
+        case sessionRolloverRequired = "session_rollover_required"
+        case sessionRolloverUnavailable = "session_rollover_unavailable"
+    }
+
+    public let payload: Payload
+    public let signature: Data
+
+    public init(payload: Payload, signature: Data) {
+        self.payload = payload
+        self.signature = signature
+    }
+
+    public func validate(
+        listenerAttestation: PeekabooBridgeListenerAttestation,
+        predecessorSession: PeekabooBridgeOperationSessionAttestation,
+        request: PeekabooBridgeAttestedOperationRequest) throws
+    {
+        try listenerAttestation.validateSignature()
+        try predecessorSession.validateSignature(listenerAttestation: listenerAttestation)
+        if let successor = self.payload.successorSessionAttestation {
+            try successor.validateSignature(listenerAttestation: listenerAttestation)
+        }
+        try request.validateEnvelope()
+        guard self.payload.schemaVersion == 1,
+              self.payload.listenerInstanceID == listenerAttestation.listenerInstanceID,
+              self.payload.listenerPublicKeySHA256 == PeekabooBridgeOperationReceiptCoding.sha256(
+                  listenerAttestation.publicKey),
+              self.payload.sessionID == predecessorSession.sessionID,
+              self.payload.clientInstanceID == predecessorSession.clientInstanceID,
+              self.payload.client == predecessorSession.client,
+              self.payload.requestID == request.requestID,
+              self.payload.sessionID == request.sessionID,
+              self.payload.sessionSequence == request.sessionSequence,
+              self.payload.clientInstanceID == request.clientInstanceID,
+              self.payload.client == request.client,
+              request.expectedListenerInstanceID == listenerAttestation.listenerInstanceID,
+              self.payload.operation == request.request.operation,
+              try self.payload.requestSHA256 == PeekabooBridgeOperationReceiptCoding.sha256(request.request),
+              try self.payload.attestedRequestSHA256 == PeekabooBridgeOperationReceiptCoding.sha256(request),
+              self.payload.hasValidSuccessorState(predecessorSession: predecessorSession),
+              !self.payload.mutationDispatched,
+              self.payload.retrySafe,
+              self.payload.refusedAtUnixMilliseconds > 0
+        else {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch("the operation session rollover refusal")
+        }
+        let key: Curve25519.Signing.PublicKey
+        do {
+            key = try Curve25519.Signing.PublicKey(rawRepresentation: listenerAttestation.publicKey)
+        } catch {
+            throw PeekabooBridgeOperationReceiptError.invalidListenerAttestation
+        }
+        guard try key.isValidSignature(
+            self.signature,
+            for: PeekabooBridgeOperationReceiptCoding.canonicalData(self.payload))
+        else {
+            throw PeekabooBridgeOperationReceiptError.invalidOperationSessionSignature
+        }
+    }
+
+    public struct Payload: Codable, Equatable, Sendable {
+        public let schemaVersion: Int
+        public let listenerInstanceID: UUID
+        public let listenerPublicKeySHA256: String
+        public let sessionID: UUID
+        public let sessionSequence: PeekabooBridgeOperationSessionSequence
+        public let requestID: UUID
+        public let clientInstanceID: UUID
+        public let client: PeekabooBridgeOperationProcessIdentity
+        public let operation: PeekabooBridgeOperation
+        public let requestSHA256: String
+        public let attestedRequestSHA256: String
+        public let successorSessionAttestation: PeekabooBridgeOperationSessionAttestation?
+        public let disposition: Disposition
+        public let mutationDispatched: Bool
+        public let retrySafe: Bool
+        public let refusedAtUnixMilliseconds: Int64
+
+        init(
+            listenerInstanceID: UUID,
+            listenerPublicKeySHA256: String,
+            sessionID: UUID,
+            sessionSequence: PeekabooBridgeOperationSessionSequence,
+            requestID: UUID,
+            clientInstanceID: UUID,
+            client: PeekabooBridgeOperationProcessIdentity,
+            operation: PeekabooBridgeOperation,
+            requestSHA256: String,
+            attestedRequestSHA256: String,
+            disposition: Disposition,
+            successorSessionAttestation: PeekabooBridgeOperationSessionAttestation?,
+            refusedAtUnixMilliseconds: Int64)
+        {
+            self.schemaVersion = 1
+            self.listenerInstanceID = listenerInstanceID
+            self.listenerPublicKeySHA256 = listenerPublicKeySHA256
+            self.sessionID = sessionID
+            self.sessionSequence = sessionSequence
+            self.requestID = requestID
+            self.clientInstanceID = clientInstanceID
+            self.client = client
+            self.operation = operation
+            self.requestSHA256 = requestSHA256
+            self.attestedRequestSHA256 = attestedRequestSHA256
+            self.disposition = disposition
+            self.successorSessionAttestation = successorSessionAttestation
+            self.mutationDispatched = false
+            self.retrySafe = true
+            self.refusedAtUnixMilliseconds = refusedAtUnixMilliseconds
+        }
+
+        fileprivate func hasValidSuccessorState(
+            predecessorSession: PeekabooBridgeOperationSessionAttestation) -> Bool
+        {
+            switch (self.disposition, self.successorSessionAttestation) {
+            case let (.sessionRolloverRequired, successor?):
+                successor.predecessorSessionID == predecessorSession.sessionID &&
+                    successor.clientInstanceID == predecessorSession.clientInstanceID &&
+                    successor.client == predecessorSession.client
+            case (.sessionRolloverUnavailable, nil):
+                true
+            default:
+                false
+            }
+        }
+    }
+}
+
+enum PeekabooBridgeOperationReceiptError: Error, LocalizedError, Equatable, Sendable {
     case invalidListenerAttestation
     case invalidListenerSignature
+    case invalidOperationSessionAttestation
+    case invalidOperationSessionSignature
+    case invalidOperationSessionConfiguration
     case listenerInstanceMismatch
+    case operationSessionMismatch
+    case operationSessionRegistryExhausted
     case peerIdentityMismatch
     case clientIdentityMismatch
     case replayedRequest
-    case replayFenceExhausted
     case invalidOperationSignature
     case receiptMismatch(String)
     case unsafeArchive(String)
@@ -724,16 +756,24 @@ enum PeekabooBridgeOperationReceiptError: Error, LocalizedError, Equatable {
             "Bridge listener attestation is incomplete or malformed"
         case .invalidListenerSignature:
             "Bridge listener attestation signature is invalid"
+        case .invalidOperationSessionAttestation:
+            "Bridge operation session attestation is incomplete or malformed"
+        case .invalidOperationSessionSignature:
+            "Bridge operation session attestation or rollover signature is invalid"
+        case .invalidOperationSessionConfiguration:
+            "Bridge operation session capacity and retention limits are invalid"
         case .listenerInstanceMismatch:
             "Bridge listener instance changed after handshake"
+        case .operationSessionMismatch:
+            "Bridge operation request does not match its peer-bound session"
+        case .operationSessionRegistryExhausted:
+            "Bridge operation session registry is at capacity"
         case .peerIdentityMismatch:
             "Connected Bridge peer does not match the attested process generation"
         case .clientIdentityMismatch:
             "Bridge request client identity does not match the connected peer"
         case .replayedRequest:
             "Bridge operation request ID was already used by this listener"
-        case .replayFenceExhausted:
-            "Bridge listener replay fence reached its bounded capacity; restart the listener"
         case .invalidOperationSignature:
             "Bridge operation receipt signature is invalid"
         case let .receiptMismatch(field):
@@ -747,6 +787,8 @@ enum PeekabooBridgeOperationReceiptError: Error, LocalizedError, Equatable {
 }
 
 enum PeekabooBridgeOperationReceiptCoding {
+    private static let requestIDDomain = Data("peekaboo.bridge.operation-request.v1\0".utf8)
+
     static func canonicalData(_ value: some Encodable) throws -> Data {
         let encoder = JSONEncoder.peekabooBridgeEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -774,300 +816,123 @@ enum PeekabooBridgeOperationReceiptCoding {
         else { return nil }
         return value
     }
-}
 
-enum PeekabooBridgeOperationReceiptSemantics {
-    static func outcome(in response: PeekabooBridgeResponse) -> DesktopActionOutcome.Projection? {
-        switch response {
-        case let .projectedAction(payload): payload.outcome
-        case let .error(envelope): envelope.actionOutcome
-        default: nil
-        }
-    }
-
-    static func validateTargetAttribution(
-        _ payload: PeekabooBridgeOperationReceiptPayload,
-        request: PeekabooBridgeRequest,
-        response: PeekabooBridgeResponse) throws
+    /// Derives an RFC 9562 version-8 UUID for diagnostics and archive correlation.
+    ///
+    /// Replay protection keys the complete `(sessionID, sequence)` tuple; the UUID is never used
+    /// as a lossy substitute for that tuple.
+    static func deterministicRequestID(
+        sessionID: UUID,
+        sequence: PeekabooBridgeOperationSessionSequence) -> UUID
     {
-        try payload.validateTargetState()
-        try self.validateReceiptCarriage(payload, request: request, response: response)
-        guard let failure = payload.targetAttributionFailure else {
-            try self.validateSuccessfulTargetAttribution(
-                payload,
-                request: request,
-                response: response)
-            return
-        }
-        try self.validateFailedTargetAttribution(
-            payload,
-            failure: failure,
-            request: request,
-            response: response)
-    }
-
-    static func validateReceiptCarriage(
-        _ payload: PeekabooBridgeOperationReceiptPayload,
-        request: PeekabooBridgeRequest,
-        response: PeekabooBridgeResponse) throws
-    {
-        do {
-            try request.validateAttestedOperationCarriage()
-        } catch {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch("attested request carriage")
-        }
-        if request.mayMutateDesktop {
-            guard case .projectedAction = request,
-                  case let .projectedAction(projected) = response,
-                  let outcome = projected.outcome,
-                  outcome.route == .bridge,
-                  payload.outcome == outcome,
-                  self.response(projected.response, matches: request.operation)
-            else {
-                throw PeekabooBridgeOperationReceiptError.receiptMismatch("mutating action outcome carriage")
-            }
-        }
-        try self.validateResponseOutcomeConsistency(response)
-    }
-
-    private static func response(
-        _ response: PeekabooBridgeResponse,
-        matches operation: PeekabooBridgeOperation) -> Bool
-    {
-        if case .error = response {
-            return true
-        }
-        switch operation {
-        case .browserExecute:
-            if case .browserToolResponse = response {
-                return true
-            }
-        case .detectElements, .inspectAccessibilityTree:
-            if case .elementDetection = response {
-                return true
-            }
-        case .desktopObservation:
-            if case .desktopObservation = response {
-                return true
-            }
-        case .typeActions, .targetedTypeActions, .exactWindowTargetedTypeActions:
-            if case .typeResult = response {
-                return true
-            }
-        case .setValue, .performAction:
-            if case .elementActionResult = response {
-                return true
-            }
-        case .launchApplication, .launchApplicationWithOptions, .relaunchApplicationWithOptions:
-            if case .application = response {
-                return true
-            }
-        case .quitApplication:
-            if case .bool = response {
-                return true
-            }
-        case .focusWindow, .moveWindow, .resizeWindow, .setWindowBounds, .closeWindow,
-             .backgroundCloseWindow, .minimizeWindow, .restoreWindow, .maximizeWindow:
-            if case .window = response {
-                return true
-            }
-            if case .ok = response {
-                return true
-            }
-        case .clickMenuBarItemNamed, .clickMenuBarItemIndex:
-            if case .clickResult = response {
-                return true
-            }
-        case .dialogClickButton, .backgroundDialogClickButton, .dialogEnterText, .dialogHandleFile,
-             .dialogDismiss, .exactDialogClickButton, .exactDialogDismiss, .exactDialogEnterText,
-             .exactDialogForceDismiss:
-            if case .dialogResult = response {
-                return true
-            }
-        default:
-            if case .ok = response {
-                return true
-            }
-        }
-        return false
-    }
-
-    private static func validateSuccessfulTargetAttribution(
-        _ payload: PeekabooBridgeOperationReceiptPayload,
-        request: PeekabooBridgeRequest,
-        response: PeekabooBridgeResponse) throws
-    {
-        do {
-            _ = try PeekabooBridgeOperationTargetAttribution.resolveRequest(request)
-        } catch {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                "successful request target contract")
-        }
-        let signedIdentity = try payload.resolvedTargetIdentity()
-        let resolvedIdentity: DesktopTargetIdentity?
-        do {
-            resolvedIdentity = try PeekabooBridgeOperationTargetAttribution.resolve(
-                request: request,
-                response: response,
-                handledTarget: signedIdentity)
-        } catch {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                "canonical target attribution evidence")
-        }
-        let resolvedTarget = PeekabooBridgeResolvedOperationTarget(resolvedIdentity)
-        guard payload.target == resolvedTarget.target,
-              payload.focusedElement == resolvedTarget.focusedElement
-        else {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                "canonical target attribution")
-        }
-    }
-
-    private static func validateFailedTargetAttribution(
-        _ payload: PeekabooBridgeOperationReceiptPayload,
-        failure: PeekabooBridgeTargetAttributionFailure,
-        request: PeekabooBridgeRequest,
-        response: PeekabooBridgeResponse) throws
-    {
-        let envelope: PeekabooBridgeErrorEnvelope? = switch response {
-        case let .error(envelope): envelope
-        case let .projectedAction(projected):
-            if case let .error(envelope) = projected.response {
-                envelope
-            } else {
-                nil
-            }
-        default: nil
-        }
-        guard envelope?.context == "bridge_target_attribution:\(failure.code.rawValue)" else {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution failure response")
-        }
-        guard let envelope else {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution error envelope")
-        }
-        try self.validateFailureResponseSemantics(
-            failure,
-            request: request,
-            envelope: envelope)
-        guard let signedEvidence = payload.targetAttributionEvidence else {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution failure evidence")
-        }
-        let requestEvidence = request.operationTargetEvidence.map(PeekabooBridgeOperationTargetEvidence.init)
-        guard Array(signedEvidence.prefix(requestEvidence.count)) == requestEvidence else {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution request evidence")
-        }
-        switch failure.stage {
-        case .preDispatch:
-            guard signedEvidence == requestEvidence else {
-                throw PeekabooBridgeOperationReceiptError.receiptMismatch("pre-dispatch target evidence")
-            }
-            do {
-                _ = try PeekabooBridgeOperationTargetAttribution.resolveRequest(request)
-                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                    "claimed pre-dispatch target attribution failure")
-            } catch let error as DesktopTargetIdentityError {
-                guard PeekabooBridgeTargetAttributionFailure.Code(error) == failure.code else {
-                    throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution failure code")
-                }
-            }
-            return
-        case .postExecution:
-            do {
-                _ = try PeekabooBridgeOperationTargetAttribution.resolveRequest(request)
-            } catch {
-                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                    "post-execution request target evidence")
-            }
-        }
-        do {
-            _ = try PeekabooBridgeOperationTargetAttribution.resolveEvidence(
-                request: request,
-                evidence: signedEvidence.map(\.desktopEvidence))
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                "claimed target attribution failure")
-        } catch let error as DesktopTargetIdentityError {
-            guard PeekabooBridgeTargetAttributionFailure.Code(error) == failure.code else {
-                throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution failure code")
-            }
-        }
-    }
-
-    private static func validateFailureResponseSemantics(
-        _ failure: PeekabooBridgeTargetAttributionFailure,
-        request: PeekabooBridgeRequest,
-        envelope: PeekabooBridgeErrorEnvelope) throws
-    {
-        guard request.mayMutateDesktop else {
-            guard envelope.code == .invalidRequest,
-                  envelope.actionOutcome == nil
-            else {
-                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                    "read-only target attribution failure semantics")
-            }
-            return
-        }
-        guard let outcome = envelope.actionOutcome?.outcome,
-              outcome.route == .bridge
-        else {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                "mutating target attribution failure outcome")
-        }
-        if failure.stage == .preDispatch || !outcome.dispatchState.mutationDispatched {
-            guard envelope.code == .invalidRequest,
-                  outcome.state == .refused,
-                  outcome.evidence == .requestRefused,
-                  outcome.dispatchState == .none,
-                  outcome.retrySafety == .safe,
-                  outcome.refusalReason == .invalidRequest
-            else {
-                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                    "retry-safe target attribution refusal")
-            }
-        } else {
-            guard envelope.code == .internalError,
-                  outcome.state == .indeterminate,
-                  outcome.evidence == .completionUnknown,
-                  outcome.dispatchState.mutationDispatched,
-                  outcome.retrySafety == .unsafe
-            else {
-                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                    "retry-unsafe target attribution failure")
-            }
-        }
-    }
-
-    private static func validateResponseOutcomeConsistency(
-        _ response: PeekabooBridgeResponse) throws
-    {
-        guard case let .projectedAction(projected) = response,
-              case let .error(envelope) = projected.response
-        else { return }
-        guard projected.outcome == envelope.actionOutcome else {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                "projected error outcome")
-        }
+        let sessionBytes = withUnsafeBytes(of: sessionID.uuid) { Data($0) }
+        var bigEndianSequence = sequence.value.bigEndian
+        let sequenceBytes = withUnsafeBytes(of: &bigEndianSequence) { Data($0) }
+        var input = self.requestIDDomain
+        input.append(sessionBytes)
+        input.append(sequenceBytes)
+        var bytes = Array(SHA256.hash(data: input).prefix(16))
+        bytes[6] = (bytes[6] & 0x0F) | 0x80
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        return UUID(uuid: (
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15]))
     }
 }
 
-/// Ephemeral signer, replay fence, and private durable archive for one listening socket lifetime.
+/// Ephemeral listener signer, bounded session replay fences, and private durable receipt archive.
 final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
+    struct SessionAuthorization: Sendable {
+        let peer: PeekabooBridgePeer
+        let pin: SessionAuthorizationPin
+    }
+
+    final class SessionAuthorizationPin: @unchecked Sendable {
+        private let lock = NSLock()
+        private var authority: PeekabooBridgeOperationReceiptAuthority?
+        private let sessionID: UUID
+
+        init(authority: PeekabooBridgeOperationReceiptAuthority, sessionID: UUID) {
+            self.authority = authority
+            self.sessionID = sessionID
+        }
+
+        deinit {
+            self.release()
+        }
+
+        func release() {
+            let authority = self.lock.withLock { () -> PeekabooBridgeOperationReceiptAuthority? in
+                defer { self.authority = nil }
+                return self.authority
+            }
+            authority?.releaseAuthorizationPin(sessionID: self.sessionID)
+        }
+    }
+
     private static let defaultMaximumClaimCount = 16384
+    private static let defaultMaximumSessionCount = 64
+    private static let defaultMaximumActiveSessionCountPerPeer = 4
+    private static let defaultRetainedRetiredSessionCount = 16
     private static let retainedListenerDirectoryCount = 16
 
     let attestation: PeekabooBridgeListenerAttestation
 
     private let privateKey: Curve25519.Signing.PrivateKey
     private let archiveDirectory: URL
+    private let sessionArchiveRoot: URL
+    private let archiveTrashRoot: URL
     private let maximumClaimCount: Int
+    private let maximumSessionCount: Int
+    private let maximumActiveSessionCount: Int
+    private let maximumActiveSessionCountPerPeer: Int
+    private let retainedRetiredSessionCount: Int
+    private let archiveMaintenance: PeekabooBridgeOperationReceiptArchiveMaintenance
+    private let sessionAttestationWriter: @Sendable (Data, URL) throws -> Void
     private let lock = NSLock()
-    private var claimedRequestIDs: Set<UUID> = []
+    private let signingLock = NSLock()
+    private var sessions: [UUID: OperationSessionState] = [:]
+    private var sessionCreations: [OperationSessionCreationKey: OperationSessionCreationReservation] = [:]
+    private var sessionOrdinal: UInt64 = 0
+
+    private enum OperationSessionCreationAction {
+        case immediate(PeekabooBridgeOperationSessionAttestation)
+        case wait(OperationSessionCreationReservation)
+        case persist(OperationSessionCreationReservation)
+        case archiveMaintenanceRequired
+        case failure(PeekabooBridgeOperationReceiptError)
+    }
+
+    private enum OperationSessionClaimPreparation {
+        case accepted(PeekabooBridgeOperationSessionClaim)
+        case rollover(
+            predecessor: PeekabooBridgeOperationSessionAttestation,
+            creation: OperationSessionCreationAction)
+    }
 
     init(
         socketPath: String,
-        maximumClaimCount: Int = PeekabooBridgeOperationReceiptAuthority.defaultMaximumClaimCount) throws
+        maximumClaimCount: Int = PeekabooBridgeOperationReceiptAuthority.defaultMaximumClaimCount,
+        maximumSessionCount: Int = PeekabooBridgeOperationReceiptAuthority.defaultMaximumSessionCount,
+        maximumActiveSessionCountPerPeer: Int =
+            PeekabooBridgeOperationReceiptAuthority.defaultMaximumActiveSessionCountPerPeer,
+        retainedRetiredSessionCount: Int =
+            PeekabooBridgeOperationReceiptAuthority.defaultRetainedRetiredSessionCount,
+        archiveFileSystem: PeekabooBridgeOperationReceiptArchiveFileSystem = .live,
+        sessionAttestationWriter: @escaping @Sendable (Data, URL) throws -> Void = {
+            try PeekabooBridgePrivateReceiptArchive.writeAtomically($0, to: $1)
+        }) throws
     {
-        guard maximumClaimCount > 0 else {
-            throw PeekabooBridgeOperationReceiptError.replayFenceExhausted
+        guard maximumClaimCount > 0,
+              maximumClaimCount <= Self.defaultMaximumClaimCount,
+              maximumSessionCount > 0,
+              maximumActiveSessionCountPerPeer > 0,
+              retainedRetiredSessionCount > 0,
+              retainedRetiredSessionCount < maximumSessionCount
+        else {
+            throw PeekabooBridgeOperationReceiptError.invalidOperationSessionConfiguration
         }
         let processIdentifier = getpid()
         guard let processStartIdentity = SystemIdentityResolver.processStartIdentity(processIdentifier),
@@ -1088,6 +953,10 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
             listenerInstanceID.uuidString.lowercased(),
             isDirectory: true)
         try PeekabooBridgePrivateReceiptArchive.prepareDirectory(archiveDirectory)
+        let sessionArchiveRoot = archiveDirectory.appendingPathComponent("sessions", isDirectory: true)
+        try PeekabooBridgePrivateReceiptArchive.prepareDirectory(sessionArchiveRoot)
+        let archiveTrashRoot = archiveDirectory.appendingPathComponent("retired-sessions", isDirectory: true)
+        try PeekabooBridgePrivateReceiptArchive.prepareDirectory(archiveTrashRoot)
         try Self.pruneOldListenerDirectories(in: archiveRoot, excluding: archiveDirectory)
 
         let unsigned = PeekabooBridgeListenerAttestation.UnsignedPayload(
@@ -1114,66 +983,937 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
             to: archiveDirectory.appendingPathComponent("attestation.json"))
         self.privateKey = privateKey
         self.archiveDirectory = archiveDirectory
+        self.sessionArchiveRoot = sessionArchiveRoot
+        self.archiveTrashRoot = archiveTrashRoot
         self.maximumClaimCount = maximumClaimCount
+        self.maximumSessionCount = maximumSessionCount
+        self.maximumActiveSessionCount = max(1, maximumSessionCount / 2)
+        self.maximumActiveSessionCountPerPeer = maximumActiveSessionCountPerPeer
+        self.retainedRetiredSessionCount = retainedRetiredSessionCount
+        self.archiveMaintenance = PeekabooBridgeOperationReceiptArchiveMaintenance(
+            fileSystem: archiveFileSystem,
+            capacityBacklogLimit: maximumSessionCount)
+        self.sessionAttestationWriter = sessionAttestationWriter
         self.attestation = attestation
+    }
+
+    func createSession(
+        clientInstanceID: UUID,
+        peer: PeekabooBridgePeer,
+        replacing predecessorSessionID: UUID? = nil) async throws -> PeekabooBridgeOperationSessionAttestation
+    {
+        self.scheduleRetiredSessionArchiveCleanup()
+        defer { self.scheduleRetiredSessionArchiveCleanup() }
+        let peerBinding = try OperationSessionPeerBinding(peer: peer)
+        let action = try self.prepareSessionCreation(
+            clientInstanceID: clientInstanceID,
+            peerBinding: peerBinding,
+            replacing: predecessorSessionID)
+        return try await self.resolveSessionCreation(
+            action,
+            clientInstanceID: clientInstanceID,
+            peerBinding: peerBinding,
+            replacing: predecessorSessionID)
+    }
+
+    /// Permits only a bounded request read. Exact session authorization still occurs after the single wire decode.
+    func hasProvisionalSession(for liveIdentity: PeekabooBridgeLivePeerIdentity) -> Bool {
+        guard liveIdentity.codeSignatureHash?.isEmpty == false else { return false }
+        return self.lock.withLock {
+            self.sessions.values.contains { $0.peerBinding.liveIdentity == liveIdentity }
+        }
+    }
+
+    /// Pins and returns the trusted peer cached by one exact logical session without consuming replay state.
+    func authorizeSession(
+        sessionID: UUID,
+        liveIdentity: PeekabooBridgeLivePeerIdentity) -> SessionAuthorization?
+    {
+        guard liveIdentity.codeSignatureHash?.isEmpty == false else { return nil }
+        return self.lock.withLock {
+            guard let session = self.sessions[sessionID],
+                  session.peerBinding.liveIdentity == liveIdentity
+            else {
+                return nil
+            }
+            session.authorizationPinCount += 1
+            return SessionAuthorization(
+                peer: session.peerBinding.peer,
+                pin: SessionAuthorizationPin(authority: self, sessionID: sessionID))
+        }
+    }
+
+    private func releaseAuthorizationPin(sessionID: UUID) {
+        self.lock.withLock {
+            guard let session = self.sessions[sessionID], session.authorizationPinCount > 0 else { return }
+            session.authorizationPinCount -= 1
+            self.pruneRetiredSessionsLocked()
+        }
+        self.scheduleRetiredSessionArchiveCleanup()
+    }
+
+    private func prepareSessionCreation(
+        clientInstanceID: UUID,
+        peerBinding: OperationSessionPeerBinding,
+        replacing predecessorSessionID: UUID?) throws -> OperationSessionCreationAction
+    {
+        self.retireDeadClientSessions(replacingWith: peerBinding)
+        return try self.lock.withLock {
+            try self.prepareSessionCreationLocked(
+                clientInstanceID: clientInstanceID,
+                peerBinding: peerBinding,
+                replacing: predecessorSessionID)
+        }
+    }
+
+    func retireSession(
+        _ sessionID: UUID,
+        clientInstanceID: UUID,
+        peer: PeekabooBridgePeer) throws
+    {
+        self.scheduleRetiredSessionArchiveCleanup()
+        defer { self.scheduleRetiredSessionArchiveCleanup() }
+        let peerBinding = try OperationSessionPeerBinding(peer: peer)
+        self.lock.lock()
+        guard let session = self.sessions[sessionID],
+              session.attestation.clientInstanceID == clientInstanceID,
+              session.peerBinding == peerBinding
+        else {
+            self.lock.unlock()
+            throw PeekabooBridgeOperationReceiptError.operationSessionMismatch
+        }
+        session.acceptingClaims = false
+        self.pruneRetiredSessionsLocked()
+        self.lock.unlock()
     }
 
     func claim(
         _ payload: PeekabooBridgeAttestedOperationRequest,
         peer: PeekabooBridgePeer,
-        currentProcessStartIdentity: (pid_t) -> UInt64? = SystemIdentityResolver.processStartIdentity) throws
+        currentProcessStartIdentity: (pid_t) -> UInt64? = SystemIdentityResolver.processStartIdentity) async throws
+        -> PeekabooBridgeOperationSessionClaimResult
     {
-        guard let processIdentifierVersion = peer.auditTokenProcessIdentifierVersion,
-              processIdentifierVersion > 0
-        else {
-            throw PeekabooBridgeOperationReceiptError.peerIdentityMismatch
-        }
+        self.scheduleRetiredSessionArchiveCleanup()
+        defer { self.scheduleRetiredSessionArchiveCleanup() }
+        try payload.validateEnvelope()
+        let peerBinding = try OperationSessionPeerBinding(peer: peer)
         guard payload.expectedListenerInstanceID == self.attestation.listenerInstanceID else {
             throw PeekabooBridgeOperationReceiptError.listenerInstanceMismatch
         }
-        guard payload.client.processIdentifier == peer.processIdentifier,
-              payload.client.processStartIdentity == peer.processStartIdentity,
-              payload.client.codeSignatureHash == peer.codeSignatureHash,
+        guard payload.client == peerBinding.client,
               currentProcessStartIdentity(peer.processIdentifier) == payload.client.processStartIdentity
         else {
             throw PeekabooBridgeOperationReceiptError.clientIdentityMismatch
         }
-
-        self.lock.lock()
-        guard self.claimedRequestIDs.count < self.maximumClaimCount else {
-            self.lock.unlock()
-            throw PeekabooBridgeOperationReceiptError.replayFenceExhausted
+        let preparation = try self.lock.withLock { () throws -> OperationSessionClaimPreparation in
+            guard let session = self.sessions[payload.sessionID],
+                  session.attestation.clientInstanceID == payload.clientInstanceID,
+                  session.attestation.client == payload.client,
+                  session.peerBinding == peerBinding
+            else {
+                throw PeekabooBridgeOperationReceiptError.operationSessionMismatch
+            }
+            let sequence = payload.sessionSequence.value
+            if sequence >= UInt64(session.attestation.maximumRequestCount) {
+                return .rollover(
+                    predecessor: session.attestation,
+                    creation: self.prepareRolloverCreationLocked(session: session))
+            }
+            if session.isClaimed(sequence) {
+                throw PeekabooBridgeOperationReceiptError.replayedRequest
+            }
+            guard session.acceptingClaims else {
+                return .rollover(
+                    predecessor: session.attestation,
+                    creation: self.prepareRolloverCreationLocked(session: session))
+            }
+            session.markClaimed(sequence)
+            session.inFlightCount += 1
+            let remainingClaimCount = session.attestation.maximumRequestCount - session.claimedCount
+            let claim = PeekabooBridgeOperationSessionClaim(
+                requestID: payload.requestID,
+                sessionID: payload.sessionID,
+                sessionSequence: payload.sessionSequence,
+                sessionAttestation: session.attestation,
+                remainingClaimCount: remainingClaimCount)
+            return .accepted(claim)
         }
-        let inserted = self.claimedRequestIDs.insert(payload.requestID).inserted
-        self.lock.unlock()
-        guard inserted else {
-            throw PeekabooBridgeOperationReceiptError.replayedRequest
+        switch preparation {
+        case let .accepted(claim):
+            return .accepted(claim)
+        case let .rollover(predecessor, creation):
+            let successor: PeekabooBridgeOperationSessionAttestation?
+            let disposition: PeekabooBridgeOperationSessionRefusal.Disposition
+            do {
+                successor = try await self.resolveSessionCreation(
+                    creation,
+                    clientInstanceID: predecessor.clientInstanceID,
+                    peerBinding: peerBinding,
+                    replacing: predecessor.sessionID)
+                disposition = .sessionRolloverRequired
+            } catch {
+                successor = nil
+                disposition = .sessionRolloverUnavailable
+            }
+            return try .rolloverRequired(self.makeRolloverRefusal(
+                payload: payload,
+                predecessor: predecessor,
+                successor: successor,
+                disposition: disposition))
         }
     }
 
-    func signAndArchive(_ payload: PeekabooBridgeOperationReceiptPayload) throws
-        -> PeekabooBridgeOperationReceipt
+    func complete(_ claim: PeekabooBridgeOperationSessionClaim) {
+        guard claim.beginCompletion() else { return }
+        defer { self.scheduleRetiredSessionArchiveCleanup() }
+        self.lock.lock()
+        if let session = self.sessions[claim.sessionID], session.inFlightCount > 0 {
+            session.inFlightCount -= 1
+        }
+        self.pruneRetiredSessionsLocked()
+        self.lock.unlock()
+    }
+
+    func signAndArchive(
+        _ payload: PeekabooBridgeOperationReceiptPayload,
+        claim: PeekabooBridgeOperationSessionClaim) async throws -> PeekabooBridgeOperationReceipt
     {
         guard payload.listenerInstanceID == self.attestation.listenerInstanceID else {
             throw PeekabooBridgeOperationReceiptError.listenerInstanceMismatch
         }
-        let signature: Data
-        self.lock.lock()
-        do {
-            signature = try self.privateKey.signature(
-                for: PeekabooBridgeOperationReceiptCoding.canonicalData(payload))
-            self.lock.unlock()
-        } catch {
-            self.lock.unlock()
-            throw error
+        guard payload.requestID == claim.requestID,
+              payload.sessionID == claim.sessionID,
+              payload.sessionSequence == claim.sessionSequence,
+              try payload.sessionAttestationSHA256 == PeekabooBridgeOperationReceiptCoding.sha256(
+                  claim.sessionAttestation),
+              payload.clientInstanceID == claim.sessionAttestation.clientInstanceID,
+              payload.client == claim.sessionAttestation.client,
+              payload.remainingClaimCount == claim.remainingClaimCount
+        else {
+            throw PeekabooBridgeOperationReceiptError.operationSessionMismatch
         }
-        let receipt = PeekabooBridgeOperationReceipt(payload: payload, signature: signature)
-        let data = try PeekabooBridgeOperationReceiptCoding.canonicalData(receipt)
-        let destination = self.archiveDirectory.appendingPathComponent(
-            payload.requestID.uuidString.lowercased() + ".json",
-            isDirectory: false)
-        try PeekabooBridgePrivateReceiptArchive.writeAtomically(data, to: destination)
-        return receipt
+        guard claim.beginSigning() else {
+            throw PeekabooBridgeOperationReceiptError.replayedRequest
+        }
+        return try await Task.detached(priority: .userInitiated) { [self] in
+            let signature = try self.signCanonical(payload)
+            let receipt = PeekabooBridgeOperationReceipt(payload: payload, signature: signature)
+            let data = try PeekabooBridgeOperationReceiptCoding.canonicalData(receipt)
+            let destination = self.sessionArchiveDirectory(sessionID: payload.sessionID).appendingPathComponent(
+                String(payload.sessionSequence.value) + ".json",
+                isDirectory: false)
+            try PeekabooBridgePrivateReceiptArchive.writeAtomically(data, to: destination)
+            return receipt
+        }.value
+    }
+
+    private func signCanonical(_ payload: some Encodable) throws -> Data {
+        self.signingLock.lock()
+        defer { self.signingLock.unlock() }
+        return try self.privateKey.signature(
+            for: PeekabooBridgeOperationReceiptCoding.canonicalData(payload))
+    }
+
+    private func prepareSessionCreationLocked(
+        clientInstanceID: UUID,
+        peerBinding: OperationSessionPeerBinding,
+        replacing predecessorSessionID: UUID?) throws -> OperationSessionCreationAction
+    {
+        let creationKey = OperationSessionCreationKey(
+            clientInstanceID: clientInstanceID,
+            peerBinding: peerBinding,
+            predecessorSessionID: predecessorSessionID)
+        if let existingCreation = self.sessionCreations[creationKey] {
+            return .wait(existingCreation)
+        }
+        let capacityReplacementSessionID: UUID?
+        if let predecessorSessionID {
+            guard let predecessor = self.sessions[predecessorSessionID],
+                  predecessor.attestation.clientInstanceID == clientInstanceID,
+                  predecessor.peerBinding == peerBinding
+            else {
+                throw PeekabooBridgeOperationReceiptError.operationSessionMismatch
+            }
+            if let successorSessionID = predecessor.successorSessionID {
+                guard let successor = self.sessions[successorSessionID] else {
+                    throw PeekabooBridgeOperationReceiptError.operationSessionMismatch
+                }
+                return .immediate(successor.attestation)
+            }
+            if !predecessor.acceptingClaims {
+                capacityReplacementSessionID = try self.capacityReplacementSessionIDLocked(
+                    peerBinding: peerBinding,
+                    excludingSessionID: predecessorSessionID)
+            } else {
+                capacityReplacementSessionID = nil
+            }
+        } else {
+            let matchingSession = self.sessions.values.first(where: {
+                $0.acceptingClaims &&
+                    $0.attestation.clientInstanceID == clientInstanceID &&
+                    $0.peerBinding == peerBinding
+            })
+            if let matchingSession, matchingSession.claimedCount == 0 {
+                return .immediate(matchingSession.attestation)
+            }
+            guard matchingSession == nil else {
+                throw PeekabooBridgeOperationReceiptError.operationSessionMismatch
+            }
+            capacityReplacementSessionID = try self.capacityReplacementSessionIDLocked(
+                peerBinding: peerBinding)
+        }
+
+        if self.archiveMaintenance.backlogIsSaturated {
+            return .archiveMaintenanceRequired
+        }
+        self.pruneRetiredSessionsLocked(
+            removeUntilBelowMaximum: true,
+            excludingSessionID: predecessorSessionID)
+        let registryIsFull = self.sessions.count + self.sessionCreations.count >= self.maximumSessionCount
+        if self.archiveMaintenance.backlogIsSaturated ||
+            (registryIsFull && self.archiveMaintenance.hasUncommittedRetiredSession)
+        {
+            return .archiveMaintenanceRequired
+        }
+        guard !registryIsFull else {
+            throw PeekabooBridgeOperationReceiptError.operationSessionRegistryExhausted
+        }
+        let reservedSessionIDs = Set(self.sessionCreations.values.map(\.sessionID))
+        var sessionID = UUID()
+        while self.sessions[sessionID] != nil || reservedSessionIDs.contains(sessionID) {
+            sessionID = UUID()
+        }
+        if let capacityReplacementSessionID {
+            guard let replacedSession = self.sessions[capacityReplacementSessionID],
+                  replacedSession.capacityReplacementSessionID == nil
+            else {
+                throw PeekabooBridgeOperationReceiptError.operationSessionRegistryExhausted
+            }
+            replacedSession.capacityReplacementSessionID = sessionID
+        }
+        let unsigned = PeekabooBridgeOperationSessionAttestation.UnsignedPayload(
+            schemaVersion: 1,
+            sessionID: sessionID,
+            listenerInstanceID: self.attestation.listenerInstanceID,
+            listenerPublicKeySHA256: PeekabooBridgeOperationReceiptCoding.sha256(self.attestation.publicKey),
+            clientInstanceID: clientInstanceID,
+            client: peerBinding.client,
+            maximumRequestCount: self.maximumClaimCount,
+            remainingClaimCount: self.maximumClaimCount,
+            predecessorSessionID: predecessorSessionID,
+            createdAtUnixMilliseconds: PeekabooBridgeOperationReceiptCoding.unixMilliseconds())
+        self.sessionOrdinal &+= 1
+        let reservation = OperationSessionCreationReservation(
+            key: creationKey,
+            sessionID: sessionID,
+            unsignedAttestation: unsigned,
+            peerBinding: peerBinding,
+            ordinal: self.sessionOrdinal,
+            capacityReplacementSessionID: capacityReplacementSessionID)
+        self.sessionCreations[creationKey] = reservation
+        return .persist(reservation)
+    }
+
+    /// Reserves capacity for a creation that adds one accepting session instead of replacing one.
+    ///
+    /// A fresh logical client has no transport lifetime: bridge sockets are per request, so an
+    /// abandoned client cannot be distinguished from an idle one. At the peer cap, retire only the
+    /// oldest quiescent session and retain its replay fence. A late request then follows the signed
+    /// rollover path; in-flight and predecessor/successor-owned sessions are never displaced.
+    private func capacityReplacementSessionIDLocked(
+        peerBinding: OperationSessionPeerBinding,
+        excludingSessionID: UUID? = nil) throws -> UUID?
+    {
+        let counts = self.additionalActiveSessionCapacityCountsLocked(peerBinding: peerBinding)
+        if counts.peer >= self.maximumActiveSessionCountPerPeer {
+            guard counts.global <= self.maximumActiveSessionCount,
+                  counts.peer == self.maximumActiveSessionCountPerPeer,
+                  let replacementSessionID = self.oldestQuiescentPeerSessionIDLocked(
+                      peerBinding: peerBinding,
+                      excludingSessionID: excludingSessionID)
+            else {
+                throw PeekabooBridgeOperationReceiptError.operationSessionRegistryExhausted
+            }
+            return replacementSessionID
+        }
+        guard counts.global < self.maximumActiveSessionCount,
+              counts.peer < self.maximumActiveSessionCountPerPeer
+        else {
+            throw PeekabooBridgeOperationReceiptError.operationSessionRegistryExhausted
+        }
+        return nil
+    }
+
+    private func additionalActiveSessionCapacityCountsLocked(
+        peerBinding: OperationSessionPeerBinding) -> (global: Int, peer: Int)
+    {
+        let acceptingSessions = self.sessions.values.filter(\.acceptingClaims)
+        let additionalCreations = self.sessionCreations.values.filter { reservation in
+            let addsAcceptingSession: Bool = if let predecessorSessionID = reservation.predecessorSessionID,
+                                                let predecessor = self.sessions[predecessorSessionID]
+            {
+                !predecessor.acceptingClaims
+            } else {
+                true
+            }
+            guard addsAcceptingSession else { return false }
+            guard let replacementSessionID = reservation.capacityReplacementSessionID,
+                  let replacement = self.sessions[replacementSessionID],
+                  replacement.acceptingClaims,
+                  replacement.capacityReplacementSessionID == reservation.sessionID
+            else { return true }
+            return false
+        }
+        return (
+            global: acceptingSessions.count + additionalCreations.count,
+            peer: acceptingSessions.count(where: { $0.peerBinding == peerBinding }) +
+                additionalCreations.count(where: { $0.peerBinding == peerBinding }))
+    }
+
+    private func oldestQuiescentPeerSessionIDLocked(
+        peerBinding: OperationSessionPeerBinding,
+        excludingSessionID: UUID?) -> UUID?
+    {
+        let referencedSuccessorSessionIDs = Set(self.sessions.values.compactMap(\.successorSessionID))
+        let reservedPredecessorSessionIDs = Set(self.sessionCreations.values.compactMap(\.predecessorSessionID))
+        guard let session = self.sessions.values
+            .filter({
+                $0.acceptingClaims &&
+                    $0.peerBinding == peerBinding &&
+                    $0.inFlightCount == 0 &&
+                    $0.authorizationPinCount == 0 &&
+                    $0.archiveCleanupReservationID == nil &&
+                    $0.capacityReplacementSessionID == nil &&
+                    $0.attestation.sessionID != excludingSessionID &&
+                    $0.successorSessionID == nil &&
+                    !referencedSuccessorSessionIDs.contains($0.attestation.sessionID) &&
+                    !reservedPredecessorSessionIDs.contains($0.attestation.sessionID)
+            })
+            .min(by: { $0.ordinal < $1.ordinal })
+        else { return nil }
+        return session.attestation.sessionID
+    }
+
+    private func resolveSessionCreation(
+        _ initialAction: OperationSessionCreationAction,
+        clientInstanceID: UUID,
+        peerBinding: OperationSessionPeerBinding,
+        replacing predecessorSessionID: UUID?) async throws -> PeekabooBridgeOperationSessionAttestation
+    {
+        var action = initialAction
+        while true {
+            switch action {
+            case let .immediate(attestation):
+                return attestation
+            case let .failure(error):
+                throw error
+            case .archiveMaintenanceRequired:
+                guard await self.performRequiredArchiveMaintenance() else {
+                    throw PeekabooBridgeOperationReceiptError.operationSessionRegistryExhausted
+                }
+                action = try self.prepareSessionCreation(
+                    clientInstanceID: clientInstanceID,
+                    peerBinding: peerBinding,
+                    replacing: predecessorSessionID)
+            case let .wait(reservation):
+                return try await reservation.waitForResult()
+            case let .persist(reservation):
+                let persistenceResult = await Task.detached(priority: .utility) { [self] in
+                    do {
+                        return try Result<
+                            PeekabooBridgeOperationSessionAttestation,
+                            PeekabooBridgeOperationReceiptError,
+                        >.success(self.persistSessionAttestation(reservation))
+                    } catch let error as PeekabooBridgeOperationReceiptError {
+                        return .failure(error)
+                    } catch {
+                        return .failure(.archiveWriteFailed(error.localizedDescription))
+                    }
+                }.value
+                let result = self.commitSessionCreation(reservation, persistenceResult: persistenceResult)
+                reservation.resolve(result)
+                return try result.get()
+            }
+        }
+    }
+
+    private func commitSessionCreation(
+        _ reservation: OperationSessionCreationReservation,
+        persistenceResult: Result<
+            PeekabooBridgeOperationSessionAttestation,
+            PeekabooBridgeOperationReceiptError,
+        >)
+        -> Result<PeekabooBridgeOperationSessionAttestation, PeekabooBridgeOperationReceiptError>
+    {
+        self.lock.withLock {
+            let creationKey = reservation.key
+            let sessionID = reservation.sessionID
+            if case let .failure(error) = persistenceResult {
+                if self.sessionCreations[creationKey] === reservation {
+                    self.sessionCreations[creationKey] = nil
+                }
+                self.releaseCapacityReplacementLocked(reservation)
+                self.queueArchiveCleanupLocked(self.sessionArchiveDirectory(sessionID: sessionID))
+                return .failure(error)
+            }
+            guard case let .success(sessionAttestation) = persistenceResult,
+                  self.sessionCreations[creationKey] === reservation
+            else {
+                let error = PeekabooBridgeOperationReceiptError.operationSessionMismatch
+                self.releaseCapacityReplacementLocked(reservation)
+                self.queueArchiveCleanupLocked(self.sessionArchiveDirectory(sessionID: sessionID))
+                return .failure(error)
+            }
+            let capacityReplacement: OperationSessionState?
+            if let replacementSessionID = reservation.capacityReplacementSessionID {
+                let referencedSuccessorSessionIDs = Set(self.sessions.values.compactMap(\.successorSessionID))
+                let reservedPredecessorSessionIDs = Set(
+                    self.sessionCreations.values.compactMap(\.predecessorSessionID))
+                guard let replacement = self.sessions[replacementSessionID],
+                      replacement.capacityReplacementSessionID == sessionID,
+                      replacement.acceptingClaims,
+                      replacement.peerBinding == reservation.peerBinding,
+                      replacement.inFlightCount == 0,
+                      replacement.authorizationPinCount == 0,
+                      replacement.archiveCleanupReservationID == nil,
+                      replacement.successorSessionID == nil,
+                      !referencedSuccessorSessionIDs.contains(replacementSessionID),
+                      !reservedPredecessorSessionIDs.contains(replacementSessionID)
+                else {
+                    self.sessionCreations[creationKey] = nil
+                    self.releaseCapacityReplacementLocked(reservation)
+                    self.queueArchiveCleanupLocked(self.sessionArchiveDirectory(sessionID: sessionID))
+                    return .failure(.operationSessionRegistryExhausted)
+                }
+                capacityReplacement = replacement
+            } else {
+                capacityReplacement = nil
+            }
+            if let predecessorSessionID = reservation.predecessorSessionID {
+                guard let predecessor = self.sessions[predecessorSessionID],
+                      predecessor.attestation.clientInstanceID == creationKey.clientInstanceID,
+                      predecessor.peerBinding == reservation.peerBinding,
+                      predecessor.successorSessionID == nil
+                else {
+                    self.sessionCreations[creationKey] = nil
+                    let error = PeekabooBridgeOperationReceiptError.operationSessionMismatch
+                    self.releaseCapacityReplacementLocked(reservation)
+                    self.queueArchiveCleanupLocked(self.sessionArchiveDirectory(sessionID: sessionID))
+                    return .failure(error)
+                }
+                predecessor.acceptingClaims = false
+                predecessor.successorSessionID = sessionID
+            }
+            capacityReplacement?.acceptingClaims = false
+            capacityReplacement?.capacityReplacementSessionID = nil
+            self.sessions[sessionID] = OperationSessionState(
+                attestation: sessionAttestation,
+                peerBinding: reservation.peerBinding,
+                ordinal: reservation.ordinal)
+            self.sessionCreations[creationKey] = nil
+            self.pruneRetiredSessionsLocked()
+            return .success(sessionAttestation)
+        }
+    }
+
+    private func releaseCapacityReplacementLocked(_ reservation: OperationSessionCreationReservation) {
+        guard let replacementSessionID = reservation.capacityReplacementSessionID,
+              let replacement = self.sessions[replacementSessionID],
+              replacement.capacityReplacementSessionID == reservation.sessionID
+        else { return }
+        replacement.capacityReplacementSessionID = nil
+    }
+
+    private func persistSessionAttestation(
+        _ reservation: OperationSessionCreationReservation) throws
+        -> PeekabooBridgeOperationSessionAttestation
+    {
+        let unsigned = reservation.unsignedAttestation
+        let signature = try self.signCanonical(unsigned)
+        let sessionAttestation = PeekabooBridgeOperationSessionAttestation(
+            sessionID: unsigned.sessionID,
+            listenerInstanceID: unsigned.listenerInstanceID,
+            listenerPublicKeySHA256: unsigned.listenerPublicKeySHA256,
+            clientInstanceID: unsigned.clientInstanceID,
+            client: unsigned.client,
+            maximumRequestCount: unsigned.maximumRequestCount,
+            remainingClaimCount: unsigned.remainingClaimCount,
+            predecessorSessionID: unsigned.predecessorSessionID,
+            createdAtUnixMilliseconds: unsigned.createdAtUnixMilliseconds,
+            signature: signature)
+        let sessionArchiveDirectory = self.sessionArchiveDirectory(sessionID: reservation.sessionID)
+        try PeekabooBridgePrivateReceiptArchive.prepareDirectory(sessionArchiveDirectory)
+        try self.sessionAttestationWriter(
+            PeekabooBridgeOperationReceiptCoding.canonicalData(sessionAttestation),
+            sessionArchiveDirectory.appendingPathComponent("attestation.json"))
+        return sessionAttestation
+    }
+
+    private func prepareRolloverCreationLocked(
+        session: OperationSessionState) -> OperationSessionCreationAction
+    {
+        if let successorSessionID = session.successorSessionID {
+            if let existing = self.sessions[successorSessionID] {
+                return .immediate(existing.attestation)
+            }
+            return .failure(.operationSessionMismatch)
+        }
+        do {
+            return try self.prepareSessionCreationLocked(
+                clientInstanceID: session.attestation.clientInstanceID,
+                peerBinding: session.peerBinding,
+                replacing: session.attestation.sessionID)
+        } catch let error as PeekabooBridgeOperationReceiptError {
+            return .failure(error)
+        } catch {
+            return .failure(.archiveWriteFailed(error.localizedDescription))
+        }
+    }
+
+    private func makeRolloverRefusal(
+        payload: PeekabooBridgeAttestedOperationRequest,
+        predecessor: PeekabooBridgeOperationSessionAttestation,
+        successor: PeekabooBridgeOperationSessionAttestation?,
+        disposition: PeekabooBridgeOperationSessionRefusal.Disposition) throws
+        -> PeekabooBridgeOperationSessionRefusal
+    {
+        let refusalPayload = try PeekabooBridgeOperationSessionRefusal.Payload(
+            listenerInstanceID: self.attestation.listenerInstanceID,
+            listenerPublicKeySHA256: PeekabooBridgeOperationReceiptCoding.sha256(self.attestation.publicKey),
+            sessionID: payload.sessionID,
+            sessionSequence: payload.sessionSequence,
+            requestID: payload.requestID,
+            clientInstanceID: payload.clientInstanceID,
+            client: payload.client,
+            operation: payload.request.operation,
+            requestSHA256: PeekabooBridgeOperationReceiptCoding.sha256(payload.request),
+            attestedRequestSHA256: PeekabooBridgeOperationReceiptCoding.sha256(payload),
+            disposition: disposition,
+            successorSessionAttestation: successor,
+            refusedAtUnixMilliseconds: PeekabooBridgeOperationReceiptCoding.unixMilliseconds())
+        return try PeekabooBridgeOperationSessionRefusal(
+            payload: refusalPayload,
+            signature: self.signCanonical(refusalPayload))
+    }
+
+    private func pruneRetiredSessionsLocked(
+        removeUntilBelowMaximum: Bool = false,
+        excludingSessionID: UUID? = nil)
+    {
+        let referencedSuccessorSessionIDs = Set(self.sessions.values.compactMap(\.successorSessionID))
+        let reservedPredecessorSessionIDs = Set(self.sessionCreations.values.compactMap(\.predecessorSessionID))
+        let removable = self.sessions.values
+            .filter {
+                !$0.acceptingClaims &&
+                    $0.inFlightCount == 0 &&
+                    $0.authorizationPinCount == 0 &&
+                    $0.archiveCleanupReservationID == nil &&
+                    $0.capacityReplacementSessionID == nil &&
+                    $0.attestation.sessionID != excludingSessionID &&
+                    !reservedPredecessorSessionIDs.contains($0.attestation.sessionID) &&
+                    !referencedSuccessorSessionIDs.contains($0.attestation.sessionID)
+            }
+            .sorted { $0.ordinal < $1.ordinal }
+        let retainedCount = removeUntilBelowMaximum
+            ? min(self.retainedRetiredSessionCount, max(0, self.maximumSessionCount - 1))
+            : self.retainedRetiredSessionCount
+        let excessRetiredCount = max(0, removable.count - retainedCount)
+        var removalCount = excessRetiredCount
+        if removeUntilBelowMaximum {
+            removalCount = max(
+                removalCount,
+                max(0, self.sessions.count + self.sessionCreations.count - self.maximumSessionCount + 1))
+        }
+        for session in removable.prefix(removalCount) {
+            let sessionID = session.attestation.sessionID
+            let source = self.sessionArchiveDirectory(sessionID: sessionID)
+            let reservationID = self.archiveMaintenance.enqueue(
+                owner: .retiredSession(sessionID),
+                source: source,
+                quarantine: self.archiveTrashRoot.appendingPathComponent(
+                    UUID().uuidString.lowercased(),
+                    isDirectory: true))
+            session.archiveCleanupReservationID = reservationID
+        }
+    }
+
+    private func queueArchiveCleanupLocked(_ archiveDirectory: URL) {
+        _ = self.archiveMaintenance.enqueue(
+            owner: .orphan,
+            source: archiveDirectory,
+            quarantine: self.archiveTrashRoot.appendingPathComponent(
+                UUID().uuidString.lowercased(),
+                isDirectory: true))
+    }
+
+    private func scheduleRetiredSessionArchiveCleanup() {
+        self.archiveMaintenance.schedule { [self] job in
+            self.commitArchiveQuarantine(job)
+        }
+    }
+
+    private func performRequiredArchiveMaintenance() async -> Bool {
+        await self.archiveMaintenance.performRequired { [self] job in
+            self.commitArchiveQuarantine(job)
+        }
+    }
+
+    private func commitArchiveQuarantine(
+        _ job: PeekabooBridgeOperationReceiptArchiveCleanupJob) -> Bool
+    {
+        self.lock.withLock {
+            switch job.owner {
+            case .orphan:
+                return true
+            case let .retiredSession(sessionID):
+                let referencedSuccessorSessionIDs = Set(self.sessions.values.compactMap(\.successorSessionID))
+                let reservedPredecessorSessionIDs = Set(
+                    self.sessionCreations.values.compactMap(\.predecessorSessionID))
+                guard let session = self.sessions[sessionID],
+                      session.archiveCleanupReservationID == job.id,
+                      !session.acceptingClaims,
+                      session.inFlightCount == 0,
+                      session.authorizationPinCount == 0,
+                      session.capacityReplacementSessionID == nil,
+                      !referencedSuccessorSessionIDs.contains(sessionID),
+                      !reservedPredecessorSessionIDs.contains(sessionID)
+                else { return false }
+                self.sessions[sessionID] = nil
+                return true
+            }
+        }
+    }
+
+    private func retireDeadClientSessions(replacingWith currentPeer: OperationSessionPeerBinding) {
+        let candidates = self.lock.withLock {
+            self.sessions.values.compactMap { session -> DeadClientProbe? in
+                guard session.acceptingClaims else { return nil }
+                return DeadClientProbe(
+                    sessionID: session.attestation.sessionID,
+                    client: session.peerBinding.client,
+                    liveIdentity: session.peerBinding.liveIdentity)
+            }
+        }
+        let evaluated = candidates.map { candidate in
+            let processIsDead = SystemIdentityResolver.processStartIdentity(candidate.client.processIdentifier) !=
+                candidate.client.processStartIdentity
+            let exactPeerWasReplaced = candidate.client.processIdentifier == currentPeer.client.processIdentifier &&
+                candidate.client.processStartIdentity == currentPeer.client.processStartIdentity &&
+                candidate.liveIdentity != currentPeer.liveIdentity
+            return (candidate, processIsDead, exactPeerWasReplaced)
+        }
+        guard evaluated.contains(where: { $0.1 || $0.2 }) else { return }
+        self.lock.withLock {
+            let referencedSuccessorSessionIDs = Set(self.sessions.values.compactMap(\.successorSessionID))
+            let reservedPredecessorSessionIDs = Set(self.sessionCreations.values.compactMap(\.predecessorSessionID))
+            for (candidate, processIsDead, exactPeerWasReplaced) in evaluated
+                where processIsDead || exactPeerWasReplaced
+            {
+                guard let session = self.sessions[candidate.sessionID],
+                      session.acceptingClaims,
+                      session.peerBinding.client == candidate.client,
+                      session.peerBinding.liveIdentity == candidate.liveIdentity
+                else { continue }
+                if exactPeerWasReplaced, !processIsDead {
+                    guard session.inFlightCount == 0,
+                          session.authorizationPinCount == 0,
+                          session.archiveCleanupReservationID == nil,
+                          session.capacityReplacementSessionID == nil,
+                          session.successorSessionID == nil,
+                          !referencedSuccessorSessionIDs.contains(candidate.sessionID),
+                          !reservedPredecessorSessionIDs.contains(candidate.sessionID)
+                    else { continue }
+                }
+                session.acceptingClaims = false
+            }
+            self.pruneRetiredSessionsLocked(removeUntilBelowMaximum: true)
+        }
+    }
+
+    private struct DeadClientProbe {
+        let sessionID: UUID
+        let client: PeekabooBridgeOperationProcessIdentity
+        let liveIdentity: PeekabooBridgeLivePeerIdentity
+    }
+
+    private func sessionArchiveDirectory(sessionID: UUID) -> URL {
+        self.sessionArchiveRoot.appendingPathComponent(
+            sessionID.uuidString.lowercased(),
+            isDirectory: true)
+    }
+
+    private struct OperationSessionCreationKey: Hashable {
+        let clientInstanceID: UUID
+        let predecessorSessionID: UUID?
+        let processIdentifier: pid_t
+        let processStartIdentity: UInt64
+        let codeSignatureHash: String
+        let auditTokenProcessIdentifierVersion: Int32
+        let userIdentifier: uid_t
+        let auditToken: Data
+        let bundleIdentifier: String?
+        let teamIdentifier: String?
+
+        init(
+            clientInstanceID: UUID,
+            peerBinding: OperationSessionPeerBinding,
+            predecessorSessionID: UUID?)
+        {
+            self.clientInstanceID = clientInstanceID
+            self.predecessorSessionID = predecessorSessionID
+            self.processIdentifier = peerBinding.client.processIdentifier
+            self.processStartIdentity = peerBinding.client.processStartIdentity
+            self.codeSignatureHash = peerBinding.client.codeSignatureHash
+            self.auditTokenProcessIdentifierVersion = peerBinding.auditTokenProcessIdentifierVersion
+            self.userIdentifier = peerBinding.userIdentifier
+            self.auditToken = peerBinding.liveIdentity.auditToken
+            self.bundleIdentifier = peerBinding.bundleIdentifier
+            self.teamIdentifier = peerBinding.teamIdentifier
+        }
+    }
+
+    private final class OperationSessionCreationReservation: @unchecked Sendable {
+        let key: OperationSessionCreationKey
+        let sessionID: UUID
+        let unsignedAttestation: PeekabooBridgeOperationSessionAttestation.UnsignedPayload
+        let peerBinding: OperationSessionPeerBinding
+        let ordinal: UInt64
+        let capacityReplacementSessionID: UUID?
+
+        var predecessorSessionID: UUID? {
+            self.key.predecessorSessionID
+        }
+
+        private let lock = NSLock()
+        private var result: Result<PeekabooBridgeOperationSessionAttestation, PeekabooBridgeOperationReceiptError>?
+        private var waiters: [CheckedContinuation<
+            Result<PeekabooBridgeOperationSessionAttestation, PeekabooBridgeOperationReceiptError>,
+            Never,
+        >] = []
+
+        init(
+            key: OperationSessionCreationKey,
+            sessionID: UUID,
+            unsignedAttestation: PeekabooBridgeOperationSessionAttestation.UnsignedPayload,
+            peerBinding: OperationSessionPeerBinding,
+            ordinal: UInt64,
+            capacityReplacementSessionID: UUID?)
+        {
+            self.key = key
+            self.sessionID = sessionID
+            self.unsignedAttestation = unsignedAttestation
+            self.peerBinding = peerBinding
+            self.ordinal = ordinal
+            self.capacityReplacementSessionID = capacityReplacementSessionID
+        }
+
+        func waitForResult() async throws -> PeekabooBridgeOperationSessionAttestation {
+            let result = await withCheckedContinuation { continuation in
+                self.lock.lock()
+                if let result = self.result {
+                    self.lock.unlock()
+                    continuation.resume(returning: result)
+                } else {
+                    self.waiters.append(continuation)
+                    self.lock.unlock()
+                }
+            }
+            return try result.get()
+        }
+
+        func resolve(
+            _ result: Result<PeekabooBridgeOperationSessionAttestation, PeekabooBridgeOperationReceiptError>)
+        {
+            self.lock.lock()
+            guard self.result == nil else {
+                self.lock.unlock()
+                return
+            }
+            self.result = result
+            let waiters = self.waiters
+            self.waiters.removeAll()
+            self.lock.unlock()
+            waiters.forEach { $0.resume(returning: result) }
+        }
+    }
+
+    private final class OperationSessionState {
+        let attestation: PeekabooBridgeOperationSessionAttestation
+        let peerBinding: OperationSessionPeerBinding
+        let ordinal: UInt64
+        var acceptingClaims = true
+        var successorSessionID: UUID?
+        var claimedCount = 0
+        var inFlightCount = 0
+        var authorizationPinCount = 0
+        var archiveCleanupReservationID: UUID?
+        var capacityReplacementSessionID: UUID?
+        private var claimedSequenceWords: [UInt64]
+
+        init(
+            attestation: PeekabooBridgeOperationSessionAttestation,
+            peerBinding: OperationSessionPeerBinding,
+            ordinal: UInt64)
+        {
+            self.attestation = attestation
+            self.peerBinding = peerBinding
+            self.ordinal = ordinal
+            self.claimedSequenceWords = Array(
+                repeating: 0,
+                count: (attestation.maximumRequestCount + 63) / 64)
+        }
+
+        func isClaimed(_ sequence: UInt64) -> Bool {
+            let wordIndex = Int(sequence / 64)
+            let bitIndex = sequence % 64
+            return self.claimedSequenceWords[wordIndex] & (UInt64(1) << bitIndex) != 0
+        }
+
+        func markClaimed(_ sequence: UInt64) {
+            let wordIndex = Int(sequence / 64)
+            let bitIndex = sequence % 64
+            self.claimedSequenceWords[wordIndex] |= UInt64(1) << bitIndex
+            self.claimedCount += 1
+        }
+    }
+
+    private struct OperationSessionPeerBinding: Equatable {
+        let client: PeekabooBridgeOperationProcessIdentity
+        let auditTokenProcessIdentifierVersion: Int32
+        let userIdentifier: uid_t
+        let liveIdentity: PeekabooBridgeLivePeerIdentity
+        let bundleIdentifier: String?
+        let teamIdentifier: String?
+
+        var peer: PeekabooBridgePeer {
+            PeekabooBridgePeer(
+                liveIdentity: self.liveIdentity,
+                bundleIdentifier: self.bundleIdentifier,
+                teamIdentifier: self.teamIdentifier)
+        }
+
+        init(peer: PeekabooBridgePeer) throws {
+            guard let liveIdentity = peer.liveIdentity,
+                  let codeSignatureHash = liveIdentity.codeSignatureHash,
+                  !codeSignatureHash.isEmpty,
+                  peer.processIdentifier == liveIdentity.processIdentifier,
+                  peer.auditTokenProcessIdentifierVersion == liveIdentity.processIdentifierVersion,
+                  peer.processStartIdentity == liveIdentity.processStartIdentity,
+                  peer.codeSignatureHash == codeSignatureHash,
+                  peer.userIdentifier == liveIdentity.effectiveUserIdentifier
+            else {
+                throw PeekabooBridgeOperationReceiptError.peerIdentityMismatch
+            }
+            self.client = PeekabooBridgeOperationProcessIdentity(
+                processIdentifier: liveIdentity.processIdentifier,
+                processStartIdentity: liveIdentity.processStartIdentity,
+                codeSignatureHash: codeSignatureHash)
+            self.auditTokenProcessIdentifierVersion = liveIdentity.processIdentifierVersion
+            self.userIdentifier = liveIdentity.effectiveUserIdentifier
+            self.liveIdentity = liveIdentity
+            self.bundleIdentifier = peer.bundleIdentifier
+            self.teamIdentifier = peer.teamIdentifier
+        }
     }
 
     private static func pruneOldListenerDirectories(in archiveRoot: URL, excluding current: URL) throws {
@@ -1199,52 +1939,6 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
         for stale in candidates.dropFirst(Self.retainedListenerDirectoryCount - 1) {
             try FileManager.default.removeItem(at: stale)
         }
-    }
-}
-
-enum PeekabooBridgeCodeSignatureIdentity {
-    static func codeSignatureHash(processIdentifier: pid_t) -> String? {
-        self.codeSignatureHash(in: self.signingInformation(attributes: [
-            kSecGuestAttributePid: processIdentifier,
-        ]))
-    }
-
-    static func codeSignatureHash(auditIdentity: PeekabooBridgePeerAuditIdentity) -> String? {
-        self.codeSignatureHash(in: self.signingInformation(auditIdentity: auditIdentity))
-    }
-
-    static func signingInformation(
-        auditIdentity: PeekabooBridgePeerAuditIdentity) -> [String: Any]?
-    {
-        self.signingInformation(attributes: [
-            kSecGuestAttributeAudit: auditIdentity.tokenData,
-        ])
-    }
-
-    private static func codeSignatureHash(in information: [String: Any]?) -> String? {
-        guard let hash = information?[kSecCodeInfoUnique as String] as? Data,
-              !hash.isEmpty
-        else { return nil }
-        return hash.map { String(format: "%02x", $0) }.joined()
-    }
-
-    private static func signingInformation(attributes: NSDictionary) -> [String: Any]? {
-        var code: SecCode?
-        guard SecCodeCopyGuestWithAttributes(nil, attributes, SecCSFlags(), &code) == errSecSuccess,
-              let code
-        else { return nil }
-
-        var staticCode: SecStaticCode?
-        guard SecCodeCopyStaticCode(code, SecCSFlags(), &staticCode) == errSecSuccess,
-              let staticCode
-        else { return nil }
-
-        var information: CFDictionary?
-        let flags = SecCSFlags(rawValue: UInt32(kSecCSSigningInformation))
-        guard SecCodeCopySigningInformation(staticCode, flags, &information) == errSecSuccess,
-              let values = information as? [String: Any]
-        else { return nil }
-        return values
     }
 }
 
@@ -1310,6 +2004,24 @@ extension PeekabooBridgeRequest {
                 [.init(processIdentifier: $0.processIdentifier, processIdentity: $0)]
             } ?? []
         case let .activateApplication(payload):
+            payload.expectedIdentity.map {
+                [.init(processIdentifier: $0.processIdentifier, processIdentity: $0)]
+            } ?? []
+        case let .hideApplication(payload):
+            if let identity = payload.expectedIdentity,
+               (try? ApplicationHideRequest(
+                   identifier: payload.identifier,
+                   expectedIdentity: identity)) != nil
+            {
+                [.init(processIdentifier: identity.processIdentifier, processIdentity: identity)]
+            } else {
+                []
+            }
+        case let .clickMenuItem(payload):
+            payload.expectedIdentity.map {
+                [.init(processIdentifier: $0.processIdentifier, processIdentity: $0)]
+            } ?? []
+        case let .clickMenuItemByName(payload):
             payload.expectedIdentity.map {
                 [.init(processIdentifier: $0.processIdentifier, processIdentity: $0)]
             } ?? []
@@ -1396,7 +2108,10 @@ enum PeekabooBridgeOperationTargetAttribution {
         response: PeekabooBridgeResponse,
         handledTarget: DesktopTargetIdentity?) throws -> DesktopTargetIdentity?
     {
-        try self.resolveEvidence(
+        if PeekabooBridgeOperationResultSemantics.isNoDispatchFailure(response) {
+            return nil
+        }
+        return try self.resolveEvidence(
             request: request,
             evidence: self.evidence(
                 request: request,
@@ -1445,27 +2160,14 @@ enum PeekabooBridgeOperationTargetAttribution {
 
 extension PeekabooBridgeRequest {
     fileprivate var requiresStableOperationTarget: Bool {
-        switch self {
-        case let .attestedOperation(payload): payload.request.requiresStableOperationTarget
-        case let .projectedAction(payload): payload.request.requiresStableOperationTarget
-        case .focusWindow, .activateApplication, .quitApplication: true
-        default: false
-        }
+        PeekabooBridgeOperationResultSemantics.contract(for: self).targetPolicy == .requestPinned
     }
 
     fileprivate var requiresResolvedOperationTarget: Bool {
-        switch self {
-        case let .attestedOperation(payload): payload.request.requiresResolvedOperationTarget
-        case let .projectedAction(payload): payload.request.requiresResolvedOperationTarget
-        case .focusWindow, .targetedScroll, .setValue, .performAction:
+        switch PeekabooBridgeOperationResultSemantics.contract(for: self).targetPolicy {
+        case .requestPinned, .handlerRequired, .responseResolved, .external:
             true
-        case let .desktopObservation(payload):
-            payload.target.requiresExactWindowReceipt
-        case let .click(payload):
-            payload.target.requiresElementResolution
-        case let .type(payload):
-            payload.target?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-        default:
+        case .notApplicable, .requestDependent, .global:
             false
         }
     }
@@ -1484,180 +2186,16 @@ extension PeekabooBridgeRequest {
             guard exactWindow.identity.windowID == Int(expectedWindowID) else {
                 throw DesktopTargetIdentityError.contradictoryWindowIdentifier
             }
+        case let .captureWindow(payload):
+            guard let expectedWindowID = payload.windowId else { return }
+            guard let exactWindow = identity?.exactWindow else {
+                throw DesktopTargetIdentityError.incompleteExactWindow
+            }
+            guard exactWindow.identity.windowID == expectedWindowID else {
+                throw DesktopTargetIdentityError.contradictoryWindowIdentifier
+            }
         default:
             return
-        }
-    }
-}
-
-extension DesktopObservationTargetRequest {
-    fileprivate var requiresExactWindowReceipt: Bool {
-        if case .windowID = self {
-            true
-        } else {
-            false
-        }
-    }
-}
-
-extension ClickTarget {
-    fileprivate var requiresElementResolution: Bool {
-        switch self {
-        case .elementId, .query: true
-        case .coordinates: false
-        }
-    }
-}
-
-extension PeekabooBridgeResponse {
-    func operationTargetEvidence(
-        for operation: PeekabooBridgeOperation) -> [DesktopTargetIdentity.Evidence]
-    {
-        switch self {
-        case let .attestedOperation(payload):
-            payload.response.operationTargetEvidence(for: operation)
-        case let .projectedAction(payload):
-            payload.response.operationTargetEvidence(for: operation)
-        case let .desktopObservation(result):
-            [
-                Self.evidence(result.target.detectionContext),
-                Self.evidence(result.target.app),
-                Self.evidence(result.target.window),
-            ].compactMap(\.self) + Self.evidence(result.capture.metadata)
-        case let .capture(result):
-            Self.evidence(result.metadata)
-        case let .elementDetection(result):
-            operation == .inspectAccessibilityTree
-                ? [Self.evidence(result.metadata.windowContext)].compactMap(\.self)
-                : []
-        case let .window(window):
-            operation.responseCarriesPostMutationWindowState
-                ? []
-                : window.map(Self.evidence).map { [$0] } ?? []
-        case let .application(application):
-            [Self.evidence(application)].compactMap(\.self)
-        case let .preparedDialogAction(receipt):
-            [.init(target: DesktopTargetIdentity(exactWindow: receipt.target))]
-        case let .dialogResult(result):
-            Self.evidence(result)
-        case .focusedElement:
-            []
-        case let .error(envelope):
-            [Self.evidence(envelope.actionTargetReceipt)].compactMap(\.self)
-        default:
-            []
-        }
-    }
-
-    private static func evidence(_ metadata: CaptureMetadata) -> [DesktopTargetIdentity.Evidence] {
-        [
-            self.evidence(metadata.applicationInfo),
-            metadata.windowInfo.map(self.evidence),
-        ].compactMap(\.self)
-    }
-
-    private static func evidence(_ context: WindowContext?) -> DesktopTargetIdentity.Evidence? {
-        guard let context else { return nil }
-        return .init(
-            processIdentifier: context.applicationProcessId,
-            windowID: context.windowID,
-            windowIdentity: context.windowMutationIdentity,
-            windowBounds: context.windowBounds,
-            focusedElement: context.focusedElement)
-    }
-
-    private static func evidence(_ window: WindowIdentity?) -> DesktopTargetIdentity.Evidence? {
-        guard let window else { return nil }
-        return .init(windowID: window.windowID, windowBounds: window.bounds)
-    }
-
-    private static func evidence(_ window: ServiceWindowInfo) -> DesktopTargetIdentity.Evidence {
-        .init(
-            processIdentifier: window.mutationIdentity?.ownerProcessIdentifier,
-            processIdentity: window.mutationIdentity?.processIdentity,
-            windowID: window.windowID,
-            windowIdentity: window.mutationIdentity,
-            windowBounds: window.bounds)
-    }
-
-    private static func evidence(_ identity: WindowMutationIdentity) -> DesktopTargetIdentity.Evidence {
-        .init(
-            processIdentifier: identity.ownerProcessIdentifier,
-            processIdentity: identity.processIdentity,
-            windowID: identity.windowID,
-            windowIdentity: identity,
-            windowBounds: identity.capturedBounds)
-    }
-
-    private static func evidence(_ application: ApplicationIdentity?) -> DesktopTargetIdentity.Evidence? {
-        guard let application else { return nil }
-        return .init(
-            processIdentifier: application.processIdentifier,
-            processIdentity: application.processStartIdentity.map {
-                .init(
-                    processIdentifier: application.processIdentifier,
-                    processStartIdentity: $0)
-            })
-    }
-
-    private static func evidence(
-        _ application: ServiceApplicationInfo?) -> DesktopTargetIdentity.Evidence?
-    {
-        guard let application else { return nil }
-        return .init(
-            processIdentifier: application.processIdentifier,
-            processIdentity: application.processStartIdentity.map {
-                .init(
-                    processIdentifier: application.processIdentifier,
-                    processStartIdentity: $0)
-            })
-    }
-
-    private static func evidence(_ result: DialogActionResult) -> [DesktopTargetIdentity.Evidence] {
-        var evidence: [DesktopTargetIdentity.Evidence] = []
-        if result.targetWindowIdentity != nil || result.targetWindowBounds != nil || result.focusedElement != nil {
-            evidence.append(.init(
-                processIdentifier: result.targetWindowIdentity?.ownerProcessIdentifier,
-                processIdentity: result.targetWindowIdentity?.processIdentity,
-                windowID: result.targetWindowIdentity?.windowID,
-                windowIdentity: result.targetWindowIdentity,
-                windowBounds: result.targetWindowBounds,
-                focusedElement: result.focusedElement))
-        }
-        if let receiptEvidence = self.evidence(result.targetReceipt) {
-            evidence.append(receiptEvidence)
-        }
-        return evidence
-    }
-
-    private static func evidence(
-        _ receipt: DesktopActionTargetReceipt?) -> DesktopTargetIdentity.Evidence?
-    {
-        guard let receipt else { return nil }
-        return .init(
-            processIdentifier: receipt.processIdentifier,
-            processIdentity: .init(
-                processIdentifier: receipt.processIdentifier,
-                processStartIdentity: receipt.processStartIdentity),
-            windowID: receipt.windowID)
-    }
-}
-
-extension PeekabooBridgeOperation {
-    fileprivate var responseCarriesPostMutationWindowState: Bool {
-        switch self {
-        case .focusWindow,
-             .moveWindow,
-             .resizeWindow,
-             .setWindowBounds,
-             .closeWindow,
-             .backgroundCloseWindow,
-             .minimizeWindow,
-             .restoreWindow,
-             .maximizeWindow:
-            true
-        default:
-            false
         }
     }
 }

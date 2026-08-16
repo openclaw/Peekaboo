@@ -6,117 +6,17 @@ extension PeekabooBridgeOperation {
     /// Bridge routing consults this policy together with the service provider's ownership claim. Keeping the
     /// exhaustive operation list here prevents native host assemblies and request routing from drifting apart.
     public var nativeServiceOwnsDesktopOperationLane: Bool {
-        switch self {
-        case .click,
-             .type,
-             .typeActions,
-             .targetedTypeActions,
-             .exactWindowTargetedTypeActions,
-             .setValue,
-             .performAction,
-             .scroll,
-             .targetedScroll,
-             .hotkey,
-             .targetedHotkey,
-             .exactWindowTargetedHotkey,
-             .targetedClick,
-             .exactWindowTargetedClick,
-             .swipe,
-             .drag,
-             .moveMouse,
-             .focusWindow,
-             .moveWindow,
-             .resizeWindow,
-             .setWindowBounds,
-             .closeWindow,
-             .backgroundCloseWindow,
-             .minimizeWindow,
-             .restoreWindow,
-             .maximizeWindow,
-             .launchApplication,
-             .launchApplicationWithOptions,
-             .relaunchApplicationWithOptions,
-             .activateApplication,
-             .quitApplication,
-             .hideApplication,
-             .unhideApplication,
-             .hideOtherApplications,
-             .showAllApplications,
-             .clickMenuItem,
-             .clickMenuItemByName,
-             .clickMenuExtra,
-             .clickMenuBarItemNamed,
-             .clickMenuBarItemIndex,
-             .launchDockItem,
-             .rightClickDockItem,
-             .hideDock,
-             .showDock,
-             .dialogFindActive,
-             .dialogClickButton,
-             .backgroundDialogClickButton,
-             .dialogEnterText,
-             .dialogHandleFile,
-             .dialogDismiss,
-             .dialogListElements,
-             .targetedDialogListElements,
-             .prepareDialogAction,
-             .exactDialogClickButton,
-             .exactDialogDismiss,
-             .exactDialogEnterText,
-             .exactDialogForceDismiss,
-             .desktopObservation:
-            true
-        case .permissionsStatus,
-             .requestPostEventPermission,
-             .daemonStatus,
-             .daemonStop,
-             .browserStatus,
-             .browserConnect,
-             .browserDisconnect,
-             .browserExecute,
-             .captureScreen,
-             .captureWindow,
-             .captureFrontmost,
-             .captureArea,
-             .detectElements,
-             .inspectAccessibilityTree,
-             .getFocusedElement,
-             .waitForElement,
-             .listWindows,
-             .getFocusedWindow,
-             .listApplications,
-             .findApplication,
-             .getFrontmostApplication,
-             .isApplicationRunning,
-             .listMenus,
-             .listFrontmostMenus,
-             .listMenuExtras,
-             .menuExtraOpenMenuFrame,
-             .listMenuBarItems,
-             .listDockItems,
-             .isDockHidden,
-             .findDockItem,
-             .createSnapshot,
-             .storeDetectionResult,
-             .getDetectionResult,
-             .storeScreenshot,
-             .storeObservationSnapshot,
-             .storeAnnotatedScreenshot,
-             .listSnapshots,
-             .getMostRecentSnapshot,
-             .invalidateImplicitLatestSnapshot,
-             .beginSnapshotMutation,
-             .finishSnapshotMutation,
-             .cleanSnapshot,
-             .cleanSnapshotsOlderThan,
-             .cleanAllSnapshots,
-             ._appleScriptProbe:
-            false
-        }
+        PeekabooBridgeOperationResultSemantics.operationPolicy(for: self)
+            .lane.nativeOwnership == .service
     }
 
     public static let nativeDesktopOperationLaneOperations: Set<PeekabooBridgeOperation> =
         Set(Self.allCases.filter(\.nativeServiceOwnsDesktopOperationLane))
+
+    var responseCarriesPostMutationWindowState: Bool {
+        PeekabooBridgeOperationResultSemantics.operationPolicy(for: self)
+            .windowResponseProof == .postMutationState
+    }
 
     /// TCC permissions an operation relies on. Used to gate advertisement/handling.
     public var requiredPermissions: Set<PeekabooBridgePermissionKind> {
@@ -127,7 +27,7 @@ extension PeekabooBridgeOperation {
         case .targetedHotkey, .targetedTypeActions, .click, .scroll, .swipe, .drag, .moveMouse:
             [.postEvent]
         case .exactWindowTargetedHotkey, .exactWindowTargetedTypeActions,
-             .exactDialogEnterText, .exactDialogForceDismiss:
+             .exactDialogForceDismiss, .clickMenuBarItemIndex:
             [.postEvent, .accessibility]
         case .inspectAccessibilityTree,
              .getFocusedElement,
@@ -136,11 +36,11 @@ extension PeekabooBridgeOperation {
              .backgroundCloseWindow,
              .minimizeWindow, .restoreWindow, .maximizeWindow, .getFocusedWindow, .listMenus, .listFrontmostMenus,
              .clickMenuItem, .clickMenuItemByName, .listMenuExtras, .clickMenuExtra, .menuExtraOpenMenuFrame,
-             .listMenuBarItems, .clickMenuBarItemNamed, .clickMenuBarItemIndex, .listDockItems, .launchDockItem,
+             .listMenuBarItems, .clickMenuBarItemNamed, .listDockItems, .launchDockItem,
              .rightClickDockItem, .hideDock, .showDock, .isDockHidden, .findDockItem, .dialogFindActive,
              .dialogClickButton, .backgroundDialogClickButton, .dialogEnterText, .dialogHandleFile, .dialogDismiss,
              .dialogListElements, .targetedDialogListElements, .prepareDialogAction,
-             .exactDialogClickButton, .exactDialogDismiss:
+             .exactDialogClickButton, .exactDialogDismiss, .exactDialogEnterText:
             [.accessibility]
         case .targetedClick, .exactWindowTargetedClick, .targetedScroll:
             [.accessibility]

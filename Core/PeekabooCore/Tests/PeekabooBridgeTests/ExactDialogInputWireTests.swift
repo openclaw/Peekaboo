@@ -7,7 +7,7 @@ import Testing
 
 struct ExactDialogInputWireTests {
     @Test
-    func `protocol 1 27 gates exact foreground dialog execution while retaining legacy input`() {
+    func `protocol 1 27 gates exact dialog execution while retaining legacy input`() {
         let operations: Set<PeekabooBridgeOperation> = [
             .dialogEnterText,
             .exactDialogEnterText,
@@ -21,7 +21,7 @@ struct ExactDialogInputWireTests {
         #expect(PeekabooBridgeHostCapability.exactDialogInputExecution == "exactDialogInputExecution")
         #expect(PeekabooBridgeHostCapability.exactForcedDialogDismissExecution ==
             "exactForcedDialogDismissExecution")
-        #expect(PeekabooBridgeOperation.exactDialogEnterText.requiredPermissions == [.accessibility, .postEvent])
+        #expect(PeekabooBridgeOperation.exactDialogEnterText.requiredPermissions == [.accessibility])
         #expect(PeekabooBridgeOperation.exactDialogForceDismiss.requiredPermissions == [.accessibility, .postEvent])
         #expect(PeekabooBridgeOperation.compatible(operations, with: legacyVersion) == [.dialogEnterText])
         #expect(PeekabooBridgeOperation.compatible(
