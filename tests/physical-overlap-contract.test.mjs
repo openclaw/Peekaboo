@@ -27,8 +27,13 @@ function validate(value) {
     'prohibited_mechanisms',
   ]) || value.version !== 1) failures.push('schema');
   if (!exactKeys(value.product_source, [
-    'commit', 'tree', 'peer_binding', 'operation_receipts_sha256', 'socket_io_sha256',
-    'host_clients_sha256', 'private_archive_sha256',
+    'commit', 'tree', 'peer_binding', 'client_sha256', 'client_transport_sha256',
+    'operation_policy_sha256', 'operation_receipt_models_sha256',
+    'operation_receipts_sha256', 'operation_receipt_archive_maintenance_sha256',
+    'operation_response_target_evidence_sha256', 'operation_result_semantics_sha256',
+    'operation_session_claim_sha256', 'server_operation_receipts_sha256',
+    'server_handshake_sha256', 'socket_io_sha256', 'host_clients_sha256',
+    'private_archive_sha256',
   ]) || value.product_source.peer_binding !== 'darwin-audit-token-pidversion-euid-cdhash-v1') {
     failures.push('source');
   }
@@ -47,10 +52,19 @@ function validate(value) {
   }
   if (!exactKeys(value.foreground_attribution_requirements, [
     'minimum_event_count', 'active_target_set', 'grant_revision_monotonic',
-    'revoke_before_clean_sample', 'unexpected_activation_fails',
+    'baseline_revision_acknowledged', 'grant_revision_acknowledged_before_input',
+    'exactly_one_controller_while_active', 'revoke_before_clean_sample',
+    'revoke_revision_acknowledged_before_restore', 'zero_controllers_after_revoke',
+    'post_revoke_clean_sample', 'unexpected_activation_fails',
   ]) || value.foreground_attribution_requirements.minimum_event_count < 1
       || value.foreground_attribution_requirements.grant_revision_monotonic !== true
+      || value.foreground_attribution_requirements.baseline_revision_acknowledged !== true
+      || value.foreground_attribution_requirements.grant_revision_acknowledged_before_input !== true
+      || value.foreground_attribution_requirements.exactly_one_controller_while_active !== true
       || value.foreground_attribution_requirements.revoke_before_clean_sample !== true
+      || value.foreground_attribution_requirements.revoke_revision_acknowledged_before_restore !== true
+      || value.foreground_attribution_requirements.zero_controllers_after_revoke !== true
+      || value.foreground_attribution_requirements.post_revoke_clean_sample !== true
       || value.foreground_attribution_requirements.unexpected_activation_fails !== true) {
     failures.push('foreground_attribution');
   }
@@ -59,7 +73,7 @@ function validate(value) {
 
 test('frozen physical overlap catalog pins exact PR 487 protocol owners', () => {
   assert.deepEqual(validate(catalog), []);
-  assert.equal(catalog.product_source.commit, 'a712664b14f0cbe569bbdd3186f1e5a188e7c70c');
+  assert.equal(catalog.product_source.commit, 'e68a46c227b957ee8a430ecfcb002162b0eb0bbb');
   assert.equal(
     execFileSync('git', ['rev-parse', `${catalog.product_source.commit}^{tree}`], {
       cwd: root,
@@ -67,22 +81,29 @@ test('frozen physical overlap catalog pins exact PR 487 protocol owners', () => 
     }).trim(),
     catalog.product_source.tree,
   );
-  assert.equal(
-    sha256('Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationReceipts.swift'),
-    catalog.product_source.operation_receipts_sha256,
-  );
-  assert.equal(
-    sha256('Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeSocketIO.swift'),
-    catalog.product_source.socket_io_sha256,
-  );
-  assert.equal(
-    sha256('Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeHost+Clients.swift'),
-    catalog.product_source.host_clients_sha256,
-  );
-  assert.equal(
-    sha256('Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgePrivateReceiptArchive.swift'),
-    catalog.product_source.private_archive_sha256,
-  );
+  const sourceOwners = [
+    ['client_sha256', 'PeekabooBridgeClient.swift'],
+    ['client_transport_sha256', 'PeekabooBridgeClient+Transport.swift'],
+    ['operation_policy_sha256', 'PeekabooBridgeOperation+Policy.swift'],
+    ['operation_receipt_models_sha256', 'PeekabooBridgeOperationReceiptModels.swift'],
+    ['operation_receipts_sha256', 'PeekabooBridgeOperationReceipts.swift'],
+    ['operation_receipt_archive_maintenance_sha256', 'PeekabooBridgeOperationReceiptArchiveMaintenance.swift'],
+    ['operation_response_target_evidence_sha256', 'PeekabooBridgeOperationResponseTargetEvidence.swift'],
+    ['operation_result_semantics_sha256', 'PeekabooBridgeOperationResultSemantics.swift'],
+    ['operation_session_claim_sha256', 'PeekabooBridgeOperationSessionClaim.swift'],
+    ['server_operation_receipts_sha256', 'PeekabooBridgeServer+OperationReceipts.swift'],
+    ['server_handshake_sha256', 'PeekabooBridgeServer+Handshake.swift'],
+    ['socket_io_sha256', 'PeekabooBridgeSocketIO.swift'],
+    ['host_clients_sha256', 'PeekabooBridgeHost+Clients.swift'],
+    ['private_archive_sha256', 'PeekabooBridgePrivateReceiptArchive.swift'],
+  ];
+  for (const [field, filename] of sourceOwners) {
+    assert.equal(
+      sha256(`Core/PeekabooCore/Sources/PeekabooBridge/${filename}`),
+      catalog.product_source[field],
+      field,
+    );
+  }
 });
 
 test('catalog cannot weaken mode attribution restoration or prohibited mechanisms', () => {
@@ -97,6 +118,22 @@ test('catalog cannot weaken mode attribution restoration or prohibited mechanism
   const attribution = structuredClone(catalog);
   attribution.foreground_attribution_requirements.minimum_event_count = 0;
   assert.ok(validate(attribution).includes('foreground_attribution'));
+
+  const activeCardinality = structuredClone(catalog);
+  activeCardinality.foreground_attribution_requirements.exactly_one_controller_while_active = false;
+  assert.ok(validate(activeCardinality).includes('foreground_attribution'));
+
+  const revokeCardinality = structuredClone(catalog);
+  revokeCardinality.foreground_attribution_requirements.zero_controllers_after_revoke = false;
+  assert.ok(validate(revokeCardinality).includes('foreground_attribution'));
+
+  const staleGrant = structuredClone(catalog);
+  staleGrant.foreground_attribution_requirements.grant_revision_acknowledged_before_input = false;
+  assert.ok(validate(staleGrant).includes('foreground_attribution'));
+
+  const earlyRestore = structuredClone(catalog);
+  earlyRestore.foreground_attribution_requirements.revoke_revision_acknowledged_before_restore = false;
+  assert.ok(validate(earlyRestore).includes('foreground_attribution'));
 
   const virtualized = structuredClone(catalog);
   virtualized.prohibited_mechanisms = virtualized.prohibited_mechanisms.filter(

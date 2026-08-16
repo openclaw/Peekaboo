@@ -111,13 +111,22 @@ function validateReceiptCertification(report, failures) {
     total + (checkpoint.observations?.length ?? 0)
   ), 0);
   if (!exactKeys(validation, [
-    'success', 'adapter_id', 'adapter_sha256', 'contract_sha256', 'result_sha256',
-    'receipt_count', 'session_count',
+    'success', 'first_party_validator_id', 'first_party_trust_source',
+    'first_party_executable_sha256', 'first_party_result_set_sha256',
+    'first_party_result_count', 'adapter_id', 'adapter_sha256', 'contract_sha256',
+    'result_sha256', 'receipt_count', 'session_count',
   ]) || validation?.success !== true
+      || validation.first_party_validator_id !== 'peekaboo-bridge-receipt-validate-v1'
+      || validation.first_party_trust_source !== 'authenticated_live_listener'
+      || !hex64.test(validation.first_party_executable_sha256 ?? '')
+      || !hex64.test(validation.first_party_result_set_sha256 ?? '')
+      || !positiveInteger(validation.first_party_result_count)
+      || validation.first_party_result_count !== validation.receipt_count
       || validation.adapter_id !== 'peekaboo-bridge-operation-receipt-bundle-1.29-logical-session-v1'
       || !hex64.test(validation.adapter_sha256 ?? '')
       || !hex64.test(validation.contract_sha256 ?? '')
       || !hex64.test(validation.result_sha256 ?? '')
+      || !positiveInteger(validation.receipt_count)
       || validation.receipt_count < trackedOperationCount
       || !positiveInteger(validation.session_count)
       || validation.session_count > validation.receipt_count) {
@@ -850,6 +859,11 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
     ],
     receipt_validation: {
       success: true,
+      first_party_validator_id: 'peekaboo-bridge-receipt-validate-v1',
+      first_party_trust_source: 'authenticated_live_listener',
+      first_party_executable_sha256: '4'.repeat(64),
+      first_party_result_set_sha256: '5'.repeat(64),
+      first_party_result_count: 22,
       adapter_id: 'peekaboo-bridge-operation-receipt-bundle-1.29-logical-session-v1',
       adapter_sha256: '1'.repeat(64),
       contract_sha256: '2'.repeat(64),
@@ -909,6 +923,12 @@ export function runOverlapContractSelfTest(catalog, catalogSHA256) {
     }, 'restoration_checkpoint_timing'],
     ['restoration counted as workflow', (report) => { report.controllers[0].mutations.splice(1, 1); }, 'mutation_count'],
     ['workflow command drift', (report) => { report.controllers[0].mutations[1].command = 'type'; }, 'mutation_sequence'],
+    ['unanchored first-party receipts', (report) => {
+      report.receipt_validation.first_party_trust_source = 'bundle_self_signature';
+    }, 'receipt_validation'],
+    ['missing first-party receipt verdict', (report) => {
+      report.receipt_validation.first_party_result_count -= 1;
+    }, 'receipt_validation'],
   ];
   for (const [name, mutate, expectedRule] of corruptions) {
     const report = structuredClone(passing);

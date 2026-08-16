@@ -29,12 +29,7 @@ struct BridgeDiagnostics {
             configurationInput: configurationInput
         )
 
-        let identity = PeekabooBridgeClientIdentity(
-            bundleIdentifier: Bundle.main.bundleIdentifier,
-            teamIdentifier: Self.currentTeamIdentifier(),
-            processIdentifier: getpid(),
-            hostname: Host.current().name
-        )
+        let identity = Self.currentClientIdentity()
 
         if let remoteSkipReason {
             let candidates = Self.diagnosticSocketPaths(
@@ -303,6 +298,15 @@ struct BridgeDiagnostics {
             PeekabooBridgeConstants.clawdbotSocketPath,
         ]
         return runtimePaths + additionalPaths.filter { !runtimePaths.contains($0) }
+    }
+
+    static func currentClientIdentity() -> PeekabooBridgeClientIdentity {
+        PeekabooBridgeClientIdentity(
+            bundleIdentifier: Bundle.main.bundleIdentifier,
+            teamIdentifier: self.currentTeamIdentifier(),
+            processIdentifier: getpid(),
+            hostname: Host.current().name
+        )
     }
 
     private static func currentTeamIdentifier() -> String? {

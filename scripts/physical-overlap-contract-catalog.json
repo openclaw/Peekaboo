@@ -1,12 +1,22 @@
 {
   "version": 1,
   "product_source": {
-    "commit": "a712664b14f0cbe569bbdd3186f1e5a188e7c70c",
-    "tree": "9edf0d05673329a0a339b05c778ba9a547b0a80e",
+    "commit": "e68a46c227b957ee8a430ecfcb002162b0eb0bbb",
+    "tree": "7b33ea5a34acc704ef5f57e88ec2d45024aa15bc",
     "peer_binding": "darwin-audit-token-pidversion-euid-cdhash-v1",
-    "operation_receipts_sha256": "a1e4aeefaa952898c581606d20005689de022c919f76e85c8c9e1e97296088db",
-    "socket_io_sha256": "18005731dd37a0045e22ce06ceaed92405dfaa0d86d046f2d1cba33fcf9fd32a",
-    "host_clients_sha256": "5aa63a11a95adb966c11d2bac7415a4437241ff0fdaf081b85765947a45105ee",
+    "client_sha256": "0b333be28a615b28aee8b8d6d7cc23df2e17bb8ed832bbd795cdf1400febe96a",
+    "client_transport_sha256": "add0088021017fa4e414ba3c321a875c82fb94dceaaae144c416e734744a7922",
+    "operation_policy_sha256": "08d15ba244708ec4dcab57d4094119bcff9ed45ec73d77ee862db0cb9906688b",
+    "operation_receipt_models_sha256": "c25a8edfd4977b3e68076685cd01e1b16a16bbb294e2210c209fd42b30d32346",
+    "operation_receipts_sha256": "8ab9a6aa72b301df3ac57f50a7b89715e668c3b0ee5849bac1992ab9f2b251f3",
+    "operation_receipt_archive_maintenance_sha256": "5a607e6acbcaaaec9adb6194d99b4e288a3a93de6911ed84a6c43a96d884cec9",
+    "operation_response_target_evidence_sha256": "80b89f6dd84f32f52e6c8e13ce4e7feba40e007f0ae7819853bc5c58b8fda954",
+    "operation_result_semantics_sha256": "eabd2eeda2da336de79ee2381ca3d95eb7f5b36a6ba2a60505bf1d9d21461f06",
+    "operation_session_claim_sha256": "e64b808a2c2e77e57960c4fe389108a60abdaaf14545fa539cf348f6f4fac663",
+    "server_operation_receipts_sha256": "82a8d951aa7753f680814313fe0a246f9e6a61a271f16a26b548ca1dabbfbf83",
+    "server_handshake_sha256": "62262633332769647138d5de92e4eb878bccfbcc341db5c9f6249ba5bb09c010",
+    "socket_io_sha256": "3cb418a2337b4c6a9da10bd02d06e37ab2adf207b19c9a7bc89d715bda55d37e",
+    "host_clients_sha256": "3a77db2547f4344b0aa4bc1d0fbb2259b2f4a74ffd957b800e987e58c6351f18",
     "private_archive_sha256": "40ef72a3cf1ce57e8da245b2fa1f620dfa1c3104dff9f9ac1e8d23d3c6a5d039"
   },
   "controllers": [
@@ -76,7 +86,13 @@
     "minimum_event_count": 1,
     "active_target_set": "sentinel-or-exact-foreground-target",
     "grant_revision_monotonic": true,
+    "baseline_revision_acknowledged": true,
+    "grant_revision_acknowledged_before_input": true,
+    "exactly_one_controller_while_active": true,
     "revoke_before_clean_sample": true,
+    "revoke_revision_acknowledged_before_restore": true,
+    "zero_controllers_after_revoke": true,
+    "post_revoke_clean_sample": true,
     "unexpected_activation_fails": true
   },
   "restoration_requirements": [

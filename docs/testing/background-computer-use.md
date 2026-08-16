@@ -109,14 +109,17 @@ each request uses a decimal-string session sequence and deterministic RFC 9562 v
 automatic retry is one request backed by a fully verified signed refusal proving `mutation_dispatched=false` and
 `retry_safe=true` and carrying the successor session. Protocol 1.28 remains receiptless.
 
-Live overlap execution is still deliberately reserved because the CLI does not yet expose a public first-party
-`bridge receipt validate` command that the shell harness can use for every exported verification bundle, including
-session and predecessor/successor linkage. `bridge status` host identity and structural `jq` checks are not substitutes
-for Ed25519 and canonical-digest validation. The current command therefore refuses before UI setup; its deterministic
-contract/self-test is landable infrastructure, while physical signed-live proof remains pending. Once that verifier is
-available, the opt-in invocation will require a clean source tree, matching stamped CLI/host source commits, one exact
-signed Bridge host, an already-running sentinel receipt, and a private
-`PEEKABOO_OPERATION_RECEIPT_DIRECTORY` whose expected terminal bundles all validate:
+`peekaboo bridge receipt validate --bundle PATH --bridge-socket PATH --json` is the first-party single-bundle verifier.
+It authenticates the exact live listener through the socket peer and signing team, then delegates listener, session,
+terminal signature, canonical digest, request identity, peer binding, target, and outcome semantics to the public
+Bridge bundle validator with that independently obtained listener attestation. `bridge status`, structural `jq` checks,
+and a bundle's own self-signature are not substitutes.
+
+Live overlap execution remains deliberately reserved until the shell coordinator invokes that command for every
+expected terminal bundle, binds the complete anchored verdict set into its report, and completes the foreground
+controller grant/revoke sequence below. The current command still refuses before UI setup. The eventual opt-in run also
+requires a clean source tree, matching stamped CLI/host source commits, one exact signed Bridge host, an already-running
+sentinel receipt, and a private `PEEKABOO_OPERATION_RECEIPT_DIRECTORY`:
 
 ```bash
 PEEKABOO_RUN_DUAL_CONTROLLER_OVERLAP=1 \
@@ -171,15 +174,15 @@ receipt, all three canonical signature payloads, and the canonical request and r
 never reconstructs signed bytes or
 substitutes a status probe made over another connection. Those bytes can contain typed text and other sensitive command
 payloads: use a new private artifact directory, do not publish it, and remove it after the certification evidence has
-been reduced to non-sensitive hashes and verdicts. The validator takes the attestation from the first bundle
-automatically:
+been reduced to non-sensitive hashes and verdicts. The offline adapter remains an independent policy cross-check, but
+it does not authenticate listener provenance. Every bundle must also pass the first-party verifier against the exact
+live socket:
 
 ```bash
-node scripts/validate-attested-operation-receipts.mjs \
-  --contract /private/path/coexistence-receipt-contract.json \
-  --receipts /private/path/verified-receipts \
-  --adapter scripts/receipt-adapters/peekaboo-bridge-operation-receipt-bundle-1-29.mjs \
-  --output /private/path/receipt-verdict.json
+peekaboo bridge receipt validate \
+  --bundle /private/path/verified-receipts/request-id.json \
+  --bridge-socket /private/path/to/bridge.sock \
+  --json
 ```
 
 The separate canonical adapter is a deterministic fixture/reference adapter. The adapter boundary owns producer wire
@@ -202,6 +205,25 @@ sample. Cursor motion stays observational, so a person using the machine does no
 `scripts/physical-overlap-contract-catalog.json` freezes this split-controller policy to the exact protocol 1.29 source
 under test. It forbids virtualization, Lume, VNC, AppleScript, and JXA; a later live binding may fill only the exact
 sentinel, controlled targets, socket/listener, CLI generations, and integrated Computer Use producer generations.
+
+The final coordinator uses one monotonic three-revision grant contract and atomic file replacement:
+
+1. Baseline revision `N` lists the exact Bridge PID/generation with role `bridge`, no foreground controller, and
+   `{ "active": false }`. Neither controller starts until the heartbeat reports revision `N` and a clean sample.
+2. Grant revision `N+1` retains the Bridge producer, adds exactly one integrated Computer Use PID/generation with role
+   `foreground-controller`, and sets
+   `{ "active": true, "target": { "pid": P, "startIdentity": S, "windowID": W } }`.
+   Foreground work starts only after the heartbeat reports `N+1`, `foregroundActive: true`, and the exact target.
+3. Before revocation, require `attributedForegroundEventCount > 0`, the exact controller PID in
+   `attributedForegroundSourcePIDs`, no monitor violation, and only the sentinel or granted target activation.
+4. Revoke with revision `N+2`: remove every foreground controller, set `{ "active": false }`, and retain the Bridge
+   receipt. Wait for the heartbeat to report `N+2` and `foregroundActive: false`; then restore the sentinel and require a
+   later clean sequence before cleanup or certification.
+
+The monitor rejects zero or multiple foreground controllers while a grant is active and any foreground controller that
+remains after revocation. Reused revisions, dead process generations, missing event attribution, unexpected activation,
+wrong targets, interrupted monitoring, missing terminal bundles, failed anchored verdicts, or cleanup before the
+post-revoke clean sample also fail the run. Physical cursor motion remains observational throughout.
 
 For the interaction commands exercised here, background is the omission contract: `--foreground` is the only consent
 for focus/activation, global keyboard input, physical cursor movement, or synthetic pointer/wheel events. Explicit app

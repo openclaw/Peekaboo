@@ -1,9 +1,10 @@
 ---
-summary: 'Diagnose Peekaboo Bridge host connectivity via peekaboo bridge'
+summary: 'Diagnose Bridge hosts and verify signed operation receipt bundles'
 read_when:
   - 'verifying whether the CLI is using Peekaboo.app / Clawdbot.app as a Bridge host'
   - 'debugging codesign / TeamID failures for bridge.sock connections'
   - 'checking which socket path Peekaboo is probing'
+  - 'verifying a private protocol 1.29 operation receipt bundle'
 ---
 
 # `peekaboo bridge`
@@ -14,6 +15,7 @@ read_when:
 | Name | Purpose |
 | --- | --- |
 | `status` (default) | Probes configured sockets and reports the selected reusable daemon, healthy Peekaboo.app GUI host, auto-start daemon plan, or final operation-dependent local fallback. |
+| `receipt validate` | Authenticates one exact live listener and verifies one private exported protocol 1.29 terminal bundle against it. |
 
 ## Notes
 - Normal automation routing reuses a healthy daemon, then tries a capable Peekaboo.app host before starting a daemon
@@ -62,11 +64,17 @@ read_when:
   generations use canonical decimal strings rather than lossy JSON numbers. Bundles can contain command text and
   response data, so do not enable export for ordinary automation or write it to a shared directory. The Swift
   `validateIntegrity()` API verifies canonical bytes, the complete signature chain, and operation semantics, but its
-  listener is self-signed and carried inside the bundle. Certification must instead call `validate(trustAnchor:)` with
-  the exact listener attestation, public key, or digest captured through an independently authenticated handshake.
-  Peekaboo validates receipts in process against that live handshake state, but there is not yet a public
-  `peekaboo bridge receipt validate` command; external physical certification remains pending that anchored first-party
-  verifier rather than treating either structural JSON checks or an unanchored self-signature as proof.
+  listener is self-signed and carried inside the bundle. `bridge receipt validate` instead requires `--bridge-socket`,
+  authenticates that exact connected host from the Unix-socket audit identity and signing team, and calls
+  `validate(trustAnchor:)` with the complete listener attestation from that independent live handshake. Standard
+  Peekaboo socket paths use the built-in release-team policy; custom paths require one or more explicit
+  `--trusted-host-team-id` values. A listener mismatch, protocol 1.28 downgrade, missing attestation, invalid signature,
+  or semantic contradiction fails nonzero. Structural JSON checks and the bundle's own self-signature are never trust
+  anchors.
+- Receipt validation accepts only an owner-private, non-symlink regular bundle, reads at most 256 MiB through one
+  descriptor, and reports minimized hashes/identities rather than the canonical command/response bytes or private host
+  archive path. The output fields `target_attested` and `outcome_attested` describe actual signed field presence; a
+  valid read-only receipt can truthfully report `outcome_attested: false`.
 - Target attribution delegates to the same canonical process/window receipt coalescer used by local automation.
   One exhaustive operation semantic plan also owns each success response family, allowed terminal states and result
   values, delivery/mode alternatives, dispatched-unit policy, and request/response/handler target provenance. The
@@ -102,6 +110,12 @@ peekaboo bridge status --bridge-socket \
 
 # Force local (skip the reusable daemon and all Bridge app hosts)
 peekaboo bridge status --no-remote
+
+# Validate one private bundle against the authenticated listener that produced it
+peekaboo bridge receipt validate \
+  --bundle /private/path/to/request-id.json \
+  --bridge-socket ~/Library/Application\ Support/Peekaboo/bridge.sock \
+  --json
 
 # OpenClaw/subprocess capture workaround when the caller already has Screen Recording
 peekaboo see --mode screen --screen-index 0 \

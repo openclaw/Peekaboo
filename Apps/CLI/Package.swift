@@ -70,6 +70,9 @@ var targets: [Target] = [
             .product(name: "PeekabooCore", package: "PeekabooCore"),
         ],
         path: "Tests/CoreCLITests",
+        resources: [
+            .copy("Fixtures"),
+        ],
         swiftSettings: swiftTestingSettings),
     .testTarget(
         name: "CLIRuntimeTests",

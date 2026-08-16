@@ -207,6 +207,15 @@ private struct AllowedEventProducerSet: Codable {
     let foreground: AllowedForegroundActivity?
 }
 
+private func foregroundControllerCardinalityIsValid(
+    producers: [AllowedEventProducer],
+    foreground: AllowedForegroundActivity) -> Bool
+{
+    let controllerCount = producers.count { $0.effectiveRole == .foregroundController }
+    return foreground.active ? controllerCount == 1 && foreground.target != nil
+        : controllerCount == 0 && foreground.target == nil
+}
+
 private struct AttemptContaminationState {
     private(set) var blocked = false
 
@@ -856,12 +865,10 @@ private struct WatchState {
         let foregroundProducers = producerSet.producers.filter {
             $0.effectiveRole == .foregroundController
         }
-        let foregroundContractValid: Bool = if foreground.active {
-            !foregroundProducers.isEmpty &&
-                foreground.target.map(foregroundTargetIsLive) == true
-        } else {
-            foreground.target == nil
-        }
+        let foregroundContractValid = foregroundControllerCardinalityIsValid(
+            producers: producerSet.producers,
+            foreground: foreground) &&
+            (!foreground.active || foreground.target.map(foregroundTargetIsLive) == true)
         guard foregroundContractValid else {
             try self.block(
                 reason: "blocked_foreground_contract",
@@ -1175,6 +1182,20 @@ private func foregroundProducerSchemaIsLossless() -> Bool {
             target: AllowedForegroundTarget(pid: 44, startIdentity: "987654323", windowID: 45))
 }
 
+private func foregroundControllerCardinalityIsSafe() -> Bool {
+    let bridge = AllowedEventProducer(pid: 42, startIdentity: "4200", role: .bridge)
+    let first = AllowedEventProducer(pid: 43, startIdentity: "4300", role: .foregroundController)
+    let second = AllowedEventProducer(pid: 44, startIdentity: "4400", role: .foregroundController)
+    let target = AllowedForegroundTarget(pid: 45, startIdentity: "4500", windowID: 46)
+    let active = AllowedForegroundActivity(active: true, target: target)
+    let revoked = AllowedForegroundActivity(active: false, target: nil)
+    return foregroundControllerCardinalityIsValid(producers: [bridge, first], foreground: active) &&
+        !foregroundControllerCardinalityIsValid(producers: [bridge], foreground: active) &&
+        !foregroundControllerCardinalityIsValid(producers: [bridge, first, second], foreground: active) &&
+        foregroundControllerCardinalityIsValid(producers: [bridge], foreground: revoked) &&
+        !foregroundControllerCardinalityIsValid(producers: [bridge, first], foreground: revoked)
+}
+
 private func physicalInputPolicyIsSafe() -> Bool {
     let physicalBatch = InputEventBatch(
         producerEventCount: 0,
@@ -1416,6 +1437,10 @@ private func runSelfTest() throws {
     guard foregroundProducerSchemaIsLossless() else {
         throw ProbeError.invalidArguments("foreground producer policy did not decode losslessly")
     }
+    guard foregroundControllerCardinalityIsSafe() else {
+        throw ProbeError.invalidArguments(
+            "foreground policy must allow exactly one active controller and none after revocation")
+    }
     let transientKinds = Set(transientFocusViolations(
         externalEventCount: 0,
         unexpectedActivations: [102],
@@ -1481,7 +1506,7 @@ private func runSelfTest() throws {
         throw ProbeError.invalidArguments("unattributed foreground focus did not fail closed")
     }
 
-    try writeJSON(SelfTestResult(success: true, tests: 18), to: nil)
+    try writeJSON(SelfTestResult(success: true, tests: 19), to: nil)
 }
 
 private func findApp(arguments: [String]) throws {

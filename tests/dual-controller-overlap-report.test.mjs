@@ -217,6 +217,18 @@ test('synthetic overlap evidence cannot replace signed protocol 1.29 receipt val
   incomplete.receipt_validation.receipt_count -= 1;
   assert.ok(rules(validate(incomplete)).has('receipt_validation'));
 
+  const unboundFirstParty = makePassingOverlapReport(catalog);
+  unboundFirstParty.receipt_validation.first_party_result_set_sha256 = 'invalid';
+  assert.ok(rules(validate(unboundFirstParty)).has('receipt_validation'));
+
+  const untrustedFirstParty = makePassingOverlapReport(catalog);
+  untrustedFirstParty.receipt_validation.first_party_trust_source = 'bundle_self_signature';
+  assert.ok(rules(validate(untrustedFirstParty)).has('receipt_validation'));
+
+  const missingFirstPartyResult = makePassingOverlapReport(catalog);
+  missingFirstPartyResult.receipt_validation.first_party_result_count -= 1;
+  assert.ok(rules(validate(missingFirstPartyResult)).has('receipt_validation'));
+
   const legacyProtocol = makePassingOverlapReport(catalog);
   legacyProtocol.host.protocol_minor = 28;
   assert.ok(rules(validate(legacyProtocol)).has('host_receipt'));
