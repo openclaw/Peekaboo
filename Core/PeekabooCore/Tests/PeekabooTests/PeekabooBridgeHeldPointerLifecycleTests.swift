@@ -25,6 +25,10 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
         #expect(!handshake.supportedOperations.contains(.createExactWindowHeldPointerOwner))
         #expect(handshake.hostCapabilities?.contains(
             PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle) != true)
+        #expect(handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.statelessClickVariants) != true)
+        #expect(await client.exactWindowHeldPointerLifecycleEnabled == false)
+        #expect(await client.statelessClickVariantsEnabled == false)
         await #expect(throws: PeekabooError.self) {
             _ = try await client.createExactWindowHeldPointerOwner()
         }
@@ -41,6 +45,12 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
         let handshake = try await client.handshake(client: Self.clientIdentity)
         #expect(handshake.hostCapabilities?.contains(
             PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle) == true)
+        #expect(handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.statelessClickVariants) == true)
+        #expect(handshake.supportedOperations.contains(.targetedClick))
+        #expect(handshake.enabledOperations?.contains(.targetedClick) == true)
+        #expect(await client.exactWindowHeldPointerLifecycleEnabled == true)
+        #expect(await client.statelessClickVariantsEnabled == true)
 
         let owner = try await client.createExactWindowHeldPointerOwner()
         let request = fixture.automation.request
@@ -148,6 +158,7 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
                 allowlistedBundles: [],
                 supportedVersions: protocolVersion...protocolVersion,
                 allowedOperations: [
+                    .targetedClick,
                     .createExactWindowHeldPointerOwner,
                     .beginExactWindowHeldPointer,
                     .releaseExactWindowHeldPointer,
@@ -179,7 +190,10 @@ private struct HostFixture: Sendable {
 }
 
 @MainActor
-private final class HeldPointerBridgeAutomationStub: ExactWindowHeldPointerLifecycleServiceProtocol {
+private final class HeldPointerBridgeAutomationStub:
+    ExactWindowHeldPointerLifecycleServiceProtocol,
+    TargetedClickServiceProtocol
+{
     let supportsExactWindowHeldPointerLifecycle = true
     private(set) var createCount = 0
     private(set) var terminalDispatchCount = 0
@@ -201,6 +215,15 @@ private final class HeldPointerBridgeAutomationStub: ExactWindowHeldPointerLifec
             windowBounds: bounds,
             button: .left,
             expiresAfterSeconds: 10)
+    }
+
+    func click(
+        target _: ClickTarget,
+        clickType _: ClickType,
+        snapshotId _: String?,
+        targetProcessIdentifier _: pid_t) async throws
+    {
+        throw PeekabooError.serviceUnavailable("Click dispatch is not exercised by this handshake fixture")
     }
 
     func createExactWindowHeldPointerOwner(

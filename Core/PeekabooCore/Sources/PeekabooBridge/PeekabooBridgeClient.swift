@@ -845,7 +845,7 @@ public actor PeekabooBridgeClient {
                     .disconnectExactWindowHeldPointerOwner,
                 ]).isSubset(of: Set(handshake.enabledOperations ?? handshake.supportedOperations)),
             statelessClickVariantsEnabled:
-                handshake.negotiatedVersion >= PeekabooBridgeConstants.statelessClickVariantVersion &&
+            handshake.negotiatedVersion >= PeekabooBridgeConstants.statelessClickVariantVersion &&
                 handshake.hostCapabilities?.contains(
                     PeekabooBridgeHostCapability.statelessClickVariants) == true &&
                 handshake.supportedOperations.contains(.targetedClick),
