@@ -26,12 +26,42 @@ extension PeekabooBridgeRequest {
             false
         }
     }
+
+    var minimumNegotiatedProtocolVersion: PeekabooBridgeProtocolVersion? {
+        if self.requiresStatelessClickVariantSupport {
+            return PeekabooBridgeConstants.statelessClickVariantVersion
+        }
+        switch self.unwrappedOperationRequest.operation {
+        case .createExactWindowHeldPointerOwner,
+             .beginExactWindowHeldPointer,
+             .releaseExactWindowHeldPointer,
+             .revokeExactWindowHeldPointer,
+             .disconnectExactWindowHeldPointerOwner:
+            return PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion
+        default:
+            return nil
+        }
+    }
+
+    var requiresExactWindowHeldPointerLifecycleSupport: Bool {
+        switch self.unwrappedOperationRequest.operation {
+        case .createExactWindowHeldPointerOwner,
+             .beginExactWindowHeldPointer,
+             .releaseExactWindowHeldPointer,
+             .revokeExactWindowHeldPointer,
+             .disconnectExactWindowHeldPointerOwner:
+            true
+        default:
+            false
+        }
+    }
 }
 
 enum PeekabooBridgeRequestContext {
     @TaskLocal static var clientConnectionProbe: (@Sendable () -> Bool)?
     @TaskLocal static var operationReceiptAuthority: PeekabooBridgeOperationReceiptAuthority?
     @TaskLocal static var usesAttestedOperationResultSemantics = false
+    @TaskLocal static var negotiatedSessionCapabilities: PeekabooBridgeNegotiatedSessionCapabilities?
 
     static func checkRequestIsActive() throws {
         try Task.checkCancellation()

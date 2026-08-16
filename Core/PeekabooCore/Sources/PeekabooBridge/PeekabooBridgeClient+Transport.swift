@@ -28,7 +28,7 @@ extension PeekabooBridgeClient {
         operationReceiptRequirement: PeekabooBridgeOperationReceiptRequirement = .whenAvailable) async throws
         -> PeekabooBridgeTransportReply
     {
-        try self.requireStatelessClickVariantSupport(for: request)
+        try self.requireNegotiatedInputCapabilities(for: request)
         let explicitlyProjected = if case .projectedAction = request {
             true
         } else {
@@ -166,6 +166,7 @@ extension PeekabooBridgeClient {
         operationReceiptRequirement: PeekabooBridgeOperationReceiptRequirement) async throws
         -> PeekabooBridgePreparedRequest
     {
+        try self.requireNegotiatedInputCapabilities(for: originalRequest)
         let preparedRequest: PeekabooBridgePreparedRequest
         do {
             preparedRequest = try await self.prepareWireRequest(projectedRequest, deadline: deadline)
@@ -181,17 +182,25 @@ extension PeekabooBridgeClient {
             guard originalRequest.mayMutateDesktop else { throw error }
             throw Self.preTransportSessionUnavailableFailure(operation: operation, cause: error)
         }
-        try self.requireStatelessClickVariantSupport(for: originalRequest)
+        try self.requireNegotiatedInputCapabilities(for: originalRequest)
         return preparedRequest
     }
 
-    private func requireStatelessClickVariantSupport(for request: PeekabooBridgeRequest) throws {
-        guard request.requiresStatelessClickVariantSupport else { return }
-        guard self.statelessClickVariantsEnabled else {
+    private func requireNegotiatedInputCapabilities(for request: PeekabooBridgeRequest) throws {
+        if request.requiresStatelessClickVariantSupport, !self.statelessClickVariantsEnabled {
             throw DesktopActionFailure.preDispatchRefusal(
                 route: .bridge,
                 reason: .runtimeIncompatible,
                 message: "Bridge protocol 1.30 middle/triple-click support is unavailable.",
+                hint: "Update or relaunch the Peekaboo Bridge host before retrying.")
+        }
+        if request.requiresExactWindowHeldPointerLifecycleSupport,
+           !self.exactWindowHeldPointerLifecycleEnabled
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "Bridge protocol 1.30 exact-window held-pointer support is unavailable.",
                 hint: "Update or relaunch the Peekaboo Bridge host before retrying.")
         }
     }

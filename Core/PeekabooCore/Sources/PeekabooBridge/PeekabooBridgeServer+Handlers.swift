@@ -921,9 +921,7 @@ extension PeekabooBridgeServer {
                 message: "Background clicks are not supported by this bridge host")
         }
         if payload.clickType.requiresStatelessVariantSupport {
-            guard targetedClickService.supportsStatelessClickVariants,
-                  self.hostCapabilities.contains(PeekabooBridgeHostCapability.statelessClickVariants)
-            else {
+            guard targetedClickService.supportsStatelessClickVariants else {
                 throw PeekabooBridgeErrorEnvelope(
                     code: .operationNotSupported,
                     message: "This Bridge host does not support middle- or triple-click requests")

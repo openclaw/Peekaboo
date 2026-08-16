@@ -180,16 +180,23 @@ enum PeekabooBridgeOperationResultSemantics {
     struct DeliveryRule: Equatable, Sendable {
         let delivery: DesktopActionOutcome.Delivery
         let units: UnitPolicy
+        let failureUnits: UnitPolicy?
         let allowsSuccessfulOutcome: Bool
 
         init(
             delivery: DesktopActionOutcome.Delivery,
             units: UnitPolicy,
+            failureUnits: UnitPolicy? = nil,
             allowsSuccessfulOutcome: Bool = true)
         {
             self.delivery = delivery
             self.units = units
+            self.failureUnits = failureUnits
             self.allowsSuccessfulOutcome = allowsSuccessfulOutcome
+        }
+
+        func acceptsFailureProgress(_ count: DesktopActionOutcome.DispatchUnitCount?) -> Bool {
+            self.failureUnits?.acceptsSuccessful(count) ?? self.units.acceptsFailureProgress(count)
         }
     }
 
@@ -1833,8 +1840,12 @@ extension PeekabooBridgeOperationResultSemantics {
         let browserForeground = DesktopActionOutcome.Delivery(mechanism: .browserProtocol, mode: .foreground)
         let compositeForeground = DesktopActionOutcome.Delivery(mechanism: .composite, mode: .foreground)
 
-        func rule(_ delivery: DesktopActionOutcome.Delivery, _ units: UnitPolicy) -> DeliveryRule {
-            DeliveryRule(delivery: delivery, units: units)
+        func rule(
+            _ delivery: DesktopActionOutcome.Delivery,
+            _ units: UnitPolicy,
+            failureUnits: UnitPolicy? = nil) -> DeliveryRule
+        {
+            DeliveryRule(delivery: delivery, units: units, failureUnits: failureUnits)
         }
 
         switch request {
@@ -1888,10 +1899,10 @@ extension PeekabooBridgeOperationResultSemantics {
                 rule(windowBackground, .variable),
             ]
         case .beginExactWindowHeldPointer:
-            return [rule(windowBackground, .exact(2))]
+            return [rule(windowBackground, .exact(2), failureUnits: .oneOf([1, 3]))]
         case .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer,
              .disconnectExactWindowHeldPointerOwner:
-            return [rule(windowBackground, .exact(1))]
+            return [rule(windowBackground, .exact(1), failureUnits: .exact(2))]
         case .targetedTypeActions:
             return [rule(processBackground, .variable), rule(axBackground, .variable)]
         case .exactWindowTargetedTypeActions:
@@ -2056,7 +2067,10 @@ extension PeekabooBridgeOperationResultSemantics {
         case (.coordinates, .right), (.coordinates, .double), (.coordinates, .middle), (.coordinates, .triple):
             window.map { [$0] } ?? []
         case (.coordinates, .longPress): []
-        case (.elementId, .single), (.query, .single): [ax]
+        case (.elementId, .single), (.query, .single): [
+                ax,
+                DeliveryRule(delivery: windowBackground, units: .variable),
+            ]
         case (.elementId, .right), (.query, .right): [ax] + (window.map { [$0] } ?? [])
         case (.elementId, .double), (.query, .double),
              (.elementId, .middle), (.query, .middle),
@@ -2136,8 +2150,10 @@ extension PeekabooBridgeOperationResultSemantics {
             return plan.deliveryAgnosticFailureUnits?.acceptsSuccessful(unitCount) == true
         }
         guard let rule = plan.deliveryRule(for: delivery) else { return false }
-        let units = plan.typedResponseRule.typeActionDispatchUnits ?? rule.units
-        return units.acceptsFailureProgress(outcome.dispatchState.unitCount)
+        if let units = plan.typedResponseRule.typeActionDispatchUnits {
+            return units.acceptsFailureProgress(outcome.dispatchState.unitCount)
+        }
+        return rule.acceptsFailureProgress(outcome.dispatchState.unitCount)
     }
 
     static func responseMatchesContract(

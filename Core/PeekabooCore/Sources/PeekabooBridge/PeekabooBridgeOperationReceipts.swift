@@ -909,6 +909,7 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
         case accepted(PeekabooBridgeOperationSessionClaim)
         case rollover(
             predecessor: PeekabooBridgeOperationSessionAttestation,
+            negotiatedCapabilities: PeekabooBridgeNegotiatedSessionCapabilities,
             creation: OperationSessionCreationAction)
     }
 
@@ -1000,6 +1001,7 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
     func createSession(
         clientInstanceID: UUID,
         peer: PeekabooBridgePeer,
+        negotiatedCapabilities: PeekabooBridgeNegotiatedSessionCapabilities = .current,
         replacing predecessorSessionID: UUID? = nil) async throws -> PeekabooBridgeOperationSessionAttestation
     {
         self.scheduleRetiredSessionArchiveCleanup()
@@ -1008,11 +1010,13 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
         let action = try self.prepareSessionCreation(
             clientInstanceID: clientInstanceID,
             peerBinding: peerBinding,
+            negotiatedCapabilities: negotiatedCapabilities,
             replacing: predecessorSessionID)
         return try await self.resolveSessionCreation(
             action,
             clientInstanceID: clientInstanceID,
             peerBinding: peerBinding,
+            negotiatedCapabilities: negotiatedCapabilities,
             replacing: predecessorSessionID)
     }
 
@@ -1055,6 +1059,7 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
     private func prepareSessionCreation(
         clientInstanceID: UUID,
         peerBinding: OperationSessionPeerBinding,
+        negotiatedCapabilities: PeekabooBridgeNegotiatedSessionCapabilities,
         replacing predecessorSessionID: UUID?) throws -> OperationSessionCreationAction
     {
         self.retireDeadClientSessions(replacingWith: peerBinding)
@@ -1062,6 +1067,7 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
             try self.prepareSessionCreationLocked(
                 clientInstanceID: clientInstanceID,
                 peerBinding: peerBinding,
+                negotiatedCapabilities: negotiatedCapabilities,
                 replacing: predecessorSessionID)
         }
     }
@@ -1117,6 +1123,7 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
             if sequence >= UInt64(session.attestation.maximumRequestCount) {
                 return .rollover(
                     predecessor: session.attestation,
+                    negotiatedCapabilities: session.negotiatedCapabilities,
                     creation: self.prepareRolloverCreationLocked(session: session))
             }
             if session.isClaimed(sequence) {
@@ -1125,6 +1132,7 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
             guard session.acceptingClaims else {
                 return .rollover(
                     predecessor: session.attestation,
+                    negotiatedCapabilities: session.negotiatedCapabilities,
                     creation: self.prepareRolloverCreationLocked(session: session))
             }
             session.markClaimed(sequence)
@@ -1135,13 +1143,14 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
                 sessionID: payload.sessionID,
                 sessionSequence: payload.sessionSequence,
                 sessionAttestation: session.attestation,
+                negotiatedCapabilities: session.negotiatedCapabilities,
                 remainingClaimCount: remainingClaimCount)
             return .accepted(claim)
         }
         switch preparation {
         case let .accepted(claim):
             return .accepted(claim)
-        case let .rollover(predecessor, creation):
+        case let .rollover(predecessor, negotiatedCapabilities, creation):
             let successor: PeekabooBridgeOperationSessionAttestation?
             let disposition: PeekabooBridgeOperationSessionRefusal.Disposition
             do {
@@ -1149,6 +1158,7 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
                     creation,
                     clientInstanceID: predecessor.clientInstanceID,
                     peerBinding: peerBinding,
+                    negotiatedCapabilities: negotiatedCapabilities,
                     replacing: predecessor.sessionID)
                 disposition = .sessionRolloverRequired
             } catch {
@@ -1217,11 +1227,13 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
     private func prepareSessionCreationLocked(
         clientInstanceID: UUID,
         peerBinding: OperationSessionPeerBinding,
+        negotiatedCapabilities: PeekabooBridgeNegotiatedSessionCapabilities,
         replacing predecessorSessionID: UUID?) throws -> OperationSessionCreationAction
     {
         let creationKey = OperationSessionCreationKey(
             clientInstanceID: clientInstanceID,
             peerBinding: peerBinding,
+            negotiatedCapabilities: negotiatedCapabilities,
             predecessorSessionID: predecessorSessionID)
         if let existingCreation = self.sessionCreations[creationKey] {
             return .wait(existingCreation)
@@ -1235,7 +1247,9 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
                 throw PeekabooBridgeOperationReceiptError.operationSessionMismatch
             }
             if let successorSessionID = predecessor.successorSessionID {
-                guard let successor = self.sessions[successorSessionID] else {
+                guard let successor = self.sessions[successorSessionID],
+                      successor.negotiatedCapabilities == negotiatedCapabilities
+                else {
                     throw PeekabooBridgeOperationReceiptError.operationSessionMismatch
                 }
                 return .immediate(successor.attestation)
@@ -1251,6 +1265,7 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
             let matchingSession = self.sessions.values.first(where: {
                 $0.acceptingClaims &&
                     $0.attestation.clientInstanceID == clientInstanceID &&
+                    $0.negotiatedCapabilities == negotiatedCapabilities &&
                     $0.peerBinding == peerBinding
             })
             if let matchingSession, matchingSession.claimedCount == 0 {
@@ -1398,6 +1413,7 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
         _ initialAction: OperationSessionCreationAction,
         clientInstanceID: UUID,
         peerBinding: OperationSessionPeerBinding,
+        negotiatedCapabilities: PeekabooBridgeNegotiatedSessionCapabilities,
         replacing predecessorSessionID: UUID?) async throws -> PeekabooBridgeOperationSessionAttestation
     {
         var action = initialAction
@@ -1414,6 +1430,7 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
                 action = try self.prepareSessionCreation(
                     clientInstanceID: clientInstanceID,
                     peerBinding: peerBinding,
+                    negotiatedCapabilities: negotiatedCapabilities,
                     replacing: predecessorSessionID)
             case let .wait(reservation):
                 return try await reservation.waitForResult()
@@ -1509,6 +1526,7 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
             self.sessions[sessionID] = OperationSessionState(
                 attestation: sessionAttestation,
                 peerBinding: reservation.peerBinding,
+                negotiatedCapabilities: reservation.key.negotiatedCapabilities,
                 ordinal: reservation.ordinal)
             self.sessionCreations[creationKey] = nil
             self.pruneRetiredSessionsLocked()
@@ -1562,6 +1580,7 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
             return try self.prepareSessionCreationLocked(
                 clientInstanceID: session.attestation.clientInstanceID,
                 peerBinding: session.peerBinding,
+                negotiatedCapabilities: session.negotiatedCapabilities,
                 replacing: session.attestation.sessionID)
         } catch let error as PeekabooBridgeOperationReceiptError {
             return .failure(error)
@@ -1745,6 +1764,7 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
     private struct OperationSessionCreationKey: Hashable {
         let clientInstanceID: UUID
         let predecessorSessionID: UUID?
+        let negotiatedCapabilities: PeekabooBridgeNegotiatedSessionCapabilities
         let processIdentifier: pid_t
         let processStartIdentity: UInt64
         let codeSignatureHash: String
@@ -1757,10 +1777,12 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
         init(
             clientInstanceID: UUID,
             peerBinding: OperationSessionPeerBinding,
+            negotiatedCapabilities: PeekabooBridgeNegotiatedSessionCapabilities,
             predecessorSessionID: UUID?)
         {
             self.clientInstanceID = clientInstanceID
             self.predecessorSessionID = predecessorSessionID
+            self.negotiatedCapabilities = negotiatedCapabilities
             self.processIdentifier = peerBinding.client.processIdentifier
             self.processStartIdentity = peerBinding.client.processStartIdentity
             self.codeSignatureHash = peerBinding.client.codeSignatureHash
@@ -1840,6 +1862,7 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
     private final class OperationSessionState {
         let attestation: PeekabooBridgeOperationSessionAttestation
         let peerBinding: OperationSessionPeerBinding
+        let negotiatedCapabilities: PeekabooBridgeNegotiatedSessionCapabilities
         let ordinal: UInt64
         var acceptingClaims = true
         var successorSessionID: UUID?
@@ -1853,10 +1876,12 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
         init(
             attestation: PeekabooBridgeOperationSessionAttestation,
             peerBinding: OperationSessionPeerBinding,
+            negotiatedCapabilities: PeekabooBridgeNegotiatedSessionCapabilities,
             ordinal: UInt64)
         {
             self.attestation = attestation
             self.peerBinding = peerBinding
+            self.negotiatedCapabilities = negotiatedCapabilities
             self.ordinal = ordinal
             self.claimedSequenceWords = Array(
                 repeating: 0,

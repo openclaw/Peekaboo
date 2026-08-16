@@ -19,12 +19,14 @@ struct OperationReceiptSessionFixture: Sendable {
         authority: PeekabooBridgeOperationReceiptAuthority,
         clientInstanceID: UUID = UUID(),
         peer: PeekabooBridgePeer? = nil,
+        negotiatedCapabilities: PeekabooBridgeNegotiatedSessionCapabilities = .current,
         replacing predecessorSessionID: UUID? = nil) async throws -> Self
     {
         let resolvedPeer = try peer ?? self.currentPeer()
         let attestation = try await authority.createSession(
             clientInstanceID: clientInstanceID,
             peer: resolvedPeer,
+            negotiatedCapabilities: negotiatedCapabilities,
             replacing: predecessorSessionID)
         try attestation.validateSignature(listenerAttestation: authority.attestation)
         return Self(

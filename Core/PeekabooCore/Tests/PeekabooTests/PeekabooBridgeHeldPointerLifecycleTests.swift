@@ -14,6 +14,86 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
         processIdentifier: getpid())
 
     @Test
+    func `held lifecycle keeps success counts exact while admitting truthful failure progress`() throws {
+        let bounds = CGRect(x: 10, y: 20, width: 100, height: 80)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 9001,
+            ownerProcessStartIdentity: 7,
+            capturedBounds: bounds)
+        let owner = ExactWindowHeldPointerOwner()
+        let holdRequest = ExactWindowHeldPointerRequest(
+            point: CGPoint(x: 20, y: 30),
+            windowIdentity: identity,
+            windowBounds: bounds,
+            button: .left,
+            expiresAfterSeconds: 10)
+        let receipt = ExactWindowHeldPointerReceipt(
+            token: UUID(),
+            owner: owner,
+            request: holdRequest,
+            expiresAt: Date().addingTimeInterval(10))
+        let begin = PeekabooBridgeRequest.beginExactWindowHeldPointer(.init(
+            owner: owner,
+            request: holdRequest))
+        let release = PeekabooBridgeRequest.releaseExactWindowHeldPointer(.init(
+            owner: owner,
+            receipt: receipt))
+        let disconnect = PeekabooBridgeRequest.disconnectExactWindowHeldPointerOwner(.init(owner: owner))
+        let delivery = DesktopActionOutcome.Delivery(
+            mechanism: .windowTargetedEvents,
+            mode: .background)
+
+        for count in [1, 2, 3] {
+            let units = try #require(DesktopActionOutcome.DispatchUnitCount(count))
+            let success = DesktopActionOutcome.dispatchedUnverified(
+                route: .bridge,
+                delivery: delivery,
+                evidence: .deliveryAccepted,
+                unitCount: units)
+            #expect(
+                PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                    success,
+                    request: begin) == (count == 2))
+            let failure = DesktopActionFailure.indeterminate(
+                route: .bridge,
+                delivery: delivery,
+                evidence: .completionUnknown,
+                unitCount: units,
+                message: "Held begin failure progress")
+            #expect(
+                PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
+                    failure.outcome,
+                    request: begin) == [1, 3].contains(count))
+        }
+
+        for count in [1, 2] {
+            let units = try #require(DesktopActionOutcome.DispatchUnitCount(count))
+            let success = DesktopActionOutcome.dispatchedUnverified(
+                route: .bridge,
+                delivery: delivery,
+                evidence: .deliveryAccepted,
+                unitCount: units)
+            #expect(
+                PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                    success,
+                    request: release) == (count == 1))
+            let failure = DesktopActionFailure.partial(
+                route: .bridge,
+                delivery: delivery,
+                unitCount: units,
+                message: "Held terminal failure progress")
+            #expect(
+                PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
+                    failure.outcome,
+                    request: release) == (count == 2))
+        }
+        #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            .confirmedNoChange(route: .bridge),
+            request: disconnect))
+    }
+
+    @Test
     func `protocol 1 29 host is refused before held pointer request dispatch`() async throws {
         let fixture = await self.makeHost(protocolVersion: .init(major: 1, minor: 29))
         try await fixture.host.startChecked()
@@ -80,6 +160,41 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
     }
 
     @Test
+    func `terminal cleanup remains admitted after post event permission is lost`() async throws {
+        let fixture = await self.makeHost(protocolVersion: PeekabooBridgeConstants.protocolVersion)
+        try await fixture.host.startChecked()
+        defer { Task { await fixture.host.stop() } }
+        let client = TrustedBridgeClientFixture.make(socketPath: fixture.socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
+        let owner = try await client.createExactWindowHeldPointerOwner()
+        let begin = try await client.beginExactWindowPointerHold(
+            owner: owner,
+            request: fixture.automation.request)
+
+        fixture.permissions.postEvent = false
+        let terminal = try await client.releaseExactWindowPointerHold(owner: owner, receipt: begin.payload)
+
+        #expect(terminal.payload.reason == .released)
+        #expect(await fixture.automation.terminalDispatchCount == 1)
+    }
+
+    @Test
+    func `input capability invalidation clears both protocol 1 30 approvals`() async throws {
+        let fixture = await self.makeHost(protocolVersion: PeekabooBridgeConstants.protocolVersion)
+        try await fixture.host.startChecked()
+        defer { Task { await fixture.host.stop() } }
+        let client = TrustedBridgeClientFixture.make(socketPath: fixture.socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
+        #expect(await client.exactWindowHeldPointerLifecycleEnabled)
+        #expect(await client.statelessClickVariantsEnabled)
+
+        await client.clearNegotiatedInputCapabilities()
+
+        #expect(await client.exactWindowHeldPointerLifecycleEnabled == false)
+        #expect(await client.statelessClickVariantsEnabled == false)
+    }
+
+    @Test
     func `protocol 1 30 removes stateless click capability when service opts out`() async throws {
         let fixture = await self.makeHost(
             protocolVersion: PeekabooBridgeConstants.protocolVersion,
@@ -110,6 +225,46 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
         #expect(handshake.hostCapabilities?.contains(
             PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle) != true)
         #expect(await client.exactWindowHeldPointerLifecycleEnabled == false)
+    }
+
+    @Test
+    func `held lifecycle requires the exact negotiated session capability`() async throws {
+        let fixture = await self.makeHost(protocolVersion: PeekabooBridgeConstants.protocolVersion)
+        let owner = ExactWindowHeldPointerOwner()
+        let receipt = ExactWindowHeldPointerReceipt(
+            token: UUID(),
+            owner: owner,
+            request: fixture.automation.request,
+            expiresAt: Date().addingTimeInterval(10))
+        let requests: [PeekabooBridgeRequest] = [
+            .createExactWindowHeldPointerOwner,
+            .beginExactWindowHeldPointer(.init(owner: owner, request: fixture.automation.request)),
+            .releaseExactWindowHeldPointer(.init(owner: owner, receipt: receipt)),
+            .revokeExactWindowHeldPointer(.init(owner: owner, receipt: receipt)),
+            .disconnectExactWindowHeldPointerOwner(.init(owner: owner)),
+        ]
+        let refusedSessions = [
+            PeekabooBridgeNegotiatedSessionCapabilities(
+                protocolVersion: .init(major: 1, minor: 29),
+                statelessClickVariants: false,
+                exactWindowHeldPointerLifecycle: false),
+            PeekabooBridgeNegotiatedSessionCapabilities(
+                protocolVersion: PeekabooBridgeConstants.protocolVersion,
+                statelessClickVariants: true,
+                exactWindowHeldPointerLifecycle: false),
+        ]
+
+        for session in refusedSessions {
+            for request in requests {
+                await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+                    _ = try await PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(session) {
+                        try await fixture.server.route(request, peer: nil)
+                    }
+                }
+            }
+        }
+        #expect(await fixture.automation.createCount == 0)
+        #expect(await fixture.automation.terminalDispatchCount == 0)
     }
 
     @Test
@@ -191,6 +346,7 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
             let automation = HeldPointerBridgeAutomationStub(
                 supportsStatelessClickVariants: supportsStatelessClickVariants,
                 supportsExactWindowHeldPointerLifecycle: supportsExactWindowHeldPointerLifecycle)
+            let permissions = HeldPointerPermissionState()
             let services = StubServices(automation: automation)
             let socketPath = "/tmp/peekaboo-held-pointer-\(UUID().uuidString).sock"
             let server = PeekabooBridgeServer(
@@ -211,15 +367,17 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
                     PermissionsStatus(
                         screenRecording: true,
                         accessibility: true,
-                        postEvent: true)
+                        postEvent: permissions.postEvent)
                 })
             return HostFixture(
                 socketPath: socketPath,
+                server: server,
                 host: PeekabooBridgeHost(
                     socketPath: socketPath,
                     server: server,
                     allowedTeamIDs: [],
                     requestTimeoutSec: 2),
+                permissions: permissions,
                 automation: automation)
         }
     }
@@ -227,8 +385,20 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
 
 private struct HostFixture: Sendable {
     let socketPath: String
+    let server: PeekabooBridgeServer
     let host: PeekabooBridgeHost
+    let permissions: HeldPointerPermissionState
     let automation: HeldPointerBridgeAutomationStub
+}
+
+private final class HeldPointerPermissionState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedPostEvent = true
+
+    var postEvent: Bool {
+        get { self.lock.withLock { self.storedPostEvent } }
+        set { self.lock.withLock { self.storedPostEvent = newValue } }
+    }
 }
 
 @MainActor

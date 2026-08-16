@@ -113,8 +113,12 @@ extension PeekabooBridgeServer {
                 context: encodingContext)
         }
 
-        let handled = await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(true) {
-            await self.terminalResponse(for: request, peer: peer)
+        let handled = await PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(
+            claim.negotiatedCapabilities)
+        {
+            await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(true) {
+                await self.terminalResponse(for: request, peer: peer)
+            }
         }
         let response: PeekabooBridgeResponse
         let target: PeekabooBridgeOperationTargetReceipt?

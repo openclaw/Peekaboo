@@ -397,7 +397,7 @@ public actor PeekabooBridgeClient {
         self.operationAttestation = nil
         self.operationSessionInvalidated = true
         self.hasSuccessfulHandshake = false
-        self.statelessClickVariantsEnabled = false
+        self.clearNegotiatedInputCapabilities()
         self.latestVerifiedOperationReceipt = nil
         self.latestVerifiedOperationReceiptBundle = nil
     }
@@ -428,9 +428,14 @@ public actor PeekabooBridgeClient {
         else { return }
         self.receiptlessAuthenticatedHost = nil
         self.hasSuccessfulHandshake = false
-        self.statelessClickVariantsEnabled = false
+        self.clearNegotiatedInputCapabilities()
         self.latestVerifiedOperationReceipt = nil
         self.latestVerifiedOperationReceiptBundle = nil
+    }
+
+    func clearNegotiatedInputCapabilities() {
+        self.exactWindowHeldPointerLifecycleEnabled = false
+        self.statelessClickVariantsEnabled = false
     }
 
     /// Creates or joins one successor-session handshake using the most recent successful public inputs.

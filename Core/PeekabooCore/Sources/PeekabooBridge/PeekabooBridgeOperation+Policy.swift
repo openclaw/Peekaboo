@@ -25,8 +25,7 @@ extension PeekabooBridgeOperation {
              .desktopObservation:
             [.screenRecording]
         case .targetedHotkey, .targetedTypeActions, .click, .scroll, .swipe, .drag, .moveMouse,
-             .beginExactWindowHeldPointer, .releaseExactWindowHeldPointer,
-             .revokeExactWindowHeldPointer, .disconnectExactWindowHeldPointerOwner:
+             .beginExactWindowHeldPointer:
             [.postEvent]
         case .exactWindowTargetedHotkey, .exactWindowTargetedTypeActions,
              .exactDialogForceDismiss, .clickMenuBarItemIndex:
@@ -48,6 +47,9 @@ extension PeekabooBridgeOperation {
             [.accessibility]
         case ._appleScriptProbe,
              .createExactWindowHeldPointerOwner,
+             .releaseExactWindowHeldPointer,
+             .revokeExactWindowHeldPointer,
+             .disconnectExactWindowHeldPointerOwner,
              .permissionsStatus,
              .requestPostEventPermission,
              .daemonStatus,

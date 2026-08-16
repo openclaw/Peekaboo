@@ -1,11 +1,11 @@
 import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
-import PeekabooBridge
 import PeekabooBridgeTestSupport
 import PeekabooCore
 import PeekabooFoundation
 import Testing
+@testable import PeekabooBridge
 
 // This suite intentionally keeps the complete targeted-click wire/permission matrix together.
 // swiftlint:disable:next type_body_length
@@ -19,6 +19,53 @@ struct PeekabooBridgeTargetedClickTests {
         bundleIdentifier: "dev.peekaboo.targeted-click-tests",
         teamIdentifier: nil,
         processIdentifier: getpid())
+
+    @Test
+    @MainActor
+    func `stateless click variants require the exact negotiated session capability`() async throws {
+        let services = StubServices()
+        let server = PeekabooBridgeServer(
+            services: services,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            permissionStatusEvaluator: { _ in
+                PermissionsStatus(screenRecording: false, accessibility: true, postEvent: true)
+            })
+        let requests: [PeekabooBridgeRequest] = [
+            .click(.init(target: .coordinates(.zero), clickType: .middle, snapshotId: nil)),
+            .targetedClick(.init(
+                target: .elementId("B1"),
+                clickType: .triple,
+                snapshotId: "snapshot",
+                targetProcessIdentifier: self.exactIdentity.ownerProcessIdentifier,
+                targetWindowID: self.exactIdentity.windowID,
+                expectedWindowIdentity: self.exactIdentity,
+                expectedWindowBounds: self.exactBounds)),
+        ]
+        let refusedSessions = [
+            PeekabooBridgeNegotiatedSessionCapabilities(
+                protocolVersion: .init(major: 1, minor: 29),
+                statelessClickVariants: false,
+                exactWindowHeldPointerLifecycle: false),
+            PeekabooBridgeNegotiatedSessionCapabilities(
+                protocolVersion: PeekabooBridgeConstants.protocolVersion,
+                statelessClickVariants: false,
+                exactWindowHeldPointerLifecycle: true),
+        ]
+
+        for session in refusedSessions {
+            for request in requests {
+                await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+                    _ = try await PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(session) {
+                        try await server.route(request, peer: nil)
+                    }
+                }
+            }
+        }
+        #expect(services.automationStub.lastClick == nil)
+        #expect(services.automationStub.lastProcessTargetedClick == nil)
+    }
+
     private static let legacyUnprojectedProtocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 22)
     private static let legacyUnprojectedHandshake = BridgeTestFixtures.handshake(
         negotiatedVersion: Self.legacyUnprojectedProtocolVersion,
@@ -39,7 +86,7 @@ struct PeekabooBridgeTargetedClickTests {
 
     @Test
     @MainActor
-    func `stateless click capability starts at protocol 1 30 and is projected out of 1 29 handshakes`() async throws {
+    func `stateless click capability requires an attested protocol 1 30 session`() async throws {
         let previous = PeekabooBridgeProtocolVersion(major: 1, minor: 29)
         let currentServer = PeekabooBridgeServer(
             services: StubServices(),
@@ -72,7 +119,7 @@ struct PeekabooBridgeTargetedClickTests {
             return
         }
         #expect(currentHandshake.hostCapabilities?.contains(
-            PeekabooBridgeHostCapability.statelessClickVariants) == true)
+            PeekabooBridgeHostCapability.statelessClickVariants) == false)
     }
 
     @Test
@@ -246,9 +293,11 @@ struct PeekabooBridgeTargetedClickTests {
                 targetWindowID: self.exactIdentity.windowID,
                 expectedWindowIdentity: self.exactIdentity,
                 expectedWindowBounds: self.exactBounds))
-            let response = try await self.decode(server.decodeAndHandle(
-                JSONEncoder.peekabooBridgeEncoder().encode(request),
-                peer: nil))
+            let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(request)
+            let responseData = await PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(.current) {
+                await server.decodeAndHandle(requestData, peer: nil)
+            }
+            let response = try self.decode(responseData)
 
             guard case let .error(envelope) = response else {
                 Issue.record("Expected Event Synthesizing refusal")

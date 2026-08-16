@@ -10,6 +10,47 @@ import Testing
 @Suite(.serialized)
 struct PeekabooBridgeOperationReceiptTests {
     @Test
+    func `operation sessions bind negotiated capabilities across reuse and rollover`() async throws {
+        let authority = try PeekabooBridgeOperationReceiptAuthority(
+            socketPath: "/tmp/peekaboo-session-capabilities-\(UUID().uuidString).sock",
+            maximumClaimCount: 1)
+        let legacyCapabilities = PeekabooBridgeNegotiatedSessionCapabilities(
+            protocolVersion: .init(major: 1, minor: 29),
+            statelessClickVariants: false,
+            exactWindowHeldPointerLifecycle: false)
+        let legacy = try await OperationReceiptSessionFixture.make(
+            authority: authority,
+            negotiatedCapabilities: legacyCapabilities)
+        let current = try await OperationReceiptSessionFixture.make(
+            authority: authority,
+            clientInstanceID: legacy.clientInstanceID,
+            peer: legacy.peer,
+            negotiatedCapabilities: .current)
+        #expect(current.attestation.sessionID != legacy.attestation.sessionID)
+
+        let legacyClaim = try await legacy.acceptedClaim(
+            authority: authority,
+            sequence: 0,
+            request: .permissionsStatus)
+        #expect(legacyClaim.claim.negotiatedCapabilities == legacyCapabilities)
+        let rollover = try await legacy.rolloverRefusal(
+            authority: authority,
+            sequence: 1,
+            request: .permissionsStatus)
+        let successor = try OperationReceiptSessionFixture(
+            clientInstanceID: legacy.clientInstanceID,
+            peer: legacy.peer,
+            attestation: #require(rollover.refusal.payload.successorSessionAttestation))
+        let successorClaim = try await successor.acceptedClaim(
+            authority: authority,
+            sequence: 0,
+            request: .permissionsStatus)
+        #expect(successorClaim.claim.negotiatedCapabilities == legacyCapabilities)
+        authority.complete(legacyClaim.claim)
+        authority.complete(successorClaim.claim)
+    }
+
+    @Test
     func `listener archive does not depend on a predictable shared root`() throws {
         let root = URL(fileURLWithPath: "/tmp/pbor-\(UUID().uuidString)", isDirectory: true)
         var archiveRoots: [URL] = []
@@ -280,6 +321,8 @@ struct PeekabooBridgeOperationReceiptTests {
         do {
             let initial = try await client.handshake(client: Self.clientIdentity)
             let firstListener = try #require(initial.operationAttestation)
+            #expect(await client.exactWindowHeldPointerLifecycleEnabled)
+            #expect(await client.statelessClickVariantsEnabled)
             var receiptSessionIDs: Set<UUID> = []
             for _ in 0..<5 {
                 guard case .permissionsStatus = try await client.send(.permissionsStatus) else {
@@ -303,6 +346,8 @@ struct PeekabooBridgeOperationReceiptTests {
             #expect(legacy.negotiatedVersion == PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion)
             #expect(legacy.operationAttestation == nil)
             #expect(legacy.operationSessionAttestation == nil)
+            #expect(await client.exactWindowHeldPointerLifecycleEnabled == false)
+            #expect(await client.statelessClickVariantsEnabled == false)
             guard case .permissionsStatus = try await client.send(.permissionsStatus) else {
                 Issue.record("Expected legacy permissions response")
                 await host.stop()
@@ -313,6 +358,8 @@ struct PeekabooBridgeOperationReceiptTests {
             let restored = try await client.handshake(client: Self.clientIdentity)
             let restoredListener = try #require(restored.operationAttestation)
             let restoredSession = try #require(restored.operationSessionAttestation)
+            #expect(await client.exactWindowHeldPointerLifecycleEnabled)
+            #expect(await client.statelessClickVariantsEnabled)
             #expect(restoredListener == firstListener)
             #expect(restoredSession.predecessorSessionID == sessionBeforeDowngrade.sessionID)
             _ = try await client.send(.permissionsStatus)

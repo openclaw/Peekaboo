@@ -58,6 +58,13 @@ extension PeekabooBridgeServer {
             negotiated >= PeekabooBridgeConstants.attestedOperationReceiptVersion &&
             operationReceiptAuthority != nil &&
             self.hostCapabilities.contains(PeekabooBridgeHostCapability.desktopActionOutcomeProjection)
+        let heldPointerOperations: Set<PeekabooBridgeOperation> = [
+            .createExactWindowHeldPointerOwner,
+            .beginExactWindowHeldPointer,
+            .releaseExactWindowHeldPointer,
+            .revokeExactWindowHeldPointer,
+            .disconnectExactWindowHeldPointerOwner,
+        ]
 
         let compatibleOperations = self.handshakeOperations(
             negotiated: negotiated,
@@ -65,6 +72,12 @@ extension PeekabooBridgeServer {
             usesAttestedOperationReceipts: supportsAttestedOperationReceipts)
         var advertisedOps = compatibleOperations.advertised.sorted { $0.rawValue < $1.rawValue }
         var enabledOps = compatibleOperations.enabled
+        if negotiated >= PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion,
+           !supportsAttestedOperationReceipts
+        {
+            advertisedOps.removeAll { heldPointerOperations.contains($0) }
+            enabledOps.subtract(heldPointerOperations)
+        }
         if negotiated >= PeekabooBridgeConstants.attestedOperationReceiptVersion,
            !advertisedOps.contains(.listWindows)
         {
@@ -119,21 +132,16 @@ extension PeekabooBridgeServer {
             """)
 
         var advertisedCapabilities = self.hostCapabilities
-        if negotiated < PeekabooBridgeConstants.statelessClickVariantVersion ||
+        if !supportsAttestedOperationReceipts ||
+            negotiated < PeekabooBridgeConstants.statelessClickVariantVersion ||
             (self.services.automation as? any TargetedClickServiceProtocol)?.supportsStatelessClickVariants != true ||
             !advertisedOps.contains(.targetedClick) ||
             !advertisedOps.contains(.exactWindowTargetedClick)
         {
             advertisedCapabilities.remove(PeekabooBridgeHostCapability.statelessClickVariants)
         }
-        let heldPointerOperations: Set<PeekabooBridgeOperation> = [
-            .createExactWindowHeldPointerOwner,
-            .beginExactWindowHeldPointer,
-            .releaseExactWindowHeldPointer,
-            .revokeExactWindowHeldPointer,
-            .disconnectExactWindowHeldPointerOwner,
-        ]
-        if negotiated < PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion ||
+        if !supportsAttestedOperationReceipts ||
+            negotiated < PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion ||
             (self.services.automation as? any ExactWindowHeldPointerLifecycleServiceProtocol)?
             .supportsExactWindowHeldPointerLifecycle != true ||
             !heldPointerOperations.isSubset(of: advertisedOps)
@@ -156,6 +164,12 @@ extension PeekabooBridgeServer {
                 operationSessionAttestation = try await operationReceiptAuthority?.createSession(
                     clientInstanceID: clientInstanceID,
                     peer: peer,
+                    negotiatedCapabilities: .init(
+                        protocolVersion: negotiated,
+                        statelessClickVariants: advertisedCapabilities.contains(
+                            PeekabooBridgeHostCapability.statelessClickVariants),
+                        exactWindowHeldPointerLifecycle: advertisedCapabilities.contains(
+                            PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle)),
                     replacing: payload.replacingOperationSessionID)
             } catch let error as PeekabooBridgeOperationReceiptError {
                 let code: PeekabooBridgeErrorCode = switch error {

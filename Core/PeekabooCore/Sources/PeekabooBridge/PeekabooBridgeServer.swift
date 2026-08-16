@@ -788,6 +788,20 @@ public final class PeekabooBridgeServer {
                 code: .operationNotSupported,
                 message: "Operation \(op.rawValue) is not supported by this host")
         }
+        if let minimumVersion = request.minimumNegotiatedProtocolVersion {
+            let session = PeekabooBridgeRequestContext.negotiatedSessionCapabilities
+            guard (session?.protocolVersion ?? .init(major: 0, minor: 0)) >= minimumVersion,
+                  !request.requiresStatelessClickVariantSupport || session?.statelessClickVariants == true,
+                  !request.requiresExactWindowHeldPointerLifecycleSupport ||
+                  session?.exactWindowHeldPointerLifecycle == true
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message:
+                    "Operation \(op.rawValue) requires its negotiated Bridge protocol " +
+                        "\(minimumVersion.major).\(minimumVersion.minor) capability")
+            }
+        }
         if PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
            op == .exactDialogEnterText,
            !self.services.dialogs.supportsBackgroundExactDialogInput
