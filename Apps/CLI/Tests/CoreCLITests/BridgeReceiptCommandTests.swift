@@ -75,6 +75,7 @@ struct BridgeReceiptCommandTests {
         #expect(!report.outcomeAttested)
     }
 
+    #if DEBUG
     @Test
     func `validator authenticates a live listener independently from the exported bundle`() async throws {
         let root = URL(
@@ -141,6 +142,7 @@ struct BridgeReceiptCommandTests {
         }
         await host.stop()
     }
+    #endif
 
     @Test
     func `different valid listener rejects an otherwise valid bundle`() throws {
@@ -316,6 +318,23 @@ struct BridgeReceiptCommandTests {
         }
     }
 
+    @Test
+    func `bundle file cannot grant access through an extended ACL`() async throws {
+        let bundle = try Self.privateBundleFile(Data("{}".utf8))
+        defer { try? FileManager.default.removeItem(at: bundle.deletingLastPathComponent()) }
+        try Self.addReadableACL(to: bundle)
+
+        await #expect(throws: BridgeReceiptValidationError.unsafeBundleFile(
+            "extended access-control entries are not accepted"
+        )) {
+            _ = try await BridgeReceiptVerifier.validate(
+                bundlePath: bundle.path,
+                bridgeSocket: "/private/tmp/missing-bridge.sock",
+                trustedHostTeamIDs: ["TEAMID"]
+            )
+        }
+    }
+
     private static func fixtureData(_ name: String) throws -> Data {
         let url = try #require(Bundle.module.url(
             forResource: name,
@@ -325,6 +344,7 @@ struct BridgeReceiptCommandTests {
         return try Data(contentsOf: url)
     }
 
+    #if DEBUG
     private static func authenticatedClient(
         socketPath: String,
         requestTimeoutSec: TimeInterval,
@@ -335,6 +355,18 @@ struct BridgeReceiptCommandTests {
             requestTimeoutSec: requestTimeoutSec,
             trustedHostTeamIDs: trustedHostTeamIDs
         )
+    }
+    #endif
+
+    private static func addReadableACL(to url: URL) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/chmod")
+        process.arguments = ["+a", "everyone allow read", url.path]
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationReason == .exit, process.terminationStatus == 0 else {
+            throw CocoaError(.fileWriteUnknown)
+        }
     }
 
     private static func privateBundleFile(_ data: Data) throws -> URL {

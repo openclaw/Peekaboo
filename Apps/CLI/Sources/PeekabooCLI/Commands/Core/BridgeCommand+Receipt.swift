@@ -361,6 +361,7 @@ enum BridgeReceiptVerifier {
                 "file must be owner-private, regular, nonempty, and at most 256 MiB"
             )
         }
+        try self.requireNoExtendedACL(descriptor: descriptor)
 
         let data = try self.readBundleContents(
             descriptor: descriptor,
@@ -380,6 +381,22 @@ enum BridgeReceiptVerifier {
             throw BridgeReceiptValidationError.unsafeBundleFile("file changed while it was being read")
         }
         return data
+    }
+
+    private static func requireNoExtendedACL(descriptor: Int32) throws {
+        errno = 0
+        guard let acl = acl_get_fd_np(descriptor, ACL_TYPE_EXTENDED) else {
+            if errno == ENOENT {
+                return
+            }
+            throw BridgeReceiptValidationError.unsafeBundleFile(
+                "file access controls could not be inspected"
+            )
+        }
+        acl_free(UnsafeMutableRawPointer(acl))
+        throw BridgeReceiptValidationError.unsafeBundleFile(
+            "extended access-control entries are not accepted"
+        )
     }
 
     private static func readBundleContents(descriptor: Int32, expectedSize: Int) throws -> Data {
