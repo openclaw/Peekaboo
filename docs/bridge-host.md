@@ -270,8 +270,9 @@ complete verification bundle for each terminal protocol 1.29 request. The export
 private certification. The Swift `validateIntegrity()` API proves canonical encoding, signature-chain integrity, and
 operation semantics, but not listener provenance: the bundle carries its own self-signed listener. Certification uses
 `validate(trustAnchor:)` with an exact listener attestation, public key, or digest obtained from an independently
-authenticated live handshake. A public CLI wrapper for that anchored verification is still pending; the dual-controller
-physical harness remains disabled until it can verify every exported bundle rather than infer validity from JSON shape.
+authenticated live handshake. `peekaboo bridge receipt validate` exposes that anchored verification and reports the
+authenticated host source commit and negotiated protocol separately from the protocol-1.29 receipt floor. The live
+multi-target coordinator validates every exported bundle against the exact connected listener before certification.
 
 Protocol 1.29 result validation is driven by one exhaustive semantic plan shared by server finalization and receipt
 verification. It classifies the response family, allowed delivery/mode alternatives, fixed or operation-dependent unit

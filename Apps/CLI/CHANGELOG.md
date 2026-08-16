@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add Bridge protocol 1.30 planner inventory transport with explicit complete/partial evidence, while protocol 1.29 hosts keep legacy list bytes and conservative exact-target compatibility.
 - Add authenticated `bridge receipt validate` for fail-closed, agent-readable verification of private protocol 1.29 bundles against the exact live listener that produced them.
 - Add capability-gated exact-window background middle/triple clicks with native center-button and 1/2/3 click-state sequences, signed target receipts, and fail-closed protocol 1.29 compatibility.
+- Include the authenticated Bridge host's stamped source commit and negotiated protocol version in live receipt-validation results for exact-build protocol certification.
 
 ### Fixed
 - Make application and window inventories report omitted or identity-incomplete rows as partial, while keeping complete AX-only window listings usable without Screen Recording.

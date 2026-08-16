@@ -170,58 +170,60 @@ not certified merely because the cases that happened to execute passed. The mach
 `certification.json` beside the normal summary.
 
 Completeness is relative to this source-controlled 42-case single-controller matrix; it is not a claim that every
-Peekaboo CLI combination is represented. `scripts/test-dual-controller-overlap.sh` is the complementary workflow-level
-cell; its internal steps deliberately stay outside the 42-row command catalog.
+Peekaboo CLI combination is represented. Live concurrent certification is a separate source-owned workflow. It runs
+two long-lived, exact-window background controllers plus an independent foreground semantic observer through the same
+authenticated Bridge listener. Each controller publishes four signed slots: type mutation, protocol-1.30 triple click,
+checkpoint observation, and final-bounds observation.
 
-The overlap cell starts two owned TextEdit executable generations during setup, pins their exact process/window
-receipts, and then restores an independently selected sentinel window. Two separate controller processes launch
-independently generation- and executable-attested CLI clients through one explicit signed current Bridge socket:
-controller A completes an observe/type/press/type/readback workflow while controller B continuously observes and updates
-its different exact window. Restoration is serialized: after A restores, both targets are read before B may restore,
-then both targets are read again, so a cross-target mutation cannot be overwritten by the peer restoration. Cleanup uses
-the launch receipts, and the validator requires real bidirectional interval overlap plus independent readback with no
-cross-target token. The native monitor keeps focus, top-window, session-global Peekaboo input, clipboard change count,
-visible Peekaboo alpha windows, host generation, and heartbeat liveness fail-closed through cleanup.
-Physical cursor motion is recorded as observational evidence and never fails the cell because the user may be working
-concurrently. Every CLI generation is registered before it can run and has a 30-second deadline (bounded to 1–300
-seconds with
-`PEEKABOO_OVERLAP_OPERATION_TIMEOUT_SECONDS`); timeout and abort cleanup escalate from TERM to KILL while the invariant
-monitor remains active. Peer synchronization uses one monotonic deadline derived from that timeout plus the bounded
-registration/attestation handoff for each maximum remaining operation: 6 for initial/final readback, 8 to establish the
-overlap witness, 30 for the longer controller workflow, and 15 for restoration plus its two-target checkpoint. A peer
-generation exit still refuses immediately. Each target starts as a stopped direct child: its intended executable path
-and process generation are recorded durably before resume, then the live executable path is verified after `exec`;
-cleanup never infers ownership from an ambient application-inventory delta or a response that can be interrupted.
+The version-4 contract distinguishes the protocol-1.30 host handshake from the protocol-1.29 receipt floor. It binds
+controller/client process generations, signed request sessions, exact window identities and bounds, canonical
+request/response digests, source builds, intervals, and outcomes. The monitor corpus contains exactly six stable fences:
+`baseline-stable`, `grant-stable`, `operations-start`, `operations-complete`, `revoke-stable`, and `final-stable`.
+Attributed foreground activity is zero at every fence except `operations-complete`, where it must be positive and come
+only from the contracted foreground-controller PID while both designated background mutations remain in flight.
 
-Protocol 1.29 now validates a stable listener identity, a peer-bound logical operation session, and a signed terminal
-receipt on the same authenticated request connection. Bounded sessions roll over without restarting the listener:
-each request uses a decimal-string session sequence and deterministic request UUID, while the only automatic retry is
-one request backed by a fully verified signed refusal proving `mutation_dispatched=false` and `retry_safe=true` and
-carrying the successor session. Protocol 1.28 remains receiptless.
+The foreground observer is a third signed controller process. Before execution, its plan commits the exact window,
+semantic role plus title and/or identifier, expected value derived from the run nonce, baseline value, and owner-private
+artifact paths. It performs a fresh signed readback during the overlap bracket and proves restoration afterward. The
+monitor also commits crash inventory, sentinel and clipboard state, producer revisions, all six fences, and restoration.
+Separate owner-private Unix sockets challenge the live monitor and observer by kernel peer PID before and after final
+validation; caller-written files alone never mint authority.
 
-`peekaboo bridge receipt validate` now authenticates one exact live listener and validates one exported protocol 1.29
-bundle against that independently obtained trust anchor. Live overlap execution remains deliberately reserved: the
-shell harness does not yet have the separately audited multi-target coordinator and certification contract needed to
-bind every expected request, session rollover, target, and terminal bundle without widening the single-target receipt
-policy. `bridge status`, structural `jq` checks, and a bundle's self-signature are not substitutes. The current command
-therefore still refuses before UI setup; its deterministic self-test remains non-live infrastructure.
+Run the lifecycle with one closed owner-private plan:
 
 ```bash
-PEEKABOO_RUN_DUAL_CONTROLLER_OVERLAP=1 \
-scripts/test-dual-controller-overlap.sh \
-  --bin /absolute/path/to/peekaboo \
-  --bridge-socket /absolute/path/to/bridge.sock \
-  --sentinel-pid 1234 \
-  --sentinel-window-id 5678 \
-  --artifacts /absolute/new/artifact-directory
+node scripts/run-live-multi-target-certification.mjs \
+  --plan /private/path/to/live-coordinator-plan.json
 ```
 
-The safe source/contract gate never touches UI:
+JSONL stdout begins with `run-created`, then emits bounded `external-foreground-window` events for the exact foreground
+task and restoration. The external controller must exclusively write the named task-complete and restore-complete
+markers with the supplied nonce and monitor UUID. A production `completed` event is certification-eligible only after
+monitor sealing, both PID-bound challenges, `prepare`, final `finalize`, and child release all succeed. Test-runtime
+fixtures instead emit `test-runtime-complete` with `certification_eligible:false`; no plan field, persisted summary,
+fixture, or caller-written success value can certify a run.
+
+The source-blind lifecycle contract is in
+`tests/contracts/live-multi-target-certification-coordinator.md`. The finalizer and digest tools are also directly
+available for owner-private artifacts:
 
 ```bash
-scripts/test-dual-controller-overlap.sh --self-test \
-  --artifacts /absolute/new/self-test-directory
+node scripts/finalize-multi-target-certification.mjs prepare \
+  --controller-receipts /private/path/to/controller-receipts \
+  --bundles /private/path/to/raw-bundles \
+  --monitor-evidence /private/path/to/monitor-evidence.json \
+  --foreground-postcondition /private/path/to/foreground-postcondition.json \
+  --artifacts /private/path/to/artifacts \
+  --peekaboo /absolute/path/to/signed/peekaboo
+
+node scripts/finalize-multi-target-certification.mjs verify-digests \
+  --artifacts /private/path/to/artifacts \
+  --summary /private/path/to/certification-summary.json
 ```
+
+The final live finalizer exit is authoritative. The persisted summary is display-only and has no top-level `success` or
+`certified` field. Its freshly recomputed `offline_protocol_validation.success` is only a receipt-protocol sub-gate;
+`verify-digests.success` means only that documented digest projections match.
 
 For the interaction commands exercised here, background is the omission contract: `--foreground` is the only consent
 for focus/activation, global keyboard input, physical cursor movement, or synthetic pointer/wheel events. Explicit app

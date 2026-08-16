@@ -70,6 +70,8 @@ struct BridgeReceiptCommandTests {
         #expect(report.valid)
         #expect(report.trustSource == "authenticated_live_listener")
         #expect(report.operation == "permissionsStatus")
+        #expect(report.hostSourceCommit == nil)
+        #expect(report.hostProtocolVersion == nil)
         #expect(report.terminalReceiptAttested)
         #expect(report.targetAttested)
         #expect(!report.outcomeAttested)
@@ -106,7 +108,7 @@ struct BridgeReceiptCommandTests {
                 requestTimeoutSec: 2,
                 operationReceiptExportDirectory: exportDirectory
             )
-            _ = try await exportingClient.handshake(client: BridgeDiagnostics.currentClientIdentity())
+            let handshake = try await exportingClient.handshake(client: BridgeDiagnostics.currentClientIdentity())
             _ = try await exportingClient.permissionsStatus()
             let bundle = try #require(await exportingClient.lastOperationReceiptBundle())
             let bundlePath = exportDirectory
@@ -125,6 +127,11 @@ struct BridgeReceiptCommandTests {
             #expect(report.trustSource == "authenticated_live_listener")
             #expect(report.listenerInstanceID == bundle.operationAttestation.listenerInstanceID.uuidString.lowercased())
             #expect(report.operation == PeekabooBridgeOperation.permissionsStatus.rawValue)
+            #expect(report.hostSourceCommit == handshake.hostIdentity?.sourceCommit)
+            #expect(
+                report.hostProtocolVersion ==
+                    "\(handshake.negotiatedVersion.major).\(handshake.negotiatedVersion.minor)"
+            )
 
             await host.stop()
             try await host.startChecked()

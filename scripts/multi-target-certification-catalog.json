@@ -1,0 +1,156 @@
+{
+  "version": 2,
+  "certification_kind": "live-physical",
+  "claim_scope": "multi-target-background-with-attributed-foreground-overlap",
+  "minimum_controlled_targets": 2,
+  "protocol": {
+    "host_handshake": {"major": 1, "minor": 30},
+    "receipt_protocol_floor": {"major": 1, "minor": 29},
+    "required_operation": "exactWindowTargetedClick"
+  },
+  "trusted_first_party_validator_team_ids": [
+    "FWJYW4S8P8"
+  ],
+  "trusted_bridge_host_team_ids": [
+    "FWJYW4S8P8"
+  ],
+  "trusted_monitor_team_ids": [
+    "FWJYW4S8P8"
+  ],
+  "trusted_controller_team_ids": [
+    "FWJYW4S8P8"
+  ],
+  "protocol_source": {
+    "commit": "7d7b5ba80bdd18331c431209d00d40e2885f5607",
+    "tree": "088c1d0bf101fd63045d38fe7ca986c5e4700cfa",
+    "peer_binding": "darwin-audit-token-pidversion-euid-cdhash-v1",
+    "operation_semantic_plan_sha256": "b15908bf00920fd86c1858b624cb67081e9bb1f251c966318961629e7f233d1b",
+    "operation_receipts_sha256": "b23e91222eb99def125eb4a50e106cdcb97f051e094f102910a2f12aa1bf177e",
+    "operation_receipt_models_sha256": "b107c717066c3521ce3db2315cdd26ada5e36e62174208c9f9bde2d1f954b5f9",
+    "operation_receipt_archive_maintenance_sha256": "5a607e6acbcaaaec9adb6194d99b4e288a3a93de6911ed84a6c43a96d884cec9",
+    "socket_io_sha256": "3cb418a2337b4c6a9da10bd02d06e37ab2adf207b19c9a7bc89d715bda55d37e",
+    "host_clients_sha256": "3a77db2547f4344b0aa4bc1d0fbb2259b2f4a74ffd957b800e987e58c6351f18",
+    "private_archive_sha256": "40ef72a3cf1ce57e8da245b2fa1f620dfa1c3104dff9f9ac1e8d23d3c6a5d039",
+    "bridge_constants_sha256": "82f545dde6f2ef95fbbbed906cc7a4632b1620340eb0bbf283bd1d94f3bfa728",
+    "bridge_models_sha256": "0ba663f685d497c44c878c78cf594d5128be7981a7eb0d58da8b2f531acebe4e",
+    "server_handshake_sha256": "984e744fb3381f12f7636da2a37ef67abefbfea9dc879b6c64de88c8d17ff014",
+    "operation_session_claim_sha256": "28a375031fd0d428a865609577de4f8bf255f171d502bbdd56c17dd7d0fcc348",
+    "server_operation_receipts_sha256": "ee205b5734192552478eaf826295b5d2ac690f8c7a3d4eafe4afc3e3bf28f854",
+    "request_desktop_mutation_sha256": "47c1c350816f8236f82e9a74149139ffc74defef5ab80da214dbbf41416bb867",
+    "bridge_server_sha256": "cf39616620c8cde51b3cd76b67497d7fdce7e47f8aeca37d4981d0ffa9b17b8d",
+    "receipt_validator_sha256": "b18adf0a9ac1fc88e98312978653c025469a1bc9fdd49559825d2d217bf59d18"
+  },
+  "monitor_source": {
+    "commit": "59e692230db3a3a0cf04a881548fdef84f30e9e3",
+    "probe_sha256": "fe40e59e324c0d878f45721cf0fe86abcfaa79bd302166ef5b512dc1af869eb2"
+  },
+  "coordinator_source": {
+    "commit": "2d122c92aa0fc63f1e72ec6c924e9833ff3f4456",
+    "script_sha256": "a3b80e216b8040c810aa7bb65d9108b0f587e0cc1420bf065701919e204dbcbf"
+  },
+  "controller_source": {
+    "commit": "2d122c92aa0fc63f1e72ec6c924e9833ff3f4456"
+  },
+  "monitor_contract": {
+    "version": 1,
+    "required_fences": [
+      "baseline-stable",
+      "grant-stable",
+      "operations-start",
+      "operations-complete",
+      "revoke-stable",
+      "final-stable"
+    ],
+    "overlap_slot_ids": [
+      "controller-a-mutation-001",
+      "controller-b-mutation-001"
+    ],
+    "crash_report_prefixes": [
+      "Peekaboo",
+      "PeekabooPlayground",
+      "OpenClaw",
+      "peekaboo-certification-controller"
+    ],
+    "physical_input_policy": "mouse-move-observational",
+    "require_foreground_activity": true,
+    "require_distinct_foreground_target": true
+  },
+  "controlled_target_ids": [
+    "target-a",
+    "target-b"
+  ],
+  "slots": [
+    {
+      "slot_id": "controller-a-mutation-001",
+      "kind": "operation",
+      "controller_id": "controller-a",
+      "target_id": "target-a",
+      "operation": "exactWindowTargetedTypeActions",
+      "request_binding_path": ["projectedAction", "_0", "request", "exactWindowTargetedTypeActions", "_0", "snapshotId"],
+      "checkpoint": null
+    },
+    {
+      "slot_id": "controller-b-mutation-001",
+      "kind": "operation",
+      "controller_id": "controller-b",
+      "target_id": "target-b",
+      "operation": "exactWindowTargetedTypeActions",
+      "request_binding_path": ["projectedAction", "_0", "request", "exactWindowTargetedTypeActions", "_0", "snapshotId"],
+      "checkpoint": null
+    },
+    {
+      "slot_id": "controller-a-protocol-130-001",
+      "kind": "operation",
+      "controller_id": "controller-a",
+      "target_id": "target-a",
+      "operation": "exactWindowTargetedClick",
+      "request_binding_path": ["projectedAction", "_0", "request", "targetedClick", "_0", "snapshotId"],
+      "checkpoint": null
+    },
+    {
+      "slot_id": "controller-b-protocol-130-001",
+      "kind": "operation",
+      "controller_id": "controller-b",
+      "target_id": "target-b",
+      "operation": "exactWindowTargetedClick",
+      "request_binding_path": ["projectedAction", "_0", "request", "targetedClick", "_0", "snapshotId"],
+      "checkpoint": null
+    },
+    {
+      "slot_id": "controller-a-checkpoint-001",
+      "kind": "checkpoint",
+      "controller_id": "controller-a",
+      "target_id": "target-a",
+      "operation": "desktopObservation",
+      "request_binding_path": ["desktopObservation", "_0", "output", "snapshotID"],
+      "checkpoint": "post-mutation"
+    },
+    {
+      "slot_id": "controller-b-checkpoint-001",
+      "kind": "checkpoint",
+      "controller_id": "controller-b",
+      "target_id": "target-b",
+      "operation": "desktopObservation",
+      "request_binding_path": ["desktopObservation", "_0", "output", "snapshotID"],
+      "checkpoint": "post-mutation"
+    },
+    {
+      "slot_id": "controller-a-final-bounds",
+      "kind": "checkpoint",
+      "controller_id": "controller-a",
+      "target_id": "target-a",
+      "operation": "desktopObservation",
+      "request_binding_path": ["desktopObservation", "_0", "output", "snapshotID"],
+      "checkpoint": "final-bounds"
+    },
+    {
+      "slot_id": "controller-b-final-bounds",
+      "kind": "checkpoint",
+      "controller_id": "controller-b",
+      "target_id": "target-b",
+      "operation": "desktopObservation",
+      "request_binding_path": ["desktopObservation", "_0", "output", "snapshotID"],
+      "checkpoint": "final-bounds"
+    }
+  ]
+}

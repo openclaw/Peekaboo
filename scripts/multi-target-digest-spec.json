@@ -1,0 +1,65 @@
+{
+  "version": 2,
+  "algorithm": "sha256",
+  "text_encoding": "utf-8",
+  "canonical_json": {
+    "id": "peekaboo-canonical-json-v1",
+    "input": "parsed JSON containing only null, booleans, strings, finite lossless numbers, arrays, and plain objects",
+    "object_key_order": "ascending ECMAScript default string order over UTF-16 code units",
+    "arrays": "preserve input order",
+    "numbers": "ECMAScript JSON.stringify spelling; reject negative zero, non-finite values, and unsafe integers",
+    "serialization": "JSON.stringify with no replacer or indentation, UTF-8 encoded, with no trailing newline"
+  },
+  "domain_separation": {
+    "template": "peekaboo.multi-target-certification.<domain>.v2",
+    "separator_hex": "00",
+    "preimage": "UTF-8 template bytes followed by one NUL byte followed by canonical JSON bytes"
+  },
+  "run_binding_projection": {
+    "input": "one version-4 live-physical contract object",
+    "output_keys": ["catalog_sha256", "listener_instance_id", "execution_nonce", "monitor_binding", "controller_build", "slots"],
+    "catalog_sha256": "contract.catalog_sha256",
+    "listener_instance_id": "contract.listener.instance_id",
+    "execution_nonce": "contract.execution_nonce",
+    "monitor_binding": "contract.monitor_binding",
+    "controller_build": "contract.controller_build",
+    "slot_order": "preserve contract.operation_slots array order",
+    "slot_fields": [
+      "slot_id",
+      "controller_id",
+      "target_id",
+      "client",
+      "request_id",
+      "session",
+      "operation",
+      "request_binding",
+      "request_sha256",
+      "response_sha256",
+      "target",
+      "interval",
+      "expected_outcome"
+    ]
+  },
+  "kinds": [
+    {"id":"catalog-file","input":"raw-bytes","projection":"identity","domain":null},
+    {"id":"digest-spec-file","input":"raw-bytes","projection":"identity","domain":null},
+    {"id":"bundle-file","input":"raw-bytes","projection":"identity","domain":null},
+    {"id":"contract","input":"json","projection":"whole-document","domain":null},
+    {"id":"operation-manifest","input":"json","projection":"whole-document","domain":"operation-manifest"},
+    {"id":"raw-evidence","input":"json","projection":"omit-offline_protocol_validation","domain":"raw-evidence"},
+    {"id":"monitor-evidence","input":"json","projection":"whole-document","domain":"monitor-evidence"},
+    {"id":"monitor-baseline","input":"json","projection":"monitor-baseline","domain":"monitor-baseline"},
+    {"id":"monitor-history","input":"json","projection":"monitor-history","domain":"monitor-history"},
+    {"id":"foreground-postcondition","input":"json","projection":"whole-document","domain":"foreground-postcondition"},
+    {"id":"raw-bundle-inventory","input":"json","projection":"preprojected-array-sorted-by-file","domain":"raw-bundle-inventory"},
+    {"id":"first-party-verdict-set","input":"json","projection":"whole-document","domain":"first-party-verdict-set"},
+    {"id":"offline-protocol-validation","input":"json","projection":"whole-document","domain":"offline-protocol-validation"},
+    {"id":"manifest-slot","input":"json","projection":"whole-document","domain":"manifest-slot"},
+    {"id":"first-party-verdict","input":"json","projection":"whole-document","domain":"first-party-verdict"},
+    {"id":"offline-receipt","input":"json","projection":"whole-document","domain":"offline-receipt"},
+    {"id":"controller","input":"json","projection":"whole-document","domain":"controller"},
+    {"id":"controlled-target","input":"json","projection":"whole-document","domain":"controlled-target"},
+    {"id":"summary-core","input":"json","projection":"omit-summary_core_sha256","domain":"summary-core"},
+    {"id":"run-binding","input":"json","projection":"contract-run-binding","domain":"run-binding"}
+  ]
+}

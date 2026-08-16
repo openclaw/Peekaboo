@@ -73,8 +73,11 @@ read_when:
   anchors.
 - Receipt validation accepts only an owner-private, non-symlink regular bundle, reads at most 256 MiB through one
   descriptor, and reports minimized hashes/identities rather than the canonical command/response bytes or private host
-  archive path. The output fields `target_attested` and `outcome_attested` describe actual signed field presence; a
-  valid read-only receipt can truthfully report `outcome_attested: false`.
+  archive path. A live result also includes the authenticated handshake's `host_source_commit` and
+  `host_protocol_version`, so certification can bind the listener to its exact source and negotiated protocol.
+  `minimum_protocol_version` remains `1.29`: it describes the signed receipt-schema floor, not the connected host's
+  negotiated protocol. The output fields `target_attested` and `outcome_attested` describe actual signed field
+  presence; a valid read-only receipt can truthfully report `outcome_attested: false`.
 - Protocol 1.30 advertises `plannerInventoryTransport` and carries application/window mutation inventories through
   separate request and response cases with explicit completeness and warnings. Protocol 1.29 list requests remain
   byte-compatible; clients treat their row-only responses as partial evidence, refusing broad mutation selectors while

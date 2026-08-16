@@ -87,6 +87,8 @@ struct BridgeReceiptValidationReport: Codable, Equatable, Sendable {
     let listenerInstanceID: String
     let listenerPublicKeySHA256: String
     let host: ProcessIdentity
+    let hostSourceCommit: String?
+    let hostProtocolVersion: String?
     let clientInstanceID: String
     let client: ProcessIdentity
     let requestSHA256: String
@@ -122,6 +124,8 @@ struct BridgeReceiptValidationReport: Codable, Equatable, Sendable {
         case listenerInstanceID = "listener_instance_id"
         case listenerPublicKeySHA256 = "listener_public_key_sha256"
         case host
+        case hostSourceCommit = "host_source_commit"
+        case hostProtocolVersion = "host_protocol_version"
         case clientInstanceID = "client_instance_id"
         case client
         case requestSHA256 = "request_sha256"
@@ -232,7 +236,13 @@ enum BridgeReceiptVerifier {
             overallTimeoutSec: self.handshakeTimeoutSeconds
         )
         let trustAnchor = try self.trustAnchor(from: handshake)
-        return try self.validate(data: data, bundle: bundle, trustAnchor: trustAnchor)
+        return try self.validate(
+            data: data,
+            bundle: bundle,
+            trustAnchor: trustAnchor,
+            hostSourceCommit: handshake.hostIdentity?.sourceCommit,
+            hostProtocolVersion: "\(handshake.negotiatedVersion.major).\(handshake.negotiatedVersion.minor)"
+        )
     }
 
     static func validate(
@@ -242,7 +252,9 @@ enum BridgeReceiptVerifier {
         try self.validate(
             data: data,
             bundle: self.decodeBundle(data),
-            trustAnchor: trustAnchor
+            trustAnchor: trustAnchor,
+            hostSourceCommit: nil,
+            hostProtocolVersion: nil
         )
     }
 
@@ -261,7 +273,9 @@ enum BridgeReceiptVerifier {
     private static func validate(
         data: Data,
         bundle: PeekabooBridgeOperationReceiptBundle,
-        trustAnchor: PeekabooBridgeOperationReceiptTrustAnchor
+        trustAnchor: PeekabooBridgeOperationReceiptTrustAnchor,
+        hostSourceCommit: String?,
+        hostProtocolVersion: String?
     ) throws -> BridgeReceiptValidationReport {
         do {
             try bundle.validate(trustAnchor: trustAnchor)
@@ -289,6 +303,8 @@ enum BridgeReceiptVerifier {
                 startIdentity: String(listener.host.processStartIdentity),
                 codeSignatureHash: listener.host.codeSignatureHash
             ),
+            hostSourceCommit: hostSourceCommit,
+            hostProtocolVersion: hostProtocolVersion,
             clientInstanceID: receipt.clientInstanceID.uuidString.lowercased(),
             client: .init(
                 pid: client.processIdentifier,

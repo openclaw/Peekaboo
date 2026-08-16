@@ -7,6 +7,8 @@
 - Add authenticated `peekaboo bridge receipt validate` for fail-closed, agent-readable verification of private protocol 1.29 bundles against the exact live listener that produced them.
 - Add an embedding-only protocol 1.30 exact-window held-pointer lifecycle with opaque owner/hold receipts, cross-call lane ownership, and generation-bound release on explicit completion, revocation, disconnect, or watchdog expiry.
 - Add capability-gated exact-window background middle/triple clicks with native center-button and 1/2/3 click-state sequences, signed target receipts, and fail-closed protocol 1.29 compatibility.
+- Add a packaged version-2 digest specification plus `digest` and `verify-digests` commands so operators can independently recompute every live certification root and leaf without source access.
+- Add a live-physical multi-target finalizer that binds exact protocol-1.30 background controllers, a source-owned epoch monitor, attributed foreground activity, restoration, crash evidence, and protocol-1.29 signed receipt validation into one fail-closed run.
 
 ### Fixed
 - Bound held-pointer owner and terminal-replay retention in long-lived hosts, make idle-owner disconnect a signed no-change close, and prevent cancelled begins from returning an already-terminated hold receipt.
