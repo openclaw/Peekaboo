@@ -216,4 +216,27 @@ struct WindowListIndexNormalizationTests {
         #expect(merged.windows == [cgWindow])
         #expect(merged.unmaterializedAXDescriptorCount == 1)
     }
+
+    @Test
+    func `unidentified AX title cannot relabel a CG window already claimed by an exact ID row`() {
+        let bounds = CGRect(x: 40, y: 50, width: 700, height: 500)
+        let cgWindow = ServiceWindowInfo(windowID: 448, title: "", bounds: bounds)
+        let exact = WindowEnumerationContext.AXWindowDescriptor(
+            windowID: cgWindow.windowID,
+            title: "",
+            bounds: bounds,
+            standaloneInfo: nil)
+        let unidentified = WindowEnumerationContext.AXWindowDescriptor(
+            windowID: nil,
+            title: "Borrowed title",
+            bounds: bounds,
+            standaloneInfo: nil)
+
+        let merged = WindowEnumerationContext.mergeWindowInventory(
+            cgWindows: [cgWindow],
+            axDescriptors: [exact, unidentified])
+
+        #expect(merged.windows == [cgWindow])
+        #expect(merged.unmaterializedAXDescriptorCount == 1)
+    }
 }

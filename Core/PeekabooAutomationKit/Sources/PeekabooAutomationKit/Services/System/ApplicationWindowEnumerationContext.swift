@@ -494,6 +494,7 @@ struct WindowEnumerationContext {
                 guard !consumedFallbacks.contains(index), let bounds = axDescriptors[index].bounds else {
                     return false
                 }
+                guard !claimedExactCGWindowIDs.contains(cgWindow.windowID) else { return false }
                 guard Self.boundsMatch(bounds, cgWindow.bounds) else { return false }
                 // Do not hijack: if this AX title+frame already belongs to a different CG window, that
                 // window is the real owner, so leave this untitled entry alone.

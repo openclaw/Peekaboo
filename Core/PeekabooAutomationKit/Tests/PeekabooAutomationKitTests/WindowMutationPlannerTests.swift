@@ -52,6 +52,9 @@ struct WindowMutationPlannerTests {
         let plan = try await planner.plan(selector: InteractionTargetSelector(windowID: window.windowID))
 
         #expect(plan.identity == window.mutationIdentity)
+        let bounds = try #require(plan.identity.capturedBounds)
+        #expect(try plan.expectedTargetIdentity == DesktopTargetIdentity(
+            exactWindow: UIAutomationTarget.ExactWindow(identity: plan.identity, bounds: bounds)))
     }
 
     @Test
@@ -85,6 +88,29 @@ struct WindowMutationPlannerTests {
     }
 
     @Test
+    func `application scoped window listing target loss stays stale instead of unavailable`() async throws {
+        let application = AutomationTestFixtures.application()
+        let expectedIdentity = try #require(application.processIdentity)
+        let applications = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: { .complete([application]) })
+
+        for error in [
+            PeekabooError.appNotFound("PID:101"),
+            PeekabooError.snapshotStale("fixture generation changed"),
+        ] {
+            let planner = DesktopTargetPlanning.WindowMutationPlanner(
+                applicationPlanner: applications,
+                windowInventoryProvider: { _ in throw error })
+
+            await #expect(throws: DesktopTargetPlanningError.staleApplication(expected: expectedIdentity)) {
+                _ = try await planner.plan(selector: InteractionTargetSelector(
+                    applicationIdentifier: "Test App",
+                    windowTitle: "Test Window"))
+            }
+        }
+    }
+
+    @Test
     func `exact window absence becomes not found initially and stale after selection`() async throws {
         let application = AutomationTestFixtures.application()
         let window = AutomationTestFixtures.window()
@@ -110,6 +136,35 @@ struct WindowMutationPlannerTests {
         isMissing.value = true
         await #expect(throws: DesktopTargetPlanningError.staleWindow(expected: plan.identity)) {
             _ = try await planner.revalidate(plan)
+        }
+    }
+
+    @Test
+    func `application and generation loss during exact revalidation stay stale`() async throws {
+        let application = AutomationTestFixtures.application()
+        let window = AutomationTestFixtures.window()
+
+        for error in [
+            PeekabooError.appNotFound("PID:101"),
+            PeekabooError.snapshotStale("fixture generation changed"),
+        ] {
+            let shouldFail = AutomationTestLockedValue(false)
+            let applications = DesktopTargetPlanning.ApplicationMutationPlanner(
+                inventoryProvider: { .complete([application]) })
+            let planner = DesktopTargetPlanning.WindowMutationPlanner(
+                applicationPlanner: applications,
+                windowInventoryProvider: { _ in
+                    if shouldFail.value {
+                        throw error
+                    }
+                    return .complete([window])
+                })
+            let plan = try await planner.plan(selector: InteractionTargetSelector(windowID: window.windowID))
+            shouldFail.value = true
+
+            await #expect(throws: DesktopTargetPlanningError.staleWindow(expected: plan.identity)) {
+                _ = try await planner.revalidate(plan)
+            }
         }
     }
 

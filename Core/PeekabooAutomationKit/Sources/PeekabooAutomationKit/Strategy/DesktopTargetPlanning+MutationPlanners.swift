@@ -12,6 +12,12 @@ extension DesktopTargetPlanning {
             "PID:\(self.processIdentity.processIdentifier)"
         }
 
+        public var expectedTargetIdentity: DesktopTargetIdentity {
+            get throws {
+                try DesktopTargetIdentity(processIdentity: self.processIdentity)
+            }
+        }
+
         init(
             application: ServiceApplicationInfo,
             processIdentity: ApplicationProcessIdentity,
@@ -260,6 +266,17 @@ extension DesktopTargetPlanning {
             .windowId(self.identity.windowID)
         }
 
+        public var expectedTargetIdentity: DesktopTargetIdentity {
+            get throws {
+                guard let bounds = self.identity.capturedBounds else {
+                    throw DesktopTargetPlanningError.incompleteWindowIdentity(windowID: self.identity.windowID)
+                }
+                return try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+                    identity: self.identity,
+                    bounds: bounds))
+            }
+        }
+
         init(
             selectionWindow: ServiceWindowInfo,
             identity: WindowMutationIdentity,
@@ -340,6 +357,7 @@ extension DesktopTargetPlanning {
             let selectorDescription = Self.selectorDescription(windowSelector)
             let inventory = try await self.windowInventory(
                 target: inventoryTarget,
+                expectedOwner: owner?.processIdentity,
                 directSelectorDescription: {
                     if case .id = windowSelector {
                         return selectorDescription
@@ -442,11 +460,13 @@ extension DesktopTargetPlanning {
             } catch let error as DesktopTargetPlanningError {
                 throw error
             } catch let error as PeekabooError {
-                guard case .windowNotFound = error else {
+                switch error {
+                case .windowNotFound, .appNotFound, .snapshotStale:
+                    throw DesktopTargetPlanningError.staleWindow(expected: plan.identity)
+                default:
                     throw DesktopTargetPlanningError.windowInventoryUnavailable(
                         selector: Self.targetDescription(plan.target))
                 }
-                throw DesktopTargetPlanningError.staleWindow(expected: plan.identity)
             } catch {
                 throw DesktopTargetPlanningError.windowInventoryUnavailable(
                     selector: Self.targetDescription(plan.target))
@@ -491,6 +511,7 @@ extension DesktopTargetPlanning {
                 revalidateBeforeReturn: false)
             let inventory = try await self.windowInventory(
                 target: .application(owner.target),
+                expectedOwner: owner.processIdentity,
                 directSelectorDescription: nil)
             guard inventory.isComplete else {
                 throw DesktopTargetPlanningError.incompleteWindowInventory(
@@ -586,6 +607,7 @@ extension DesktopTargetPlanning {
 
         private func windowInventory(
             target: WindowTarget,
+            expectedOwner: ApplicationProcessIdentity?,
             directSelectorDescription: String?) async throws -> Inventory<ServiceWindowInfo>
         {
             do {
@@ -601,6 +623,14 @@ extension DesktopTargetPlanning {
                     throw DesktopTargetPlanningError.windowNotFound(
                         selector: directSelectorDescription,
                         candidateWindowIDs: [])
+                }
+                if let expectedOwner {
+                    switch error {
+                    case .appNotFound, .snapshotStale:
+                        throw DesktopTargetPlanningError.staleApplication(expected: expectedOwner)
+                    default:
+                        break
+                    }
                 }
                 throw DesktopTargetPlanningError.windowInventoryUnavailable(
                     selector: Self.targetDescription(target))

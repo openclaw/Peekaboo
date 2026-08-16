@@ -31,6 +31,7 @@ struct ApplicationInventoryTimeoutTests {
 
         #expect(output.data.applications.map(\.processIdentifier) == [missingIdentityPID])
         #expect(output.summary.status == .partial)
+        #expect(output.summary.counts["incompleteApplications"] == 1)
         #expect(output.summary.counts["omittedApplications"] == 1)
         #expect(output.metadata.warnings.contains { $0.contains("changed process generation") })
         #expect(output.metadata.warnings.contains { $0.contains("Process-generation identity was unavailable") })
@@ -59,6 +60,7 @@ struct ApplicationInventoryTimeoutTests {
 
         #expect(output.data.applications.isEmpty)
         #expect(output.summary.status == .partial)
+        #expect(output.summary.counts["incompleteApplications"] == 0)
         #expect(output.summary.counts["omittedApplications"] == 1)
         #expect(output.metadata.warnings == ["Application PID \(pid) metadata lacked a usable name and was omitted."])
     }

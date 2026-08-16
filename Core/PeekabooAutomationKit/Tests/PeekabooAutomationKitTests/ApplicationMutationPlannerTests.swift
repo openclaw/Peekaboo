@@ -166,6 +166,7 @@ struct ApplicationMutationPlannerTests {
         #expect(plan.application == application)
         #expect(plan.target == "PID:101")
         #expect(plan.processIdentity == application.processIdentity)
+        #expect(try plan.expectedTargetIdentity == DesktopTargetIdentity(processIdentity: plan.processIdentity))
         #expect(plan.selectorProof.scope == .application)
         #expect(plan.selectorProof.normalizedSelector == "Test App")
         #expect(plan.selectorProof.matchKind == .exactName)

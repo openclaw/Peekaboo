@@ -212,7 +212,7 @@ extension ApplicationService {
                     "appsWithWindows": appsWithWindows.count,
                     "totalWindows": totalWindows,
                     "incompleteApplications":
-                        applications.count(where: { !($0.metadataWarnings ?? []).isEmpty }) + omissionWarnings.count,
+                        applications.count(where: { !($0.metadataWarnings ?? []).isEmpty }),
                     "omittedApplications": omissionWarnings.count,
                 ],
                 highlights: highlights),
