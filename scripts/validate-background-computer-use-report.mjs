@@ -459,11 +459,15 @@ export function validateCertification(catalog, report, trustedSourceArtifacts = 
   const physicalTargets = observedCases
     .filter((entry) => entry?.physical_app !== null && entry?.physical_app !== undefined)
     .map((entry) => entry?.physical_target);
-  const physicalTargetIdentities = physicalTargets.map((target) => (
+  const physicalProcessGenerations = physicalTargets.map((target) => (
+    `${target?.pid ?? "?"}:${target?.process_start_identity ?? "?"}`
+  ));
+  const physicalWindowIdentities = physicalTargets.map((target) => (
     `${target?.pid ?? "?"}:${target?.process_start_identity ?? "?"}:${target?.window_id ?? "?"}`
   ));
   if (physicalTargets.length !== 8
-      || new Set(physicalTargetIdentities).size !== physicalTargetIdentities.length) {
+      || new Set(physicalProcessGenerations).size !== physicalProcessGenerations.length
+      || new Set(physicalWindowIdentities).size !== physicalWindowIdentities.length) {
     failures.push(failure(
       "certification",
       "physical_target_duplicate",

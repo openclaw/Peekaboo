@@ -178,6 +178,16 @@ test("physical app rows reject duplicate process-generation window identities", 
   assert.ok(rules(validateCertification(catalog, report)).has("physical_target_duplicate"));
 });
 
+test("physical app rows reject a reused process generation with a relabeled window", () => {
+  const report = makePassingReport(catalog);
+  const safari = caseById(report, "physical-safari").physical_target;
+  const calendar = caseById(report, "physical-calendar").physical_target;
+  calendar.pid = safari.pid;
+  calendar.process_start_identity = safari.process_start_identity;
+  assert.notEqual(calendar.window_id, safari.window_id);
+  assert.ok(rules(validateCertification(catalog, report)).has("physical_target_duplicate"));
+});
+
 test("missing or duplicate catalog physical-app coverage fails closed", () => {
   const missing = structuredClone(catalog);
   delete missing.cases.find((entry) => entry.id === "physical-safari").physical_app;

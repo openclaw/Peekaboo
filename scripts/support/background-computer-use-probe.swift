@@ -543,6 +543,7 @@ private struct MonitorEpochMachineState: Sendable {
     var lastAdmission: UInt64 = 0
     var nextEpochSerial: UInt64 = 2
     var acknowledgementReadyRevision: UInt64?
+    var isSealCutoff = false
     var isQuiesced = false
 }
 
@@ -636,12 +637,26 @@ private final class MonitorEpochMachine: Sendable {
         self.reserve()
     }
 
-    func quiesce() {
+    func beginSealCutoff() -> Bool {
         self.state.withLock { state in
+            guard !state.isQuiesced, !state.isSealCutoff else { return false }
+            state.isSealCutoff = true
+            return true
+        }
+    }
+
+    func finishSealCutoff() -> Bool {
+        self.state.withLock { state in
+            guard state.isSealCutoff,
+                  !state.isQuiesced,
+                  state.sealedBuckets.isEmpty,
+                  state.openBucket.pendingAdmissions.isEmpty,
+                  state.openBucket.events.isEmpty,
+                  state.openBucket.epoch.phase.isStable,
+                  state.acknowledgementReadyRevision == nil
+            else { return false }
             state.isQuiesced = true
-            state.openBucket.events.removeAll()
-            state.openBucket.pendingAdmissions.removeAll()
-            state.sealedBuckets.removeAll()
+            return true
         }
     }
 
@@ -747,7 +762,7 @@ private final class MonitorEpochMachine: Sendable {
 
     private func reserve() -> MonitorAdmissionToken {
         self.state.withLock { state in
-            if state.isQuiesced {
+            if state.isQuiesced || state.isSealCutoff {
                 return MonitorAdmissionToken(admission: 0, epoch: state.openBucket.epoch)
             }
             state.lastAdmission += 1
@@ -1141,15 +1156,27 @@ private final class FocusObserverCoordinator {
         }
     }
 
-    func stop() {
+    func stop() throws {
+        var firstError: Error?
         for observer in self.grantedObservers.values {
-            try? observer.stop()
+            do {
+                try observer.stop()
+            } catch {
+                firstError = firstError ?? error
+            }
         }
         if let baselineObserver = self.baselineObserver {
-            try? baselineObserver.stop()
+            do {
+                try baselineObserver.stop()
+            } catch {
+                firstError = firstError ?? error
+            }
         }
         self.grantedObservers.removeAll()
         self.baselineObserver = nil
+        if let firstError {
+            throw firstError
+        }
     }
 
     var observedIdentities: Set<ProcessGenerationIdentity> {
@@ -3016,6 +3043,7 @@ private func monitorClockStepIsConsistent(
 private func sealMonitorEvidenceIfRequested(
     configuration: MonitorSealConfiguration,
     ledger: MonitorPublicationLedger,
+    prepareForSeal: () throws -> Void = {},
     finalSampleProvider: () throws -> SystemSample = { try sample(includeClipboardDigest: true) }) throws -> Bool
 {
     if ledger.sealedDigest() != nil {
@@ -3096,6 +3124,7 @@ private func sealMonitorEvidenceIfRequested(
     let draftContaminations = try JSONDecoder().decode(
         [ContaminationRecord].self,
         from: JSONSerialization.data(withJSONObject: contaminationRecords))
+    try prepareForSeal()
     let recordedEvidence = ledger.evidenceRecords()
     guard draftViolations == recordedEvidence.violations,
           draftContaminations == recordedEvidence.contaminations,
@@ -3325,7 +3354,7 @@ private func runWatch(arguments: [String]) throws -> Never {
     var monitoringQuiesced = false
     defer {
         if !monitoringQuiesced {
-            focusObservers.stop()
+            try? focusObservers.stop()
             activationTracker.stop()
             inputTracker.stop()
         }
@@ -3452,13 +3481,45 @@ private func runWatch(arguments: [String]) throws -> Never {
             firstSample = false
         }
         if let sealConfiguration {
-            let sealed = try sealMonitorEvidenceIfRequested(configuration: sealConfiguration, ledger: ledger)
-            if sealed, !monitoringQuiesced {
-                focusObservers.stop()
-                activationTracker.stop()
-                inputTracker.stop()
-                machine.quiesce()
-                monitoringQuiesced = true
+            let sealed = try sealMonitorEvidenceIfRequested(
+                configuration: sealConfiguration,
+                ledger: ledger,
+                prepareForSeal: {
+                    guard !monitoringQuiesced else { return }
+                    guard acknowledgementGate.pendingRevision == nil,
+                          machine.beginSealCutoff()
+                    else {
+                        throw ProbeError.invalidArguments(
+                            "monitor terminal seal cutoff requires a fully acknowledged stable epoch")
+                    }
+                    inputTracker.stop()
+                    activationTracker.stop()
+                    try focusObservers.stop()
+                    let timeout = max(Double(intervalMilliseconds) / 1000, 0.1)
+                    let cutoffDeadline = DispatchTime.now().uptimeNanoseconds + 2_000_000_000
+                    while true {
+                        guard runLoopReachesIdle(timeout: timeout) else {
+                            throw ProbeError.invalidArguments(
+                                "monitor could not drain its run loop at the terminal seal cutoff")
+                        }
+                        if let cutoffClosure = machine.closeForHeartbeat() {
+                            _ = try watchState.observe(
+                                current: sample(includeClipboardDigest: true),
+                                phase: "complete",
+                                closure: cutoffClosure)
+                        }
+                        if machine.finishSealCutoff() {
+                            break
+                        }
+                        guard DispatchTime.now().uptimeNanoseconds < cutoffDeadline else {
+                            throw ProbeError.invalidArguments(
+                                "monitor retained a pre-cutoff callback past its terminal drain deadline")
+                        }
+                    }
+                    monitoringQuiesced = true
+                })
+            guard !sealed || monitoringQuiesced else {
+                throw ProbeError.invalidArguments("monitor sealed evidence before establishing its callback cutoff")
             }
         }
     }
@@ -4750,7 +4811,8 @@ private func makeSelfTestWatchState(
     outputPath: String,
     contaminationPath: String,
     physicalInputObservational: Bool = true,
-    cursorObservational: Bool = true) -> WatchState
+    cursorObservational: Bool = true,
+    evidenceLedger: MonitorPublicationLedger? = nil) -> WatchState
 {
     WatchState(
         baseline: desktop.sample,
@@ -4764,7 +4826,7 @@ private func makeSelfTestWatchState(
         projection: projection,
         outputPath: outputPath,
         contaminationOutputPath: contaminationPath,
-        evidenceLedger: nil)
+        evidenceLedger: evidenceLedger)
 }
 
 private func transitionAcknowledgementNeverAdvancesClean(
@@ -5571,15 +5633,24 @@ private func producerLedgerPreservesEquivalentReorder() -> Bool {
     }
 }
 
-private func quiescedMonitorDropsAllAdmissions() -> Bool {
+private func sealCutoffDrainsPreCutoffAdmissions() -> Bool {
     let machine = MonitorEpochMachine(initialAuthorization: testAuthorization(testProducerSet(
         revision: 1,
         producers: [])))
     let pending = machine.reserveForTesting()
-    machine.quiesce()
+    guard machine.beginSealCutoff(), !machine.finishSealCutoff() else { return false }
+    machine.admitForTesting(.input(InputEventEvidence(
+        type: CGEventType.keyDown.rawValue,
+        source: testEvidence(20, "2000", nil),
+        sessionFocus: nil)))
+    guard machine.pendingEvidenceCountForTesting() == 1 else { return false }
     guard machine.completeForTesting(
         pending,
         with: .activation(testEvidence(10, "1000", 100)))
+    else { return false }
+    guard let closure = machine.closeForHeartbeat(),
+          closure.epochs.flatMap(\.events).count == 1,
+          machine.finishSealCutoff()
     else { return false }
     for _ in 0..<100 {
         machine.admitForTesting(.input(InputEventEvidence(
@@ -5837,6 +5908,101 @@ private func monitorSealIsRunBoundAndOwned() throws -> Bool {
     guard blockedAttempts == 2,
           blockedLedger.sealedDigest() == nil,
           try readOwnerPrivateFile(blockedSealedPath) == Data("occupied".utf8)
+    else { return false }
+    let lateSealedPath = "\(directory)/late-sealed.json"
+    let lateRequestPath = "\(directory)/late-request.json"
+    let lateReceiptPath = "\(directory)/late-receipt.json"
+    let lateHeartbeatPath = "\(directory)/late-heartbeat.json"
+    let lateRequest = MonitorSealRequest(
+        version: 1,
+        executionNonce: selfTestExecutionNonce,
+        monitorInstanceID: selfTestMonitorInstanceID,
+        phase: "seal",
+        draftPath: draftPath,
+        sealedPath: lateSealedPath,
+        historyCommitmentSHA256: historyCommitment)
+    try writeOwnerPrivateData(encoder.encode(lateRequest), to: lateRequestPath)
+    let lateLedger = try populatedLedger()
+    let lateMachine = MonitorEpochMachine(initialAuthorization: testAuthorization(testProducerSet(
+        revision: 1,
+        producers: [])))
+    let latePending = lateMachine.reserveForTesting()
+    let lateDesktop = selfTestDesktop()
+    let lateProjection = InvariantProjection(names: InvariantSlot.allCases.map { "late-\($0.rawValue)" })
+    var lateWatch = makeSelfTestWatchState(
+        desktop: lateDesktop,
+        projection: lateProjection,
+        outputPath: "\(directory)/late-violations.jsonl",
+        contaminationPath: "\(directory)/late-contamination.jsonl",
+        physicalInputObservational: false,
+        evidenceLedger: lateLedger)
+    let lateConfiguration = MonitorSealConfiguration(
+        executionNonce: selfTestExecutionNonce,
+        monitorInstanceID: selfTestMonitorInstanceID,
+        requestPath: lateRequestPath,
+        sealedEvidencePath: lateSealedPath,
+        attestationEvidencePath: lateSealedPath,
+        receiptPath: lateReceiptPath,
+        attestationSocketPath: socketPath,
+        heartbeatPath: lateHeartbeatPath,
+        violationsPath: violationsPath,
+        contaminationPath: contaminationPath,
+        baseline: baseline,
+        initialCommitmentSHA256: initialCommitment,
+        monitor: monitor)
+    var cutoffCalls = 0
+    var cutoffDrained = false
+    do {
+        _ = try sealMonitorEvidenceIfRequested(
+            configuration: lateConfiguration,
+            ledger: lateLedger,
+            prepareForSeal: {
+                cutoffCalls += 1
+                guard lateMachine.beginSealCutoff(),
+                      !lateMachine.finishSealCutoff(),
+                      lateMachine.pendingEvidenceCountForTesting() == 1
+                else {
+                    throw ProbeError.invalidArguments("seal cutoff did not retain its pre-cutoff admission")
+                }
+                lateMachine.admitForTesting(.input(InputEventEvidence(
+                    type: CGEventType.keyDown.rawValue,
+                    source: testEvidence(98, "9800", nil),
+                    sessionFocus: nil)))
+                guard lateMachine.pendingEvidenceCountForTesting() == 1,
+                      lateMachine.completeForTesting(
+                          latePending,
+                          with: .input(InputEventEvidence(
+                              type: CGEventType.keyDown.rawValue,
+                              source: testEvidence(99, "9900", nil),
+                              sessionFocus: nil))),
+                      let closure = lateMachine.closeForHeartbeat()
+                else {
+                    throw ProbeError.invalidArguments("seal cutoff lost its pre-cutoff callback")
+                }
+                _ = try lateWatch.observe(
+                    current: lateDesktop.sample,
+                    phase: "complete",
+                    closure: closure,
+                    processIdentity: { [10: 1000, 99: 9900][$0] },
+                    targetValidator: { _ in true })
+                guard lateMachine.finishSealCutoff() else {
+                    throw ProbeError.invalidArguments("seal cutoff did not finish after draining callback evidence")
+                }
+                cutoffDrained = true
+            },
+            finalSampleProvider: { baseline })
+        return false
+    } catch {
+        // The late callback must invalidate the seal before any output is published.
+    }
+    let lateRecords = lateLedger.evidenceRecords()
+    guard cutoffCalls == 1,
+          cutoffDrained,
+          lateRecords.violations.isEmpty,
+          lateRecords.contaminations.count == 1,
+          lateLedger.sealedDigest() == nil,
+          !FileManager.default.fileExists(atPath: lateSealedPath),
+          !FileManager.default.fileExists(atPath: lateReceiptPath)
     else { return false }
     let configuration = MonitorSealConfiguration(
         executionNonce: selfTestExecutionNonce,
@@ -6120,8 +6286,8 @@ private func runSelfTest() throws {
     guard producerLedgerPreservesEquivalentReorder() else {
         throw ProbeError.invalidArguments("producer ledger rejected an idempotent reorder or accepted drift")
     }
-    guard quiescedMonitorDropsAllAdmissions() else {
-        throw ProbeError.invalidArguments("post-seal monitor admission was not quiesced")
+    guard sealCutoffDrainsPreCutoffAdmissions() else {
+        throw ProbeError.invalidArguments("terminal seal cutoff lost or admitted callback evidence")
     }
     guard integerClockExtremesFailClosed() else {
         throw ProbeError.invalidArguments("monitor clock arithmetic accepted an unsafe or backward step")

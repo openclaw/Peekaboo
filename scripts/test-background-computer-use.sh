@@ -190,6 +190,9 @@ swiftc "$SOURCE_INPUT_ROOT/probe.swift" \
     -framework CoreGraphics \
     -framework CryptoKit \
     -framework Security
+PROBE_EXECUTABLE_SHA256_INITIAL="$(shasum -a 256 "$PROBE_BIN" | awk '{print $1}')"
+PROBE_EXECUTABLE_DEVICE_INITIAL="$(stat -f '%d' "$PROBE_BIN")"
+PROBE_EXECUTABLE_INODE_INITIAL="$(stat -f '%i' "$PROBE_BIN")"
 "$PROBE_BIN" self-test > "$ARTIFACT_ROOT/probe-self-test.json"
 
 MONITOR_DIGEST_FIXTURE="$ARTIFACT_ROOT/monitor-digest-fixture.json"
@@ -2742,6 +2745,13 @@ for source_and_digest in \
         PROVENANCE_STABLE=false
     fi
 done
+if [[ "$(shasum -a 256 "$PROBE_BIN" | awk '{print $1}')" != \
+        "$PROBE_EXECUTABLE_SHA256_INITIAL" || \
+      "$(stat -f '%d' "$PROBE_BIN")" != "$PROBE_EXECUTABLE_DEVICE_INITIAL" || \
+      "$(stat -f '%i' "$PROBE_BIN")" != "$PROBE_EXECUTABLE_INODE_INITIAL" ]]; then
+    record_failure "Native certification probe executable changed during the matrix"
+    PROVENANCE_STABLE=false
+fi
 if [[ "$(shasum -a 256 "$PEEKABOO_BIN" | awk '{print $1}')" != "$PEEKABOO_EXECUTABLE_SHA256" || \
       "$(codesign -dvvv "$PEEKABOO_BIN" 2>&1 | awk -F= '/^CDHash=/{print $2; exit}')" != \
         "$PEEKABOO_CODE_SIGNATURE_HASH" || \
@@ -2776,7 +2786,7 @@ SOURCE_ARTIFACTS_JSON="$(jq -cn \
     --arg catalogSHA256 "$CATALOG_SHA256_INITIAL" \
     --arg reporterSHA256 "$REPORTER_SHA256_INITIAL" \
     --arg probeSourceSHA256 "$PROBE_SOURCE_SHA256_INITIAL" \
-    --arg probeExecutableSHA256 "$(shasum -a 256 "$PROBE_BIN" | awk '{print $1}')" \
+    --arg probeExecutableSHA256 "$PROBE_EXECUTABLE_SHA256_INITIAL" \
     --arg harnessSHA256 "$HARNESS_SHA256_INITIAL" \
     --arg cliExecutableSHA256 "$PEEKABOO_EXECUTABLE_SHA256" \
     --arg cliCodeSignatureHash "$PEEKABOO_CODE_SIGNATURE_HASH" \
