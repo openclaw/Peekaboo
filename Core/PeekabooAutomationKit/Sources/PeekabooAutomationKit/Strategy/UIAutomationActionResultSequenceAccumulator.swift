@@ -224,7 +224,7 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
             self.targetlessPhaseReturnedTarget = self.targetlessPhaseReturnedTarget || hasTarget
         }
 
-        guard let selectedLeafEvidence else { return }
+        guard let selectedLeafEvidence, !selectedLeafEvidence.isEmpty else { return }
         let identityTargetReceipt = targetIdentity?.actionTargetReceipt
         let phaseTargetReceipt: DesktopActionTargetReceipt? = if let identityTargetReceipt,
                                                                  let targetReceipt
@@ -234,7 +234,6 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
             targetReceipt ?? identityTargetReceipt
         }
         guard didDispatch,
-              !selectedLeafEvidence.isEmpty,
               selectedLeafEvidence.allSatisfy(\.isCanonical),
               let phaseTargetReceipt,
               selectedLeafEvidence.allSatisfy({ evidence in

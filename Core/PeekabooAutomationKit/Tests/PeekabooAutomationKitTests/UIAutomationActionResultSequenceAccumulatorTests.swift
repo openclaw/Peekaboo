@@ -367,6 +367,28 @@ struct UIAutomationActionResultSequenceAccumulatorTests {
     }
 
     @Test
+    func `empty selected-leaf collection is normalized to absent evidence`() throws {
+        let target = AutomationTestFixtures.linkedDesktopTarget(
+            windowID: 71,
+            bounds: Self.windowBounds)
+        var sequence = UIAutomationActionResultSequenceAccumulator()
+        sequence.record(
+            outcome: .confirmedChange(delivery: self.backgroundDelivery, unitCount: .one),
+            targetReceipt: target.windowTargetReceipt,
+            selectedLeafEvidence: [],
+            attribution: .mutationTarget)
+
+        let result = try sequence.result(
+            payload: (),
+            operation: "Empty selected leaves",
+            requiresOutcome: true,
+            requiresCompatibleTarget: true)
+
+        #expect(result.outcome?.state == .confirmedChange)
+        #expect(result.selectedLeafEvidence == nil)
+    }
+
+    @Test
     func `selected leaves must be contained by the attributed phase target`() throws {
         let phase = AutomationTestFixtures.linkedDesktopTarget(
             processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001),
