@@ -10,8 +10,12 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const catalogPath = path.join(root, 'scripts/physical-overlap-contract-catalog.json');
 const catalog = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
 
-function sha256(relativePath) {
-  return createHash('sha256').update(fs.readFileSync(path.join(root, relativePath))).digest('hex');
+function sha256AtPinnedCommit(relativePath) {
+  return createHash('sha256').update(execFileSync(
+    'git',
+    ['show', `${catalog.product_source.commit}:${relativePath}`],
+    { cwd: root, encoding: null },
+  )).digest('hex');
 }
 
 function exactKeys(value, expected) {
@@ -22,10 +26,21 @@ function exactKeys(value, expected) {
 function validate(value) {
   const failures = [];
   if (!exactKeys(value, [
-    'version', 'product_source', 'controllers', 'phases', 'invariants', 'receipt_requirements',
-    'foreground_attribution_requirements', 'restoration_requirements', 'cursor_policy',
-    'prohibited_mechanisms',
+    'version', 'implementation_status', 'product_source', 'controllers', 'phases', 'invariants',
+    'receipt_requirements', 'foreground_attribution_requirements', 'restoration_requirements',
+    'cursor_policy', 'prohibited_mechanisms',
   ]) || value.version !== 1) failures.push('schema');
+  if (!exactKeys(value.implementation_status, [
+    'state', 'live_enabled', 'required_owner', 'acceptance_blockers',
+  ]) || value.implementation_status.state !== 'contract-only-blocked'
+      || value.implementation_status.live_enabled !== false
+      || value.implementation_status.required_owner
+        !== 'centralized-epoch-publication-and-focus-event-time-monitor'
+      || JSON.stringify(value.implementation_status.acceptance_blockers) !== JSON.stringify([
+        'atomic-event-epoch-through-heartbeat-publication',
+        'ack-gate-every-authorization-changing-revision',
+        'notification-time-generation-and-exact-window-focus-evidence',
+      ])) failures.push('implementation_status');
   if (!exactKeys(value.product_source, [
     'commit', 'tree', 'peer_binding', 'client_sha256', 'client_transport_sha256',
     'operation_policy_sha256', 'operation_receipt_models_sha256',
@@ -40,7 +55,9 @@ function validate(value) {
   if (!Array.isArray(value.controllers) || value.controllers.length !== 2
       || value.controllers.map((entry) => entry.id).join(',') !== 'peekaboo,integrated-computer-use'
       || value.controllers[0].interaction_mode !== 'background'
-      || value.controllers[1].interaction_mode !== 'foreground') failures.push('controllers');
+      || value.controllers[1].interaction_mode !== 'foreground'
+      || value.controllers[1].operation_evidence
+        !== 'required-native-monitor-event-attribution-not-implemented') failures.push('controllers');
   for (const key of ['phases', 'invariants', 'receipt_requirements', 'restoration_requirements']) {
     if (!Array.isArray(value[key]) || value[key].length === 0
         || new Set(value[key]).size !== value[key].length) failures.push(key);
@@ -102,7 +119,7 @@ test('frozen physical overlap catalog pins exact PR 487 protocol owners', () => 
   ];
   for (const [field, filename] of sourceOwners) {
     assert.equal(
-      sha256(`Core/PeekabooCore/Sources/PeekabooBridge/${filename}`),
+      sha256AtPinnedCommit(`Core/PeekabooCore/Sources/PeekabooBridge/${filename}`),
       catalog.product_source[field],
       field,
     );
@@ -110,6 +127,10 @@ test('frozen physical overlap catalog pins exact PR 487 protocol owners', () => 
 });
 
 test('catalog cannot weaken mode attribution restoration or prohibited mechanisms', () => {
+  const live = structuredClone(catalog);
+  live.implementation_status.live_enabled = true;
+  assert.ok(validate(live).includes('implementation_status'));
+
   const foreground = structuredClone(catalog);
   foreground.controllers[0].interaction_mode = 'foreground';
   assert.ok(validate(foreground).includes('controllers'));

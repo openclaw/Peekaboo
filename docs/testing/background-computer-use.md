@@ -116,10 +116,10 @@ Bridge bundle validator with that independently obtained listener attestation. `
 and a bundle's own self-signature are not substitutes.
 
 Live overlap execution remains deliberately reserved until the shell coordinator invokes that command for every
-expected terminal bundle, binds the complete anchored verdict set into its report, and completes the foreground
-controller grant/revoke sequence below. The current command still refuses before UI setup. The eventual opt-in run also
-requires a clean source tree, matching stamped CLI/host source commits, one exact signed Bridge host, an already-running
-sentinel receipt, and a private `PEEKABOO_OPERATION_RECEIPT_DIRECTORY`:
+expected terminal bundle, binds the complete anchored verdict set into its report, and uses a centralized foreground
+epoch monitor that satisfies the frozen contract below. The current command still refuses before UI setup. The eventual
+opt-in run also requires a clean source tree, matching stamped CLI/host source commits, one exact signed Bridge host, an
+already-running sentinel receipt, and a private `PEEKABOO_OPERATION_RECEIPT_DIRECTORY`:
 
 ```bash
 PEEKABOO_RUN_DUAL_CONTROLLER_OVERLAP=1 \
@@ -194,36 +194,27 @@ adapters and a fixed-key signed fixture corpus:
 pnpm run test:background-certification
 ```
 
-The native invariant monitor has a matching opt-in foreground-attribution seam. Existing producer entries remain Bridge
-producers and any session-global event from them is a failure. A coexistence coordinator may additionally register exact
-`foreground-controller` PID/process-generation entries and atomically advance the producer-set revision with one active
-foreground target `{pid,startIdentity,windowID}`. While that grant is active, only the original sentinel or that exact
-target may become frontmost; unrelated activation is still a violation. Clipboard, visible Peekaboo overlays, producer
-generation, and unattributed input stay strict throughout. The heartbeat records the attributed producer generations and
-event count. The coordinator must revoke the grant and restore the sentinel before the monitor can emit another clean
-sample. Cursor motion stays observational, so a person using the machine does not create a false Peekaboo failure.
-`scripts/physical-overlap-contract-catalog.json` freezes this split-controller policy to the exact protocol 1.29 source
-under test. It forbids virtualization, Lume, VNC, AppleScript, and JXA; a later live binding may fill only the exact
-sentinel, controlled targets, socket/listener, CLI generations, and integrated Computer Use producer generations.
+`scripts/physical-overlap-contract-catalog.json` freezes the intended split-controller policy to the exact protocol 1.29
+source under test, but marks live execution as blocked. It is a non-live acceptance contract, not evidence that the
+current invariant monitor can safely grant foreground authority. It forbids virtualization, Lume, VNC, AppleScript, and
+JXA. Physical cursor motion remains observational so a person using the machine does not create a false Peekaboo
+failure.
 
-The final coordinator uses one monotonic three-revision grant contract and atomic file replacement:
+Before live overlap can be enabled, one centralized epoch-publication and focus-event-time owner must satisfy all three
+of these fail-closed requirements:
 
-1. Baseline revision `N` lists the exact Bridge PID/generation with role `bridge`, no foreground controller, and
-   `{ "active": false }`. Neither controller starts until the heartbeat reports revision `N` and a clean sample.
-2. Grant revision `N+1` retains the Bridge producer, adds exactly one integrated Computer Use PID/generation with role
-   `foreground-controller`, and sets
-   `{ "active": true, "target": { "pid": P, "startIdentity": S, "windowID": W } }`.
-   Foreground work starts only after the heartbeat reports `N+1`, `foregroundActive: true`, and the exact target.
-3. Before revocation, require `attributedForegroundEventCount > 0`, the exact controller PID in
-   `attributedForegroundSourcePIDs`, no monitor violation, and only the sentinel or granted target activation.
-4. Revoke with revision `N+2`: remove every foreground controller, set `{ "active": false }`, and retain the Bridge
-   receipt. Wait for the heartbeat to report `N+2` and `foregroundActive: false`; then restore the sentinel and require a
-   later clean sequence before cleanup or certification.
+1. An authorization revision becomes active only after its heartbeat is published. Input, activation, and focused-window
+   events arriving at the drain/publication boundary must retain the immutable prior epoch; record, update, drain, and
+   acknowledgement cannot expose a mixed-policy interval.
+2. Every authorization-changing revision is acknowledgement-gated, including a new controller PID/generation with the
+   same foreground target. No event from the new producer set can receive credit before that revision's heartbeat.
+3. Focus evidence carries notification-time PID generation and exact window identity, or fails closed. Callback-time
+   queries of the final focused window cannot substitute for a transient wrong-window event, including same-PID
+   retarget, revoke, and wrong-window-to-target transitions.
 
-The monitor rejects zero or multiple foreground controllers while a grant is active and any foreground controller that
-remains after revocation. Reused revisions, dead process generations, missing event attribution, unexpected activation,
-wrong targets, interrupted monitoring, missing terminal bundles, failed anchored verdicts, or cleanup before the
-post-revoke clean sample also fail the run. Physical cursor motion remains observational throughout.
+The future coordinator must also implement the cataloged monotonic baseline/grant/revoke handshake, exact controller
+cardinality, post-revoke sentinel restoration, and later clean-sample requirement. Until the three event-time conditions
+above and that coordinator are implemented and independently tested, live mode must continue to refuse before UI setup.
 
 For the interaction commands exercised here, background is the omission contract: `--foreground` is the only consent
 for focus/activation, global keyboard input, physical cursor movement, or synthetic pointer/wheel events. Explicit app

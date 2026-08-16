@@ -52,7 +52,7 @@ while an independently selected sentinel PID/window must remain foreground.
 
 Protocol 1.29 receipt carriage and authenticated first-party single-bundle validation are present,
 but live mode remains reserved until the coordinator binds one anchored verdict to every terminal
-bundle and completes the exact foreground-controller grant/revoke handshake.
+bundle and a centralized epoch-publication/focus-event-time monitor is implemented and independently proven.
 The future live invocation will require PEEKABOO_RUN_DUAL_CONTROLLER_OVERLAP=1 and:
   --bin PATH                 Signed current Peekaboo CLI
   --bridge-socket PATH       Exact signed current Bridge socket
@@ -1290,7 +1290,7 @@ live_overlap_coordinator_available() {
 }
 if ! live_overlap_coordinator_available; then
     printf '%s\n' \
-        'Live overlap is reserved until anchored verdict collection and foreground grant/revoke coordination are wired.' >&2
+        'Live overlap is reserved until anchored verdict collection and the centralized epoch/focus monitor are implemented and independently proven.' >&2
     exit 2
 fi
 

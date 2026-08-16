@@ -1,5 +1,15 @@
 {
   "version": 1,
+  "implementation_status": {
+    "state": "contract-only-blocked",
+    "live_enabled": false,
+    "required_owner": "centralized-epoch-publication-and-focus-event-time-monitor",
+    "acceptance_blockers": [
+      "atomic-event-epoch-through-heartbeat-publication",
+      "ack-gate-every-authorization-changing-revision",
+      "notification-time-generation-and-exact-window-focus-evidence"
+    ]
+  },
   "product_source": {
     "commit": "e68a46c227b957ee8a430ecfcb002162b0eb0bbb",
     "tree": "7b33ea5a34acc704ef5f57e88ec2d45024aa15bc",
@@ -32,7 +42,7 @@
       "interaction_mode": "foreground",
       "producer_policy": "exact-pid-generation-attribution",
       "target_policy": "distinct-exact-window",
-      "operation_evidence": "native-monitor-event-attribution"
+      "operation_evidence": "required-native-monitor-event-attribution-not-implemented"
     }
   ],
   "phases": [
