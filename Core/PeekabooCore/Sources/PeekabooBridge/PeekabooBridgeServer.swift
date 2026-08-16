@@ -52,6 +52,7 @@ public struct PeekabooBridgePeer: Sendable {
 
 struct PeekabooBridgeHeldPointerOwnerBinding {
     let peerIdentity: ApplicationProcessIdentity
+    var pendingBeginTarget: DesktopTargetIdentity?
     var activeReceipt: ExactWindowHeldPointerReceipt?
     var closedAt: ContinuousClock.Instant?
 }

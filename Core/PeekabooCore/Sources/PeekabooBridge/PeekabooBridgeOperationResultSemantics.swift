@@ -206,6 +206,8 @@ enum PeekabooBridgeOperationResultSemantics {
         case errorOnly
         /// The Boolean payload and canonical action state must describe the same quit result.
         case quitBoolean
+        /// A terminal replay may be no-dispatch only when it proves a pre-dispatch owner disconnect.
+        case heldPointerTerminalReplay
     }
 
     struct TypeActionResultRule: Equatable, Sendable {
@@ -1028,9 +1030,10 @@ extension PeekabooBridgeOperationResultSemantics {
             .init(completion: .dispatchedUnverified(processBackground), targetPolicy: .requestPinned)
         case .exactWindowTargetedTypeActions, .exactWindowTargetedHotkey:
             .init(completion: .dispatchedUnverified(windowBackground), targetPolicy: .requestPinned)
-        case .beginExactWindowHeldPointer, .releaseExactWindowHeldPointer,
-             .revokeExactWindowHeldPointer:
+        case .beginExactWindowHeldPointer:
             .init(completion: .dispatchedUnverified(windowBackground), targetPolicy: .requestPinned)
+        case .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer:
+            .init(completion: .requestDependent(mutatesDesktop: true), targetPolicy: .requestPinned)
         case .disconnectExactWindowHeldPointerOwner:
             .init(completion: .requestDependent(mutatesDesktop: true), targetPolicy: .handlerResolvedOrGlobal)
         case .setValue:
@@ -1658,9 +1661,10 @@ extension PeekabooBridgeOperationResultSemantics {
              .detectElements, .inspectAccessibilityTree,
              .exactDialogForceDismiss:
             return [.dispatchedUnverified]
-        case .beginExactWindowHeldPointer, .releaseExactWindowHeldPointer,
-             .revokeExactWindowHeldPointer:
+        case .beginExactWindowHeldPointer:
             return [.dispatchedUnverified]
+        case .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer:
+            return [.confirmedNoChange, .dispatchedUnverified]
         case .disconnectExactWindowHeldPointerOwner:
             return [.confirmedNoChange, .dispatchedUnverified]
         case .exactDialogClickButton, .exactDialogDismiss:
@@ -1721,6 +1725,8 @@ extension PeekabooBridgeOperationResultSemantics {
             .errorOnly
         case .quitApplication:
             .quitBoolean
+        case .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer:
+            .heldPointerTerminalReplay
         default:
             .ordinary
         }
@@ -2140,6 +2146,20 @@ extension PeekabooBridgeOperationResultSemantics {
                 return [.confirmedChange, .dispatchedUnverified].contains(outcome.state)
             }
             return [.suspectedNoop, .dispatchedUnverified].contains(outcome.state)
+        case .heldPointerTerminalReplay:
+            if outcome.state == .dispatchedUnverified {
+                return true
+            }
+            guard outcome.state == .confirmedNoChange,
+                  case let .exactWindowHeldPointerTermination(payload) = response,
+                  let termination = payload,
+                  termination.reason == .ownerDisconnected,
+                  termination.lifecycleDispatchedUnitCount == 0,
+                  termination.cleanupOutcome.state == .confirmedNoChange,
+                  termination.cleanupOutcome.dispatchState == .none,
+                  termination.cleanupOutcome.delivery == nil
+            else { return false }
+            return true
         }
     }
 

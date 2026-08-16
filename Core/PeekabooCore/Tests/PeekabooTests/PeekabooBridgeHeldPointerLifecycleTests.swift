@@ -367,6 +367,93 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
     }
 
     @Test
+    func `zero dispatch disconnect termination replays through release and revoke`() async throws {
+        let fixture = await self.makeHost(protocolVersion: PeekabooBridgeConstants.protocolVersion)
+        try await fixture.host.startChecked()
+        defer { Task { await fixture.host.stop() } }
+        let client = TrustedBridgeClientFixture.make(socketPath: fixture.socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
+        let owner = try await client.createExactWindowHeldPointerOwner()
+        let beginQueued = HeldPointerBridgeTestGate()
+        let resumeBegin = HeldPointerBridgeTestGate()
+        await MainActor.run {
+            fixture.automation.beginDispatchHook = {
+                await beginQueued.open()
+                await resumeBegin.wait()
+            }
+        }
+
+        let begin = Task {
+            try await client.beginExactWindowPointerHold(owner: owner, request: fixture.automation.request)
+        }
+        await beginQueued.wait()
+        let disconnected = try await client.disconnectExactWindowHeldPointerOwner(owner)
+        let terminal = try #require(disconnected.payload)
+        await resumeBegin.open()
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await begin.value
+        }
+
+        #expect(terminal.reason == .ownerDisconnected)
+        #expect(terminal.lifecycleDispatchedUnitCount == 0)
+        #expect(disconnected.outcome?.state == .confirmedNoChange)
+        let release = try await client.releaseExactWindowPointerHold(owner: owner, receipt: terminal.receipt)
+        let revoke = try await client.revokeExactWindowPointerHold(owner: owner, receipt: terminal.receipt)
+        #expect(release.payload == terminal)
+        #expect(revoke.payload == terminal)
+        #expect(release.outcome?.state == .confirmedNoChange)
+        #expect(revoke.outcome?.state == .confirmedNoChange)
+        #expect(await fixture.automation.terminalDispatchCount == 0)
+    }
+
+    @Test
+    func `racing disconnect failure retains pending begin target attribution`() async throws {
+        let fixture = await self.makeHost(protocolVersion: PeekabooBridgeConstants.protocolVersion)
+        try await fixture.host.startChecked()
+        defer { Task { await fixture.host.stop() } }
+        let client = TrustedBridgeClientFixture.make(socketPath: fixture.socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
+        let owner = try await client.createExactWindowHeldPointerOwner()
+        let beginCompleted = HeldPointerBridgeTestGate()
+        let resumeBegin = HeldPointerBridgeTestGate()
+        await MainActor.run {
+            fixture.automation.disconnectFailure = .partial(
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                unitCount: .init(2),
+                message: "Held pointer cleanup did not complete")
+            fixture.automation.beginCompletionHook = {
+                await beginCompleted.open()
+                await resumeBegin.wait()
+            }
+        }
+
+        let begin = Task {
+            try await client.beginExactWindowPointerHold(owner: owner, request: fixture.automation.request)
+        }
+        await beginCompleted.wait()
+        do {
+            _ = try await client.disconnectExactWindowHeldPointerOwner(owner)
+            Issue.record("Expected the racing disconnect cleanup failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .partial)
+            #expect(failure.targetReceipt == DesktopActionTargetReceipt(
+                processIdentifier: fixture.automation.request.windowIdentity.ownerProcessIdentifier,
+                processStartIdentity: fixture.automation.request.windowIdentity.ownerProcessStartIdentity,
+                windowID: fixture.automation.request.windowIdentity.windowID))
+        }
+        await resumeBegin.open()
+
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await begin.value
+        }
+        #expect(await MainActor.run {
+            let binding = fixture.server.heldPointerBridgeOwners[owner]
+            return binding?.closedAt != nil &&
+                binding?.pendingBeginTarget?.exactWindow?.identity == fixture.automation.request.windowIdentity
+        })
+    }
+
+    @Test
     @MainActor
     func `older terminal completion cannot clear a newer hold`() async {
         let fixture = await self.makeHost(protocolVersion: PeekabooBridgeConstants.protocolVersion)
@@ -385,6 +472,7 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
             peerIdentity: ApplicationProcessIdentity(
                 processIdentifier: getpid(),
                 processStartIdentity: 1),
+            pendingBeginTarget: nil,
             activeReceipt: first,
             closedAt: nil)
 
@@ -583,8 +671,10 @@ private final class HeldPointerBridgeAutomationStub:
     private(set) var createCount = 0
     private(set) var terminalDispatchCount = 0
     var disconnectFailure: DesktopActionFailure?
+    var beginDispatchHook: (@MainActor @Sendable () async -> Void)?
     var beginCompletionHook: (@MainActor @Sendable () async -> Void)?
     private var owners: Set<ExactWindowHeldPointerOwner> = []
+    private var queued: [ExactWindowHeldPointerOwner: ExactWindowHeldPointerReceipt] = [:]
     private var active: [ExactWindowHeldPointerOwner: ExactWindowHeldPointerReceipt] = [:]
     private var completed: [ExactWindowHeldPointerOwner: UIAutomationActionResult<ExactWindowHeldPointerTermination>] =
         [:]
@@ -639,7 +729,7 @@ private final class HeldPointerBridgeAutomationStub:
         request: ExactWindowHeldPointerRequest) async throws
         -> UIAutomationActionResult<ExactWindowHeldPointerReceipt>
     {
-        guard self.owners.contains(owner), self.active[owner] == nil else {
+        guard self.owners.contains(owner), self.queued[owner] == nil, self.active[owner] == nil else {
             throw ExactWindowHeldPointerLifecycleError.ownerUnknown
         }
         let receipt = ExactWindowHeldPointerReceipt(
@@ -647,6 +737,16 @@ private final class HeldPointerBridgeAutomationStub:
             owner: owner,
             request: request,
             expiresAt: Date().addingTimeInterval(request.expiresAfterSeconds))
+        if let beginDispatchHook {
+            self.queued[owner] = receipt
+            await beginDispatchHook()
+            self.beginDispatchHook = nil
+            guard self.queued.removeValue(forKey: owner) == receipt,
+                  self.owners.contains(owner)
+            else {
+                throw ExactWindowHeldPointerLifecycleError.ownerDisconnectedBeforeDispatch
+            }
+        }
         self.active[owner] = receipt
         let result = try UIAutomationActionResult(
             payload: receipt,
@@ -682,6 +782,25 @@ private final class HeldPointerBridgeAutomationStub:
         _ owner: ExactWindowHeldPointerOwner) async throws
         -> UIAutomationActionResult<ExactWindowHeldPointerTermination?>
     {
+        if let receipt = self.queued.removeValue(forKey: owner) {
+            self.owners.remove(owner)
+            let terminal = ExactWindowHeldPointerTermination(
+                receipt: receipt,
+                reason: .ownerDisconnected,
+                cleanupOutcome: .confirmedNoChange(),
+                lifecycleDispatchedUnitCount: 0)
+            let completed = try UIAutomationActionResult(
+                payload: terminal,
+                outcome: .confirmedNoChange(),
+                targetIdentity: DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+                    identity: receipt.windowIdentity,
+                    bounds: receipt.windowBounds)))
+            self.completed[owner] = completed
+            return UIAutomationActionResult(
+                payload: terminal,
+                outcome: completed.outcome,
+                targetIdentity: completed.targetIdentity)
+        }
         guard let receipt = self.active[owner] else {
             guard self.owners.remove(owner) != nil else {
                 throw ExactWindowHeldPointerLifecycleError.ownerUnknown

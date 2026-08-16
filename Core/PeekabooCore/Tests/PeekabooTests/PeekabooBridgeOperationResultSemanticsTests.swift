@@ -1,12 +1,86 @@
 import Foundation
-import PeekabooAutomationKit
 import PeekabooFoundation
 import Testing
+@testable import PeekabooAutomationKit
 @testable import PeekabooBridge
 @testable import PeekabooCore
 
 @Suite("Bridge operation result semantics")
 struct PeekabooBridgeOperationResultSemanticsTests {
+    @Test
+    func `held terminal no change replay requires an exact pre dispatch owner disconnect`() {
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 9001,
+            ownerProcessStartIdentity: 7,
+            capturedBounds: bounds)
+        let owner = ExactWindowHeldPointerOwner()
+        let holdRequest = ExactWindowHeldPointerRequest(
+            point: CGPoint(x: 20, y: 30),
+            windowIdentity: identity,
+            windowBounds: bounds,
+            button: .left,
+            expiresAfterSeconds: 10)
+        let receipt = ExactWindowHeldPointerReceipt(
+            token: UUID(),
+            owner: owner,
+            request: holdRequest,
+            expiresAt: Date().addingTimeInterval(10))
+        let release = PeekabooBridgeRequest.releaseExactWindowHeldPointer(.init(
+            owner: owner,
+            receipt: receipt))
+        let revoke = PeekabooBridgeRequest.revokeExactWindowHeldPointer(.init(
+            owner: owner,
+            receipt: receipt))
+        let begin = PeekabooBridgeRequest.beginExactWindowHeldPointer(.init(
+            owner: owner,
+            request: holdRequest))
+        let noChange = DesktopActionOutcome.confirmedNoChange(route: .bridge)
+
+        func response(
+            reason: ExactWindowHeldPointerTerminalReason,
+            lifecycleUnits: Int,
+            cleanup: DesktopActionOutcome = .confirmedNoChange()) -> PeekabooBridgeResponse
+        {
+            .exactWindowHeldPointerTermination(.init(
+                receipt: receipt,
+                reason: reason,
+                cleanupOutcome: cleanup,
+                lifecycleDispatchedUnitCount: lifecycleUnits))
+        }
+
+        let exactReplay = response(reason: .ownerDisconnected, lifecycleUnits: 0)
+        for request in [release, revoke] {
+            #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                noChange,
+                response: exactReplay,
+                request: request))
+            #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                noChange,
+                response: response(reason: .released, lifecycleUnits: 0),
+                request: request))
+            #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                noChange,
+                response: response(reason: .ownerDisconnected, lifecycleUnits: 1),
+                request: request))
+            #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                noChange,
+                response: response(
+                    reason: .ownerDisconnected,
+                    lifecycleUnits: 0,
+                    cleanup: .dispatchedUnverified(
+                        delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                        evidence: .deliveryAccepted,
+                        unitCount: .one)),
+                request: request))
+        }
+        #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            noChange,
+            response: exactReplay,
+            request: begin))
+    }
+
     @Test
     func `middle and triple click success requires exact routed delivery and event counts`() throws {
         let identity = WindowMutationIdentity(
