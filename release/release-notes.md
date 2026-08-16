@@ -1,3 +1,13 @@
+## [4.2.0] - 2026-08-16
+
+### Highlights
+
+- **Background-first automation is signed and fail closed.** Bridge protocol 1.29 binds peer-authenticated sessions to exact requests, targets, results, process generations, and retry semantics, with replay protection and bounded rollover for long-running automation.
+- **More UI automation stays in the background.** Exact browser sessions, dialog click/dismiss/input, coordinate-only snapshots, and opaque WKWebView/Tauri scrolling preserve the foreground app and physical cursor, while Space switching and followed moves require explicit foreground consent.
+- **Target and result semantics now have one canonical path.** Shared selector/receipt adapters and application/window outcomes keep CLI, MCP, Bridge, services, and Agent behavior aligned, refusing stale, ambiguous, or incomplete evidence before dispatch.
+- **Exact-target automation is substantially faster without weakening identity checks.** Generation-proven PID/window observations measured 141x faster combined resolution, and one-pass Bridge peer identity lookup reduced signed app-inventory median latency by 29.6%.
+- **Native-only embedding and release are first-class.** Signed macOS apps can host a lean background Bridge without Core, provider, browser, daemon, or AppleScript dependencies, while branded DMGs use direct Finder metadata outside the signed app and no GUI automation.
+
 ### Added
 - Add Bridge protocol 1.29 peer-bound signed operation sessions and exact target/result receipts, with bounded rollover, replay protection, and fail-closed recovery for long-running background automation.
 - Make protocol 1.29 browser receipts require a fully resolved explicit DevTools endpoint, and make exact dialog text entry use background Accessibility value mutation while refusing receipt-incapable legacy dialog mutations before dispatch.
@@ -5,8 +15,10 @@
 - Add Bridge protocol 1.25 one-shot dialog receipts that uniquely bind an exact process/window, raw dialog or sheet, and semantic AXPress button for background click/dismiss, with read-only targeted listing and canonical postcondition outcomes.
 - Add a background-first native Bridge host runtime for signed macOS apps, with explicit caller allowlists, shared mutation/snapshot state, checked lifecycle, and no Core, provider, browser, daemon, or AppleScript surface.
 - Add capability-gated exact-window background wheel delivery for opaque WKWebView/Tauri scroll targets, preserving the foreground app and physical cursor while refusing hidden, stale, Electron, Chromium, Catalyst, or AX-only routes.
+
 ### Changed
 - Build branded release disk images from pinned direct Finder-metadata tooling, preserving the signed and notarized drag-to-Applications layout without GUI automation.
+
 ### Fixed
 - Keep Finder layout metadata on the DMG volume instead of the signed app bundle, preserving strict mounted-payload code verification without losing the branded drag-to-Applications layout.
 - Complete the Bridge 1.29 receipt-session handshake before daemon status or stop control, validate explicit move snapshots before focus setup, and preserve actionable quit recovery over generic escalation guidance.
@@ -30,3 +42,13 @@
 - Classify an exact standard window with a live attached sheet as dialog-active during observation, sharing native role evidence with dialog actions while keeping the parent window receipt exact.
 - Report exact ScreenCaptureKit owner PID, process generation, safe build identity, and selected-versus-owner Bridge sockets when available; automatic capture can still use an owner-aware host's classic-only path around an auxiliary legacy owner, while explicit modern and ambiguous legacy ownership remain fail-closed without unsafe process-stop guidance.
 - Centralize canonical application/window outcomes across Foundation, services, Bridge, CLI, and MCP while preserving legacy JSON fields and v4.1.0 public APIs, and keep minimize verification exact when retained AX window IDs disappear transiently.
+
+### Verification
+
+- Source: [809630e4e10c452644239d7be5d495241bb3cee2](https://github.com/openclaw/Peekaboo/commit/809630e4e10c452644239d7be5d495241bb3cee2) — GitHub-verified release commit.
+- npm: [@steipete/peekaboo@4.2.0](https://www.npmjs.com/package/@steipete/peekaboo/v/4.2.0)
+- Registry tarball: [peekaboo-4.2.0.tgz](https://registry.npmjs.org/@steipete/peekaboo/-/peekaboo-4.2.0.tgz)
+- npm integrity: `sha512-ImBijaPupQwhi2m8Wj2uZfYGPIui5gFC7Dd5oXBI6Od7FxRtXu3mSPcJGqNskC5knUiNYIBDWuvRoIBOKas0tw==`
+- npm published: `2026-08-16T13:55:36.756Z`; `latest` resolves to `4.2.0`.
+- Tests: `pnpm run test:safe`, `pnpm run test:automation` (987 Core, 99 runtime, and 765 automation tests), and `scripts/test-create-release-dmg.sh` passed on the release commit.
+- Artifact proof: the universal CLI, npm CLI, app zip, and branded DMG embed the release commit; Foundation Developer ID signing, nested-code verification, online notarization, stapling, Gatekeeper, checksums, mounted-DMG layout/xattr checks, and Sparkle enclosure verification passed.

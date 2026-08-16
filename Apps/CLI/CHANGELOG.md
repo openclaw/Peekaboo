@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.2.0] - 2026-08-16
 
+### Highlights
+
+- **Background-first automation is signed and fail closed.** Bridge protocol 1.29 binds peer-authenticated sessions to exact requests, targets, results, process generations, and retry semantics, with replay protection and bounded rollover for long-running automation.
+- **More UI automation stays in the background.** Exact browser sessions, dialog click/dismiss/input, coordinate-only snapshots, and opaque WKWebView/Tauri scrolling preserve the foreground app and physical cursor, while Space switching and followed moves require explicit foreground consent.
+- **Target and result semantics now have one canonical path.** Shared selector/receipt adapters and application/window outcomes keep CLI, MCP, Bridge, services, and Agent behavior aligned, refusing stale, ambiguous, or incomplete evidence before dispatch.
+- **Exact-target automation is substantially faster without weakening identity checks.** Generation-proven PID/window observations measured 141x faster combined resolution, and one-pass Bridge peer identity lookup reduced signed app-inventory median latency by 29.6%.
+- **Native-only embedding and release are first-class.** Signed macOS apps can host a lean background Bridge without Core, provider, browser, daemon, or AppleScript dependencies, while branded DMGs use direct Finder metadata outside the signed app and no GUI automation.
+
 ### Added
 - Add Bridge protocol 1.29 peer-bound signed operation sessions and exact target/result receipts, with bounded rollover, replay protection, and fail-closed recovery for long-running background automation.
 - Make protocol 1.29 browser receipts require a fully resolved explicit DevTools endpoint, and make exact dialog text entry use background Accessibility value mutation while refusing receipt-incapable legacy dialog mutations before dispatch.
