@@ -24,97 +24,10 @@ extension WindowManagementService {
         expectedIdentity: WindowMutationIdentity,
         allowForegroundFallback: Bool) async throws
     {
-        if !allowForegroundFallback {
-            _ = try await self.closeWindowWithOutcome(
-                target: target,
-                expectedIdentity: expectedIdentity)
-            return
-        }
-        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
-            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-            let trackedWindowID = expectedIdentity.windowID
-            try Task.checkCancellation()
-            let exactTarget = WindowTarget.windowId(trackedWindowID)
-            let windowServerInfo = self.windowIdentityService
-                .getWindowServerInfo(windowID: CGWindowID(trackedWindowID))
-            guard hasSufficientMetadataForPinnedClose(
-                hasWindowServerMetadata: windowServerInfo != nil,
-                expectedMinimized: expectedIdentity.isMinimized == true)
-            else {
-                throw PeekabooError.windowNotFound(criteria: "windowId \(trackedWindowID)")
-            }
-            let backgroundAttempt: PinnedWindowCloseAttemptResult
-            if expectedIdentity.isMinimized == true {
-                backgroundAttempt = PinnedWindowCloseAttemptResult(dispatchCount: 0, disappeared: false)
-            } else {
-                do {
-                    backgroundAttempt = try await self.attemptPinnedBackgroundClose(expectedIdentity)
-                } catch {
-                    throw error
-                }
-            }
-            try Task.checkCancellation()
-
-            if backgroundAttempt.disappeared {
-                return
-            }
-
-            try Task.checkCancellation()
-            self.logger
-                .warning(
-                    "Close succeeded but window still exists; trying hotkey fallbacks. windowID=\(trackedWindowID)")
-
-            try await withMinimizedWindowFailureRecovery(
-                wasMinimized: expectedIdentity.isMinimized == true,
-                restore: {
-                    let restored: Bool
-                    do {
-                        try await self.restorePinnedMinimizedWindow(expectedIdentity)
-                        restored = true
-                    } catch {
-                        restored = false
-                    }
-                    if !restored {
-                        let message = "Could not restore minimized state after foreground close failure. " +
-                            "windowID=\(trackedWindowID)"
-                        self.logger.error("\(message, privacy: .public)")
-                    }
-                    return restored
-                },
-                operation: {
-                    // Make the exact target key before global shortcuts; a same-process sibling must
-                    // never inherit Cmd-W just because the requested focus call returned.
-                    try Task.checkCancellation()
-                    let window = try await self.element(for: exactTarget)
-                    try self.validatePinnedWindowElement(window, expectedIdentity: expectedIdentity)
-                    let focusSucceeded = window.focusWindow()
-                    try await self.requirePinnedForegroundCloseReadiness(
-                        expectedIdentity,
-                        focusSucceeded: focusSucceeded)
-
-                    try Task.checkCancellation()
-                    try InputDriver.hotkey(keys: ["cmd", "w"], holdDuration: 0.05)
-                    if try await self.pinnedWindowDisappeared(expectedIdentity) {
-                        return
-                    }
-
-                    // Cmd-W may surface a sheet or move key status to a sibling. Re-prove the exact
-                    // target immediately before the broader Cmd-Shift-W fallback.
-                    try await self.requirePinnedForegroundCloseReadiness(
-                        expectedIdentity,
-                        focusSucceeded: true)
-                    try Task.checkCancellation()
-                    try InputDriver.hotkey(keys: ["cmd", "shift", "w"], holdDuration: 0.05)
-                    if try await self.pinnedWindowDisappeared(expectedIdentity) {
-                        return
-                    }
-
-                    throw OperationError.interactionFailed(
-                        action: "close window",
-                        reason: "Foreground close completed but window remained visible " +
-                            "(windowID=\(trackedWindowID))")
-                })
-        }
+        _ = try await self.closeWindowActionResult(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            allowForegroundFallback: allowForegroundFallback)
     }
 
     public func closeWindowWithOutcome(
@@ -133,11 +46,9 @@ extension WindowManagementService {
         allowForegroundFallback: Bool) async throws -> DesktopActionResult<Void>
     {
         if allowForegroundFallback {
-            try await self.closeWindow(
+            return try await self.closeWindowWithForegroundFallbackResult(
                 target: target,
-                expectedIdentity: expectedIdentity,
-                allowForegroundFallback: true)
-            return DesktopActionResult(outcome: nil)
+                expectedIdentity: expectedIdentity)
         }
         let outcome = try await WindowManagementActionOutcome.perform(action: "close window") {
             try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
@@ -333,11 +244,19 @@ extension WindowManagementService {
         return DesktopActionResult(outcome: outcome)
     }
 
-    private func restorePinnedMinimizedWindow(_ expectedIdentity: WindowMutationIdentity) async throws {
-        _ = try await completePinnedMinimizedWindowRestore(
+    func restorePinnedMinimizedWindow(
+        _ expectedIdentity: WindowMutationIdentity,
+        onDispatchAccepted: (() -> Void)? = nil) async throws -> WindowMutationIdentity
+    {
+        try await completePinnedMinimizedWindowRestore(
             expectedIdentity: expectedIdentity,
             dispatch: {
-                await BoundedBackgroundWindowAX.dispatchMinimizedRestore(expectedIdentity: expectedIdentity)
+                let accepted = await BoundedBackgroundWindowAX.dispatchMinimizedRestore(
+                    expectedIdentity: expectedIdentity)
+                if accepted {
+                    onDispatchAccepted?()
+                }
+                return accepted
             },
             repin: { identity, expectedBounds in
                 try await self.waitForRepinnedWindowMutation(identity, expectedBounds: expectedBounds)
@@ -374,7 +293,10 @@ extension WindowManagementService {
                 try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
                 let desiredBounds = try self.maximizedBounds(for: windowInfo.bounds)
 
-                if Self.windowBoundsMatch(windowInfo.bounds, desiredBounds, tolerance: 4) {
+                if WindowMutationGeometryPostcondition.boundsMatch(
+                    windowInfo.bounds,
+                    desiredBounds)
+                {
                     return WindowManagementActionOutcome.confirmedNoChange
                 }
 
@@ -413,7 +335,10 @@ extension WindowManagementService {
                             action: "maximize window",
                             reason: "The window did not reach the target screen's visible bounds within 2 seconds " +
                                 "(requested: \(desiredBounds), achieved: \(String(describing: achieved)))")
-                        if Self.windowBoundsMatch(windowInfo.bounds, achieved ?? .null, tolerance: 4) {
+                        if WindowMutationGeometryPostcondition.boundsMatch(
+                            windowInfo.bounds,
+                            achieved ?? .null)
+                        {
                             throw WindowManagementActionOutcome.suspectedNoop(
                                 action: "maximize window",
                                 delivery: WindowManagementActionOutcome.backgroundValueDelivery,
@@ -444,22 +369,8 @@ extension WindowManagementService {
     }
 
     private func maximizedBounds(for windowBounds: CGRect) throws -> CGRect {
-        let primaryDisplayHeight = (NSScreen.screens.first { $0.frame.origin == .zero }
-            ?? NSScreen.main)?.frame.height ?? 0
-        let visibleFrames = NSScreen.screens.map { screen in
-            CGRect(
-                x: screen.visibleFrame.origin.x,
-                y: primaryDisplayHeight - screen.visibleFrame.origin.y - screen.visibleFrame.height,
-                width: screen.visibleFrame.width,
-                height: screen.visibleFrame.height)
-        }
-        guard !visibleFrames.isEmpty else {
-            throw PeekabooError.commandFailed("No display is available for window maximize")
-        }
-
-        guard let target = maximizedVisibleFrame(
-            windowBounds: windowBounds,
-            screenVisibleFramesTopLeft: visibleFrames)
+        guard let target = WindowMutationGeometryPostcondition.currentMaximizedVisibleWorkArea(
+            for: windowBounds)
         else {
             throw PeekabooError.commandFailed("No display is available for window maximize")
         }
@@ -480,11 +391,12 @@ extension WindowManagementService {
                 .getWindowServerInfo(windowID: CGWindowID(windowID)),
                 info.ownerPID == expectedIdentity.ownerProcessIdentifier,
                 SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity),
-                Self.windowBoundsMatch(info.bounds, expected, tolerance: 4),
+                WindowMutationGeometryPostcondition.boundsMatch(
+                    info.bounds,
+                    expected),
                 SystemIdentityResolver.repinWindowMutationIdentity(
                     expectedIdentity,
-                    expectedBounds: expected,
-                    tolerance: 4) != nil
+                    expectedBounds: expected) != nil
             {
                 return true
             }
@@ -493,45 +405,7 @@ extension WindowManagementService {
         return false
     }
 
-    private static func windowBoundsMatch(_ lhs: CGRect, _ rhs: CGRect, tolerance: CGFloat) -> Bool {
-        abs(lhs.minX - rhs.minX) <= tolerance &&
-            abs(lhs.minY - rhs.minY) <= tolerance &&
-            abs(lhs.width - rhs.width) <= tolerance &&
-            abs(lhs.height - rhs.height) <= tolerance
-    }
-
-    public func focusWindow(target: WindowTarget) async throws {
-        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
-            self.logger.info("Attempting to focus window with target: \(target)")
-            self.logger.debug("WindowManagementService.focusWindow called with target: \(target)")
-
-            let window = try await self.element(for: target)
-            let success: Bool
-            if let windowID = self.windowIdentityService.getWindowID(from: window) {
-                let focusService = FocusManagementService(
-                    applications: self.applicationService,
-                    operationLaneCoordinator: self.operationLaneCoordinator)
-                try await focusService.focusWindowWithOwnedLane(windowID: windowID)
-                success = true
-            } else {
-                self.logger.debug("Falling back to AXorcist focus without a CGWindowID")
-                success = window.focusWindow()
-            }
-            guard success else {
-                let windowInfo = self.focusFailureDescription(for: target)
-                self.logger.error("Focus window failed for: \(windowInfo)")
-
-                let reason = [
-                    "Failed to focus \(windowInfo).",
-                    "The window may be minimized, on another Space, " +
-                        "or the app may not be responding to focus requests.",
-                ].joined(separator: " ")
-                throw OperationError.interactionFailed(action: "focus window", reason: reason)
-            }
-        }
-    }
-
-    private func attemptPinnedBackgroundClose(
+    func attemptPinnedBackgroundClose(
         _ expectedIdentity: WindowMutationIdentity) async throws -> PinnedWindowCloseAttemptResult
     {
         let primaryDispatched = await BoundedBackgroundWindowAX.dispatchClose(
@@ -642,11 +516,11 @@ extension WindowManagementService {
         return .retryClose
     }
 
-    private func pinnedWindowDisappeared(_ expectedIdentity: WindowMutationIdentity) async throws -> Bool {
+    func pinnedWindowDisappeared(_ expectedIdentity: WindowMutationIdentity) async throws -> Bool {
         try await self.verifyPinnedWindowClose(expectedIdentity) == .succeeded
     }
 
-    private func requirePinnedForegroundCloseReadiness(
+    func requirePinnedForegroundCloseReadiness(
         _ expectedIdentity: WindowMutationIdentity,
         focusSucceeded: Bool) async throws
     {
@@ -706,6 +580,9 @@ extension WindowManagementService {
             let currentProcessStartIdentity = SystemIdentityResolver.processStartIdentity(
                 expectedIdentity.ownerProcessIdentifier)
             let currentWindowID = self.windowIdentityService.getWindowID(from: window).map(Int.init)
+            let currentBounds = window.position().flatMap { position in
+                window.size().map { size in CGRect(origin: position, size: size) }
+            }
             let minimized = window.isMinimized()
             let windowServerIdentityMatches = minimized == true &&
                 SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity)
@@ -713,6 +590,7 @@ extension WindowManagementService {
                 expectedIdentity: expectedIdentity,
                 currentProcessStartIdentity: currentProcessStartIdentity,
                 currentWindowID: currentWindowID,
+                currentBounds: currentBounds,
                 windowServerIdentityMatches: windowServerIdentityMatches)
             else {
                 throw PeekabooError.commandFailed(
@@ -968,7 +846,7 @@ func withMinimizedWindowFailureRecovery<T>(
     }
 }
 
-private struct PinnedWindowCloseAttemptResult {
+struct PinnedWindowCloseAttemptResult {
     let dispatchCount: Int
     let disappeared: Bool
 
@@ -1053,11 +931,14 @@ func pinnedWindowMinimizeIdentityMatches(
     expectedIdentity: WindowMutationIdentity,
     currentProcessStartIdentity: UInt64?,
     currentWindowID: Int?,
+    currentBounds: CGRect?,
     windowServerIdentityMatches: Bool = false) -> Bool
 {
-    currentProcessStartIdentity == expectedIdentity.ownerProcessStartIdentity &&
-        (currentWindowID == expectedIdentity.windowID ||
-            (currentWindowID == nil && windowServerIdentityMatches))
+    guard currentProcessStartIdentity == expectedIdentity.ownerProcessStartIdentity else { return false }
+    if currentWindowID == expectedIdentity.windowID {
+        return currentBounds == expectedIdentity.capturedBounds
+    }
+    return currentWindowID == nil && windowServerIdentityMatches
 }
 
 func pinnedWindowRestoreIdentityMatches(
@@ -1151,19 +1032,9 @@ func maximizedVisibleFrame(
     windowBounds: CGRect,
     screenVisibleFramesTopLeft: [CGRect]) -> CGRect?
 {
-    guard let greatestOverlap = screenVisibleFramesTopLeft.max(by: { lhs, rhs in
-        lhs.intersection(windowBounds).area < rhs.intersection(windowBounds).area
-    }) else {
-        return nil
-    }
-    if greatestOverlap.intersection(windowBounds).area > 0 {
-        return greatestOverlap
-    }
-
-    let center = CGPoint(x: windowBounds.midX, y: windowBounds.midY)
-    return screenVisibleFramesTopLeft.min { lhs, rhs in
-        lhs.center.squaredDistance(to: center) < rhs.center.squaredDistance(to: center)
-    }
+    WindowMutationGeometryPostcondition.maximizedVisibleWorkArea(
+        for: windowBounds,
+        screenVisibleWorkAreas: screenVisibleFramesTopLeft)
 }
 
 func backgroundGeometryDispatchRemainsPinned(
@@ -1195,18 +1066,18 @@ private struct BackgroundWindowGeometryDispatchResult {
 }
 
 extension CGRect {
-    fileprivate var area: CGFloat {
+    private var area: CGFloat {
         guard !self.isNull, !self.isInfinite else { return 0 }
         return max(0, self.width) * max(0, self.height)
     }
 
-    fileprivate var center: CGPoint {
+    private var center: CGPoint {
         CGPoint(x: self.midX, y: self.midY)
     }
 }
 
 extension CGPoint {
-    fileprivate func squaredDistance(to other: CGPoint) -> CGFloat {
+    private func squaredDistance(to other: CGPoint) -> CGFloat {
         let deltaX = self.x - other.x
         let deltaY = self.y - other.y
         return deltaX * deltaX + deltaY * deltaY

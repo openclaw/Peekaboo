@@ -15,6 +15,25 @@ struct WatchCaptureFrameProvider {
     let scope: CaptureScope
     let options: CaptureOptions
     let regionValidator: WatchCaptureRegionValidator
+    let windowIdentityValidator: @MainActor (WindowMutationIdentity) -> Bool
+
+    init(
+        screenCapture: any ScreenCaptureServiceProtocol,
+        frameSource: (any CaptureFrameSource)?,
+        scope: CaptureScope,
+        options: CaptureOptions,
+        regionValidator: WatchCaptureRegionValidator,
+        windowIdentityValidator: @escaping @MainActor (WindowMutationIdentity) -> Bool = {
+            SystemIdentityResolver.validateWindowMutationIdentity($0)
+        })
+    {
+        self.screenCapture = screenCapture
+        self.frameSource = frameSource
+        self.scope = scope
+        self.options = options
+        self.regionValidator = regionValidator
+        self.windowIdentityValidator = windowIdentityValidator
+    }
 
     func captureFrame() async throws -> (frame: WatchCaptureFrame?, warning: WatchWarning?) {
         if let source = self.frameSource {
@@ -39,24 +58,14 @@ struct WatchCaptureFrameProvider {
                 visualizerMode: visualizerMode,
                 scale: .logical1x)
         case .window:
-            if let windowId = self.scope.windowId {
-                warning = nil
-                result = try await self.screenCapture.captureWindow(
-                    windowID: CGWindowID(windowId),
-                    visualizerMode: visualizerMode,
-                    scale: .logical1x)
-                break
-            }
-
-            guard let app = self.scope.applicationIdentifier else {
-                throw PeekabooError.windowNotFound(criteria: "missing application identifier")
-            }
+            let identity = try self.exactWindowIdentity()
+            try self.validateWindowIdentity(identity, phase: "before")
             warning = nil
             result = try await self.screenCapture.captureWindow(
-                appIdentifier: app,
-                windowIndex: self.scope.windowIndex,
+                windowID: CGWindowID(identity.windowID),
                 visualizerMode: visualizerMode,
                 scale: .logical1x)
+            try self.validateWindowIdentity(identity, phase: "after")
         case .region:
             guard let rect = self.scope.region else {
                 throw PeekabooError.captureFailed(reason: "Region missing for watch capture")
@@ -118,6 +127,28 @@ struct WatchCaptureFrameProvider {
         let scale = cap / maxDimension
         let newSize = CGSize(width: width * scale, height: height * scale)
         return WatchCaptureArtifactWriter.resize(image: image, to: newSize) ?? image
+    }
+
+    private func exactWindowIdentity() throws -> WindowMutationIdentity {
+        guard let windowID = self.scope.windowId,
+              let identity = self.scope.windowMutationIdentity,
+              identity.windowID == Int(windowID),
+              identity.capturedBounds != nil
+        else {
+            throw PeekabooError.windowNotFound(
+                criteria: "live window capture requires an exact process-generation and bounds receipt")
+        }
+        return identity
+    }
+
+    private func validateWindowIdentity(
+        _ identity: WindowMutationIdentity,
+        phase: String) throws
+    {
+        guard self.windowIdentityValidator(identity) else {
+            throw PeekabooError.windowNotFound(
+                criteria: "live capture window changed identity \(phase) frame capture")
+        }
     }
 
     @MainActor

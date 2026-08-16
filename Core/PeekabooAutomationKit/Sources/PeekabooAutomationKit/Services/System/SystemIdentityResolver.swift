@@ -414,23 +414,22 @@ public enum SystemIdentityResolver {
               providers.processStartIdentity(expected.ownerProcessIdentifier) == expected.ownerProcessStartIdentity,
               let current = providers.windowIdentity(windowID),
               current.ownerProcessIdentifier == expected.ownerProcessIdentifier,
-              self.boundsMatch(current.bounds, expectedBounds, tolerance: tolerance),
+              WindowMutationGeometryPostcondition.boundsMatch(
+                  current.bounds,
+                  expectedBounds,
+                  tolerance: tolerance),
               let repinned = providers.mutationIdentity(windowID),
               repinned.ownerProcessIdentifier == expected.ownerProcessIdentifier,
               repinned.ownerProcessStartIdentity == expected.ownerProcessStartIdentity,
               let repinnedBounds = repinned.capturedBounds,
-              self.boundsMatch(repinnedBounds, expectedBounds, tolerance: tolerance)
+              WindowMutationGeometryPostcondition.boundsMatch(
+                  repinnedBounds,
+                  expectedBounds,
+                  tolerance: tolerance)
         else {
             return nil
         }
         return repinned
-    }
-
-    private static func boundsMatch(_ lhs: CGRect, _ rhs: CGRect, tolerance: CGFloat) -> Bool {
-        abs(lhs.minX - rhs.minX) <= tolerance &&
-            abs(lhs.minY - rhs.minY) <= tolerance &&
-            abs(lhs.width - rhs.width) <= tolerance &&
-            abs(lhs.height - rhs.height) <= tolerance
     }
 
     private static func intValue(_ value: Any?) -> Int? {

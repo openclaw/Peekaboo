@@ -12,7 +12,9 @@ import os
 import PeekabooFoundation
 
 @MainActor
-public final class MenuService: MenuServiceProtocol {
+public final class MenuService: MenuServiceProtocol, MenuServiceGenerationPinnedActionResultProviding,
+    MenuServiceGenerationPinnedMenuBarActionResultProviding, MenuServiceExactLeafActionResultProviding
+{
     let applicationService: any ApplicationServiceProtocol
     let logger: Logger
     let feedbackClient: any AutomationFeedbackClient

@@ -1,4 +1,5 @@
 import AppKit
+import PeekabooFoundation
 import UniformTypeIdentifiers
 import XCTest
 @testable import PeekabooAutomationKit
@@ -42,5 +43,38 @@ final class ClipboardWriteRequestTests: XCTestCase {
             }
             XCTAssertGreaterThan(current, limit)
         }
+    }
+
+    func testResultAwareMutationsConfirmVerifiedPasteboardState() throws {
+        let pasteboard = NSPasteboard.withUniqueName()
+        let clipboard = ClipboardService(pasteboard: pasteboard)
+        let delivery = ClipboardMutationResultSemantics.delivery
+
+        let set = try clipboard.setResult(ClipboardPayloadBuilder.textRequest(text: "stored"))
+        XCTAssertEqual(set.outcome, .confirmedChange(delivery: delivery))
+
+        try clipboard.save(slot: "fixture")
+        _ = try clipboard.set(ClipboardPayloadBuilder.textRequest(text: "temporary"))
+        let restore = try clipboard.restoreResult(slot: "fixture")
+        XCTAssertEqual(restore.outcome, .confirmedChange(delivery: delivery))
+        XCTAssertEqual(String(data: restore.payload.data, encoding: .utf8), "stored")
+
+        let clear = try clipboard.clearResult()
+        XCTAssertEqual(clear.outcome, .confirmedChange(delivery: delivery))
+        XCTAssertNil(try clipboard.get(prefer: nil))
+    }
+
+    func testResultAwareSetValidationRefusesWithoutPasteboardDispatch() {
+        let pasteboard = NSPasteboard.withUniqueName()
+        let clipboard = ClipboardService(pasteboard: pasteboard)
+        let initialChangeCount = pasteboard.changeCount
+
+        XCTAssertThrowsError(try clipboard.setResult(ClipboardWriteRequest(representations: []))) { error in
+            guard let failure = error as? DesktopActionFailure else {
+                return XCTFail("Expected DesktopActionFailure, got \(error)")
+            }
+            XCTAssertEqual(failure.outcome, .refused(reason: .invalidRequest))
+        }
+        XCTAssertEqual(pasteboard.changeCount, initialChangeCount)
     }
 }

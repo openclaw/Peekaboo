@@ -6,9 +6,22 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
+
+struct MenuBarWindowRoute: Equatable {
+    let identity: WindowMutationIdentity
+    let bounds: CGRect
+    let point: CGPoint
+}
 
 @MainActor
 extension MenuService {
+    static let menuBarRoutableWindowLayers: Set<Int> = Set([
+        CGWindowLevelKey.normalWindow,
+        .mainMenuWindow,
+        .statusWindow,
+    ].map { Int(CGWindowLevelForKey($0)) })
+
     func getMenuBarItemsViaWindows() -> [MenuExtraInfo] {
         var items: [MenuExtraInfo] = []
         let displayBounds = self.activeDisplayBounds()
@@ -22,7 +35,9 @@ extension MenuService {
         // Preferred path: CGS menuBarItems window list (private API, mirrored from Ice).
         let cgsIDs = cgsMenuBarWindowIDs(onScreen: true, activeSpace: true)
         let legacyIDs = cgsProcessMenuBarWindowIDs(onScreenOnly: true)
-        let combinedIDs = Array(Set(cgsIDs + legacyIDs))
+        // Window ordering is part of selected-leaf evidence. A Set's iteration order would make
+        // identical inventories appear reordered between preflight and dispatch.
+        let combinedIDs = Array(Set(cgsIDs + legacyIDs)).sorted()
         self.logger.debug(
             """
             CGS menuBarItems returned \(cgsIDs.count) ids;
@@ -60,18 +75,42 @@ extension MenuService {
         return items
     }
 
-    func resolveMenuExtraClickPoint(for extra: MenuExtraInfo) -> CGPoint? {
-        if let windowID = extra.windowID,
-           let bounds = self.windowBounds(for: windowID)
-        {
-            return CGPoint(x: bounds.midX, y: bounds.midY)
+    static func menuBarWindowRoute(
+        extra: MenuExtraInfo,
+        expectedProcessIdentity: ApplicationProcessIdentity,
+        liveWindow: SystemWindowIdentity?,
+        mutationIdentity: WindowMutationIdentity?) throws -> MenuBarWindowRoute
+    {
+        guard let windowID = extra.windowID,
+              let ownerPID = extra.ownerPID,
+              let liveWindow,
+              let mutationIdentity,
+              liveWindow.windowID == windowID,
+              liveWindow.ownerProcessIdentifier == ownerPID,
+              mutationIdentity.windowID == Int(windowID),
+              mutationIdentity.processIdentity == expectedProcessIdentity,
+              mutationIdentity.ownerProcessStartIdentity == liveWindow.ownerProcessStartIdentity,
+              mutationIdentity.capturedBounds == liveWindow.bounds,
+              extra.windowLayer.map({ $0 == liveWindow.layer }) ?? true
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Menu bar item has no stable PID/window generation route.",
+                hint: "Refresh menu bar items before retrying.")
         }
-
-        if extra.position != .zero {
-            return extra.position
+        guard self.menuBarRoutableWindowLayers.contains(liveWindow.layer),
+              liveWindow.isOnScreen,
+              liveWindow.alpha > 0
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "Menu bar item cannot use the proven background window-routing transport.",
+                hint: "Use the named Accessibility action path; shared-pointer fallback is disabled.")
         }
-
-        return nil
+        return MenuBarWindowRoute(
+            identity: mutationIdentity,
+            bounds: liveWindow.bounds,
+            point: CGPoint(x: liveWindow.bounds.midX, y: liveWindow.bounds.midY))
     }
 
     func isMenuExtraPointVisible(_ point: CGPoint) -> Bool {
@@ -132,69 +171,6 @@ extension MenuService {
             return appKitBounds()
         }
         return displayIDs.prefix(Int(displayCount)).map { CGDisplayBounds($0) }
-    }
-
-    func windowBounds(for windowID: CGWindowID) -> CGRect? {
-        guard let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]],
-              let first = info.first,
-              let boundsDict = first[kCGWindowBounds as String] as? [String: Any],
-              let x = boundsDict["X"] as? CGFloat,
-              let y = boundsDict["Y"] as? CGFloat,
-              let width = boundsDict["Width"] as? CGFloat,
-              let height = boundsDict["Height"] as? CGFloat
-        else {
-            return nil
-        }
-
-        return CGRect(x: x, y: y, width: width, height: height)
-    }
-
-    func tryWindowTargetedClick(extra: MenuExtraInfo, point: CGPoint) -> Bool {
-        guard self.isMenuExtraPointVisible(point) else {
-            return false
-        }
-        guard let windowID = extra.windowID else {
-            return false
-        }
-        guard let source = CGEventSource(stateID: .hidSystemState) else {
-            return false
-        }
-
-        let userData = Int64(truncatingIfNeeded: Int(bitPattern: ObjectIdentifier(source)))
-        let windowIDValue = Int64(windowID)
-
-        guard
-            let down = CGEvent(
-                mouseEventSource: source,
-                mouseType: .leftMouseDown,
-                mouseCursorPosition: point,
-                mouseButton: .left),
-            let up = CGEvent(
-                mouseEventSource: source,
-                mouseType: .leftMouseUp,
-                mouseCursorPosition: point,
-                mouseButton: .left)
-        else {
-            return false
-        }
-
-        if let ownerPID = extra.ownerPID {
-            let pidValue = Int64(ownerPID)
-            down.setIntegerValueField(.eventTargetUnixProcessID, value: pidValue)
-            up.setIntegerValueField(.eventTargetUnixProcessID, value: pidValue)
-        }
-
-        for event in [down, up] {
-            event.setIntegerValueField(.eventSourceUserData, value: userData)
-            event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: windowIDValue)
-            event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: windowIDValue)
-            event.setIntegerValueField(.windowID, value: windowIDValue)
-            event.setIntegerValueField(.mouseEventClickState, value: 1)
-        }
-
-        down.post(tap: .cgSessionEventTap)
-        up.post(tap: .cgSessionEventTap)
-        return true
     }
 
     func isLikelyMenuBarAXPosition(_ position: CGPoint) -> Bool {

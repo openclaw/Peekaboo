@@ -4,6 +4,13 @@ import Foundation
 
 @MainActor
 extension DialogService {
+    struct FileDialogElementResolution {
+        let element: Element
+        let dialogIdentifier: String
+        let foundVia: String
+        let target: UIAutomationTarget.ExactWindow
+    }
+
     func resolveDialogElement(windowTitle: String?, appName: String?) async throws -> Element {
         if let appName, !appName.isEmpty {
             self.logger.debug("Resolving dialog with app hint: \(appName)")
@@ -27,11 +34,11 @@ extension DialogService {
     }
 
     func resolveFileDialogElementResolution(appName: String?) async throws
-    -> (element: Element, dialogIdentifier: String, foundVia: String) {
+    -> FileDialogElementResolution {
         if let appName,
            let fileDialog = self.findActiveFileDialogElement(appName: appName)
         {
-            return (
+            return try await self.fileDialogElementResolution(
                 element: fileDialog,
                 dialogIdentifier: self.dialogIdentifier(for: fileDialog),
                 foundVia: "active_file_dialog")
@@ -42,7 +49,76 @@ extension DialogService {
             throw DialogError.noFileDialog
         }
 
-        return resolved
+        return try await self.fileDialogElementResolution(
+            element: resolved.element,
+            dialogIdentifier: resolved.dialogIdentifier,
+            foundVia: resolved.foundVia)
+    }
+
+    private func fileDialogElementResolution(
+        element: Element,
+        dialogIdentifier: String,
+        foundVia: String) async throws -> FileDialogElementResolution
+    {
+        let target = try await self.exactFileDialogTarget(for: element)
+        return FileDialogElementResolution(
+            element: element,
+            dialogIdentifier: dialogIdentifier,
+            foundVia: foundVia,
+            target: target)
+    }
+
+    private func exactFileDialogTarget(for dialog: Element) async throws -> UIAutomationTarget.ExactWindow {
+        guard let processIdentifier = dialog.pid(), processIdentifier > 0,
+              let windowID = self.windowIdentityService.getWindowID(
+                  from: dialog,
+                  messagingTimeout: self.targetedDialogSearchTimeout)
+        else {
+            throw self.targetUnavailable("File dialog has no exact owning window receipt.")
+        }
+
+        let application = try await self.applicationService.findApplication(
+            identifier: "PID:\(processIdentifier)")
+        guard let processIdentity = application.processIdentity,
+              processIdentity.processIdentifier == processIdentifier
+        else {
+            throw self.targetUnavailable("File dialog owner has no stable process-generation receipt.")
+        }
+
+        let response = try await self.applicationService.listWindows(
+            for: "PID:\(processIdentifier)",
+            timeout: self.targetedDialogSearchTimeout)
+        let matches = response.data.windows.filter { $0.windowID == Int(windowID) }
+        guard matches.count == 1, let window = matches.first,
+              let identity = window.mutationIdentity,
+              identity.processIdentity == processIdentity,
+              identity.windowID == window.windowID,
+              identity.capturedBounds == window.bounds,
+              let handle = self.windowIdentityService.findWindow(
+                  byID: windowID,
+                  messagingTimeout: self.targetedDialogSearchTimeout),
+              handle.element.pid() == processIdentifier
+        else {
+            throw self.targetUnavailable("File dialog owning window receipt is incomplete or ambiguous.")
+        }
+
+        let currentDialogs = self.freshDialogElements(in: handle.element)
+        let retainedMatches = (currentDialogs.structural + currentDialogs.legacy).filter {
+            Self.sameElement($0, dialog)
+        }
+        guard currentDialogs.readable,
+              retainedMatches.count == 1,
+              retainedMatches.first.map(self.isFileDialogElement) == true
+        else {
+            throw self.targetUnavailable("File dialog changed while retaining its exact owning window.")
+        }
+
+        let currentApplication = try await self.applicationService.findApplication(
+            identifier: "PID:\(processIdentifier)")
+        guard currentApplication.processIdentity == processIdentity else {
+            throw self.targetUnavailable("File dialog owner changed process generation during planning.")
+        }
+        return try UIAutomationTarget.ExactWindow(window: window)
     }
 
     private func findDialogElement(withTitle title: String?, appName: String?) throws -> Element {

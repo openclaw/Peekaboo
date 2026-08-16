@@ -1,11 +1,25 @@
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
 
 @MainActor
 public protocol ObservationTargetResolving: Sendable {
     func resolve(
         _ target: DesktopObservationTargetRequest,
         snapshot: DesktopStateSnapshot) async throws -> ResolvedObservationTarget
+
+    func resolveActionResult(
+        _ target: DesktopObservationTargetRequest,
+        snapshot: DesktopStateSnapshot) async throws -> UIAutomationActionResult<ResolvedObservationTarget>
+}
+
+extension ObservationTargetResolving {
+    public func resolveActionResult(
+        _ target: DesktopObservationTargetRequest,
+        snapshot: DesktopStateSnapshot) async throws -> UIAutomationActionResult<ResolvedObservationTarget>
+    {
+        try await UIAutomationActionResult(payload: self.resolve(target, snapshot: snapshot), outcome: nil)
+    }
 }
 
 @MainActor
@@ -31,12 +45,24 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
         _ target: DesktopObservationTargetRequest,
         snapshot: DesktopStateSnapshot) async throws -> ResolvedObservationTarget
     {
-        switch target {
+        try await self.resolveActionResult(target, snapshot: snapshot).payload
+    }
+
+    public func resolveActionResult(
+        _ target: DesktopObservationTargetRequest,
+        snapshot: DesktopStateSnapshot) async throws -> UIAutomationActionResult<ResolvedObservationTarget>
+    {
+        if case let .menubarPopover(hints, openIfNeeded) = target {
+            return try await self.resolveMenuBarPopoverActionResult(
+                hints: hints,
+                openIfNeeded: openIfNeeded)
+        }
+        let resolved: ResolvedObservationTarget = switch target {
         case let .screen(index):
             ResolvedObservationTarget(kind: .screen(index: index))
 
         case .allScreens:
-            ResolvedObservationTarget(kind: .screen(index: nil))
+            throw DesktopObservationError.allScreensRequiresMultiArtifactOutput
 
         case .frontmost:
             try await self.resolveFrontmost(snapshot: snapshot)
@@ -56,9 +82,10 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
         case .menubar:
             try self.resolveMenuBar()
 
-        case let .menubarPopover(hints, openIfNeeded):
-            try await self.resolveMenuBarPopover(hints: hints, openIfNeeded: openIfNeeded)
+        case .menubarPopover:
+            preconditionFailure("Menu-bar popovers are handled by their action-result resolver")
         }
+        return UIAutomationActionResult(payload: resolved, outcome: nil)
     }
 
     private func resolveFrontmost(snapshot: DesktopStateSnapshot) async throws -> ResolvedObservationTarget {
@@ -94,7 +121,7 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
         selection: WindowSelection?,
         snapshot: DesktopStateSnapshot) async throws -> ResolvedObservationTarget
     {
-        let app: ServiceApplicationInfo = if let snapshotApp = Self.application(
+        let app: ServiceApplicationInfo = if let snapshotApp = try Self.application(
             matching: identifier,
             in: snapshot.runningApplications)
         {
@@ -195,13 +222,25 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
             windowID: selectedWindow?.windowID,
             windowBounds: selectedWindow?.bounds,
             windowMutationIdentity: selectedWindow?.mutationIdentity)
+        var selectorResolutionProofs = app.selectorResolutionProofs?.map {
+            $0.selecting(windowIdentity: selectedWindow?.mutationIdentity)
+        }
+        if let selectedWindow, let processIdentity = app.processIdentity {
+            let windowProof = try WindowSelectorResolutionProof.make(
+                selection: selection,
+                candidates: windows,
+                selected: selectedWindow,
+                processIdentity: processIdentity)
+            selectorResolutionProofs = (selectorResolutionProofs ?? []) + [windowProof]
+        }
 
         return ResolvedObservationTarget(
             kind: selectedWindow.map { .windowID(CGWindowID($0.windowID)) } ?? .appWindow,
             app: ApplicationIdentity(app),
             window: selectedWindow.map(WindowIdentity.init),
             bounds: selectedWindow?.bounds,
-            detectionContext: context)
+            detectionContext: context,
+            selectorResolutionProofs: selectorResolutionProofs)
     }
 
     nonisolated static func serviceWindowInfo(
@@ -304,30 +343,24 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
 
     private static func application(
         matching identifier: String,
-        in applications: [ApplicationIdentity]) -> ApplicationIdentity?
+        in applications: [ApplicationIdentity]) throws -> ApplicationIdentity?
     {
-        let trimmedIdentifier = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        let uppercasedIdentifier = trimmedIdentifier.uppercased()
-        if uppercasedIdentifier.hasPrefix("PID:"),
-           let pid = Int32(trimmedIdentifier.dropFirst("PID:".count)),
-           let match = applications.first(where: { $0.processIdentifier == pid })
-        {
-            return match
+        let candidates = applications.map(ApplicationIdentifierMatcher.Candidate.init)
+        guard let resolution = try ApplicationIdentifierMatcher.resolution(for: identifier, in: candidates) else {
+            return nil
         }
-
-        if let bundleMatch = applications.first(where: { $0.bundleIdentifier == trimmedIdentifier }) {
-            return bundleMatch
+        guard !resolution.hasWinningTie else {
+            throw PeekabooError.ambiguousAppIdentifier(
+                identifier,
+                suggestions: candidates.map(\.name))
         }
-
-        if let exactName = applications.first(where: {
-            $0.name.compare(trimmedIdentifier, options: .caseInsensitive) == .orderedSame
-        }) {
-            return exactName
+        let application = applications[resolution.index]
+        let proof = application.processStartIdentity.map {
+            resolution.proof(selectedProcessIdentity: ApplicationProcessIdentity(
+                processIdentifier: application.processIdentifier,
+                processStartIdentity: $0))
         }
-
-        return applications.first(where: {
-            $0.name.localizedCaseInsensitiveContains(trimmedIdentifier)
-        })
+        return application.withSelectorResolutionProofs(proof.map { [$0] })
     }
 
     private static func serviceApplicationInfo(from identity: ApplicationIdentity) -> ServiceApplicationInfo {
@@ -336,6 +369,16 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
             processStartIdentity: identity.processStartIdentity,
             bundleIdentifier: identity.bundleIdentifier,
             name: identity.name,
-            windowCount: 0)
+            bundlePath: identity.bundlePath,
+            executablePath: identity.executablePath,
+            windowCount: 0,
+            activationPolicy: identity.activationPolicy,
+            selectorResolutionProofs: identity.selectorResolutionProofs)
+    }
+}
+
+extension DesktopObservationError {
+    static var allScreensRequiresMultiArtifactOutput: Self {
+        .unsupportedTarget("all screens require multi-artifact output")
     }
 }

@@ -48,7 +48,7 @@ struct HotkeyServiceFactoryContext {
 public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceProtocol,
     ExactWindowTargetedClickServiceProtocol, TargetedFocusedElementServiceProtocol,
     ExactWindowTargetedKeyboardServiceProtocol, ExactWindowFocusedElementServiceProtocol,
-    UIAutomationActionOutcomeProviding
+    UIAutomationActionOutcomeProviding, UIAutomationGlobalPointerActionResultProviding
 {
     public let supportsProcessGenerationPinnedHotkeys = true
     public let supportsProcessGenerationPinnedTypeActions = true

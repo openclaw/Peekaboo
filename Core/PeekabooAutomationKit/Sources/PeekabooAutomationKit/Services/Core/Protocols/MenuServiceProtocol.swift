@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
 
 /// Result of a click operation
 public struct ClickResult: Sendable, Codable {
@@ -66,6 +67,322 @@ public protocol MenuServiceProtocol: Sendable {
     /// - Parameter index: Index of the menu bar item
     /// - Returns: Click result
     func clickMenuBarItem(at index: Int) async throws -> ClickResult
+}
+
+/// Additive capability for menu mutations that report both execution semantics and the resolved owner.
+public protocol MenuServiceActionResultProviding: MenuServiceProtocol {
+    func clickMenuItemActionResult(app: String, itemPath: String) async throws -> UIAutomationActionResult<Void>
+
+    func clickMenuItemByNameActionResult(app: String, itemName: String) async throws
+        -> UIAutomationActionResult<Void>
+
+    func clickMenuExtraActionResult(title: String) async throws -> UIAutomationActionResult<Void>
+
+    func clickMenuBarItemActionResult(named name: String) async throws -> UIAutomationActionResult<ClickResult>
+
+    func clickMenuBarItemActionResult(at index: Int) async throws -> UIAutomationActionResult<ClickResult>
+}
+
+/// Capability for menu-bar item providers that resolve and generation-pin the native owner before
+/// dispatching either an Accessibility action or a window-routed click.
+public protocol MenuServiceGenerationPinnedMenuBarActionResultProviding: MenuServiceProtocol {
+    func clickMenuBarItemGenerationPinnedActionResult(named name: String) async throws
+        -> UIAutomationActionResult<ClickResult>
+}
+
+/// A menu-bar mutation bound to the exact status item returned by a prior inventory read.
+public struct MenuBarItemActionRequest: Sendable, Codable, Equatable {
+    public let name: String?
+    public let index: Int?
+    public let expectedLeafEvidence: DesktopSelectedLeafEvidence
+
+    public init(named name: String, expectedLeafEvidence: DesktopSelectedLeafEvidence) throws {
+        guard expectedLeafEvidence.kind == .menuBarItem else {
+            throw PeekabooError.invalidInput("Expected leaf evidence is not a menu bar item")
+        }
+        self.name = name
+        self.index = nil
+        self.expectedLeafEvidence = expectedLeafEvidence
+    }
+
+    public init(index: Int, expectedLeafEvidence: DesktopSelectedLeafEvidence) throws {
+        guard index >= 0,
+              expectedLeafEvidence.kind == .menuBarItem,
+              expectedLeafEvidence.selectedIndex == index
+        else {
+            throw PeekabooError.invalidInput("Menu bar index contradicts its selected-leaf evidence")
+        }
+        self.name = nil
+        self.index = index
+        self.expectedLeafEvidence = expectedLeafEvidence
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name
+        case index
+        case expectedLeafEvidence
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let name = try container.decodeIfPresent(String.self, forKey: .name)
+        let index = try container.decodeIfPresent(Int.self, forKey: .index)
+        let evidence = try container.decode(DesktopSelectedLeafEvidence.self, forKey: .expectedLeafEvidence)
+        do {
+            if let name, index == nil {
+                try self.init(named: name, expectedLeafEvidence: evidence)
+            } else if let index, name == nil {
+                try self.init(index: index, expectedLeafEvidence: evidence)
+            } else {
+                throw PeekabooError.invalidInput("Menu bar action requires exactly one selector")
+            }
+        } catch {
+            throw DecodingError.dataCorruptedError(
+                forKey: .expectedLeafEvidence,
+                in: container,
+                debugDescription: error.localizedDescription)
+        }
+    }
+}
+
+/// Additive capability for a status-item mutation pinned to prior selected-leaf evidence.
+public protocol MenuServiceExactLeafActionResultProviding: MenuServiceActionResultProviding {
+    func clickMenuBarItemActionResult(request: MenuBarItemActionRequest) async throws
+        -> UIAutomationActionResult<ClickResult>
+}
+
+/// An application-menu path mutation pinned to the process generation selected by the caller.
+public struct MenuItemActionRequest: Sendable, Codable, Equatable {
+    public let appIdentifier: String
+    public let itemPath: String
+    public let expectedIdentity: ApplicationProcessIdentity
+    public let deliveryMode: DesktopActionOutcome.Delivery.Mode
+
+    public init(
+        appIdentifier: String,
+        itemPath: String,
+        expectedIdentity: ApplicationProcessIdentity,
+        deliveryMode: DesktopActionOutcome.Delivery.Mode = .background) throws
+    {
+        guard appIdentifier == "PID:\(expectedIdentity.processIdentifier)" else {
+            throw PeekabooError.invalidInput(
+                "Exact menu item identifier must match its process-generation identity")
+        }
+        self.appIdentifier = appIdentifier
+        self.itemPath = itemPath
+        self.expectedIdentity = expectedIdentity
+        self.deliveryMode = deliveryMode
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case appIdentifier
+        case itemPath
+        case expectedIdentity
+        case deliveryMode
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let appIdentifier = try container.decode(String.self, forKey: .appIdentifier)
+        let itemPath = try container.decode(String.self, forKey: .itemPath)
+        let expectedIdentity = try container.decode(ApplicationProcessIdentity.self, forKey: .expectedIdentity)
+        let deliveryMode = try container.decodeIfPresent(
+            DesktopActionOutcome.Delivery.Mode.self,
+            forKey: .deliveryMode) ?? .background
+        do {
+            try self.init(
+                appIdentifier: appIdentifier,
+                itemPath: itemPath,
+                expectedIdentity: expectedIdentity,
+                deliveryMode: deliveryMode)
+        } catch {
+            throw DecodingError.dataCorruptedError(
+                forKey: .appIdentifier,
+                in: container,
+                debugDescription: "Exact menu item identifier contradicts its process identity")
+        }
+    }
+}
+
+/// A recursive application-menu search pinned to the process generation selected by the caller.
+public struct MenuItemByNameActionRequest: Sendable, Codable, Equatable {
+    public let appIdentifier: String
+    public let itemName: String
+    public let expectedIdentity: ApplicationProcessIdentity
+    public let deliveryMode: DesktopActionOutcome.Delivery.Mode
+
+    public init(
+        appIdentifier: String,
+        itemName: String,
+        expectedIdentity: ApplicationProcessIdentity,
+        deliveryMode: DesktopActionOutcome.Delivery.Mode = .background) throws
+    {
+        guard appIdentifier == "PID:\(expectedIdentity.processIdentifier)" else {
+            throw PeekabooError.invalidInput(
+                "Exact named menu item identifier must match its process-generation identity")
+        }
+        self.appIdentifier = appIdentifier
+        self.itemName = itemName
+        self.expectedIdentity = expectedIdentity
+        self.deliveryMode = deliveryMode
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case appIdentifier
+        case itemName
+        case expectedIdentity
+        case deliveryMode
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let appIdentifier = try container.decode(String.self, forKey: .appIdentifier)
+        let itemName = try container.decode(String.self, forKey: .itemName)
+        let expectedIdentity = try container.decode(ApplicationProcessIdentity.self, forKey: .expectedIdentity)
+        let deliveryMode = try container.decodeIfPresent(
+            DesktopActionOutcome.Delivery.Mode.self,
+            forKey: .deliveryMode) ?? .background
+        do {
+            try self.init(
+                appIdentifier: appIdentifier,
+                itemName: itemName,
+                expectedIdentity: expectedIdentity,
+                deliveryMode: deliveryMode)
+        } catch {
+            throw DecodingError.dataCorruptedError(
+                forKey: .appIdentifier,
+                in: container,
+                debugDescription: "Exact named menu item identifier contradicts its process identity")
+        }
+    }
+}
+
+/// Additive capability for application-menu mutations pinned to a caller-authorized process generation.
+public protocol MenuServiceGenerationPinnedActionResultProviding: MenuServiceActionResultProviding {
+    func clickMenuItemActionResult(request: MenuItemActionRequest) async throws -> UIAutomationActionResult<Void>
+
+    func clickMenuItemByNameActionResult(request: MenuItemByNameActionRequest) async throws
+        -> UIAutomationActionResult<Void>
+}
+
+extension MenuServiceProtocol {
+    public nonisolated func validatedGenerationPinnedMenuResult(
+        _ result: UIAutomationActionResult<Void>,
+        expectedIdentity: ApplicationProcessIdentity,
+        operation: String) throws -> UIAutomationActionResult<Void>
+    {
+        let receipt = DesktopActionTargetReceipt(
+            processIdentifier: expectedIdentity.processIdentifier,
+            processStartIdentity: expectedIdentity.processStartIdentity)
+        guard let outcome = result.outcome else {
+            throw DesktopActionFailure.indeterminate(
+                evidence: .completionUnknown,
+                message: "\(operation) returned without a canonical outcome.",
+                hint: "Observe the intended application before retrying and update the runtime host.")
+                .attributed(to: receipt)
+        }
+        if outcome.state == .refused, outcome.dispatchState == .none {
+            return result
+        }
+        guard result.targetIdentity?.processIdentity == expectedIdentity else {
+            let failure = if outcome.dispatchState.mutationDispatched {
+                DesktopActionFailure.indeterminate(
+                    route: outcome.route,
+                    delivery: outcome.delivery,
+                    evidence: .completionUnknown,
+                    unitCount: outcome.dispatchState.unitCount,
+                    message: "\(operation) returned a missing or mismatched process-generation target.",
+                    hint: "Observe the intended application before retrying and update the runtime host.")
+            } else {
+                DesktopActionFailure.preDispatchRefusal(
+                    route: outcome.route,
+                    reason: .targetUnavailable,
+                    message: "\(operation) returned a missing or mismatched process-generation target.",
+                    hint: "Refresh the application inventory before retrying.")
+            }
+            throw failure.attributed(to: receipt)
+        }
+        return result
+    }
+
+    public func clickMenuItemResult(app: String, itemPath: String) async throws -> UIAutomationActionResult<Void> {
+        if let results = self as? any MenuServiceActionResultProviding {
+            return try await results.clickMenuItemActionResult(app: app, itemPath: itemPath)
+        }
+        try await self.clickMenuItem(app: app, itemPath: itemPath)
+        return UIAutomationActionResult(
+            payload: (),
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                evidence: .deliveryAccepted),
+            targetIdentity: nil)
+    }
+
+    public func clickMenuItemByNameResult(app: String, itemName: String) async throws
+        -> UIAutomationActionResult<Void>
+    {
+        if let results = self as? any MenuServiceActionResultProviding {
+            return try await results.clickMenuItemByNameActionResult(app: app, itemName: itemName)
+        }
+        try await self.clickMenuItemByName(app: app, itemName: itemName)
+        return UIAutomationActionResult(
+            payload: (),
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                evidence: .deliveryAccepted),
+            targetIdentity: nil)
+    }
+
+    public func clickMenuExtraResult(title: String) async throws -> UIAutomationActionResult<Void> {
+        if let results = self as? any MenuServiceActionResultProviding {
+            return try await results.clickMenuExtraActionResult(title: title)
+        }
+        try await self.clickMenuExtra(title: title)
+        return UIAutomationActionResult(
+            payload: (),
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                evidence: .deliveryAccepted),
+            targetIdentity: nil)
+    }
+
+    public func clickMenuBarItemResult(named name: String) async throws -> UIAutomationActionResult<ClickResult> {
+        if let results = self as? any MenuServiceActionResultProviding {
+            return try await results.clickMenuBarItemActionResult(named: name)
+        }
+        let payload = try await self.clickMenuBarItem(named: name)
+        return UIAutomationActionResult(
+            payload: payload,
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .deliveryAccepted),
+            targetIdentity: nil)
+    }
+
+    public func clickMenuBarItemResult(at index: Int) async throws -> UIAutomationActionResult<ClickResult> {
+        if let results = self as? any MenuServiceActionResultProviding {
+            return try await results.clickMenuBarItemActionResult(at: index)
+        }
+        let payload = try await self.clickMenuBarItem(at: index)
+        return UIAutomationActionResult(
+            payload: payload,
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .deliveryAccepted),
+            targetIdentity: nil)
+    }
+
+    public func clickMenuBarItemResult(request: MenuBarItemActionRequest) async throws
+        -> UIAutomationActionResult<ClickResult>
+    {
+        guard let exact = self as? any MenuServiceExactLeafActionResultProviding else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .runtimeIncompatible,
+                message: "The menu service cannot preserve selected status-item evidence.",
+                hint: "Update the selected Peekaboo runtime before retrying.")
+        }
+        return try await exact.clickMenuBarItemActionResult(request: request)
+    }
 }
 
 /// Structure representing an application's menu bar
@@ -197,6 +514,26 @@ public struct KeyboardShortcut: Sendable, Codable {
         self.key = key
         self.displayString = displayString
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case modifiers
+        case key
+        case displayString
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.modifiers = try Set(container.decode([String].self, forKey: .modifiers))
+        self.key = try container.decode(String.self, forKey: .key)
+        self.displayString = try container.decode(String.self, forKey: .displayString)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.modifiers.sorted(), forKey: .modifiers)
+        try container.encode(self.key, forKey: .key)
+        try container.encode(self.displayString, forKey: .displayString)
+    }
 }
 
 /// Information about a menu bar item (status bar item)
@@ -246,6 +583,9 @@ public struct MenuBarItemInfo: Sendable, Codable {
     /// Source used to collect the item (e.g., "cgs", "cgwindow", "ax-control-center").
     public let rawSource: String?
 
+    /// Exact status-item identity and ordered inventory digest for a follow-up mutation.
+    public let selectionEvidence: DesktopSelectedLeafEvidence?
+
     public init(
         title: String?,
         index: Int,
@@ -261,7 +601,8 @@ public struct MenuBarItemInfo: Sendable, Codable {
         rawWindowID: CGWindowID? = nil,
         rawWindowLayer: Int? = nil,
         rawOwnerPID: pid_t? = nil,
-        rawSource: String? = nil)
+        rawSource: String? = nil,
+        selectionEvidence: DesktopSelectedLeafEvidence? = nil)
     {
         self.title = title
         self.rawTitle = rawTitle
@@ -278,6 +619,7 @@ public struct MenuBarItemInfo: Sendable, Codable {
         self.rawWindowLayer = rawWindowLayer
         self.rawOwnerPID = rawOwnerPID
         self.rawSource = rawSource
+        self.selectionEvidence = selectionEvidence
     }
 }
 

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import PeekabooFoundation
 import Testing
@@ -67,6 +68,30 @@ struct DesktopActionSequenceAccumulatorTests {
             delivery: foreground,
             unitCount: self.units(5)))
         #expect(try resolution.mutationDisposition == .definite(unitCount: self.units(5)))
+    }
+
+    @Test
+    func `mixed mechanisms retain composite foreground delivery and exact units`() throws {
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.dispatched(
+            route: .local,
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            unitCount: .one))
+        sequence.record(.dispatched(
+            route: .local,
+            delivery: .init(mechanism: .accessibilityValue, mode: .foreground),
+            unitCount: .one))
+        sequence.record(.dispatched(
+            route: .local,
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            unitCount: .one))
+
+        let resolution = sequence.successResolution()
+        #expect(try resolution.outcome == .dispatchedUnverified(
+            delivery: .init(mechanism: .composite, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: self.units(3)))
+        #expect(try resolution.mutationDisposition == .definite(unitCount: self.units(3)))
     }
 
     @Test
@@ -172,7 +197,7 @@ struct DesktopActionSequenceAccumulatorTests {
     }
 
     @Test
-    func `mixed route or mechanism keeps disposition but suppresses a false aggregate`() throws {
+    func `mixed route suppresses aggregate while mixed mechanisms become composite`() throws {
         var mixedRoute = DesktopActionSequenceAccumulator()
         try mixedRoute.record(.outcome(.confirmedChange(
             route: .local,
@@ -188,8 +213,9 @@ struct DesktopActionSequenceAccumulatorTests {
         var mixedDelivery = DesktopActionSequenceAccumulator()
         mixedDelivery.record(.outcome(.confirmedChange(delivery: self.localBackground)))
         mixedDelivery.record(.outcome(.confirmedChange(delivery: self.localForeground)))
-        #expect(mixedDelivery.successResolution().outcome == nil)
-        #expect(mixedDelivery.successResolution().requiresFreshObservation)
+        #expect(mixedDelivery.successResolution().outcome == .confirmedChange(
+            delivery: .init(mechanism: .composite, mode: .foreground)))
+        #expect(!mixedDelivery.successResolution().requiresFreshObservation)
     }
 
     @Test
@@ -265,6 +291,58 @@ struct DesktopActionSequenceAccumulatorTests {
         #expect(suppressed.outcome.state == .indeterminate)
         #expect(suppressed.outcome.delivery == nil)
         #expect(try suppressed.outcome.dispatchState == .mayHaveDispatched(unitCount: self.units(4)))
+    }
+
+    @Test
+    func `composed dispatched failures preserve selected leaf evidence`() throws {
+        let leaf = try self.selectedLeaf()
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.outcome(.confirmedChange(
+            route: .bridge,
+            delivery: self.localBackground,
+            unitCount: .one)))
+
+        let partial = DesktopActionFailure.partial(
+            route: .bridge,
+            delivery: self.localBackground,
+            unitCount: .one,
+            message: "Selection partially completed")
+            .selectingLeaves([leaf])
+        let composedPartial = sequence.failure(combining: partial, message: "Composite partial failure")
+        #expect(composedPartial.outcome.state == .partial)
+        #expect(composedPartial.selectedLeafEvidence == [leaf])
+
+        let indeterminate = DesktopActionFailure.indeterminate(
+            route: .bridge,
+            delivery: self.localBackground,
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: "Selection completion is unknown")
+            .selectingLeaves([leaf])
+        let composedIndeterminate = sequence.failure(
+            combining: indeterminate,
+            message: "Composite indeterminate failure")
+        #expect(composedIndeterminate.outcome.state == .indeterminate)
+        #expect(composedIndeterminate.selectedLeafEvidence == [leaf])
+    }
+
+    @Test
+    func `dispatch unit count overflow degrades to unknown`() throws {
+        var sequence = DesktopActionSequenceAccumulator()
+        try sequence.record(.dispatched(
+            route: .local,
+            delivery: self.localBackground,
+            unitCount: self.units(Int.max)))
+        sequence.record(.dispatched(
+            route: .local,
+            delivery: self.localBackground,
+            unitCount: .one))
+
+        #expect(sequence.mutationDisposition == .definite(unitCount: nil))
+        #expect(sequence.successResolution().outcome == .dispatchedUnverified(
+            delivery: self.localBackground,
+            evidence: .deliveryAccepted,
+            unitCount: nil))
     }
 
     @Test
@@ -416,10 +494,13 @@ struct DesktopActionSequenceAccumulatorTests {
         let mixedDelivery = DesktopActionOutcome.suspectedNoop(
             delivery: self.localForeground,
             unitCount: .one)
-        #expect(DesktopActionSequenceAccumulator.completedBatch(
+        let compositePartial = try #require(DesktopActionSequenceAccumulator.completedBatch(
             outcomes: [confirmed, mixedDelivery],
             succeededCount: 1,
-            attemptedCount: 2) == nil)
+            attemptedCount: 2))
+        #expect(compositePartial.state == .partial)
+        #expect(compositePartial.delivery == .init(mechanism: .composite, mode: .foreground))
+        #expect(compositePartial.dispatchState.unitCount == twoUnits)
         #expect(DesktopActionSequenceAccumulator.completedBatch(
             outcomes: [confirmed],
             succeededCount: 1,
@@ -716,5 +797,20 @@ struct DesktopActionSequenceAccumulatorTests {
 
     private func units(_ value: Int) throws -> DesktopActionOutcome.DispatchUnitCount {
         try #require(DesktopActionOutcome.DispatchUnitCount(value))
+    }
+
+    private func selectedLeaf() throws -> DesktopSelectedLeafEvidence {
+        try DesktopSelectedLeafEvidence(
+            kind: .dockItem,
+            normalizedSelector: "safari",
+            matchKind: .exact,
+            selectedTargetReceipt: .init(processIdentifier: 42, processStartIdentity: 99),
+            selectedIndex: 0,
+            selectedTitle: "Safari",
+            selectedIdentifier: "com.apple.Safari",
+            selectedRole: "AXDockItem",
+            selectedFrame: CGRect(x: 10, y: 10, width: 20, height: 20),
+            candidateSetSHA256: String(repeating: "a", count: 64),
+            candidateCount: 1)
     }
 }

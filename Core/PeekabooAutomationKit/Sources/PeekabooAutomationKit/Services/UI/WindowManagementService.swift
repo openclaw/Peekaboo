@@ -39,7 +39,8 @@ import PeekabooFoundation
 @MainActor
 public final class WindowManagementService: WindowManagementServiceProtocol,
     WindowManagementActionOutcomeProviding,
-    WindowManagementActionResultProviding
+    WindowManagementActionResultProviding,
+    WindowManagementPinnedFocusActionResultProviding
 {
     let applicationService: any ApplicationServiceProtocol
     let windowIdentityService = WindowIdentityService()

@@ -25,7 +25,7 @@ public struct ObservationMenuBarPopoverOCRSelector {
         screenCapture: any ScreenCaptureServiceProtocol,
         screens: [ScreenInfo],
         ocrRecognizer: any OCRRecognizing = OCRService(),
-        visualizerMode: CaptureVisualizerMode = .screenshotFlash,
+        visualizerMode: CaptureVisualizerMode = .none,
         scale: CaptureScalePreference = .logical1x)
     {
         self.screenCapture = screenCapture

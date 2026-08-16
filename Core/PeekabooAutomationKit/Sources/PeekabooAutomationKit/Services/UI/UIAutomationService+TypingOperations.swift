@@ -182,9 +182,10 @@ extension UIAutomationService {
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<TypeResult>
     {
-        let automationTarget: UIAutomationTarget = try .exactWindow(UIAutomationTarget.ExactWindow(
+        let exactWindow = try UIAutomationTarget.ExactWindow(
             identity: expectedWindowIdentity,
-            bounds: expectedWindowBounds))
+            bounds: expectedWindowBounds)
+        let automationTarget = UIAutomationTarget.exactWindow(exactWindow)
         let validator: @MainActor @Sendable () async throws -> Void = {
             try await self.requireExactWindowKeyboardFocus(
                 expectedWindowIdentity: expectedWindowIdentity,
@@ -200,7 +201,8 @@ extension UIAutomationService {
         }
         return UIAutomationActionResult(
             payload: summary.result,
-            outcome: summary.executionResult.outcome)
+            outcome: summary.executionResult.outcome,
+            targetIdentity: DesktopTargetIdentity(exactWindow: exactWindow))
     }
 
     public func typeActions(
@@ -222,10 +224,11 @@ extension UIAutomationService {
         snapshotId: String?,
         target: ExactWindowKeyboardTarget) async throws -> UIAutomationActionResult<TypeResult>
     {
-        let automationTarget: UIAutomationTarget = try .exactWindow(UIAutomationTarget.ExactWindow(
+        let exactWindow = try UIAutomationTarget.ExactWindow(
             identity: target.windowIdentity,
             bounds: target.windowBounds,
-            focusedElement: target.focusedElement))
+            focusedElement: target.focusedElement)
+        let automationTarget = UIAutomationTarget.exactWindow(exactWindow)
         let validator: @MainActor @Sendable () async throws -> Void = {
             try await self.requireExactWindowKeyboardFocus(
                 expectedWindowIdentity: target.windowIdentity,
@@ -242,7 +245,8 @@ extension UIAutomationService {
         }
         return UIAutomationActionResult(
             payload: summary.result,
-            outcome: summary.executionResult.outcome)
+            outcome: summary.executionResult.outcome,
+            targetIdentity: DesktopTargetIdentity(exactWindow: exactWindow))
     }
 
     public func typeActions(
@@ -303,9 +307,11 @@ extension UIAutomationService {
         snapshotId: String?,
         expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<TypeResult>
     {
-        let automationTarget: UIAutomationTarget = try .process(UIAutomationTarget.Process(
+        let processTarget = try UIAutomationTarget.Process(
             processIdentifier: expectedProcessIdentity.processIdentifier,
-            identity: expectedProcessIdentity))
+            identity: expectedProcessIdentity)
+        let automationTarget = UIAutomationTarget.process(processTarget)
+        let targetIdentity = try DesktopTargetIdentity(processIdentity: expectedProcessIdentity)
         let validator: @MainActor @Sendable () async throws -> Void = {
             guard self.processStartIdentityProvider(expectedProcessIdentity.processIdentifier) ==
                 expectedProcessIdentity.processStartIdentity
@@ -324,7 +330,8 @@ extension UIAutomationService {
         }
         return UIAutomationActionResult(
             payload: summary.result,
-            outcome: summary.executionResult.outcome)
+            outcome: summary.executionResult.outcome,
+            targetIdentity: targetIdentity)
     }
 
     // MARK: - Typing Visualization Helpers

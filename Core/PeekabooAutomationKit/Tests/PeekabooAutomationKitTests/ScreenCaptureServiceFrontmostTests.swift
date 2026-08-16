@@ -12,14 +12,24 @@ final class ScreenCaptureServiceFrontmostTests: XCTestCase {
     }
 
     func testCaptureFrontmostUsesApplicationResolverIdentity() async throws {
-        let app = ServiceApplicationInfo(
+        let processIdentity = ApplicationProcessIdentity(
             processIdentifier: 1234,
+            processStartIdentity: 5678)
+        let baseApp = ServiceApplicationInfo(
+            processIdentifier: 1234,
+            processStartIdentity: 5678,
             bundleIdentifier: "com.example.Frontmost",
             name: "Frontmost",
             bundlePath: "/Applications/Frontmost.app",
             isActive: true,
             isHidden: false,
             windowCount: 1)
+        let resolution = try XCTUnwrap(ApplicationIdentifierMatcher.resolution(
+            for: "Frontmost",
+            in: [ApplicationIdentifierMatcher.Candidate(baseApp)]))
+        let app = baseApp.withSelectorResolutionProofs([
+            resolution.proof(selectedProcessIdentity: processIdentity),
+        ])
         let window = ScreenCaptureService.TestFixtures.Window(
             application: app,
             title: "Frontmost Window",
@@ -40,10 +50,12 @@ final class ScreenCaptureServiceFrontmostTests: XCTestCase {
 
         let result = try await service.captureFrontmost(scale: .native)
 
+        XCTAssertEqual(result.metadata.mode, .frontmost)
         XCTAssertEqual(result.metadata.applicationInfo?.processIdentifier, app.processIdentifier)
         XCTAssertEqual(result.metadata.applicationInfo?.bundleIdentifier, app.bundleIdentifier)
         XCTAssertEqual(result.metadata.windowInfo?.title, "Frontmost Window")
         XCTAssertEqual(result.metadata.size, CGSize(width: 640, height: 400))
+        XCTAssertEqual(result.metadata.selectorResolutionProofs, app.selectorResolutionProofs)
     }
 
     func testCaptureFrontmostReportsMissingApplication() async {

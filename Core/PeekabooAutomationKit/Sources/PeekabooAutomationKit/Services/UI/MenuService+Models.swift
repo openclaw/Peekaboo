@@ -5,6 +5,7 @@
 
 import Foundation
 import os
+import PeekabooFoundation
 
 private let menuClock = ContinuousClock()
 
@@ -71,5 +72,8 @@ struct MenuTraversalContext {
     var menuPath: [String]
     let fullPath: String
     let appInfo: ServiceApplicationInfo
+    let processIdentity: ApplicationProcessIdentity
+    let delivery: DesktopActionOutcome.Delivery
     var budget: MenuTraversalBudget
+    var submittedUnitCount: Int = 0
 }

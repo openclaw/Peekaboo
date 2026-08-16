@@ -42,7 +42,9 @@ import PeekabooFoundation
  * - Since: PeekabooCore 1.0.0
  */
 @MainActor
-public final class ApplicationService: ApplicationServiceProtocol, ApplicationServiceActionResultProviding {
+public final class ApplicationService: ApplicationServiceProtocol, ApplicationServiceActionResultProviding,
+    ApplicationServiceTargetedActionResultProviding
+{
     public let supportsApplicationLaunchOptions = true
     public let supportsSafeBackgroundApplicationLaunchNoOp = true
     public let supportsNewApplicationInstanceLaunch = true
@@ -50,6 +52,7 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationSe
     public let supportsApplicationRelaunch = true
     public let supportsProcessGenerationPinnedApplicationQuit = true
     public let supportsProcessGenerationPinnedApplicationActivation = true
+    public let supportsProcessGenerationPinnedApplicationHide = true
 
     struct WindowServerActivationState: Equatable, Sendable {
         let targetHasVisibleWindow: Bool
@@ -90,7 +93,7 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationSe
         case accepted(ApplicationActionDispatch)
         case rejected
         case mayHaveDispatched(
-            delivery: DesktopActionOutcome.Delivery,
+            delivery: DesktopActionOutcome.Delivery?,
             unitCount: DesktopActionOutcome.DispatchUnitCount?,
             causeDescription: String)
     }
@@ -103,6 +106,7 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationSe
         _ targetURL: URL,
         _ configuration: NSWorkspace.OpenConfiguration) async throws -> NSRunningApplication
     typealias RunningApplicationsForURLProvider = @MainActor (_ applicationURL: URL) -> [NSRunningApplication]
+    typealias ApplicationSelectorCandidatesProvider = @MainActor () -> [ApplicationIdentifierMatcher.Candidate]
     typealias RelaunchTargetResolver = @MainActor (_ identifier: String) async throws -> ServiceApplicationInfo
     typealias RelaunchQuitHandler = @MainActor (_ request: ApplicationQuitRequest) async throws
         -> ApplicationQuitAttempt
@@ -141,6 +145,7 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationSe
     let applicationOpenHandler: ApplicationOpenHandler
     let defaultApplicationOpenHandler: DefaultApplicationOpenHandler
     let runningApplicationsForURLProvider: RunningApplicationsForURLProvider
+    let applicationSelectorCandidatesProvider: ApplicationSelectorCandidatesProvider
     let relaunchTargetResolver: RelaunchTargetResolver?
     let relaunchQuitHandler: RelaunchQuitHandler?
     let relaunchRunningHandler: RelaunchRunningHandler?
@@ -217,6 +222,11 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationSe
         runningApplicationsForURLProvider: @escaping RunningApplicationsForURLProvider = {
             ApplicationService.runningApplicationCandidates(for: $0)
         },
+        applicationSelectorCandidatesProvider: @escaping ApplicationSelectorCandidatesProvider = {
+            NSWorkspace.shared.runningApplications
+                .filter { !$0.isTerminated }
+                .map(ApplicationService.identifierCandidate)
+        },
         relaunchTargetResolver: RelaunchTargetResolver? = nil,
         relaunchQuitHandler: RelaunchQuitHandler? = nil,
         relaunchRunningHandler: RelaunchRunningHandler? = nil,
@@ -280,6 +290,7 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationSe
         self.applicationOpenHandler = applicationOpenHandler
         self.defaultApplicationOpenHandler = defaultApplicationOpenHandler
         self.runningApplicationsForURLProvider = runningApplicationsForURLProvider
+        self.applicationSelectorCandidatesProvider = applicationSelectorCandidatesProvider
         self.relaunchTargetResolver = relaunchTargetResolver
         self.relaunchQuitHandler = relaunchQuitHandler
         self.relaunchRunningHandler = relaunchRunningHandler

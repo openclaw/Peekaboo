@@ -1,3 +1,4 @@
+import ApplicationServices
 import AXorcist
 import CoreGraphics
 import Foundation
@@ -8,6 +9,143 @@ import Testing
 @MainActor
 @Suite("Exact dialog input contract")
 struct DialogExactInputContractTests {
+    @Test
+    func `exact dialog text edit stays background and preserves the selected range`() throws {
+        #expect(DialogService.backgroundDialogInputDelivery == .init(
+            mechanism: .accessibilityValue,
+            mode: .background))
+
+        let insertion = try DialogService.backgroundDialogTextEdit(
+            currentValue: "hello",
+            selectedRange: CFRange(location: 1, length: 3),
+            replacement: "i",
+            clearExisting: false)
+        #expect(insertion.value == "hio")
+        #expect(insertion.cursorRange.location == 2)
+        #expect(insertion.cursorRange.length == 0)
+
+        let unicodeInsertion = try DialogService.backgroundDialogTextEdit(
+            currentValue: "a😀b",
+            selectedRange: CFRange(location: 1, length: 2),
+            replacement: "x",
+            clearExisting: false)
+        #expect(unicodeInsertion.value == "axb")
+        #expect(unicodeInsertion.cursorRange.location == 2)
+
+        let replacement = try DialogService.backgroundDialogTextEdit(
+            currentValue: "old",
+            selectedRange: nil,
+            replacement: "new",
+            clearExisting: true)
+        #expect(replacement.value == "new")
+        #expect(replacement.cursorRange.location == 3)
+
+        let sameTextWrongCursor = DialogService.backgroundDialogEditDispatchPlan(
+            currentValue: "new",
+            selectedRange: CFRange(location: 0, length: 0),
+            edit: replacement)
+        #expect(!sameTextWrongCursor.valueNeedsUpdate)
+        #expect(sameTextWrongCursor.cursorNeedsUpdate)
+        let sameTextDesiredCursor = DialogService.backgroundDialogEditDispatchPlan(
+            currentValue: "new",
+            selectedRange: CFRange(location: 3, length: 0),
+            edit: replacement)
+        #expect(!sameTextDesiredCursor.valueNeedsUpdate)
+        #expect(!sameTextDesiredCursor.cursorNeedsUpdate)
+
+        #expect(DialogService.sameDialogTextRange(
+            CFRange(location: 1, length: 2),
+            CFRange(location: 1, length: 2)))
+        #expect(!DialogService.sameDialogTextRange(
+            CFRange(location: 1, length: 2),
+            CFRange(location: 2, length: 1)))
+        #expect(!DialogService.sameDialogTextRange(nil, CFRange(location: 0, length: 0)))
+
+        let encodedRange = try #require(DialogService.dialogTextRangeAXValue(replacement.cursorRange))
+        var decodedRange = CFRange()
+        #expect(AXValueGetValue(encodedRange, .cfRange, &decodedRange))
+        #expect(DialogService.sameDialogTextRange(decodedRange, replacement.cursorRange))
+    }
+
+    @Test
+    func `background value-only edit skips read-only cursor capability`() throws {
+        let edit = try DialogService.backgroundDialogTextEdit(
+            currentValue: "old",
+            selectedRange: nil,
+            replacement: "new",
+            clearExisting: true)
+        let dispatchPlan = DialogService.backgroundDialogEditDispatchPlan(
+            currentValue: "old",
+            selectedRange: edit.cursorRange,
+            edit: edit)
+
+        #expect(dispatchPlan.valueNeedsUpdate)
+        #expect(!dispatchPlan.cursorNeedsUpdate)
+        #expect(dispatchPlan.successfulUnitCount == .one)
+        var cursorCapabilityChecked = false
+        let cursorValue = try DialogService.backgroundDialogCursorDispatchValue(
+            dispatchPlan: dispatchPlan,
+            cursorRange: edit.cursorRange)
+        {
+            cursorCapabilityChecked = true
+            return false
+        }
+
+        #expect(cursorValue == nil)
+        #expect(!cursorCapabilityChecked)
+    }
+
+    @Test
+    func `background cursor edit refuses when selected range is not settable`() throws {
+        let edit = try DialogService.backgroundDialogTextEdit(
+            currentValue: "new",
+            selectedRange: nil,
+            replacement: "new",
+            clearExisting: true)
+        let dispatchPlan = DialogService.backgroundDialogEditDispatchPlan(
+            currentValue: "new",
+            selectedRange: CFRange(location: 0, length: 0),
+            edit: edit)
+        #expect(!dispatchPlan.valueNeedsUpdate)
+        #expect(dispatchPlan.cursorNeedsUpdate)
+        #expect(dispatchPlan.successfulUnitCount == .one)
+        var cursorCapabilityChecked = false
+
+        do {
+            _ = try DialogService.backgroundDialogCursorDispatchValue(
+                dispatchPlan: dispatchPlan,
+                cursorRange: edit.cursorRange)
+            {
+                cursorCapabilityChecked = true
+                return false
+            }
+            Issue.record("Expected a required nonsettable cursor range to refuse before dispatch")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .operationUnsupported)
+            #expect(failure.outcome.dispatchState == .none)
+        }
+        #expect(cursorCapabilityChecked)
+    }
+
+    @Test
+    func `exact background insertion refuses an unknown or invalid selection`() {
+        #expect(throws: DialogService.DialogBackgroundTextEditError.self) {
+            try DialogService.backgroundDialogTextEdit(
+                currentValue: "hello",
+                selectedRange: nil,
+                replacement: "!",
+                clearExisting: false)
+        }
+        #expect(throws: DialogService.DialogBackgroundTextEditError.self) {
+            try DialogService.backgroundDialogTextEdit(
+                currentValue: "hello",
+                selectedRange: CFRange(location: 6, length: 0),
+                replacement: "!",
+                clearExisting: false)
+        }
+    }
+
     @Test
     func `missing stale PID is a canonical target refusal before dispatch`() async throws {
         let service = DialogService(applicationService: MissingDialogApplicationService())
@@ -74,8 +212,16 @@ struct DialogExactInputContractTests {
 
         let candidates = try sameTitle.map { window in
             let target = try UIAutomationTarget.ExactWindow(window: window)
-            return DialogService.TargetedDialogCandidate(
+            return try DialogService.TargetedDialogCandidate(
                 target: target,
+                resolvedTarget: ResolvedDialogTargetEvidence(
+                    target: target,
+                    application: .init(
+                        processIdentifier: 42,
+                        processStartIdentity: 1234,
+                        bundleIdentifier: "dev.peekaboo.fixture",
+                        name: "Fixture"),
+                    window: window),
                 window: Element.systemWide(),
                 dialog: Element.systemWide())
         }
@@ -86,6 +232,28 @@ struct DialogExactInputContractTests {
         #expect(refusal.outcome.refusalReason == .targetUnavailable)
         #expect(refusal.message.contains("ambiguous"))
         #expect(refusal.hint?.contains("700, 701") == true)
+    }
+
+    @Test
+    func `resolved dialog proof preserves prohibited helper fuzzy eligibility`() throws {
+        let window = self.window(id: 700, title: "Helper Dialog", generation: 1234)
+        let target = try UIAutomationTarget.ExactWindow(window: window)
+        let evidence = try ResolvedDialogTargetEvidence(
+            target: target,
+            application: .init(
+                processIdentifier: 42,
+                processStartIdentity: 1234,
+                bundleIdentifier: "dev.peekaboo.fixture.helper",
+                name: "Fixture Helper",
+                bundlePath: "/Applications/Fixture Helper.app",
+                executablePath: "/Applications/Fixture Helper.app/Contents/MacOS/fixture-helper",
+                activationPolicy: .prohibited),
+            window: window)
+
+        let fuzzySelector = try DialogTargetSelector(applicationIdentifier: "Fixture")
+        let exactSelector = try DialogTargetSelector(applicationIdentifier: "dev.peekaboo.fixture.helper")
+        #expect(!evidence.matches(fuzzySelector))
+        #expect(evidence.matches(exactSelector))
     }
 
     @Test
@@ -294,6 +462,25 @@ struct DialogExactInputContractTests {
         #expect(driver.hotkeys == [["cmd", "a"]])
         #expect(driver.tappedKeys == [.delete])
         #expect(driver.typedText == ["h", "e", "l", "l", "o"])
+    }
+
+    @Test
+    func `cancellation during final focus validation emits no keyboard unit`() async {
+        let driver = RecordingDialogSyntheticDriver()
+        let service = DialogService(syntheticInputDriver: driver)
+        let task = Task { @MainActor in
+            try service.dispatchDialogInput(
+                text: "hello",
+                clearExisting: false,
+                unitFocusValidation: { _ in
+                    withUnsafeCurrentTask { $0?.cancel() }
+                })
+        }
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+        #expect(driver.typedText.isEmpty)
     }
 
     @Test

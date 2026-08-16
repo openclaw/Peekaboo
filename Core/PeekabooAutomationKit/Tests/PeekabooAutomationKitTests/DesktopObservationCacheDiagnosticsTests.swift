@@ -64,6 +64,11 @@ final class DesktopObservationCacheDiagnosticsTests: XCTestCase {
             index: index,
             layer: 0,
             isOnScreen: true,
-            sharingState: .readOnly)
+            sharingState: .readOnly,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: 123,
+                ownerProcessStartIdentity: 456,
+                capturedBounds: bounds))
     }
 }

@@ -1,7 +1,10 @@
+import ApplicationServices
 @preconcurrency import AXorcist
 import CoreGraphics
 import Foundation
+import struct PeekabooFoundation.DesktopActionFailure
 import struct PeekabooFoundation.DesktopActionOutcome
+import struct PeekabooFoundation.DesktopActionSequenceAccumulator
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -12,8 +15,15 @@ struct DialogServiceGoToFolderTests {
         let driver = FailingDialogSyntheticInputDriver(failingHotkeyCall: 1)
         let service = DialogService(syntheticInputDriver: driver)
 
-        await #expect(throws: DialogInputError.hotkeyFailed(1)) {
-            try await service.performGoToFolderKeyboardNavigation(directoryPath: "/tmp/target") {}
+        do {
+            _ = try await service.performGoToFolderKeyboardNavigation(directoryPath: "/tmp/target") { nil }
+            Issue.record("Expected canonical input failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
+            #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: .one))
+        } catch {
+            Issue.record(error)
         }
 
         #expect(driver.events == [
@@ -26,14 +36,87 @@ struct DialogServiceGoToFolderTests {
         let driver = FailingDialogSyntheticInputDriver(failingHotkeyCall: 2)
         let service = DialogService(syntheticInputDriver: driver)
 
-        await #expect(throws: DialogInputError.hotkeyFailed(2)) {
-            try await service.performGoToFolderKeyboardNavigation(directoryPath: "/tmp/target") {}
+        do {
+            _ = try await service.performGoToFolderKeyboardNavigation(directoryPath: "/tmp/target") { nil }
+            Issue.record("Expected canonical input failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
+            #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: .init(2)))
+        } catch {
+            Issue.record(error)
         }
 
         #expect(driver.events == [
             .hotkey(keys: ["cmd", "shift", "g"], holdDuration: 0.05),
             .hotkey(keys: ["cmd", "a"], holdDuration: 0.05),
         ])
+    }
+
+    @Test
+    func `go to folder accumulates focus and every keyboard dispatch`() async throws {
+        let driver = FailingDialogSyntheticInputDriver(failingHotkeyCall: nil)
+        let service = DialogService(syntheticInputDriver: driver)
+        let focusOutcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .accessibilityValue, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+
+        let outcome = try await service.performGoToFolderKeyboardNavigation(directoryPath: "/tmp/target") {
+            focusOutcome
+        }
+
+        #expect(outcome.state == .dispatchedUnverified)
+        #expect(outcome.delivery == .init(mechanism: .composite, mode: .foreground))
+        #expect(outcome.dispatchState == .dispatched(unitCount: .init(15)))
+        #expect(driver.events == [
+            .hotkey(keys: ["cmd", "shift", "g"], holdDuration: 0.05),
+            .hotkey(keys: ["cmd", "a"], holdDuration: 0.05),
+            .type("/tmp/target", delayPerCharacter: 0.005),
+            .tapKey(.return, modifiers: []),
+        ])
+    }
+
+    @Test
+    func `Missing path field returns expansion aware target disposition`() async throws {
+        let driver = FailingDialogSyntheticInputDriver(failingHotkeyCall: nil)
+        let service = DialogService(syntheticInputDriver: driver)
+        let dialog = Element(AXUIElementCreateApplication(getpid() + 10000))
+
+        let navigation = try await service.navigateToPath(
+            "/tmp/target",
+            in: dialog,
+            ensureExpanded: false,
+            appName: nil)
+
+        #expect(navigation.method == "go_to_folder+auto_expand")
+        #expect(
+            navigation.targetDisposition ==
+                DialogService.FileDialogNavigationResult.TargetDisposition.refreshAfterExpansion)
+    }
+
+    @Test
+    func `later file-dialog failure preserves completed focus and navigation`() throws {
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.outcome(.dispatchedUnverified(
+            delivery: .init(mechanism: .accessibilityValue, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one)))
+        sequence.record(.outcome(.dispatchedUnverified(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .init(3))))
+
+        let error = DialogService.preservingFileDialogFailure(
+            DialogInputError.hotkeyFailed(9),
+            after: sequence,
+            target: nil)
+        let failure = try #require(error as? DesktopActionFailure)
+
+        #expect(failure.outcome.state == .indeterminate)
+        #expect(failure.outcome.delivery == .init(mechanism: .composite, mode: .foreground))
+        #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: .init(4)))
+        #expect(failure.outcome.retrySafety == .unsafe)
     }
 }
 
@@ -49,11 +132,11 @@ private final class FailingDialogSyntheticInputDriver: SyntheticInputDriving {
         case tapKey(SpecialKey, modifiers: CGEventFlags)
     }
 
-    private let failingHotkeyCall: Int
+    private let failingHotkeyCall: Int?
     private var hotkeyCallCount = 0
     private(set) var events: [Event] = []
 
-    init(failingHotkeyCall: Int) {
+    init(failingHotkeyCall: Int?) {
         self.failingHotkeyCall = failingHotkeyCall
     }
 

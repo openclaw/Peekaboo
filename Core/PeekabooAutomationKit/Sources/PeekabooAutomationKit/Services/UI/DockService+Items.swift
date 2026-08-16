@@ -29,30 +29,32 @@ extension DockService {
 
     func findDockItemImpl(name: String) async throws -> DockItem {
         let items = try await listDockItems(includeAll: false)
-
-        if let exactMatch = items.first(where: { $0.title == name }) {
-            return exactMatch
+        let candidates = items.map { item in
+            DeterministicDesktopLeafSelector.Candidate(
+                value: item,
+                index: item.index,
+                displayName: item.title,
+                matchFields: [item.title],
+                stableIdentity: DeterministicDesktopLeafSelector.stableIdentity([
+                    item.title,
+                    item.itemType.rawValue,
+                    item.bundleIdentifier,
+                    item.position.map { "\($0.x),\($0.y)" },
+                    item.size.map { "\($0.width),\($0.height)" },
+                ]))
         }
-
-        let lowercaseName = name.lowercased()
-        if let caseMatch = items.first(where: { $0.title.lowercased() == lowercaseName }) {
-            return caseMatch
-        }
-
-        let partialMatches = items.filter { item in
-            item.title.lowercased().contains(lowercaseName)
-        }
-
-        if partialMatches.count == 1 {
-            return partialMatches[0]
-        } else if partialMatches.count > 1 {
-            if let runningMatch = partialMatches.first(where: { $0.isRunning == true }) {
-                return runningMatch
+        do {
+            return try DeterministicDesktopLeafSelector.select(named: name, from: candidates).candidate.value
+        } catch let error as DesktopLeafSelectionError {
+            switch error {
+            case .notFound, .invalidIndex:
+                throw DockError.itemNotFound(name)
+            case let .ambiguous(_, matches):
+                throw PeekabooError.invalidInput(
+                    "Dock item selector '\(name)' is ambiguous: \(matches.joined(separator: ", ")). " +
+                        "Use the exact Dock item title shown by 'peekaboo dock list'.")
             }
-            return partialMatches[0]
         }
-
-        throw DockError.itemNotFound(name)
     }
 
     private func makeDockItem(from element: Element, index: Int, includeAll: Bool) -> DockItem? {

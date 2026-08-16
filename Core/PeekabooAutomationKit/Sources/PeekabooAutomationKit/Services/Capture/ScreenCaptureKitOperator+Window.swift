@@ -106,6 +106,7 @@ extension ScreenCaptureKitOperator {
         let displayIndex: Int
         let scalePlan: ScreenCaptureScaleResolver.Plan
         let mutationIdentity: WindowMutationIdentity?
+        let selectorResolutionProofs: [SelectorResolutionProof]?
         let windowPlanCacheStatus: CaptureWindowPlanCacheStatus?
         let windowPlanCacheGeneration: UInt64?
 
@@ -118,6 +119,7 @@ extension ScreenCaptureKitOperator {
             displayIndex: Int,
             scalePlan: ScreenCaptureScaleResolver.Plan,
             mutationIdentity: WindowMutationIdentity?,
+            selectorResolutionProofs: [SelectorResolutionProof]? = nil,
             windowPlanCacheStatus: CaptureWindowPlanCacheStatus? = nil,
             windowPlanCacheGeneration: UInt64? = nil)
         {
@@ -129,6 +131,7 @@ extension ScreenCaptureKitOperator {
             self.displayIndex = displayIndex
             self.scalePlan = scalePlan
             self.mutationIdentity = mutationIdentity
+            self.selectorResolutionProofs = selectorResolutionProofs
             self.windowPlanCacheStatus = windowPlanCacheStatus
             self.windowPlanCacheGeneration = windowPlanCacheGeneration
         }
@@ -201,6 +204,12 @@ extension ScreenCaptureKitOperator {
             guard snapshot.ownerProcessStartIdentity == app.processStartIdentity else { return nil }
             return Self.validatedMutationIdentity(snapshot)
         }
+        let selectorResolutionProofs = try self.selectorResolutionProofs(
+            app: app,
+            windows: appWindows,
+            selectedIndex: resolvedIndex,
+            requestedIndex: windowIndex,
+            selectedIdentity: mutationIdentity)
 
         self.logger.debug(
             "Screenshot created",
@@ -216,18 +225,14 @@ extension ScreenCaptureKitOperator {
             image: image,
             context: WindowMetadataContext(
                 mode: .window,
-                applicationInfo: ServiceApplicationInfo(
-                    processIdentifier: app.processIdentifier,
-                    processStartIdentity: mutationIdentity?.ownerProcessStartIdentity,
-                    bundleIdentifier: app.bundleIdentifier,
-                    name: app.name,
-                    bundlePath: app.bundlePath),
+                applicationInfo: app,
                 window: WindowMetadataIdentity(targetWindow),
                 windowIndex: resolvedIndex,
                 display: DisplayMetadataIdentity(targetDisplay),
                 displayIndex: content.displays.firstIndex(where: { $0.displayID == targetDisplay.displayID }) ?? 0,
                 scalePlan: scalePlan,
-                mutationIdentity: mutationIdentity))
+                mutationIdentity: mutationIdentity,
+                selectorResolutionProofs: selectorResolutionProofs))
 
         return CaptureResult(imageData: imageData, metadata: metadata)
     }
@@ -708,7 +713,40 @@ extension ScreenCaptureKitOperator {
                 plan: context.scalePlan,
                 finalPixelSize: CGSize(width: image.width, height: image.height),
                 windowPlanCacheStatus: context.windowPlanCacheStatus,
-                windowPlanCacheGeneration: context.windowPlanCacheGeneration))
+                windowPlanCacheGeneration: context.windowPlanCacheGeneration),
+            selectorResolutionProofs: context.selectorResolutionProofs)
+    }
+
+    private func selectorResolutionProofs(
+        app: ServiceApplicationInfo,
+        windows: [SCWindow],
+        selectedIndex: Int,
+        requestedIndex: Int?,
+        selectedIdentity: WindowMutationIdentity?) throws -> [SelectorResolutionProof]?
+    {
+        guard let processIdentity = app.processIdentity,
+              let selectedIdentity,
+              selectedIdentity.processIdentity == processIdentity
+        else {
+            return app.selectorResolutionProofs
+        }
+        let candidates = windows.enumerated().map { index, window in
+            ServiceWindowInfo(
+                windowID: Int(window.windowID),
+                title: window.title ?? "",
+                bounds: window.frame,
+                index: index,
+                mutationIdentity: index == selectedIndex ? selectedIdentity : nil)
+        }
+        let selection = requestedIndex.map(WindowSelection.index) ?? .automatic
+        let windowProof = try WindowSelectorResolutionProof.make(
+            selection: selection,
+            candidates: candidates,
+            selected: candidates[selectedIndex],
+            processIdentity: processIdentity)
+        return (app.selectorResolutionProofs ?? []).map {
+            $0.selecting(windowIdentity: selectedIdentity)
+        } + [windowProof]
     }
 
     func applicationInfo(

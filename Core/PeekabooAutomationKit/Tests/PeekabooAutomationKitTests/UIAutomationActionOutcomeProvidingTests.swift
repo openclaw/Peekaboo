@@ -214,6 +214,10 @@ struct UIAutomationActionOutcomeProvidingTests {
 
         #expect(result.outcome == expected)
         #expect(result.payload == legacy)
+        #expect(result.payload.target == "E1")
+        #expect(result.payload.actionName == "AXPress")
+        #expect(result.payload.oldValue == nil)
+        #expect(result.payload.newValue == nil)
         #expect(result.targetIdentity?.exactWindow != nil)
         #expect(resultDriver.performActionCount == 1)
         #expect(legacyDriver.performActionCount == 1)
@@ -279,6 +283,11 @@ struct UIAutomationActionOutcomeProvidingTests {
         for result in clickResults {
             #expect(result.outcome == expectedClick)
         }
+        #expect(clickResults[0].targetIdentity == nil)
+        #expect(clickResults[1].targetIdentity?.processIdentity == processIdentity)
+        #expect(clickResults[1].targetIdentity?.exactWindow == nil)
+        #expect(clickResults[2].targetIdentity?.exactWindow?.identity == windowIdentity)
+        #expect(clickResults[2].targetIdentity?.exactWindow?.bounds == bounds)
 
         let pidType = try await service.typeActionsWithOutcome(
             [],
@@ -312,6 +321,15 @@ struct UIAutomationActionOutcomeProvidingTests {
             #expect(result.payload.totalCharacters == 0)
             #expect(result.payload.keyPresses == 0)
         }
+        #expect(pidType.targetIdentity == nil)
+        #expect(processType.targetIdentity?.processIdentity == processIdentity)
+        #expect(processType.targetIdentity?.exactWindow == nil)
+        #expect(windowType.targetIdentity?.exactWindow?.identity == windowIdentity)
+        #expect(windowType.targetIdentity?.exactWindow?.bounds == bounds)
+        #expect(windowType.targetIdentity?.exactWindow?.focusedElement == nil)
+        #expect(focusedType.targetIdentity?.exactWindow?.identity == windowIdentity)
+        #expect(focusedType.targetIdentity?.exactWindow?.bounds == bounds)
+        #expect(focusedType.targetIdentity?.exactWindow?.focusedElement == focused)
 
         let pidHotkey = try await service.hotkeyWithOutcome(
             keys: "cmd,shift,l",

@@ -31,6 +31,9 @@ public struct DesktopActionOutcome: Codable, Equatable, Sendable {
 
     public struct Delivery: Codable, Equatable, Sendable {
         public enum Mechanism: String, Codable, Sendable {
+            /// A single logical operation composed from two or more concrete delivery mechanisms.
+            /// The unit count remains the exact sum of the constituent dispatches.
+            case composite
             case accessibilityAction = "accessibility_action"
             case accessibilityValue = "accessibility_value"
             case processTargetedEvents = "process_targeted_events"
@@ -172,6 +175,7 @@ public struct DesktopActionOutcome: Codable, Equatable, Sendable {
         case correctRequest = "correct_request"
         case grantPermission = "grant_permission"
         case refreshTarget = "refresh_target"
+        case reconnectSession = "reconnect_session"
         case updateRuntime = "update_runtime"
         case recoverSideEffect = "recover_side_effect"
         case observeBeforeRetry = "observe_before_retry"
@@ -181,6 +185,8 @@ public struct DesktopActionOutcome: Codable, Equatable, Sendable {
         case invalidRequest = "invalid_request"
         case permissionDenied = "permission_denied"
         case targetUnavailable = "target_unavailable"
+        case transportSessionUnavailable = "transport_session_unavailable"
+        case requestCancelled = "request_cancelled"
         case runtimeIncompatible = "runtime_incompatible"
         case foregroundConsentRequired = "foreground_consent_required"
         case operationUnsupported = "operation_unsupported"
@@ -193,9 +199,87 @@ public struct DesktopActionOutcome: Codable, Equatable, Sendable {
                 .grantPermission
             case .targetUnavailable:
                 .refreshTarget
+            case .transportSessionUnavailable:
+                .reconnectSession
+            case .requestCancelled:
+                .none
             case .runtimeIncompatible:
                 .updateRuntime
             }
+        }
+    }
+
+    /// Shared policy for deciding whether a returned action outcome can represent a successful
+    /// operation at a caller boundary.
+    ///
+    /// Confirmation and dispatch acceptance are deliberately separate. Some surfaces require a
+    /// verified effect, while compatibility surfaces may accept an honestly reported unverified
+    /// dispatch. A delivery-mode requirement applies only to states that dispatched work;
+    /// `confirmedNoChange` remains valid because it proves that no dispatch was necessary.
+    public struct SuccessPolicy: Equatable, Sendable {
+        public let acceptsDispatchedUnverified: Bool
+        public let acceptsSuspectedNoop: Bool
+        public let requiredDeliveryMode: Delivery.Mode?
+
+        public init(
+            acceptsDispatchedUnverified: Bool,
+            acceptsSuspectedNoop: Bool = false,
+            requiredDeliveryMode: Delivery.Mode? = nil)
+        {
+            self.acceptsDispatchedUnverified = acceptsDispatchedUnverified
+            self.acceptsSuspectedNoop = acceptsSuspectedNoop
+            self.requiredDeliveryMode = requiredDeliveryMode
+        }
+
+        public static let confirmed = Self(acceptsDispatchedUnverified: false)
+        public static let confirmedOrDispatched = Self(acceptsDispatchedUnverified: true)
+        public static let observation = Self(
+            acceptsDispatchedUnverified: true,
+            acceptsSuspectedNoop: true)
+
+        public static func confirmed(
+            requiring deliveryMode: Delivery.Mode) -> Self
+        {
+            Self(
+                acceptsDispatchedUnverified: false,
+                requiredDeliveryMode: deliveryMode)
+        }
+
+        public static func confirmedOrDispatched(
+            requiring deliveryMode: Delivery.Mode) -> Self
+        {
+            Self(
+                acceptsDispatchedUnverified: true,
+                requiredDeliveryMode: deliveryMode)
+        }
+
+        public static func observation(
+            requiring deliveryMode: Delivery.Mode) -> Self
+        {
+            Self(
+                acceptsDispatchedUnverified: true,
+                acceptsSuspectedNoop: true,
+                requiredDeliveryMode: deliveryMode)
+        }
+
+        public func accepts(_ outcome: DesktopActionOutcome) -> Bool {
+            let acceptedState = switch outcome.state {
+            case .confirmedChange, .confirmedNoChange:
+                true
+            case .dispatchedUnverified:
+                self.acceptsDispatchedUnverified
+            case .suspectedNoop:
+                self.acceptsSuspectedNoop
+            case .partial, .refused, .indeterminate:
+                false
+            }
+            guard acceptedState else { return false }
+            guard outcome.state != .confirmedNoChange,
+                  let requiredDeliveryMode = self.requiredDeliveryMode
+            else {
+                return true
+            }
+            return outcome.delivery?.mode == requiredDeliveryMode
         }
     }
 
@@ -220,6 +304,10 @@ public struct DesktopActionOutcome: Codable, Equatable, Sendable {
 
     public var isConfirmed: Bool {
         self.effect == .confirmed
+    }
+
+    public func isAccepted(by policy: SuccessPolicy) -> Bool {
+        policy.accepts(self)
     }
 
     private init(
@@ -541,13 +629,13 @@ public struct DesktopActionOutcome: Codable, Equatable, Sendable {
     }
 }
 
-/// Canonical generation-bound window attribution for desktop action results and failures.
+/// Canonical generation-bound process or window attribution for desktop action results and failures.
 public struct DesktopActionTargetReceipt: Codable, Equatable, Sendable {
     public let processIdentifier: Int32
     public let processStartIdentity: UInt64
-    public let windowID: Int
+    public let windowID: Int?
 
-    public init(processIdentifier: Int32, processStartIdentity: UInt64, windowID: Int) {
+    public init(processIdentifier: Int32, processStartIdentity: UInt64, windowID: Int? = nil) {
         self.processIdentifier = processIdentifier
         self.processStartIdentity = processStartIdentity
         self.windowID = windowID
@@ -565,11 +653,11 @@ public struct DesktopActionTargetReceipt: Codable, Equatable, Sendable {
         let processIdentifier = try container.decode(Int32.self, forKey: .processIdentifier)
         let processStartIdentity = try container.decode(UInt64.self, forKey: .processStartIdentity)
         let decimal = try container.decodeIfPresent(String.self, forKey: .processStartIdentityDecimal)
-        let windowID = try container.decode(Int.self, forKey: .windowID)
+        let windowID = try container.decodeIfPresent(Int.self, forKey: .windowID)
         guard processIdentifier > 0,
               processStartIdentity > 0,
               decimal == nil || decimal == String(processStartIdentity),
-              windowID > 0
+              windowID.map({ $0 > 0 }) ?? true
         else {
             throw DecodingError.dataCorruptedError(
                 forKey: .processStartIdentityDecimal,
@@ -587,7 +675,7 @@ public struct DesktopActionTargetReceipt: Codable, Equatable, Sendable {
         try container.encode(self.processIdentifier, forKey: .processIdentifier)
         try container.encode(self.processStartIdentity, forKey: .processStartIdentity)
         try container.encode(String(self.processStartIdentity), forKey: .processStartIdentityDecimal)
-        try container.encode(self.windowID, forKey: .windowID)
+        try container.encodeIfPresent(self.windowID, forKey: .windowID)
     }
 }
 
@@ -598,20 +686,27 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
     public let hint: String?
     public let causeDescription: String?
     public let targetReceipt: DesktopActionTargetReceipt?
+    public let selectedLeafEvidence: [DesktopSelectedLeafEvidence]?
 
     public init?(
         outcome: DesktopActionOutcome,
         message: String,
         hint: String? = nil,
         causeDescription: String? = nil,
-        targetReceipt: DesktopActionTargetReceipt? = nil)
+        targetReceipt: DesktopActionTargetReceipt? = nil,
+        selectedLeafEvidence: [DesktopSelectedLeafEvidence]? = nil)
     {
-        guard !outcome.isConfirmed else { return nil }
+        guard !outcome.isConfirmed,
+              selectedLeafEvidence == nil || outcome.dispatchState.mutationDispatched,
+              selectedLeafEvidence?.isEmpty != true,
+              selectedLeafEvidence?.allSatisfy(\.isCanonical) != false
+        else { return nil }
         self.outcome = outcome
         self.message = message
         self.hint = hint
         self.causeDescription = causeDescription
         self.targetReceipt = targetReceipt
+        self.selectedLeafEvidence = selectedLeafEvidence
     }
 
     public static func partial(
@@ -735,13 +830,15 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
         message: String,
         hint: String?,
         causeDescription: String?,
-        targetReceipt: DesktopActionTargetReceipt? = nil)
+        targetReceipt: DesktopActionTargetReceipt? = nil,
+        selectedLeafEvidence: [DesktopSelectedLeafEvidence]? = nil)
     {
         self.outcome = outcome
         self.message = message
         self.hint = hint
         self.causeDescription = causeDescription
         self.targetReceipt = targetReceipt
+        self.selectedLeafEvidence = outcome.dispatchState.mutationDispatched ? selectedLeafEvidence : nil
     }
 
     public var errorDescription: String? {
@@ -763,7 +860,8 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
             message: self.message,
             hint: self.hint,
             causeDescription: self.causeDescription,
-            targetReceipt: self.targetReceipt)
+            targetReceipt: self.targetReceipt,
+            selectedLeafEvidence: self.selectedLeafEvidence)
     }
 
     /// Attaches a resolved target only after the execution owner has established it.
@@ -774,7 +872,24 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
             message: self.message,
             hint: self.hint,
             causeDescription: self.causeDescription,
-            targetReceipt: targetReceipt)
+            targetReceipt: targetReceipt,
+            selectedLeafEvidence: self.selectedLeafEvidence)
+    }
+
+    /// Attaches the exact selected leaves only after at least one mutation crossed dispatch.
+    public func selectingLeaves(_ evidence: [DesktopSelectedLeafEvidence]?) -> DesktopActionFailure {
+        guard self.outcome.dispatchState.mutationDispatched,
+              let evidence,
+              !evidence.isEmpty,
+              evidence.allSatisfy(\.isCanonical)
+        else { return self }
+        return Self(
+            validatedOutcome: self.outcome,
+            message: self.message,
+            hint: self.hint,
+            causeDescription: self.causeDescription,
+            targetReceipt: self.targetReceipt,
+            selectedLeafEvidence: evidence)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -783,6 +898,7 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
         case hint
         case causeDescription = "cause_description"
         case targetReceipt = "target_receipt"
+        case selectedLeafEvidence = "selected_leaf_evidence"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -799,5 +915,17 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
         self.hint = try container.decodeIfPresent(String.self, forKey: .hint)
         self.causeDescription = try container.decodeIfPresent(String.self, forKey: .causeDescription)
         self.targetReceipt = try container.decodeIfPresent(DesktopActionTargetReceipt.self, forKey: .targetReceipt)
+        self.selectedLeafEvidence = try container.decodeIfPresent(
+            [DesktopSelectedLeafEvidence].self,
+            forKey: .selectedLeafEvidence)
+        guard self.selectedLeafEvidence == nil || outcome.dispatchState.mutationDispatched,
+              self.selectedLeafEvidence?.isEmpty != true,
+              self.selectedLeafEvidence?.allSatisfy(\.isCanonical) != false
+        else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .selectedLeafEvidence,
+                in: container,
+                debugDescription: "Selected-leaf failure evidence requires a dispatched mutation")
+        }
     }
 }

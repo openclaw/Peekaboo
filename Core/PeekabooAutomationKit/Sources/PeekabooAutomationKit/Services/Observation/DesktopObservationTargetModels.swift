@@ -57,17 +57,29 @@ public struct ApplicationIdentity: Sendable, Codable, Equatable {
     public let processStartIdentity: UInt64?
     public let bundleIdentifier: String?
     public let name: String
+    public let bundlePath: String?
+    public let executablePath: String?
+    public let activationPolicy: ServiceApplicationActivationPolicy?
+    public let selectorResolutionProofs: [SelectorResolutionProof]?
 
     public init(
         processIdentifier: Int32,
         processStartIdentity: UInt64? = nil,
         bundleIdentifier: String?,
-        name: String)
+        name: String,
+        bundlePath: String? = nil,
+        executablePath: String? = nil,
+        activationPolicy: ServiceApplicationActivationPolicy? = nil,
+        selectorResolutionProofs: [SelectorResolutionProof]? = nil)
     {
         self.processIdentifier = processIdentifier
         self.processStartIdentity = processStartIdentity
         self.bundleIdentifier = bundleIdentifier
         self.name = name
+        self.bundlePath = bundlePath
+        self.executablePath = executablePath
+        self.activationPolicy = activationPolicy
+        self.selectorResolutionProofs = selectorResolutionProofs
     }
 
     init(_ app: ServiceApplicationInfo) {
@@ -75,7 +87,23 @@ public struct ApplicationIdentity: Sendable, Codable, Equatable {
             processIdentifier: app.processIdentifier,
             processStartIdentity: app.processStartIdentity,
             bundleIdentifier: app.bundleIdentifier,
-            name: app.name)
+            name: app.name,
+            bundlePath: app.bundlePath,
+            executablePath: app.executablePath,
+            activationPolicy: app.activationPolicy,
+            selectorResolutionProofs: app.selectorResolutionProofs)
+    }
+
+    func withSelectorResolutionProofs(_ proofs: [SelectorResolutionProof]?) -> Self {
+        Self(
+            processIdentifier: self.processIdentifier,
+            processStartIdentity: self.processStartIdentity,
+            bundleIdentifier: self.bundleIdentifier,
+            name: self.name,
+            bundlePath: self.bundlePath,
+            executablePath: self.executablePath,
+            activationPolicy: self.activationPolicy,
+            selectorResolutionProofs: proofs)
     }
 }
 
@@ -158,6 +186,19 @@ public struct DesktopStateSnapshotSummary: Sendable, Codable, Equatable {
     }
 }
 
+/// Codable projection of the exact owner mutated while resolving an observation target.
+public struct DesktopObservationMutationTargetIdentity: Sendable, Codable, Equatable {
+    public let processIdentity: ApplicationProcessIdentity
+    public let windowIdentity: WindowMutationIdentity?
+    public let windowBounds: CGRect?
+
+    public init(_ target: DesktopTargetIdentity) {
+        self.processIdentity = target.processIdentity
+        self.windowIdentity = target.exactWindow?.identity
+        self.windowBounds = target.exactWindow?.bounds
+    }
+}
+
 public struct ResolvedObservationTarget: Sendable, Codable, Equatable {
     public let kind: ResolvedObservationKind
     public let app: ApplicationIdentity?
@@ -165,6 +206,12 @@ public struct ResolvedObservationTarget: Sendable, Codable, Equatable {
     public let bounds: CGRect?
     public let detectionContext: WindowContext?
     public let captureScaleHint: CGFloat?
+    public let selectorResolutionProofs: [SelectorResolutionProof]?
+    /// Exact owner of a conditional mutation performed while resolving this observation target.
+    ///
+    /// This is intentionally separate from `app` and `window`: opening a menu-bar popover mutates
+    /// the status item's window, then captures a different popover window or screen area.
+    public let mutationTargetIdentity: DesktopObservationMutationTargetIdentity?
 
     public init(
         kind: ResolvedObservationKind,
@@ -172,7 +219,9 @@ public struct ResolvedObservationTarget: Sendable, Codable, Equatable {
         window: WindowIdentity? = nil,
         bounds: CGRect? = nil,
         detectionContext: WindowContext? = nil,
-        captureScaleHint: CGFloat? = nil)
+        captureScaleHint: CGFloat? = nil,
+        selectorResolutionProofs: [SelectorResolutionProof]? = nil,
+        mutationTargetIdentity: DesktopObservationMutationTargetIdentity? = nil)
     {
         self.kind = kind
         self.app = app
@@ -180,6 +229,10 @@ public struct ResolvedObservationTarget: Sendable, Codable, Equatable {
         self.bounds = bounds
         self.detectionContext = detectionContext
         self.captureScaleHint = captureScaleHint
+        self.selectorResolutionProofs = selectorResolutionProofs ?? app?.selectorResolutionProofs?.map {
+            $0.selecting(windowIdentity: detectionContext?.windowMutationIdentity)
+        }
+        self.mutationTargetIdentity = mutationTargetIdentity
     }
 
     public static func == (lhs: ResolvedObservationTarget, rhs: ResolvedObservationTarget) -> Bool {
@@ -188,6 +241,8 @@ public struct ResolvedObservationTarget: Sendable, Codable, Equatable {
             && lhs.window == rhs.window
             && lhs.bounds == rhs.bounds
             && lhs.captureScaleHint == rhs.captureScaleHint
+            && lhs.selectorResolutionProofs == rhs.selectorResolutionProofs
+            && lhs.mutationTargetIdentity == rhs.mutationTargetIdentity
             && lhs.detectionContext?.applicationName == rhs.detectionContext?.applicationName
             && lhs.detectionContext?.applicationBundleId == rhs.detectionContext?.applicationBundleId
             && lhs.detectionContext?.applicationProcessId == rhs.detectionContext?.applicationProcessId

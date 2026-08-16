@@ -21,6 +21,19 @@ struct WindowRoutedPointerDriver {
         let identity: WindowMutationIdentity
         let bounds: CGRect
         let screenPoint: CGPoint
+        let windowLayer: Int
+
+        init(
+            identity: WindowMutationIdentity,
+            bounds: CGRect,
+            screenPoint: CGPoint,
+            windowLayer: Int = Int(CGWindowLevelForKey(.normalWindow)))
+        {
+            self.identity = identity
+            self.bounds = bounds
+            self.screenPoint = screenPoint
+            self.windowLayer = windowLayer
+        }
 
         var windowPoint: CGPoint {
             CGPoint(
@@ -126,7 +139,9 @@ struct WindowRoutedPointerDriver {
         targetProcessIdentifier: pid_t,
         targetWindowID: CGWindowID,
         expectedWindowIdentity: WindowMutationIdentity? = nil,
-        expectedWindowBounds: CGRect? = nil) async throws -> DesktopActionOutcome
+        expectedWindowBounds: CGRect? = nil,
+        allowedWindowLayers: Set<Int> = [Int(CGWindowLevelForKey(.normalWindow))]) async throws
+        -> DesktopActionOutcome
     {
         guard button == .left || button == .right else {
             throw PeekabooError.serviceUnavailable(
@@ -143,6 +158,7 @@ struct WindowRoutedPointerDriver {
         let receipt = try self.resolveRoute(targetProcessIdentifier, targetWindowID, point)
         guard receipt.identity.ownerProcessIdentifier == targetProcessIdentifier,
               receipt.identity.windowID == Int(targetWindowID),
+              allowedWindowLayers.contains(receipt.windowLayer),
               receipt.bounds.contains(point),
               expectedWindowIdentity.map({ $0 == receipt.identity }) ?? true,
               expectedWindowBounds.map({ $0 == receipt.bounds }) ?? true
@@ -233,6 +249,7 @@ struct WindowRoutedPointerDriver {
         return outcome
     }
 
+    // swiftlint:disable function_parameter_count
     /// Posts line-based wheel events to one exact visible background window without cursor movement.
     ///
     /// This is intentionally lower-level than an Accessibility scroll action. Callers must first
@@ -256,6 +273,7 @@ struct WindowRoutedPointerDriver {
 
         let receipt = try self.resolveRoute(targetProcessIdentifier, targetWindowID, point)
         guard receipt.identity == expectedWindowIdentity,
+              receipt.windowLayer == Int(CGWindowLevelForKey(.normalWindow)),
               receipt.bounds == expectedWindowBounds,
               receipt.bounds.contains(point),
               self.scrollTargetIsVisible(receipt)
@@ -330,6 +348,8 @@ struct WindowRoutedPointerDriver {
             evidence: .deliveryAccepted,
             unitCount: unitCount)
     }
+
+    // swiftlint:enable function_parameter_count
 
     private func scrollRouteIsCurrent(_ receipt: RouteReceipt) -> Bool {
         self.routeIsCurrent(receipt) && self.scrollTargetIsVisible(receipt)
@@ -582,7 +602,6 @@ struct WindowRoutedPointerDriver {
         guard targetProcessIdentifier > 0,
               let window = SystemIdentityResolver.windowIdentity(targetWindowID),
               window.ownerProcessIdentifier == targetProcessIdentifier,
-              window.layer == 0,
               window.bounds.contains(point),
               let identity = SystemIdentityResolver.windowMutationIdentity(windowID: targetWindowID),
               identity.ownerProcessIdentifier == targetProcessIdentifier
@@ -590,7 +609,11 @@ struct WindowRoutedPointerDriver {
             throw PeekabooError.snapshotStale(
                 "Cannot prove the exact PID/window owner, generation, and bounds for background pointer delivery")
         }
-        return RouteReceipt(identity: identity, bounds: window.bounds, screenPoint: point)
+        return RouteReceipt(
+            identity: identity,
+            bounds: window.bounds,
+            screenPoint: point,
+            windowLayer: window.layer)
     }
 
     private static func validateLiveRoute(_ receipt: RouteReceipt) -> Bool {
@@ -619,7 +642,7 @@ struct WindowRoutedPointerDriver {
               finalWindow.windowID == expectedWindowID,
               finalWindow.ownerProcessIdentifier == receipt.identity.ownerProcessIdentifier,
               finalProcessStartIdentity == receipt.identity.ownerProcessStartIdentity,
-              finalWindow.layer == 0,
+              finalWindow.layer == receipt.windowLayer,
               finalWindow.bounds == receipt.bounds,
               finalWindow.bounds.contains(receipt.screenPoint)
         else {
@@ -639,7 +662,7 @@ struct WindowRoutedPointerDriver {
               window.windowID == windowID,
               window.ownerProcessIdentifier == receipt.identity.ownerProcessIdentifier,
               window.bounds == receipt.bounds,
-              window.layer == 0,
+              window.layer == receipt.windowLayer,
               window.isOnScreen,
               window.alpha > 0,
               window.bounds.contains(receipt.screenPoint)

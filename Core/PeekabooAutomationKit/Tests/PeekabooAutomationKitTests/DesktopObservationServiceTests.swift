@@ -107,6 +107,29 @@ extension DesktopObservationServiceTests {
 
 @MainActor
 extension DesktopObservationServiceTests {
+    func testBackgroundCaptureSuppressesVisibleVisualizerMode() async throws {
+        let app = Self.app()
+        let window = Self.window(
+            id: 42,
+            title: "Fixture",
+            bounds: CGRect(x: 10, y: 20, width: 300, height: 200))
+        let capture = RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window))
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: RecordingUIAutomationService(),
+            applications: RecordingApplicationService(applications: [app], windows: [window]))
+        let target = ResolvedObservationTarget(kind: .screen(index: 0))
+
+        _ = try await service.captureResolvedTarget(
+            target,
+            options: .init(focus: .background, visualizerMode: .screenshotFlash))
+        _ = try await service.captureResolvedTarget(
+            target,
+            options: .init(focus: .foreground, visualizerMode: .screenshotFlash))
+
+        XCTAssertEqual(capture.visualizerModes, [.none, .screenshotFlash])
+    }
+
     func testObservationWithoutDetectionCapturesResolvedWindowID() async throws {
         let imageData = Data([1, 2, 3])
         let app = Self.app()
@@ -247,25 +270,58 @@ extension DesktopObservationServiceTests {
     }
 
     func testObservationNormalizesCapturedWindowMetadataToResolvedTarget() async throws {
-        let app = Self.app()
+        let processIdentity = ApplicationProcessIdentity(
+            processIdentifier: 123,
+            processStartIdentity: 700)
+        let baseApp = ServiceApplicationInfo(
+            processIdentifier: processIdentity.processIdentifier,
+            processStartIdentity: processIdentity.processStartIdentity,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture",
+            windowCount: 1)
+        let appResolution = try XCTUnwrap(ApplicationIdentifierMatcher.resolution(
+            for: "Fixture",
+            in: [ApplicationIdentifierMatcher.Candidate(baseApp)]))
+        let app = baseApp.withSelectorResolutionProofs([
+            appResolution.proof(selectedProcessIdentity: processIdentity),
+        ])
+        let bounds = CGRect(x: 100, y: 100, width: 400, height: 300)
+        let windowIdentity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: processIdentity.processIdentifier,
+            ownerProcessStartIdentity: processIdentity.processStartIdentity,
+            capturedBounds: bounds,
+            isMinimized: false)
         let resolvedWindow = Self.window(
             id: 42,
             title: "Document",
-            bounds: CGRect(x: 100, y: 100, width: 400, height: 300),
-            index: 0)
+            bounds: bounds,
+            index: 0,
+            mutationIdentity: windowIdentity)
         let capturedWindow = Self.window(
             id: 42,
             title: "Document",
-            bounds: CGRect(x: 100, y: 100, width: 400, height: 300),
+            bounds: bounds,
             index: 5,
-            mutationIdentity: WindowMutationIdentity(
-                windowID: 42,
-                ownerProcessIdentifier: app.processIdentifier,
-                ownerProcessStartIdentity: 700,
-                isMinimized: false))
+            mutationIdentity: windowIdentity)
+        let windowProof = try WindowSelectorResolutionProof.make(
+            selection: .automatic,
+            candidates: [resolvedWindow],
+            selected: resolvedWindow,
+            processIdentity: processIdentity)
+        let selectorResolutionProofs = (app.selectorResolutionProofs ?? []).map {
+            $0.selecting(windowIdentity: windowIdentity)
+        } + [windowProof]
+        let captureResult = CaptureResult(
+            imageData: Data([9]),
+            metadata: CaptureMetadata(
+                size: capturedWindow.bounds.size,
+                mode: .window,
+                applicationInfo: app,
+                windowInfo: capturedWindow,
+                selectorResolutionProofs: selectorResolutionProofs))
         let applications = RecordingApplicationService(applications: [app], windows: [resolvedWindow])
-        let capture = RecordingScreenCaptureService(
-            result: Self.captureResult(app: app, window: capturedWindow))
+        let capture = RecordingScreenCaptureService(result: captureResult)
         let service = DesktopObservationService(
             screenCapture: capture,
             automation: RecordingUIAutomationService(),
@@ -280,6 +336,8 @@ extension DesktopObservationServiceTests {
         XCTAssertEqual(result.capture.metadata.windowInfo?.title, "Document")
         XCTAssertEqual(result.capture.metadata.windowInfo?.mutationIdentity, capturedWindow.mutationIdentity)
         XCTAssertEqual(result.target.detectionContext?.windowMutationIdentity, capturedWindow.mutationIdentity)
+        XCTAssertEqual(result.capture.metadata.selectorResolutionProofs, selectorResolutionProofs)
+        XCTAssertEqual(result.target.selectorResolutionProofs, selectorResolutionProofs)
     }
 
     func testObservationWithDetectionPassesWindowContextAndWebFocusPolicy() async throws {
@@ -769,6 +827,7 @@ extension DesktopObservationServiceTests {
 
         XCTAssertEqual(result.files.rawScreenshotPath, outputURL.path)
         let snapshotID = try XCTUnwrap(result.elements?.snapshotId)
+        XCTAssertEqual(result.files.publishedSnapshotID, snapshotID)
         let storedDetection = try await snapshotManager.getDetectionResult(snapshotId: snapshotID)
         XCTAssertEqual(storedDetection?.screenshotPath, outputURL.path)
         XCTAssertEqual(storedDetection?.elements.all.first?.id, "B1")
@@ -1414,6 +1473,7 @@ EngineAwareScreenCaptureServiceProtocol {
     private let onCapture: @MainActor () -> Void
     private var engine: CaptureEnginePreference = .auto
     var operations: [Operation] = []
+    var visualizerModes: [CaptureVisualizerMode] = []
 
     init(
         result: CaptureResult,
@@ -1437,9 +1497,10 @@ EngineAwareScreenCaptureServiceProtocol {
 
     func captureScreen(
         displayIndex: Int?,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale: CaptureScalePreference) async throws -> CaptureResult
     {
+        self.visualizerModes.append(visualizerMode)
         self.operations.append(.screen(displayIndex, scale, self.engine))
         self.onCapture()
         return self.result
@@ -1448,9 +1509,10 @@ EngineAwareScreenCaptureServiceProtocol {
     func captureWindow(
         appIdentifier: String,
         windowIndex: Int?,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale: CaptureScalePreference) async throws -> CaptureResult
     {
+        self.visualizerModes.append(visualizerMode)
         self.operations.append(.window(appIdentifier, windowIndex, scale, self.engine))
         self.onCapture()
         return self.result
@@ -1458,18 +1520,20 @@ EngineAwareScreenCaptureServiceProtocol {
 
     func captureWindow(
         windowID: CGWindowID,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale: CaptureScalePreference) async throws -> CaptureResult
     {
+        self.visualizerModes.append(visualizerMode)
         self.operations.append(.windowID(Int(windowID), scale, self.engine))
         self.onCapture()
         return self.result
     }
 
     func captureFrontmost(
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale: CaptureScalePreference) async throws -> CaptureResult
     {
+        self.visualizerModes.append(visualizerMode)
         self.operations.append(.frontmost(scale, self.engine))
         self.onCapture()
         return self.result
@@ -1477,9 +1541,10 @@ EngineAwareScreenCaptureServiceProtocol {
 
     func captureArea(
         _ rect: CGRect,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale: CaptureScalePreference) async throws -> CaptureResult
     {
+        self.visualizerModes.append(visualizerMode)
         self.operations.append(.area(rect, scale, self.engine))
         self.onCapture()
         return self.result

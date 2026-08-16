@@ -5,6 +5,15 @@ import Testing
 
 struct ApplicationServiceProtocolTests {
     @Test
+    func `hide request rejects a selector from another process`() {
+        #expect(throws: PeekabooError.self) {
+            _ = try ApplicationHideRequest(
+                identifier: "PID:43",
+                expectedIdentity: .init(processIdentifier: 42, processStartIdentity: 7))
+        }
+    }
+
+    @Test
     func `safe background launch shape excludes every dispatching option`() {
         #expect(ApplicationLaunchRequest(applicationIdentifier: "Fixture").isSafeBackgroundNoOp)
         #expect(ApplicationLaunchRequest(
@@ -20,6 +29,82 @@ struct ApplicationServiceProtocolTests {
         #expect(!ApplicationLaunchRequest(
             applicationIdentifier: "Fixture",
             createsNewInstance: true).isSafeBackgroundNoOp)
+    }
+
+    @Test
+    func `exact quit rejects missing canonical outcome`() {
+        let identity = ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 7)
+
+        do {
+            try ApplicationActionResultSemantics.requireConsistentQuitResult(
+                DesktopActionResult(payload: true, outcome: nil),
+                expectedIdentity: identity,
+                operation: "Quit application")
+            Issue.record("Expected missing-outcome failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: nil))
+            #expect(failure.targetReceipt == .init(
+                processIdentifier: identity.processIdentifier,
+                processStartIdentity: identity.processStartIdentity))
+        } catch {
+            Issue.record(error)
+        }
+    }
+
+    @Test
+    func `legacy bulk quit may retain a receiptless result`() throws {
+        let identity = ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 7)
+
+        try ApplicationActionResultSemantics.requireConsistentQuitResult(
+            DesktopActionResult(payload: false, outcome: nil),
+            expectedIdentity: identity,
+            operation: "Bulk quit application",
+            requiresCanonicalOutcome: false)
+    }
+
+    @Test
+    func `exact quit rejects false payload with successful outcome`() {
+        let identity = ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 7)
+        let outcome = DesktopActionOutcome.confirmedChange(
+            delivery: .init(mechanism: .nativeFramework, mode: .background),
+            unitCount: .one)
+
+        do {
+            try ApplicationActionResultSemantics.requireConsistentQuitResult(
+                DesktopActionResult(payload: false, outcome: outcome),
+                expectedIdentity: identity,
+                operation: "Quit application")
+            Issue.record("Expected contradictory false-payload failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.delivery == outcome.delivery)
+            #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: .one))
+            #expect(failure.targetReceipt?.processStartIdentity == identity.processStartIdentity)
+        } catch {
+            Issue.record(error)
+        }
+    }
+
+    @Test
+    func `exact quit preserves false payload non-success outcome`() {
+        let identity = ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 7)
+        let outcome = DesktopActionOutcome.suspectedNoop(
+            delivery: .init(mechanism: .nativeFramework, mode: .background),
+            unitCount: .one)
+
+        do {
+            try ApplicationActionResultSemantics.requireConsistentQuitResult(
+                DesktopActionResult(payload: false, outcome: outcome),
+                expectedIdentity: identity,
+                operation: "Quit application")
+            Issue.record("Expected canonical non-success failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome == outcome)
+            #expect(failure.targetReceipt?.processStartIdentity == identity.processStartIdentity)
+        } catch {
+            Issue.record(error)
+        }
     }
 
     @Test

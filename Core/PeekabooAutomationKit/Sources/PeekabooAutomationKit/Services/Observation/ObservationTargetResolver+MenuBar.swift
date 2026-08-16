@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
 
 extension ObservationTargetResolver {
     func resolveMenuBar() throws -> ResolvedObservationTarget {
@@ -18,8 +19,20 @@ extension ObservationTargetResolver {
         hints: [String],
         openIfNeeded: MenuBarPopoverOpenOptions?) async throws -> ResolvedObservationTarget
     {
+        try await self.resolveMenuBarPopoverActionResult(
+            hints: hints,
+            openIfNeeded: openIfNeeded).payload
+    }
+
+    func resolveMenuBarPopoverActionResult(
+        hints: [String],
+        openIfNeeded: MenuBarPopoverOpenOptions?) async throws
+        -> UIAutomationActionResult<ResolvedObservationTarget>
+    {
         do {
-            return try self.resolveOpenMenuBarPopover(hints: hints)
+            return try UIAutomationActionResult(
+                payload: self.resolveOpenMenuBarPopover(hints: hints),
+                outcome: nil)
         } catch DesktopObservationError.targetNotFound(_) where openIfNeeded != nil {
             return try await self.openAndResolveMenuBarPopover(
                 hints: hints,
@@ -27,7 +40,9 @@ extension ObservationTargetResolver {
         }
     }
 
-    private func resolveOpenMenuBarPopover(hints: [String]) throws -> ResolvedObservationTarget {
+    private func resolveOpenMenuBarPopover(
+        hints: [String]) throws -> ResolvedObservationTarget
+    {
         guard let screens = self.screens?.listScreens(), !screens.isEmpty else {
             throw DesktopObservationError.targetNotFound("menu bar popover screens")
         }
@@ -40,10 +55,25 @@ extension ObservationTargetResolver {
             throw DesktopObservationError.targetNotFound("menu bar popover")
         }
 
+        let exactMetadata = self.exactWindowMetadataProvider.metadata(for: popover.windowID)
+        if exactMetadata == nil ||
+            exactMetadata?.ownerProcessIdentifier != popover.ownerPID ||
+            exactMetadata?.bounds != popover.bounds
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The open menu-bar popover has no stable owner generation.",
+                hint: "Refresh the menu-bar target before retrying; Peekaboo refused to click it.")
+        }
+        guard let exactMetadata else {
+            preconditionFailure("Stable popover metadata was required above")
+        }
+        let processStartIdentity = exactMetadata.ownerProcessStartIdentity
         let app = ApplicationIdentity(
             processIdentifier: popover.ownerPID,
+            processStartIdentity: processStartIdentity,
             bundleIdentifier: nil,
-            name: popover.ownerName ?? "Unknown")
+            name: popover.ownerName ?? exactMetadata.applicationName ?? "Unknown")
         let window = WindowIdentity(
             windowID: Int(popover.windowID),
             title: popover.title ?? "",
@@ -55,7 +85,12 @@ extension ObservationTargetResolver {
             applicationProcessId: app.processIdentifier,
             windowTitle: window.title,
             windowID: window.windowID,
-            windowBounds: window.bounds)
+            windowBounds: window.bounds,
+            windowMutationIdentity: WindowMutationIdentity(
+                windowID: window.windowID,
+                ownerProcessIdentifier: app.processIdentifier,
+                ownerProcessStartIdentity: processStartIdentity,
+                capturedBounds: window.bounds))
 
         return ResolvedObservationTarget(
             kind: .menubarPopover,
@@ -67,7 +102,7 @@ extension ObservationTargetResolver {
 
     private func openAndResolveMenuBarPopover(
         hints: [String],
-        options: MenuBarPopoverOpenOptions) async throws -> ResolvedObservationTarget
+        options: MenuBarPopoverOpenOptions) async throws -> UIAutomationActionResult<ResolvedObservationTarget>
     {
         guard let menu else {
             throw DesktopObservationError.targetNotFound("menu bar popover menu service")
@@ -76,40 +111,175 @@ extension ObservationTargetResolver {
             throw DesktopObservationError.targetNotFound("menu bar popover click hint")
         }
 
-        let clickResult = if let ownedMenu = menu as? MenuService {
-            try await ownedMenu.clickMenuBarItemWithOwnedLane(named: hint)
+        guard let exactMenu = menu as? any MenuServiceExactLeafActionResultProviding else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .foregroundConsentRequired,
+                message: "Background popover observation requires an exact window-routed menu-bar item.",
+                hint: "Update the runtime or explicitly authorize a separate foreground menu-bar interaction.")
+        }
+
+        let clickResult = try await self.backgroundMenuBarClick(
+            named: hint,
+            menu: menu,
+            exactMenu: exactMenu)
+        DesktopObservationActionProgressContext.record(clickResult)
+        do {
+            if options.settleDelayNanoseconds > 0 {
+                try await Task.sleep(nanoseconds: options.settleDelayNanoseconds)
+            }
+
+            if let target = try? self.resolveOpenMenuBarPopover(hints: hints) {
+                return self.menuBarResolutionResult(target, after: clickResult)
+            }
+
+            // Some transient menu extras do not publish a stable CG window immediately after click; fall back to
+            // the click-adjacent menu-bar area so OCR can still inspect the opened popover.
+            if options.useClickLocationAreaFallback,
+               let preferredX = clickResult.payload.location?.x,
+               let screens = self.screens?.listScreens(),
+               let bounds = ObservationMenuBarPopoverOCRSelector.popoverAreaRect(
+                   preferredX: preferredX,
+                   screens: screens)
+            {
+                let context = WindowContext(
+                    applicationName: hint,
+                    windowTitle: hint,
+                    windowBounds: bounds)
+                return self.menuBarResolutionResult(
+                    ResolvedObservationTarget(
+                        kind: .menubarPopover,
+                        app: ApplicationIdentity(processIdentifier: -1, bundleIdentifier: nil, name: hint),
+                        bounds: bounds,
+                        detectionContext: context),
+                    after: clickResult)
+            }
+
+            throw DesktopObservationError.targetNotFound("menu bar popover")
+        } catch {
+            throw self.failureAfterMenuBarClick(error, clickResult: clickResult)
+        }
+    }
+
+    private func withMutationTargetIdentity(
+        _ target: ResolvedObservationTarget,
+        _ mutationTargetIdentity: DesktopTargetIdentity) -> ResolvedObservationTarget
+    {
+        ResolvedObservationTarget(
+            kind: target.kind,
+            app: target.app,
+            window: target.window,
+            bounds: target.bounds,
+            detectionContext: target.detectionContext,
+            captureScaleHint: target.captureScaleHint,
+            mutationTargetIdentity: DesktopObservationMutationTargetIdentity(mutationTargetIdentity))
+    }
+
+    private func backgroundMenuBarClick(
+        named name: String,
+        menu: any MenuServiceProtocol,
+        exactMenu: any MenuServiceExactLeafActionResultProviding) async throws
+        -> UIAutomationActionResult<ClickResult>
+    {
+        let items = try await menu.listMenuBarItems(includeRaw: true)
+        let selection: DeterministicDesktopLeafSelector.Selection<MenuBarItemInfo>
+        do {
+            selection = try MenuBarItemSelector.select(named: name, from: items)
+        } catch let error as DesktopLeafSelectionError {
+            let reason: DesktopActionOutcome.RefusalReason = switch error {
+            case .ambiguous: .invalidRequest
+            case .notFound, .invalidIndex: .targetUnavailable
+            }
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: reason,
+                message: error.localizedDescription,
+                hint: "Use one exact current menu-bar item name.")
+        }
+        guard let baseEvidence = selection.candidate.value.selectionEvidence,
+              baseEvidence.selectedTargetReceipt.windowID != nil
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .foregroundConsentRequired,
+                message: "The menu-bar item has no exact background window route.",
+                hint: "Use an explicitly authorized foreground menu-bar action instead.")
+        }
+        let expectedEvidence = try baseEvidence.selecting(
+            normalizedSelector: selection.normalizedSelector,
+            matchKind: selection.matchKind)
+        let request = try MenuBarItemActionRequest(
+            named: name,
+            expectedLeafEvidence: expectedEvidence)
+        let result = if let ownedMenu = exactMenu as? MenuService {
+            try await ownedMenu.clickMenuBarItemActionResultWithOwnedLane(
+                at: selection.candidate.value.index,
+                expectedEvidence: expectedEvidence,
+                normalizedSelector: selection.normalizedSelector,
+                matchKind: selection.matchKind)
         } else {
-            try await menu.clickMenuBarItem(named: hint)
-        }
-        if options.settleDelayNanoseconds > 0 {
-            try await Task.sleep(nanoseconds: options.settleDelayNanoseconds)
+            try await exactMenu.clickMenuBarItemActionResult(request: request)
         }
 
-        if let target = try? self.resolveOpenMenuBarPopover(hints: hints) {
-            return target
+        guard let outcome = result.outcome,
+              outcome.isAccepted(by: .confirmedOrDispatched),
+              outcome.delivery == .init(mechanism: .windowTargetedEvents, mode: .background),
+              outcome.dispatchState.unitCount != nil,
+              let target = result.targetIdentity,
+              let exactWindow = target.exactWindow,
+              expectedEvidence.selects(window: exactWindow.identity),
+              result.selectedLeafEvidence?.count == 1,
+              result.selectedLeafEvidence?.first?.hasSameResolvedLeaf(as: expectedEvidence) == true
+        else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: result.outcome?.delivery,
+                evidence: .completionUnknown,
+                unitCount: result.outcome?.dispatchState.unitCount,
+                message: "The background menu-bar click returned incomplete or foreground action evidence.",
+                hint: "Observe the menu bar before retrying and update the runtime host.")
+                .attributed(to: result.targetIdentity?.actionTargetReceipt)
+                .selectingLeaves(result.selectedLeafEvidence)
         }
+        return result
+    }
 
-        // Some transient menu extras do not publish a stable CG window immediately after click; fall back to
-        // the click-adjacent menu-bar area so OCR can still inspect the opened popover.
-        if options.useClickLocationAreaFallback,
-           let preferredX = clickResult.location?.x,
-           let screens = self.screens?.listScreens(),
-           let bounds = ObservationMenuBarPopoverOCRSelector.popoverAreaRect(
-               preferredX: preferredX,
-               screens: screens)
+    private func menuBarResolutionResult(
+        _ target: ResolvedObservationTarget,
+        after clickResult: UIAutomationActionResult<ClickResult>) -> UIAutomationActionResult<ResolvedObservationTarget>
+    {
+        guard let mutationTargetIdentity = clickResult.targetIdentity else {
+            preconditionFailure("Background menu-bar result validation requires an exact target")
+        }
+        return UIAutomationActionResult(
+            payload: self.withMutationTargetIdentity(target, mutationTargetIdentity),
+            outcome: clickResult.outcome,
+            targetIdentity: mutationTargetIdentity,
+            selectedLeafEvidence: clickResult.selectedLeafEvidence)
+    }
+
+    private func failureAfterMenuBarClick(
+        _ error: any Error,
+        clickResult: UIAutomationActionResult<ClickResult>) -> DesktopActionFailure
+    {
+        let message = "Menu-bar popover resolution failed after its background click was dispatched."
+        let hint = "Observe the menu bar before retrying this popover observation."
+        if let outcome = clickResult.outcome,
+           let failure = DesktopActionFailure(
+               outcome: outcome,
+               message: message,
+               hint: hint,
+               causeDescription: error.localizedDescription,
+               targetReceipt: clickResult.targetIdentity?.actionTargetReceipt,
+               selectedLeafEvidence: clickResult.selectedLeafEvidence)
         {
-            let context = WindowContext(
-                applicationName: hint,
-                windowTitle: hint,
-                windowBounds: bounds)
-            return ResolvedObservationTarget(
-                kind: .menubarPopover,
-                app: ApplicationIdentity(processIdentifier: -1, bundleIdentifier: nil, name: hint),
-                bounds: bounds,
-                detectionContext: context)
+            return failure
         }
-
-        throw DesktopObservationError.targetNotFound("menu bar popover")
+        return DesktopActionFailure.indeterminate(
+            delivery: clickResult.outcome?.delivery,
+            evidence: .completionUnknown,
+            unitCount: clickResult.outcome?.dispatchState.unitCount,
+            message: message,
+            hint: hint,
+            causeDescription: error.localizedDescription)
+            .attributed(to: clickResult.targetIdentity?.actionTargetReceipt)
+            .selectingLeaves(clickResult.selectedLeafEvidence)
     }
 
     private func menuBarPopoverClickHint(

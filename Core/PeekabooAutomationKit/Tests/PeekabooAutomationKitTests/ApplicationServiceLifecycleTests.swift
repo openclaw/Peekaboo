@@ -318,6 +318,7 @@ struct ApplicationServiceLifecycleTests {
         #expect(info.windowCount == 1)
         #expect(info.windowIDs == nil)
         #expect(info.processStartIdentity == nil)
+        #expect(info.executablePath == nil)
     }
 
     @Test
@@ -634,6 +635,71 @@ struct ApplicationServiceLifecycleTests {
 
     @Test
     @MainActor
+    func `new-instance launch binds the exact process returned by LaunchServices`() async throws {
+        let recorder = ApplicationOpenRecorder()
+        let runningApplication = recorder.runningApplication
+        let processStartIdentity = try #require(
+            SystemIdentityResolver.processStartIdentity(runningApplication.processIdentifier))
+        var ambientCandidateReads = 0
+        let service = ApplicationService(
+            applicationOpenHandler: recorder.open,
+            applicationSelectorCandidatesProvider: {
+                ambientCandidateReads += 1
+                return [ApplicationIdentifierMatcher.Candidate(
+                    processIdentifier: runningApplication.processIdentifier + 1,
+                    bundleIdentifier: runningApplication.bundleIdentifier,
+                    name: runningApplication.localizedName ?? "Finder",
+                    bundlePath: runningApplication.bundleURL?.path,
+                    executablePath: runningApplication.executableURL?.path,
+                    isRegularApplication: true)]
+            },
+            applicationActiveProvider: { _ in true },
+            processStartIdentityProvider: { _ in processStartIdentity })
+
+        let result = try await service.launchApplicationResult(request: ApplicationLaunchRequest(
+            applicationIdentifier: "Finder",
+            activates: true,
+            waitUntilReady: false,
+            createsNewInstance: true))
+
+        let proof = try #require(result.payload.selectorResolutionProofs?.first)
+        #expect(result.payload.processIdentity == ApplicationProcessIdentity(
+            processIdentifier: runningApplication.processIdentifier,
+            processStartIdentity: processStartIdentity))
+        #expect(proof.selectedProcessIdentity == result.payload.processIdentity)
+        #expect(proof.candidateCount == 1)
+        #expect(ambientCandidateReads == 0)
+    }
+
+    @Test
+    @MainActor
+    func `new-instance selector mismatch remains an unsafe post-dispatch failure`() async throws {
+        let recorder = ApplicationOpenRecorder()
+        let processStartIdentity = try #require(
+            SystemIdentityResolver.processStartIdentity(recorder.runningApplication.processIdentifier))
+        let service = ApplicationService(
+            applicationOpenHandler: recorder.open,
+            applicationActiveProvider: { _ in true },
+            processStartIdentityProvider: { _ in processStartIdentity })
+
+        do {
+            _ = try await service.launchApplicationResult(request: ApplicationLaunchRequest(
+                applicationIdentifier: "TextEdit",
+                activates: true,
+                waitUntilReady: false,
+                createsNewInstance: true))
+            Issue.record("Expected the returned application to fail its exact launch selector")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .dispatchedUnverified)
+            #expect(failure.outcome.delivery == .init(mechanism: .nativeFramework, mode: .foreground))
+            #expect(failure.outcome.dispatchState == .dispatched(unitCount: .one))
+            #expect(failure.outcome.retrySafety == .unsafe)
+        }
+        #expect(recorder.calls.count == 1)
+    }
+
+    @Test
+    @MainActor
     func `wait-for-window polls for automation readiness after process launch`() async throws {
         let recorder = ApplicationOpenRecorder()
         var readinessChecks = 0
@@ -880,6 +946,54 @@ extension ApplicationServiceLifecycleTests {
         #expect(result.outcome?.delivery == .init(mechanism: .nativeFramework, mode: .foreground))
         #expect(result.outcome?.dispatchState == .dispatched(
             unitCount: DesktopActionOutcome.DispatchUnitCount(2)))
+    }
+
+    @Test
+    @MainActor
+    func `relaunch refuses a different launch bundle before quitting its pinned target`() async throws {
+        let openRecorder = ApplicationOpenRecorder()
+        var resolvedIdentifiers: [String] = []
+        var quitCalls = 0
+        let service = ApplicationService(
+            applicationOpenHandler: openRecorder.open,
+            relaunchTargetResolver: { identifier in
+                resolvedIdentifiers.append(identifier)
+                return ServiceApplicationInfo(
+                    processIdentifier: 4242,
+                    processStartIdentity: 700,
+                    bundleIdentifier: "com.example.Unrelated",
+                    name: "Unrelated",
+                    bundlePath: "/Applications/Unrelated.app")
+            },
+            relaunchQuitHandler: { _ in
+                quitCalls += 1
+                return .init(requestAccepted: true, terminated: true)
+            })
+
+        do {
+            _ = try await service.relaunchApplicationResult(request: ApplicationRelaunchRequest(
+                targetIdentifier: "PID:4242",
+                expectedTargetIdentity: ApplicationProcessIdentity(
+                    processIdentifier: 4242,
+                    processStartIdentity: 700),
+                launchRequest: ApplicationLaunchRequest(
+                    applicationIdentifier: "Finder",
+                    activates: true),
+                waitSeconds: 0))
+            Issue.record("Expected a mismatched relaunch target refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .invalidRequest)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+            #expect(failure.targetReceipt == .init(
+                processIdentifier: 4242,
+                processStartIdentity: 700))
+        }
+
+        #expect(resolvedIdentifiers == ["PID:4242"])
+        #expect(quitCalls == 0)
+        #expect(openRecorder.calls.isEmpty)
     }
 
     @Test
@@ -1166,6 +1280,9 @@ extension ApplicationServiceLifecycleTests {
             #expect(failure.outcome.retrySafety == .unsafe)
             #expect(failure.outcome.dispatchState == .mayHaveDispatched(
                 unitCount: DesktopActionOutcome.DispatchUnitCount(2)))
+            #expect(failure.targetReceipt == .init(
+                processIdentifier: 4242,
+                processStartIdentity: 700))
             #expect(lifecycle.quitCalls.count == 1)
             #expect(lifecycle.runningIdentifiers == ["PID:4242"])
         }
@@ -1390,6 +1507,9 @@ extension ApplicationServiceLifecycleTests {
             #expect(failure.outcome.refusalReason == .targetUnavailable)
             #expect(failure.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
             #expect(failure.outcome.retrySafety == .safe)
+            #expect(failure.targetReceipt == .init(
+                processIdentifier: processIdentifier,
+                processStartIdentity: processStartIdentity))
         }
         #expect(quitRequestForces == [false, true, false])
     }
@@ -1453,6 +1573,10 @@ extension ApplicationServiceLifecycleTests {
     @MainActor
     func `activation cancellation after dispatch is a canonical unsafe failure`() async throws {
         let runningApplication = try self.runningApplication()
+        let identity = try ApplicationProcessIdentity(
+            processIdentifier: runningApplication.processIdentifier,
+            processStartIdentity: #require(SystemIdentityResolver.processStartIdentity(
+                runningApplication.processIdentifier)))
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in runningApplication },
             applicationActivationHandler: { _ in true },
@@ -1468,11 +1592,15 @@ extension ApplicationServiceLifecycleTests {
 
         do {
             _ = try await service.activateApplicationResult(request: ApplicationActivationRequest(
-                identifier: "PID:\(runningApplication.processIdentifier)"))
+                identifier: "PID:\(runningApplication.processIdentifier)",
+                expectedIdentity: identity))
             Issue.record("Expected canonical post-dispatch cancellation")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .dispatchedUnverified)
             #expect(failure.outcome.evidence == .operationStillRunning)
+            #expect(failure.targetReceipt == .init(
+                processIdentifier: identity.processIdentifier,
+                processStartIdentity: identity.processStartIdentity))
             #expect(failure.outcome.retrySafety == .unsafe)
         }
     }
@@ -1676,8 +1804,9 @@ private final class RelaunchLifecycleRecorder {
         return ServiceApplicationInfo(
             processIdentifier: self.targetPID,
             processStartIdentity: 700,
-            bundleIdentifier: "com.example.target",
-            name: "Target")
+            bundleIdentifier: "com.apple.finder",
+            name: "Finder",
+            bundlePath: NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder")?.path)
     }
 
     func quit(request: ApplicationQuitRequest) async throws -> ApplicationService.ApplicationQuitAttempt {

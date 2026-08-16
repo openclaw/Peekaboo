@@ -50,7 +50,7 @@ final class DesktopObservationMenubarTests: XCTestCase {
         XCTAssertEqual(target.captureScaleHint, screen.scaleFactor)
     }
 
-    func testPopoverObservationCapturesResolvedWindowID() async throws {
+    func testPopoverObservationRefusesUnreceiptedWindowBeforeCapture() async throws {
         let capture = MenuBarRecordingScreenCaptureService()
         let bounds = CGRect(x: 1200, y: 920, width: 320, height: 260)
         let service = DesktopObservationService(
@@ -62,21 +62,519 @@ final class DesktopObservationMenubarTests: XCTestCase {
                 window: WindowIdentity(windowID: 42, title: "", bounds: bounds, index: 0),
                 bounds: bounds)))
 
-        let result = try await service.observe(DesktopObservationRequest(
-            target: .menubarPopover(hints: ["Trimmy"]),
+        do {
+            _ = try await service.observe(DesktopObservationRequest(
+                target: .menubarPopover(hints: ["Trimmy"]),
+                detection: DesktopDetectionOptions(mode: .none)))
+            XCTFail("Expected an unreceipted popover window to fail closed")
+        } catch let error as DesktopObservationError {
+            guard case .targetChanged = error else {
+                return XCTFail("Expected targetChanged, received \(error)")
+            }
+        }
+
+        XCTAssertTrue(capture.capturedWindowIDs.isEmpty)
+    }
+
+    func testPopoverObservationRejectsSameWindowIDFromReplacementGeneration() async throws {
+        let capture = MenuBarRecordingScreenCaptureService()
+        let bounds = CGRect(x: 1200, y: 920, width: 320, height: 260)
+        let original = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 123,
+            ownerProcessStartIdentity: 700,
+            capturedBounds: bounds)
+        let replacement = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 123,
+            ownerProcessStartIdentity: 701,
+            capturedBounds: bounds)
+        capture.windowCaptureResult = CaptureResult(
+            imageData: Data([4, 5, 6]),
+            metadata: CaptureMetadata(
+                size: bounds.size,
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 123,
+                    processStartIdentity: 701,
+                    bundleIdentifier: "dev.peekaboo.replacement",
+                    name: "Replacement"),
+                windowInfo: ServiceWindowInfo(
+                    windowID: 42,
+                    title: "",
+                    bounds: bounds,
+                    index: 0,
+                    mutationIdentity: replacement)))
+        let target = ResolvedObservationTarget(
+            kind: .menubarPopover,
+            app: ApplicationIdentity(
+                processIdentifier: 123,
+                processStartIdentity: 700,
+                bundleIdentifier: nil,
+                name: "Original"),
+            window: WindowIdentity(windowID: 42, title: "", bounds: bounds, index: 0),
+            bounds: bounds,
+            detectionContext: WindowContext(
+                applicationName: "Original",
+                applicationProcessId: 123,
+                windowTitle: "",
+                windowID: 42,
+                windowBounds: bounds,
+                windowMutationIdentity: original))
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: MenuBarRecordingAutomationService(),
+            targetResolver: MenuBarTargetResolver(target: target))
+
+        do {
+            _ = try await service.observe(DesktopObservationRequest(
+                target: .menubarPopover(hints: ["Original"]),
+                detection: DesktopDetectionOptions(mode: .none)))
+            XCTFail("Expected replacement generation to fail capture receipt validation")
+        } catch let error as DesktopObservationError {
+            guard case .targetChanged = error else {
+                return XCTFail("Expected targetChanged, received \(error)")
+            }
+        }
+
+        XCTAssertEqual(capture.capturedWindowIDs, [42, 42])
+    }
+
+    func testPopoverObservationWithOpenIfNeededIsNoChangeWhenAlreadyOpen() async throws {
+        let capture = MenuBarRecordingScreenCaptureService()
+        let bounds = CGRect(x: 1200, y: 920, width: 320, height: 260)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 123,
+            ownerProcessStartIdentity: 700,
+            capturedBounds: bounds)
+        capture.windowCaptureResult = CaptureResult(
+            imageData: Data([4, 5, 6]),
+            metadata: CaptureMetadata(
+                size: bounds.size,
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 123,
+                    processStartIdentity: 700,
+                    bundleIdentifier: "dev.peekaboo.fixture",
+                    name: "Fixture"),
+                windowInfo: ServiceWindowInfo(
+                    windowID: 42,
+                    title: "",
+                    bounds: bounds,
+                    index: 0,
+                    mutationIdentity: identity)))
+        let target = ResolvedObservationTarget(
+            kind: .menubarPopover,
+            app: ApplicationIdentity(
+                processIdentifier: 123,
+                processStartIdentity: 700,
+                bundleIdentifier: "dev.peekaboo.fixture",
+                name: "Fixture"),
+            window: WindowIdentity(windowID: 42, title: "", bounds: bounds, index: 0),
+            bounds: bounds,
+            detectionContext: WindowContext(
+                applicationName: "Fixture",
+                applicationBundleId: "dev.peekaboo.fixture",
+                applicationProcessId: 123,
+                windowTitle: "",
+                windowID: 42,
+                windowBounds: bounds,
+                windowMutationIdentity: identity))
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: MenuBarRecordingAutomationService(),
+            targetResolver: MenuBarTargetResolver(target: target))
+
+        let result = try await service.observeActionResult(DesktopObservationRequest(
+            target: .menubarPopover(
+                hints: ["Fixture"],
+                openIfNeeded: .init(clickHint: "Fixture", settleDelayNanoseconds: 0)),
             detection: DesktopDetectionOptions(mode: .none)))
 
         XCTAssertEqual(capture.capturedWindowIDs, [42])
-        XCTAssertEqual(result.target.kind, .menubarPopover)
-        XCTAssertEqual(result.target.bounds, bounds)
-        XCTAssertEqual(result.timings.spans.map(\.name), [
-            "state.snapshot",
-            "target.resolve",
-            "capture.area",
-            "desktop.observe",
-        ])
-        XCTAssertEqual(result.diagnostics.target?.source, "window-list")
-        XCTAssertEqual(result.diagnostics.target?.windowID, 42)
+        XCTAssertEqual(result.outcome?.state, .confirmedNoChange)
+        XCTAssertNil(result.outcome?.delivery)
+        XCTAssertEqual(result.outcome?.dispatchState, DesktopActionOutcome.DispatchState.none)
+        XCTAssertNil(result.targetIdentity)
+        XCTAssertNil(result.selectedLeafEvidence)
+        XCTAssertNil(result.payload.target.mutationTargetIdentity)
+    }
+
+    func testAlreadyOpenPopoverComposesForegroundCaptureOutcomeAndTarget() async throws {
+        let fixture = try Self.alreadyOpenPopoverFixture()
+        let capture = MenuBarRecordingScreenCaptureService()
+        capture.windowCaptureResult = fixture.capture
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: MenuBarRecordingAutomationService(),
+            targetResolver: MenuBarTargetResolver(target: fixture.target))
+
+        let result = try await service.observeActionResult(DesktopObservationRequest(
+            target: .menubarPopover(
+                hints: ["Fixture"],
+                openIfNeeded: .init(clickHint: "Fixture", settleDelayNanoseconds: 0)),
+            capture: DesktopCaptureOptions(focus: .foreground),
+            detection: DesktopDetectionOptions(mode: .none)))
+
+        XCTAssertEqual(result.outcome?.state, .dispatchedUnverified)
+        XCTAssertEqual(
+            result.outcome?.delivery,
+            DesktopActionOutcome.Delivery(mechanism: .capturePipeline, mode: .foreground))
+        XCTAssertEqual(result.outcome?.dispatchState.unitCount, .one)
+        XCTAssertEqual(result.targetIdentity, fixture.targetIdentity)
+        XCTAssertEqual(result.payload.target.window?.windowID, fixture.identity.windowID)
+    }
+
+    func testAlreadyOpenPopoverPreservesForegroundCaptureFailureOutcomeAndTarget() async throws {
+        let fixture = try Self.alreadyOpenPopoverFixture()
+        let capture = MenuBarRecordingScreenCaptureService()
+        capture.windowCaptureError = DesktopObservationError.targetNotFound("capture fixture")
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: MenuBarRecordingAutomationService(),
+            targetResolver: MenuBarTargetResolver(target: fixture.target))
+
+        do {
+            _ = try await service.observeActionResult(DesktopObservationRequest(
+                target: .menubarPopover(
+                    hints: ["Fixture"],
+                    openIfNeeded: .init(clickHint: "Fixture", settleDelayNanoseconds: 0)),
+                capture: DesktopCaptureOptions(focus: .foreground),
+                detection: DesktopDetectionOptions(mode: .none)))
+            XCTFail("Expected foreground capture failure")
+        } catch let failure as DesktopActionFailure {
+            XCTAssertEqual(failure.outcome.state, .dispatchedUnverified)
+            XCTAssertEqual(
+                failure.outcome.delivery,
+                DesktopActionOutcome.Delivery(mechanism: .capturePipeline, mode: .foreground))
+            XCTAssertEqual(failure.outcome.dispatchState.unitCount, .one)
+            XCTAssertEqual(failure.targetReceipt, fixture.targetIdentity.actionTargetReceipt)
+            XCTAssertTrue(failure.causeDescription?.contains("capture fixture") == true)
+        }
+    }
+
+    func testAlreadyOpenPopoverComposesWebFocusOutcomeUnitsAndTarget() async throws {
+        let fixture = try Self.alreadyOpenPopoverFixture()
+        let capture = MenuBarRecordingScreenCaptureService()
+        capture.windowCaptureResult = fixture.capture
+        let detection = Self.detectionResult(for: fixture.target)
+        let automation = MenuBarRecordingAutomationService(actionResult: UIAutomationActionResult(
+            payload: detection,
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: DesktopActionOutcome.DispatchUnitCount(2)),
+            targetIdentity: fixture.targetIdentity))
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: automation,
+            targetResolver: MenuBarTargetResolver(target: fixture.target))
+
+        let result = try await service.observeActionResult(DesktopObservationRequest(
+            target: .menubarPopover(
+                hints: ["Fixture"],
+                openIfNeeded: .init(clickHint: "Fixture", settleDelayNanoseconds: 0)),
+            detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: true)))
+
+        XCTAssertEqual(result.outcome?.state, .dispatchedUnverified)
+        XCTAssertEqual(
+            result.outcome?.delivery,
+            DesktopActionOutcome.Delivery(mechanism: .capturePipeline, mode: .background))
+        XCTAssertEqual(result.outcome?.dispatchState.unitCount, DesktopActionOutcome.DispatchUnitCount(2))
+        XCTAssertEqual(result.targetIdentity, fixture.targetIdentity)
+        XCTAssertEqual(automation.detectCalls, 1)
+    }
+
+    func testAlreadyOpenPopoverComposesForegroundCaptureAndWebFocusUnits() async throws {
+        let fixture = try Self.alreadyOpenPopoverFixture()
+        let capture = MenuBarRecordingScreenCaptureService()
+        capture.windowCaptureResult = fixture.capture
+        let automation = MenuBarRecordingAutomationService(actionResult: UIAutomationActionResult(
+            payload: Self.detectionResult(for: fixture.target),
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: DesktopActionOutcome.DispatchUnitCount(2)),
+            targetIdentity: fixture.targetIdentity))
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: automation,
+            targetResolver: MenuBarTargetResolver(target: fixture.target))
+
+        let result = try await service.observeActionResult(DesktopObservationRequest(
+            target: .menubarPopover(
+                hints: ["Fixture"],
+                openIfNeeded: .init(clickHint: "Fixture", settleDelayNanoseconds: 0)),
+            capture: DesktopCaptureOptions(focus: .foreground),
+            detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: true)))
+
+        XCTAssertEqual(result.outcome?.state, .dispatchedUnverified)
+        XCTAssertEqual(
+            result.outcome?.delivery,
+            DesktopActionOutcome.Delivery(mechanism: .capturePipeline, mode: .foreground))
+        XCTAssertEqual(result.outcome?.dispatchState.unitCount, DesktopActionOutcome.DispatchUnitCount(3))
+        XCTAssertEqual(result.targetIdentity, fixture.targetIdentity)
+    }
+
+    func testAlreadyOpenPopoverPreservesWebFocusFailureUnitsAndTarget() async throws {
+        let fixture = try Self.alreadyOpenPopoverFixture()
+        let capture = MenuBarRecordingScreenCaptureService()
+        capture.windowCaptureResult = fixture.capture
+        let detectionFailure = DesktopActionFailure.indeterminate(
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(2),
+            message: "Web focus failed after dispatch.")
+            .attributed(to: fixture.targetIdentity.actionTargetReceipt)
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: MenuBarRecordingAutomationService(actionError: detectionFailure),
+            targetResolver: MenuBarTargetResolver(target: fixture.target))
+
+        do {
+            _ = try await service.observeActionResult(DesktopObservationRequest(
+                target: .menubarPopover(
+                    hints: ["Fixture"],
+                    openIfNeeded: .init(clickHint: "Fixture", settleDelayNanoseconds: 0)),
+                detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: true)))
+            XCTFail("Expected web-focus failure")
+        } catch let failure as DesktopActionFailure {
+            XCTAssertEqual(failure.outcome.state, .indeterminate)
+            XCTAssertEqual(
+                failure.outcome.delivery,
+                DesktopActionOutcome.Delivery(mechanism: .capturePipeline, mode: .background))
+            XCTAssertEqual(failure.outcome.dispatchState.unitCount, DesktopActionOutcome.DispatchUnitCount(2))
+            XCTAssertEqual(failure.targetReceipt, fixture.targetIdentity.actionTargetReceipt)
+        }
+    }
+
+    func testPopoverConditionalTimeoutPreservesMutationUncertaintyAndExactReceipt() async throws {
+        let fixture = try Self.alreadyOpenPopoverFixture()
+        let statusBounds = CGRect(x: 1590, y: 1080, width: 20, height: 20)
+        let statusIdentity = WindowMutationIdentity(
+            windowID: 700,
+            ownerProcessIdentifier: 321,
+            ownerProcessStartIdentity: 654,
+            capturedBounds: statusBounds)
+        let statusTarget = try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+            identity: statusIdentity,
+            bounds: statusBounds))
+        let captureSuspension = MenuBarObservationSuspension()
+        let capture = MenuBarRecordingScreenCaptureService()
+        capture.windowCaptureResult = fixture.capture
+        capture.windowCaptureSuspension = captureSuspension
+        let service = try DesktopObservationService(
+            screenCapture: capture,
+            automation: MenuBarRecordingAutomationService(),
+            targetResolver: MenuBarActionTargetResolver(result: UIAutomationActionResult(
+                payload: fixture.target,
+                outcome: .dispatchedUnverified(
+                    delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                    evidence: .deliveryAccepted,
+                    unitCount: DesktopActionOutcome.DispatchUnitCount(3)),
+                targetIdentity: statusTarget)))
+
+        let observation = Task { @MainActor in
+            try await service.observeActionResult(DesktopObservationRequest(
+                target: .menubarPopover(
+                    hints: ["Fixture"],
+                    openIfNeeded: MenuBarPopoverOpenOptions(clickHint: "Fixture")),
+                detection: DesktopDetectionOptions(mode: .none),
+                timeout: DesktopObservationTimeouts(overall: 0.2)))
+        }
+        await captureSuspension.waitUntilEntered()
+
+        do {
+            _ = try await observation.value
+            XCTFail("Expected conditional popover timeout")
+        } catch let failure as DesktopActionFailure {
+            XCTAssertEqual(failure.outcome.state, .indeterminate)
+            XCTAssertEqual(failure.outcome.delivery?.mechanism, .windowTargetedEvents)
+            XCTAssertEqual(failure.outcome.delivery?.mode, .background)
+            XCTAssertEqual(failure.outcome.dispatchState.unitCount?.rawValue, 3)
+            XCTAssertEqual(failure.outcome.retrySafety, .unsafe)
+            XCTAssertEqual(failure.targetReceipt, statusTarget.actionTargetReceipt)
+        }
+        await captureSuspension.release()
+    }
+
+    func testPopoverSettleTimeoutPreservesDispatchedClickEvidence() async throws {
+        let capture = MenuBarRecordingScreenCaptureService()
+        let statusBounds = CGRect(x: 1590, y: 1080, width: 20, height: 20)
+        let statusIdentity = WindowMutationIdentity(
+            windowID: 700,
+            ownerProcessIdentifier: 321,
+            ownerProcessStartIdentity: 654,
+            capturedBounds: statusBounds)
+        let mutationTarget = try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+            identity: statusIdentity,
+            bounds: statusBounds))
+        let menu = GenerationPinnedMenuBarRecordingMenuService(
+            location: CGPoint(x: 1600, y: 1098),
+            targetIdentity: mutationTarget)
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: MenuBarRecordingAutomationService(),
+            applications: UnusedApplicationService(),
+            menu: menu,
+            screens: MenuBarRecordingScreenService(screens: [Self.primaryScreen()]))
+
+        do {
+            _ = try await service.observeActionResult(DesktopObservationRequest(
+                target: .menubarPopover(
+                    hints: ["Definitely Not Open Menu Extra For Test"],
+                    openIfNeeded: MenuBarPopoverOpenOptions(
+                        clickHint: "Definitely Not Open Menu Extra For Test",
+                        settleDelayNanoseconds: 1_000_000_000)),
+                detection: DesktopDetectionOptions(mode: .none),
+                timeout: DesktopObservationTimeouts(overall: 0.1)))
+            XCTFail("Expected post-click popover settlement timeout")
+        } catch let failure as DesktopActionFailure {
+            XCTAssertEqual(failure.outcome.state, .indeterminate)
+            XCTAssertEqual(failure.outcome.delivery?.mechanism, .windowTargetedEvents)
+            XCTAssertEqual(failure.outcome.delivery?.mode, .background)
+            XCTAssertEqual(failure.outcome.dispatchState.unitCount?.rawValue, 3)
+            XCTAssertEqual(failure.outcome.retrySafety, .unsafe)
+            XCTAssertEqual(failure.targetReceipt, mutationTarget.actionTargetReceipt)
+            XCTAssertEqual(failure.selectedLeafEvidence?.count, 1)
+        }
+        XCTAssertEqual(menu.clickedNames, ["Definitely Not Open Menu Extra For Test"])
+        XCTAssertTrue(capture.capturedAreas.isEmpty)
+        XCTAssertTrue(capture.capturedWindowIDs.isEmpty)
+    }
+
+    func testWebFocusConditionalTimeoutPreservesMutationUncertaintyAndExactReceipt() async throws {
+        let fixture = try Self.alreadyOpenPopoverFixture()
+        let detectionSuspension = MenuBarObservationSuspension()
+        let capture = MenuBarRecordingScreenCaptureService()
+        capture.windowCaptureResult = fixture.capture
+        let automation = try MenuBarRecordingAutomationService(
+            actionResult: UIAutomationActionResult(
+                payload: Self.detectionResult(for: fixture.target),
+                outcome: .dispatchedUnverified(
+                    delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one),
+                targetIdentity: fixture.targetIdentity),
+            detectionSuspension: detectionSuspension)
+        let service = try DesktopObservationService(
+            screenCapture: capture,
+            automation: automation,
+            targetResolver: MenuBarActionTargetResolver(result: UIAutomationActionResult(
+                payload: fixture.target,
+                outcome: nil)))
+
+        do {
+            _ = try await service.observeActionResult(DesktopObservationRequest(
+                target: .frontmost,
+                detection: DesktopDetectionOptions(
+                    mode: .accessibility,
+                    allowWebFocusFallback: true),
+                timeout: DesktopObservationTimeouts(overall: 0.02)))
+            XCTFail("Expected conditional web-focus timeout")
+        } catch let failure as DesktopActionFailure {
+            XCTAssertEqual(failure.outcome.state, .indeterminate)
+            XCTAssertEqual(failure.outcome.delivery?.mechanism, .capturePipeline)
+            XCTAssertEqual(failure.outcome.delivery?.mode, .background)
+            XCTAssertEqual(failure.outcome.dispatchState.unitCount, .one)
+            XCTAssertEqual(failure.outcome.retrySafety, .unsafe)
+            XCTAssertEqual(failure.targetReceipt, fixture.targetIdentity.actionTargetReceipt)
+        }
+        await detectionSuspension.release()
+    }
+
+    func testWebFocusTimeoutBeforeDetectionDispatchRemainsSafeCaptureTimeout() async throws {
+        let fixture = try Self.alreadyOpenPopoverFixture()
+        let captureSuspension = MenuBarObservationSuspension()
+        let capture = MenuBarRecordingScreenCaptureService()
+        capture.windowCaptureResult = fixture.capture
+        capture.windowCaptureSuspension = captureSuspension
+        let automation = try MenuBarRecordingAutomationService(actionResult: UIAutomationActionResult(
+            payload: Self.detectionResult(for: fixture.target),
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .one),
+            targetIdentity: fixture.targetIdentity))
+        let service = try DesktopObservationService(
+            screenCapture: capture,
+            automation: automation,
+            targetResolver: MenuBarActionTargetResolver(result: UIAutomationActionResult(
+                payload: fixture.target,
+                outcome: nil)))
+
+        do {
+            _ = try await service.observeActionResult(DesktopObservationRequest(
+                target: .frontmost,
+                detection: DesktopDetectionOptions(
+                    mode: .accessibility,
+                    allowWebFocusFallback: true),
+                timeout: DesktopObservationTimeouts(overall: 0.02)))
+            XCTFail("Expected pre-detection capture timeout")
+        } catch let CaptureError.detectionTimedOut(seconds) {
+            XCTAssertEqual(seconds, 0.02, accuracy: 0.001)
+        }
+        XCTAssertEqual(automation.detectCalls, 0)
+        await captureSuspension.release()
+    }
+
+    func testOpenedPopoverRefusesToCollapseSetupAndWebFocusOntoDifferentWindows() async throws {
+        let fixture = try Self.alreadyOpenPopoverFixture()
+        let statusBounds = CGRect(x: 1590, y: 1080, width: 20, height: 20)
+        let statusIdentity = WindowMutationIdentity(
+            windowID: 700,
+            ownerProcessIdentifier: 321,
+            ownerProcessStartIdentity: 654,
+            capturedBounds: statusBounds)
+        let statusTarget = try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+            identity: statusIdentity,
+            bounds: statusBounds))
+        let resolvedTarget = ResolvedObservationTarget(
+            kind: fixture.target.kind,
+            app: fixture.target.app,
+            window: fixture.target.window,
+            bounds: fixture.target.bounds,
+            detectionContext: fixture.target.detectionContext,
+            mutationTargetIdentity: DesktopObservationMutationTargetIdentity(statusTarget))
+        let setupResult = UIAutomationActionResult(
+            payload: resolvedTarget,
+            outcome: DesktopActionOutcome.dispatchedUnverified(
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: DesktopActionOutcome.DispatchUnitCount(3)),
+            targetIdentity: statusTarget)
+        let capture = MenuBarRecordingScreenCaptureService()
+        capture.windowCaptureResult = fixture.capture
+        let detection = Self.detectionResult(for: resolvedTarget)
+        let automation = MenuBarRecordingAutomationService(actionResult: UIAutomationActionResult(
+            payload: detection,
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: DesktopActionOutcome.DispatchUnitCount(2)),
+            targetIdentity: fixture.targetIdentity))
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: automation,
+            targetResolver: MenuBarActionTargetResolver(result: setupResult))
+
+        do {
+            _ = try await service.observeActionResult(DesktopObservationRequest(
+                target: .menubarPopover(
+                    hints: ["Fixture"],
+                    openIfNeeded: .init(clickHint: "Fixture", settleDelayNanoseconds: 0)),
+                detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: true)))
+            XCTFail("Expected incompatible mutation targets to fail closed")
+        } catch let failure as DesktopActionFailure {
+            XCTAssertEqual(failure.outcome.state, .dispatchedUnverified)
+            XCTAssertEqual(
+                failure.outcome.delivery,
+                DesktopActionOutcome.Delivery(mechanism: .composite, mode: .background))
+            XCTAssertEqual(failure.outcome.dispatchState.unitCount, DesktopActionOutcome.DispatchUnitCount(5))
+            XCTAssertNil(failure.targetReceipt)
+            XCTAssertEqual(automation.detectCalls, 1)
+        }
     }
 
     func testPopoverResolverPrefersHintedOwnerNearMenuBar() {
@@ -270,6 +768,7 @@ final class DesktopObservationMenubarTests: XCTestCase {
             hints: ["battery"])
 
         XCTAssertEqual(capture.capturedWindowIDs, [42])
+        XCTAssertEqual(capture.visualizerModes, [.none])
         XCTAssertEqual(match?.bounds, bounds)
         XCTAssertEqual(match?.windowID, CGWindowID(42))
     }
@@ -289,12 +788,24 @@ final class DesktopObservationMenubarTests: XCTestCase {
             preferredX: 1600,
             screens: [screen]))
         XCTAssertEqual(capture.capturedAreas, [expected])
+        XCTAssertEqual(capture.visualizerModes, [.none])
         XCTAssertEqual(match?.bounds, expected)
     }
 
     func testPopoverObservationCanOpenMenuExtraAndCaptureClickAreaFallback() async throws {
         let capture = MenuBarRecordingScreenCaptureService()
-        let menu = MenuBarRecordingMenuService(location: CGPoint(x: 1600, y: 1098))
+        let statusBounds = CGRect(x: 1590, y: 1080, width: 20, height: 20)
+        let statusIdentity = WindowMutationIdentity(
+            windowID: 700,
+            ownerProcessIdentifier: 321,
+            ownerProcessStartIdentity: 654,
+            capturedBounds: statusBounds)
+        let mutationTarget = try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+            identity: statusIdentity,
+            bounds: statusBounds))
+        let menu = GenerationPinnedMenuBarRecordingMenuService(
+            location: CGPoint(x: 1600, y: 1098),
+            targetIdentity: mutationTarget)
         let screen = Self.primaryScreen()
         let service = DesktopObservationService(
             screenCapture: capture,
@@ -307,7 +818,7 @@ final class DesktopObservationMenubarTests: XCTestCase {
             preferredX: 1600,
             screens: [screen]))
 
-        let result = try await service.observe(DesktopObservationRequest(
+        let actionResult = try await service.observeActionResult(DesktopObservationRequest(
             target: .menubarPopover(
                 hints: ["Definitely Not Open Menu Extra For Test"],
                 openIfNeeded: MenuBarPopoverOpenOptions(
@@ -315,6 +826,7 @@ final class DesktopObservationMenubarTests: XCTestCase {
                     settleDelayNanoseconds: 0)),
             detection: DesktopDetectionOptions(mode: .none)))
 
+        let result = actionResult.payload
         XCTAssertEqual(menu.clickedNames, ["Definitely Not Open Menu Extra For Test"])
         XCTAssertEqual(capture.capturedAreas, [expected])
         XCTAssertEqual(result.target.kind, .menubarPopover)
@@ -326,6 +838,42 @@ final class DesktopObservationMenubarTests: XCTestCase {
         XCTAssertEqual(result.diagnostics.target?.openIfNeeded, true)
         XCTAssertEqual(result.diagnostics.target?.clickHint, "Definitely Not Open Menu Extra For Test")
         XCTAssertNil(result.diagnostics.target?.windowID)
+        XCTAssertEqual(
+            result.target.mutationTargetIdentity,
+            DesktopObservationMutationTargetIdentity(mutationTarget))
+        XCTAssertEqual(
+            actionResult.outcome?.delivery,
+            DesktopActionOutcome.Delivery(mechanism: .windowTargetedEvents, mode: .background))
+        XCTAssertEqual(actionResult.targetIdentity, mutationTarget)
+        XCTAssertEqual(actionResult.selectedLeafEvidence?.count, 1)
+    }
+
+    func testPopoverObservationRefusesBeforeClickWithoutGenerationPinnedMenuCapability() async throws {
+        let menu = MenuBarRecordingMenuService(location: CGPoint(x: 1600, y: 1098))
+        let service = DesktopObservationService(
+            screenCapture: MenuBarRecordingScreenCaptureService(),
+            automation: MenuBarRecordingAutomationService(),
+            applications: UnusedApplicationService(),
+            menu: menu,
+            screens: MenuBarRecordingScreenService(screens: [Self.primaryScreen()]))
+
+        do {
+            _ = try await service.observe(DesktopObservationRequest(
+                target: .menubarPopover(
+                    hints: ["Definitely Not Open Menu Extra For Test"],
+                    openIfNeeded: .init(
+                        clickHint: "Definitely Not Open Menu Extra For Test",
+                        settleDelayNanoseconds: 0)),
+                detection: DesktopDetectionOptions(mode: .none)))
+            XCTFail("Expected pre-dispatch generation-pinning refusal")
+        } catch let failure as DesktopActionFailure {
+            XCTAssertEqual(failure.outcome.state, .refused)
+            XCTAssertEqual(failure.outcome.refusalReason, .foregroundConsentRequired)
+            XCTAssertEqual(failure.outcome.dispatchState, .none)
+            XCTAssertTrue(failure.outcome.retrySafety == .safe)
+        }
+
+        XCTAssertTrue(menu.clickedNames.isEmpty)
     }
 
     private static func windowInfo(
@@ -351,6 +899,73 @@ final class DesktopObservationMenubarTests: XCTestCase {
                 "Height": bounds.height,
             ],
         ]
+    }
+
+    private static func alreadyOpenPopoverFixture() throws -> (
+        target: ResolvedObservationTarget,
+        capture: CaptureResult,
+        identity: WindowMutationIdentity,
+        targetIdentity: DesktopTargetIdentity)
+    {
+        let bounds = CGRect(x: 1200, y: 920, width: 320, height: 260)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 123,
+            ownerProcessStartIdentity: 700,
+            capturedBounds: bounds)
+        let target = ResolvedObservationTarget(
+            kind: .menubarPopover,
+            app: ApplicationIdentity(
+                processIdentifier: identity.ownerProcessIdentifier,
+                processStartIdentity: identity.ownerProcessStartIdentity,
+                bundleIdentifier: "dev.peekaboo.fixture",
+                name: "Fixture"),
+            window: WindowIdentity(windowID: identity.windowID, title: "", bounds: bounds, index: 0),
+            bounds: bounds,
+            detectionContext: WindowContext(
+                applicationName: "Fixture",
+                applicationBundleId: "dev.peekaboo.fixture",
+                applicationProcessId: identity.ownerProcessIdentifier,
+                windowTitle: "",
+                windowID: identity.windowID,
+                windowBounds: bounds,
+                windowMutationIdentity: identity))
+        let capture = CaptureResult(
+            imageData: Data([4, 5, 6]),
+            metadata: CaptureMetadata(
+                size: bounds.size,
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: identity.ownerProcessIdentifier,
+                    processStartIdentity: identity.ownerProcessStartIdentity,
+                    bundleIdentifier: "dev.peekaboo.fixture",
+                    name: "Fixture"),
+                windowInfo: ServiceWindowInfo(
+                    windowID: identity.windowID,
+                    title: "",
+                    bounds: bounds,
+                    index: 0,
+                    mutationIdentity: identity)))
+        let exactWindow = try UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds)
+        return (target, capture, identity, DesktopTargetIdentity(exactWindow: exactWindow))
+    }
+
+    private static func detectionResult(
+        for target: ResolvedObservationTarget) -> ElementDetectionResult
+    {
+        ElementDetectionResult(
+            snapshotId: "web-focus",
+            screenshotPath: "",
+            elements: DetectedElements(buttons: [DetectedElement(
+                id: "web-focus-button",
+                type: .button,
+                label: "Fixture",
+                bounds: CGRect(x: 10, y: 10, width: 60, height: 24))]),
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: 1,
+                method: "fixture",
+                windowContext: target.detectionContext))
     }
 
     private static func primaryScreen() -> ScreenInfo {
@@ -382,9 +997,37 @@ private final class MenuBarTargetResolver: ObservationTargetResolving {
 }
 
 @MainActor
+private final class MenuBarActionTargetResolver: ObservationTargetResolving {
+    private let result: UIAutomationActionResult<ResolvedObservationTarget>
+
+    init(result: UIAutomationActionResult<ResolvedObservationTarget>) {
+        self.result = result
+    }
+
+    func resolve(
+        _: DesktopObservationTargetRequest,
+        snapshot _: DesktopStateSnapshot) async throws -> ResolvedObservationTarget
+    {
+        self.result.payload
+    }
+
+    func resolveActionResult(
+        _: DesktopObservationTargetRequest,
+        snapshot _: DesktopStateSnapshot) async throws -> UIAutomationActionResult<ResolvedObservationTarget>
+    {
+        self.result
+    }
+}
+
+@MainActor
 private final class MenuBarRecordingScreenCaptureService: ScreenCaptureServiceProtocol {
+    let captureTransactionGateOwner: CaptureTransactionGateOwner = .service
     var capturedAreas: [CGRect] = []
     var capturedWindowIDs: [CGWindowID] = []
+    var visualizerModes: [CaptureVisualizerMode] = []
+    var windowCaptureResult: CaptureResult?
+    var windowCaptureError: (any Error)?
+    var windowCaptureSuspension: MenuBarObservationSuspension?
 
     func captureScreen(
         displayIndex _: Int?,
@@ -405,11 +1048,16 @@ private final class MenuBarRecordingScreenCaptureService: ScreenCaptureServicePr
 
     func captureWindow(
         windowID: CGWindowID,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale _: CaptureScalePreference) async throws -> CaptureResult
     {
         self.capturedWindowIDs.append(windowID)
-        return CaptureResult(
+        self.visualizerModes.append(visualizerMode)
+        await self.windowCaptureSuspension?.wait()
+        if let windowCaptureError {
+            throw windowCaptureError
+        }
+        return self.windowCaptureResult ?? CaptureResult(
             imageData: Data([4, 5, 6]),
             metadata: CaptureMetadata(size: CGSize(width: 320, height: 260), mode: .window))
     }
@@ -423,10 +1071,11 @@ private final class MenuBarRecordingScreenCaptureService: ScreenCaptureServicePr
 
     func captureArea(
         _ rect: CGRect,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale _: CaptureScalePreference) async throws -> CaptureResult
     {
         self.capturedAreas.append(rect)
+        self.visualizerModes.append(visualizerMode)
         return CaptureResult(
             imageData: Data([1, 2, 3]),
             metadata: CaptureMetadata(size: rect.size, mode: .area))
@@ -438,13 +1087,66 @@ private final class MenuBarRecordingScreenCaptureService: ScreenCaptureServicePr
 }
 
 @MainActor
-private final class MenuBarRecordingAutomationService: UIAutomationServiceProtocol {
+private final class MenuBarRecordingAutomationService: UIAutomationObservationActionResultProviding {
+    private let actionResult: UIAutomationActionResult<ElementDetectionResult>?
+    private let actionError: (any Error)?
+    private let detectionSuspension: MenuBarObservationSuspension?
+    private(set) var detectCalls = 0
+
+    init(
+        actionResult: UIAutomationActionResult<ElementDetectionResult>? = nil,
+        actionError: (any Error)? = nil,
+        detectionSuspension: MenuBarObservationSuspension? = nil)
+    {
+        self.actionResult = actionResult
+        self.actionError = actionError
+        self.detectionSuspension = detectionSuspension
+    }
+
     func detectElements(
         in _: Data,
         snapshotId _: String?,
         windowContext _: WindowContext?) async throws -> ElementDetectionResult
     {
+        await self.detectionSuspension?.wait()
+        self.detectCalls += 1
+        if let actionError {
+            throw actionError
+        }
+        if let actionResult {
+            return actionResult.payload
+        }
         throw DesktopObservationError.unsupportedTarget("detection")
+    }
+
+    func detectElementsActionResult(
+        in _: Data,
+        snapshotId _: String?,
+        windowContext _: WindowContext?,
+        requestTimeoutSec _: TimeInterval?) async throws -> UIAutomationActionResult<ElementDetectionResult>
+    {
+        await self.detectionSuspension?.wait()
+        self.detectCalls += 1
+        if let actionError {
+            throw actionError
+        }
+        guard let actionResult else {
+            throw DesktopObservationError.unsupportedTarget("detection")
+        }
+        return actionResult
+    }
+
+    func inspectAccessibilityTreeActionResult(
+        windowContext _: WindowContext?) async throws -> UIAutomationActionResult<ElementDetectionResult>
+    {
+        await self.detectionSuspension?.wait()
+        if let actionError {
+            throw actionError
+        }
+        guard let actionResult else {
+            throw DesktopObservationError.unsupportedTarget("accessibility inspection")
+        }
+        return actionResult
     }
 
     func click(target _: ClickTarget, clickType _: ClickType, snapshotId _: String?) async throws {}
@@ -487,6 +1189,35 @@ private final class MenuBarRecordingAutomationService: UIAutomationServiceProtoc
     }
 }
 
+private actor MenuBarObservationSuspension {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var entryContinuations: [CheckedContinuation<Void, Never>] = []
+    private var entered = false
+    private var released = false
+
+    func wait() async {
+        self.entered = true
+        let entryContinuations = self.entryContinuations
+        self.entryContinuations.removeAll()
+        for continuation in entryContinuations {
+            continuation.resume()
+        }
+        guard !self.released else { return }
+        await withCheckedContinuation { self.continuation = $0 }
+    }
+
+    func waitUntilEntered() async {
+        guard !self.entered else { return }
+        await withCheckedContinuation { self.entryContinuations.append($0) }
+    }
+
+    func release() {
+        self.released = true
+        self.continuation?.resume()
+        self.continuation = nil
+    }
+}
+
 @MainActor
 private final class MenuBarRecordingScreenService: ScreenServiceProtocol {
     private let screens: [ScreenInfo]
@@ -513,7 +1244,7 @@ private final class MenuBarRecordingScreenService: ScreenServiceProtocol {
 }
 
 @MainActor
-private final class MenuBarRecordingMenuService: MenuServiceProtocol {
+private class MenuBarRecordingMenuService: MenuServiceProtocol {
     private let location: CGPoint
     var clickedNames: [String] = []
 
@@ -558,6 +1289,94 @@ private final class MenuBarRecordingMenuService: MenuServiceProtocol {
 
     func clickMenuBarItem(at _: Int) async throws -> ClickResult {
         fatalError("unused")
+    }
+}
+
+@MainActor
+private final class GenerationPinnedMenuBarRecordingMenuService: MenuBarRecordingMenuService,
+    MenuServiceExactLeafActionResultProviding
+{
+    private let targetIdentity: DesktopTargetIdentity
+
+    init(location: CGPoint, targetIdentity: DesktopTargetIdentity) {
+        self.targetIdentity = targetIdentity
+        super.init(location: location)
+    }
+
+    override func listMenuBarItems(includeRaw _: Bool) async throws -> [MenuBarItemInfo] {
+        try [MenuBarItemInfo(
+            title: "Definitely Not Open Menu Extra For Test",
+            index: 0,
+            frame: self.targetIdentity.exactWindow?.bounds,
+            selectionEvidence: self.evidence())]
+    }
+
+    func clickMenuItemActionResult(app _: String, itemPath _: String) async throws
+        -> UIAutomationActionResult<Void>
+    {
+        fatalError("unused")
+    }
+
+    func clickMenuItemByNameActionResult(app _: String, itemName _: String) async throws
+        -> UIAutomationActionResult<Void>
+    {
+        fatalError("unused")
+    }
+
+    func clickMenuExtraActionResult(title _: String) async throws -> UIAutomationActionResult<Void> {
+        fatalError("unused")
+    }
+
+    func clickMenuBarItemActionResult(named name: String) async throws
+        -> UIAutomationActionResult<ClickResult>
+    {
+        let payload = try await self.clickMenuBarItem(named: name)
+        return try UIAutomationActionResult(
+            payload: payload,
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: DesktopActionOutcome.DispatchUnitCount(3)),
+            targetIdentity: self.targetIdentity,
+            selectedLeafEvidence: [self.evidence().selecting(
+                normalizedSelector: DeterministicDesktopLeafSelector.normalized(name),
+                matchKind: .exact)])
+    }
+
+    func clickMenuBarItemActionResult(at _: Int) async throws -> UIAutomationActionResult<ClickResult> {
+        fatalError("unused")
+    }
+
+    func clickMenuBarItemActionResult(request: MenuBarItemActionRequest) async throws
+        -> UIAutomationActionResult<ClickResult>
+    {
+        guard let name = request.name,
+              try request.expectedLeafEvidence.hasSameResolvedLeaf(as: self.evidence())
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Fixture menu evidence changed")
+        }
+        return try await self.clickMenuBarItemActionResult(named: name)
+    }
+
+    private func evidence() throws -> DesktopSelectedLeafEvidence {
+        guard let exactWindow = targetIdentity.exactWindow else {
+            throw DesktopTargetIdentityError.incompleteExactWindow
+        }
+        return try DesktopSelectedLeafEvidence(
+            kind: .menuBarItem,
+            normalizedSelector: "0",
+            matchKind: .index,
+            selectedProcessIdentity: exactWindow.identity.processIdentity,
+            selectedWindowIdentity: exactWindow.identity,
+            selectedIndex: 0,
+            selectedTitle: "Definitely Not Open Menu Extra For Test",
+            selectedIdentifier: "fixture.menu.extra",
+            selectedRole: "AXStatusItem",
+            selectedFrame: exactWindow.bounds,
+            candidateSetSHA256: String(repeating: "a", count: 64),
+            candidateCount: 1)
     }
 }
 

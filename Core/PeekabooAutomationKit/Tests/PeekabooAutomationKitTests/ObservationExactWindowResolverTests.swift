@@ -177,10 +177,11 @@ final class ObservationExactWindowResolverTests: XCTestCase {
     }
 
     private static func serviceWindow(id: Int) -> ServiceWindowInfo {
-        ServiceWindowInfo(
+        let bounds = CGRect(x: 10, y: 20, width: 800, height: 600)
+        return ServiceWindowInfo(
             windowID: id,
             title: "Editor",
-            bounds: CGRect(x: 10, y: 20, width: 800, height: 600),
+            bounds: bounds,
             isMinimized: false,
             isMainWindow: true,
             windowLevel: 0,
@@ -189,7 +190,12 @@ final class ObservationExactWindowResolverTests: XCTestCase {
             layer: 0,
             isOnScreen: true,
             sharingState: .readOnly,
-            isExcludedFromWindowsMenu: false)
+            isExcludedFromWindowsMenu: false,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: id,
+                ownerProcessIdentifier: 123,
+                ownerProcessStartIdentity: 700,
+                capturedBounds: bounds))
     }
 
     private nonisolated static func metadata(

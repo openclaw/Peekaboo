@@ -101,7 +101,7 @@ extension ScreenCaptureServiceProtocol {
     public func captureScreen(displayIndex: Int?) async throws -> CaptureResult {
         try await self.captureScreen(
             displayIndex: displayIndex,
-            visualizerMode: .screenshotFlash,
+            visualizerMode: .none,
             scale: .logical1x)
     }
 
@@ -109,7 +109,7 @@ extension ScreenCaptureServiceProtocol {
         try await self.captureWindow(
             appIdentifier: appIdentifier,
             windowIndex: windowIndex,
-            visualizerMode: .screenshotFlash,
+            visualizerMode: .none,
             scale: .logical1x)
     }
 
@@ -127,16 +127,16 @@ extension ScreenCaptureServiceProtocol {
     public func captureWindow(windowID: CGWindowID) async throws -> CaptureResult {
         try await self.captureWindow(
             windowID: windowID,
-            visualizerMode: .screenshotFlash,
+            visualizerMode: .none,
             scale: .logical1x)
     }
 
     public func captureFrontmost() async throws -> CaptureResult {
-        try await self.captureFrontmost(visualizerMode: .screenshotFlash, scale: .logical1x)
+        try await self.captureFrontmost(visualizerMode: .none, scale: .logical1x)
     }
 
     public func captureArea(_ rect: CGRect) async throws -> CaptureResult {
-        try await self.captureArea(rect, visualizerMode: .screenshotFlash, scale: .logical1x)
+        try await self.captureArea(rect, visualizerMode: .none, scale: .logical1x)
     }
 }
 
@@ -197,6 +197,9 @@ public struct CaptureMetadata: Sendable, Codable {
     /// Optional stateless viewport applied after an exact-window capture.
     public let viewport: CaptureViewport?
 
+    /// Ordered authoritative selector stages (application, then window), when this was a targeted capture.
+    public let selectorResolutionProofs: [SelectorResolutionProof]?
+
     public init(
         size: CGSize,
         mode: CaptureMode,
@@ -206,7 +209,8 @@ public struct CaptureMetadata: Sendable, Codable {
         displayInfo: DisplayInfo? = nil,
         timestamp: Date = Date(),
         diagnostics: CaptureDiagnostics? = nil,
-        viewport: CaptureViewport? = nil)
+        viewport: CaptureViewport? = nil,
+        selectorResolutionProofs: [SelectorResolutionProof]? = nil)
     {
         self.size = size
         self.mode = mode
@@ -217,6 +221,9 @@ public struct CaptureMetadata: Sendable, Codable {
         self.timestamp = timestamp
         self.diagnostics = diagnostics
         self.viewport = viewport
+        self.selectorResolutionProofs = selectorResolutionProofs ?? applicationInfo?.selectorResolutionProofs?.map {
+            $0.selecting(windowIdentity: windowInfo?.mutationIdentity)
+        }
     }
 }
 

@@ -40,7 +40,7 @@ extension DialogService {
         let resolvedButtonIdentifier = targetButton.attribute(identifierAttribute)
 
         self.logger.debug("Clicking button: \(resolvedButtonTitle)")
-        try self.pressOrClick(targetButton, allowGlobalFallback: allowGlobalFallback)
+        let outcome = try self.pressOrClick(targetButton, allowGlobalFallback: allowGlobalFallback)
 
         var clickDetails: [String: String] = [
             "button": resolvedButtonTitle,
@@ -53,7 +53,8 @@ extension DialogService {
         let result = DialogActionResult(
             success: true,
             action: .clickButton,
-            details: clickDetails)
+            details: clickDetails,
+            outcome: outcome)
 
         self.logger.info("\(AgentDisplayTokens.Status.success) Successfully clicked button: \(resolvedButtonTitle)")
         return result

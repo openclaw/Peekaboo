@@ -34,12 +34,49 @@ struct DesktopActionOutcomeTests {
     }
 
     @Test
+    func `success policies own the canonical accepted state partitions`() {
+        let background = DesktopActionOutcome.Delivery(
+            mechanism: .accessibilityAction,
+            mode: .background)
+        let foreground = DesktopActionOutcome.Delivery(
+            mechanism: .globalEvents,
+            mode: .foreground)
+        let outcomes: [(DesktopActionOutcome, confirmed: Bool, dispatched: Bool, observation: Bool)] = [
+            (.confirmedChange(delivery: background), true, true, true),
+            (.confirmedNoChange(), true, true, true),
+            (.dispatchedUnverified(delivery: background, evidence: .deliveryAccepted), false, true, true),
+            (.suspectedNoop(delivery: background), false, false, true),
+            (.partial(delivery: background), false, false, false),
+            (.refused(reason: .targetUnavailable), false, false, false),
+            (.indeterminate(evidence: .completionUnknown), false, false, false),
+        ]
+
+        for item in outcomes {
+            #expect(item.0.isAccepted(by: .confirmed) == item.confirmed)
+            #expect(item.0.isAccepted(by: .confirmedOrDispatched) == item.dispatched)
+            #expect(item.0.isAccepted(by: .observation) == item.observation)
+        }
+
+        #expect(DesktopActionOutcome.confirmedNoChange().isAccepted(
+            by: .confirmedOrDispatched(requiring: .background)))
+        #expect(DesktopActionOutcome.confirmedChange(delivery: background).isAccepted(
+            by: .confirmedOrDispatched(requiring: .background)))
+        #expect(!DesktopActionOutcome.confirmedChange(delivery: foreground).isAccepted(
+            by: .confirmedOrDispatched(requiring: .background)))
+        #expect(!DesktopActionOutcome.dispatchedUnverified(
+            delivery: foreground,
+            evidence: .deliveryAccepted).isAccepted(
+            by: .confirmedOrDispatched(requiring: .background)))
+    }
+
+    @Test
     func `all factories round trip through the validated flat encoding`() throws {
         let outcomes = try DesktopActionOutcomeFixtures.canonicalCases.map(\.outcome) + [
             DesktopActionOutcome.dispatchedUnverified(
                 delivery: self.backgroundAX,
                 evidence: .deliveryAccepted),
             DesktopActionOutcome.refused(route: .bridge, reason: .runtimeIncompatible),
+            DesktopActionOutcome.refused(route: .bridge, reason: .transportSessionUnavailable),
             DesktopActionOutcome.indeterminate(
                 evidence: .completionUnknown,
                 unitCount: self.positiveUnitCount(1)),
@@ -57,6 +94,19 @@ struct DesktopActionOutcomeTests {
             #expect(object["escalation"] != nil)
             #expect(try decoder.decode(DesktopActionOutcome.self, from: data) == outcome)
         }
+    }
+
+    @Test
+    func `transport session refusal directs reconnect without target refresh`() {
+        let outcome = DesktopActionOutcome.refused(
+            route: .bridge,
+            reason: .transportSessionUnavailable)
+
+        #expect(outcome.state == .refused)
+        #expect(outcome.dispatchState == .none)
+        #expect(outcome.retrySafety == .safe)
+        #expect(outcome.refusalReason == .transportSessionUnavailable)
+        #expect(outcome.escalation == .reconnectSession)
     }
 
     @Test
@@ -158,6 +208,29 @@ struct DesktopActionOutcomeTests {
         #expect(routedFailure.hint == typedFailure.hint)
         #expect(routedFailure.causeDescription == typedFailure.causeDescription)
         #expect(routedFailure.targetReceipt == receipt)
+    }
+
+    @Test
+    func `target receipts round trip process and exact window scopes`() throws {
+        let process = DesktopActionTargetReceipt(
+            processIdentifier: 44,
+            processStartIdentity: 8_007_199_254_740_993)
+        let processData = try JSONEncoder().encode(process)
+        let processJSON = try #require(
+            JSONSerialization.jsonObject(with: processData) as? [String: Any])
+        #expect(processJSON["process_start_identity_decimal"] as? String == "8007199254740993")
+        #expect(processJSON["window_id"] == nil)
+        #expect(try JSONDecoder().decode(DesktopActionTargetReceipt.self, from: processData) == process)
+
+        let exactWindow = DesktopActionTargetReceipt(
+            processIdentifier: 44,
+            processStartIdentity: 8_007_199_254_740_993,
+            windowID: 73)
+        let windowData = try JSONEncoder().encode(exactWindow)
+        let windowJSON = try #require(
+            JSONSerialization.jsonObject(with: windowData) as? [String: Any])
+        #expect(windowJSON["window_id"] as? Int == 73)
+        #expect(try JSONDecoder().decode(DesktopActionTargetReceipt.self, from: windowData) == exactWindow)
     }
 
     @Test

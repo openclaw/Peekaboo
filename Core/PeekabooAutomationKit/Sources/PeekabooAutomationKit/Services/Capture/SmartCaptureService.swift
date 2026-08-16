@@ -52,7 +52,7 @@ public final class SmartCaptureService {
     /// Returns nil image if screen is unchanged.
     public func captureIfChanged(
         threshold: Float = 0.05,
-        visualizerMode: CaptureVisualizerMode = .screenshotFlash) async throws -> SmartCaptureResult
+        visualizerMode: CaptureVisualizerMode = .none) async throws -> SmartCaptureResult
     {
         let now = Date()
 
@@ -108,7 +108,7 @@ public final class SmartCaptureService {
         _ center: CGPoint,
         radius: CGFloat = 300,
         includeContextThumbnail: Bool = true,
-        visualizerMode: CaptureVisualizerMode = .screenshotFlash) async throws -> SmartCaptureResult
+        visualizerMode: CaptureVisualizerMode = .none) async throws -> SmartCaptureResult
     {
         // Calculate capture rect
         var rect = CGRect(
@@ -157,7 +157,7 @@ public final class SmartCaptureService {
     public func captureAfterAction(
         toolName: String,
         targetPoint: CGPoint?,
-        visualizerMode: CaptureVisualizerMode = .screenshotFlash) async throws -> SmartCaptureResult
+        visualizerMode: CaptureVisualizerMode = .none) async throws -> SmartCaptureResult
     {
         guard let point = targetPoint else {
             // No specific target - use diff-aware full capture

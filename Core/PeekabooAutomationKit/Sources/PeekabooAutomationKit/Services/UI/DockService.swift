@@ -35,10 +35,11 @@ public enum DockError: LocalizedError {
 
 /// Default implementation of Dock interaction operations using AXorcist
 @MainActor
-public final class DockService: DockServiceProtocol {
+public final class DockService: DockServiceProtocol, DockServiceActionResultProviding {
     let feedbackClient: any AutomationFeedbackClient
     let logger = Logger(subsystem: "boo.peekaboo.core", category: "DockService")
     let operationLaneCoordinator: DesktopOperationLaneCoordinator
+    let dockVisibilityCommandRunner: DockVisibilityCommandRunner
 
     public convenience init(feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient()) {
         self.init(feedbackClient: feedbackClient, operationLaneCoordinator: .shared)
@@ -46,10 +47,12 @@ public final class DockService: DockServiceProtocol {
 
     init(
         feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient(),
-        operationLaneCoordinator: DesktopOperationLaneCoordinator)
+        operationLaneCoordinator: DesktopOperationLaneCoordinator,
+        dockVisibilityCommandRunner: @escaping DockVisibilityCommandRunner = DockService.executeDockVisibilityCommand)
     {
         self.feedbackClient = feedbackClient
         self.operationLaneCoordinator = operationLaneCoordinator
+        self.dockVisibilityCommandRunner = dockVisibilityCommandRunner
         Task { @MainActor in
             self.feedbackClient.connect()
         }
@@ -60,8 +63,26 @@ public final class DockService: DockServiceProtocol {
     }
 
     public func launchFromDock(appName: String) async throws {
+        _ = try await self.launchFromDockActionResult(appName: appName)
+    }
+
+    public func launchFromDockActionResult(appName: String) async throws -> UIAutomationActionResult<Void> {
         try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
-            try await self.launchFromDockImpl(appName: appName)
+            let target = try self.resolveDockElement(appName: appName)
+            let selectedLeafEvidence = try await Self.withDockFailureAttribution(
+                processIdentity: target.identity,
+                selectedLeafEvidence: [target.evidence])
+            {
+                try await self.launchFromDockImpl(target: target, appName: appName)
+            }
+            return try UIAutomationActionResult(
+                payload: (),
+                outcome: .dispatchedUnverified(
+                    delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one),
+                targetIdentity: DesktopTargetIdentity(processIdentity: target.identity),
+                selectedLeafEvidence: [selectedLeafEvidence])
         }
     }
 
@@ -78,21 +99,36 @@ public final class DockService: DockServiceProtocol {
     }
 
     public func rightClickDockItem(appName: String, menuItem: String?) async throws {
+        _ = try await self.rightClickDockItemActionResult(appName: appName, menuItem: menuItem)
+    }
+
+    public func rightClickDockItemActionResult(
+        appName: String,
+        menuItem: String?) async throws -> UIAutomationActionResult<Void>
+    {
         try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
-            try await self.rightClickDockItemImpl(appName: appName, menuItem: menuItem)
+            let target = try self.resolveDockElement(appName: appName)
+            let selectedLeafEvidence = try await Self.withDockFailureAttribution(
+                processIdentity: target.identity,
+                selectedLeafEvidence: [target.evidence])
+            {
+                try await self.rightClickDockItemImpl(target: target, appName: appName, menuItem: menuItem)
+            }
+            return try UIAutomationActionResult(
+                payload: (),
+                outcome: DockContextMenuActionSemantics.successfulOutcome(
+                    selectingMenuItem: menuItem != nil),
+                targetIdentity: DesktopTargetIdentity(processIdentity: target.identity),
+                selectedLeafEvidence: selectedLeafEvidence)
         }
     }
 
     public func hideDock() async throws {
-        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
-            try await self.hideDockImpl()
-        }
+        _ = try await self.hideDockActionResult()
     }
 
     public func showDock() async throws {
-        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
-            try await self.showDockImpl()
-        }
+        _ = try await self.showDockActionResult()
     }
 
     public func isDockAutoHidden() async -> Bool {
@@ -101,5 +137,20 @@ public final class DockService: DockServiceProtocol {
 
     public func findDockItem(name: String) async throws -> DockItem {
         try await self.findDockItemImpl(name: name)
+    }
+
+    static func withDockFailureAttribution<Result>(
+        processIdentity: ApplicationProcessIdentity,
+        selectedLeafEvidence: [DesktopSelectedLeafEvidence]? = nil,
+        operation: () async throws -> Result) async throws -> Result
+    {
+        do {
+            return try await operation()
+        } catch let failure as DesktopActionFailure {
+            let combinedEvidence = (selectedLeafEvidence ?? []) + (failure.selectedLeafEvidence ?? [])
+            throw failure
+                .attributed(to: processIdentity)
+                .selectingLeaves(combinedEvidence.isEmpty ? nil : combinedEvidence)
+        }
     }
 }

@@ -33,7 +33,8 @@ extension DialogService {
                             timeout: 1.0,
                             retryCount: 1,
                             switchSpace: true,
-                            bringToCurrentSpace: true))
+                            bringToCurrentSpace: true),
+                        expectedIdentity: window.mutationIdentity)
                     try await Task.sleep(nanoseconds: 200_000_000)
                     return
                 }

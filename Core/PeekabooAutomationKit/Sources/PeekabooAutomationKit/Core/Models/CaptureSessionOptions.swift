@@ -14,6 +14,10 @@ public struct CaptureScope: Codable, Sendable, Equatable {
     public let screenIndex: Int?
     public let displayUUID: String?
     public let windowId: UInt32?
+    /// Exact process-generation and immutable-bounds receipt for live window capture.
+    ///
+    /// A numeric WindowServer ID alone is reusable and cannot authorize a multi-frame capture.
+    public let windowMutationIdentity: WindowMutationIdentity?
     public let applicationIdentifier: String?
     public let windowIndex: Int?
     public let region: CGRect?
@@ -23,6 +27,7 @@ public struct CaptureScope: Codable, Sendable, Equatable {
         screenIndex: Int? = nil,
         displayUUID: String? = nil,
         windowId: UInt32? = nil,
+        windowMutationIdentity: WindowMutationIdentity? = nil,
         applicationIdentifier: String? = nil,
         windowIndex: Int? = nil,
         region: CGRect? = nil)
@@ -31,6 +36,7 @@ public struct CaptureScope: Codable, Sendable, Equatable {
         self.screenIndex = screenIndex
         self.displayUUID = displayUUID
         self.windowId = windowId
+        self.windowMutationIdentity = windowMutationIdentity
         self.applicationIdentifier = applicationIdentifier
         self.windowIndex = windowIndex
         self.region = region

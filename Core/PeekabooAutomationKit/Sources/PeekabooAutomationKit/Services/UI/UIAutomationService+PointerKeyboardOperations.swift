@@ -283,6 +283,10 @@ extension UIAutomationService {
     }
 
     public func drag(_ request: DragOperationRequest) async throws {
+        _ = try await self.dragWithOutcome(request)
+    }
+
+    public func dragWithOutcome(_ request: DragOperationRequest) async throws -> UIAutomationActionResult<Void> {
         try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
             self.logger.debug("Delegating drag to GestureService")
             defer { self.elementDetectionService.invalidateCache() }
@@ -292,6 +296,12 @@ extension UIAutomationService {
                 duration: TimeInterval(request.duration) / 1000.0,
                 target: VisualizerTargetWindowResolver.frontmostWindow())
             try await self.gestureService.drag(request)
+            return UIAutomationActionResult(
+                payload: (),
+                outcome: .dispatchedUnverified(
+                    delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one))
         }
     }
 
@@ -300,6 +310,19 @@ extension UIAutomationService {
         duration: Int,
         steps: Int,
         profile: MouseMovementProfile) async throws
+    {
+        _ = try await self.moveMouseWithOutcome(
+            to: to,
+            duration: duration,
+            steps: steps,
+            profile: profile)
+    }
+
+    public func moveMouseWithOutcome(
+        to: CGPoint,
+        duration: Int,
+        steps: Int,
+        profile: MouseMovementProfile) async throws -> UIAutomationActionResult<Void>
     {
         try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
             self.logger.debug("Delegating moveMouse to GestureService")
@@ -313,6 +336,12 @@ extension UIAutomationService {
                 duration: TimeInterval(duration) / 1000.0,
                 target: VisualizerTargetWindowResolver.frontmostWindow())
             try await self.gestureService.moveMouse(to: to, duration: duration, steps: steps, profile: profile)
+            return UIAutomationActionResult(
+                payload: (),
+                outcome: .dispatchedUnverified(
+                    delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one))
         }
     }
 

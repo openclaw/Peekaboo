@@ -301,6 +301,7 @@ public struct UIAutomationActionResult<Payload: Sendable>: Sendable {
     public let payload: Payload
     public let outcome: DesktopActionOutcome?
     public let targetIdentity: DesktopTargetIdentity?
+    public let selectedLeafEvidence: [DesktopSelectedLeafEvidence]?
 
     public init(payload: Payload, outcome: DesktopActionOutcome?) {
         self.init(payload: payload, outcome: outcome, targetIdentity: nil)
@@ -311,13 +312,31 @@ public struct UIAutomationActionResult<Payload: Sendable>: Sendable {
         outcome: DesktopActionOutcome?,
         targetIdentity: DesktopTargetIdentity?)
     {
+        self.init(
+            payload: payload,
+            outcome: outcome,
+            targetIdentity: targetIdentity,
+            selectedLeafEvidence: nil)
+    }
+
+    public init(
+        payload: Payload,
+        outcome: DesktopActionOutcome?,
+        targetIdentity: DesktopTargetIdentity?,
+        selectedLeafEvidence: [DesktopSelectedLeafEvidence]?)
+    {
         self.payload = payload
         self.outcome = outcome
         self.targetIdentity = targetIdentity
+        self.selectedLeafEvidence = selectedLeafEvidence
     }
 
     public init(_ result: DesktopActionResult<Payload>) {
-        self.init(payload: result.payload, outcome: result.outcome, targetIdentity: nil)
+        self.init(
+            payload: result.payload,
+            outcome: result.outcome,
+            targetIdentity: nil,
+            selectedLeafEvidence: nil)
     }
 
     public var desktopActionResult: DesktopActionResult<Payload> {
@@ -383,7 +402,7 @@ public enum UIElementValue: Sendable, Codable, Equatable {
         case let .int(value):
             try container.encode(value)
         case let .double(value):
-            try container.encode(value)
+            try container.encode(value == 0 ? 0.0 : value)
         case let .string(value):
             try container.encode(value)
         }

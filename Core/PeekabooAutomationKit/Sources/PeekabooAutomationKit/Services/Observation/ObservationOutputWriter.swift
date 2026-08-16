@@ -35,7 +35,7 @@ public final class ObservationOutputWriter {
         } else {
             nil
         }
-        if options.saveSnapshot {
+        let publishedSnapshotID: String? = if options.saveSnapshot {
             try await self.record("snapshot.write", into: &spans) {
                 try await self.writeSnapshotIfNeeded(
                     rawPath: effectiveRawPath,
@@ -44,11 +44,14 @@ public final class ObservationOutputWriter {
                     elements: elements,
                     options: options)
             }
+        } else {
+            nil
         }
         return DesktopObservationOutputWriteResult(
             files: DesktopObservationFiles(
                 rawScreenshotPath: effectiveRawPath,
-                annotatedScreenshotPath: annotatedPath),
+                annotatedScreenshotPath: annotatedPath,
+                publishedSnapshotID: publishedSnapshotID),
             spans: spans)
     }
 
@@ -77,15 +80,15 @@ public final class ObservationOutputWriter {
         annotatedPath: String?,
         capture: CaptureResult,
         elements: ElementDetectionResult?,
-        options: DesktopObservationOutputOptions) async throws
+        options: DesktopObservationOutputOptions) async throws -> String?
     {
         guard options.saveSnapshot, let snapshotManager = self.snapshotManager, let rawPath else {
-            return
+            return nil
         }
 
         let snapshotID = options.snapshotID ?? elements?.snapshotId
         guard let snapshotID else {
-            return
+            return nil
         }
 
         let windowContext = elements?.metadata.windowContext
@@ -121,6 +124,7 @@ public final class ObservationOutputWriter {
                 snapshotId: snapshotID,
                 annotatedScreenshotPath: annotatedPath)
         }
+        return snapshotID
     }
 
     private func writeAnnotatedScreenshotIfNeeded(

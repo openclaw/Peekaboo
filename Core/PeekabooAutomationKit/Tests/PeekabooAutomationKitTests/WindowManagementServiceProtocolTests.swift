@@ -171,6 +171,140 @@ struct WindowManagementServiceProtocolTests {
         #expect(await double.legacyDispatchCount == 0)
     }
 
+    @Test
+    func `result aware focus refuses before dispatch when provider lacks canonical results`() async throws {
+        let legacy = LegacyOnlyWindowManagementService()
+        let service: any WindowManagementServiceProtocol = legacy
+
+        do {
+            _ = try await service.focusWindowResult(target: .windowId(77))
+            Issue.record("Expected result-aware focus to reject a receiptless provider")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .runtimeIncompatible)
+            #expect(failure.outcome.dispatchState == .none)
+        }
+        #expect(await legacy.legacyDispatchCount == 0)
+
+        try await service.focusWindow(target: .windowId(77))
+        #expect(await legacy.legacyDispatchCount == 1)
+    }
+
+    @Test
+    func `validated mutation matrix rejects non-success and nil across every exact action`() async throws {
+        let provider = OutcomeWindowManagementService()
+        let service: any WindowManagementServiceProtocol = provider
+        let identity = AutomationTestFixtures.windowIdentity()
+        let rejected: [DesktopActionOutcome?] = [
+            .refused(reason: .targetUnavailable),
+            .partial(
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                unitCount: .one),
+            .suspectedNoop(
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                unitCount: .one),
+            .indeterminate(
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                evidence: .completionUnknown,
+                unitCount: .one),
+            nil,
+        ]
+
+        for operation in WindowAdapterOperation.allCases {
+            for outcome in rejected {
+                await provider.setOutcome(outcome)
+                let raw = try await self.invokeResultAdapter(
+                    operation,
+                    on: service,
+                    identity: identity)
+                do {
+                    _ = try service.validatedWindowMutationResult(
+                        raw,
+                        expectedIdentity: identity,
+                        operation: operation.label)
+                    Issue.record("Expected \(operation.label) to reject \(String(describing: outcome?.state))")
+                } catch let failure as DesktopActionFailure {
+                    #expect(failure.targetReceipt?.windowID == identity.windowID)
+                    #expect(failure.outcome.state == outcome?.state || outcome == nil)
+                }
+            }
+        }
+    }
+
+    @Test
+    func `validated mutation matrix accepts success and attaches only target-binding providers`() async throws {
+        let provider = OutcomeWindowManagementService()
+        let service: any WindowManagementServiceProtocol = provider
+        let identity = AutomationTestFixtures.windowIdentity()
+        let accepted: [DesktopActionOutcome] = [
+            .confirmedChange(
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                unitCount: .one),
+            .confirmedNoChange(),
+            .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .one),
+        ]
+
+        for operation in WindowAdapterOperation.allCases {
+            for outcome in accepted {
+                await provider.setOutcome(outcome)
+                let raw = try await self.invokeResultAdapter(
+                    operation,
+                    on: service,
+                    identity: identity)
+                let validated = try service.validatedWindowMutationResult(
+                    raw,
+                    expectedIdentity: identity,
+                    operation: operation.label)
+                #expect(validated.outcome == outcome)
+                #expect(validated.targetIdentity?.exactWindow?.identity.hasSameStableReceipt(as: identity) == true)
+                #expect(validated.targetIdentity?.exactWindow?.bounds == identity.capturedBounds)
+            }
+        }
+
+        let legacy: any WindowManagementServiceProtocol = PinnedLegacyWindowManagementService()
+        #expect(throws: DesktopActionFailure.self) {
+            _ = try legacy.validatedWindowMutationResult(
+                DesktopActionResult(outcome: accepted[0]),
+                expectedIdentity: identity,
+                operation: "Window move")
+        }
+    }
+
+    @Test
+    func `validated mutation matrix rejects mismatched returned targets across every exact action`() throws {
+        let service: any WindowManagementServiceProtocol = OutcomeWindowManagementService()
+        let identity = AutomationTestFixtures.windowIdentity()
+        let mismatch = WindowMutationIdentity(
+            windowID: identity.windowID + 1,
+            ownerProcessIdentifier: identity.ownerProcessIdentifier,
+            ownerProcessStartIdentity: identity.ownerProcessStartIdentity,
+            capturedBounds: identity.capturedBounds)
+        let mismatchTarget = try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+            identity: mismatch,
+            bounds: #require(mismatch.capturedBounds)))
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .accessibilityValue, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+
+        for operation in WindowAdapterOperation.allCases {
+            let returned = UIAutomationActionResult(payload: (), outcome: outcome, targetIdentity: mismatchTarget)
+            do {
+                _ = try service.validatedWindowMutationResult(
+                    returned,
+                    expectedIdentity: identity,
+                    operation: operation.label)
+                Issue.record("Expected mismatched \(operation.label) target rejection")
+            } catch let failure as DesktopActionFailure {
+                #expect(failure.outcome.state == .indeterminate)
+                #expect(failure.targetReceipt?.windowID == identity.windowID)
+            }
+        }
+    }
+
     private func invokeResultAdapters(
         on service: any WindowManagementServiceProtocol) async throws -> [DesktopActionOutcome?]
     {
@@ -199,6 +333,36 @@ struct WindowManagementServiceProtocolTests {
             setBounds.outcome,
         ]
     }
+
+    private func invokeResultAdapter(
+        _ operation: WindowAdapterOperation,
+        on service: any WindowManagementServiceProtocol,
+        identity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
+    {
+        let target = WindowTarget.windowId(identity.windowID)
+        switch operation {
+        case .close:
+            return try await service.closeWindowResult(
+                target: target,
+                expectedIdentity: identity,
+                allowForegroundFallback: false)
+        case .minimize:
+            return try await service.minimizeWindowResult(target: target, expectedIdentity: identity)
+        case .restore:
+            return try await service.restoreWindowResult(target: target, expectedIdentity: identity)
+        case .maximize:
+            return try await service.maximizeWindowResult(target: target, expectedIdentity: identity)
+        case .move:
+            return try await service.moveWindowResult(target: target, expectedIdentity: identity, to: .zero)
+        case .resize:
+            return try await service.resizeWindowResult(target: target, expectedIdentity: identity, to: .zero)
+        case .setBounds:
+            return try await service.setWindowBoundsResult(
+                target: target,
+                expectedIdentity: identity,
+                bounds: .zero)
+        }
+    }
 }
 
 private enum WindowAdapterOperation: CaseIterable, Sendable {
@@ -209,6 +373,18 @@ private enum WindowAdapterOperation: CaseIterable, Sendable {
     case move
     case resize
     case setBounds
+
+    var label: String {
+        switch self {
+        case .close: "Window close"
+        case .minimize: "Window minimize"
+        case .restore: "Window restore"
+        case .maximize: "Window maximize"
+        case .move: "Window move"
+        case .resize: "Window resize"
+        case .setBounds: "Window set bounds"
+        }
+    }
 }
 
 private actor WindowActionResultProbe: WindowManagementActionResultProviding,
@@ -476,7 +652,9 @@ private actor LegacyOnlyWindowManagementService: WindowManagementServiceProtocol
         self.legacyDispatchCount += 1
     }
 
-    func focusWindow(target _: WindowTarget) async throws {}
+    func focusWindow(target _: WindowTarget) async throws {
+        self.legacyDispatchCount += 1
+    }
 
     func listWindows(target _: WindowTarget) async throws -> [ServiceWindowInfo] {
         []

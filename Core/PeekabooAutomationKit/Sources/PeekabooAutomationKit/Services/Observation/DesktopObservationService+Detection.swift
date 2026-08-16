@@ -7,7 +7,8 @@ extension DesktopObservationService {
         capture: CaptureResult,
         target: ResolvedObservationTarget,
         request: DesktopObservationRequest,
-        tracer: DesktopObservationTraceRecorder) async throws -> ElementDetectionResult?
+        tracer: DesktopObservationTraceRecorder) async throws
+        -> UIAutomationActionResult<ElementDetectionResult>?
     {
         guard request.detection.mode != .none else {
             return nil
@@ -29,7 +30,7 @@ extension DesktopObservationService {
             accessibilityTimeoutSeconds: request.timeout.detection)
 
         return try await tracer.span("detection.ax") {
-            try await self.detectElements(
+            try await self.detectElementsResult(
                 in: capture.imageData,
                 snapshotID: request.output.snapshotID,
                 windowContext: context,
@@ -140,18 +141,19 @@ extension DesktopObservationService {
             detectionTime: 0)
     }
 
-    func detectElements(
+    func detectElementsResult(
         in imageData: Data,
         snapshotID: String?,
         windowContext: WindowContext?,
-        timeout: TimeInterval?) async throws -> ElementDetectionResult
+        timeout: TimeInterval?) async throws -> UIAutomationActionResult<ElementDetectionResult>
     {
         let automation = self.automation
-        let operation: @MainActor @Sendable () async throws -> ElementDetectionResult = {
-            try await automation.detectElements(
+        let operation: @MainActor @Sendable () async throws -> UIAutomationActionResult<ElementDetectionResult> = {
+            try await automation.detectElementsResult(
                 in: imageData,
                 snapshotId: snapshotID,
-                windowContext: windowContext)
+                windowContext: windowContext,
+                requestTimeoutSec: timeout)
         }
 
         guard let timeout else {

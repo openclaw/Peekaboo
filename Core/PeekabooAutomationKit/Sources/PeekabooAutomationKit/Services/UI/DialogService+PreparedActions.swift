@@ -19,7 +19,8 @@ extension DialogService {
                 let receipt = PreparedDialogActionReceipt(
                     token: UUID(),
                     kind: request.kind,
-                    target: candidate.target)
+                    target: candidate.target,
+                    resolvedTarget: candidate.resolvedTarget)
                 self.preparedActionStore.insert(.init(
                     receipt: receipt,
                     request: request,
@@ -128,7 +129,8 @@ extension DialogService {
                     targetReceipt: nil,
                     targetWindowIdentity: receipt.target.identity,
                     targetWindowBounds: receipt.target.bounds,
-                    focusedElement: receipt.target.focusedElement)
+                    focusedElement: receipt.target.focusedElement,
+                    resolvedTarget: receipt.resolvedTarget)
             }
 
             let fallbackOutcome = sequence.successResolution().outcome ?? leafOutcome
@@ -155,7 +157,10 @@ extension DialogService {
             guard dialogs.count == 1, let selected = dialogs.first else {
                 throw self.dialogCandidateRefusal(target: target, candidates: dialogs)
             }
-            return self.dialogElements(for: selected.dialog)
+            let resolvedTarget = try self.resolvedTargetWithUniqueWindowProof(
+                selected,
+                candidates: dialogs)
+            return self.dialogElements(for: selected.dialog, resolvedTarget: resolvedTarget)
         }
     }
 }
@@ -169,12 +174,14 @@ extension DialogService {
 
     struct TargetedDialogCandidate {
         let target: UIAutomationTarget.ExactWindow
+        let resolvedTarget: ResolvedDialogTargetEvidence
         let window: Element
         let dialog: Element
     }
 
     struct PreparedActionCandidate {
         let target: UIAutomationTarget.ExactWindow
+        let resolvedTarget: ResolvedDialogTargetEvidence
         let window: Element
         let dialog: Element
         let button: Element
@@ -215,6 +222,9 @@ extension DialogService {
         guard dialogs.count == 1, let candidate = dialogs.first else {
             throw self.dialogCandidateRefusal(target: request.target, candidates: dialogs)
         }
+        let resolvedTarget = try self.resolvedTargetWithUniqueWindowProof(
+            candidate,
+            candidates: dialogs)
         let matches = self.semanticButtons(in: candidate.dialog, request: request)
         guard matches.count == 1, let button = matches.first else {
             let available = self.collectButtons(from: candidate.dialog).enumerated().map { index, button in
@@ -233,6 +243,7 @@ extension DialogService {
         }
         return [PreparedActionCandidate(
             target: candidate.target,
+            resolvedTarget: resolvedTarget,
             window: candidate.window,
             dialog: candidate.dialog,
             button: button)]
@@ -261,7 +272,8 @@ extension DialogService {
         let response = try await self.applicationService.listWindows(
             for: "PID:\(processIdentity.processIdentifier)",
             timeout: self.targetedDialogSearchTimeout)
-        let windows = self.filteredDialogWindows(response.data.windows, selector: selector)
+        let allWindows = response.data.windows
+        let windows = self.filteredDialogWindows(allWindows, selector: selector)
         if selector.hasWindowSelector, windows.count != 1 {
             let ids = windows.map(\.windowID).sorted().map(String.init).joined(separator: ", ")
             let candidateIDs = ids.isEmpty ? "none" : ids
@@ -286,6 +298,16 @@ extension DialogService {
             else { continue }
 
             let exactWindow = try UIAutomationTarget.ExactWindow(window: window)
+            let windowResolutionProof = try Self.windowResolutionProof(
+                selector: selector,
+                candidates: allWindows,
+                selected: window,
+                processIdentity: processIdentity)
+            let resolvedTarget = try ResolvedDialogTargetEvidence(
+                target: exactWindow,
+                application: application,
+                window: window,
+                windowResolutionProof: windowResolutionProof)
             let freshDialogs = self.freshDialogElements(in: handle.element)
             guard freshDialogs.readable else {
                 throw self.targetUnavailable(
@@ -295,6 +317,7 @@ extension DialogService {
                 guard dialog.pid() == processIdentity.processIdentifier else { continue }
                 structuralCandidates.append(TargetedDialogCandidate(
                     target: exactWindow,
+                    resolvedTarget: resolvedTarget,
                     window: handle.element,
                     dialog: dialog))
             }
@@ -303,6 +326,7 @@ extension DialogService {
                     guard dialog.pid() == processIdentity.processIdentifier else { continue }
                     legacyCandidates.append(TargetedDialogCandidate(
                         target: exactWindow,
+                        resolvedTarget: resolvedTarget,
                         window: handle.element,
                         dialog: dialog))
                 }
@@ -325,6 +349,55 @@ extension DialogService {
                 structural: structuralCandidates,
                 legacy: legacyCandidates)
         }
+    }
+
+    private static func windowResolutionProof(
+        selector: DialogTargetSelector,
+        candidates: [ServiceWindowInfo],
+        selected: ServiceWindowInfo,
+        processIdentity: ApplicationProcessIdentity) throws -> SelectorResolutionProof?
+    {
+        let selection: WindowSelection? = if let windowID = selector.windowID {
+            .id(CGWindowID(windowID))
+        } else if let windowTitle = selector.windowTitle {
+            .title(windowTitle)
+        } else if let windowIndex = selector.windowIndex {
+            .index(windowIndex)
+        } else {
+            nil
+        }
+        guard let selection else { return nil }
+        return try WindowSelectorResolutionProof.make(
+            selection: selection,
+            candidates: candidates,
+            selected: selected,
+            processIdentity: processIdentity)
+    }
+
+    private func resolvedTargetWithUniqueWindowProof(
+        _ candidate: TargetedDialogCandidate,
+        candidates: [TargetedDialogCandidate]) throws -> ResolvedDialogTargetEvidence
+    {
+        if candidate.resolvedTarget.selectorResolutionProofs?.contains(where: { $0.scope == .window }) == true {
+            return candidate.resolvedTarget
+        }
+        let windows = candidates.map { item in
+            ServiceWindowInfo(
+                windowID: item.target.identity.windowID,
+                title: item.resolvedTarget.windowTitle,
+                bounds: item.target.bounds,
+                index: item.resolvedTarget.windowIndex,
+                mutationIdentity: item.target.identity)
+        }
+        guard let selected = windows.first(where: { $0.windowID == candidate.target.identity.windowID }) else {
+            throw self.targetUnavailable("The unique dialog window disappeared during selector proof.")
+        }
+        let proof = try WindowSelectorResolutionProof.make(
+            selection: .automatic,
+            candidates: windows,
+            selected: selected,
+            processIdentity: candidate.target.identity.processIdentity)
+        return try candidate.resolvedTarget.addingWindowResolutionProof(proof)
     }
 
     func targetApplication(for selector: DialogTargetSelector) async throws -> ServiceApplicationInfo {
@@ -493,8 +566,15 @@ extension DialogService {
             throw self.targetUnavailable("Prepared dialog or sheet changed before \(operation).")
         }
         try Task.checkCancellation()
-        return TargetedDialogCandidate(
+        guard let window else {
+            throw self.targetUnavailable("Dialog window metadata disappeared before \(operation).")
+        }
+        return try TargetedDialogCandidate(
             target: expected,
+            resolvedTarget: ResolvedDialogTargetEvidence(
+                target: expected,
+                application: application,
+                window: window),
             window: currentWindow.element,
             dialog: freshDialogs.structural[0])
     }
@@ -600,7 +680,10 @@ extension DialogService {
             windowID: target.identity.windowID)
     }
 
-    func dialogElements(for dialog: Element) -> DialogElements {
+    func dialogElements(
+        for dialog: Element,
+        resolvedTarget: ResolvedDialogTargetEvidence? = nil) -> DialogElements
+    {
         let info = DialogInfo(
             title: dialog.title() ?? "Untitled Dialog",
             role: dialog.role() ?? "Unknown",
@@ -612,7 +695,8 @@ extension DialogService {
             buttons: self.dialogButtons(from: dialog),
             textFields: self.dialogTextFields(from: dialog),
             staticTexts: self.dialogStaticTexts(from: dialog),
-            otherElements: self.dialogOtherElements(from: dialog))
+            otherElements: self.dialogOtherElements(from: dialog),
+            resolvedTarget: resolvedTarget)
     }
 
     func actionCandidateRefusal(

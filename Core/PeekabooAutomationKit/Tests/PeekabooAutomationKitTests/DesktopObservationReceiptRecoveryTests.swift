@@ -109,7 +109,7 @@ final class DesktopObservationReceiptRecoveryTests: XCTestCase {
         XCTAssertEqual(captureFailedCapture.captureCalls, 1)
     }
 
-    func testMutatingObservationModesDoNotRetryChangedCaptureReceipts() async throws {
+    func testPotentiallyMutatingObservationModesDoNotRetryChangedCaptureReceipts() async throws {
         let bounds = CGRect(x: 100, y: 100, width: 500, height: 400)
         let target = Self.receiptedTarget(bounds: bounds)
         let changedCapture = Self.receiptedCapture(
@@ -127,7 +127,8 @@ final class DesktopObservationReceiptRecoveryTests: XCTestCase {
                 detection: DesktopDetectionOptions(mode: .none)),
         ]
 
-        for request in requests {
+        let expectedMutationDispatched: [Bool?] = [true, nil, false]
+        for (index, request) in requests.enumerated() {
             let resolver = RecordingReceiptTargetResolver(target: target)
             let capture = ReceiptRecoveryCaptureService(result: changedCapture)
             let service = DesktopObservationService(
@@ -138,7 +139,20 @@ final class DesktopObservationReceiptRecoveryTests: XCTestCase {
             do {
                 _ = try await service.observe(request)
                 XCTFail("Expected changed capture receipt")
+            } catch let failure as DesktopActionFailure {
+                let expected = try XCTUnwrap(expectedMutationDispatched[index])
+                XCTAssertEqual(
+                    failure.outcome.dispatchState.mutationDispatched,
+                    expected)
+                XCTAssertEqual(
+                    failure.outcome.retrySafety,
+                    expected ? .unsafe : .safe)
+                XCTAssertEqual(
+                    failure.outcome.projection.requiresFreshObservation,
+                    expected)
+                XCTAssertTrue(failure.causeDescription?.contains("targetChanged") == true)
             } catch let error as DesktopObservationError {
+                XCTAssertNil(expectedMutationDispatched[index])
                 guard case .targetChanged = error else {
                     XCTFail("Expected targetChanged, got \(error)")
                     continue
@@ -147,6 +161,88 @@ final class DesktopObservationReceiptRecoveryTests: XCTestCase {
             XCTAssertEqual(resolver.resolveCalls, 1)
             XCTAssertEqual(capture.captureCalls, 1)
         }
+    }
+
+    func testWebFocusCaptureFailureStaysPredispatchSafe() async throws {
+        let target = Self.receiptedTarget(bounds: CGRect(x: 100, y: 100, width: 500, height: 400))
+        let resolver = RecordingReceiptTargetResolver(target: target)
+        let capture = ReceiptRecoveryCaptureService(resultProvider: {
+            throw OperationError.captureFailed(reason: "web-focus capture fixture")
+        })
+        let automation = ReceiptRecoveryAutomationService()
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: automation,
+            targetResolver: resolver)
+
+        do {
+            _ = try await service.observeActionResult(DesktopObservationRequest(
+                target: .app(identifier: "Fixture", window: .automatic),
+                detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: true)))
+            XCTFail("Expected capture failure")
+        } catch is DesktopActionFailure {
+            XCTFail("Capture failed before web-focus detection, so no mutation outcome should be synthesized")
+        } catch let OperationError.captureFailed(reason) {
+            XCTAssertEqual(reason, "web-focus capture fixture")
+        }
+
+        XCTAssertEqual(resolver.resolveCalls, 1)
+        XCTAssertEqual(capture.captureCalls, 1)
+        XCTAssertEqual(automation.detectCalls, 0)
+    }
+
+    func testWebFocusDispatchIsAddedAfterSuccessfulCapture() async throws {
+        let bounds = CGRect(x: 100, y: 100, width: 500, height: 400)
+        let resolver = RecordingReceiptTargetResolver(target: Self.receiptedTarget(bounds: bounds))
+        let capture = ReceiptRecoveryCaptureService(result: Self.receiptedCapture(bounds: bounds))
+        let automation = ReceiptRecoveryAutomationService()
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: automation,
+            targetResolver: resolver)
+
+        let result = try await service.observeActionResult(DesktopObservationRequest(
+            target: .app(identifier: "Fixture", window: .automatic),
+            detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: true)))
+
+        XCTAssertEqual(capture.captureCalls, 1)
+        XCTAssertEqual(automation.detectCalls, 1)
+        XCTAssertEqual(result.outcome?.state, .dispatchedUnverified)
+        XCTAssertEqual(
+            result.outcome?.delivery,
+            DesktopActionOutcome.Delivery(mechanism: .capturePipeline, mode: .background))
+        XCTAssertEqual(result.outcome?.dispatchState.unitCount, .one)
+    }
+
+    func testWebFocusDetectionFailureBecomesUnsafeOnlyAfterSuccessfulCapture() async throws {
+        let bounds = CGRect(x: 100, y: 100, width: 500, height: 400)
+        let resolver = RecordingReceiptTargetResolver(target: Self.receiptedTarget(bounds: bounds))
+        let capture = ReceiptRecoveryCaptureService(result: Self.receiptedCapture(bounds: bounds))
+        let automation = ReceiptRecoveryAutomationService(
+            actionError: OperationError.captureFailed(reason: "web-focus detection fixture"))
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: automation,
+            targetResolver: resolver)
+
+        do {
+            _ = try await service.observeActionResult(DesktopObservationRequest(
+                target: .app(identifier: "Fixture", window: .automatic),
+                detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: true)))
+            XCTFail("Expected detection failure")
+        } catch let failure as DesktopActionFailure {
+            XCTAssertEqual(failure.outcome.state, .dispatchedUnverified)
+            XCTAssertTrue(failure.outcome.dispatchState.mutationDispatched)
+            XCTAssertEqual(failure.outcome.retrySafety, .unsafe)
+            XCTAssertEqual(
+                failure.outcome.delivery,
+                DesktopActionOutcome.Delivery(mechanism: .capturePipeline, mode: .background))
+            XCTAssertEqual(failure.outcome.dispatchState.unitCount, .one)
+            XCTAssertTrue(failure.causeDescription?.contains("web-focus detection fixture") == true)
+        }
+
+        XCTAssertEqual(capture.captureCalls, 1)
+        XCTAssertEqual(automation.detectCalls, 1)
     }
 
     private static func receiptedTarget(bounds: CGRect) -> ResolvedObservationTarget {
@@ -287,17 +383,58 @@ private final class ReceiptRecoveryCaptureService: ScreenCaptureServiceProtocol 
 }
 
 @MainActor
-private final class ReceiptRecoveryAutomationService: UIAutomationServiceProtocol {
+private final class ReceiptRecoveryAutomationService: UIAutomationObservationActionResultProviding {
+    private let actionError: (any Error)?
     private(set) var detectCalls = 0
+
+    init(actionError: (any Error)? = nil) {
+        self.actionError = actionError
+    }
 
     func detectElements(
         in _: Data,
         snapshotId: String?,
         windowContext _: WindowContext?) async throws -> ElementDetectionResult
     {
+        try self.detectionResult(snapshotID: snapshotId)
+    }
+
+    func detectElementsActionResult(
+        in _: Data,
+        snapshotId: String?,
+        windowContext: WindowContext?,
+        requestTimeoutSec _: TimeInterval?) async throws -> UIAutomationActionResult<ElementDetectionResult>
+    {
+        try UIAutomationActionResult(
+            payload: self.detectionResult(snapshotID: snapshotId),
+            outcome: windowContext?.shouldFocusWebContent == true
+                ? .dispatchedUnverified(
+                    delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one)
+                : nil)
+    }
+
+    func inspectAccessibilityTreeActionResult(
+        windowContext: WindowContext?) async throws -> UIAutomationActionResult<ElementDetectionResult>
+    {
+        try UIAutomationActionResult(
+            payload: self.detectionResult(snapshotID: nil),
+            outcome: windowContext?.shouldFocusWebContent == true
+                ? .dispatchedUnverified(
+                    delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one)
+                : nil)
+    }
+
+    private func detectionResult(snapshotID: String?) throws -> ElementDetectionResult {
         self.detectCalls += 1
+        if let actionError {
+            throw actionError
+        }
         return ElementDetectionResult(
-            snapshotId: snapshotId ?? "generated",
+            snapshotId: snapshotID ?? "generated",
             screenshotPath: "/tmp/fake.png",
             elements: DetectedElements(buttons: [
                 DetectedElement(id: "B1", type: .button, label: "Fixture", bounds: .zero),

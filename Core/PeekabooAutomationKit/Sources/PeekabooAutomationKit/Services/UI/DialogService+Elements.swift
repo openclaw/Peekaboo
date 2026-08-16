@@ -45,22 +45,34 @@ extension DialogService {
         return CGRect(origin: position, size: size)
     }
 
-    func focusTextField(_ field: Element) {
+    func focusTextField(_ field: Element) throws -> DesktopActionOutcome {
         let elementDescription = field.briefDescription(option: ValueFormatOption.smart)
         self.logger.debug("Focusing text field: \(elementDescription)")
 
-        if field.isAttributeSettable(named: AXAttributeNames.kAXFocusedAttribute),
-           field.setValue(true, forAttribute: AXAttributeNames.kAXFocusedAttribute)
-        {
-            return
+        if field.attribute(Attribute<Bool>(AXAttributeNames.kAXFocusedAttribute)) == true {
+            return .confirmedNoChange()
+        }
+
+        if field.isAttributeSettable(named: AXAttributeNames.kAXFocusedAttribute) {
+            guard field.setValue(true, forAttribute: AXAttributeNames.kAXFocusedAttribute) else {
+                throw DesktopActionFailure.indeterminate(
+                    delivery: .init(mechanism: .accessibilityValue, mode: .foreground),
+                    evidence: .completionUnknown,
+                    unitCount: .one,
+                    message: "File-dialog field focus returned without acceptance evidence.",
+                    hint: "Observe the file dialog and field before retrying.")
+            }
+            return .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityValue, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .one)
         }
 
         if field.isActionSupported(AXActionNames.kAXPressAction) {
-            do {
+            return try self.fileDialogAccessibilityAction(
+                operation: "focus the file-dialog text field")
+            {
                 try field.performAction(.press)
-                return
-            } catch {
-                self.logger.debug("Failed to focus text field via press: \(String(describing: error))")
             }
         }
 
@@ -70,11 +82,15 @@ extension DialogService {
            size.height > 0
         {
             let point = CGPoint(x: position.x + size.width / 2.0, y: position.y + size.height / 2.0)
-            try? InputDriver.click(at: point)
-            return
+            return try self.fileDialogGlobalPointerClick(
+                at: point,
+                operation: "focus the file-dialog text field")
         }
 
-        self.logger.debug("Text field is not focusable (focused attribute not settable; press/click unavailable).")
+        throw DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "File-dialog text field has no focusable AX or pointer target.",
+            hint: "Refresh the file dialog before retrying.")
     }
 
     func clearFieldIfNeeded(_ field: Element, shouldClear: Bool) throws {
@@ -85,9 +101,17 @@ extension DialogService {
         usleep(50000)
     }
 
-    func typeTextValue(_ text: String, delay: useconds_t) throws {
+    func typeTextValue(_ text: String, delay: useconds_t) throws -> DesktopActionOutcome {
         self.logger.debug("Typing text into field")
-        try InputDriver.type(text, delayPerCharacter: Double(delay) / 1_000_000.0)
+        guard !text.isEmpty else { return .confirmedNoChange() }
+        return try self.fileDialogGlobalInput(
+            operation: "type file-dialog text",
+            unitCount: text.count)
+        {
+            try self.syntheticInputDriver.type(
+                text,
+                delayPerCharacter: Double(delay) / 1_000_000.0)
+        }
     }
 
     func collectButtons(from element: Element) -> [Element] {
@@ -150,24 +174,105 @@ extension DialogService {
         }
     }
 
-    func pressOrClick(_ element: Element, allowGlobalFallback: Bool = false) throws {
-        do {
-            try element.performAction(.press)
-            return
-        } catch {
-            guard allowGlobalFallback else {
-                throw error
+    func pressOrClick(
+        _ element: Element,
+        allowGlobalFallback: Bool = false) throws -> DesktopActionOutcome
+    {
+        if element.isActionSupported(AXActionNames.kAXPressAction) {
+            return try self.fileDialogAccessibilityAction(operation: "press the dialog control") {
+                try element.performAction(.press)
             }
-            guard let position = element.position(),
-                  let size = element.size(),
-                  size.width > 0,
-                  size.height > 0
-            else {
-                throw error
-            }
+        }
 
-            let point = CGPoint(x: position.x + size.width / 2.0, y: position.y + size.height / 2.0)
-            try InputDriver.click(at: point)
+        guard allowGlobalFallback,
+              let position = element.position(),
+              let size = element.size(),
+              size.width > 0,
+              size.height > 0
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "Dialog control does not expose AXPress or a permitted pointer fallback.",
+                hint: "Refresh the dialog and choose a supported control.")
+        }
+
+        let point = CGPoint(x: position.x + size.width / 2.0, y: position.y + size.height / 2.0)
+        return try self.fileDialogGlobalPointerClick(at: point, operation: "click the dialog control")
+    }
+
+    func fileDialogGlobalInput(
+        operation: String,
+        unitCount: Int = 1,
+        dispatch: () throws -> Void) throws -> DesktopActionOutcome
+    {
+        guard let count = DesktopActionOutcome.DispatchUnitCount(unitCount) else {
+            return .confirmedNoChange()
+        }
+        do {
+            try dispatch()
+            return .dispatchedUnverified(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: count)
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch let error as PeekabooError {
+            if case .permissionDeniedEventSynthesizing = error {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .permissionDenied,
+                    message: "Cannot \(operation) without Event Synthesizing permission.",
+                    hint: "Grant Event Synthesizing permission before retrying.",
+                    causeDescription: error.localizedDescription)
+            }
+            throw DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .completionUnknown,
+                unitCount: count,
+                message: "File-dialog input returned without reliable dispatch evidence.",
+                hint: "Observe the file dialog before retrying.",
+                causeDescription: error.localizedDescription)
+        } catch {
+            throw DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .completionUnknown,
+                unitCount: count,
+                message: "File-dialog input returned without reliable dispatch evidence.",
+                hint: "Observe the file dialog before retrying.",
+                causeDescription: error.localizedDescription)
+        }
+    }
+
+    func fileDialogGlobalPointerClick(
+        at point: CGPoint,
+        operation: String) throws -> DesktopActionOutcome
+    {
+        do {
+            return try self.syntheticInputDriver.click(at: point, button: .left, count: 1)
+        } catch {
+            return try self.fileDialogGlobalInput(operation: operation) { throw error }
+        }
+    }
+
+    private func fileDialogAccessibilityAction(
+        operation: String,
+        dispatch: () throws -> Void) throws -> DesktopActionOutcome
+    {
+        do {
+            try dispatch()
+            return .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .one)
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch {
+            throw DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "Accessibility could not reliably \(operation).",
+                hint: "Observe the file dialog before retrying.",
+                causeDescription: error.localizedDescription)
         }
     }
 

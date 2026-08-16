@@ -146,7 +146,7 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
 
     public func captureScreen(
         displayIndex: Int?,
-        visualizerMode: CaptureVisualizerMode = .screenshotFlash,
+        visualizerMode: CaptureVisualizerMode = .none,
         scale: CaptureScalePreference = .logical1x) async throws -> CaptureResult
     {
         try await self.captureScreenImpl(
@@ -158,7 +158,7 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
     public func captureWindow(
         appIdentifier: String,
         windowIndex: Int?,
-        visualizerMode: CaptureVisualizerMode = .screenshotFlash,
+        visualizerMode: CaptureVisualizerMode = .none,
         scale: CaptureScalePreference = .logical1x) async throws -> CaptureResult
     {
         try await self.captureWindowImpl(
@@ -170,7 +170,7 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
 
     public func captureWindow(
         windowID: CGWindowID,
-        visualizerMode: CaptureVisualizerMode = .screenshotFlash,
+        visualizerMode: CaptureVisualizerMode = .none,
         scale: CaptureScalePreference = .logical1x) async throws -> CaptureResult
     {
         try await self.captureWindowImpl(
@@ -180,7 +180,7 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
     }
 
     public func captureFrontmost(
-        visualizerMode: CaptureVisualizerMode = .screenshotFlash,
+        visualizerMode: CaptureVisualizerMode = .none,
         scale: CaptureScalePreference = .logical1x) async throws -> CaptureResult
     {
         try await self.captureFrontmostImpl(
@@ -190,7 +190,7 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
 
     public func captureArea(
         _ rect: CGRect,
-        visualizerMode _: CaptureVisualizerMode = .screenshotFlash,
+        visualizerMode _: CaptureVisualizerMode = .none,
         scale: CaptureScalePreference = .logical1x) async throws -> CaptureResult
     {
         try await self.captureAreaImpl(rect, scale: scale)

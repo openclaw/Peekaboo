@@ -16,6 +16,7 @@ extension ApplicationService {
         let createsNewInstance: Bool
         let disablesRunningApplicationSubstitution: Bool
         let requestedRunningApplicationIdentity: ApplicationProcessIdentity?
+        let applicationIdentifier: String?
     }
 
     public func launchApplication(identifier: String) async throws -> ServiceApplicationInfo {
@@ -73,7 +74,8 @@ extension ApplicationService {
             waitForWindow: request.waitForWindow,
             createsNewInstance: request.createsNewInstance,
             disablesRunningApplicationSubstitution: identifier.map(Self.isExplicitApplicationPath) == true,
-            requestedRunningApplicationIdentity: requestedRunningApplication?.processIdentity)
+            requestedRunningApplicationIdentity: requestedRunningApplication?.processIdentity,
+            applicationIdentifier: identifier)
     }
 
     func performApplicationLaunchWithOutcomeOwnedLane(
@@ -82,7 +84,8 @@ extension ApplicationService {
         self.logger.info("Launching application from the owned desktop lane")
         if !launch.activates {
             let application = try await self.performVerifiedBackgroundLaunchNoOp(launch)
-            return DesktopActionResult(payload: application, outcome: .confirmedNoChange())
+            let boundApplication = try await self.bindSelectorResolution(application, launch: launch)
+            return DesktopActionResult(payload: boundApplication, outcome: .confirmedNoChange())
         }
         if let requestedIdentity = launch.requestedRunningApplicationIdentity {
             let activation = try await self.activateVerifiedRunningApplication(
@@ -93,7 +96,8 @@ extension ApplicationService {
             } else {
                 .confirmedNoChange()
             }
-            return DesktopActionResult(payload: activation.application, outcome: outcome)
+            let boundApplication = try await self.bindSelectorResolution(activation.application, launch: launch)
+            return DesktopActionResult(payload: boundApplication, outcome: outcome)
         }
 
         let config = NSWorkspace.OpenConfiguration()
@@ -106,7 +110,9 @@ extension ApplicationService {
         // LaunchServices may continue opening an application after its caller is cancelled. Keep
         // ownership of that native operation until it returns a PID so the global desktop lane is
         // not abandoned while an explicitly foreground launch may still complete.
+        try Self.checkApplicationDispatchCancellation(operation: "Launch application")
         let openTask = Task { @MainActor in
+            try Task.checkCancellation()
             if let applicationURL = launch.applicationURL {
                 if launch.disablesRunningApplicationSubstitution {
                     config.allowsRunningApplicationSubstitution = false
@@ -134,6 +140,7 @@ extension ApplicationService {
             try Task.checkCancellation()
 
             if !self.applicationActiveProvider(runningApp) {
+                try Task.checkCancellation()
                 if self.applicationActivationHandler(runningApp) {
                     acceptedNativeDispatchCount += 1
                 } else {
@@ -166,8 +173,9 @@ extension ApplicationService {
                 throw PeekabooError.commandFailed(
                     "Launched application process generation changed before its receipt could be returned")
             }
+            let boundApplication = try await self.bindSelectorResolution(application, launch: launch)
             return DesktopActionResult(
-                payload: application,
+                payload: boundApplication,
                 outcome: .confirmedChange(
                     delivery: Self.applicationDelivery(mode: .foreground),
                     unitCount: DesktopActionOutcome.DispatchUnitCount(acceptedNativeDispatchCount) ?? .one))
@@ -178,6 +186,58 @@ extension ApplicationService {
                 error: error,
                 unitCount: DesktopActionOutcome.DispatchUnitCount(acceptedNativeDispatchCount) ?? .one)
         }
+    }
+
+    private func bindSelectorResolution(
+        _ application: ServiceApplicationInfo,
+        launch: PreparedApplicationLaunch) async throws -> ServiceApplicationInfo
+    {
+        guard let identifier = launch.applicationIdentifier,
+              let processIdentity = application.processIdentity
+        else {
+            return application
+        }
+        let selectorIdentifier: String
+        if launch.disablesRunningApplicationSubstitution {
+            guard let applicationURL = launch.applicationURL else {
+                throw PeekabooError.commandFailed(
+                    "The explicit application path did not resolve to an application URL")
+            }
+            selectorIdentifier = Self.canonicalApplicationPath(applicationURL)
+        } else {
+            selectorIdentifier = identifier
+        }
+        let selectedCandidate = ApplicationIdentifierMatcher.Candidate(application)
+        let runningCandidates = launch.createsNewInstance
+            ? [selectedCandidate]
+            : self.applicationSelectorCandidatesProvider()
+        let systemResolution = try ApplicationIdentifierMatcher.resolution(
+            for: selectorIdentifier,
+            in: runningCandidates)
+        let resolution: ApplicationIdentifierMatcher.Resolution
+        if let systemResolution {
+            guard runningCandidates[systemResolution.index].processIdentifier == application.processIdentifier else {
+                throw PeekabooError.commandFailed(
+                    "The launched application does not match the authoritative selector winner")
+            }
+            resolution = systemResolution
+        } else {
+            guard let selectedResolution = try ApplicationIdentifierMatcher.resolution(
+                for: selectorIdentifier,
+                in: [selectedCandidate])
+            else {
+                throw PeekabooError.commandFailed(
+                    "The launched application does not satisfy its requested selector")
+            }
+            resolution = selectedResolution
+        }
+        guard !resolution.hasWinningTie else {
+            throw PeekabooError.commandFailed(
+                "The launched application selector has more than one authoritative winner")
+        }
+        return application.withSelectorResolutionProofs([
+            resolution.proof(selectedProcessIdentity: processIdentity),
+        ])
     }
 
     private func performVerifiedBackgroundLaunchNoOp(
@@ -414,6 +474,7 @@ extension ApplicationService {
             throw PeekabooError.commandFailed(
                 "The relaunch target changed process generation after initial selection")
         }
+        try Self.validateRelaunchLaunchOwnership(preparedLaunch, target: target)
         if target.processIdentifier == getpid() {
             throw PeekabooError.serviceUnavailable("A runtime host cannot relaunch itself")
         }
@@ -422,6 +483,7 @@ extension ApplicationService {
             identifier: canonicalTargetIdentifier,
             force: request.force,
             expectedIdentity: expectedTargetIdentity)
+        try Self.checkApplicationDispatchCancellation(operation: "Application relaunch")
 
         var quitCompleted = false
         var relaunchSequence = DesktopActionSequenceAccumulator()
@@ -512,6 +574,33 @@ extension ApplicationService {
             return try await relaunchTargetResolver(identifier)
         }
         return try await self.findApplication(identifier: identifier)
+    }
+
+    private static func validateRelaunchLaunchOwnership(
+        _ launch: PreparedApplicationLaunch,
+        target: ServiceApplicationInfo) throws
+    {
+        guard let launchURL = launch.applicationURL else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "Atomic relaunch requires an application bundle to launch after quitting the target.",
+                hint: "Relaunch the selected application by its bundle identifier or exact application path.")
+        }
+        guard let targetBundlePath = target.bundlePath?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !targetBundlePath.isEmpty
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Atomic relaunch could not prove the selected application's bundle path.",
+                hint: "Refresh the application inventory before retrying.")
+        }
+        let targetURL = URL(fileURLWithPath: NSString(string: targetBundlePath).expandingTildeInPath)
+        guard self.canonicalApplicationPath(launchURL) == self.canonicalApplicationPath(targetURL) else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "Atomic relaunch requires the quit target and launch request to name the same application.",
+                hint: "Use the selected application's bundle identifier or exact application path.")
+        }
     }
 
     private func quitRelaunchTarget(
@@ -679,6 +768,7 @@ extension ApplicationService {
         guard requested else { return }
         let deadline = Date().addingTimeInterval(2)
         while !self.applicationActiveProvider(app), Date() < deadline {
+            try Task.checkCancellation()
             if self.applicationActivationHandler(app) {
                 recordAcceptedActivation()
             }
@@ -773,12 +863,14 @@ extension ApplicationService {
                     return dispatchReceipt()
                 }
 
+                try Task.checkCancellation()
                 let accepted = self.applicationActivationHandler(application)
                 nativeRequestAccepted = nativeRequestAccepted || accepted
                 if accepted {
                     recordAcceptedRequest(.nativeFramework)
                 }
                 if shouldUseAccessibilityFallback || !accepted {
+                    try Task.checkCancellation()
                     let accessibilityAccepted = self.applicationAccessibilityActivationHandler(processIdentifier)
                     accessibilityRequestAccepted = accessibilityAccepted || accessibilityRequestAccepted
                     if accessibilityAccepted {
@@ -931,6 +1023,7 @@ extension ApplicationService {
 
         self.logger.debug("Sending \(request.force ? "force terminate" : "terminate") signal to \(app.name)")
         try self.validateApplicationQuitIdentity(expectedIdentity, resolvedApplication: app)
+        try Self.checkApplicationDispatchCancellation(operation: "Quit application")
         let success = self.applicationQuitHandler(runningApp, request.force)
 
         guard success else {
@@ -986,6 +1079,8 @@ extension ApplicationService {
         hidden: Bool) throws -> ApplicationVisibilityAttempt
     {
         if let applicationVisibilityHandler = self.applicationVisibilityHandler {
+            try Self.checkApplicationDispatchCancellation(
+                operation: hidden ? "Hide application" : "Unhide application")
             let accepted = try applicationVisibilityHandler(application, hidden)
             guard accepted else { return .rejected }
             return .accepted(ApplicationActionDispatch(
@@ -995,6 +1090,7 @@ extension ApplicationService {
                 unitCount: .one))
         }
         if !hidden {
+            try Self.checkApplicationDispatchCancellation(operation: "Unhide application")
             guard self.applicationNativeVisibilityHandler(application, false) else { return .rejected }
             return .accepted(ApplicationActionDispatch(
                 delivery: DesktopActionOutcome.Delivery(
@@ -1004,39 +1100,37 @@ extension ApplicationService {
         }
 
         do {
+            try Self.checkApplicationDispatchCancellation(operation: "Hide application")
             try self.applicationAccessibilityHideHandler(application)
             return .accepted(ApplicationActionDispatch(
                 delivery: DesktopActionOutcome.Delivery(
                     mechanism: .accessibilityAction,
                     mode: .background),
                 unitCount: .one))
+        } catch let failure as DesktopActionFailure {
+            guard failure.outcome.state == .refused,
+                  failure.outcome.dispatchState == .none,
+                  failure.outcome.retrySafety == .safe,
+                  let refusalReason = failure.outcome.refusalReason,
+                  [.operationUnsupported, .permissionDenied].contains(refusalReason)
+            else {
+                throw failure
+            }
+            // The typed AX refusal above proves zero dispatch. Cancellation before the native
+            // fallback therefore remains a pre-dispatch refusal instead of inventing an AX unit.
+            try Self.checkApplicationDispatchCancellation(operation: "Hide application fallback")
+            guard self.applicationNativeVisibilityHandler(application, true) else {
+                return .rejected
+            }
+            return .accepted(ApplicationActionDispatch(
+                delivery: DesktopActionOutcome.Delivery(
+                    mechanism: .nativeFramework,
+                    mode: .background),
+                unitCount: .one))
         } catch {
             _ = error.asPeekabooError(context: "AX hide action failed")
-            // AX can fail after dispatch. Avoid a known duplicate when its effect is already visible;
-            // if native fallback is still needed, an unknown count preserves both possible attempts.
-            do {
-                if try self.applicationHiddenProvider(application) {
-                    return .accepted(ApplicationActionDispatch(
-                        delivery: DesktopActionOutcome.Delivery(
-                            mechanism: .accessibilityAction,
-                            mode: .background),
-                        unitCount: .one))
-                }
-            } catch {
-                return .mayHaveDispatched(
-                    delivery: DesktopActionOutcome.Delivery(
-                        mechanism: .accessibilityAction,
-                        mode: .background),
-                    unitCount: .one,
-                    causeDescription: String(describing: error))
-            }
-            if self.applicationNativeVisibilityHandler(application, true) {
-                return .accepted(ApplicationActionDispatch(
-                    delivery: DesktopActionOutcome.Delivery(
-                        mechanism: .nativeFramework,
-                        mode: .background),
-                    unitCount: nil))
-            }
+            // A generic AX error does not prove that dispatch was rejected. Replaying the hide
+            // through AppKit could therefore toggle or duplicate a mutation that already happened.
             return .mayHaveDispatched(
                 delivery: DesktopActionOutcome.Delivery(
                     mechanism: .accessibilityAction,
@@ -1047,69 +1141,11 @@ extension ApplicationService {
     }
 
     public func hideOtherApplications(identifier: String) async throws {
-        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
-            self.logger.info("Hiding other applications except: \(identifier)")
-            let app = try await findApplication(identifier: identifier)
-
-            guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier) else {
-                throw NotFoundError.application(identifier)
-            }
-            let appElement = AXApp(runningApp).element
-
-            do {
-                // Use custom attribute for hide others action
-                try appElement.performAction(Attribute<String>("AXHideOthers"))
-                self.logger.debug("Hidden others via AX action")
-            } catch {
-                // Log the error but use fallback
-                _ = error.asPeekabooError(context: "AX hide others action failed")
-                // Fallback: hide each app individually
-                self.logger.debug("Hiding apps individually")
-                // Already on main thread due to @MainActor on class
-                let apps = NSWorkspace.shared.runningApplications
-                var hiddenCount = 0
-                for runningApp in apps {
-                    if runningApp.processIdentifier != app.processIdentifier,
-                       runningApp.activationPolicy == .regular,
-                       runningApp.bundleIdentifier != "com.apple.finder"
-                    {
-                        runningApp.hide()
-                        hiddenCount += 1
-                    }
-                }
-                // Return value already computed
-                self.logger.debug("Hidden \(hiddenCount) other applications")
-            }
-        }
+        _ = try await self.hideOtherApplicationsActionResult(identifier: identifier)
     }
 
     public func showAllApplications() async throws {
-        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
-            self.logger.info("Showing all applications")
-            let systemWide = Element.systemWide()
-
-            do {
-                // Use custom attribute for show all action
-                try systemWide.performAction(Attribute<String>("AXShowAll"))
-                self.logger.debug("Shown all via AX action")
-            } catch {
-                // Log the error but use fallback
-                _ = error.asPeekabooError(context: "AX show all action failed")
-                // Fallback: unhide each hidden app
-                self.logger.debug("Unhiding apps individually")
-                // Already on main thread due to @MainActor on class
-                let apps = NSWorkspace.shared.runningApplications
-                var unhiddenCount = 0
-                for runningApp in apps {
-                    if runningApp.isHidden, runningApp.activationPolicy == .regular {
-                        runningApp.unhide()
-                        unhiddenCount += 1
-                    }
-                }
-                // Return value already computed
-                self.logger.debug("Unhidden \(unhiddenCount) applications")
-            }
-        }
+        _ = try await self.showAllApplicationsActionResult()
     }
 
     private func findApplicationByName(_ name: String) -> URL? {

@@ -407,18 +407,19 @@ public struct DesktopActionSequenceAccumulator: Sendable {
                aggregate.dispatchedRoute.value != nil,
                let delivery = aggregate.dispatchedDelivery.value
             {
-                return .partial(
+                return DesktopActionFailure.partial(
                     route: route,
                     delivery: delivery,
                     unitCount: unitCount,
                     message: message,
                     hint: hint ?? leafFailure.hint,
                     causeDescription: causeDescription ?? leafFailure.causeDescription)
+                    .selectingLeaves(leafFailure.selectedLeafEvidence)
             }
 
             let evidence: DesktopActionOutcome.IndeterminateEvidence =
                 leafFailure.outcome.evidence == .responseLost ? .responseLost : .completionUnknown
-            return .indeterminate(
+            return DesktopActionFailure.indeterminate(
                 route: route,
                 delivery: aggregate.dispatchedRoute.value == nil ? nil : aggregate.dispatchedDelivery.value,
                 evidence: evidence,
@@ -426,6 +427,7 @@ public struct DesktopActionSequenceAccumulator: Sendable {
                 message: message,
                 hint: hint ?? leafFailure.hint,
                 causeDescription: causeDescription ?? leafFailure.causeDescription)
+                .selectingLeaves(leafFailure.selectedLeafEvidence)
         }
         return leafFailure
     }
@@ -524,7 +526,9 @@ public struct DesktopActionSequenceAccumulator: Sendable {
             guard let lhsCount = lhs.unitCount?.rawValue,
                   let rhsCount = rhs.unitCount?.rawValue
             else { return nil }
-            return DesktopActionOutcome.DispatchUnitCount(lhsCount + rhsCount)
+            let (sum, overflow) = lhsCount.addingReportingOverflow(rhsCount)
+            guard !overflow else { return nil }
+            return DesktopActionOutcome.DispatchUnitCount(sum)
         }
     }
 }
@@ -549,7 +553,10 @@ private struct HomogeneousValue<Value: Equatable & Sendable>: Sendable {
     }
 }
 
-/// Combines one delivery mechanism while retaining the most disruptive mode it used.
+/// Combines delivery mechanisms while retaining the most disruptive mode they used.
+///
+/// A known sequence that crosses mechanisms remains exactly representable as `composite`.
+/// Missing delivery evidence still makes the aggregate unavailable rather than inventing a route.
 private struct CompatibleDeliveryValue: Sendable {
     private(set) var value: DesktopActionOutcome.Delivery?
     private var isAvailable = true
@@ -565,13 +572,10 @@ private struct CompatibleDeliveryValue: Sendable {
             self.value = value
             return
         }
-        guard existing.mechanism == value.mechanism else {
-            self.value = nil
-            self.isAvailable = false
-            return
-        }
+        let mechanism: DesktopActionOutcome.Delivery.Mechanism =
+            existing.mechanism == value.mechanism ? existing.mechanism : .composite
         self.value = DesktopActionOutcome.Delivery(
-            mechanism: existing.mechanism,
+            mechanism: mechanism,
             mode: existing.mode == .foreground || value.mode == .foreground ? .foreground : .background)
     }
 }

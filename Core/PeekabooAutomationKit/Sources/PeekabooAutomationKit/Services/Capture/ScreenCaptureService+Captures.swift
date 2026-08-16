@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
 
 @MainActor
 extension ScreenCaptureService {
@@ -92,6 +93,10 @@ extension ScreenCaptureService {
     {
         try await self.performOperation(.frontmost) { correlationId in
             let serviceApp = try await self.frontmostApplication()
+            guard let expectedIdentity = serviceApp.processIdentity else {
+                throw PeekabooError.commandFailed(
+                    "Frontmost application did not provide a stable process-generation identity")
+            }
 
             self.logger.debug(
                 "Found frontmost application",
@@ -102,11 +107,19 @@ extension ScreenCaptureService {
                 ],
                 correlationId: correlationId)
 
-            return try await self.captureWindow(
+            let capture = try await self.captureWindow(
                 app: serviceApp,
                 windowIndex: nil,
                 options: WindowCaptureOptions(visualizerMode: visualizerMode, scale: scale),
                 context: CaptureInvocationContext(operation: .frontmost, correlationId: correlationId))
+            let currentFrontmost = try await self.frontmostApplication()
+            guard currentFrontmost.processIdentity == expectedIdentity,
+                  capture.metadata.applicationInfo?.processIdentity == expectedIdentity
+            else {
+                throw PeekabooError.commandFailed(
+                    "Frontmost application changed while its window was being captured")
+            }
+            return capture.withMode(.frontmost)
         }
     }
 
@@ -206,5 +219,25 @@ extension ScreenCaptureService {
                     scale: options.scale)
             }
         }
+    }
+}
+
+extension CaptureResult {
+    fileprivate func withMode(_ mode: CaptureMode) -> CaptureResult {
+        CaptureResult(
+            imageData: self.imageData,
+            savedPath: self.savedPath,
+            metadata: CaptureMetadata(
+                size: self.metadata.size,
+                mode: mode,
+                videoTimestampMs: self.metadata.videoTimestampMs,
+                applicationInfo: self.metadata.applicationInfo,
+                windowInfo: self.metadata.windowInfo,
+                displayInfo: self.metadata.displayInfo,
+                timestamp: self.metadata.timestamp,
+                diagnostics: self.metadata.diagnostics,
+                viewport: self.metadata.viewport,
+                selectorResolutionProofs: self.metadata.selectorResolutionProofs),
+            warning: self.warning)
     }
 }

@@ -155,6 +155,25 @@ struct DialogPreparedActionStoreTests {
             #expect(failure.outcome.retrySafety == .unsafe)
         }
 
+        let refusal = DesktopActionOutcome.refused(reason: .targetUnavailable)
+        for (kind, action) in [
+            (DialogPreparedActionKind.clickButton, DialogActionType.clickButton),
+            (.dismiss, .dismiss),
+        ] {
+            let refused = DialogActionResult(
+                success: false,
+                action: action,
+                outcome: refusal)
+            do {
+                _ = try refused.requiredPreparedOutcome(kind: kind)
+                Issue.record("Expected prepared \(kind.rawValue) target refusal to remain a typed failure")
+            } catch let failure as DesktopActionFailure {
+                #expect(failure.outcome == refusal)
+                #expect(failure.outcome.dispatchState == .none)
+                #expect(failure.outcome.retrySafety == .safe)
+            }
+        }
+
         let wrongAction = DialogActionResult(
             success: true,
             action: .dismiss,

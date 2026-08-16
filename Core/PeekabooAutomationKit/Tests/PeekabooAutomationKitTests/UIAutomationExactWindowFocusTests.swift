@@ -108,6 +108,42 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
         XCTAssertEqual(postedEventCount, 0)
     }
 
+    func testFocusTargetIdentityRejectsReusedIDAndChangedBounds() {
+        let bounds = CGRect(x: 10, y: 20, width: 800, height: 600)
+        let expected = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 930_006,
+            ownerProcessStartIdentity: 111,
+            capturedBounds: bounds)
+        let matching = FocusTargetIdentityObservation(
+            processStartIdentity: 111,
+            windowOwnerProcessIdentifier: 930_006,
+            windowBounds: bounds,
+            axProcessIdentifier: 930_006,
+            axWindowID: 42,
+            axBounds: bounds)
+
+        XCTAssertTrue(focusTargetIdentityMatches(expected: expected, observation: matching))
+        XCTAssertFalse(focusTargetIdentityMatches(
+            expected: expected,
+            observation: FocusTargetIdentityObservation(
+                processStartIdentity: 222,
+                windowOwnerProcessIdentifier: 930_006,
+                windowBounds: bounds,
+                axProcessIdentifier: 930_006,
+                axWindowID: 42,
+                axBounds: bounds)))
+        XCTAssertFalse(focusTargetIdentityMatches(
+            expected: expected,
+            observation: FocusTargetIdentityObservation(
+                processStartIdentity: 111,
+                windowOwnerProcessIdentifier: 930_006,
+                windowBounds: bounds.offsetBy(dx: 20, dy: 0),
+                axProcessIdentifier: 930_006,
+                axWindowID: 42,
+                axBounds: bounds.offsetBy(dx: 20, dy: 0))))
+    }
+
     func testSameWindowSiblingFocusDoesNotMatchClickedDestination() async throws {
         let windowIdentity = WindowMutationIdentity(
             windowID: 42,

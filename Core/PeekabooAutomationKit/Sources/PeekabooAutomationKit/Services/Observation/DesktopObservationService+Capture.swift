@@ -4,9 +4,13 @@ import Foundation
 extension DesktopObservationService {
     func capture(
         _ target: ResolvedObservationTarget,
+        requestedTarget: DesktopObservationTargetRequest,
         options: DesktopCaptureOptions,
         snapshot _: DesktopStateSnapshot) async throws -> CaptureResult
     {
+        if case .allScreens = requestedTarget {
+            throw DesktopObservationError.allScreensRequiresMultiArtifactOutput
+        }
         guard let engineAwareCapture = self.engineAwareCapture else {
             return try await self.captureResolvedTarget(target, options: options)
         }
@@ -20,16 +24,19 @@ extension DesktopObservationService {
         _ target: ResolvedObservationTarget,
         options: DesktopCaptureOptions) async throws -> CaptureResult
     {
+        let visualizerMode = CaptureVisualizerMode.resolved(
+            for: options.focus,
+            visibleMode: options.visualizerMode)
         switch target.kind {
         case let .screen(index):
             return try await self.screenCapture.captureScreen(
                 displayIndex: index,
-                visualizerMode: options.visualizerMode,
+                visualizerMode: visualizerMode,
                 scale: options.scale)
 
         case .frontmost:
             return try await self.screenCapture.captureFrontmost(
-                visualizerMode: options.visualizerMode,
+                visualizerMode: visualizerMode,
                 scale: options.scale)
 
         case .appWindow:
@@ -39,19 +46,19 @@ extension DesktopObservationService {
             return try await self.screenCapture.captureWindow(
                 appIdentifier: app.bundleIdentifier ?? app.name,
                 windowIndex: target.window?.index,
-                visualizerMode: options.visualizerMode,
+                visualizerMode: visualizerMode,
                 scale: options.scale)
 
         case let .windowID(windowID):
             return try await self.screenCapture.captureWindow(
                 windowID: windowID,
-                visualizerMode: options.visualizerMode,
+                visualizerMode: visualizerMode,
                 scale: options.scale)
 
         case let .area(rect):
             return try await self.screenCapture.captureArea(
                 rect,
-                visualizerMode: options.visualizerMode,
+                visualizerMode: visualizerMode,
                 scale: options.scale)
 
         case .menubar:
@@ -60,14 +67,14 @@ extension DesktopObservationService {
             }
             return try await self.screenCapture.captureArea(
                 bounds,
-                visualizerMode: options.visualizerMode,
+                visualizerMode: visualizerMode,
                 scale: options.scale)
 
         case .menubarPopover:
             if let windowID = target.window?.windowID {
                 return try await self.screenCapture.captureWindow(
                     windowID: CGWindowID(windowID),
-                    visualizerMode: options.visualizerMode,
+                    visualizerMode: visualizerMode,
                     scale: options.scale)
             }
             guard let bounds = target.bounds else {
@@ -75,7 +82,7 @@ extension DesktopObservationService {
             }
             return try await self.screenCapture.captureArea(
                 bounds,
-                visualizerMode: options.visualizerMode,
+                visualizerMode: visualizerMode,
                 scale: options.scale)
         }
     }
@@ -119,7 +126,9 @@ extension DesktopObservationService {
             windowInfo: normalizedWindow,
             displayInfo: capture.metadata.displayInfo,
             timestamp: capture.metadata.timestamp,
-            diagnostics: capture.metadata.diagnostics)
+            diagnostics: capture.metadata.diagnostics,
+            viewport: capture.metadata.viewport,
+            selectorResolutionProofs: capture.metadata.selectorResolutionProofs)
 
         return CaptureResult(
             imageData: capture.imageData,
@@ -132,6 +141,13 @@ extension DesktopObservationService {
         _ capture: CaptureResult,
         for target: ResolvedObservationTarget) throws
     {
+        if case .menubarPopover = target.kind,
+           target.window != nil,
+           target.detectionContext?.windowMutationIdentity == nil
+        {
+            throw DesktopObservationError.targetChanged(
+                "the window-backed menu-bar popover had no pre-capture owner-generation receipt")
+        }
         guard let expected = target.detectionContext?.windowMutationIdentity else {
             return
         }
@@ -172,7 +188,9 @@ extension DesktopObservationService {
             window: capturedWindow ?? target.window,
             bounds: capturedWindow?.bounds ?? target.bounds,
             detectionContext: self.windowContext(for: target, capture: capture),
-            captureScaleHint: target.captureScaleHint)
+            captureScaleHint: target.captureScaleHint,
+            selectorResolutionProofs: capture.metadata.selectorResolutionProofs ?? target.selectorResolutionProofs,
+            mutationTargetIdentity: target.mutationTargetIdentity)
     }
 
     var engineAwareCapture: (any EngineAwareScreenCaptureServiceProtocol)? {

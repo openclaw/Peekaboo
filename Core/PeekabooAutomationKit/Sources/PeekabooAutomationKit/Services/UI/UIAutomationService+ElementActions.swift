@@ -166,13 +166,13 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             try await self.desktopOperationExecutor.executeWithTargetIdentity(plan)
         }
         let result = execution.payload
-        guard let resolved else {
+        guard resolved != nil else {
             throw PeekabooError.operationError(message: "Element action target was not prepared")
         }
 
         return UIAutomationActionResult(
             payload: ElementActionResult(
-                target: resolved.description,
+                target: target,
                 actionName: result.actionName,
                 anchorPoint: result.anchorPoint),
             outcome: result.outcome,

@@ -53,6 +53,7 @@
 import AppKit
 @preconcurrency import CoreFoundation
 import Foundation
+import PeekabooFoundation
 
 // MARK: - Space Management Service
 
@@ -273,14 +274,41 @@ public final class SpaceManagementService {
 
     // MARK: - Space Switching
 
-    /// Switch to a specific Space
-    public func switchToSpace(_ spaceID: CGSSpaceID) async throws {
-        // Switch to a specific Space
-        // Use kCGSPackagesMainDisplayIdentifier for the main display
+    private static let switchDelivery = DesktopActionOutcome.Delivery(
+        mechanism: .nativeFramework,
+        mode: .foreground)
+
+    /// Switch to a specific Space and return the canonical native dispatch outcome.
+    public func switchToSpaceResult(_ spaceID: CGSSpaceID) async throws -> DesktopActionResult<Void> {
+        if CGSGetActiveSpace(self.connection) == spaceID {
+            return DesktopActionResult(outcome: .confirmedNoChange())
+        }
+
+        try Task.checkCancellation()
         CGSManagedDisplaySetCurrentSpace(self.connection, kCGSPackagesMainDisplayIdentifier, spaceID)
 
-        // Give the system time to perform the switch
-        try? await Task.sleep(nanoseconds: 300_000_000) // 0.3s
+        do {
+            try await Task.sleep(nanoseconds: 300_000_000) // 0.3s
+        } catch {
+            throw DesktopActionFailure.indeterminate(
+                delivery: Self.switchDelivery,
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "Space switch was dispatched, but post-dispatch settling failed.",
+                hint: "Observe the active Space before retrying; replaying may switch away from the intended desktop.",
+                causeDescription: error.localizedDescription)
+        }
+
+        return DesktopActionResult(
+            outcome: .dispatchedUnverified(
+                delivery: Self.switchDelivery,
+                evidence: .deliveryAccepted,
+                unitCount: .one))
+    }
+
+    /// Switch to a specific Space
+    public func switchToSpace(_ spaceID: CGSSpaceID) async throws {
+        _ = try await self.switchToSpaceResult(spaceID)
     }
 
     /// Switch to the Space containing a specific window
@@ -299,6 +327,35 @@ public final class SpaceManagementService {
         }
 
         try await self.switchToSpace(targetSpace.id)
+    }
+
+    /// Switch to the Space containing one generation-pinned exact window.
+    public func switchToWindowSpaceResult(
+        windowID: CGWindowID,
+        expectedIdentity: WindowMutationIdentity) async throws -> UIAutomationActionResult<Void>
+    {
+        let connection = self.connection
+        return try await SpaceWindowMutationDispatcher.switchToWindowSpace(
+            windowID: windowID,
+            expectedIdentity: expectedIdentity,
+            backend: .init(
+                destinationExists: { destination in
+                    self.getAllSpaces().contains { $0.id == destination }
+                },
+                validateIdentity: SystemIdentityResolver.validateWindowMutationIdentity,
+                spaceIDsForWindow: {
+                    self.getSpacesForWindow(windowID: windowID).map(\.id)
+                },
+                activeSpaceID: { CGSGetActiveSpace(connection) },
+                setCurrentSpace: { destination in
+                    CGSManagedDisplaySetCurrentSpace(
+                        connection,
+                        kCGSPackagesMainDisplayIdentifier,
+                        destination)
+                },
+                settle: {
+                    try await Task.sleep(nanoseconds: 300_000_000)
+                }))
     }
 
     // MARK: - Window Information
@@ -346,6 +403,39 @@ public final class SpaceManagementService {
         // Moved window to Space
     }
 
+    /// Move one generation-pinned exact window to a specific Space.
+    ///
+    /// The destination is established and verified before prior memberships are removed, then the
+    /// final exact membership is verified before this method reports a confirmed change.
+    public func moveWindowToSpaceResult(
+        windowID: CGWindowID,
+        expectedIdentity: WindowMutationIdentity,
+        spaceID: CGSSpaceID) throws -> UIAutomationActionResult<Void>
+    {
+        let connection = self.connection
+        let windowArray = [windowID] as CFArray
+        let targetSpaceArray = [spaceID] as CFArray
+
+        return try SpaceWindowMutationDispatcher.moveWindow(
+            windowID: windowID,
+            expectedIdentity: expectedIdentity,
+            targetSpaceID: spaceID,
+            backend: .init(
+                destinationExists: { destination in
+                    self.getAllSpaces().contains { $0.id == destination }
+                },
+                validateIdentity: SystemIdentityResolver.validateWindowMutationIdentity,
+                spaceIDsForWindow: {
+                    self.getSpacesForWindow(windowID: windowID).map(\.id)
+                },
+                removeWindows: { sourceSpaceIDs in
+                    CGSRemoveWindowsFromSpaces(connection, windowArray, sourceSpaceIDs as CFArray)
+                },
+                addWindow: { _ in
+                    CGSAddWindowsToSpaces(connection, windowArray, targetSpaceArray)
+                }))
+    }
+
     /// Move a window to the current Space
     public func moveWindowToCurrentSpace(windowID: CGWindowID) throws {
         // Move a window to the current Space
@@ -354,5 +444,23 @@ public final class SpaceManagementService {
         }
 
         try self.moveWindowToSpace(windowID: windowID, spaceID: currentSpace.id)
+    }
+
+    /// Move one generation-pinned exact window to the current Space.
+    public func moveWindowToCurrentSpaceResult(
+        windowID: CGWindowID,
+        expectedIdentity: WindowMutationIdentity) throws -> UIAutomationActionResult<Void>
+    {
+        guard let currentSpace = getCurrentSpace() else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Could not resolve the current Space before moving the window.",
+                hint: "Refresh the Space inventory before retrying.")
+        }
+
+        return try self.moveWindowToSpaceResult(
+            windowID: windowID,
+            expectedIdentity: expectedIdentity,
+            spaceID: currentSpace.id)
     }
 }

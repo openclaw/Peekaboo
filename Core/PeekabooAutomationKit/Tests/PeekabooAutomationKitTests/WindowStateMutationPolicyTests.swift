@@ -16,7 +16,8 @@ struct WindowStateMutationPolicyTests {
         #expect(pinnedWindowMinimizeIdentityMatches(
             expectedIdentity: self.identity,
             currentProcessStartIdentity: 7,
-            currentWindowID: 924))
+            currentWindowID: 924,
+            currentBounds: self.identity.capturedBounds))
     }
 
     @Test
@@ -24,7 +25,8 @@ struct WindowStateMutationPolicyTests {
         #expect(!pinnedWindowMinimizeIdentityMatches(
             expectedIdentity: self.identity,
             currentProcessStartIdentity: 8,
-            currentWindowID: 924))
+            currentWindowID: 924,
+            currentBounds: self.identity.capturedBounds))
     }
 
     @Test
@@ -33,12 +35,23 @@ struct WindowStateMutationPolicyTests {
             expectedIdentity: self.identity,
             currentProcessStartIdentity: 7,
             currentWindowID: nil,
+            currentBounds: nil,
             windowServerIdentityMatches: true))
         #expect(!pinnedWindowMinimizeIdentityMatches(
             expectedIdentity: self.identity,
             currentProcessStartIdentity: 7,
             currentWindowID: 925,
+            currentBounds: self.identity.capturedBounds,
             windowServerIdentityMatches: true))
+    }
+
+    @Test
+    func `minimize postcondition rejects changed capture-time bounds`() {
+        #expect(!pinnedWindowMinimizeIdentityMatches(
+            expectedIdentity: self.identity,
+            currentProcessStartIdentity: 7,
+            currentWindowID: 924,
+            currentBounds: CGRect(x: 50, y: 60, width: 700, height: 500)))
     }
 
     @Test
@@ -363,6 +376,38 @@ struct WindowStateMutationPolicyTests {
     }
 
     @Test
+    func `foreground close focus allows exact target Space switching`() {
+        let options = foregroundCloseFocusOptions()
+
+        #expect(options.switchSpace)
+        #expect(!options.bringToCurrentSpace)
+    }
+
+    @Test
+    @MainActor
+    func `minimized foreground close accounts exact unminimize before focus`() async throws {
+        let minimized = self.identity.withMinimizedState(true)
+        let restored = self.identity.withMinimizedState(false)
+        var events: [String] = []
+        var sequence = DesktopActionSequenceAccumulator()
+
+        let focusIdentity = try await prepareForegroundCloseIdentity(
+            expectedIdentity: minimized,
+            restoreMinimized: {
+                events.append("unminimize")
+                ForegroundCloseRecoveryAccounting.recordAcceptedDispatch(in: &sequence)
+                return restored
+            })
+        events.append("focus")
+
+        #expect(events == ["unminimize", "focus"])
+        #expect(focusIdentity == restored)
+        #expect(sequence.mutationDisposition == .definite(unitCount: .one))
+        #expect(sequence.successResolution().outcome?.delivery ==
+            WindowManagementActionOutcome.backgroundValueDelivery)
+    }
+
+    @Test
     func `foreground close rejects same-process sibling key window`() {
         let readiness = pinnedForegroundCloseReadiness(
             focusSucceeded: true,
@@ -446,6 +491,48 @@ struct WindowStateMutationPolicyTests {
         }
 
         #expect(restoration.count == 2)
+    }
+
+    @Test
+    func `predispatch minimized cancellation has zero mutation and skips recovery`() {
+        let sequence = DesktopActionSequenceAccumulator()
+
+        #expect(!ForegroundCloseRecoveryAccounting.shouldRecover(
+            wasMinimized: true,
+            sequence: sequence))
+        #expect(sequence.mutationDisposition == .none)
+        #expect(sequence.cancellationFailure(
+            fallbackRoute: .local,
+            message: "cancelled",
+            hint: "none",
+            causeDescription: "predispatch") == nil)
+    }
+
+    @Test
+    func `post-setup cancellation accounts accepted minimized recovery`() throws {
+        let focusDelivery = DesktopActionOutcome.Delivery(
+            mechanism: .accessibilityAction,
+            mode: .foreground)
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.dispatched(
+            route: .local,
+            delivery: focusDelivery,
+            unitCount: .one))
+
+        #expect(ForegroundCloseRecoveryAccounting.shouldRecover(
+            wasMinimized: true,
+            sequence: sequence))
+        ForegroundCloseRecoveryAccounting.recordAcceptedDispatch(in: &sequence)
+        let failure = try #require(sequence.cancellationFailure(
+            fallbackRoute: .local,
+            message: "cancelled",
+            hint: "observe",
+            causeDescription: "post-setup"))
+
+        #expect(failure.outcome.state == .indeterminate)
+        #expect(failure.outcome.evidence == .completionUnknown)
+        #expect(failure.outcome.delivery == .init(mechanism: .composite, mode: .foreground))
+        #expect(failure.outcome.dispatchState.unitCount == DesktopActionOutcome.DispatchUnitCount(2))
     }
 
     @Test

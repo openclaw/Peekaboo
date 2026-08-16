@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import PeekabooFoundation
 import UniformTypeIdentifiers
 
 /// Representation of a single pasteboard payload.
@@ -83,9 +84,161 @@ public protocol ClipboardServiceProtocol: Sendable {
     func restore(slot: String) throws -> ClipboardReadResult
 }
 
+/// Additive capability for clipboard mutations that retain canonical action semantics.
+@MainActor
+public protocol ClipboardServiceActionResultProviding: ClipboardServiceProtocol {
+    func setActionResult(_ request: ClipboardWriteRequest) throws -> DesktopActionResult<ClipboardReadResult>
+    func clearActionResult() throws -> DesktopActionResult<Void>
+    func restoreActionResult(slot: String) throws -> DesktopActionResult<ClipboardReadResult>
+}
+
+/// Shared clipboard mutation policy used by services and result consumers.
+public enum ClipboardMutationResultSemantics {
+    public static let delivery = DesktopActionOutcome.Delivery(
+        mechanism: .clipboardTransaction,
+        mode: .foreground)
+
+    public static func requireSuccessfulOutcome(
+        _ outcome: DesktopActionOutcome?,
+        operation: String) throws -> DesktopActionOutcome
+    {
+        guard let outcome else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: self.delivery,
+                evidence: .completionUnknown,
+                message: "\(operation) returned without a canonical clipboard outcome.",
+                hint: "Inspect the clipboard before retrying; replaying may overwrite newer contents.")
+        }
+        return try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+            outcome,
+            policy: .confirmedOrDispatched(requiring: self.delivery.mode),
+            operation: operation,
+            missingOutcomeMessage: "\(operation) returned without a canonical clipboard outcome.",
+            rejectedOutcomeMessage: "\(operation) did not return a successful clipboard outcome.",
+            missingOutcomeHint: "Inspect the clipboard before retrying; replaying may overwrite newer contents.")
+    }
+
+    public static func postWriteFailure(_ error: any Error, operation: String) -> DesktopActionFailure {
+        .indeterminate(
+            delivery: self.delivery,
+            evidence: .completionUnknown,
+            message: "\(operation) may have changed the clipboard, but post-write processing failed.",
+            hint: "Inspect the clipboard before retrying; replaying may overwrite newer contents.",
+            causeDescription: error.localizedDescription)
+    }
+}
+
+extension ClipboardServiceProtocol {
+    public func setResult(_ request: ClipboardWriteRequest) throws -> DesktopActionResult<ClipboardReadResult> {
+        if let provider = self as? any ClipboardServiceActionResultProviding {
+            return try provider.setActionResult(request)
+        }
+        guard !request.representations.isEmpty else {
+            throw ClipboardMutationResultOwner.preDispatchFailure(
+                ClipboardServiceError.writeFailed("No representations provided."),
+                operation: "Clipboard set")
+        }
+        return try ClipboardMutationResultOwner.performLegacy(
+            operation: "Clipboard set",
+            mutation: { try self.set(request) })
+    }
+
+    public func clearResult() throws -> DesktopActionResult<Void> {
+        if let provider = self as? any ClipboardServiceActionResultProviding {
+            return try provider.clearActionResult()
+        }
+        self.clear()
+        return DesktopActionResult(
+            outcome: .dispatchedUnverified(
+                delivery: ClipboardMutationResultSemantics.delivery,
+                evidence: .deliveryAccepted))
+    }
+
+    public func restoreResult(slot: String) throws -> DesktopActionResult<ClipboardReadResult> {
+        if let provider = self as? any ClipboardServiceActionResultProviding {
+            return try provider.restoreActionResult(slot: slot)
+        }
+        guard !slot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ClipboardMutationResultOwner.preDispatchFailure(
+                ClipboardServiceError.slotNotFound(slot),
+                operation: "Clipboard restore")
+        }
+        return try ClipboardMutationResultOwner.performLegacy(
+            operation: "Clipboard restore",
+            mutation: { try self.restore(slot: slot) })
+    }
+}
+
+private enum ClipboardMutationResultOwner {
+    static func perform<Payload: Sendable>(
+        operation: String,
+        mutation: (inout Bool) throws -> Payload,
+        verify: (Payload) throws -> Bool) throws -> DesktopActionResult<Payload>
+    {
+        var didDispatch = false
+        do {
+            let payload = try mutation(&didDispatch)
+            guard didDispatch else {
+                throw DesktopActionFailure.indeterminate(
+                    delivery: ClipboardMutationResultSemantics.delivery,
+                    evidence: .completionUnknown,
+                    message: "\(operation) completed without recording clipboard dispatch.",
+                    hint: "Inspect the clipboard before retrying; replaying may overwrite newer contents.")
+            }
+            let outcome: DesktopActionOutcome = try verify(payload)
+                ? .confirmedChange(
+                    delivery: ClipboardMutationResultSemantics.delivery)
+                : .dispatchedUnverified(
+                    delivery: ClipboardMutationResultSemantics.delivery,
+                    evidence: .deliveryAccepted)
+            return DesktopActionResult(payload: payload, outcome: outcome)
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch {
+            if didDispatch {
+                throw ClipboardMutationResultSemantics.postWriteFailure(error, operation: operation)
+            }
+            throw self.preDispatchFailure(error, operation: operation)
+        }
+    }
+
+    static func performLegacy<Payload: Sendable>(
+        operation: String,
+        mutation: () throws -> Payload) throws -> DesktopActionResult<Payload>
+    {
+        do {
+            let payload = try mutation()
+            return DesktopActionResult(
+                payload: payload,
+                outcome: .dispatchedUnverified(
+                    delivery: ClipboardMutationResultSemantics.delivery,
+                    evidence: .deliveryAccepted))
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch let error as ClipboardServiceError {
+            switch error {
+            case .empty, .sizeExceeded, .slotNotFound:
+                throw self.preDispatchFailure(error, operation: operation)
+            case .writeFailed:
+                throw ClipboardMutationResultSemantics.postWriteFailure(error, operation: operation)
+            }
+        } catch {
+            throw ClipboardMutationResultSemantics.postWriteFailure(error, operation: operation)
+        }
+    }
+
+    static func preDispatchFailure(_ error: any Error, operation: String) -> DesktopActionFailure {
+        .preDispatchRefusal(
+            reason: .invalidRequest,
+            message: "\(operation) was refused before dispatch.",
+            hint: "Correct the clipboard request before retrying.",
+            causeDescription: error.localizedDescription)
+    }
+}
+
 /// Default implementation backed by NSPasteboard.
 @MainActor
-public final class ClipboardService: ClipboardServiceProtocol {
+public final class ClipboardService: ClipboardServiceActionResultProviding {
     private let pasteboard: NSPasteboard
     private let sizeLimit: Int
     private var slots: [String: [ClipboardRepresentation]] = [:]
@@ -151,6 +304,23 @@ public final class ClipboardService: ClipboardServiceProtocol {
     }
 
     public func set(_ request: ClipboardWriteRequest) throws -> ClipboardReadResult {
+        var didDispatch = false
+        return try self.set(request, didDispatch: &didDispatch)
+    }
+
+    public func setActionResult(_ request: ClipboardWriteRequest) throws -> DesktopActionResult<ClipboardReadResult> {
+        try ClipboardMutationResultOwner.perform(
+            operation: "Clipboard set",
+            mutation: { didDispatch in
+                try self.set(request, didDispatch: &didDispatch)
+            },
+            verify: { _ in self.matches(request: request) })
+    }
+
+    private func set(
+        _ request: ClipboardWriteRequest,
+        didDispatch: inout Bool) throws -> ClipboardReadResult
+    {
         guard !request.representations.isEmpty else {
             throw ClipboardServiceError.writeFailed("No representations provided.")
         }
@@ -169,6 +339,7 @@ public final class ClipboardService: ClipboardServiceProtocol {
             }
         }
         self.pasteboard.declareTypes(types, owner: nil)
+        didDispatch = true
 
         for representation in request.representations {
             let pbType = NSPasteboard.PasteboardType(representation.utiIdentifier)
@@ -206,6 +377,16 @@ public final class ClipboardService: ClipboardServiceProtocol {
         self.pasteboard.clearContents()
     }
 
+    public func clearActionResult() throws -> DesktopActionResult<Void> {
+        try ClipboardMutationResultOwner.perform(
+            operation: "Clipboard clear",
+            mutation: { didDispatch in
+                self.pasteboard.clearContents()
+                didDispatch = true
+            },
+            verify: { _ in self.pasteboard.types?.isEmpty != false })
+    }
+
     public func save(slot: String) throws {
         let trimmedSlot = slot.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSlot.isEmpty else {
@@ -230,6 +411,32 @@ public final class ClipboardService: ClipboardServiceProtocol {
     }
 
     public func restore(slot: String) throws -> ClipboardReadResult {
+        var didDispatch = false
+        var restoredRepresentations: [ClipboardRepresentation] = []
+        return try self.restore(
+            slot: slot,
+            didDispatch: &didDispatch,
+            restoredRepresentations: &restoredRepresentations)
+    }
+
+    public func restoreActionResult(slot: String) throws -> DesktopActionResult<ClipboardReadResult> {
+        var restoredRepresentations: [ClipboardRepresentation] = []
+        return try ClipboardMutationResultOwner.perform(
+            operation: "Clipboard restore",
+            mutation: { didDispatch in
+                try self.restore(
+                    slot: slot,
+                    didDispatch: &didDispatch,
+                    restoredRepresentations: &restoredRepresentations)
+            },
+            verify: { _ in self.matches(representations: restoredRepresentations, alsoText: nil) })
+    }
+
+    private func restore(
+        slot: String,
+        didDispatch: inout Bool,
+        restoredRepresentations: inout [ClipboardRepresentation]) throws -> ClipboardReadResult
+    {
         let trimmedSlot = slot.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSlot.isEmpty else {
             throw ClipboardServiceError.slotNotFound(slot)
@@ -247,9 +454,10 @@ public final class ClipboardService: ClipboardServiceProtocol {
             }
             reps = loaded
         }
+        restoredRepresentations = reps
 
         let request = ClipboardWriteRequest(representations: reps)
-        let result = try self.set(request)
+        let result = try self.set(request, didDispatch: &didDispatch)
         self.slots.removeValue(forKey: trimmedSlot)
         NSPasteboard(name: slotPasteboardName).clearContents()
         return result
@@ -291,6 +499,44 @@ public final class ClipboardService: ClipboardServiceProtocol {
     private static func isPlainTextRepresentation(_ representation: ClipboardRepresentation) -> Bool {
         representation.utiIdentifier == UTType.plainText.identifier ||
             representation.utiIdentifier == UTType.utf8PlainText.identifier
+    }
+
+    private func matches(request: ClipboardWriteRequest) -> Bool {
+        self.matches(representations: request.representations, alsoText: request.alsoText)
+    }
+
+    private func matches(representations: [ClipboardRepresentation], alsoText: String?) -> Bool {
+        for representation in representations {
+            let type = NSPasteboard.PasteboardType(representation.utiIdentifier)
+            guard let actual = self.pasteboard.data(forType: type),
+                  Self.normalizedData(actual, for: representation.utiIdentifier) ==
+                  Self.normalizedData(representation.data, for: representation.utiIdentifier)
+            else {
+                return false
+            }
+        }
+        if let alsoText {
+            guard let actual = self.pasteboard.string(forType: .string),
+                  Self.normalizedText(actual) == Self.normalizedText(alsoText)
+            else {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func normalizedData(_ data: Data, for utiIdentifier: String) -> Data {
+        guard [UTType.plainText.identifier, UTType.utf8PlainText.identifier].contains(utiIdentifier),
+              let text = String(data: data, encoding: .utf8)
+        else {
+            return data
+        }
+        return Data(self.normalizedText(text).utf8)
+    }
+
+    private static func normalizedText(_ text: String) -> String {
+        text.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
     }
 
     private static func makePreview(_ text: String) -> String {

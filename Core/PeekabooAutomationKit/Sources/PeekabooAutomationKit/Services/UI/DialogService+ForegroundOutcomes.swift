@@ -7,6 +7,7 @@ import PeekabooFoundation
 extension DialogService {
     struct ForegroundDialogPlan {
         let target: UIAutomationTarget.ExactWindow
+        let resolvedTarget: ResolvedDialogTargetEvidence?
         let window: Element
         let dialog: Element
     }
@@ -25,6 +26,9 @@ extension DialogService {
     static let foregroundKeyboardDelivery = DesktopActionOutcome.Delivery(
         mechanism: .globalEvents,
         mode: .foreground)
+    static let backgroundDialogInputDelivery = DesktopActionOutcome.Delivery(
+        mechanism: .accessibilityValue,
+        mode: .background)
     static let forcedDismissMutationScope = DesktopOperationScope.global
 
     static func attributedDialogActionFailure(
@@ -78,6 +82,36 @@ extension DialogService {
             }
             let plan = ForegroundDialogPlan(
                 target: candidate.target,
+                resolvedTarget: candidate.resolvedTarget,
+                window: candidate.window,
+                dialog: candidate.dialog)
+            do {
+                let targetField = try self.exactDialogInputField(
+                    in: plan.dialog,
+                    identifier: request.fieldIdentifier)
+                return try await self.executeBackgroundDialogInput(
+                    request,
+                    plan: plan,
+                    retainedField: targetField)
+            } catch let failure as DesktopActionFailure {
+                throw Self.attributedDialogActionFailure(failure, target: plan.target)
+            }
+        }
+    }
+
+    public func enterTextForegroundCompatible(
+        _ request: DialogInputExecutionRequest) async throws -> DialogActionResult
+    {
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            let candidates = try await self.targetedDialogCandidates(
+                target: request.target,
+                membership: .structuralMutation)
+            guard candidates.count == 1, let candidate = candidates.first else {
+                throw self.dialogCandidateRefusal(target: request.target, candidates: candidates)
+            }
+            let plan = ForegroundDialogPlan(
+                target: candidate.target,
+                resolvedTarget: candidate.resolvedTarget,
                 window: candidate.window,
                 dialog: candidate.dialog)
             do {
@@ -96,6 +130,346 @@ extension DialogService {
             } catch let failure as DesktopActionFailure {
                 throw Self.attributedDialogActionFailure(failure, target: plan.target)
             }
+        }
+    }
+
+    // swiftlint:disable:next function_body_length
+    private func executeBackgroundDialogInput(
+        _ request: DialogInputExecutionRequest,
+        plan: ForegroundDialogPlan,
+        retainedField: Element) async throws -> DialogActionResult
+    {
+        self.logger.info("Entering text into exact dialog field with background AXValue delivery")
+        try Task.checkCancellation()
+        let dispatchTarget = try await self.revalidateDialogTarget(
+            target: plan.target,
+            retainedWindow: plan.window,
+            retainedDialog: plan.dialog,
+            operation: "background dialog input planning")
+        var field = try self.revalidateDialogInputField(
+            retainedField,
+            in: dispatchTarget.dialog,
+            identifier: request.fieldIdentifier,
+            exactSelection: true)
+        if request.text.isEmpty, !request.clearExisting {
+            return self.backgroundDialogInputResult(
+                request: request,
+                plan: plan,
+                field: field,
+                outcome: .confirmedNoChange(),
+                verification: .init(valueVerified: false, cursorUpdated: false))
+        }
+        guard field.role() != "AXSecureTextField",
+              field.subrole() != "AXSecureTextField"
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "Exact background dialog input cannot set a secure text field through Accessibility.",
+                hint: "Use an explicitly foreground input workflow for secure text.")
+        }
+        guard field.isAttributeSettable(named: AXAttributeNames.kAXValueAttribute) else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "The exact dialog field does not expose a settable AXValue.",
+                hint: "Choose a settable text field or use an explicitly foreground input workflow.")
+        }
+
+        let currentValue = field.rawAttributeValue(named: AXAttributeNames.kAXValueAttribute) as? String
+        let selectedRange = Self.dialogSelectedTextRange(field)
+        let edit: DialogBackgroundTextEdit
+        do {
+            edit = try Self.backgroundDialogTextEdit(
+                currentValue: currentValue,
+                selectedRange: selectedRange,
+                replacement: request.text,
+                clearExisting: request.clearExisting)
+        } catch {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The exact dialog field did not expose a stable background text selection.",
+                hint: "Refresh the dialog field or use clear-existing background input.",
+                causeDescription: error.localizedDescription)
+        }
+        let latestValue = field.rawAttributeValue(named: AXAttributeNames.kAXValueAttribute) as? String
+        let latestSelectedRange = Self.dialogSelectedTextRange(field)
+        guard latestValue == currentValue,
+              request.clearExisting || Self.sameDialogTextRange(latestSelectedRange, selectedRange)
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The exact dialog field value or selection changed before background dispatch.",
+                hint: "Read the field again and retry against its current selection.")
+        }
+
+        let dispatchPlan = Self.backgroundDialogEditDispatchPlan(
+            currentValue: currentValue,
+            selectedRange: selectedRange,
+            edit: edit)
+        if !dispatchPlan.valueNeedsUpdate, !dispatchPlan.cursorNeedsUpdate {
+            try Task.checkCancellation()
+            return self.backgroundDialogInputResult(
+                request: request,
+                plan: plan,
+                field: field,
+                outcome: .confirmedNoChange(),
+                verification: .init(valueVerified: true, cursorUpdated: false))
+        }
+
+        let cursorValue = try Self.backgroundDialogCursorDispatchValue(
+            dispatchPlan: dispatchPlan,
+            cursorRange: edit.cursorRange)
+        {
+            field.isAttributeSettable(named: AXAttributeNames.kAXSelectedTextRangeAttribute)
+        }
+        var submittedUnitCount = 0
+        if dispatchPlan.valueNeedsUpdate {
+            try Task.checkCancellation()
+            guard field.setValue(edit.value, forAttribute: AXAttributeNames.kAXValueAttribute) else {
+                throw DesktopActionFailure.indeterminate(
+                    delivery: Self.backgroundDialogInputDelivery,
+                    evidence: .completionUnknown,
+                    unitCount: .one,
+                    message: "Background dialog AXValue delivery returned without acceptance evidence.",
+                    hint: "Read the exact dialog field before retrying.")
+            }
+            submittedUnitCount = 1
+        }
+        if let cursorValue {
+            do {
+                try Task.checkCancellation()
+            } catch {
+                guard submittedUnitCount > 0 else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: .requestCancelled,
+                        message: "Background dialog cursor placement was cancelled before dispatch.",
+                        hint: "Submit a new request only if the input is still wanted.")
+                }
+                throw DesktopActionFailure.dispatchedUnverified(
+                    delivery: Self.backgroundDialogInputDelivery,
+                    evidence: .deliveryAccepted,
+                    unitCount: Self.dispatchUnitCount(submittedUnitCount),
+                    message: "Background dialog AXValue was accepted before cursor placement was cancelled.",
+                    hint: "Read the exact dialog field before retrying.")
+            }
+            try Self.setDialogSelectedTextRange(
+                cursorValue,
+                on: field,
+                priorSubmittedUnitCount: submittedUnitCount)
+            submittedUnitCount += 1
+        }
+
+        do {
+            try Task.checkCancellation()
+            let postDispatchTarget = try await self.revalidateDialogTarget(
+                target: plan.target,
+                retainedWindow: plan.window,
+                retainedDialog: plan.dialog,
+                operation: "background dialog AXValue postcondition")
+            field = try self.revalidateDialogInputField(
+                field,
+                in: postDispatchTarget.dialog,
+                identifier: request.fieldIdentifier,
+                exactSelection: true)
+        } catch {
+            throw DesktopActionFailure.dispatchedUnverified(
+                delivery: Self.backgroundDialogInputDelivery,
+                evidence: .deliveryAccepted,
+                unitCount: Self.dispatchUnitCount(submittedUnitCount),
+                message: "Background dialog input was accepted, but its exact target changed during verification.",
+                hint: "Read the exact dialog field before retrying.",
+                causeDescription: error.localizedDescription)
+        }
+        let observedValue = field.rawAttributeValue(named: AXAttributeNames.kAXValueAttribute) as? String
+        guard observedValue == edit.value else {
+            throw DesktopActionFailure.dispatchedUnverified(
+                delivery: Self.backgroundDialogInputDelivery,
+                evidence: .deliveryAccepted,
+                unitCount: Self.dispatchUnitCount(submittedUnitCount),
+                message: "Background dialog input was accepted, but the retained AXValue did not match.",
+                hint: "Read the exact dialog field before retrying.")
+        }
+        if dispatchPlan.cursorNeedsUpdate {
+            let observedCursor = Self.dialogSelectedTextRange(field)
+            guard Self.sameDialogTextRange(observedCursor, edit.cursorRange) else {
+                throw DesktopActionFailure.dispatchedUnverified(
+                    delivery: Self.backgroundDialogInputDelivery,
+                    evidence: .deliveryAccepted,
+                    unitCount: Self.dispatchUnitCount(submittedUnitCount),
+                    message: "Background dialog input was accepted, but its cursor range did not match.",
+                    hint: "Read the exact dialog field before retrying.")
+            }
+        }
+        return self.backgroundDialogInputResult(
+            request: request,
+            plan: plan,
+            field: field,
+            outcome: .dispatchedUnverified(
+                delivery: Self.backgroundDialogInputDelivery,
+                evidence: .deliveryAccepted,
+                unitCount: dispatchPlan.successfulUnitCount),
+            verification: .init(
+                valueVerified: true,
+                cursorUpdated: dispatchPlan.cursorNeedsUpdate))
+    }
+
+    private struct DialogBackgroundInputVerification {
+        let valueVerified: Bool
+        let cursorUpdated: Bool
+    }
+
+    private func backgroundDialogInputResult(
+        request: DialogInputExecutionRequest,
+        plan: ForegroundDialogPlan,
+        field: Element,
+        outcome: DesktopActionOutcome,
+        verification: DialogBackgroundInputVerification) -> DialogActionResult
+    {
+        var details = self.dialogInputDetails(
+            plan: plan,
+            field: field,
+            textLength: request.text.count,
+            cleared: request.clearExisting,
+            valueVerified: verification.valueVerified,
+            focusPolicy: request.focus)
+        details["delivery_mode"] = DesktopActionOutcome.Delivery.Mode.background.rawValue
+        details["delivery_mechanism"] = DesktopActionOutcome.Delivery.Mechanism.accessibilityValue.rawValue
+        details["focus_applied"] = "false"
+        details["cursor_updated"] = String(verification.cursorUpdated)
+        return DialogActionResult(
+            success: true,
+            action: .enterText,
+            details: details,
+            outcome: outcome,
+            targetReceipt: Self.desktopActionTargetReceipt(plan.target),
+            targetWindowIdentity: plan.target.identity,
+            targetWindowBounds: plan.target.bounds,
+            focusedElement: plan.target.focusedElement,
+            resolvedTarget: plan.resolvedTarget)
+    }
+
+    struct DialogBackgroundTextEdit {
+        let value: String
+        let cursorRange: CFRange
+    }
+
+    struct DialogBackgroundEditDispatchPlan: Equatable {
+        let valueNeedsUpdate: Bool
+        let cursorNeedsUpdate: Bool
+
+        var successfulUnitCount: DesktopActionOutcome.DispatchUnitCount? {
+            DesktopActionOutcome.DispatchUnitCount(
+                (self.valueNeedsUpdate ? 1 : 0) + (self.cursorNeedsUpdate ? 1 : 0))
+        }
+    }
+
+    enum DialogBackgroundTextEditError: Error {
+        case currentValueUnavailable
+        case selectionUnavailable
+        case invalidSelection
+    }
+
+    static func backgroundDialogTextEdit(
+        currentValue: String?,
+        selectedRange: CFRange?,
+        replacement: String,
+        clearExisting: Bool) throws -> DialogBackgroundTextEdit
+    {
+        if clearExisting {
+            return DialogBackgroundTextEdit(
+                value: replacement,
+                cursorRange: CFRange(location: (replacement as NSString).length, length: 0))
+        }
+        guard let currentValue else { throw DialogBackgroundTextEditError.currentValueUnavailable }
+        guard !replacement.isEmpty else {
+            let cursor = selectedRange ?? CFRange(location: (currentValue as NSString).length, length: 0)
+            return DialogBackgroundTextEdit(value: currentValue, cursorRange: cursor)
+        }
+        guard let selectedRange else { throw DialogBackgroundTextEditError.selectionUnavailable }
+        let current = currentValue as NSString
+        guard selectedRange.location >= 0,
+              selectedRange.length >= 0,
+              selectedRange.location <= current.length,
+              selectedRange.length <= current.length - selectedRange.location
+        else {
+            throw DialogBackgroundTextEditError.invalidSelection
+        }
+        let replacementLength = (replacement as NSString).length
+        return DialogBackgroundTextEdit(
+            value: current.replacingCharacters(
+                in: NSRange(location: selectedRange.location, length: selectedRange.length),
+                with: replacement),
+            cursorRange: CFRange(location: selectedRange.location + replacementLength, length: 0))
+    }
+
+    static func backgroundDialogEditDispatchPlan(
+        currentValue: String?,
+        selectedRange: CFRange?,
+        edit: DialogBackgroundTextEdit) -> DialogBackgroundEditDispatchPlan
+    {
+        DialogBackgroundEditDispatchPlan(
+            valueNeedsUpdate: currentValue != edit.value,
+            cursorNeedsUpdate: !self.sameDialogTextRange(selectedRange, edit.cursorRange))
+    }
+
+    static func backgroundDialogCursorDispatchValue(
+        dispatchPlan: DialogBackgroundEditDispatchPlan,
+        cursorRange: CFRange,
+        isCursorSettable: () -> Bool) throws -> AXValue?
+    {
+        guard dispatchPlan.cursorNeedsUpdate else { return nil }
+        guard isCursorSettable() else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "The exact dialog field cannot establish its required cursor range through Accessibility.",
+                hint: "Use an explicitly foreground input workflow for this field.")
+        }
+        guard let cursorValue = self.dialogTextRangeAXValue(cursorRange) else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "The exact dialog cursor range could not be encoded before background dispatch.",
+                hint: "Use an explicitly foreground input workflow for this field.")
+        }
+        return cursorValue
+    }
+
+    static func dialogSelectedTextRange(_ field: Element) -> CFRange? {
+        guard let rawValue = field.rawAttributeValue(named: AXAttributeNames.kAXSelectedTextRangeAttribute),
+              CFGetTypeID(rawValue as CFTypeRef) == AXValueGetTypeID()
+        else { return nil }
+        let value = unsafeDowncast(rawValue as CFTypeRef, to: AXValue.self)
+        guard AXValueGetType(value) == .cfRange else { return nil }
+        var range = CFRange(location: 0, length: 0)
+        return AXValueGetValue(value, .cfRange, &range) ? range : nil
+    }
+
+    static func sameDialogTextRange(_ lhs: CFRange?, _ rhs: CFRange?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            true
+        case let (lhs?, rhs?):
+            lhs.location == rhs.location && lhs.length == rhs.length
+        case (nil, _?), (_?, nil):
+            false
+        }
+    }
+
+    static func dialogTextRangeAXValue(_ range: CFRange) -> AXValue? {
+        var range = range
+        return AXValueCreate(.cfRange, &range)
+    }
+
+    static func setDialogSelectedTextRange(
+        _ value: AXValue,
+        on field: Element,
+        priorSubmittedUnitCount: Int) throws
+    {
+        guard field.setValue(value, forAttribute: AXAttributeNames.kAXSelectedTextRangeAttribute) else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: self.backgroundDialogInputDelivery,
+                evidence: .completionUnknown,
+                unitCount: self.dispatchUnitCount(priorSubmittedUnitCount + 1),
+                message: "Dialog AXValue changed, but cursor placement returned without acceptance evidence.",
+                hint: "Read the exact dialog field before retrying.")
         }
     }
 
@@ -137,7 +511,8 @@ extension DialogService {
                 targetReceipt: execution.publishTargetReceipt ? Self.desktopActionTargetReceipt(plan.target) : nil,
                 targetWindowIdentity: plan.target.identity,
                 targetWindowBounds: plan.target.bounds,
-                focusedElement: plan.target.focusedElement)
+                focusedElement: plan.target.focusedElement,
+                resolvedTarget: execution.publishTargetReceipt ? plan.resolvedTarget : nil)
         }
 
         try Task.checkCancellation()
@@ -240,7 +615,8 @@ extension DialogService {
             targetReceipt: execution.publishTargetReceipt ? Self.desktopActionTargetReceipt(plan.target) : nil,
             targetWindowIdentity: plan.target.identity,
             targetWindowBounds: plan.target.bounds,
-            focusedElement: plan.target.focusedElement)
+            focusedElement: plan.target.focusedElement,
+            resolvedTarget: execution.publishTargetReceipt ? plan.resolvedTarget : nil)
         self.logger.info("\(AgentDisplayTokens.Status.success) Dialog input delivery completed")
         return result
     }
@@ -327,6 +703,7 @@ extension DialogService {
             }
             let plan = ForegroundDialogPlan(
                 target: candidate.target,
+                resolvedTarget: candidate.resolvedTarget,
                 window: candidate.window,
                 dialog: candidate.dialog)
             return try await self.executeForcedDialogDismiss(plan: plan, focus: request.focus)
@@ -358,6 +735,11 @@ extension DialogService {
                 // Preserve that possible side effect instead of erasing it as bare cancellation.
                 throw Self.dialogWindowFocusFailure(autoFocus: focus.autoFocus, cause: error)
             }
+            do {
+                try Task.checkCancellation()
+            } catch {
+                throw Self.dialogWindowFocusFailure(autoFocus: focus.autoFocus, cause: error)
+            }
             try self.dispatchForcedDialogEscape()
 
             let presence = self.dialogPresence(target: plan.target, retainedDialog: plan.dialog)
@@ -375,7 +757,8 @@ extension DialogService {
                 targetReceipt: Self.desktopActionTargetReceipt(plan.target),
                 targetWindowIdentity: plan.target.identity,
                 targetWindowBounds: plan.target.bounds,
-                focusedElement: plan.target.focusedElement)
+                focusedElement: plan.target.focusedElement,
+                resolvedTarget: plan.resolvedTarget)
         } catch let failure as DesktopActionFailure {
             throw Self.attributedDialogActionFailure(failure, target: plan.target)
         }
@@ -620,12 +1003,14 @@ extension DialogService {
         if clearExisting {
             try self.checkDialogInputCancellation(dispatchedUnits: dispatchedUnits)
             try unitFocusValidation(dispatchedUnits)
+            try self.checkDialogInputCancellation(dispatchedUnits: dispatchedUnits)
             try self.dispatchDialogInputUnit(dispatchedUnits: dispatchedUnits) {
                 try self.syntheticInputDriver.hotkey(keys: ["cmd", "a"], holdDuration: 0.05)
             }
             dispatchedUnits += 1
             try self.checkDialogInputCancellation(dispatchedUnits: dispatchedUnits)
             try unitFocusValidation(dispatchedUnits)
+            try self.checkDialogInputCancellation(dispatchedUnits: dispatchedUnits)
             try self.dispatchDialogInputUnit(dispatchedUnits: dispatchedUnits) {
                 try self.syntheticInputDriver.tapKey(.delete, modifiers: [])
             }
@@ -638,6 +1023,7 @@ extension DialogService {
                     let effectiveUnits = dispatchedUnits + (typeUnitStarted ? 1 : 0)
                     try self.checkDialogInputCancellation(dispatchedUnits: effectiveUnits)
                     try unitFocusValidation(effectiveUnits)
+                    try self.checkDialogInputCancellation(dispatchedUnits: effectiveUnits)
                     // Text entry is one logical dispatch unit even when emitted character by character.
                     // The wrapper adds that possibly-started unit; passing effectiveUnits would double-count it.
                     try self.dispatchDialogInputUnit(dispatchedUnits: dispatchedUnits) {
@@ -651,6 +1037,7 @@ extension DialogService {
             } else {
                 try self.checkDialogInputCancellation(dispatchedUnits: dispatchedUnits)
                 try unitFocusValidation(dispatchedUnits)
+                try self.checkDialogInputCancellation(dispatchedUnits: dispatchedUnits)
                 try self.dispatchDialogInputUnit(dispatchedUnits: dispatchedUnits) {
                     try self.syntheticInputDriver.type(text, delayPerCharacter: 0.01)
                 }
@@ -804,6 +1191,7 @@ extension DialogService {
         }
         return ForegroundDialogPlan(
             target: candidate.target,
+            resolvedTarget: candidate.resolvedTarget,
             window: candidate.window,
             dialog: candidate.dialog)
     }

@@ -130,6 +130,10 @@ enum WindowManagementActionOutcome {
             "Grant Accessibility permission before retrying \(action)."
         case .targetUnavailable:
             "Refresh the exact window receipt before retrying."
+        case .transportSessionUnavailable:
+            "Reconnect the transport session before retrying."
+        case .requestCancelled:
+            "Submit a new request only if the operation is still wanted."
         case .runtimeIncompatible:
             "Update the runtime host before retrying."
         case .invalidRequest:

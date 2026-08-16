@@ -102,10 +102,118 @@ public struct DialogTargetSelector: Sendable, Codable, Equatable {
     }
 }
 
-/// Foreground-focus behavior for one exact dialog input execution.
+/// Exact dialog target plus the application/window metadata that resolved a broad selector.
+public struct ResolvedDialogTargetEvidence: Sendable, Codable, Equatable {
+    public let target: UIAutomationTarget.ExactWindow
+    public let applicationBundleIdentifier: String?
+    public let applicationName: String
+    public let applicationBundlePath: String?
+    public let applicationExecutablePath: String?
+    public let applicationActivationPolicy: ServiceApplicationActivationPolicy?
+    public let selectorResolutionProofs: [SelectorResolutionProof]?
+    public let windowTitle: String
+    public let windowIndex: Int
+
+    public init(
+        target: UIAutomationTarget.ExactWindow,
+        application: ServiceApplicationInfo,
+        window: ServiceWindowInfo,
+        windowResolutionProof: SelectorResolutionProof? = nil) throws
+    {
+        guard application.processIdentity == target.identity.processIdentity,
+              window.windowID == target.identity.windowID,
+              window.mutationIdentity?.hasSameStableReceipt(as: target.identity) == true,
+              window.bounds == target.bounds,
+              window.index >= 0
+        else {
+            throw PeekabooError.invalidInput(
+                "Resolved dialog selector evidence does not match its exact target receipt")
+        }
+        self.target = target
+        self.applicationBundleIdentifier = application.bundleIdentifier
+        self.applicationName = application.name
+        self.applicationBundlePath = application.bundlePath
+        self.applicationExecutablePath = application.executablePath
+        self.applicationActivationPolicy = application.activationPolicy
+        let applicationProofs = application.selectorResolutionProofs?.map {
+            $0.selecting(windowIdentity: window.mutationIdentity)
+        } ?? []
+        self.selectorResolutionProofs = (applicationProofs + [windowResolutionProof].compactMap(\.self)).nilIfEmpty
+        self.windowTitle = window.title
+        self.windowIndex = window.index
+    }
+
+    public func matches(_ selector: DialogTargetSelector) -> Bool {
+        let application = ApplicationIdentifierMatcher.Candidate(
+            processIdentifier: self.target.identity.ownerProcessIdentifier,
+            bundleIdentifier: self.applicationBundleIdentifier,
+            name: self.applicationName,
+            bundlePath: self.applicationBundlePath,
+            executablePath: self.applicationExecutablePath,
+            allowsFuzzyMatching: self.applicationActivationPolicy != .prohibited,
+            isRegularApplication: self.applicationActivationPolicy == .regular)
+        if let identifier = selector.applicationIdentifier,
+           !ApplicationIdentifierMatcher.matches(application, identifier: identifier)
+        {
+            return false
+        }
+        if let processIdentifier = selector.processIdentifier,
+           processIdentifier != self.target.identity.ownerProcessIdentifier
+        {
+            return false
+        }
+        if let windowID = selector.windowID,
+           windowID != self.target.identity.windowID
+        {
+            return false
+        }
+        if let windowTitle = selector.windowTitle,
+           !self.windowTitle.localizedCaseInsensitiveContains(windowTitle)
+        {
+            return false
+        }
+        if let windowIndex = selector.windowIndex,
+           windowIndex != self.windowIndex
+        {
+            return false
+        }
+        return true
+    }
+
+    func addingWindowResolutionProof(_ proof: SelectorResolutionProof) throws -> Self {
+        let application = ServiceApplicationInfo(
+            processIdentifier: self.target.identity.ownerProcessIdentifier,
+            processStartIdentity: self.target.identity.ownerProcessStartIdentity,
+            bundleIdentifier: self.applicationBundleIdentifier,
+            name: self.applicationName,
+            bundlePath: self.applicationBundlePath,
+            executablePath: self.applicationExecutablePath,
+            activationPolicy: self.applicationActivationPolicy,
+            selectorResolutionProofs: self.selectorResolutionProofs?.filter { $0.scope == .application })
+        let window = ServiceWindowInfo(
+            windowID: self.target.identity.windowID,
+            title: self.windowTitle,
+            bounds: self.target.bounds,
+            index: self.windowIndex,
+            mutationIdentity: self.target.identity)
+        return try Self(
+            target: self.target,
+            application: application,
+            window: window,
+            windowResolutionProof: proof)
+    }
+}
+
+extension Array {
+    fileprivate var nilIfEmpty: Self? {
+        self.isEmpty ? nil : self
+    }
+}
+
+/// Foreground-focus behavior retained for compatibility and explicit forced-dismiss operations.
 ///
-/// Dialog text entry ultimately uses global keyboard events, so disabling automatic focus does not
-/// weaken verification: the selected parent/dialog must already own foreground focus before dispatch.
+/// Exact dialog text entry uses retained-field background AXValue delivery and does not activate or
+/// focus the application. Legacy text entry and forced Escape continue to honor this policy.
 public struct DialogForegroundFocusPolicy: Sendable, Codable, Equatable {
     public let autoFocus: Bool
     public let timeout: TimeInterval
@@ -202,7 +310,7 @@ public struct DialogLegacyInputExecutionRequest: Sendable, Codable, Equatable {
     }
 }
 
-/// Complete, host-executed request for exact dialog text entry.
+/// Complete, host-executed request for exact background dialog text entry.
 ///
 /// The selector is intentionally unresolved on the wire. The execution host must resolve and retain
 /// the parent window, structural dialog, field, and process-generation receipt in one operation lane.
@@ -354,14 +462,17 @@ public struct PreparedDialogActionReceipt: Sendable, Codable, Equatable {
     public let token: UUID
     public let kind: DialogPreparedActionKind
     public let target: UIAutomationTarget.ExactWindow
+    public let resolvedTarget: ResolvedDialogTargetEvidence?
 
     public init(
         token: UUID,
         kind: DialogPreparedActionKind,
-        target: UIAutomationTarget.ExactWindow)
+        target: UIAutomationTarget.ExactWindow,
+        resolvedTarget: ResolvedDialogTargetEvidence? = nil)
     {
         self.token = token
         self.kind = kind
         self.target = target
+        self.resolvedTarget = resolvedTarget
     }
 }

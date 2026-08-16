@@ -83,6 +83,13 @@ extension LegacyScreenCaptureOperator {
         }
 
         let bounds = Self.windowBounds(from: targetWindow, fallbackImage: image)
+        let selectorResolutionProofs = try self.selectorResolutionProofs(
+            app: app,
+            windows: appWindows,
+            selectedIndex: resolvedIndex,
+            requestedIndex: windowIndex,
+            selectedBounds: bounds,
+            selectedIdentity: mutationIdentity)
         let scalePlan = self.scalePlan(for: bounds, preference: scale)
         let imageData: Data
         let scaledImage = ScreenCaptureImageScaler.maybeDownscale(
@@ -106,12 +113,7 @@ extension LegacyScreenCaptureOperator {
         let metadata = CaptureMetadata(
             size: CGSize(width: scaledImage.width, height: scaledImage.height),
             mode: .window,
-            applicationInfo: ServiceApplicationInfo(
-                processIdentifier: app.processIdentifier,
-                processStartIdentity: mutationIdentity?.ownerProcessStartIdentity,
-                bundleIdentifier: app.bundleIdentifier,
-                name: app.name,
-                bundlePath: app.bundlePath),
+            applicationInfo: app,
             windowInfo: ServiceWindowInfo(
                 windowID: Int(windowID),
                 title: windowTitle,
@@ -135,7 +137,8 @@ extension LegacyScreenCaptureOperator {
                 scaleFactor: scalePlan.outputScale),
             diagnostics: ScreenCaptureScaleResolver.diagnostics(
                 plan: scalePlan,
-                finalPixelSize: CGSize(width: scaledImage.width, height: scaledImage.height)))
+                finalPixelSize: CGSize(width: scaledImage.width, height: scaledImage.height)),
+            selectorResolutionProofs: selectorResolutionProofs)
 
         return CaptureResult(
             imageData: imageData,
@@ -310,5 +313,55 @@ extension LegacyScreenCaptureOperator {
         }
 
         return CGRect(x: 0, y: 0, width: image.width, height: image.height)
+    }
+
+    private func selectorResolutionProofs(
+        app: ServiceApplicationInfo,
+        windows: [[String: Any]],
+        selectedIndex: Int,
+        requestedIndex: Int?,
+        selectedBounds: CGRect,
+        selectedIdentity: WindowMutationIdentity?) throws -> [SelectorResolutionProof]?
+    {
+        guard let processIdentity = app.processIdentity,
+              let selectedIdentity,
+              selectedIdentity.processIdentity == processIdentity
+        else {
+            return app.selectorResolutionProofs
+        }
+        let candidates = windows.enumerated().compactMap { index, window -> ServiceWindowInfo? in
+            guard let windowID = window[kCGWindowNumber as String] as? CGWindowID else { return nil }
+            let bounds = index == selectedIndex ? selectedBounds : Self.windowBoundsOrZero(from: window)
+            return ServiceWindowInfo(
+                windowID: Int(windowID),
+                title: window[kCGWindowName as String] as? String ?? "",
+                bounds: bounds,
+                index: index,
+                mutationIdentity: index == selectedIndex ? selectedIdentity : nil)
+        }
+        guard let selected = candidates.first(where: { $0.windowID == selectedIdentity.windowID }) else {
+            return app.selectorResolutionProofs
+        }
+        let selection = requestedIndex.map(WindowSelection.index) ?? .automatic
+        let windowProof = try WindowSelectorResolutionProof.make(
+            selection: selection,
+            candidates: candidates,
+            selected: selected,
+            processIdentity: processIdentity)
+        return (app.selectorResolutionProofs ?? []).map {
+            $0.selecting(windowIdentity: selectedIdentity)
+        } + [windowProof]
+    }
+
+    private static func windowBoundsOrZero(from window: [String: Any]) -> CGRect {
+        guard let bounds = window[kCGWindowBounds as String] as? [String: Any],
+              let x = bounds["X"] as? CGFloat,
+              let y = bounds["Y"] as? CGFloat,
+              let width = bounds["Width"] as? CGFloat,
+              let height = bounds["Height"] as? CGFloat
+        else {
+            return .zero
+        }
+        return CGRect(x: x, y: y, width: width, height: height)
     }
 }

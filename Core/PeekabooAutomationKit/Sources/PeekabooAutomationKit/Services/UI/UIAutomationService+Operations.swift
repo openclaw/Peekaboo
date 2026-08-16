@@ -281,7 +281,10 @@ extension UIAutomationService {
             snapshotId: snapshotId,
             targetProcessIdentifier: expectedProcessIdentity.processIdentifier)
 
-        return UIAutomationActionResult(payload: (), outcome: result.outcome)
+        return try UIAutomationActionResult(
+            payload: (),
+            outcome: result.outcome,
+            targetIdentity: DesktopTargetIdentity(processIdentity: expectedProcessIdentity))
     }
 
     public func click(
@@ -306,9 +309,10 @@ extension UIAutomationService {
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<Void>
     {
-        let automationTarget: UIAutomationTarget = try .exactWindow(UIAutomationTarget.ExactWindow(
+        let exactWindow = try UIAutomationTarget.ExactWindow(
             identity: expectedWindowIdentity,
-            bounds: expectedWindowBounds))
+            bounds: expectedWindowBounds)
+        let automationTarget: UIAutomationTarget = .exactWindow(exactWindow)
         self.logger.debug("Delegating exact-window background click to ClickService")
         let result = try await self.normalizingSnapshotErrors {
             try await self.clickService.click(
@@ -326,7 +330,10 @@ extension UIAutomationService {
             snapshotId: snapshotId,
             targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier)
 
-        return UIAutomationActionResult(payload: (), outcome: result.outcome)
+        return UIAutomationActionResult(
+            payload: (),
+            outcome: result.outcome,
+            targetIdentity: DesktopTargetIdentity(exactWindow: exactWindow))
     }
 
     /// Background delivery must remain invisible to the foreground user. Visualizer windows are
