@@ -185,6 +185,17 @@ public enum ObservationActionResultSemantics {
                 causeDescription: failure.causeDescription)
         }
 
+        var validation = UIAutomationActionResultSequenceAccumulator()
+        validation.record(
+            outcome: outcome,
+            targetReceipt: targetReceipt,
+            selectedLeafEvidence: selectedLeafEvidence,
+            attribution: .operationTarget)
+        let validationResolution = validation.resolution
+        let validatedSelectedLeafEvidence = validationResolution.hasInvalidSelectedLeafEvidence
+            ? nil
+            : validationResolution.selectedLeafEvidence
+
         let message = error.localizedDescription
         let hint = "Observe the target before retrying \(operation)."
         let causeDescription = String(describing: error)
@@ -195,7 +206,7 @@ public enum ObservationActionResultSemantics {
             causeDescription: causeDescription,
             targetReceipt: targetReceipt)
         {
-            return failure.selectingLeaves(selectedLeafEvidence)
+            return failure.selectingLeaves(validatedSelectedLeafEvidence)
         }
         switch outcome.state {
         case .confirmedChange:
@@ -208,7 +219,7 @@ public enum ObservationActionResultSemantics {
                 hint: hint,
                 causeDescription: causeDescription)
                 .attributed(to: targetReceipt)
-                .selectingLeaves(selectedLeafEvidence)
+                .selectingLeaves(validatedSelectedLeafEvidence)
         case .confirmedNoChange:
             return DesktopActionFailure.preDispatchRefusal(
                 route: outcome.route,

@@ -143,6 +143,36 @@ struct UIAutomationActionResultSequenceAccumulatorTests {
     }
 
     @Test
+    func `required phase rejects contradictory identity and receipt without compatibility opt in`() throws {
+        let identityTarget = AutomationTestFixtures.linkedDesktopTarget(
+            windowID: 71,
+            bounds: Self.windowBounds)
+        let explicitTarget = AutomationTestFixtures.linkedDesktopTarget(
+            windowID: 72,
+            bounds: Self.windowBounds)
+        var sequence = UIAutomationActionResultSequenceAccumulator()
+        sequence.record(
+            outcome: .confirmedNoChange(),
+            targetIdentity: identityTarget.windowTargetIdentity,
+            targetReceipt: explicitTarget.windowTargetReceipt,
+            attribution: .requiredTarget)
+
+        do {
+            _ = try sequence.result(
+                payload: (),
+                operation: "Contradictory required target",
+                requiresOutcome: true)
+            Issue.record("Expected the contradictory required target to fail without compatibility opt in")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.dispatchState.unitCount == nil)
+            #expect(failure.targetReceipt == nil)
+            #expect(failure.causeDescription ==
+                DesktopTargetIdentityError.contradictoryWindowIdentity.localizedDescription)
+        }
+    }
+
+    @Test
     func `targetless leaf suppresses setup attribution and rejects its own target`() throws {
         let target = AutomationTestFixtures.linkedDesktopTarget(
             windowID: 71,
@@ -240,6 +270,95 @@ struct UIAutomationActionResultSequenceAccumulatorTests {
                 operation: "No-dispatch leaf sequence",
                 requiresOutcome: true)
         }
+    }
+
+    @Test
+    func `selected leaves must be contained by the attributed phase target`() throws {
+        let phase = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001),
+            windowID: 71,
+            bounds: Self.windowBounds)
+        let sibling = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: phase.processIdentity,
+            windowID: 72,
+            bounds: Self.windowBounds)
+        for unrelatedTarget in [sibling.windowTargetReceipt, phase.processTargetReceipt] {
+            let evidence = try self.leaf(index: 0, target: unrelatedTarget)
+            var sequence = UIAutomationActionResultSequenceAccumulator()
+            sequence.record(
+                UIAutomationActionResult(
+                    payload: (),
+                    outcome: .confirmedChange(delivery: self.backgroundDelivery, unitCount: .one),
+                    targetIdentity: phase.windowTargetIdentity,
+                    selectedLeafEvidence: [evidence]),
+                attribution: .mutationTarget)
+
+            #expect(throws: DesktopActionFailure.self) {
+                _ = try sequence.result(
+                    payload: (),
+                    operation: "Mismatched selected leaf",
+                    requiresOutcome: true,
+                    requiresCompatibleTarget: true)
+            }
+            let failure = sequence.failure(
+                combining: .preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "Later phase refused"),
+                operation: "Mismatched selected leaf")
+            #expect(failure.selectedLeafEvidence == nil)
+        }
+    }
+
+    @Test
+    func `process phase accepts selected leaves from an exact child window`() throws {
+        let phase = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001),
+            windowID: 71,
+            bounds: Self.windowBounds)
+        let evidence = try self.leaf(index: 0, target: phase.windowTargetReceipt)
+        var sequence = UIAutomationActionResultSequenceAccumulator()
+        sequence.record(
+            outcome: .confirmedChange(delivery: self.backgroundDelivery, unitCount: .one),
+            targetIdentity: phase.processTargetIdentity,
+            selectedLeafEvidence: [evidence],
+            attribution: .mutationTarget)
+
+        let result = try sequence.result(
+            payload: (),
+            operation: "Process selected leaf",
+            requiresOutcome: true,
+            requiresCompatibleTarget: true)
+
+        #expect(result.selectedLeafEvidence == [evidence])
+    }
+
+    @Test
+    func `no-dispatch failure cannot hide a prior operation target conflict`() {
+        let first = AutomationTestFixtures.linkedDesktopTarget(
+            windowID: 71,
+            bounds: Self.windowBounds)
+        let second = AutomationTestFixtures.linkedDesktopTarget(
+            windowID: 72,
+            bounds: Self.windowBounds)
+        let later = AutomationTestFixtures.linkedDesktopTarget(
+            windowID: 73,
+            bounds: Self.windowBounds)
+        var sequence = UIAutomationActionResultSequenceAccumulator()
+        for target in [first, second] {
+            sequence.record(
+                outcome: .confirmedNoChange(),
+                targetReceipt: target.windowTargetReceipt,
+                attribution: .operationTarget)
+        }
+
+        let failure = sequence.failure(
+            combining: DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Later phase refused")
+                .attributed(to: later.windowTargetReceipt),
+            operation: "Conflicting no-dispatch targets")
+
+        #expect(failure.targetReceipt == nil)
     }
 
     private func leaf(

@@ -203,6 +203,48 @@ struct ObservationActionResultSemanticsTests {
         #expect(target?.exactWindow?.identity.windowID == 70)
     }
 
+    @Test
+    func `generic failures reject selected leaves from an unrelated target`() throws {
+        let phase = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 545, processStartIdentity: 6545),
+            windowID: 70)
+        let unrelated = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 546, processStartIdentity: 6546),
+            windowID: 71)
+        let evidence = try DesktopSelectedLeafEvidence(
+            kind: .menuBarItem,
+            normalizedSelector: "fixture",
+            matchKind: .exact,
+            selectedTargetReceipt: unrelated.windowTargetReceipt,
+            selectedIndex: 0,
+            selectedTitle: "Fixture",
+            selectedIdentifier: "fixture.item",
+            selectedRole: "AXMenuBarItem",
+            selectedFrame: CGRect(x: 0, y: 0, width: 18, height: 18),
+            candidateSetSHA256: DesktopSelectedLeafEvidence.digestCandidateSet(["fixture"]),
+            candidateCount: 1)
+        let result = UIAutomationActionResult(
+            payload: (),
+            outcome: DesktopActionOutcome.dispatchedUnverified(
+                delivery: Self.delivery,
+                evidence: .deliveryAccepted,
+                unitCount: .one),
+            targetIdentity: phase.windowTargetIdentity,
+            selectedLeafEvidence: [evidence])
+
+        let preserved = ObservationActionResultSemantics.preservingFailure(
+            FixtureError.failed,
+            after: result,
+            operation: "Fixture observation")
+        let failure = try #require(preserved as? DesktopActionFailure)
+
+        #expect(failure.outcome.state == .dispatchedUnverified)
+        #expect(failure.message == FixtureError.failed.localizedDescription)
+        #expect(failure.causeDescription == String(describing: FixtureError.failed))
+        #expect(failure.targetReceipt == phase.windowTargetReceipt)
+        #expect(failure.selectedLeafEvidence == nil)
+    }
+
     private static let delivery = DesktopActionOutcome.Delivery(
         mechanism: .accessibilityAction,
         mode: .background)
@@ -222,4 +264,8 @@ struct ObservationActionResultSemanticsTests {
         .confirmedNoChange(),
         .dispatchedUnverified(delivery: Self.delivery, evidence: .deliveryAccepted, unitCount: .one),
     ]
+
+    private enum FixtureError: Error {
+        case failed
+    }
 }

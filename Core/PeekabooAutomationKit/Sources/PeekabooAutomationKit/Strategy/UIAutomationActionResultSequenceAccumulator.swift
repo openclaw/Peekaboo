@@ -31,6 +31,7 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
         public let hasTargetConflict: Bool
         public let hasProhibitedTarget: Bool
         public let hasMissingRequiredTarget: Bool
+        public let hasContradictoryRequiredTarget: Bool
         public let hasInvalidSelectedLeafEvidence: Bool
     }
 
@@ -131,6 +132,17 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
                 processIdentifier: lhs.processIdentifier,
                 processStartIdentity: lhs.processStartIdentity)
         }
+
+        fileprivate static func contains(
+            _ candidate: DesktopActionTargetReceipt,
+            within scope: DesktopActionTargetReceipt) -> Bool
+        {
+            guard candidate.processIdentifier == scope.processIdentifier,
+                  candidate.processStartIdentity == scope.processStartIdentity
+            else { return false }
+            guard let scopeWindowID = scope.windowID else { return true }
+            return candidate.windowID == scopeWindowID
+        }
     }
 
     private var sequence = DesktopActionSequenceAccumulator()
@@ -141,6 +153,7 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
     private var forcesTargetlessResult = false
     private var targetlessPhaseReturnedTarget = false
     private var missingRequiredTarget = false
+    private var contradictoryRequiredTarget = false
     private var invalidSelectedLeafEvidence = false
 
     public init() {}
@@ -197,6 +210,11 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
         case .requiredTarget:
             if !hasTarget {
                 self.missingRequiredTarget = true
+            } else if let identityReceipt = targetIdentity?.actionTargetReceipt,
+                      let targetReceipt,
+                      identityReceipt != targetReceipt
+            {
+                self.contradictoryRequiredTarget = true
             }
             self.recordTargetContribution(
                 identity: targetIdentity,
@@ -209,9 +227,23 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
         }
 
         guard let selectedLeafEvidence else { return }
+        let identityTargetReceipt = targetIdentity?.actionTargetReceipt
+        let phaseTargetReceipt: DesktopActionTargetReceipt? = if let identityTargetReceipt,
+                                                                 let targetReceipt
+        {
+            identityTargetReceipt == targetReceipt ? targetReceipt : nil
+        } else {
+            targetReceipt ?? identityTargetReceipt
+        }
         guard didDispatch,
               !selectedLeafEvidence.isEmpty,
-              selectedLeafEvidence.allSatisfy(\.isCanonical)
+              selectedLeafEvidence.allSatisfy(\.isCanonical),
+              let phaseTargetReceipt,
+              selectedLeafEvidence.allSatisfy({ evidence in
+                  TargetAccumulator.contains(
+                      evidence.selectedTargetReceipt,
+                      within: phaseTargetReceipt)
+              })
         else {
             self.invalidSelectedLeafEvidence = true
             return
@@ -233,6 +265,7 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
             hasTargetConflict: targetConflict,
             hasProhibitedTarget: self.targetlessPhaseReturnedTarget,
             hasMissingRequiredTarget: self.missingRequiredTarget,
+            hasContradictoryRequiredTarget: self.contradictoryRequiredTarget,
             hasInvalidSelectedLeafEvidence: self.invalidSelectedLeafEvidence)
     }
 
@@ -263,6 +296,15 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
                 message: failureMessage ?? "\(operation) returned without its required phase target.",
                 hint: failureHint,
                 causeDescription: DesktopTargetIdentityError.missingProcessGeneration.localizedDescription)
+        }
+        if resolution.hasContradictoryRequiredTarget {
+            throw self.compositionFailure(
+                outcome: outcome,
+                operation: operation,
+                message: failureMessage ??
+                    "\(operation) returned contradictory identity and receipt for a required phase target.",
+                hint: failureHint,
+                causeDescription: DesktopTargetIdentityError.contradictoryWindowIdentity.localizedDescription)
         }
         if resolution.hasProhibitedTarget {
             throw self.compositionFailure(
@@ -351,6 +393,7 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
         case (false, true):
             return leafFailure.targetReceipt
         case (false, false):
+            guard !self.resolution.hasTargetConflict else { return nil }
             switch (self.resolution.targetReceipt, leafFailure.targetReceipt) {
             case let (prior?, later?):
                 return TargetAccumulator.commonScope(prior, later)
