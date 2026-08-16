@@ -2176,7 +2176,7 @@ extension PeekabooBridgeRequest {
         switch PeekabooBridgeOperationResultSemantics.contract(for: self).targetPolicy {
         case .requestPinned, .handlerRequired, .responseResolved, .external:
             true
-        case .notApplicable, .requestDependent, .global:
+        case .handlerResolvedOrGlobal, .notApplicable, .requestDependent, .global:
             false
         }
     }

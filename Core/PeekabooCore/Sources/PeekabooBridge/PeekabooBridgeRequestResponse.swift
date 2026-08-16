@@ -262,7 +262,7 @@ public enum PeekabooBridgeResponse: Codable, Sendable {
     case typeResult(TypeResult)
     case exactWindowHeldPointerOwner(ExactWindowHeldPointerOwner)
     case exactWindowHeldPointerReceipt(ExactWindowHeldPointerReceipt)
-    case exactWindowHeldPointerTermination(ExactWindowHeldPointerTermination)
+    case exactWindowHeldPointerTermination(ExactWindowHeldPointerTermination?)
     case elementActionResult(ElementActionResult)
     case clickResult(ClickResult)
     case menuStructure(MenuStructure)

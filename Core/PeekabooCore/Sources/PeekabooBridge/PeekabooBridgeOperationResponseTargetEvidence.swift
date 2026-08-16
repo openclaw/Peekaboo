@@ -116,6 +116,13 @@ extension PeekabooBridgeResponse {
             return [.init(target: DesktopTargetIdentity(exactWindow: target))]
         case let .dialogResult(result):
             return Self.evidence(result)
+        case let .exactWindowHeldPointerTermination(termination?):
+            return [.init(
+                processIdentifier: termination.receipt.windowIdentity.ownerProcessIdentifier,
+                processIdentity: termination.receipt.windowIdentity.processIdentity,
+                windowID: termination.receipt.windowIdentity.windowID,
+                windowIdentity: termination.receipt.windowIdentity,
+                windowBounds: termination.receipt.windowBounds)]
         case .focusedElement:
             return []
         case let .error(envelope):

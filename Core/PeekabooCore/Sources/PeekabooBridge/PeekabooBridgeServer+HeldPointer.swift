@@ -19,13 +19,18 @@ extension PeekabooBridgeServer {
 
         switch request {
         case .createExactWindowHeldPointerOwner:
-            self.pruneHeldPointerBridgeOwners()
-            let owner = try await service.createExactWindowHeldPointerOwner(boundTo: peerIdentity)
+            await self.pruneHeldPointerBridgeOwners(service: service)
+            let owner = try await self.translateHeldPointerErrors {
+                try await service.createExactWindowHeldPointerOwner(boundTo: peerIdentity)
+            }
             self.heldPointerBridgeOwners[owner] = peerIdentity
             return .init(response: .exactWindowHeldPointerOwner(owner))
 
         case let .beginExactWindowHeldPointer(payload):
-            try self.requireHeldPointerOwner(payload.owner, peerIdentity: peerIdentity)
+            try await self.requireHeldPointerOwner(
+                payload.owner,
+                peerIdentity: peerIdentity,
+                service: service)
             self.automationActivityObserver?(payload.request.windowIdentity.ownerProcessIdentifier)
             let result = try await self.translateHeldPointerErrors {
                 try await service.beginExactWindowPointerHold(
@@ -41,24 +46,29 @@ extension PeekabooBridgeServer {
             return try await self.handleHeldPointerTerminal(
                 payload,
                 peerIdentity: peerIdentity,
+                service: service,
                 operation: service.releaseExactWindowPointerHold)
 
         case let .revokeExactWindowHeldPointer(payload):
             return try await self.handleHeldPointerTerminal(
                 payload,
                 peerIdentity: peerIdentity,
+                service: service,
                 operation: service.revokeExactWindowPointerHold)
 
         case let .disconnectExactWindowHeldPointerOwner(payload):
-            try self.requireHeldPointerOwner(payload.owner, peerIdentity: peerIdentity)
+            try await self.requireHeldPointerOwner(
+                payload.owner,
+                peerIdentity: peerIdentity,
+                service: service)
+            defer { self.heldPointerBridgeOwners.removeValue(forKey: payload.owner) }
             let result = try await self.translateHeldPointerErrors {
                 try await service.disconnectExactWindowHeldPointerOwner(payload.owner)
             }
-            self.heldPointerBridgeOwners.removeValue(forKey: payload.owner)
             return try Self.handledActionResponse(
                 response: .exactWindowHeldPointerTermination(result.payload),
                 result: result,
-                fallbackTarget: .requestPinned)
+                fallbackTarget: result.payload == nil ? .global : .requestPinned)
 
         default:
             throw Self.invalidRequest(for: request)
@@ -68,11 +78,15 @@ extension PeekabooBridgeServer {
     private func handleHeldPointerTerminal(
         _ payload: PeekabooBridgeFinishHeldPointerRequest,
         peerIdentity: ApplicationProcessIdentity,
+        service: any ExactWindowHeldPointerLifecycleServiceProtocol,
         operation: (ExactWindowHeldPointerOwner, ExactWindowHeldPointerReceipt) async throws
             -> UIAutomationActionResult<ExactWindowHeldPointerTermination>) async throws
         -> PeekabooBridgeHandledResponse
     {
-        try self.requireHeldPointerOwner(payload.owner, peerIdentity: peerIdentity)
+        try await self.requireHeldPointerOwner(
+            payload.owner,
+            peerIdentity: peerIdentity,
+            service: service)
         self.automationActivityObserver?(payload.receipt.windowIdentity.ownerProcessIdentifier)
         let result = try await self.translateHeldPointerErrors {
             try await operation(payload.owner, payload.receipt)
@@ -101,9 +115,10 @@ extension PeekabooBridgeServer {
 
     private func requireHeldPointerOwner(
         _ owner: ExactWindowHeldPointerOwner,
-        peerIdentity: ApplicationProcessIdentity) throws
+        peerIdentity: ApplicationProcessIdentity,
+        service: any ExactWindowHeldPointerLifecycleServiceProtocol) async throws
     {
-        self.pruneHeldPointerBridgeOwners()
+        await self.pruneHeldPointerBridgeOwners(service: service)
         guard self.heldPointerBridgeOwners[owner] == peerIdentity else {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .invalidRequest,
@@ -112,9 +127,22 @@ extension PeekabooBridgeServer {
         }
     }
 
-    private func pruneHeldPointerBridgeOwners() {
-        self.heldPointerBridgeOwners = self.heldPointerBridgeOwners.filter { _, identity in
+    private func pruneHeldPointerBridgeOwners(
+        service: any ExactWindowHeldPointerLifecycleServiceProtocol) async
+    {
+        let staleOwners = self.heldPointerBridgeOwners.compactMap { owner, identity in
             self.processStartIdentityProvider(identity.processIdentifier) == identity.processStartIdentity
+                ? nil
+                : owner
+        }
+        for owner in staleOwners {
+            self.heldPointerBridgeOwners.removeValue(forKey: owner)
+            do {
+                _ = try await service.disconnectExactWindowHeldPointerOwner(owner)
+            } catch {
+                self.logger.error(
+                    "Stale held pointer owner cleanup failed: \(error.localizedDescription, privacy: .private)")
+            }
         }
     }
 

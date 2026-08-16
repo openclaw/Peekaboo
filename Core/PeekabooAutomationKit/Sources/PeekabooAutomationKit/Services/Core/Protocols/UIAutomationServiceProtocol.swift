@@ -176,7 +176,7 @@ public protocol ExactWindowHeldPointerLifecycleServiceProtocol: UIAutomationServ
 
     func disconnectExactWindowHeldPointerOwner(
         _ owner: ExactWindowHeldPointerOwner) async throws
-        -> UIAutomationActionResult<ExactWindowHeldPointerTermination>
+        -> UIAutomationActionResult<ExactWindowHeldPointerTermination?>
 }
 
 /// Additive capability for observations that can conditionally focus embedded web content.

@@ -663,7 +663,7 @@ extension RemoteUIAutomationService: ExactWindowHeldPointerLifecycleServiceProto
 
     public func disconnectExactWindowHeldPointerOwner(
         _ owner: ExactWindowHeldPointerOwner) async throws
-        -> UIAutomationActionResult<ExactWindowHeldPointerTermination>
+        -> UIAutomationActionResult<ExactWindowHeldPointerTermination?>
     {
         try await self.client.disconnectExactWindowHeldPointerOwner(owner)
     }

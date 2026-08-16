@@ -52,7 +52,7 @@ extension PeekabooBridgeClient {
 
     public func disconnectExactWindowHeldPointerOwner(
         _ owner: ExactWindowHeldPointerOwner) async throws
-        -> UIAutomationActionResult<ExactWindowHeldPointerTermination>
+        -> UIAutomationActionResult<ExactWindowHeldPointerTermination?>
     {
         try self.requireExactWindowHeldPointerLifecycle()
         return try await self.actionResult(
@@ -61,7 +61,7 @@ extension PeekabooBridgeClient {
             operationReceiptRequirement: .required)
         { response in
             guard case let .exactWindowHeldPointerTermination(termination) = response else { return nil }
-            return termination
+            return .some(termination)
         }
     }
 
@@ -76,7 +76,7 @@ extension PeekabooBridgeClient {
             requiresTargetIdentity: true,
             operationReceiptRequirement: .required)
         { response in
-            guard case let .exactWindowHeldPointerTermination(termination) = response else { return nil }
+            guard case let .exactWindowHeldPointerTermination(termination?) = response else { return nil }
             return termination
         }
     }

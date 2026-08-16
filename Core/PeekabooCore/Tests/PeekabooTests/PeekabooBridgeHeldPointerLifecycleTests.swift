@@ -55,6 +55,11 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
         #expect(release.outcome?.dispatchState.unitCount?.rawValue == 1)
         #expect(release.payload.lifecycleDispatchedUnitCount == 3)
         #expect(await fixture.automation.terminalDispatchCount == 1)
+        let retry = try await client.revokeExactWindowPointerHold(
+            owner: owner,
+            receipt: begin.payload)
+        #expect(retry.payload == release.payload)
+        #expect(await fixture.automation.terminalDispatchCount == 1)
 
         let bundle = try #require(await client.lastOperationReceiptBundle())
         try bundle.validate()
@@ -103,9 +108,32 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
             request: fixture.automation.request)
 
         let result = try await client.disconnectExactWindowHeldPointerOwner(owner)
-        #expect(result.payload.reason == .ownerDisconnected)
+        #expect(result.payload?.reason == .ownerDisconnected)
         #expect(result.outcome?.dispatchState.unitCount?.rawValue == 1)
         #expect(await fixture.automation.terminalDispatchCount == 1)
+        await fixture.host.stop()
+    }
+
+    @Test
+    func `Bridge disconnect closes an idle owner as signed no change`() async throws {
+        let fixture = await self.makeHost(protocolVersion: PeekabooBridgeConstants.protocolVersion)
+        try await fixture.host.startChecked()
+        defer { Task { await fixture.host.stop() } }
+        let client = TrustedBridgeClientFixture.make(socketPath: fixture.socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
+        let owner = try await client.createExactWindowHeldPointerOwner()
+
+        let result = try await client.disconnectExactWindowHeldPointerOwner(owner)
+        #expect(result.payload == nil)
+        #expect(result.outcome?.state == .confirmedNoChange)
+        #expect(result.targetIdentity == nil)
+        let bundle = try #require(await client.lastOperationReceiptBundle())
+        try bundle.validate()
+        #expect(bundle.receipt.payload.target == .global)
+
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await client.disconnectExactWindowHeldPointerOwner(owner)
+        }
         await fixture.host.stop()
     }
 
@@ -157,6 +185,8 @@ private final class HeldPointerBridgeAutomationStub: ExactWindowHeldPointerLifec
     private(set) var terminalDispatchCount = 0
     private var owners: Set<ExactWindowHeldPointerOwner> = []
     private var active: [ExactWindowHeldPointerOwner: ExactWindowHeldPointerReceipt] = [:]
+    private var completed: [ExactWindowHeldPointerOwner: UIAutomationActionResult<ExactWindowHeldPointerTermination>] =
+        [:]
     let request: ExactWindowHeldPointerRequest
 
     init() {
@@ -225,14 +255,23 @@ private final class HeldPointerBridgeAutomationStub: ExactWindowHeldPointerLifec
 
     func disconnectExactWindowHeldPointerOwner(
         _ owner: ExactWindowHeldPointerOwner) async throws
-        -> UIAutomationActionResult<ExactWindowHeldPointerTermination>
+        -> UIAutomationActionResult<ExactWindowHeldPointerTermination?>
     {
         guard let receipt = self.active[owner] else {
-            throw ExactWindowHeldPointerLifecycleError.receiptUnknown
+            guard self.owners.remove(owner) != nil else {
+                throw ExactWindowHeldPointerLifecycleError.ownerUnknown
+            }
+            return UIAutomationActionResult(
+                payload: nil,
+                outcome: .confirmedNoChange(),
+                targetIdentity: nil)
         }
         let result = try self.terminate(owner: owner, receipt: receipt, reason: .ownerDisconnected)
         self.owners.remove(owner)
-        return result
+        return UIAutomationActionResult(
+            payload: result.payload,
+            outcome: result.outcome,
+            targetIdentity: result.targetIdentity)
     }
 
     private func terminate(
@@ -242,6 +281,9 @@ private final class HeldPointerBridgeAutomationStub: ExactWindowHeldPointerLifec
         -> UIAutomationActionResult<ExactWindowHeldPointerTermination>
     {
         guard self.active[owner] == receipt else {
+            if let completed = self.completed[owner], completed.payload.receipt == receipt {
+                return completed
+            }
             throw ExactWindowHeldPointerLifecycleError.ownerMismatch
         }
         self.active.removeValue(forKey: owner)
@@ -255,12 +297,14 @@ private final class HeldPointerBridgeAutomationStub: ExactWindowHeldPointerLifec
             reason: reason,
             cleanupOutcome: outcome,
             lifecycleDispatchedUnitCount: 3)
-        return try UIAutomationActionResult(
+        let result = try UIAutomationActionResult(
             payload: terminal,
             outcome: outcome,
             targetIdentity: DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
                 identity: receipt.windowIdentity,
                 bounds: receipt.windowBounds)))
+        self.completed[owner] = result
+        return result
     }
 
     func detectElements(in _: Data, snapshotId _: String?, windowContext _: WindowContext?) async throws

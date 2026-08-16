@@ -30,6 +30,8 @@ enum PeekabooBridgeOperationResultSemantics {
         case global
         case requestPinned
         case handlerRequired
+        /// The handler may resolve one exact target or prove that no desktop target was active.
+        case handlerResolvedOrGlobal
         case responseResolved
         /// The affected object needs a richer receipt than a desktop process/window identity.
         case external
@@ -1023,7 +1025,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .revokeExactWindowHeldPointer:
             .init(completion: .dispatchedUnverified(windowBackground), targetPolicy: .requestPinned)
         case .disconnectExactWindowHeldPointerOwner:
-            .init(completion: .dispatchedUnverified(windowBackground), targetPolicy: .handlerRequired)
+            .init(completion: .requestDependent(mutatesDesktop: true), targetPolicy: .handlerResolvedOrGlobal)
         case .setValue:
             .init(completion: .dispatchedUnverified(accessibilityValueBackground), targetPolicy: .handlerRequired)
         case .performAction, .targetedScroll:
@@ -1650,8 +1652,10 @@ extension PeekabooBridgeOperationResultSemantics {
              .exactDialogForceDismiss:
             return [.dispatchedUnverified]
         case .beginExactWindowHeldPointer, .releaseExactWindowHeldPointer,
-             .revokeExactWindowHeldPointer, .disconnectExactWindowHeldPointerOwner:
+             .revokeExactWindowHeldPointer:
             return [.dispatchedUnverified]
+        case .disconnectExactWindowHeldPointerOwner:
+            return [.confirmedNoChange, .dispatchedUnverified]
         case .exactDialogClickButton, .exactDialogDismiss:
             return [.confirmedChange]
         case .exactDialogEnterText:
@@ -2233,7 +2237,7 @@ extension PeekabooBridgeOperationResultSemantics {
             case .global: .global
             case .requestPinned: .requestPinned
             case .responseResolved: .responseResolved
-            case .handlerRequired, .external:
+            case .handlerRequired, .handlerResolvedOrGlobal, .external:
                 throw DesktopActionFailure.indeterminate(
                     route: .bridge,
                     delivery: rule.delivery,
@@ -2384,7 +2388,7 @@ extension PeekabooBridgeOperationResultSemantics {
                 guard self.actionFailure(in: handled.response)?.targetReceipt != nil else {
                     throw DesktopTargetIdentityError.incompleteExactWindow
                 }
-            case .notApplicable, .requestDependent:
+            case .handlerResolvedOrGlobal, .notApplicable, .requestDependent:
                 throw DesktopTargetIdentityError.incompleteExactWindow
             }
             // A projected error has no successful handler disposition to preserve. For a
@@ -2398,6 +2402,8 @@ extension PeekabooBridgeOperationResultSemantics {
              (.requestPinned, .requestPinned),
              (.requestPinned, .handlerResolved),
              (.handlerRequired, .handlerResolved),
+             (.handlerResolvedOrGlobal, .handlerResolved),
+             (.handlerResolvedOrGlobal, .global),
              (.responseResolved, .responseResolved),
              (.responseResolved, .handlerResolved):
             true
@@ -2405,7 +2411,8 @@ extension PeekabooBridgeOperationResultSemantics {
             // A process/window identity is an accepted conservative target for an external
             // object. Bare `.external` only names the need and is not itself target evidence.
             true
-        case (.notApplicable, _), (.requestDependent, _), (_, .external), (_, .externalBrowser),
+        case (.notApplicable, _), (.requestDependent, _), (.handlerResolvedOrGlobal, _),
+             (_, .external), (_, .externalBrowser),
              (_, .global), (_, .requestPinned), (_, .responseResolved),
              (_, .handlerResolved):
             false

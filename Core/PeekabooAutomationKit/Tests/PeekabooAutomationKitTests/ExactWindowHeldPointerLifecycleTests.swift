@@ -11,7 +11,7 @@ struct ExactWindowHeldPointerLifecycleTests {
     @Test
     func `release and revoke race performs exactly one cleanup`() async throws {
         let fixture = self.makeFixture()
-        let owner = fixture.lifecycle.createOwner(boundTo: nil)
+        let owner = try fixture.lifecycle.createOwner(boundTo: nil)
         let started = try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
 
         async let release = fixture.lifecycle.release(owner: owner, receipt: started.payload)
@@ -25,9 +25,57 @@ struct ExactWindowHeldPointerLifecycleTests {
     }
 
     @Test
+    func `terminal retry returns the retained result without another cleanup`() async throws {
+        let fixture = self.makeFixture()
+        let owner = try fixture.lifecycle.createOwner(boundTo: nil)
+        let started = try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
+
+        let first = try await fixture.lifecycle.release(owner: owner, receipt: started.payload)
+        let retry = try await fixture.lifecycle.revoke(owner: owner, receipt: started.payload)
+
+        #expect(retry == first)
+        #expect(fixture.lifecycle.retainedHoldCountForTesting == 1)
+        #expect(fixture.state.postedTypes == [.mouseMoved, .leftMouseDown, .leftMouseUp])
+    }
+
+    @Test
+    func `terminal retention evicts oldest completed holds at capacity`() async throws {
+        let fixture = self.makeFixture(terminalRetentionCapacity: 2)
+        let owner = try fixture.lifecycle.createOwner(boundTo: nil)
+        var receipts: [ExactWindowHeldPointerReceipt] = []
+        for _ in 0..<3 {
+            let started = try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
+            receipts.append(started.payload)
+            _ = try await fixture.lifecycle.release(owner: owner, receipt: started.payload)
+        }
+
+        #expect(fixture.lifecycle.retainedHoldCountForTesting == 2)
+        await #expect(throws: ExactWindowHeldPointerLifecycleError.self) {
+            _ = try await fixture.lifecycle.release(owner: owner, receipt: receipts[0])
+        }
+        _ = try await fixture.lifecycle.release(owner: owner, receipt: receipts[2])
+        #expect(fixture.state.postedTypes.filter { $0 == .leftMouseUp }.count == 3)
+    }
+
+    @Test
+    func `terminal retention expires without affecting active owners`() async throws {
+        let fixture = self.makeFixture(terminalRetentionDuration: 1)
+        let owner = try fixture.lifecycle.createOwner(boundTo: nil)
+        let started = try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
+        _ = try await fixture.lifecycle.release(owner: owner, receipt: started.payload)
+        fixture.state.now = fixture.state.now.addingTimeInterval(2)
+
+        await #expect(throws: ExactWindowHeldPointerLifecycleError.self) {
+            _ = try await fixture.lifecycle.release(owner: owner, receipt: started.payload)
+        }
+        #expect(fixture.lifecycle.retainedHoldCountForTesting == 0)
+        #expect(fixture.lifecycle.registeredOwnerCountForTesting == 1)
+    }
+
+    @Test
     func `held pointer excludes another writer from the same window lane`() async throws {
         let fixture = self.makeFixture()
-        let owner = fixture.lifecycle.createOwner(boundTo: nil)
+        let owner = try fixture.lifecycle.createOwner(boundTo: nil)
         let started = try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
         let probe = MainActorFlag()
         let contender = Task { @MainActor in
@@ -46,8 +94,8 @@ struct ExactWindowHeldPointerLifecycleTests {
     @Test
     func `wrong owner refuses without dispatch`() async throws {
         let fixture = self.makeFixture()
-        let owner = fixture.lifecycle.createOwner(boundTo: nil)
-        let wrongOwner = fixture.lifecycle.createOwner(boundTo: nil)
+        let owner = try fixture.lifecycle.createOwner(boundTo: nil)
+        let wrongOwner = try fixture.lifecycle.createOwner(boundTo: nil)
         let started = try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
 
         await #expect(throws: ExactWindowHeldPointerLifecycleError.self) {
@@ -60,7 +108,7 @@ struct ExactWindowHeldPointerLifecycleTests {
     @Test
     func `wrong hold token refuses without dispatch`() async throws {
         let fixture = self.makeFixture()
-        let owner = fixture.lifecycle.createOwner(boundTo: nil)
+        let owner = try fixture.lifecycle.createOwner(boundTo: nil)
         let started = try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
         let forged = ExactWindowHeldPointerReceipt(
             token: UUID(),
@@ -78,7 +126,7 @@ struct ExactWindowHeldPointerLifecycleTests {
     @Test
     func `watchdog expiry releases once and retains terminal result`() async throws {
         let fixture = self.makeFixture(expiresAfter: 0.05)
-        let owner = fixture.lifecycle.createOwner(boundTo: nil)
+        let owner = try fixture.lifecycle.createOwner(boundTo: nil)
         let started = try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
         fixture.state.now = fixture.state.now.addingTimeInterval(1)
 
@@ -92,7 +140,7 @@ struct ExactWindowHeldPointerLifecycleTests {
     @Test
     func `window drift triggers one generation-bound cleanup`() async throws {
         let fixture = self.makeFixture()
-        let owner = fixture.lifecycle.createOwner(boundTo: nil)
+        let owner = try fixture.lifecycle.createOwner(boundTo: nil)
         let started = try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
         fixture.state.routeIsCurrent = false
 
@@ -105,7 +153,7 @@ struct ExactWindowHeldPointerLifecycleTests {
     @Test
     func `process generation drift never sends cleanup to recycled PID`() async throws {
         let fixture = self.makeFixture()
-        let owner = fixture.lifecycle.createOwner(boundTo: nil)
+        let owner = try fixture.lifecycle.createOwner(boundTo: nil)
         let started = try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
         fixture.state.processGenerationIsCurrent = false
 
@@ -124,15 +172,42 @@ struct ExactWindowHeldPointerLifecycleTests {
     @Test
     func `explicit owner disconnect releases active hold once`() async throws {
         let fixture = self.makeFixture()
-        let owner = fixture.lifecycle.createOwner(boundTo: nil)
-        _ = try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
+        let owner = try fixture.lifecycle.createOwner(boundTo: nil)
+        let started = try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
 
-        let terminal = try await fixture.lifecycle.disconnect(owner: owner)
+        let terminal = try #require(try await fixture.lifecycle.disconnect(owner: owner))
         #expect(terminal.reason == .ownerDisconnected)
         #expect(fixture.state.postedTypes == [.mouseMoved, .leftMouseDown, .leftMouseUp])
+        #expect(try await fixture.lifecycle.release(owner: owner, receipt: started.payload) == terminal)
+        #expect(fixture.lifecycle.retainedHoldCountForTesting == 1)
+        #expect(fixture.lifecycle.registeredOwnerCountForTesting == 0)
         await #expect(throws: ExactWindowHeldPointerLifecycleError.self) {
             _ = try await fixture.lifecycle.disconnect(owner: owner)
         }
+    }
+
+    @Test
+    func `disconnect closes an idle owner and releases owner capacity`() async throws {
+        let fixture = self.makeFixture(ownerCapacity: 1)
+        let owner = try fixture.lifecycle.createOwner(boundTo: nil)
+        #expect(fixture.lifecycle.registeredOwnerCountForTesting == 1)
+
+        let terminal = try await fixture.lifecycle.disconnect(owner: owner)
+        #expect(terminal == nil)
+        #expect(fixture.lifecycle.registeredOwnerCountForTesting == 0)
+        _ = try fixture.lifecycle.createOwner(boundTo: nil)
+        #expect(fixture.lifecycle.registeredOwnerCountForTesting == 1)
+    }
+
+    @Test
+    func `owner capacity fails closed instead of growing without bound`() throws {
+        let fixture = self.makeFixture(ownerCapacity: 1)
+        _ = try fixture.lifecycle.createOwner(boundTo: nil)
+
+        #expect(throws: ExactWindowHeldPointerLifecycleError.self) {
+            _ = try fixture.lifecycle.createOwner(boundTo: nil)
+        }
+        #expect(fixture.lifecycle.registeredOwnerCountForTesting == 1)
     }
 
     @Test
@@ -142,7 +217,7 @@ struct ExactWindowHeldPointerLifecycleTests {
             processIdentifier: 55001,
             processStartIdentity: 9)
         fixture.state.clientGeneration = 9
-        let owner = fixture.lifecycle.createOwner(boundTo: client)
+        let owner = try fixture.lifecycle.createOwner(boundTo: client)
         let started = try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
         fixture.state.clientGeneration = 10
 
@@ -166,7 +241,7 @@ struct ExactWindowHeldPointerLifecycleTests {
             await Task.yield()
         }
 
-        let owner = fixture.lifecycle.createOwner(boundTo: nil)
+        let owner = try fixture.lifecycle.createOwner(boundTo: nil)
         let begin = Task { @MainActor in
             try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
         }
@@ -180,7 +255,41 @@ struct ExactWindowHeldPointerLifecycleTests {
         #expect(fixture.state.postedTypes.isEmpty)
     }
 
-    private func makeFixture(expiresAfter: TimeInterval = 10) -> Fixture {
+    @Test
+    func `cancelled begin after mouse down waits for terminal cleanup and returns no live receipt`() async throws {
+        let hookEntered = MainActorFlag()
+        let resumeBegin = MainActorGate()
+        let fixture = self.makeFixture(beginResolutionHook: {
+            hookEntered.set()
+            await resumeBegin.wait()
+        })
+        let owner = try fixture.lifecycle.createOwner(boundTo: nil)
+        let begin = Task { @MainActor in
+            try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
+        }
+        while !hookEntered.value {
+            await Task.yield()
+        }
+
+        begin.cancel()
+        resumeBegin.open()
+        do {
+            _ = try await begin.value
+            Issue.record("Expected cancellation after mouse-down to refuse a live receipt")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.dispatchState.unitCount?.rawValue == 3)
+            #expect(failure.causeDescription?.contains("callerCancelled") == true)
+        }
+        #expect(fixture.state.postedTypes == [.mouseMoved, .leftMouseDown, .leftMouseUp])
+    }
+
+    private func makeFixture(
+        expiresAfter: TimeInterval = 10,
+        beginResolutionHook: @escaping @MainActor @Sendable () async -> Void = {},
+        ownerCapacity: Int = 1024,
+        terminalRetentionCapacity: Int = 256,
+        terminalRetentionDuration: TimeInterval = 60) -> Fixture
+    {
         let state = PointerState()
         let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
         let identity = WindowMutationIdentity(
@@ -217,7 +326,11 @@ struct ExactWindowHeldPointerLifecycleTests {
             pointerDriver: driver,
             processStartIdentityProvider: { pid in state.generation(for: pid) },
             now: { state.now },
-            watchdogSleeper: { try await Task.sleep(for: .milliseconds(2)) })
+            watchdogSleeper: { try await Task.sleep(for: .milliseconds(2)) },
+            beginResolutionHook: beginResolutionHook,
+            ownerCapacity: ownerCapacity,
+            terminalRetentionCapacity: terminalRetentionCapacity,
+            terminalRetentionDuration: terminalRetentionDuration)
         return Fixture(
             state: state,
             coordinator: coordinator,

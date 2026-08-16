@@ -612,6 +612,8 @@ extension PeekabooBridgeClient {
             }
         case .handlerRequired, .responseResolved, .external:
             guard resolved != nil else { throw DesktopTargetIdentityError.incompleteExactWindow }
+        case .handlerResolvedOrGlobal:
+            break
         case .notApplicable, .requestDependent:
             throw DesktopTargetIdentityError.incompleteExactWindow
         }

@@ -117,6 +117,7 @@ public enum ExactWindowHeldPointerLifecycleError: LocalizedError, Equatable, Sen
     case ownerMismatch
     case receiptUnknown
     case receiptMismatch
+    case ownerCapacityExceeded
     case invalidExpiry
     case cancelledBeforeDispatch
     case ownerDisconnectedBeforeDispatch
@@ -134,6 +135,8 @@ public enum ExactWindowHeldPointerLifecycleError: LocalizedError, Equatable, Sen
             "Held pointer receipt is unknown or no longer retained"
         case .receiptMismatch:
             "Held pointer receipt does not match the retained exact-window hold"
+        case .ownerCapacityExceeded:
+            "Held pointer owner capacity is exhausted; disconnect an idle owner before retrying"
         case .invalidExpiry:
             "Held pointer expiry must be finite and between 0.05 and 30 seconds"
         case .cancelledBeforeDispatch:
@@ -215,6 +218,7 @@ final class ExactWindowHeldPointerLifecycle {
         var watchdogTask: Task<Void, Never>?
         var dispatch: WindowRoutedPointerDriver.HeldPointerDispatch?
         var downUnitCount = 0
+        var completedAt: Date?
     }
 
     private let laneCoordinator: DesktopOperationLaneCoordinator
@@ -222,6 +226,10 @@ final class ExactWindowHeldPointerLifecycle {
     private let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
     private let now: @MainActor @Sendable () -> Date
     private let watchdogSleeper: @MainActor @Sendable () async throws -> Void
+    private let beginResolutionHook: @MainActor @Sendable () async -> Void
+    private let ownerCapacity: Int
+    private let terminalRetentionCapacity: Int
+    private let terminalRetentionDuration: TimeInterval
     private var owners: [ExactWindowHeldPointerOwner: OwnerState] = [:]
     private var holds: [UUID: HoldState] = [:]
 
@@ -232,16 +240,28 @@ final class ExactWindowHeldPointerLifecycle {
         now: @escaping @MainActor @Sendable () -> Date = Date.init,
         watchdogSleeper: @escaping @MainActor @Sendable () async throws -> Void = {
             try await Task.sleep(for: .milliseconds(20))
-        })
+        },
+        beginResolutionHook: @escaping @MainActor @Sendable () async -> Void = {},
+        ownerCapacity: Int = 1024,
+        terminalRetentionCapacity: Int = 256,
+        terminalRetentionDuration: TimeInterval = 60)
     {
         self.laneCoordinator = laneCoordinator
         self.pointerDriver = pointerDriver
         self.processStartIdentityProvider = processStartIdentityProvider
         self.now = now
         self.watchdogSleeper = watchdogSleeper
+        self.beginResolutionHook = beginResolutionHook
+        self.ownerCapacity = max(1, ownerCapacity)
+        self.terminalRetentionCapacity = max(1, terminalRetentionCapacity)
+        self.terminalRetentionDuration = max(0, terminalRetentionDuration)
     }
 
-    func createOwner(boundTo processIdentity: ApplicationProcessIdentity?) -> ExactWindowHeldPointerOwner {
+    func createOwner(boundTo processIdentity: ApplicationProcessIdentity?) throws -> ExactWindowHeldPointerOwner {
+        self.pruneTerminalHolds()
+        guard self.owners.count < self.ownerCapacity else {
+            throw ExactWindowHeldPointerLifecycleError.ownerCapacityExceeded
+        }
         var owner = ExactWindowHeldPointerOwner()
         while self.owners[owner] != nil {
             owner = ExactWindowHeldPointerOwner()
@@ -255,6 +275,7 @@ final class ExactWindowHeldPointerLifecycle {
         request: ExactWindowHeldPointerRequest) async throws
         -> UIAutomationActionResult<ExactWindowHeldPointerReceipt>
     {
+        self.pruneTerminalHolds()
         guard request.expiresAfterSeconds.isFinite,
               (0.05...30).contains(request.expiresAfterSeconds)
         else { throw ExactWindowHeldPointerLifecycleError.invalidExpiry }
@@ -272,7 +293,6 @@ final class ExactWindowHeldPointerLifecycle {
                 "Held pointer point is outside the exact target window bounds")
         }
 
-        self.holds = self.holds.filter { $0.value.owner != owner }
         let token = UUID()
         let receipt = ExactWindowHeldPointerReceipt(
             token: token,
@@ -304,8 +324,27 @@ final class ExactWindowHeldPointerLifecycle {
                 self?.signalTerminal(token: token, reason: .callerCancelled)
             }
         }
+        await self.beginResolutionHook()
         switch resolution {
         case let .started(receipt, dispatchedUnitCount):
+            if Task.isCancelled {
+                self.signalTerminal(token: token, reason: .callerCancelled)
+            }
+            if let terminalReason = terminalSignal.resolvedValue {
+                switch await terminal.wait() {
+                case let .terminated(termination):
+                    throw DesktopActionFailure.dispatchedUnverified(
+                        delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                        evidence: .deliveryAccepted,
+                        unitCount: DesktopActionOutcome.DispatchUnitCount(
+                            termination.lifecycleDispatchedUnitCount),
+                        message: "Held pointer ended before its begin receipt could be delivered.",
+                        hint: "Do not treat the returned hold receipt as live or retry the pointer action blindly.",
+                        causeDescription: "Terminal reason: \(terminalReason.rawValue)")
+                case let .failed(failure):
+                    throw failure
+                }
+            }
             return try UIAutomationActionResult(
                 payload: receipt,
                 outcome: .dispatchedUnverified(
@@ -334,16 +373,18 @@ final class ExactWindowHeldPointerLifecycle {
         try await self.terminate(owner: owner, receipt: receipt, reason: .revoked)
     }
 
-    func disconnect(owner: ExactWindowHeldPointerOwner) async throws -> ExactWindowHeldPointerTermination {
+    func disconnect(owner: ExactWindowHeldPointerOwner) async throws -> ExactWindowHeldPointerTermination? {
+        self.pruneTerminalHolds()
         guard let ownerState = self.owners[owner] else {
             throw ExactWindowHeldPointerLifecycleError.ownerUnknown
         }
         guard let token = ownerState.activeToken, let hold = self.holds[token] else {
-            throw ExactWindowHeldPointerLifecycleError.receiptUnknown
+            self.removeOwner(owner)
+            return nil
         }
         self.signalTerminal(token: token, reason: .ownerDisconnected)
         let resolution = await hold.terminal.wait()
-        self.owners.removeValue(forKey: owner)
+        self.closeOwner(owner, preserving: token)
         switch resolution {
         case let .terminated(termination): return termination
         case let .failed(failure): throw failure
@@ -355,9 +396,7 @@ final class ExactWindowHeldPointerLifecycle {
         receipt: ExactWindowHeldPointerReceipt,
         reason: ExactWindowHeldPointerTerminalReason) async throws -> ExactWindowHeldPointerTermination
     {
-        guard self.owners[owner] != nil else {
-            throw ExactWindowHeldPointerLifecycleError.ownerUnknown
-        }
+        self.pruneTerminalHolds()
         guard receipt.ownerIdentifier == owner.identifier else {
             throw ExactWindowHeldPointerLifecycleError.ownerMismatch
         }
@@ -370,6 +409,9 @@ final class ExactWindowHeldPointerLifecycle {
         guard hold.receipt == receipt else {
             throw ExactWindowHeldPointerLifecycleError.receiptMismatch
         }
+        guard self.owners[owner] != nil || hold.completedAt != nil else {
+            throw ExactWindowHeldPointerLifecycleError.ownerUnknown
+        }
         self.signalTerminal(token: receipt.token, reason: reason)
         switch await hold.terminal.wait() {
         case let .terminated(termination): return termination
@@ -380,6 +422,7 @@ final class ExactWindowHeldPointerLifecycle {
     private func runHold(token: UUID, request: ExactWindowHeldPointerRequest) async {
         guard let hold = self.holds[token] else { return }
         var completedTerminal: TerminalResolution?
+        var completedReason: ExactWindowHeldPointerTerminalReason?
         do {
             try await self.laneCoordinator.run(scope: .window(request.windowIdentity), access: .write) {
                 guard hold.terminalSignal.resolvedValue == nil else {
@@ -413,6 +456,7 @@ final class ExactWindowHeldPointerLifecycle {
                 self.startWatchdog(token: token)
 
                 let reason = await hold.terminalSignal.wait()
+                completedReason = reason
                 self.holds[token]?.watchdogTask?.cancel()
                 completedTerminal = self.finishHold(
                     hold: hold,
@@ -429,7 +473,8 @@ final class ExactWindowHeldPointerLifecycle {
             }
         }
         self.holds[token]?.watchdogTask?.cancel()
-        if var ownerState = self.owners[hold.owner], ownerState.activeToken == token {
+        let closesOwner = completedReason == .ownerDisconnected
+        if !closesOwner, var ownerState = self.owners[hold.owner], ownerState.activeToken == token {
             ownerState.activeToken = nil
             self.owners[hold.owner] = ownerState
         }
@@ -438,6 +483,17 @@ final class ExactWindowHeldPointerLifecycle {
                 self.logger
                     .error("Held pointer terminal cleanup failed: \(failure.localizedDescription, privacy: .private)")
             }
+            if closesOwner {
+                self.closeOwner(hold.owner, preserving: token)
+            }
+            if var retained = self.holds[token] {
+                retained.lifecycleTask = nil
+                retained.watchdogTask = nil
+                retained.dispatch = nil
+                retained.completedAt = self.now()
+                self.holds[token] = retained
+            }
+            self.pruneTerminalHolds()
             hold.terminal.resolve(completedTerminal)
         }
     }
@@ -492,6 +548,51 @@ final class ExactWindowHeldPointerLifecycle {
         guard let binding = self.owners[owner]?.boundProcessIdentity else { return true }
         return self.processStartIdentityProvider(binding.processIdentifier) == binding.processStartIdentity
     }
+
+    private func removeOwner(_ owner: ExactWindowHeldPointerOwner) {
+        self.owners.removeValue(forKey: owner)
+        self.holds = self.holds.filter { $0.value.owner != owner }
+    }
+
+    private func closeOwner(_ owner: ExactWindowHeldPointerOwner, preserving token: UUID) {
+        self.owners.removeValue(forKey: owner)
+        self.holds = self.holds.filter { candidate, hold in
+            hold.owner != owner || candidate == token
+        }
+    }
+
+    private func pruneTerminalHolds() {
+        let current = self.now()
+        let expiredTokens = self.holds.compactMap { token, hold -> UUID? in
+            guard let completedAt = hold.completedAt else { return nil }
+            return current.timeIntervalSince(completedAt) >= self.terminalRetentionDuration ? token : nil
+        }
+        for token in expiredTokens {
+            self.holds.removeValue(forKey: token)
+        }
+
+        let completed = self.holds.compactMap { token, hold -> (UUID, Date)? in
+            hold.completedAt.map { (token, $0) }
+        }.sorted { lhs, rhs in
+            if lhs.1 != rhs.1 {
+                return lhs.1 < rhs.1
+            }
+            return lhs.0.uuidString < rhs.0.uuidString
+        }
+        for (token, _) in completed.dropLast(self.terminalRetentionCapacity) {
+            self.holds.removeValue(forKey: token)
+        }
+    }
+
+    #if DEBUG
+    var retainedHoldCountForTesting: Int {
+        self.holds.count
+    }
+
+    var registeredOwnerCountForTesting: Int {
+        self.owners.count
+    }
+    #endif
 
     private func finishHold(
         hold: HoldState,
@@ -564,7 +665,7 @@ extension UIAutomationService: ExactWindowHeldPointerLifecycleServiceProtocol {
     public func createExactWindowHeldPointerOwner(
         boundTo processIdentity: ApplicationProcessIdentity? = nil) async throws -> ExactWindowHeldPointerOwner
     {
-        self.heldPointerLifecycle.createOwner(boundTo: processIdentity)
+        try self.heldPointerLifecycle.createOwner(boundTo: processIdentity)
     }
 
     public func beginExactWindowPointerHold(
@@ -605,15 +706,17 @@ extension UIAutomationService: ExactWindowHeldPointerLifecycleServiceProtocol {
 
     public func disconnectExactWindowHeldPointerOwner(
         _ owner: ExactWindowHeldPointerOwner) async throws
-        -> UIAutomationActionResult<ExactWindowHeldPointerTermination>
+        -> UIAutomationActionResult<ExactWindowHeldPointerTermination?>
     {
         let termination = try await self.heldPointerLifecycle.disconnect(owner: owner)
-        let identity = try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
-            identity: termination.receipt.windowIdentity,
-            bounds: termination.receipt.windowBounds))
+        let identity = try termination.map {
+            try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+                identity: $0.receipt.windowIdentity,
+                bounds: $0.receipt.windowBounds))
+        }
         return UIAutomationActionResult(
             payload: termination,
-            outcome: termination.cleanupOutcome,
+            outcome: termination?.cleanupOutcome ?? .confirmedNoChange(),
             targetIdentity: identity)
     }
 }

@@ -107,7 +107,9 @@ expiry, then release or revoke with the returned opaque hold receipt. Mouse-down
 lane across calls. A matching release, explicit owner disconnect, caller cancellation, target drift, or watchdog expiry
 wins terminal cleanup exactly once. Mouse-up is sent only while the original process generation remains live; if its
 PID was recycled, cleanup fails with a typed partial outcome instead of targeting the replacement process. Disconnect
-the owner before releasing the embedding client.
+the owner before releasing the embedding client. Terminal results remain available in a bounded replay cache so
+concurrent or retried release/revoke calls return the first result without another mouse-up; idle-owner disconnect
+closes the owner as a signed no-change operation.
 
 Peekaboo.app and the reusable daemon still use the full `PeekabooServices` registry because they also own agent,
 browser, configuration, audio, and visualizer state. A follow-up can make that registry compose this native bundle once

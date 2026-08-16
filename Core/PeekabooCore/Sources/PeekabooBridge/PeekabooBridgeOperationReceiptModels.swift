@@ -831,7 +831,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
         let signedIdentity = try payload.resolvedTargetIdentity()
         let targetPolicy = PeekabooBridgeOperationResultSemantics.semanticPlan(for: request).contract.targetPolicy
         let handledTarget: DesktopTargetIdentity? = switch targetPolicy {
-        case .handlerRequired, .external:
+        case .handlerRequired, .handlerResolvedOrGlobal, .external:
             signedIdentity
         case .responseResolved:
             self.errorEnvelope(in: response)?.actionTargetReceipt == nil ? nil : signedIdentity
