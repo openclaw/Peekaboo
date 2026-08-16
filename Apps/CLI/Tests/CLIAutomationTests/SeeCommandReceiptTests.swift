@@ -8,6 +8,31 @@ import Testing
 extension SeeCommandRuntimeTests {
     @Test
     @MainActor
+    func `legacy menu bar OCR fallback publishes its canonical no-change outcome`() throws {
+        let result = SeeCommand.legacyMenuBarOCRDetectionResult(
+            snapshotID: "legacy-menubar-ocr",
+            elements: [],
+            metadata: DetectionMetadata(
+                detectionTime: 0.1,
+                elementCount: 0,
+                method: "OCR"
+            )
+        )
+
+        let receipt = try SeeExecutionReceipt.validated(
+            result,
+            operation: "Legacy menu bar OCR",
+            requiresOutcome: true,
+            requiresTarget: false
+        )
+
+        #expect(result.outcome == .confirmedNoChange())
+        #expect(receipt.outcome == .confirmedNoChange())
+        #expect(receipt.targetReceipt == nil)
+    }
+
+    @Test
+    @MainActor
     func `web focus See publishes its observation outcome and exact target receipt`() async throws {
         try await self.withTempConfigEnv { _ in
             let fixture = Self.makeSeeCommandRuntimeFixture()

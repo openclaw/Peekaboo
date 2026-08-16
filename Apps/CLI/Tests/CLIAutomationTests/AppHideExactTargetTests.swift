@@ -27,6 +27,7 @@ struct AppHideExactTargetTests {
         let object = try Self.jsonObject(result.stdout)
         let data = try #require(object["data"] as? [String: Any])
         let target = try #require(object["target_identity"] as? [String: Any])
+        let targetReceipt = try #require(object["target_receipt"] as? [String: Any])
         let outcome = try #require(object["outcome"] as? [String: Any])
         #expect(result.exitStatus == 0)
         #expect(try service.targetedHideRequests == [ApplicationHideRequest(
@@ -38,6 +39,9 @@ struct AppHideExactTargetTests {
         #expect(target["kind"] as? String == "process")
         #expect(target["pid"] as? Int == 4070)
         #expect(target["process_start_identity_decimal"] as? String == String(processStartIdentity))
+        #expect(targetReceipt["pid"] as? Int == 4070)
+        #expect(targetReceipt["process_start_identity_decimal"] as? String == String(processStartIdentity))
+        #expect(targetReceipt["window_id"] == nil)
         #expect(outcome["state"] as? String == "confirmed_change")
     }
 

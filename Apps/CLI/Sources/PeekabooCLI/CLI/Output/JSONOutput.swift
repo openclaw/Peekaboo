@@ -388,7 +388,7 @@ func makeSuccessEnvelope<Payload>(
         outcome: projection,
         data: data,
         target_identity: targetIdentity.map(DesktopTargetIdentityProjection.init),
-        target_receipt: targetIdentity.flatMap(desktopActionTargetReceipt),
+        target_receipt: targetIdentity?.actionTargetReceipt,
         messages: messages,
         debug_logs: debugLogs
     )
@@ -551,7 +551,7 @@ func validateSuccessfulActionOutcome(
             message: "\(operation) returned without a canonical outcome.",
             hint: "Observe the target before retrying and update the runtime host."
         )
-        .attributed(to: targetIdentity.flatMap(desktopActionTargetReceipt))
+        .attributed(to: targetIdentity?.actionTargetReceipt)
         throw ActionResultEnvelopeFailure(failure: failure, targetIdentity: targetIdentity)
     }
     guard !outcome.isAccepted(by: .confirmedOrDispatched) else { return }
@@ -559,23 +559,12 @@ func validateSuccessfulActionOutcome(
         outcome: outcome,
         message: "\(operation) did not return a successful outcome.",
         hint: "Follow the canonical escalation metadata before deciding whether to retry.",
-        targetReceipt: targetIdentity.flatMap(desktopActionTargetReceipt)
+        targetReceipt: targetIdentity?.actionTargetReceipt
     )
     else {
         return
     }
     throw ActionResultEnvelopeFailure(failure: failure, targetIdentity: targetIdentity)
-}
-
-private func desktopActionTargetReceipt(
-    _ identity: DesktopTargetIdentity
-) -> DesktopActionTargetReceipt? {
-    guard let exactWindow = identity.exactWindow else { return nil }
-    return DesktopActionTargetReceipt(
-        processIdentifier: exactWindow.identity.ownerProcessIdentifier,
-        processStartIdentity: exactWindow.identity.ownerProcessStartIdentity,
-        windowID: exactWindow.identity.windowID
-    )
 }
 
 func outputJSONCodable(_ response: ResultEnvelope<some Encodable>, logger: Logger) {
@@ -673,7 +662,7 @@ func makeErrorEnvelope(
         data: nil,
         target_identity: targetIdentity.map(DesktopTargetIdentityProjection.init),
         target_receipt: actionFailure?.targetReceipt ?? targetReceipt ??
-            targetIdentity.flatMap(desktopActionTargetReceipt),
+            targetIdentity?.actionTargetReceipt,
         debug_logs: debugLogs,
         error: ErrorInfo(
             message: message,

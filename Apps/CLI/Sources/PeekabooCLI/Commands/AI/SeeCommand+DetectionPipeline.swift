@@ -257,14 +257,10 @@ extension SeeCommand {
                 windowContext: windowContext,
                 isDialog: false
             )
-            return UIAutomationActionResult(
-                payload: ElementDetectionResult(
-                    snapshotId: snapshotID,
-                    screenshotPath: "",
-                    elements: DetectedElements(other: ocrElements),
-                    metadata: metadata
-                ),
-                outcome: nil
+            return Self.legacyMenuBarOCRDetectionResult(
+                snapshotID: snapshotID,
+                elements: ocrElements,
+                metadata: metadata
             )
         }
 
@@ -282,6 +278,23 @@ extension SeeCommand {
             ),
             outcome: detectionResult.outcome,
             targetIdentity: detectionResult.targetIdentity
+        )
+    }
+
+    static func legacyMenuBarOCRDetectionResult(
+        snapshotID: String,
+        elements: [DetectedElement],
+        metadata: DetectionMetadata
+    ) -> UIAutomationActionResult<ElementDetectionResult> {
+        UIAutomationActionResult(
+            payload: ElementDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: "",
+                elements: DetectedElements(other: elements),
+                metadata: metadata
+            ),
+            // A post-click resolution failure is canonicalized before this read-only fallback is reached.
+            outcome: .confirmedNoChange()
         )
     }
 

@@ -137,6 +137,31 @@ struct ResultEnvelopeTests {
         #expect(envelope.outcome == failure.outcome.projection)
     }
 
+    @Test func `success and error envelopes publish process-only target receipts`() throws {
+        let identity = ApplicationProcessIdentity(
+            processIdentifier: 42,
+            processStartIdentity: 9_007_199_254_740_993
+        )
+        let targetIdentity = try DesktopTargetIdentity(processIdentity: identity)
+        let expectedReceipt = DesktopActionTargetReceipt(
+            processIdentifier: identity.processIdentifier,
+            processStartIdentity: identity.processStartIdentity
+        )
+
+        let success = makeSuccessEnvelope(
+            data: Payload(value: 1),
+            targetIdentity: targetIdentity
+        )
+        let failure = makeErrorEnvelope(
+            message: "Fixture failure",
+            code: .INTERACTION_FAILED,
+            targetIdentity: targetIdentity
+        )
+
+        #expect(success.target_receipt == expectedReceipt)
+        #expect(failure.target_receipt == expectedReceipt)
+    }
+
     @Test func `post-result processing preserves every accepted outcome and raw target receipt`() throws {
         let delivery = DesktopActionOutcome.Delivery(
             mechanism: .capturePipeline,
