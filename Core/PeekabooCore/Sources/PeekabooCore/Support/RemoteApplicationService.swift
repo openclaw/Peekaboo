@@ -7,7 +7,9 @@ import PeekabooBridge
 import PeekabooFoundation
 
 @MainActor
-public final class RemoteApplicationService: ApplicationServiceProtocol, ApplicationServiceActionResultProviding,
+public final class RemoteApplicationService: ApplicationServiceProtocol,
+    ApplicationMutationInventoryProviding,
+    ApplicationServiceActionResultProviding,
     ApplicationServiceTargetedActionResultProviding
 {
     private let client: PeekabooBridgeClient
@@ -94,6 +96,12 @@ public final class RemoteApplicationService: ApplicationServiceProtocol, Applica
                     "incompleteApplications": apps.count(where: { !($0.metadataWarnings ?? []).isEmpty }),
                 ]),
             metadata: .init(duration: 0, warnings: warnings))
+    }
+
+    public func applicationMutationInventory() async throws
+        -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo>
+    {
+        try await self.client.listApplicationMutationInventory()
     }
 
     public func findApplication(identifier: String) async throws -> ServiceApplicationInfo {

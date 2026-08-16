@@ -64,7 +64,11 @@ public enum PeekabooBridgeConstants {
     }
 
     /// Current protocol version supported by this build.
-    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 29)
+    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 30)
+
+    /// First protocol that transports mutation-planner inventories with explicit completeness evidence.
+    public static let plannerInventoryTransportVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 30)
 
     /// First protocol with listener-bound, signed per-operation receipts.
     public static let attestedOperationReceiptVersion =

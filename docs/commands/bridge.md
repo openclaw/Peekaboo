@@ -75,6 +75,10 @@ read_when:
   descriptor, and reports minimized hashes/identities rather than the canonical command/response bytes or private host
   archive path. The output fields `target_attested` and `outcome_attested` describe actual signed field presence; a
   valid read-only receipt can truthfully report `outcome_attested: false`.
+- Protocol 1.30 advertises `plannerInventoryTransport` and carries application/window mutation inventories through
+  separate request and response cases with explicit completeness and warnings. Protocol 1.29 list requests remain
+  byte-compatible; clients treat their row-only responses as partial evidence, refusing broad mutation selectors while
+  retaining direct exact-PID and exact-window-ID compatibility.
 - Target attribution delegates to the same canonical process/window receipt coalescer used by local automation.
   One exhaustive operation semantic plan also owns each success response family, allowed terminal states and result
   values, delivery/mode alternatives, dispatched-unit policy, and request/response/handler target provenance. The

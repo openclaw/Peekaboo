@@ -342,6 +342,7 @@ public enum PeekabooBridgeHostCapability {
     public static let exactForcedDialogDismissExecution = "exactForcedDialogDismissExecution"
     public static let dialogInputFocusPolicy = "dialogInputFocusPolicy"
     public static let attestedOperationReceipts = "attestedOperationReceipts"
+    public static let plannerInventoryTransport = "plannerInventoryTransport"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {

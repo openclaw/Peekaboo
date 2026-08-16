@@ -1149,6 +1149,9 @@ extension PeekabooBridgeServer {
         case let .listWindows(payload):
             let result = try await self.services.windows.listWindows(target: payload.target)
             return .init(response: .windows(result))
+        case let .listWindowMutationInventory(payload):
+            let inventory = try await self.services.windows.mutationInventory(target: payload.target)
+            return .init(response: .windowMutationInventory(inventory))
         case let .focusWindow(payload):
             return try await self.handleWindowFocus(payload)
         case let .moveWindow(payload):

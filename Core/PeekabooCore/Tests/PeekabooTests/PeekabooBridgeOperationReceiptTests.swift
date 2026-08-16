@@ -142,7 +142,9 @@ struct PeekabooBridgeOperationReceiptTests {
                 socketPath: socketPath,
                 requestTimeoutSec: 2,
                 operationReceiptExportDirectory: exportDirectory)
-            let handshake = try await client.handshake(client: Self.clientIdentity)
+            let handshake = try await client.handshake(
+                client: Self.clientIdentity,
+                protocolVersion: PeekabooBridgeConstants.attestedOperationReceiptVersion)
             let attestation = try #require(handshake.operationAttestation)
             let sessionAttestation = try #require(handshake.operationSessionAttestation)
 

@@ -41,6 +41,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case moveMouse(PeekabooBridgeMoveMouseRequest)
     case waitForElement(PeekabooBridgeWaitRequest)
     case listWindows(PeekabooBridgeWindowTargetRequest)
+    case listWindowMutationInventory(PeekabooBridgeWindowTargetRequest)
     case focusWindow(PeekabooBridgeWindowTargetRequest)
     case moveWindow(PeekabooBridgeWindowMoveRequest)
     case resizeWindow(PeekabooBridgeWindowResizeRequest)
@@ -52,6 +53,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case maximizeWindow(PeekabooBridgeWindowTargetRequest)
     case getFocusedWindow
     case listApplications
+    case listApplicationMutationInventory
     case findApplication(PeekabooBridgeAppIdentifierRequest)
     case getFrontmostApplication
     case isApplicationRunning(PeekabooBridgeAppIdentifierRequest)
@@ -152,7 +154,7 @@ extension PeekabooBridgeRequest {
         case .drag: .drag
         case .moveMouse: .moveMouse
         case .waitForElement: .waitForElement
-        case .listWindows: .listWindows
+        case .listWindows, .listWindowMutationInventory: .listWindows
         case .focusWindow: .focusWindow
         case .moveWindow: .moveWindow
         case .resizeWindow: .resizeWindow
@@ -163,7 +165,7 @@ extension PeekabooBridgeRequest {
         case .restoreWindow: .restoreWindow
         case .maximizeWindow: .maximizeWindow
         case .getFocusedWindow: .getFocusedWindow
-        case .listApplications: .listApplications
+        case .listApplications, .listApplicationMutationInventory: .listApplications
         case .findApplication: .findApplication
         case .getFrontmostApplication: .getFrontmostApplication
         case .isApplicationRunning: .isApplicationRunning
@@ -241,8 +243,10 @@ public enum PeekabooBridgeResponse: Codable, Sendable {
     case ok
     case waitResult(WaitForElementResult)
     case windows([ServiceWindowInfo])
+    case windowMutationInventory(DesktopTargetPlanning.Inventory<ServiceWindowInfo>)
     case window(ServiceWindowInfo?)
     case applications([ServiceApplicationInfo])
+    case applicationMutationInventory(DesktopTargetPlanning.Inventory<ServiceApplicationInfo>)
     case application(ServiceApplicationInfo)
     case bool(Bool)
     case typeResult(TypeResult)

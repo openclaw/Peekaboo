@@ -906,5 +906,8 @@ private func protocolHostCapabilities(
         capabilities.insert(PeekabooBridgeHostCapability.exactForcedDialogDismissExecution)
         capabilities.insert(PeekabooBridgeHostCapability.dialogInputFocusPolicy)
     }
+    if supportedVersions.upperBound >= PeekabooBridgeConstants.plannerInventoryTransportVersion {
+        capabilities.insert(PeekabooBridgeHostCapability.plannerInventoryTransport)
+    }
     return capabilities
 }

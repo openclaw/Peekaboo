@@ -2,11 +2,13 @@ import CoreGraphics
 import Foundation
 import PeekabooAgentRuntime
 import PeekabooAutomation
+import PeekabooAutomationKit
 import PeekabooBridge
 import PeekabooFoundation
 
 @MainActor
 public final class RemoteWindowManagementService: WindowManagementServiceProtocol,
+    WindowMutationInventoryProviding,
     WindowManagementActionOutcomeProviding,
     WindowManagementActionResultProviding,
     WindowManagementPinnedFocusActionResultProviding
@@ -310,6 +312,12 @@ public final class RemoteWindowManagementService: WindowManagementServiceProtoco
 
     public func listWindows(target: WindowTarget) async throws -> [ServiceWindowInfo] {
         try await self.client.listWindows(target: target)
+    }
+
+    public func windowMutationInventory(
+        target: WindowTarget) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo>
+    {
+        try await self.client.listWindowMutationInventory(target: target)
     }
 
     public func getFocusedWindow() async throws -> ServiceWindowInfo? {

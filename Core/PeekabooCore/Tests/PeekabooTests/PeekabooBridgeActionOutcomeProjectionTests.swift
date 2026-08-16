@@ -933,8 +933,8 @@ extension PeekabooBridgeActionOutcomeProjectionTests {
     }
 
     @Test
-    func `current protocol 1 29 preserves projection capability introduced at 1 23`() {
-        let currentVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 29)
+    func `current protocol 1 30 preserves projection capability introduced at 1 23`() {
+        let currentVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 30)
         let projectionVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 23)
 
         #expect(PeekabooBridgeConstants.protocolVersion == currentVersion)

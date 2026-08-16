@@ -10,6 +10,9 @@ extension PeekabooBridgeServer {
         case .listApplications:
             let apps = try await self.services.applications.listApplications()
             return .init(response: .applications(apps.data.applications))
+        case .listApplicationMutationInventory:
+            let inventory = try await self.services.applications.mutationApplicationInventory()
+            return .init(response: .applicationMutationInventory(inventory))
         case let .findApplication(payload):
             let app = try await self.services.applications.findApplication(identifier: payload.identifier)
             return .init(response: .application(app))

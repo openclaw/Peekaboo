@@ -48,6 +48,8 @@ public actor PeekabooBridgeClient {
     var exactDialogInputExecutionEnabled = false
     var exactDialogForceDismissExecutionEnabled = false
     var dialogInputFocusPolicyEnabled = false
+    var applicationMutationInventoryTransportEnabled = false
+    var windowMutationInventoryTransportEnabled = false
     var operationAttestation: PeekabooBridgeListenerAttestation?
     var latestVerifiedOperationReceipt: PeekabooBridgeOperationReceipt?
     var latestVerifiedOperationReceiptBundle: PeekabooBridgeOperationReceiptBundle?
@@ -808,6 +810,18 @@ public actor PeekabooBridgeClient {
                 (handshake.enabledOperations?.contains(.dialogEnterText) ?? legacyInputAdvertised) &&
                 handshake.hostCapabilities?.contains(
                     PeekabooBridgeHostCapability.dialogInputFocusPolicy) == true,
+            applicationMutationInventoryTransportEnabled:
+            handshake.negotiatedVersion >= PeekabooBridgeConstants.plannerInventoryTransportVersion &&
+                handshake.hostCapabilities?.contains(
+                    PeekabooBridgeHostCapability.plannerInventoryTransport) == true &&
+                handshake.supportedOperations.contains(.listApplications) &&
+                (handshake.enabledOperations?.contains(.listApplications) ?? true),
+            windowMutationInventoryTransportEnabled:
+            handshake.negotiatedVersion >= PeekabooBridgeConstants.plannerInventoryTransportVersion &&
+                handshake.hostCapabilities?.contains(
+                    PeekabooBridgeHostCapability.plannerInventoryTransport) == true &&
+                handshake.supportedOperations.contains(.listWindows) &&
+                (handshake.enabledOperations?.contains(.listWindows) ?? true),
             listenerAttestation: listenerAttestation,
             listenerLiveIdentity: listenerLiveIdentity,
             sessionAttestation: sessionAttestation,
@@ -849,6 +863,9 @@ public actor PeekabooBridgeClient {
         self.exactDialogInputExecutionEnabled = candidate.exactDialogInputExecutionEnabled
         self.exactDialogForceDismissExecutionEnabled = candidate.exactDialogForceDismissExecutionEnabled
         self.dialogInputFocusPolicyEnabled = candidate.dialogInputFocusPolicyEnabled
+        self.applicationMutationInventoryTransportEnabled =
+            candidate.applicationMutationInventoryTransportEnabled
+        self.windowMutationInventoryTransportEnabled = candidate.windowMutationInventoryTransportEnabled
         self.operationAttestation = candidate.listenerAttestation
         self.installReceiptlessAuthenticatedHost(candidate.receiptlessAuthenticatedHost)
         if let listenerAttestation = candidate.listenerAttestation,
@@ -1127,6 +1144,8 @@ private struct PeekabooBridgeClientHandshakeCandidate: Sendable {
     let exactDialogInputExecutionEnabled: Bool
     let exactDialogForceDismissExecutionEnabled: Bool
     let dialogInputFocusPolicyEnabled: Bool
+    let applicationMutationInventoryTransportEnabled: Bool
+    let windowMutationInventoryTransportEnabled: Bool
     let listenerAttestation: PeekabooBridgeListenerAttestation?
     let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity?
     let sessionAttestation: PeekabooBridgeOperationSessionAttestation?

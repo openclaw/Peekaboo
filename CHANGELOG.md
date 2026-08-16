@@ -3,6 +3,7 @@
 ## [4.2.1] - Unreleased
 
 ### Added
+- Add Bridge protocol 1.30 planner inventory transport with explicit complete/partial evidence, while protocol 1.29 hosts keep legacy list bytes and conservative exact-target compatibility.
 - Add authenticated `peekaboo bridge receipt validate` for fail-closed, agent-readable verification of private protocol 1.29 bundles against the exact live listener that produced them.
 
 ### Fixed

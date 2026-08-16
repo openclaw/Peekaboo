@@ -42,6 +42,7 @@ enum PeekabooBridgeOperationResultSemantics {
 
     enum ResponseFamily: Hashable, Sendable {
         case application
+        case applicationMutationInventory
         case applications
         case bool
         case browserStatus
@@ -73,11 +74,13 @@ enum PeekabooBridgeOperationResultSemantics {
         case typeResult
         case waitResult
         case window
+        case windowMutationInventory
         case windows
 
         func matches(_ response: PeekabooBridgeResponse) -> Bool {
             switch (self, response) {
             case (.application, .application),
+                 (.applicationMutationInventory, .applicationMutationInventory),
                  (.applications, .applications),
                  (.bool, .bool),
                  (.browserStatus, .browserStatus),
@@ -109,6 +112,7 @@ enum PeekabooBridgeOperationResultSemantics {
                  (.typeResult, .typeResult),
                  (.waitResult, .waitResult),
                  (.window, .window),
+                 (.windowMutationInventory, .windowMutationInventory),
                  (.windows, .windows):
                 true
             default:
@@ -1278,7 +1282,7 @@ extension PeekabooBridgeOperationResultSemantics {
             operation: operation,
             operationPolicy: operationPolicy,
             contract: contract,
-            responseFamilies: self.responseFamilies(for: operation),
+            responseFamilies: self.responseFamilies(for: request),
             deliveryRules: self.deliveryRules(for: request),
             allowedSuccessStates: self.allowedSuccessStates(for: request),
             successResponsePolicy: self.successResponsePolicy(for: request),
@@ -1495,6 +1499,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .moveMouse,
              .waitForElement,
              .listWindows,
+             .listWindowMutationInventory,
              .focusWindow,
              .moveWindow,
              .resizeWindow,
@@ -1506,6 +1511,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .maximizeWindow,
              .getFocusedWindow,
              .listApplications,
+             .listApplicationMutationInventory,
              .findApplication,
              .getFrontmostApplication,
              .isApplicationRunning,
@@ -1738,6 +1744,17 @@ extension PeekabooBridgeOperationResultSemantics {
         case .beginSnapshotMutation: [.snapshotMutationLease]
         case .cleanSnapshotsOlderThan, .cleanAllSnapshots: [.int]
         case ._appleScriptProbe: []
+        }
+    }
+
+    private static func responseFamilies(for request: PeekabooBridgeRequest) -> Set<ResponseFamily> {
+        switch request.unwrappedOperationRequest {
+        case .listApplicationMutationInventory:
+            [.applicationMutationInventory]
+        case .listWindowMutationInventory:
+            [.windowMutationInventory]
+        default:
+            self.responseFamilies(for: request.operation)
         }
     }
 

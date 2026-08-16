@@ -16,6 +16,28 @@ extension PeekabooBridgeClient {
         }
     }
 
+    public func listWindowMutationInventory(
+        target: WindowTarget) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo>
+    {
+        guard self.windowMutationInventoryTransportEnabled else {
+            return try await .partial(
+                self.listWindows(target: target),
+                warnings: ["Bridge host did not report window mutation inventory completeness."])
+        }
+        let response = try await self.send(.listWindowMutationInventory(
+            PeekabooBridgeWindowTargetRequest(target: target)))
+        switch response {
+        case let .windowMutationInventory(inventory):
+            return inventory
+        case let .error(envelope):
+            throw envelope
+        default:
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Unexpected listWindowMutationInventory response")
+        }
+    }
+
     public func focusWindow(target: WindowTarget) async throws {
         _ = try await self.focusWindowResult(target: target)
     }
@@ -351,6 +373,27 @@ extension PeekabooBridgeClient {
             throw envelope
         default:
             throw PeekabooBridgeErrorEnvelope(code: .invalidRequest, message: "Unexpected listApplications response")
+        }
+    }
+
+    public func listApplicationMutationInventory() async throws
+        -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo>
+    {
+        guard self.applicationMutationInventoryTransportEnabled else {
+            return try await .partial(
+                self.listApplications(),
+                warnings: ["Bridge host did not report application mutation inventory completeness."])
+        }
+        let response = try await self.send(.listApplicationMutationInventory)
+        switch response {
+        case let .applicationMutationInventory(inventory):
+            return inventory
+        case let .error(envelope):
+            throw envelope
+        default:
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Unexpected listApplicationMutationInventory response")
         }
     }
 

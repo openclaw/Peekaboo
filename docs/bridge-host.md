@@ -199,6 +199,15 @@ attestation. The session binds the listener, client-instance UUID, exact peer pr
 request capacity, and optional predecessor session. Protocol 1.28 and older handshakes omit both attestations and keep
 their existing raw, receiptless request/response behavior.
 
+Protocol `1.30` adds separate application and window mutation-inventory requests and responses. These responses carry
+the planner's catalog rows together with explicit `complete` or `partial` state and bounded warnings. The legacy
+`listApplications` and `listWindows` request bytes, response families, operations, and protocol 1.29 receipt contract
+remain unchanged. A client uses the new cases only after negotiating 1.30 plus the `plannerInventoryTransport`
+capability and the corresponding enabled list operation. Otherwise it converts the legacy row array into an explicit
+partial inventory: broad name, title, index, or automatic selection then fails closed, while the planner may still use
+a direct exact-PID or exact-window-ID provider. The selected mutation plan remains local; Bridge transports evidence,
+not a second host-owned selector policy.
+
 The client does not treat the response-carried, self-signed listener as provenance by itself. It captures the connected
 socket peer's audit token and requires exact PID/PID-version, process-start, live kernel CDHash, Apple-anchored signing
 identity, trusted team membership, and listener-host agreement before installing a 1.29 session. Bundled Peekaboo

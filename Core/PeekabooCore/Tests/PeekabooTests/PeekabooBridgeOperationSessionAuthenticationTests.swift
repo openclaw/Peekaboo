@@ -210,7 +210,9 @@ struct PeekabooBridgeOperationSessionAuthenticationTests {
         defer { Task { await host.stop() } }
 
         let client = TrustedBridgeClientFixture.make(socketPath: socketPath)
-        let handshake = try await client.handshake(client: Self.clientIdentity)
+        let handshake = try await client.handshake(
+            client: Self.clientIdentity,
+            protocolVersion: PeekabooBridgeConstants.attestedOperationReceiptVersion)
         #expect(handshake.negotiatedVersion == PeekabooBridgeConstants.attestedOperationReceiptVersion)
         #expect(handshake.operationAttestation != nil)
         #expect(handshake.operationSessionAttestation != nil)
@@ -224,7 +226,11 @@ struct PeekabooBridgeOperationSessionAuthenticationTests {
             signingTeamIdentifier: "UNTRUSTED-TEST-HOST")
 
         do {
-            let handshake = Task { try await client.handshake(client: Self.clientIdentity) }
+            let handshake = Task {
+                try await client.handshake(
+                    client: Self.clientIdentity,
+                    protocolVersion: PeekabooBridgeConstants.attestedOperationReceiptVersion)
+            }
             let request = try await peer.nextRequest()
             guard case let .handshake(payload) = try request.decode() else {
                 Issue.record("Expected protocol 1.29 handshake request")
@@ -289,6 +295,16 @@ struct PeekabooBridgeOperationSessionAuthenticationTests {
             try await peer.respond(
                 .error(.init(code: .versionMismatch, message: "Legacy trusted host")),
                 to: currentRequest)
+            let previousRequest = try await peer.nextRequest()
+            guard case let .handshake(previousPayload) = try previousRequest.decode() else {
+                Issue.record("Expected trusted protocol 1.29 fallback request")
+                await peer.stop()
+                return
+            }
+            #expect(previousPayload.protocolVersion == .init(major: 1, minor: 29))
+            try await peer.respond(
+                .error(.init(code: .versionMismatch, message: "Protocol 1.29 unavailable")),
+                to: previousRequest)
             let legacyRequest = try await peer.nextRequest()
             guard case let .handshake(legacyPayload) = try legacyRequest.decode() else {
                 Issue.record("Expected trusted protocol 1.28 fallback request")
@@ -316,7 +332,7 @@ struct PeekabooBridgeOperationSessionAuthenticationTests {
                 return
             }
             #expect(await client.lastOperationReceipt() == nil)
-            #expect(await peer.acceptedConnectionCount == 3)
+            #expect(await peer.acceptedConnectionCount == 4)
         } catch {
             await peer.stop()
             throw error

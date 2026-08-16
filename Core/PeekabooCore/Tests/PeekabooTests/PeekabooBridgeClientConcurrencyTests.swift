@@ -892,8 +892,16 @@ extension PeekabooBridgeClientConcurrencyTests {
             #expect(currentRenewalPayload.protocolVersion == PeekabooBridgeConstants.protocolVersion)
             #expect(currentRenewalPayload.replacingOperationSessionID == predecessor.attestation.sessionID)
             try await peer.respond(
-                .error(.init(code: .versionMismatch, message: "Protocol 1.29 is unavailable")),
+                .error(.init(code: .versionMismatch, message: "Protocol 1.30 is unavailable")),
                 to: currentRenewalRequest)
+
+            let previousRenewalRequest = try await peer.nextRequest()
+            let previousRenewalPayload = try Self.requireHandshake(previousRenewalRequest)
+            #expect(previousRenewalPayload.protocolVersion == PeekabooBridgeConstants.attestedOperationReceiptVersion)
+            #expect(previousRenewalPayload.replacingOperationSessionID == predecessor.attestation.sessionID)
+            try await peer.respond(
+                .error(.init(code: .versionMismatch, message: "Protocol 1.29 is unavailable")),
+                to: previousRenewalRequest)
 
             let legacyRenewalRequest = try await peer.nextRequest()
             let legacyRenewalPayload = try Self.requireHandshake(legacyRenewalRequest)
@@ -943,7 +951,7 @@ extension PeekabooBridgeClientConcurrencyTests {
                 return
             }
             #expect(await client.lastOperationReceipt() == nil)
-            #expect(await peer.acceptedConnectionCount == 5)
+            #expect(await peer.acceptedConnectionCount == 6)
         } catch {
             await peer.stop()
             throw error

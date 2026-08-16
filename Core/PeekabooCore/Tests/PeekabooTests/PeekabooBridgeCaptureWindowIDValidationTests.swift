@@ -84,7 +84,9 @@ struct PeekabooBridgeCaptureWindowIDValidationTests {
         defer { Task { await host.stop() } }
 
         let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
-        let handshake = try await client.handshake(client: Self.clientIdentity)
+        let handshake = try await client.handshake(
+            client: Self.clientIdentity,
+            protocolVersion: PeekabooBridgeConstants.attestedOperationReceiptVersion)
         #expect(handshake.negotiatedVersion == PeekabooBridgeConstants.attestedOperationReceiptVersion)
 
         let request = Self.captureWindowRequest(windowId: windowId)
