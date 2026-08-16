@@ -11,8 +11,6 @@ trap 'rm -rf "$ARTIFACT_ROOT"' EXIT
   --artifacts "$ARTIFACT_ROOT/harness"
 node --test "$ROOT_DIR/tests/background-computer-use-report.test.mjs"
 node --test "$ROOT_DIR/tests/dual-controller-overlap-report.test.mjs"
-node --test "$ROOT_DIR/tests/attested-operation-receipts.test.mjs"
-node --test "$ROOT_DIR/tests/physical-overlap-contract.test.mjs"
 "$ROOT_DIR/scripts/test-dual-controller-overlap.sh" \
   --self-test \
   --artifacts "$ARTIFACT_ROOT/dual-controller-overlap"

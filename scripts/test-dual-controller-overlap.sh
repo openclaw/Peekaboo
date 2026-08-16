@@ -50,9 +50,9 @@ Runs two independent Peekaboo clients through one exact signed Bridge host.
 Both clients mutate different launch-owned TextEdit windows in the background
 while an independently selected sentinel PID/window must remain foreground.
 
-Protocol 1.29 receipt carriage and authenticated first-party single-bundle validation are present,
-but live mode remains reserved until the coordinator binds one anchored verdict to every terminal
-bundle and a centralized epoch-publication/focus-event-time monitor is implemented and independently proven.
+Authenticated single-bundle receipt validation is present, but live mode remains
+reserved until a separately audited multi-target coordinator binds every expected
+request, session rollover, target, and terminal bundle without widening policy.
 The future live invocation will require PEEKABOO_RUN_DUAL_CONTROLLER_OVERLAP=1 and:
   --bin PATH                 Signed current Peekaboo CLI
   --bridge-socket PATH       Exact signed current Bridge socket
@@ -1285,12 +1285,12 @@ if $SELF_TEST_ONLY; then
     exit 0
 fi
 
-live_overlap_coordinator_available() {
+live_overlap_certification_available() {
     return 1
 }
-if ! live_overlap_coordinator_available; then
+if ! live_overlap_certification_available; then
     printf '%s\n' \
-        'Live overlap is reserved until anchored verdict collection and the centralized epoch/focus monitor are implemented and independently proven.' >&2
+        'Live overlap is reserved until the separate multi-target certification coordinator is implemented.' >&2
     exit 2
 fi
 
@@ -2038,39 +2038,18 @@ if [[ "$(git -C "$ROOT_DIR" rev-parse HEAD)" != "$SOURCE_COMMIT" || \
 fi
 CATALOG_SHA256="$CATALOG_SHA256_INITIAL"
 
-pb window list --pid "$TARGET_A_PID" --json --bridge-socket "$BRIDGE_SOCKET" \
-    > "$ARTIFACT_ROOT/controllers/A-target-final.json"
-pb window list --pid "$TARGET_B_PID" --json --bridge-socket "$BRIDGE_SOCKET" \
-    > "$ARTIFACT_ROOT/controllers/B-target-final.json"
-TARGET_A_BOUNDS_JSON="$(jq -cer --argjson window "$TARGET_A_WINDOW_ID" '
-    .data.windows[] | select(.window_id == $window) | .bounds |
-    select((.x | type) == "number" and (.y | type) == "number" and
-        (.width | type) == "number" and (.height | type) == "number" and
-        .width > 0 and .height > 0)
-' "$ARTIFACT_ROOT/controllers/A-target-final.json")"
-TARGET_B_BOUNDS_JSON="$(jq -cer --argjson window "$TARGET_B_WINDOW_ID" '
-    .data.windows[] | select(.window_id == $window) | .bounds |
-    select((.x | type) == "number" and (.y | type) == "number" and
-        (.width | type) == "number" and (.height | type) == "number" and
-        .width > 0 and .height > 0)
-' "$ARTIFACT_ROOT/controllers/B-target-final.json")"
-
 jq -n \
     --arg id A --argjson clientPID "$CLIENT_A_RECEIPT_PID" \
     --arg clientIdentity "$CLIENT_A_IDENTITY" \
     --argjson targetPID "$TARGET_A_PID" --arg targetIdentity "$TARGET_A_IDENTITY" \
     --argjson targetWindow "$TARGET_A_WINDOW_ID" \
-    --argjson targetBounds "$TARGET_A_BOUNDS_JSON" \
     --slurpfile meta "$ARTIFACT_ROOT/controllers/A-meta.json" \
     --slurpfile mutations "$ARTIFACT_ROOT/controllers/A-mutations.json" \
     --slurpfile observations "$ARTIFACT_ROOT/controllers/A-observations.json" '
     {
         id: $id,
         controller_process: {pid: $clientPID, start_identity: $clientIdentity},
-        target: {
-            scope: "window", pid: $targetPID, start_identity: $targetIdentity,
-            window_id: $targetWindow, bounds: $targetBounds
-        },
+        target: {pid: $targetPID, start_identity: $targetIdentity, window_id: $targetWindow},
         started_at: $meta[0].started_at,
         finished_at: $meta[0].finished_at,
         mutations: $mutations[0],
@@ -2089,17 +2068,13 @@ jq -n \
     --arg clientIdentity "$CLIENT_B_IDENTITY" \
     --argjson targetPID "$TARGET_B_PID" --arg targetIdentity "$TARGET_B_IDENTITY" \
     --argjson targetWindow "$TARGET_B_WINDOW_ID" \
-    --argjson targetBounds "$TARGET_B_BOUNDS_JSON" \
     --slurpfile meta "$ARTIFACT_ROOT/controllers/B-meta.json" \
     --slurpfile mutations "$ARTIFACT_ROOT/controllers/B-mutations.json" \
     --slurpfile observations "$ARTIFACT_ROOT/controllers/B-observations.json" '
     {
         id: $id,
         controller_process: {pid: $clientPID, start_identity: $clientIdentity},
-        target: {
-            scope: "window", pid: $targetPID, start_identity: $targetIdentity,
-            window_id: $targetWindow, bounds: $targetBounds
-        },
+        target: {pid: $targetPID, start_identity: $targetIdentity, window_id: $targetWindow},
         started_at: $meta[0].started_at,
         finished_at: $meta[0].finished_at,
         mutations: $mutations[0],
@@ -2154,7 +2129,7 @@ jq -n \
 ' > "$ARTIFACT_ROOT/overlap.json"
 
 jq -n \
-    --argjson version 3 --arg catalogSHA "$CATALOG_SHA256" --arg runID "$RUN_ID" \
+    --argjson version 1 --arg catalogSHA "$CATALOG_SHA256" --arg runID "$RUN_ID" \
     --arg source "$SOURCE_COMMIT" --arg cliCDHash "$CLI_CDHASH" --arg cliSHA "$CLI_SHA256" \
     --arg cliPath "$PEEKABOO_BIN" \
     --argjson hostPID "$HOST_PID" --arg hostIdentity "$HOST_IDENTITY" \
@@ -2169,16 +2144,7 @@ jq -n \
     --slurpfile b "$ARTIFACT_ROOT/controllers/B-report.json" \
     --slurpfile overlap "$ARTIFACT_ROOT/overlap.json" \
     --slurpfile restorationCheckpoints "$ARTIFACT_ROOT/restoration-checkpoints.json" \
-    --slurpfile receiptValidation "$ARTIFACT_ROOT/receipt-validation-summary.json" \
     --argjson monitorClean "$MONITOR_CLEAN" --argjson aGone "$A_GONE" --argjson bGone "$B_GONE" '
-    [
-        $a[0].mutations[]?.operation_receipts[]?,
-        $b[0].mutations[]?.operation_receipts[]?,
-        ($a[0].observations[]? | .operation_receipts[]?, .route_receipt.operation_receipts[]?),
-        ($b[0].observations[]? | .operation_receipts[]?, .route_receipt.operation_receipts[]?),
-        ($restorationCheckpoints[0][]?.observations[]? |
-            .operation_receipts[]?, .route_receipt.operation_receipts[]?)
-    ] as $operationReceipts |
     {
         version: $version,
         catalog_sha256: $catalogSHA,
@@ -2235,56 +2201,17 @@ jq -n \
             {id: "A", pid: $a[0].target.pid, start_identity: $a[0].target.start_identity, gone: $aGone},
             {id: "B", pid: $b[0].target.pid, start_identity: $b[0].target.start_identity, gone: $bGone}
         ],
-        receipt_validation: $receiptValidation[0],
         evidence: {
             exact_target_receipts: true,
             independent_readback: true,
             overlapping_intervals: ($overlap[0].seconds > 0),
             restoration: true,
-            generation_pinned_cleanup: ($aGone and $bGone),
-            signed_operation_receipts: ($receiptValidation[0].success == true),
-            complete_anchored_receipt_verdict_set: (
-                $receiptValidation[0].success == true and
-                ($receiptValidation[0].first_party_results | type) == "array" and
-                ($receiptValidation[0].first_party_results | length) ==
-                    $receiptValidation[0].first_party_result_count
-            ),
-            first_party_offline_bundle_bijection: (
-                [$receiptValidation[0].first_party_results[]?.bundle_sha256] | sort
-            ) == (
-                [$receiptValidation[0].offline_result.receipts[]?.file_sha256] | sort
-            ),
-            exact_operation_request_session_binding: (
-                ($operationReceipts | length) > 0 and
-                all($operationReceipts[];
-                    (.request_id | type) == "string" and
-                    (.session_id | type) == "string" and
-                    (.session_sequence | type) == "string" and
-                    (.request_sha256 | type) == "string" and
-                    (.response_sha256 | type) == "string" and
-                    (.bundle_sha256 | type) == "string") and
-                ([$operationReceipts[].request_id] | unique | length) ==
-                    ($operationReceipts | length)
-            ),
-            catalog_derived_exact_operation_manifest: (
-                ($receiptValidation[0].operation_manifest_sha256 | type) == "string" and
-                ($receiptValidation[0].offline_contract_sha256 | type) == "string"
-            ),
-            offline_policy_contract_binding: (
-                $receiptValidation[0].offline_contract_sha256 ==
-                    $receiptValidation[0].offline_result.contract_sha256
-            )
+            generation_pinned_cleanup: ($aGone and $bGone)
         }
     }
 ' > "$ARTIFACT_ROOT/observed.json"
 
 node "$REPORTER" --catalog "$CATALOG" --report "$ARTIFACT_ROOT/observed.json" \
-    --offline-contract "$ARTIFACT_ROOT/receipt-validation-contract.json" \
-    --finalize-operation-manifest "$ARTIFACT_ROOT/operation-manifest.json" \
-    > "$ARTIFACT_ROOT/operation-manifest-finalization.json"
-node "$REPORTER" --catalog "$CATALOG" --report "$ARTIFACT_ROOT/observed.json" \
-    --operation-manifest "$ARTIFACT_ROOT/operation-manifest.json" \
-    --offline-contract "$ARTIFACT_ROOT/receipt-validation-contract.json" \
     --output "$ARTIFACT_ROOT/certification.json"
 jq -n \
     --slurpfile certification "$ARTIFACT_ROOT/certification.json" \

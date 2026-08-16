@@ -105,21 +105,16 @@ cleanup never infers ownership from an ambient application-inventory delta or a 
 
 Protocol 1.29 now validates a stable listener identity, a peer-bound logical operation session, and a signed terminal
 receipt on the same authenticated request connection. Bounded sessions roll over without restarting the listener:
-each request uses a decimal-string session sequence and deterministic RFC 9562 version-8 request UUID, while the only
-automatic retry is one request backed by a fully verified signed refusal proving `mutation_dispatched=false` and
-`retry_safe=true` and carrying the successor session. Protocol 1.28 remains receiptless.
+each request uses a decimal-string session sequence and deterministic request UUID, while the only automatic retry is
+one request backed by a fully verified signed refusal proving `mutation_dispatched=false` and `retry_safe=true` and
+carrying the successor session. Protocol 1.28 remains receiptless.
 
-`peekaboo bridge receipt validate --bundle PATH --bridge-socket PATH --json` is the first-party single-bundle verifier.
-It authenticates the exact live listener through the socket peer and signing team, then delegates listener, session,
-terminal signature, canonical digest, request identity, peer binding, target, and outcome semantics to the public
-Bridge bundle validator with that independently obtained listener attestation. `bridge status`, structural `jq` checks,
-and a bundle's own self-signature are not substitutes.
-
-Live overlap execution remains deliberately reserved until the shell coordinator invokes that command for every
-expected terminal bundle, binds the complete anchored verdict set into its report, and uses a centralized foreground
-epoch monitor that satisfies the frozen contract below. The current command still refuses before UI setup. The eventual
-opt-in run also requires a clean source tree, matching stamped CLI/host source commits, one exact signed Bridge host, an
-already-running sentinel receipt, and a private `PEEKABOO_OPERATION_RECEIPT_DIRECTORY`:
+`peekaboo bridge receipt validate` now authenticates one exact live listener and validates one exported protocol 1.29
+bundle against that independently obtained trust anchor. Live overlap execution remains deliberately reserved: the
+shell harness does not yet have the separately audited multi-target coordinator and certification contract needed to
+bind every expected request, session rollover, target, and terminal bundle without widening the single-target receipt
+policy. `bridge status`, structural `jq` checks, and a bundle's self-signature are not substitutes. The current command
+therefore still refuses before UI setup; its deterministic self-test remains non-live infrastructure.
 
 ```bash
 PEEKABOO_RUN_DUAL_CONTROLLER_OVERLAP=1 \
@@ -137,95 +132,6 @@ The safe source/contract gate never touches UI:
 scripts/test-dual-controller-overlap.sh --self-test \
   --artifacts /absolute/new/self-test-directory
 ```
-
-Protocol 1.29 adds the operation-level evidence needed to remove that live reservation safely. The coexistence harness
-must set `PEEKABOO_OPERATION_RECEIPT_DIRECTORY` to a new private directory. It retains a returned request ID when one is
-available and otherwise binds each receipt to the unique registered CLI PID/process-generation/CDHash and operation. It
-then validates the exported receipts with
-`scripts/validate-attested-operation-receipts.mjs`. The validator deliberately consumes receipts through a versioned
-adapter: the protocol decoder owns the producer's wire spelling, while the certification policy owns the normalized
-identity, target, timing, and outcome checks. A producer format change therefore cannot silently weaken certification.
-
-Receipt completeness is not inferred from the mutable report. Version 2 of the overlap catalog defines the exact
-mutation, observation, route, and restoration-checkpoint slots. The reporter derives a canonical operation manifest
-from those independently hashed catalog bytes, binds each slot to one exact client/request/session/digest receipt,
-emits that mapping as a separate owner-private file, and writes its SHA-256 into the version-3 receipt-validation
-summary before final validation. The summary separately binds the canonical version-3 offline policy-contract digest;
-each contract `operationID` must equal its catalog manifest slot and bind the same request, client generation, operation,
-request digest, and response digest. Every report reference must equal its frozen manifest row byte-for-byte, and every
-row must have exactly one first-party verdict and offline bundle. Missing, duplicate, substituted, wrong-slot, or
-unmanifested auxiliary operations—and a result produced under a different target, interval, outcome, or source
-contract—fail certification even if every summary count and hash is recomputed afterward.
-
-The run-specific contract pins the exact audited protocol source, including its Darwin audit-token, PID-version,
-effective-UID, and CDHash peer-binding owners. It also pins the signed listener instance and public key, Bridge and client
-process generations and CDHashes, exact socket device/inode, Peekaboo's exact window-generation target, a distinct
-foreground-controller target, the overlap interval, and every expected request/response digest and enum case. The
-validator verifies the listener self-signature, listener-signed logical session, full signed-session digest, deterministic
-request UUID, sequence capacity and replay tuple, predecessor chain, and every Ed25519 terminal receipt. It requires
-protocol 1.29 or newer, rejects
-global/process-only or cross-target routing, validates optional focused-element identity, and requires every mutation to
-carry the exact background outcome returned by the canonical response. Signed attribution failures retain their
-pre-dispatch or post-execution stage and evidence digest for diagnosis, but cannot certify the protected lane. A missing,
-duplicate, undecodable, or unsigned response is indeterminate and fails certification; it is never converted into a
-replayable operation.
-
-At consumption time the socket must still be a non-symlink socket at the run-pinned device/inode. The private export
-must contain exactly one stable terminal bundle per expected request and is the durable certification corpus. The host
-archive stores `attestation.json` plus session attestations and decimal-sequence receipt files below
-`$TMPDIR/PeekabooOperationReceipts/<sha256(socket-path)>/<listener-instance>/sessions/<session-id>/`. Every retained
-file must exactly match its exported signed bytes, but an absent session directory is not a lost response: the host
-intentionally retains only a bounded number of dead-client sessions and quarantines older directories under
-`retired-sessions/` before deletion. Every directory is owner-only and non-symlink, and the outer namespace retains no
-more than 16 listener generations.
-
-`scripts/receipt-adapters/peekaboo-bridge-operation-receipt-bundle-1-29.mjs` decodes the real opt-in verification
-bundle. Every bundle contains the exact same-connection listener and logical-session attestations, signed terminal
-receipt, all three canonical signature payloads, and the canonical request and response bytes. The validator therefore
-never reconstructs signed bytes or
-substitutes a status probe made over another connection. Those bytes can contain typed text and other sensitive command
-payloads: use a new private artifact directory, do not publish it, and remove it after the certification evidence has
-been reduced to non-sensitive hashes and verdicts. The offline adapter remains an independent policy cross-check, but
-it does not authenticate listener provenance. Every bundle must also pass the first-party verifier against the exact
-live socket:
-
-```bash
-peekaboo bridge receipt validate \
-  --bundle /private/path/verified-receipts/request-id.json \
-  --bridge-socket /private/path/to/bridge.sock \
-  --json
-```
-
-The separate canonical adapter is a deterministic fixture/reference adapter. The adapter boundary owns producer wire
-spelling while the validator keeps the normalized policy closed; each run contract pins both the adapter ID and its
-source SHA-256 so a different decoder cannot reinterpret signed bytes after the fact. The safe gate exercises both
-adapters and a fixed-key signed fixture corpus:
-
-```bash
-pnpm run test:background-certification
-```
-
-`scripts/physical-overlap-contract-catalog.json` freezes the intended split-controller policy to the exact protocol 1.29
-source under test, but marks live execution as blocked. It is a non-live acceptance contract, not evidence that the
-current invariant monitor can safely grant foreground authority. It forbids virtualization, Lume, VNC, AppleScript, and
-JXA. Physical cursor motion remains observational so a person using the machine does not create a false Peekaboo
-failure.
-
-Before live overlap can be enabled, one centralized epoch-publication and focus-event-time owner must satisfy all three
-of these fail-closed requirements:
-
-1. An authorization revision becomes active only after its heartbeat is published. Input, activation, and focused-window
-   events arriving at the drain/publication boundary must retain the immutable prior epoch; record, update, drain, and
-   acknowledgement cannot expose a mixed-policy interval.
-2. Every authorization-changing revision is acknowledgement-gated, including a new controller PID/generation with the
-   same foreground target. No event from the new producer set can receive credit before that revision's heartbeat.
-3. Focus evidence carries notification-time PID generation and exact window identity, or fails closed. Callback-time
-   queries of the final focused window cannot substitute for a transient wrong-window event, including same-PID
-   retarget, revoke, and wrong-window-to-target transitions.
-
-The future coordinator must also implement the cataloged monotonic baseline/grant/revoke handshake, exact controller
-cardinality, post-revoke sentinel restoration, and later clean-sample requirement. Until the three event-time conditions
-above and that coordinator are implemented and independently tested, live mode must continue to refuse before UI setup.
 
 For the interaction commands exercised here, background is the omission contract: `--foreground` is the only consent
 for focus/activation, global keyboard input, physical cursor movement, or synthetic pointer/wheel events. Explicit app

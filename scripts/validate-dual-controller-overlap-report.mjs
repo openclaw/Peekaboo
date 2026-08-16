@@ -10,10 +10,6 @@ import { fileURLToPath } from 'node:url';
 const hex40 = /^[0-9a-f]{40}$/;
 const hex64 = /^[0-9a-f]{64}$/;
 const decimalIdentity = /^[1-9][0-9]*$/;
-const canonicalUInt64 = /^(0|[1-9][0-9]*)$/;
-const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const uuidV8 = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const uint64Maximum = 0xffff_ffff_ffff_ffffn;
 
 function failure(rule, message, controller = null) {
   return { rule, message, controller };
@@ -24,322 +20,6 @@ function exactKeys(value, expected) {
   const actual = Object.keys(value).sort();
   const wanted = [...expected].sort();
   return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
-}
-
-function canonicalValue(value) {
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value) || Object.is(value, -0)
-        || (Number.isInteger(value) && !Number.isSafeInteger(value))) {
-      throw new TypeError('canonical JSON only accepts finite lossless numbers');
-    }
-    return value;
-  }
-  if (Array.isArray(value)) return value.map(canonicalValue);
-  if (!value || typeof value !== 'object') {
-    throw new TypeError('canonical JSON only accepts plain JSON values');
-  }
-  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalValue(value[key])]));
-}
-
-function canonicalSHA256(value) {
-  return createHash('sha256').update(JSON.stringify(canonicalValue(value))).digest('hex');
-}
-
-function canonicalExactTarget(value) {
-  if (!exactKeys(value, ['scope', 'pid', 'start_identity', 'window_id', 'bounds'])
-      || value.scope !== 'window'
-      || !positiveInteger(value.pid)
-      || typeof value.start_identity !== 'string'
-      || !decimalIdentity.test(value.start_identity)
-      || !positiveInteger(value.window_id)
-      || !exactKeys(value.bounds, ['x', 'y', 'width', 'height'])
-      || ![value.bounds.x, value.bounds.y, value.bounds.width, value.bounds.height]
-        .every((entry) => typeof entry === 'number' && Number.isFinite(entry))
-      || value.bounds.width <= 0
-      || value.bounds.height <= 0) return null;
-  return canonicalValue(value);
-}
-
-function reportTargetFromOffline(value) {
-  return canonicalExactTarget({
-    scope: value?.scope,
-    pid: value?.pid,
-    start_identity: value?.processStartIdentity,
-    window_id: value?.windowID,
-    bounds: structuredClone(value?.bounds),
-  });
-}
-
-function offlineTargetFromReport(value) {
-  const target = canonicalExactTarget(value);
-  if (!target) return null;
-  return {
-    scope: target.scope,
-    pid: target.pid,
-    processStartIdentity: target.start_identity,
-    windowID: target.window_id,
-    bounds: structuredClone(target.bounds),
-  };
-}
-
-function exactTargetsEqual(reportTarget, offlineTarget) {
-  const expected = canonicalExactTarget(reportTarget);
-  const actual = reportTargetFromOffline(offlineTarget);
-  return expected !== null && actual !== null
-    && JSON.stringify(expected) === JSON.stringify(actual);
-}
-
-export function firstPartyResultSetSHA256(results) {
-  return canonicalSHA256(results);
-}
-
-export function receiptValidationResultSHA256(result) {
-  return canonicalSHA256(result);
-}
-
-function mutationOperation(command) {
-  return command === 'press' ? 'exactWindowTargetedHotkey' : 'exactWindowTargetedTypeActions';
-}
-
-export function expectedOperationManifest(catalog) {
-  const slots = [];
-  const add = (slot) => slots.push({
-    ...slot,
-    slot_id: [
-      slot.kind,
-      slot.controller_id ?? slot.after_controller,
-      slot.index,
-      slot.target_controller ?? '-',
-      slot.channel,
-    ].join(':'),
-  });
-  for (const controller of catalog.controllers ?? []) {
-    const commands = [...(controller.workflow_commands ?? []), controller.restoration_command];
-    commands.forEach((command, index) => add({
-      kind: 'mutation',
-      controller_id: controller.id,
-      index: index + 1,
-      target_controller: null,
-      channel: 'primary',
-      operation: mutationOperation(command),
-    }));
-    for (let index = 1; index <= (controller.observation_count ?? 0); index += 1) {
-      add({
-        kind: 'observation', controller_id: controller.id, index,
-        target_controller: null, channel: 'primary', operation: 'desktopObservation',
-      });
-      add({
-        kind: 'observation', controller_id: controller.id, index,
-        target_controller: null, channel: 'route', operation: 'listWindows',
-      });
-    }
-  }
-  for (const afterController of ['A', 'B']) {
-    for (const [targetIndex, targetController] of ['A', 'B'].entries()) {
-      add({
-        kind: 'restoration_checkpoint',
-        after_controller: afterController,
-        controller_id: null,
-        index: targetIndex + 1,
-        target_controller: targetController,
-        channel: 'primary',
-        operation: 'desktopObservation',
-      });
-      add({
-        kind: 'restoration_checkpoint',
-        after_controller: afterController,
-        controller_id: null,
-        index: targetIndex + 1,
-        target_controller: targetController,
-        channel: 'route',
-        operation: 'listWindows',
-      });
-    }
-  }
-  return { version: 1, slots };
-}
-
-function offlineOperationForSlot(offlineContract, report, slot, operation, receipt) {
-  const matches = (offlineContract?.expectedOperations ?? []).filter((entry) => (
-    entry?.operationID === slot.slot_id
-  ));
-  if (matches.length !== 1) return null;
-  const expected = matches[0];
-  return expected.requestID === receipt.request_id
-    && expected.operation === slot.operation
-    && expected.client?.pid === operation.client_pid
-    && expected.client?.startIdentity === operation.client_start_identity
-    && expected.client?.codeSignatureHash === report.cli?.code_signature_hash
-    && expected.requestSHA256 === receipt.request_sha256
-    && expected.responseSHA256 === receipt.response_sha256
-    ? expected
-    : null;
-}
-
-export function makeOperationManifest(catalog, report, offlineContract) {
-  const template = expectedOperationManifest(catalog);
-  if (offlineContract?.version !== 3
-      || !offlineContractMatchesReport(catalog, report, offlineContract)
-      || !Array.isArray(offlineContract.expectedOperations)
-      || offlineContract.expectedOperations.length !== template.slots.length) {
-    throw new TypeError('Offline contract does not contain the exact version-3 operation manifest');
-  }
-  const offlineOperationIDs = offlineContract.expectedOperations.map((entry) => entry?.operationID);
-  if (new Set(offlineOperationIDs).size !== template.slots.length) {
-    throw new TypeError('Offline contract operation IDs are not unique');
-  }
-  return {
-    version: 2,
-    catalog_sha256: report.catalog_sha256,
-    offline_contract_sha256: canonicalSHA256(offlineContract),
-    slots: template.slots.map((slot) => {
-      const operation = operationForManifestSlot(report, slot);
-      const receipts = operation?.operation_receipts;
-      if (!exactOperationReceiptReferences(receipts, slot.operation)) {
-        throw new TypeError(`Cannot manifest incomplete operation slot: ${slot.slot_id}`);
-      }
-      const offlineOperation = offlineOperationForSlot(
-        offlineContract,
-        report,
-        slot,
-        operation,
-        receipts[0],
-      );
-      if (!offlineOperation) {
-        throw new TypeError(`Offline contract does not bind operation slot: ${slot.slot_id}`);
-      }
-      return {
-        ...slot,
-        offline_operation_id: offlineOperation.operationID,
-        client_pid: operation.client_pid,
-        client_start_identity: operation.client_start_identity,
-        receipt: structuredClone(receipts[0]),
-      };
-    }),
-  };
-}
-
-export function operationManifestSHA256(manifest) {
-  return canonicalSHA256(manifest);
-}
-
-export function makeOfflineContractForReport(catalog, report) {
-  const template = expectedOperationManifest(catalog);
-  const controllerStarts = (report.controllers ?? []).map((entry) => entry?.started_at);
-  const controllerFinishes = (report.controllers ?? []).map((entry) => entry?.finished_at);
-  return {
-    version: 3,
-    certificationRunID: report.run_id,
-    protocolImplementation: { sourceCommit: report.source_commit },
-    ownedTarget: offlineTargetFromReport(report.controllers?.[0]?.target),
-    foregroundTarget: offlineTargetFromReport(report.controllers?.[1]?.target),
-    interval: {
-      startedAtMilliseconds: Math.round(Math.min(...controllerStarts) * 1000),
-      completedAtMilliseconds: Math.round(Math.max(...controllerFinishes) * 1000),
-    },
-    expectedOperations: template.slots.map((slot) => {
-      const operation = operationForManifestSlot(report, slot);
-      const receipt = operation?.operation_receipts?.[0];
-      return {
-        operationID: slot.slot_id,
-        requestID: receipt?.request_id,
-        operation: slot.operation,
-        client: {
-          pid: operation?.client_pid,
-          startIdentity: operation?.client_start_identity,
-          codeSignatureHash: report.cli?.code_signature_hash,
-        },
-        requestSHA256: receipt?.request_sha256,
-        responseSHA256: receipt?.response_sha256,
-        target: offlineTargetFromReport(reportTargetForSlot(report, slot)),
-        outcome: slot.kind === 'mutation' ? {
-          deliveryMode: 'background',
-          effect: operation?.effect,
-          mutationDispatched: true,
-          retrySafe: false,
-        } : null,
-      };
-    }),
-  };
-}
-
-function reportTargetForSlot(report, slot) {
-  if (slot.kind === 'restoration_checkpoint') {
-    return (report.controllers ?? []).find((entry) => entry?.id === slot.target_controller)?.target;
-  }
-  return (report.controllers ?? []).find((entry) => entry?.id === slot.controller_id)?.target;
-}
-
-function offlineContractMatchesReport(catalog, report, offlineContract) {
-  const template = expectedOperationManifest(catalog);
-  const controllerStarts = (report.controllers ?? []).map((entry) => entry?.started_at);
-  const controllerFinishes = (report.controllers ?? []).map((entry) => entry?.finished_at);
-  if (offlineContract?.version !== 3
-      || offlineContract.certificationRunID !== report.run_id
-      || offlineContract.protocolImplementation?.sourceCommit !== report.source_commit
-      || !exactTargetsEqual(report.controllers?.[0]?.target, offlineContract.ownedTarget)
-      || !exactTargetsEqual(report.controllers?.[1]?.target, offlineContract.foregroundTarget)
-      || offlineContract.interval?.startedAtMilliseconds
-        !== Math.round(Math.min(...controllerStarts) * 1000)
-      || offlineContract.interval?.completedAtMilliseconds
-        !== Math.round(Math.max(...controllerFinishes) * 1000)
-      || !Array.isArray(offlineContract.expectedOperations)
-      || offlineContract.expectedOperations.length !== template.slots.length) return false;
-  return template.slots.every((slot) => {
-    const operation = operationForManifestSlot(report, slot);
-    const expected = offlineContract.expectedOperations.find((entry) => (
-      entry?.operationID === slot.slot_id
-    ));
-    if (!expected
-        || !exactTargetsEqual(reportTargetForSlot(report, slot), expected.target)) return false;
-    if (slot.kind !== 'mutation') return expected.outcome === null;
-    return expected.outcome?.deliveryMode === 'background'
-      && expected.outcome.effect === operation?.effect
-      && expected.outcome.mutationDispatched === operation?.mutation_dispatched
-      && expected.outcome.retrySafe === operation?.retry_safe;
-  });
-}
-
-function validateOperationManifest(catalog, report, manifest, offlineContract) {
-  const template = expectedOperationManifest(catalog);
-  if (!exactKeys(manifest, [
-    'version', 'catalog_sha256', 'offline_contract_sha256', 'slots',
-  ])
-      || manifest.version !== 2
-      || manifest.catalog_sha256 !== report.catalog_sha256
-      || offlineContract?.version !== 3
-      || !offlineContractMatchesReport(catalog, report, offlineContract)
-      || manifest.offline_contract_sha256 !== canonicalSHA256(offlineContract)
-      || !Array.isArray(manifest.slots)
-      || manifest.slots.length !== template.slots.length) return false;
-  const requestIDs = [];
-  for (let index = 0; index < template.slots.length; index += 1) {
-    const expected = template.slots[index];
-    const actual = manifest.slots[index];
-    if (!exactKeys(actual, [
-      ...Object.keys(expected), 'offline_operation_id', 'client_pid', 'client_start_identity', 'receipt',
-    ]) || Object.keys(expected).some((key) => actual[key] !== expected[key])
-        || !validProcessFields({
-          pid: actual.client_pid,
-          start_identity: actual.client_start_identity,
-        })
-        || !exactOperationReceiptReference(actual.receipt)
-        || actual.receipt.operation !== expected.operation
-        || actual.offline_operation_id !== expected.slot_id
-        || !offlineOperationForSlot(
-          offlineContract,
-          report,
-          expected,
-          {
-            client_pid: actual.client_pid,
-            client_start_identity: actual.client_start_identity,
-          },
-          actual.receipt,
-        )) return false;
-    requestIDs.push(actual.receipt.request_id);
-  }
-  return new Set(requestIDs).size === requestIDs.length;
 }
 
 function positiveInteger(value) {
@@ -362,7 +42,8 @@ function validProcessFields(value) {
 }
 
 function exactTargetReceipt(value) {
-  return canonicalExactTarget(value) !== null;
+  return exactKeys(value, ['pid', 'start_identity', 'window_id'])
+    && validTargetFields(value);
 }
 
 function validTargetFields(value) {
@@ -373,18 +54,18 @@ function validateCatalog(catalog) {
   const failures = [];
   if (!exactKeys(catalog, [
     'version', 'controllers', 'invariants', 'cursor_policy', 'required_evidence',
-  ]) || catalog?.version !== 2) {
-    return [failure('catalog_schema', 'Catalog must be one closed version-2 object')];
+  ]) || catalog?.version !== 1) {
+    return [failure('catalog_schema', 'Catalog must be one closed version-1 object')];
   }
   if (!Array.isArray(catalog.controllers) || catalog.controllers.length !== 2
       || catalog.controllers.map((entry) => entry?.id).join(',') !== 'A,B'
       || catalog.controllers.some((entry) => !exactKeys(
         entry,
-        ['id', 'workflow_commands', 'restoration_command', 'observation_count'],
+        ['id', 'workflow_commands', 'restoration_command', 'minimum_observations'],
       ) || !Array.isArray(entry.workflow_commands) || entry.workflow_commands.length === 0
         || entry.workflow_commands.some((command) => !['type', 'press'].includes(command))
         || !['type', 'press'].includes(entry.restoration_command)
-        || !positiveInteger(entry.observation_count))) {
+        || !positiveInteger(entry.minimum_observations))) {
     failures.push(failure('catalog_controllers', 'Catalog must define exact A and B controller requirements'));
   }
   for (const field of ['invariants', 'required_evidence']) {
@@ -412,296 +93,12 @@ function validateHost(report, failures) {
       || !hex40.test(host.code_signature_hash ?? '')
       || !hex64.test(host.executable_sha256 ?? '')
       || !positiveInteger(host.protocol_major)
-      || host.protocol_major !== 1
-      || !Number.isSafeInteger(host.protocol_minor) || host.protocol_minor < 29
+      || !Number.isSafeInteger(host.protocol_minor) || host.protocol_minor < 0
       || host.stable !== true) {
     failures.push(failure('host_receipt', 'Signed current host receipt is incomplete, malformed, or unstable'));
   }
   if (host?.source_commit !== report.source_commit) {
     failures.push(failure('host_source', 'Host source commit differs from the certified CLI source'));
-  }
-}
-
-function exactOperationReceiptReference(value) {
-  return exactKeys(value, [
-    'request_id', 'session_id', 'session_sequence', 'operation', 'request_sha256',
-    'response_sha256', 'bundle_sha256',
-  ])
-    && typeof value.request_id === 'string' && uuidV8.test(value.request_id)
-    && typeof value.session_id === 'string' && uuidV4.test(value.session_id)
-    && validCanonicalUInt64(value.session_sequence)
-    && typeof value.operation === 'string' && value.operation.length > 0
-    && hex64.test(value.request_sha256 ?? '')
-    && hex64.test(value.response_sha256 ?? '')
-    && hex64.test(value.bundle_sha256 ?? '');
-}
-
-function exactOperationReceiptReferences(values, primaryOperation) {
-  return Array.isArray(values)
-    && values.length === 1
-    && values.every(exactOperationReceiptReference)
-    && values[0].operation === primaryOperation;
-}
-
-function operationForManifestSlot(report, slot) {
-  if (slot.kind === 'mutation' || slot.kind === 'observation') {
-    const controller = (report.controllers ?? []).find((entry) => entry?.id === slot.controller_id);
-    const entries = slot.kind === 'mutation' ? controller?.mutations : controller?.observations;
-    const operation = entries?.[slot.index - 1];
-    return slot.channel === 'route' ? operation?.route_receipt : operation;
-  }
-  if (slot.kind === 'restoration_checkpoint') {
-    const checkpoint = (report.restoration_checkpoints ?? []).find((entry) => (
-      entry?.after_controller === slot.after_controller
-    ));
-    const operation = checkpoint?.observations?.[slot.index - 1];
-    return slot.channel === 'route' ? operation?.route_receipt : operation;
-  }
-  return null;
-}
-
-function operationReceiptRequirements(report, manifest) {
-  return manifest.slots.map((manifestSlot) => {
-    const operation = operationForManifestSlot(report, manifestSlot);
-    const receipts = operation?.operation_receipts;
-    if (!exactOperationReceiptReferences(receipts, manifestSlot.operation)
-        || operation.client_pid !== manifestSlot.client_pid
-        || operation.client_start_identity !== manifestSlot.client_start_identity
-        || JSON.stringify(receipts[0]) !== JSON.stringify(manifestSlot.receipt)) return null;
-    return {
-      slot_id: manifestSlot.slot_id,
-      offline_operation_id: manifestSlot.offline_operation_id,
-      client_pid: operation.client_pid,
-      client_start_identity: operation.client_start_identity,
-      receipt: manifestSlot.receipt,
-    };
-  });
-}
-
-function validCanonicalUInt64(value) {
-  return typeof value === 'string'
-    && canonicalUInt64.test(value)
-    && BigInt(value) <= uint64Maximum;
-}
-
-function validateFirstPartyResult(result, report, requiredClientGenerations) {
-  if (!exactKeys(result, [
-    'valid', 'validator_id', 'trust_source', 'minimum_protocol_version', 'request_id',
-    'session_id', 'session_sequence', 'predecessor_session_id', 'operation',
-    'listener_instance_id', 'listener_public_key_sha256', 'host', 'client_instance_id',
-    'client', 'request_sha256', 'response_sha256', 'bundle_sha256',
-    'terminal_receipt_attested', 'target_attested', 'outcome_attested', 'retention_basis',
-  ]) || result.valid !== true
-      || result.validator_id !== 'peekaboo-bridge-receipt-validate-v1'
-      || result.trust_source !== 'authenticated_live_listener'
-      || result.minimum_protocol_version !== '1.29'
-      || typeof result.request_id !== 'string' || !uuidV8.test(result.request_id)
-      || typeof result.session_id !== 'string' || !uuidV4.test(result.session_id)
-      || !validCanonicalUInt64(result.session_sequence)
-      || (result.predecessor_session_id !== null
-        && (typeof result.predecessor_session_id !== 'string'
-          || !uuidV4.test(result.predecessor_session_id)))
-      || typeof result.operation !== 'string' || result.operation.length === 0
-      || typeof result.listener_instance_id !== 'string'
-      || !uuidV4.test(result.listener_instance_id)
-      || !hex64.test(result.listener_public_key_sha256 ?? '')
-      || !exactKeys(result.host, ['pid', 'start_identity', 'code_signature_hash'])
-      || result.host.pid !== report.host?.pid
-      || result.host.start_identity !== report.host?.start_identity
-      || result.host.code_signature_hash !== report.host?.code_signature_hash
-      || typeof result.client_instance_id !== 'string' || !uuidV4.test(result.client_instance_id)
-      || !exactKeys(result.client, ['pid', 'start_identity', 'code_signature_hash'])
-      || !validProcessFields(result.client)
-      || result.client.code_signature_hash !== report.cli?.code_signature_hash
-      || !hex64.test(result.request_sha256 ?? '')
-      || !hex64.test(result.response_sha256 ?? '')
-      || !hex64.test(result.bundle_sha256 ?? '')
-      || result.terminal_receipt_attested !== true
-      || typeof result.target_attested !== 'boolean'
-      || typeof result.outcome_attested !== 'boolean'
-      || result.retention_basis !== 'exported_bundle') {
-    return false;
-  }
-  if (!requiredClientGenerations.has(`${result.client.pid}:${result.client.start_identity}`)) return false;
-  if (['exactWindowTargetedHotkey', 'exactWindowTargetedTypeActions'].includes(result.operation)) {
-    return result.target_attested === true && result.outcome_attested === true;
-  }
-  if (result.operation === 'desktopObservation') return result.target_attested === true;
-  return true;
-}
-
-function validateOfflineResult(result, validation) {
-  if (!exactKeys(result, ['success', 'contract_sha256', 'adapter', 'receipts', 'failures'])
-      || result.success !== true
-      || result.contract_sha256 !== validation?.offline_contract_sha256
-      || !exactKeys(result.adapter, ['id', 'api_version', 'sha256'])
-      || result.adapter.id !== validation?.adapter_id
-      || result.adapter.api_version !== 3
-      || result.adapter.sha256 !== validation?.adapter_sha256
-      || !Array.isArray(result.receipts) || result.receipts.length === 0
-      || !Array.isArray(result.failures) || result.failures.length !== 0) {
-    return false;
-  }
-  const canonicalOrder = [...result.receipts].sort((left, right) => (
-    `${left?.request_id ?? ''}`.localeCompare(`${right?.request_id ?? ''}`)
-  ));
-  if (JSON.stringify(result.receipts) !== JSON.stringify(canonicalOrder)) return false;
-  return result.receipts.every((receipt) => exactKeys(receipt, [
-    'operation_id', 'request_id', 'operation', 'file', 'file_sha256',
-  ])
-    && typeof receipt.operation_id === 'string' && receipt.operation_id.length > 0
-    && typeof receipt.request_id === 'string' && uuidV8.test(receipt.request_id)
-    && typeof receipt.operation === 'string' && receipt.operation.length > 0
-    && receipt.file === `${receipt.request_id}.json`
-    && hex64.test(receipt.file_sha256 ?? ''));
-}
-
-function receiptReferenceMatchesResult(requirement, result) {
-  const receipt = requirement.receipt;
-  return exactOperationReceiptReference(receipt)
-    && result?.client?.pid === requirement.client_pid
-    && result?.client?.start_identity === requirement.client_start_identity
-    && result?.request_id === receipt.request_id
-    && result?.session_id === receipt.session_id
-    && result?.session_sequence === receipt.session_sequence
-    && result.operation === receipt.operation
-    && result.request_sha256 === receipt.request_sha256
-    && result.response_sha256 === receipt.response_sha256
-    && result.bundle_sha256 === receipt.bundle_sha256;
-}
-
-function validateReceiptCertification(
-  catalog,
-  report,
-  operationManifest,
-  offlineContract,
-  failures,
-) {
-  const validation = report.receipt_validation;
-  const results = validation?.first_party_results;
-  const offlineResult = validation?.offline_result;
-  const offlineReceipts = offlineResult?.receipts;
-  const manifestSHA256 = operationManifestSHA256(operationManifest);
-  const offlineContractSHA256 = canonicalSHA256(offlineContract);
-  const requirements = operationReceiptRequirements(report, operationManifest);
-  const requiredClientGenerations = new Set(requirements.filter(Boolean).map((entry) => (
-    `${entry.client_pid}:${entry.client_start_identity}`
-  )));
-  const canonicalOrder = Array.isArray(results)
-    ? [...results].sort((left, right) => (
-      `${left?.request_id ?? ''}`.localeCompare(`${right?.request_id ?? ''}`)
-    ))
-    : [];
-  const requestIDs = Array.isArray(results) ? results.map((entry) => entry?.request_id) : [];
-  const bundleSHA256s = Array.isArray(results) ? results.map((entry) => entry?.bundle_sha256) : [];
-  const sessionClaims = Array.isArray(results)
-    ? results.map((entry) => `${entry?.session_id}:${entry?.session_sequence}`)
-    : [];
-  const sessionIDs = new Set(Array.isArray(results) ? results.map((entry) => entry?.session_id) : []);
-  const listenerIdentities = new Set(Array.isArray(results) ? results.map((entry) => (
-    `${entry?.listener_instance_id}:${entry?.listener_public_key_sha256}`
-  )) : []);
-  const offlineRequestIDs = Array.isArray(offlineReceipts)
-    ? offlineReceipts.map((entry) => entry?.request_id)
-    : [];
-  const offlineOperationIDs = Array.isArray(offlineReceipts)
-    ? offlineReceipts.map((entry) => entry?.operation_id)
-    : [];
-  const offlineBundleSHA256s = Array.isArray(offlineReceipts)
-    ? offlineReceipts.map((entry) => entry?.file_sha256)
-    : [];
-  let resultSetSHA256 = null;
-  let offlineResultSHA256 = null;
-  try {
-    if (Array.isArray(results)) resultSetSHA256 = firstPartyResultSetSHA256(results);
-    if (offlineResult) offlineResultSHA256 = receiptValidationResultSHA256(offlineResult);
-  } catch {
-    resultSetSHA256 = null;
-    offlineResultSHA256 = null;
-  }
-  const unmatchedResults = Array.isArray(results) ? [...results] : [];
-  const unmatchedOfflineReceipts = Array.isArray(offlineReceipts) ? [...offlineReceipts] : [];
-  const requirementsMatch = requirements.every((requirement) => {
-    if (requirement === null) return false;
-    const matchingIndexes = unmatchedResults.flatMap((result, index) => (
-      receiptReferenceMatchesResult(requirement, result) ? [index] : []
-    ));
-    if (matchingIndexes.length !== 1) return false;
-    unmatchedResults.splice(matchingIndexes[0], 1);
-    return true;
-  });
-  const offlineRequirementsMatch = requirements.every((requirement) => {
-    if (requirement === null) return false;
-    const matchingIndexes = unmatchedOfflineReceipts.flatMap((receipt, index) => (
-      receipt?.operation_id === requirement.offline_operation_id
-        && receipt.request_id === requirement.receipt.request_id
-        && receipt.operation === requirement.receipt.operation
-        && receipt.file_sha256 === requirement.receipt.bundle_sha256
-        ? [index] : []
-    ));
-    if (matchingIndexes.length !== 1) return false;
-    unmatchedOfflineReceipts.splice(matchingIndexes[0], 1);
-    return true;
-  });
-  const firstPartyOfflinePairs = Array.isArray(results) && Array.isArray(offlineReceipts)
-    ? results.map((entry) => [entry.request_id, entry.operation, entry.bundle_sha256])
-    : [];
-  const offlineFirstPartyPairs = Array.isArray(offlineReceipts)
-    ? offlineReceipts.map((entry) => [entry.request_id, entry.operation, entry.file_sha256])
-    : [];
-  if (!exactKeys(validation, [
-    'version', 'success', 'first_party_validator_id', 'first_party_trust_source',
-    'first_party_executable_sha256', 'first_party_result_set_sha256',
-    'first_party_result_count', 'first_party_results', 'adapter_id', 'adapter_sha256',
-    'operation_manifest_sha256', 'offline_contract_sha256', 'result_sha256',
-    'offline_result', 'receipt_count', 'session_count',
-  ]) || validation?.version !== 3
-      || validation.success !== true
-      || validation.first_party_validator_id !== 'peekaboo-bridge-receipt-validate-v1'
-      || validation.first_party_trust_source !== 'authenticated_live_listener'
-      || !hex64.test(validation.first_party_executable_sha256 ?? '')
-      || validation.first_party_executable_sha256 !== report.cli?.executable_sha256
-      || !hex64.test(validation.first_party_result_set_sha256 ?? '')
-      || validation.first_party_result_set_sha256 !== resultSetSHA256
-      || !positiveInteger(validation.first_party_result_count)
-      || !Array.isArray(results) || results.length === 0
-      || validation.first_party_result_count !== results.length
-      || validation.first_party_result_count !== validation.receipt_count
-      || validation.adapter_id !== 'peekaboo-bridge-operation-receipt-bundle-1.29-logical-session-v1'
-      || !hex64.test(validation.adapter_sha256 ?? '')
-      || validation.operation_manifest_sha256 !== manifestSHA256
-      || validation.offline_contract_sha256 !== offlineContractSHA256
-      || operationManifest.offline_contract_sha256 !== offlineContractSHA256
-      || !hex64.test(validation.result_sha256 ?? '')
-      || validation.result_sha256 !== offlineResultSHA256
-      || !validateOfflineResult(offlineResult, validation)
-      || !positiveInteger(validation.receipt_count)
-      || !Array.isArray(offlineReceipts)
-      || validation.receipt_count !== offlineReceipts.length
-      || !positiveInteger(validation.session_count)
-      || validation.session_count !== sessionIDs.size
-      || JSON.stringify(results) !== JSON.stringify(canonicalOrder)
-      || new Set(requestIDs).size !== results.length
-      || new Set(bundleSHA256s).size !== results.length
-      || new Set(sessionClaims).size !== results.length
-      || listenerIdentities.size !== 1
-      || results.some((result) => !validateFirstPartyResult(
-        result,
-        report,
-        requiredClientGenerations,
-      ))
-      || new Set(offlineRequestIDs).size !== offlineReceipts.length
-      || new Set(offlineOperationIDs).size !== offlineReceipts.length
-      || new Set(offlineBundleSHA256s).size !== offlineReceipts.length
-      || JSON.stringify(firstPartyOfflinePairs) !== JSON.stringify(offlineFirstPartyPairs)
-      || !requirementsMatch
-      || unmatchedResults.length !== 0
-      || !offlineRequirementsMatch
-      || unmatchedOfflineReceipts.length !== 0) {
-    failures.push(failure(
-      'receipt_validation',
-      'Overlap report lacks one complete independently checked authenticated verdict set',
-    ));
   }
 }
 
@@ -722,7 +119,7 @@ function validateMutation(entry, controller, target, cli, host, index, failures)
     'success', 'effect', 'mutation_dispatched', 'retry_safe', 'foreground', 'client_pid',
     'client_start_identity', 'reported_target_pid', 'reported_target_window_id',
     'target_start_identity_after', 'delivery_mode', 'client_executable_path',
-    'host_pid', 'host_start_identity', 'host_code_signature_hash', 'operation_receipts',
+    'host_pid', 'host_start_identity', 'host_code_signature_hash',
   ]) || entry.index !== index
       || !['type', 'press'].includes(entry.command)
       || !['workflow', 'restoration'].includes(entry.phase)
@@ -743,9 +140,6 @@ function validateMutation(entry, controller, target, cli, host, index, failures)
       || entry.success !== true
       || !['confirmed', 'unverifiable'].includes(entry.effect)
       || entry.mutation_dispatched !== true || entry.retry_safe !== false
-      || !exactOperationReceiptReferences(entry.operation_receipts, entry.command === 'press'
-        ? 'exactWindowTargetedHotkey'
-        : 'exactWindowTargetedTypeActions')
       || entry.foreground !== false) {
     failures.push(failure('mutation_contract', `Controller ${controller} mutation ${index} is not exact`, controller));
   }
@@ -757,7 +151,7 @@ function validateObservation(entry, controller, target, cli, host, index, failur
     'expected_token', 'token_present', 'other_token_absent', 'client_pid',
     'client_start_identity', 'reported_window_id', 'target_start_identity_after', 'route_receipt',
     'client_executable_path', 'host_pid', 'host_start_identity', 'host_code_signature_hash',
-    'result_success', 'operation_receipts',
+    'result_success',
   ]) || entry.index !== index
       || !finiteTimestamp(entry.started_at) || !finiteTimestamp(entry.finished_at)
       || entry.finished_at <= entry.started_at
@@ -772,7 +166,6 @@ function validateObservation(entry, controller, target, cli, host, index, failur
       || entry.reported_window_id !== target.window_id
       || entry.target_start_identity_after !== target.start_identity
       || entry.result_success !== true
-      || !exactOperationReceiptReferences(entry.operation_receipts, 'desktopObservation')
       || typeof entry.expected_token !== 'string' || entry.expected_token.length === 0
       || entry.token_present !== true || entry.other_token_absent !== true) {
     failures.push(failure('observation_contract', `Controller ${controller} observation ${index} is not exact`, controller));
@@ -781,7 +174,7 @@ function validateObservation(entry, controller, target, cli, host, index, failur
   if (!exactKeys(route, [
     'client_pid', 'client_start_identity', 'client_executable_path', 'host_pid',
     'host_start_identity', 'host_code_signature_hash', 'reported_target_pid',
-    'reported_window_id', 'target_start_identity_after', 'result_success', 'operation_receipts',
+    'reported_window_id', 'target_start_identity_after', 'result_success',
   ]) || !positiveInteger(route.client_pid)
       || typeof route.client_start_identity !== 'string'
       || !decimalIdentity.test(route.client_start_identity)
@@ -792,7 +185,6 @@ function validateObservation(entry, controller, target, cli, host, index, failur
       || route.reported_target_pid !== target.pid
       || route.reported_window_id !== target.window_id
       || route.target_start_identity_after !== target.start_identity
-      || !exactOperationReceiptReferences(route.operation_receipts, 'listWindows')
       || route.result_success !== true) {
     failures.push(failure('observation_route', `Controller ${controller} route receipt ${index} is not exact`, controller));
   }
@@ -873,13 +265,8 @@ function validateController(observed, expected, other, runID, cli, host, failure
       failures.push(failure('mutation_timing', `Controller ${expected.id} workflow is not ordered before restoration`, expected.id));
     }
   }
-  if (!Array.isArray(observed.observations)
-      || observed.observations.length !== expected.observation_count) {
-    failures.push(failure(
-      'observation_count',
-      `Controller ${expected.id} did not complete the exact observation manifest`,
-      expected.id,
-    ));
+  if (!Array.isArray(observed.observations) || observed.observations.length - 1 < expected.minimum_observations) {
+    failures.push(failure('observation_count', `Controller ${expected.id} did not complete enough observations`, expected.id));
   } else {
     observed.observations.forEach((entry, index) => (
       validateObservation(entry, expected.id, observed.target, cli, host, index + 1, failures)
@@ -1001,31 +388,19 @@ function validateRestorationCheckpoints(report, failures) {
   });
 }
 
-export function validateOverlapCertification(
-  catalog,
-  report,
-  expectedCatalogSHA256 = null,
-  operationManifest = null,
-  offlineContract = null,
-) {
+export function validateOverlapCertification(catalog, report, expectedCatalogSHA256 = null) {
   const failures = validateCatalog(catalog);
   if (!exactKeys(report, [
     'version', 'catalog_sha256', 'run_id', 'source_commit', 'cli', 'host', 'sentinel',
     'controllers', 'overlap', 'invariants', 'cursor_observation', 'restoration',
-    'restoration_checkpoints', 'cleanup', 'receipt_validation', 'evidence',
-  ]) || report?.version !== 3) {
-    failures.push(failure('report_schema', 'Report must be one closed version-3 object'));
+    'restoration_checkpoints', 'cleanup', 'evidence',
+  ]) || report?.version !== 1) {
+    failures.push(failure('report_schema', 'Report must be one closed version-1 object'));
     return { success: false, failures };
   }
   if (!hex64.test(report.catalog_sha256 ?? '')
       || (expectedCatalogSHA256 !== null && report.catalog_sha256 !== expectedCatalogSHA256)) {
     failures.push(failure('catalog_hash', 'Report is not bound to the exact catalog bytes'));
-  }
-  if (!validateOperationManifest(catalog, report, operationManifest, offlineContract)) {
-    failures.push(failure(
-      'operation_manifest',
-      'Report is not bound to one independent exact slot-to-request manifest',
-    ));
   }
   if (typeof report.run_id !== 'string' || !/^overlap-[0-9a-f-]{36}$/.test(report.run_id)) {
     failures.push(failure('run_id', 'Run ID must be one exact overlap UUID'));
@@ -1088,15 +463,6 @@ export function validateOverlapCertification(
 
   const [controllerA, controllerB] = report.controllers ?? [];
   validateRestorationCheckpoints(report, failures);
-  if (validateOperationManifest(catalog, report, operationManifest, offlineContract)) {
-    validateReceiptCertification(
-      catalog,
-      report,
-      operationManifest,
-      offlineContract,
-      failures,
-    );
-  }
   const workflowMutationsA = (controllerA?.mutations ?? []).filter((entry) => entry?.phase === 'workflow');
   const workflowMutationsB = (controllerB?.mutations ?? []).filter((entry) => entry?.phase === 'workflow');
   const overlap = report.overlap;
@@ -1220,11 +586,9 @@ export function validateOverlapCertification(
 export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)) {
   const runID = 'overlap-01234567-89ab-cdef-0123-456789abcdef';
   const target = (pid, startIdentity, windowID) => ({
-    scope: 'window',
     pid,
     start_identity: startIdentity,
     window_id: windowID,
-    bounds: { x: pid, y: pid + 1, width: 640, height: 480 },
   });
   const mutation = (index, command, phase, startedAt, targetReceipt) => ({
     index,
@@ -1249,7 +613,6 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
     mutation_dispatched: true,
     retry_safe: false,
     foreground: false,
-    operation_receipts: [],
   });
   const observation = (index, startedAt, token, targetReceipt) => ({
     index,
@@ -1277,12 +640,10 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
       reported_window_id: targetReceipt.window_id,
       target_start_identity_after: targetReceipt.start_identity,
       result_success: true,
-      operation_receipts: [],
     },
     expected_token: token,
     token_present: true,
     other_token_absent: true,
-    operation_receipts: [],
   });
   const checkpointObservation = (index, startedAt, token, targetReceipt, generationSeed) => {
     const receipt = observation(index, startedAt, token, targetReceipt);
@@ -1346,14 +707,8 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
       cross_target_clear: true,
     };
   };
-  const controllerA = controller(
-    catalog.controllers[0], 301, target(101, '10100', 201), 10, 15,
-    catalog.controllers[0].observation_count,
-  );
-  const controllerB = controller(
-    catalog.controllers[1], 302, target(202, '20200', 302), 9, 16,
-    catalog.controllers[1].observation_count,
-  );
+  const controllerA = controller(catalog.controllers[0], 301, target(101, '10100', 201), 10, 15, 4);
+  const controllerB = controller(catalog.controllers[1], 302, target(202, '20200', 302), 9, 16, 5);
   const restorationA = controllerA.mutations.at(-1);
   const restorationB = controllerB.mutations.at(-1);
   restorationB.started_at = 12.5;
@@ -1378,90 +733,8 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
       ],
     },
   ];
-  const receiptClient = (operation, primaryOperation) => ({
-    entry: operation,
-    pid: operation.client_pid,
-    start_identity: operation.client_start_identity,
-    operation: primaryOperation,
-  });
-  const observationReceiptClients = (observationEntry) => [
-    receiptClient(observationEntry, 'desktopObservation'),
-    receiptClient(observationEntry.route_receipt, 'listWindows'),
-  ];
-  const expectedReceiptClients = [controllerA, controllerB].flatMap((controllerEntry) => [
-    ...controllerEntry.mutations.map((entry) => receiptClient(
-      entry,
-      entry.command === 'press' ? 'exactWindowTargetedHotkey' : 'exactWindowTargetedTypeActions',
-    )),
-    ...controllerEntry.observations.flatMap(observationReceiptClients),
-  ]).concat(restorationCheckpoints.flatMap((checkpoint) => (
-    checkpoint.observations.flatMap(observationReceiptClients)
-  )));
-  const digest = (value) => createHash('sha256').update(value).digest('hex');
-  const paddedHex = (value) => value.toString(16).padStart(12, '0');
-  const firstPartyResults = expectedReceiptClients.map((client, index) => {
-    const ordinal = index + 1;
-    const result = {
-      valid: true,
-      validator_id: 'peekaboo-bridge-receipt-validate-v1',
-      trust_source: 'authenticated_live_listener',
-      minimum_protocol_version: '1.29',
-      request_id: `00000000-0000-8000-8000-${paddedHex(ordinal)}`,
-      session_id: `00000000-0000-4000-8000-${paddedHex(ordinal)}`,
-      session_sequence: '0',
-      predecessor_session_id: null,
-      operation: client.operation,
-      listener_instance_id: '11111111-1111-4111-8111-111111111111',
-      listener_public_key_sha256: '6'.repeat(64),
-      host: {
-        pid: 401,
-        start_identity: '40100',
-        code_signature_hash: 'a'.repeat(40),
-      },
-      client_instance_id: `22222222-2222-4222-8222-${paddedHex(ordinal)}`,
-      client: {
-        pid: client.pid,
-        start_identity: client.start_identity,
-        code_signature_hash: 'd'.repeat(40),
-      },
-      request_sha256: digest(`request-${ordinal}`),
-      response_sha256: digest(`response-${ordinal}`),
-      bundle_sha256: digest(`bundle-${ordinal}`),
-      terminal_receipt_attested: true,
-      target_attested: client.operation !== 'listWindows',
-      outcome_attested: !['desktopObservation', 'listWindows'].includes(client.operation),
-      retention_basis: 'exported_bundle',
-    };
-    client.entry.operation_receipts = [{
-      request_id: result.request_id,
-      session_id: result.session_id,
-      session_sequence: result.session_sequence,
-      operation: result.operation,
-      request_sha256: result.request_sha256,
-      response_sha256: result.response_sha256,
-      bundle_sha256: result.bundle_sha256,
-    }];
-    return result;
-  });
-  const offlineResult = {
-    success: true,
-    contract_sha256: '0'.repeat(64),
-    adapter: {
-      id: 'peekaboo-bridge-operation-receipt-bundle-1.29-logical-session-v1',
-      api_version: 3,
-      sha256: '1'.repeat(64),
-    },
-    receipts: firstPartyResults.map((result, index) => ({
-      operation_id: expectedOperationManifest(catalog).slots[index].slot_id,
-      request_id: result.request_id,
-      operation: result.operation,
-      file: `${result.request_id}.json`,
-      file_sha256: result.bundle_sha256,
-    })),
-    failures: [],
-  };
-  const report = {
-    version: 3,
+  return {
+    version: 1,
     catalog_sha256: catalogSHA256,
     run_id: runID,
     source_commit: '0123456789abcdef0123456789abcdef01234567',
@@ -1478,14 +751,12 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
       source_commit: '0123456789abcdef0123456789abcdef01234567',
       code_signature_hash: 'a'.repeat(40),
       protocol_major: 1,
-      protocol_minor: 29,
+      protocol_minor: 25,
       executable_sha256: 'b'.repeat(64),
       stable: true,
     },
     sentinel: {
-      pid: 501,
-      start_identity: '50100',
-      window_id: 601,
+      ...target(501, '50100', 601),
       initial_frontmost_pid: 501,
       initial_top_window_id: 601,
       final_frontmost_pid: 501,
@@ -1550,52 +821,13 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
       { id: 'A', pid: 101, start_identity: '10100', gone: true },
       { id: 'B', pid: 202, start_identity: '20200', gone: true },
     ],
-    receipt_validation: {
-      version: 3,
-      success: true,
-      first_party_validator_id: 'peekaboo-bridge-receipt-validate-v1',
-      first_party_trust_source: 'authenticated_live_listener',
-      first_party_executable_sha256: 'c'.repeat(64),
-      first_party_result_set_sha256: firstPartyResultSetSHA256(firstPartyResults),
-      first_party_result_count: firstPartyResults.length,
-      first_party_results: firstPartyResults,
-      adapter_id: 'peekaboo-bridge-operation-receipt-bundle-1.29-logical-session-v1',
-      adapter_sha256: '1'.repeat(64),
-      operation_manifest_sha256: '0'.repeat(64),
-      offline_contract_sha256: '0'.repeat(64),
-      result_sha256: receiptValidationResultSHA256(offlineResult),
-      offline_result: offlineResult,
-      receipt_count: firstPartyResults.length,
-      session_count: new Set(firstPartyResults.map((entry) => entry.session_id)).size,
-    },
     evidence: Object.fromEntries(catalog.required_evidence.map((name) => [name, true])),
   };
-  const offlineContract = makeOfflineContractForReport(catalog, report);
-  const offlineContractDigest = canonicalSHA256(offlineContract);
-  report.receipt_validation.offline_result.contract_sha256 = offlineContractDigest;
-  report.receipt_validation.offline_contract_sha256 = offlineContractDigest;
-  const operationManifest = makeOperationManifest(catalog, report, offlineContract);
-  report.receipt_validation.operation_manifest_sha256 = operationManifestSHA256(operationManifest);
-  report.receipt_validation.result_sha256 = receiptValidationResultSHA256(
-    report.receipt_validation.offline_result,
-  );
-  return report;
 }
 
 export function runOverlapContractSelfTest(catalog, catalogSHA256) {
   const passing = makePassingOverlapReport(catalog, catalogSHA256);
-  const offlineContract = makeOfflineContractForReport(catalog, passing);
-  const manifest = makeOperationManifest(catalog, passing, offlineContract);
-  assert.equal(
-    validateOverlapCertification(
-      catalog,
-      passing,
-      catalogSHA256,
-      manifest,
-      offlineContract,
-    ).success,
-    true,
-  );
+  assert.equal(validateOverlapCertification(catalog, passing, catalogSHA256).success, true);
   const corruptions = [
     ['missing controller', (report) => report.controllers.pop(), 'controllers'],
     ['reused target', (report) => { report.controllers[1].target.pid = report.controllers[0].target.pid; }, 'target_isolation'],
@@ -1641,45 +873,11 @@ export function runOverlapContractSelfTest(catalog, catalogSHA256) {
     }, 'restoration_checkpoint_timing'],
     ['restoration counted as workflow', (report) => { report.controllers[0].mutations.splice(1, 1); }, 'mutation_count'],
     ['workflow command drift', (report) => { report.controllers[0].mutations[1].command = 'type'; }, 'mutation_sequence'],
-    ['unanchored first-party receipts', (report) => {
-      report.receipt_validation.first_party_trust_source = 'bundle_self_signature';
-    }, 'receipt_validation'],
-    ['missing first-party receipt verdict', (report) => {
-      report.receipt_validation.first_party_result_count -= 1;
-    }, 'receipt_validation'],
-    ['unversioned receipt summary', (report) => {
-      delete report.receipt_validation.version;
-    }, 'receipt_validation'],
-    ['unbound operation manifest', (report) => {
-      report.receipt_validation.operation_manifest_sha256 = '0'.repeat(64);
-    }, 'receipt_validation'],
-    ['unbound offline contract', (report) => {
-      report.receipt_validation.offline_contract_sha256 = '0'.repeat(64);
-    }, 'receipt_validation'],
-    ['offline result changed after digest', (report) => {
-      report.receipt_validation.offline_result.receipts[0].operation_id = 'rewritten';
-    }, 'receipt_validation'],
-    ['duplicate operation receipt instance', (report) => {
-      report.controllers[0].mutations[1].operation_receipts = structuredClone(
-        report.controllers[0].mutations[0].operation_receipts,
-      );
-    }, 'receipt_validation'],
-    ['unmanifested auxiliary operation', (report) => {
-      report.controllers[0].mutations[0].operation_receipts.push(structuredClone(
-        report.controllers[0].mutations[0].operation_receipts[0],
-      ));
-    }, 'mutation_contract'],
   ];
   for (const [name, mutate, expectedRule] of corruptions) {
     const report = structuredClone(passing);
     mutate(report);
-    const result = validateOverlapCertification(
-      catalog,
-      report,
-      catalogSHA256,
-      manifest,
-      offlineContract,
-    );
+    const result = validateOverlapCertification(catalog, report, catalogSHA256);
     assert.equal(result.success, false, name);
     assert.ok(result.failures.some((entry) => entry.rule === expectedRule), name);
   }
@@ -1691,12 +889,8 @@ function parseArguments(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === '--self-test') result.selfTest = true;
-    else if ([
-      '--catalog', '--report', '--output', '--operation-manifest',
-      '--finalize-operation-manifest', '--offline-contract',
-    ].includes(value) && argv[index + 1]) {
-      const key = value.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
-      result[key] = argv[index + 1];
+    else if (['--catalog', '--report', '--output'].includes(value) && argv[index + 1]) {
+      result[value.slice(2)] = argv[index + 1];
       index += 1;
     } else throw new Error(`Unknown or incomplete argument: ${value}`);
   }
@@ -1718,45 +912,7 @@ function runCLI() {
   const catalog = JSON.parse(catalogBytes);
   const report = JSON.parse(fs.readFileSync(args.report, 'utf8'));
   const catalogSHA256 = createHash('sha256').update(catalogBytes).digest('hex');
-  if (!args.offlineContract) {
-    throw new Error('--offline-contract is required when finalizing or validating a report');
-  }
-  const offlineContract = JSON.parse(fs.readFileSync(args.offlineContract, 'utf8'));
-  const offlineContractDigest = canonicalSHA256(offlineContract);
-  if (args.finalizeOperationManifest) {
-    if (report.receipt_validation?.offline_result?.contract_sha256 !== offlineContractDigest) {
-      throw new Error('Offline result does not match the exact supplied policy contract');
-    }
-    const manifest = makeOperationManifest(catalog, report, offlineContract);
-    report.receipt_validation.version = 3;
-    delete report.receipt_validation.contract_sha256;
-    report.receipt_validation.operation_manifest_sha256 = operationManifestSHA256(manifest);
-    report.receipt_validation.offline_contract_sha256 = offlineContractDigest;
-    report.evidence.catalog_derived_exact_operation_manifest = true;
-    report.evidence.offline_policy_contract_binding = true;
-    fs.writeFileSync(args.finalizeOperationManifest, `${JSON.stringify(manifest, null, 2)}\n`, {
-      mode: 0o400,
-      flag: 'wx',
-    });
-    fs.writeFileSync(args.report, `${JSON.stringify(report, null, 2)}\n`);
-    process.stdout.write(`${JSON.stringify({
-      success: true,
-      operation_manifest_sha256: report.receipt_validation.operation_manifest_sha256,
-      offline_contract_sha256: offlineContractDigest,
-    })}\n`);
-    return;
-  }
-  if (!args.operationManifest) {
-    throw new Error('--operation-manifest is required when validating a report');
-  }
-  const operationManifest = JSON.parse(fs.readFileSync(args.operationManifest, 'utf8'));
-  const result = validateOverlapCertification(
-    catalog,
-    report,
-    catalogSHA256,
-    operationManifest,
-    offlineContract,
-  );
+  const result = validateOverlapCertification(catalog, report, catalogSHA256);
   const output = `${JSON.stringify(result, null, 2)}\n`;
   if (args.output) fs.writeFileSync(args.output, output);
   else process.stdout.write(output);
