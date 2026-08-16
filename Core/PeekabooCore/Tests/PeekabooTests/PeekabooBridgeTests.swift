@@ -1991,6 +1991,7 @@ final class StubServices: PeekabooBridgeServiceProviding {
     var browserCompletedCallCount: Int?
     var browserDispatchedCallCount: Int?
     var preservesBrowserReceiptChannel = false
+    private let ownedDesktopOperationLanes: Set<PeekabooBridgeOperation>
     var browserResponseContent: [PeekabooBridgeJSONValue] = [
         .object([
             "type": .string("text"),
@@ -2009,7 +2010,8 @@ final class StubServices: PeekabooBridgeServiceProviding {
         automation: (any UIAutomationServiceProtocol)? = nil,
         windows: any WindowManagementServiceProtocol = StubWindowService(),
         snapshots: any SnapshotManagerProtocol = SnapshotManager(),
-        desktopObservation: (any DesktopObservationServiceProtocol)? = nil)
+        desktopObservation: (any DesktopObservationServiceProtocol)? = nil,
+        ownedDesktopOperationLanes: Set<PeekabooBridgeOperation> = [])
     {
         let desktopObservationStub = StubDesktopObservationService()
         self.screenCapture = self.screenCaptureStub
@@ -2019,6 +2021,11 @@ final class StubServices: PeekabooBridgeServiceProviding {
         self.snapshots = snapshots
         self.desktopObservationStub = desktopObservationStub
         self.desktopObservation = desktopObservation ?? desktopObservationStub
+        self.ownedDesktopOperationLanes = ownedDesktopOperationLanes
+    }
+
+    func ownsDesktopOperationLane(for operation: PeekabooBridgeOperation) -> Bool {
+        self.ownedDesktopOperationLanes.contains(operation)
     }
 
     func browserStatus(channel: String?) async throws -> PeekabooBridgeBrowserStatus {

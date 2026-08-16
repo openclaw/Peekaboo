@@ -43,7 +43,18 @@ extension PeekabooBridgeServer {
                     owner: payload.owner,
                     request: payload.request)
             }
-            self.heldPointerBridgeOwners[payload.owner]?.activeReceipt = result.payload
+            guard var binding = self.heldPointerBridgeOwners[payload.owner], binding.closedAt == nil else {
+                throw DesktopActionFailure.dispatchedUnverified(
+                    route: .bridge,
+                    delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                    evidence: .deliveryAccepted,
+                    unitCount: result.outcome?.dispatchState.unitCount,
+                    message: "Held pointer owner disconnected before its begin receipt could be delivered.",
+                    hint: "Treat the hold as terminal and observe the target before retrying.")
+                    .attributed(to: Self.actionTargetReceipt(result.payload))
+            }
+            binding.activeReceipt = result.payload
+            self.heldPointerBridgeOwners[payload.owner] = binding
             return try Self.handledActionResponse(
                 response: .exactWindowHeldPointerReceipt(result.payload),
                 result: result,
@@ -76,6 +87,7 @@ extension PeekabooBridgeServer {
                     try await service.disconnectExactWindowHeldPointerOwner(payload.owner)
                 }
             } catch let failure as DesktopActionFailure {
+                self.markHeldPointerOwnerClosed(payload.owner)
                 guard let activeReceipt else { throw failure }
                 let routed = failure
                     .attributed(to: Self.actionTargetReceipt(activeReceipt))

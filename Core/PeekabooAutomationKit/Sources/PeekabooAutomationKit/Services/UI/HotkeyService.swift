@@ -22,6 +22,7 @@ public final class HotkeyService {
     private let runningApplicationResolver: @MainActor @Sendable (pid_t) -> NSRunningApplication?
     private let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
     private let holdSleeper: @MainActor @Sendable (UInt64) async throws -> Void
+    private let heldInterEventDelay: @MainActor @Sendable () -> Void
     let inputPolicy: UIInputPolicy
     private let actionInputDriver: any ActionInputDriving
     private let desktopOperationExecutor: DesktopOperationExecutor
@@ -63,6 +64,7 @@ public final class HotkeyService {
         holdSleeper: @escaping @MainActor @Sendable (UInt64) async throws -> Void = {
             try await Task.sleep(nanoseconds: $0)
         },
+        heldInterEventDelay: @escaping @MainActor @Sendable () -> Void = { usleep(1000) },
         desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
         operationFinalizer: @escaping @MainActor () -> Void = {})
     {
@@ -74,6 +76,7 @@ public final class HotkeyService {
         self.runningApplicationResolver = runningApplicationResolver
         self.processStartIdentityProvider = processStartIdentityProvider
         self.holdSleeper = holdSleeper
+        self.heldInterEventDelay = heldInterEventDelay
         self.desktopOperationExecutor = desktopOperationExecutor
         self.operationFinalizer = operationFinalizer
     }
@@ -402,14 +405,21 @@ public final class HotkeyService {
         var state = HeldHotkeyState()
 
         do {
-            try await self.validateDelivery(deliveryValidator, emittedUnitCount: 0)
             for event in eventPlan.modifierKeyDownEvents {
+                if state.emittedUnitCount > 0 {
+                    self.heldInterEventDelay()
+                }
+                try await self.validateDelivery(
+                    deliveryValidator,
+                    emittedUnitCount: state.emittedUnitCount)
                 state.pressedModifierKeyCodes.insert(event.getIntegerValueField(.keyboardEventKeycode))
                 self.eventPoster(event, targetProcessIdentifier)
                 state.emittedUnitCount += 1
-                usleep(1000)
             }
 
+            if state.emittedUnitCount > 0 {
+                self.heldInterEventDelay()
+            }
             try await self.validateDelivery(
                 deliveryValidator,
                 emittedUnitCount: state.emittedUnitCount)
@@ -466,8 +476,8 @@ public final class HotkeyService {
         for event in eventPlan.modifierKeyUpEvents {
             let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
             guard state.pressedModifierKeyCodes.contains(keyCode) else { continue }
+            self.heldInterEventDelay()
             try self.requireCleanupProcessGeneration(cleanupProcessIdentity)
-            usleep(1000)
             self.eventPoster(event, targetProcessIdentifier)
             state.emittedUnitCount += 1
             state.pressedModifierKeyCodes.remove(keyCode)
