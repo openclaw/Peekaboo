@@ -62,7 +62,12 @@ function validate(value) {
     if (!Array.isArray(value[key]) || value[key].length === 0
         || new Set(value[key]).size !== value[key].length) failures.push(key);
   }
-  if (!value.receipt_requirements.includes('complete-anchored-first-party-verdict-set')) {
+  const mandatoryReceiptRequirements = [
+    'complete-anchored-first-party-verdict-set',
+    'first-party-offline-bundle-bijection',
+    'exact-operation-request-session-binding',
+  ];
+  if (mandatoryReceiptRequirements.some((entry) => !value.receipt_requirements.includes(entry))) {
     failures.push('receipt_verdict_set');
   }
   if (value.cursor_policy !== 'observational') failures.push('cursor');

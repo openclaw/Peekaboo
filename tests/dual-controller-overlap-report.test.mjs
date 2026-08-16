@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   firstPartyResultSetSHA256,
   makePassingOverlapReport,
+  receiptValidationResultSHA256,
   validateOverlapCertification,
 } from '../scripts/validate-dual-controller-overlap-report.mjs';
 
@@ -30,6 +31,12 @@ function refreshFirstPartySummary(report) {
   report.receipt_validation.receipt_count = results.length;
   report.receipt_validation.session_count = new Set(results.map((entry) => entry.session_id)).size;
   report.receipt_validation.first_party_result_set_sha256 = firstPartyResultSetSHA256(results);
+}
+
+function refreshOfflineSummary(report) {
+  report.receipt_validation.result_sha256 = receiptValidationResultSHA256(
+    report.receipt_validation.offline_result,
+  );
 }
 
 test('passing report proves exact targets and bidirectional overlap', () => {
@@ -283,6 +290,128 @@ test('anchored per-bundle verdicts are retained and independently checked', () =
   assert.ok(rules(validate(untrackedClient)).has('receipt_validation'));
 });
 
+test('first-party verdicts and offline bundle rows form one exact bijection', () => {
+  const deletedPair = makePassingOverlapReport(catalog);
+  deletedPair.receipt_validation.first_party_results.shift();
+  deletedPair.receipt_validation.offline_result.receipts.shift();
+  refreshFirstPartySummary(deletedPair);
+  refreshOfflineSummary(deletedPair);
+  assert.ok(rules(validate(deletedPair)).has('receipt_validation'));
+
+  const substitutedBundle = makePassingOverlapReport(catalog);
+  substitutedBundle.receipt_validation.offline_result.receipts[0].file_sha256 = 'e'.repeat(64);
+  refreshOfflineSummary(substitutedBundle);
+  assert.ok(rules(validate(substitutedBundle)).has('receipt_validation'));
+
+  const donor = makePassingOverlapReport(catalog);
+  donor.receipt_validation.first_party_results[0].bundle_sha256 = 'e'.repeat(64);
+  donor.controllers[0].mutations[0].operation_receipts[0].bundle_sha256 = 'e'.repeat(64);
+  donor.receipt_validation.offline_result.receipts[0].file_sha256 = 'e'.repeat(64);
+  refreshFirstPartySummary(donor);
+  refreshOfflineSummary(donor);
+  assert.equal(validate(donor).success, true);
+  const splicedSets = makePassingOverlapReport(catalog);
+  splicedSets.receipt_validation.offline_result.receipts[0] = structuredClone(
+    donor.receipt_validation.offline_result.receipts[0],
+  );
+  refreshOfflineSummary(splicedSets);
+  assert.ok(rules(validate(splicedSets)).has('receipt_validation'));
+
+  const duplicateOfflineBundle = makePassingOverlapReport(catalog);
+  duplicateOfflineBundle.receipt_validation.offline_result.receipts[1].file_sha256 =
+    duplicateOfflineBundle.receipt_validation.offline_result.receipts[0].file_sha256;
+  refreshOfflineSummary(duplicateOfflineBundle);
+  assert.ok(rules(validate(duplicateOfflineBundle)).has('receipt_validation'));
+
+  const reorderedOfflineRows = makePassingOverlapReport(catalog);
+  reorderedOfflineRows.receipt_validation.offline_result.receipts.reverse();
+  refreshOfflineSummary(reorderedOfflineRows);
+  assert.ok(rules(validate(reorderedOfflineRows)).has('receipt_validation'));
+
+  const staleOfflineHash = makePassingOverlapReport(catalog);
+  staleOfflineHash.receipt_validation.offline_result.receipts[0].operation_id = 'rewritten';
+  assert.ok(rules(validate(staleOfflineHash)).has('receipt_validation'));
+
+  const summaryOnly = makePassingOverlapReport(catalog);
+  delete summaryOnly.receipt_validation.offline_result;
+  assert.ok(rules(validate(summaryOnly)).has('receipt_validation'));
+});
+
+test('exact operation receipt instances cannot be overwritten or spliced', () => {
+  const auxiliaryInstance = makePassingOverlapReport(catalog);
+  const primaryMutation = auxiliaryInstance.controllers[0].mutations[0];
+  const primaryResult = auxiliaryInstance.receipt_validation.first_party_results.find(
+    (entry) => entry.request_id === primaryMutation.operation_receipts[0].request_id,
+  );
+  const auxiliaryResult = structuredClone(primaryResult);
+  auxiliaryResult.request_id = 'ffffffff-ffff-8fff-bfff-ffffffffffff';
+  auxiliaryResult.session_sequence = '1';
+  auxiliaryResult.operation = 'listWindows';
+  auxiliaryResult.request_sha256 = 'a'.repeat(64);
+  auxiliaryResult.response_sha256 = 'b'.repeat(64);
+  auxiliaryResult.bundle_sha256 = 'e'.repeat(64);
+  auxiliaryResult.target_attested = false;
+  auxiliaryResult.outcome_attested = false;
+  auxiliaryInstance.receipt_validation.first_party_results.push(auxiliaryResult);
+  primaryMutation.operation_receipts.push({
+    request_id: auxiliaryResult.request_id,
+    session_id: auxiliaryResult.session_id,
+    session_sequence: auxiliaryResult.session_sequence,
+    operation: auxiliaryResult.operation,
+    request_sha256: auxiliaryResult.request_sha256,
+    response_sha256: auxiliaryResult.response_sha256,
+    bundle_sha256: auxiliaryResult.bundle_sha256,
+  });
+  auxiliaryInstance.receipt_validation.offline_result.receipts.push({
+    operation_id: 'overlap-operation-auxiliary',
+    request_id: auxiliaryResult.request_id,
+    operation: auxiliaryResult.operation,
+    file: `${auxiliaryResult.request_id}.json`,
+    file_sha256: auxiliaryResult.bundle_sha256,
+  });
+  refreshFirstPartySummary(auxiliaryInstance);
+  refreshOfflineSummary(auxiliaryInstance);
+  assert.equal(validate(auxiliaryInstance).success, true);
+
+  const substitutedInstance = makePassingOverlapReport(catalog);
+  [
+    substitutedInstance.controllers[0].mutations[0].operation_receipts,
+    substitutedInstance.controllers[1].mutations[0].operation_receipts,
+  ] = [
+    substitutedInstance.controllers[1].mutations[0].operation_receipts,
+    substitutedInstance.controllers[0].mutations[0].operation_receipts,
+  ];
+  assert.ok(rules(validate(substitutedInstance)).has('receipt_validation'));
+
+  const duplicateInstance = makePassingOverlapReport(catalog);
+  duplicateInstance.controllers[0].mutations[2].operation_receipts = structuredClone(
+    duplicateInstance.controllers[0].mutations[0].operation_receipts,
+  );
+  assert.ok(rules(validate(duplicateInstance)).has('receipt_validation'));
+
+  const repeatedGeneration = makePassingOverlapReport(catalog);
+  const firstMutation = repeatedGeneration.controllers[0].mutations[0];
+  const laterMutation = repeatedGeneration.controllers[0].mutations[2];
+  const firstResult = repeatedGeneration.receipt_validation.first_party_results.find(
+    (entry) => entry.request_id === firstMutation.operation_receipts[0].request_id,
+  );
+  const laterResult = repeatedGeneration.receipt_validation.first_party_results.find(
+    (entry) => entry.request_id === laterMutation.operation_receipts[0].request_id,
+  );
+  laterMutation.client_pid = firstMutation.client_pid;
+  laterMutation.client_start_identity = firstMutation.client_start_identity;
+  laterResult.client = structuredClone(firstResult.client);
+  laterResult.client_instance_id = firstResult.client_instance_id;
+  laterResult.session_id = firstResult.session_id;
+  laterResult.session_sequence = '1';
+  laterMutation.operation_receipts[0].session_id = firstResult.session_id;
+  laterMutation.operation_receipts[0].session_sequence = '1';
+  refreshFirstPartySummary(repeatedGeneration);
+  const repeatedResult = validate(repeatedGeneration);
+  assert.ok(rules(repeatedResult).has('client_isolation'));
+  assert.equal(rules(repeatedResult).has('receipt_validation'), false);
+});
+
 test('controller token namespaces are run-bound and disjoint', () => {
   const report = makePassingOverlapReport(catalog);
   report.controllers[1].initial_token = report.controllers[0].initial_token;
@@ -337,6 +466,10 @@ test('unknown fields and legacy aggregate results fail closed', () => {
   const aggregate = makePassingOverlapReport(catalog);
   aggregate.invariants = { violations: 0 };
   assert.ok(rules(validate(aggregate)).has('invariant_schema'));
+
+  const legacyReport = makePassingOverlapReport(catalog);
+  legacyReport.version = 2;
+  assert.ok(rules(validate(legacyReport)).has('report_schema'));
 });
 
 test('catalog hash must match independently supplied bytes', () => {

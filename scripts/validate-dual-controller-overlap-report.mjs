@@ -42,8 +42,16 @@ function canonicalValue(value) {
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalValue(value[key])]));
 }
 
+function canonicalSHA256(value) {
+  return createHash('sha256').update(JSON.stringify(canonicalValue(value))).digest('hex');
+}
+
 export function firstPartyResultSetSHA256(results) {
-  return createHash('sha256').update(JSON.stringify(canonicalValue(results))).digest('hex');
+  return canonicalSHA256(results);
+}
+
+export function receiptValidationResultSHA256(result) {
+  return canonicalSHA256(result);
 }
 
 function positiveInteger(value) {
@@ -127,28 +135,51 @@ function validateHost(report, failures) {
   }
 }
 
-function operationClientRequirements(report) {
-  const requirements = new Map();
-  const add = (operation, primaryOperation) => {
-    const key = `${operation?.client_pid}:${operation?.client_start_identity}`;
-    requirements.set(key, { primaryOperation });
+function exactOperationReceiptReference(value) {
+  return exactKeys(value, [
+    'request_id', 'session_id', 'session_sequence', 'operation', 'request_sha256',
+    'response_sha256', 'bundle_sha256',
+  ])
+    && typeof value.request_id === 'string' && uuidV8.test(value.request_id)
+    && typeof value.session_id === 'string' && uuidV4.test(value.session_id)
+    && validCanonicalUInt64(value.session_sequence)
+    && typeof value.operation === 'string' && value.operation.length > 0
+    && hex64.test(value.request_sha256 ?? '')
+    && hex64.test(value.response_sha256 ?? '')
+    && hex64.test(value.bundle_sha256 ?? '');
+}
+
+function exactOperationReceiptReferences(values, primaryOperation) {
+  return Array.isArray(values)
+    && values.length > 0
+    && values.every(exactOperationReceiptReference)
+    && values.filter((entry) => entry.operation === primaryOperation).length === 1;
+}
+
+function operationReceiptRequirements(report) {
+  const requirements = [];
+  const add = (operation) => {
+    for (const receipt of operation?.operation_receipts ?? []) {
+      requirements.push({
+        client_pid: operation?.client_pid,
+        client_start_identity: operation?.client_start_identity,
+        receipt,
+      });
+    }
   };
   for (const controller of report.controllers ?? []) {
     for (const mutation of controller.mutations ?? []) {
-      const primaryOperation = mutation.command === 'press'
-        ? 'exactWindowTargetedHotkey'
-        : 'exactWindowTargetedTypeActions';
-      add(mutation, primaryOperation);
+      add(mutation);
     }
     for (const observation of controller.observations ?? []) {
-      add(observation, 'desktopObservation');
-      add(observation.route_receipt, 'listWindows');
+      add(observation);
+      add(observation.route_receipt);
     }
   }
   for (const checkpoint of report.restoration_checkpoints ?? []) {
     for (const observation of checkpoint.observations ?? []) {
-      add(observation, 'desktopObservation');
-      add(observation.route_receipt, 'listWindows');
+      add(observation);
+      add(observation.route_receipt);
     }
   }
   return requirements;
@@ -160,7 +191,7 @@ function validCanonicalUInt64(value) {
     && BigInt(value) <= uint64Maximum;
 }
 
-function validateFirstPartyResult(result, report, requirements) {
+function validateFirstPartyResult(result, report, requiredClientGenerations) {
   if (!exactKeys(result, [
     'valid', 'validator_id', 'trust_source', 'minimum_protocol_version', 'request_id',
     'session_id', 'session_sequence', 'predecessor_session_id', 'operation',
@@ -198,8 +229,7 @@ function validateFirstPartyResult(result, report, requirements) {
       || result.retention_basis !== 'exported_bundle') {
     return false;
   }
-  const requirement = requirements.get(`${result.client.pid}:${result.client.start_identity}`);
-  if (!requirement) return false;
+  if (!requiredClientGenerations.has(`${result.client.pid}:${result.client.start_identity}`)) return false;
   if (['exactWindowTargetedHotkey', 'exactWindowTargetedTypeActions'].includes(result.operation)) {
     return result.target_attested === true && result.outcome_attested === true;
   }
@@ -207,10 +237,54 @@ function validateFirstPartyResult(result, report, requirements) {
   return true;
 }
 
+function validateOfflineResult(result, validation) {
+  if (!exactKeys(result, ['success', 'adapter', 'receipts', 'failures'])
+      || result.success !== true
+      || !exactKeys(result.adapter, ['id', 'api_version', 'sha256'])
+      || result.adapter.id !== validation?.adapter_id
+      || result.adapter.api_version !== 3
+      || result.adapter.sha256 !== validation?.adapter_sha256
+      || !Array.isArray(result.receipts) || result.receipts.length === 0
+      || !Array.isArray(result.failures) || result.failures.length !== 0) {
+    return false;
+  }
+  const canonicalOrder = [...result.receipts].sort((left, right) => (
+    `${left?.request_id ?? ''}`.localeCompare(`${right?.request_id ?? ''}`)
+  ));
+  if (JSON.stringify(result.receipts) !== JSON.stringify(canonicalOrder)) return false;
+  return result.receipts.every((receipt) => exactKeys(receipt, [
+    'operation_id', 'request_id', 'operation', 'file', 'file_sha256',
+  ])
+    && typeof receipt.operation_id === 'string' && receipt.operation_id.length > 0
+    && typeof receipt.request_id === 'string' && uuidV8.test(receipt.request_id)
+    && typeof receipt.operation === 'string' && receipt.operation.length > 0
+    && receipt.file === `${receipt.request_id}.json`
+    && hex64.test(receipt.file_sha256 ?? ''));
+}
+
+function receiptReferenceMatchesResult(requirement, result) {
+  const receipt = requirement.receipt;
+  return exactOperationReceiptReference(receipt)
+    && result?.client?.pid === requirement.client_pid
+    && result?.client?.start_identity === requirement.client_start_identity
+    && result?.request_id === receipt.request_id
+    && result?.session_id === receipt.session_id
+    && result?.session_sequence === receipt.session_sequence
+    && result.operation === receipt.operation
+    && result.request_sha256 === receipt.request_sha256
+    && result.response_sha256 === receipt.response_sha256
+    && result.bundle_sha256 === receipt.bundle_sha256;
+}
+
 function validateReceiptCertification(report, failures) {
   const validation = report.receipt_validation;
   const results = validation?.first_party_results;
-  const requirements = operationClientRequirements(report);
+  const offlineResult = validation?.offline_result;
+  const offlineReceipts = offlineResult?.receipts;
+  const requirements = operationReceiptRequirements(report);
+  const requiredClientGenerations = new Set(requirements.map((entry) => (
+    `${entry.client_pid}:${entry.client_start_identity}`
+  )));
   const canonicalOrder = Array.isArray(results)
     ? [...results].sort((left, right) => (
       `${left?.request_id ?? ''}`.localeCompare(`${right?.request_id ?? ''}`)
@@ -225,24 +299,46 @@ function validateReceiptCertification(report, failures) {
   const listenerIdentities = new Set(Array.isArray(results) ? results.map((entry) => (
     `${entry?.listener_instance_id}:${entry?.listener_public_key_sha256}`
   )) : []);
-  const resultClients = new Map();
-  for (const result of results ?? []) {
-    const key = `${result?.client?.pid}:${result?.client?.start_identity}`;
-    if (!resultClients.has(key)) resultClients.set(key, new Set());
-    resultClients.get(key).add(result?.operation);
-  }
+  const offlineRequestIDs = Array.isArray(offlineReceipts)
+    ? offlineReceipts.map((entry) => entry?.request_id)
+    : [];
+  const offlineOperationIDs = Array.isArray(offlineReceipts)
+    ? offlineReceipts.map((entry) => entry?.operation_id)
+    : [];
+  const offlineBundleSHA256s = Array.isArray(offlineReceipts)
+    ? offlineReceipts.map((entry) => entry?.file_sha256)
+    : [];
   let resultSetSHA256 = null;
+  let offlineResultSHA256 = null;
   try {
     if (Array.isArray(results)) resultSetSHA256 = firstPartyResultSetSHA256(results);
+    if (offlineResult) offlineResultSHA256 = receiptValidationResultSHA256(offlineResult);
   } catch {
     resultSetSHA256 = null;
+    offlineResultSHA256 = null;
   }
+  const unmatchedResults = Array.isArray(results) ? [...results] : [];
+  const requirementsMatch = requirements.every((requirement) => {
+    const matchingIndexes = unmatchedResults.flatMap((result, index) => (
+      receiptReferenceMatchesResult(requirement, result) ? [index] : []
+    ));
+    if (matchingIndexes.length !== 1) return false;
+    unmatchedResults.splice(matchingIndexes[0], 1);
+    return true;
+  });
+  const firstPartyOfflinePairs = Array.isArray(results) && Array.isArray(offlineReceipts)
+    ? results.map((entry) => [entry.request_id, entry.operation, entry.bundle_sha256])
+    : [];
+  const offlineFirstPartyPairs = Array.isArray(offlineReceipts)
+    ? offlineReceipts.map((entry) => [entry.request_id, entry.operation, entry.file_sha256])
+    : [];
   if (!exactKeys(validation, [
-    'success', 'first_party_validator_id', 'first_party_trust_source',
+    'version', 'success', 'first_party_validator_id', 'first_party_trust_source',
     'first_party_executable_sha256', 'first_party_result_set_sha256',
     'first_party_result_count', 'first_party_results', 'adapter_id', 'adapter_sha256',
-    'contract_sha256', 'result_sha256', 'receipt_count', 'session_count',
-  ]) || validation?.success !== true
+    'contract_sha256', 'result_sha256', 'offline_result', 'receipt_count', 'session_count',
+  ]) || validation?.version !== 1
+      || validation.success !== true
       || validation.first_party_validator_id !== 'peekaboo-bridge-receipt-validate-v1'
       || validation.first_party_trust_source !== 'authenticated_live_listener'
       || !hex64.test(validation.first_party_executable_sha256 ?? '')
@@ -257,7 +353,11 @@ function validateReceiptCertification(report, failures) {
       || !hex64.test(validation.adapter_sha256 ?? '')
       || !hex64.test(validation.contract_sha256 ?? '')
       || !hex64.test(validation.result_sha256 ?? '')
+      || validation.result_sha256 !== offlineResultSHA256
+      || !validateOfflineResult(offlineResult, validation)
       || !positiveInteger(validation.receipt_count)
+      || !Array.isArray(offlineReceipts)
+      || validation.receipt_count !== offlineReceipts.length
       || !positiveInteger(validation.session_count)
       || validation.session_count !== sessionIDs.size
       || JSON.stringify(results) !== JSON.stringify(canonicalOrder)
@@ -265,10 +365,17 @@ function validateReceiptCertification(report, failures) {
       || new Set(bundleSHA256s).size !== results.length
       || new Set(sessionClaims).size !== results.length
       || listenerIdentities.size !== 1
-      || results.some((result) => !validateFirstPartyResult(result, report, requirements))
-      || [...requirements].some(([key, requirement]) => (
-        !resultClients.get(key)?.has(requirement.primaryOperation)
-      ))) {
+      || results.some((result) => !validateFirstPartyResult(
+        result,
+        report,
+        requiredClientGenerations,
+      ))
+      || new Set(offlineRequestIDs).size !== offlineReceipts.length
+      || new Set(offlineOperationIDs).size !== offlineReceipts.length
+      || new Set(offlineBundleSHA256s).size !== offlineReceipts.length
+      || JSON.stringify(firstPartyOfflinePairs) !== JSON.stringify(offlineFirstPartyPairs)
+      || !requirementsMatch
+      || unmatchedResults.length !== 0) {
     failures.push(failure(
       'receipt_validation',
       'Overlap report lacks one complete independently checked authenticated verdict set',
@@ -293,7 +400,7 @@ function validateMutation(entry, controller, target, cli, host, index, failures)
     'success', 'effect', 'mutation_dispatched', 'retry_safe', 'foreground', 'client_pid',
     'client_start_identity', 'reported_target_pid', 'reported_target_window_id',
     'target_start_identity_after', 'delivery_mode', 'client_executable_path',
-    'host_pid', 'host_start_identity', 'host_code_signature_hash',
+    'host_pid', 'host_start_identity', 'host_code_signature_hash', 'operation_receipts',
   ]) || entry.index !== index
       || !['type', 'press'].includes(entry.command)
       || !['workflow', 'restoration'].includes(entry.phase)
@@ -314,6 +421,9 @@ function validateMutation(entry, controller, target, cli, host, index, failures)
       || entry.success !== true
       || !['confirmed', 'unverifiable'].includes(entry.effect)
       || entry.mutation_dispatched !== true || entry.retry_safe !== false
+      || !exactOperationReceiptReferences(entry.operation_receipts, entry.command === 'press'
+        ? 'exactWindowTargetedHotkey'
+        : 'exactWindowTargetedTypeActions')
       || entry.foreground !== false) {
     failures.push(failure('mutation_contract', `Controller ${controller} mutation ${index} is not exact`, controller));
   }
@@ -325,7 +435,7 @@ function validateObservation(entry, controller, target, cli, host, index, failur
     'expected_token', 'token_present', 'other_token_absent', 'client_pid',
     'client_start_identity', 'reported_window_id', 'target_start_identity_after', 'route_receipt',
     'client_executable_path', 'host_pid', 'host_start_identity', 'host_code_signature_hash',
-    'result_success',
+    'result_success', 'operation_receipts',
   ]) || entry.index !== index
       || !finiteTimestamp(entry.started_at) || !finiteTimestamp(entry.finished_at)
       || entry.finished_at <= entry.started_at
@@ -340,6 +450,7 @@ function validateObservation(entry, controller, target, cli, host, index, failur
       || entry.reported_window_id !== target.window_id
       || entry.target_start_identity_after !== target.start_identity
       || entry.result_success !== true
+      || !exactOperationReceiptReferences(entry.operation_receipts, 'desktopObservation')
       || typeof entry.expected_token !== 'string' || entry.expected_token.length === 0
       || entry.token_present !== true || entry.other_token_absent !== true) {
     failures.push(failure('observation_contract', `Controller ${controller} observation ${index} is not exact`, controller));
@@ -348,7 +459,7 @@ function validateObservation(entry, controller, target, cli, host, index, failur
   if (!exactKeys(route, [
     'client_pid', 'client_start_identity', 'client_executable_path', 'host_pid',
     'host_start_identity', 'host_code_signature_hash', 'reported_target_pid',
-    'reported_window_id', 'target_start_identity_after', 'result_success',
+    'reported_window_id', 'target_start_identity_after', 'result_success', 'operation_receipts',
   ]) || !positiveInteger(route.client_pid)
       || typeof route.client_start_identity !== 'string'
       || !decimalIdentity.test(route.client_start_identity)
@@ -359,6 +470,7 @@ function validateObservation(entry, controller, target, cli, host, index, failur
       || route.reported_target_pid !== target.pid
       || route.reported_window_id !== target.window_id
       || route.target_start_identity_after !== target.start_identity
+      || !exactOperationReceiptReferences(route.operation_receipts, 'listWindows')
       || route.result_success !== true) {
     failures.push(failure('observation_route', `Controller ${controller} route receipt ${index} is not exact`, controller));
   }
@@ -568,8 +680,8 @@ export function validateOverlapCertification(catalog, report, expectedCatalogSHA
     'version', 'catalog_sha256', 'run_id', 'source_commit', 'cli', 'host', 'sentinel',
     'controllers', 'overlap', 'invariants', 'cursor_observation', 'restoration',
     'restoration_checkpoints', 'cleanup', 'receipt_validation', 'evidence',
-  ]) || report?.version !== 2) {
-    failures.push(failure('report_schema', 'Report must be one closed version-2 object'));
+  ]) || report?.version !== 3) {
+    failures.push(failure('report_schema', 'Report must be one closed version-3 object'));
     return { success: false, failures };
   }
   if (!hex64.test(report.catalog_sha256 ?? '')
@@ -788,6 +900,7 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
     mutation_dispatched: true,
     retry_safe: false,
     foreground: false,
+    operation_receipts: [],
   });
   const observation = (index, startedAt, token, targetReceipt) => ({
     index,
@@ -815,10 +928,12 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
       reported_window_id: targetReceipt.window_id,
       target_start_identity_after: targetReceipt.start_identity,
       result_success: true,
+      operation_receipts: [],
     },
     expected_token: token,
     token_present: true,
     other_token_absent: true,
+    operation_receipts: [],
   });
   const checkpointObservation = (index, startedAt, token, targetReceipt, generationSeed) => {
     const receipt = observation(index, startedAt, token, targetReceipt);
@@ -909,6 +1024,7 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
     },
   ];
   const receiptClient = (operation, primaryOperation) => ({
+    entry: operation,
     pid: operation.client_pid,
     start_identity: operation.client_start_identity,
     operation: primaryOperation,
@@ -930,7 +1046,7 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
   const paddedHex = (value) => value.toString(16).padStart(12, '0');
   const firstPartyResults = expectedReceiptClients.map((client, index) => {
     const ordinal = index + 1;
-    return {
+    const result = {
       valid: true,
       validator_id: 'peekaboo-bridge-receipt-validate-v1',
       trust_source: 'authenticated_live_listener',
@@ -961,9 +1077,35 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
       outcome_attested: !['desktopObservation', 'listWindows'].includes(client.operation),
       retention_basis: 'exported_bundle',
     };
+    client.entry.operation_receipts = [{
+      request_id: result.request_id,
+      session_id: result.session_id,
+      session_sequence: result.session_sequence,
+      operation: result.operation,
+      request_sha256: result.request_sha256,
+      response_sha256: result.response_sha256,
+      bundle_sha256: result.bundle_sha256,
+    }];
+    return result;
   });
+  const offlineResult = {
+    success: true,
+    adapter: {
+      id: 'peekaboo-bridge-operation-receipt-bundle-1.29-logical-session-v1',
+      api_version: 3,
+      sha256: '1'.repeat(64),
+    },
+    receipts: firstPartyResults.map((result, index) => ({
+      operation_id: `overlap-operation-${String(index + 1).padStart(3, '0')}`,
+      request_id: result.request_id,
+      operation: result.operation,
+      file: `${result.request_id}.json`,
+      file_sha256: result.bundle_sha256,
+    })),
+    failures: [],
+  };
   const report = {
-    version: 2,
+    version: 3,
     catalog_sha256: catalogSHA256,
     run_id: runID,
     source_commit: '0123456789abcdef0123456789abcdef01234567',
@@ -1051,6 +1193,7 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
       { id: 'B', pid: 202, start_identity: '20200', gone: true },
     ],
     receipt_validation: {
+      version: 1,
       success: true,
       first_party_validator_id: 'peekaboo-bridge-receipt-validate-v1',
       first_party_trust_source: 'authenticated_live_listener',
@@ -1061,7 +1204,8 @@ export function makePassingOverlapReport(catalog, catalogSHA256 = 'f'.repeat(64)
       adapter_id: 'peekaboo-bridge-operation-receipt-bundle-1.29-logical-session-v1',
       adapter_sha256: '1'.repeat(64),
       contract_sha256: '2'.repeat(64),
-      result_sha256: '3'.repeat(64),
+      result_sha256: receiptValidationResultSHA256(offlineResult),
+      offline_result: offlineResult,
       receipt_count: firstPartyResults.length,
       session_count: new Set(firstPartyResults.map((entry) => entry.session_id)).size,
     },
@@ -1123,6 +1267,17 @@ export function runOverlapContractSelfTest(catalog, catalogSHA256) {
     }, 'receipt_validation'],
     ['missing first-party receipt verdict', (report) => {
       report.receipt_validation.first_party_result_count -= 1;
+    }, 'receipt_validation'],
+    ['unversioned receipt summary', (report) => {
+      delete report.receipt_validation.version;
+    }, 'receipt_validation'],
+    ['offline result changed after digest', (report) => {
+      report.receipt_validation.offline_result.receipts[0].operation_id = 'rewritten';
+    }, 'receipt_validation'],
+    ['duplicate operation receipt instance', (report) => {
+      report.controllers[0].mutations[1].operation_receipts = structuredClone(
+        report.controllers[0].mutations[0].operation_receipts,
+      );
     }, 'receipt_validation'],
   ];
   for (const [name, mutate, expectedRule] of corruptions) {

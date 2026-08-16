@@ -2129,7 +2129,7 @@ jq -n \
 ' > "$ARTIFACT_ROOT/overlap.json"
 
 jq -n \
-    --argjson version 2 --arg catalogSHA "$CATALOG_SHA256" --arg runID "$RUN_ID" \
+    --argjson version 3 --arg catalogSHA "$CATALOG_SHA256" --arg runID "$RUN_ID" \
     --arg source "$SOURCE_COMMIT" --arg cliCDHash "$CLI_CDHASH" --arg cliSHA "$CLI_SHA256" \
     --arg cliPath "$PEEKABOO_BIN" \
     --argjson hostPID "$HOST_PID" --arg hostIdentity "$HOST_IDENTITY" \
@@ -2146,6 +2146,14 @@ jq -n \
     --slurpfile restorationCheckpoints "$ARTIFACT_ROOT/restoration-checkpoints.json" \
     --slurpfile receiptValidation "$ARTIFACT_ROOT/receipt-validation-summary.json" \
     --argjson monitorClean "$MONITOR_CLEAN" --argjson aGone "$A_GONE" --argjson bGone "$B_GONE" '
+    [
+        $a[0].mutations[]?.operation_receipts[]?,
+        $b[0].mutations[]?.operation_receipts[]?,
+        ($a[0].observations[]? | .operation_receipts[]?, .route_receipt.operation_receipts[]?),
+        ($b[0].observations[]? | .operation_receipts[]?, .route_receipt.operation_receipts[]?),
+        ($restorationCheckpoints[0][]?.observations[]? |
+            .operation_receipts[]?, .route_receipt.operation_receipts[]?)
+    ] as $operationReceipts |
     {
         version: $version,
         catalog_sha256: $catalogSHA,
@@ -2215,6 +2223,23 @@ jq -n \
                 ($receiptValidation[0].first_party_results | type) == "array" and
                 ($receiptValidation[0].first_party_results | length) ==
                     $receiptValidation[0].first_party_result_count
+            ),
+            first_party_offline_bundle_bijection: (
+                [$receiptValidation[0].first_party_results[]?.bundle_sha256] | sort
+            ) == (
+                [$receiptValidation[0].offline_result.receipts[]?.file_sha256] | sort
+            ),
+            exact_operation_request_session_binding: (
+                ($operationReceipts | length) > 0 and
+                all($operationReceipts[];
+                    (.request_id | type) == "string" and
+                    (.session_id | type) == "string" and
+                    (.session_sequence | type) == "string" and
+                    (.request_sha256 | type) == "string" and
+                    (.response_sha256 | type) == "string" and
+                    (.bundle_sha256 | type) == "string") and
+                ([$operationReceipts[].request_id] | unique | length) ==
+                    ($operationReceipts | length)
             )
         }
     }
