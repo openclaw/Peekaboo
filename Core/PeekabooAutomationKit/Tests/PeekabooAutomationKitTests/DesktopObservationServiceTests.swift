@@ -161,7 +161,7 @@ extension DesktopObservationServiceTests {
         XCTAssertEqual(automation.detectCalls, 0)
     }
 
-    func testReusedPIDAndWindowIDFailBeforeCapture() async throws {
+    func testReusedPIDAndWindowIDFailWhenCaptureReceiptDisagrees() async throws {
         let oldApplication = ServiceApplicationInfo(
             processIdentifier: 123,
             processStartIdentity: 100,
@@ -185,12 +185,51 @@ extension DesktopObservationServiceTests {
             _ = try await service.observe(DesktopObservationRequest(
                 target: .pid(123, window: .id(42)),
                 detection: DesktopDetectionOptions(mode: .none)))
-            XCTFail("Expected reused PID/window ID to fail before capture")
+            XCTFail("Expected reused PID/window ID to fail closed")
         } catch is DesktopObservationError {
             // Expected.
         }
 
-        XCTAssertTrue(capture.operations.isEmpty)
+        XCTAssertEqual(capture.operations, [
+            .windowID(42, .logical1x, .auto),
+            .windowID(42, .logical1x, .auto),
+        ])
+    }
+
+    func testExactPIDObservationBindsCaptureAppMetadataWithoutInventory() async throws {
+        let application = ServiceApplicationInfo(
+            processIdentifier: 123,
+            processStartIdentity: 700,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture",
+            windowCount: 1)
+        let window = Self.window(
+            id: 42,
+            title: "Captured",
+            bounds: CGRect(x: 100, y: 100, width: 400, height: 300),
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: application.processIdentifier,
+                ownerProcessStartIdentity: 700,
+                capturedBounds: CGRect(x: 100, y: 100, width: 400, height: 300)))
+        let applications = RecordingApplicationService(applications: [application], windows: [window])
+        let service = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(
+                result: Self.captureResult(app: application, window: window)),
+            automation: RecordingUIAutomationService(),
+            applications: applications,
+            exactWindowMetadataProvider: StableExactWindowMetadataProvider())
+
+        let result = try await service.observe(DesktopObservationRequest(
+            target: .pid(application.processIdentifier, window: .id(42)),
+            capture: DesktopCaptureOptions(engine: .legacy),
+            detection: DesktopDetectionOptions(mode: .none)))
+
+        XCTAssertEqual(applications.listApplicationsCalls, 0)
+        XCTAssertEqual(result.diagnostics.stateSnapshot?.runningApplicationCount, 0)
+        XCTAssertEqual(result.target.app?.bundleIdentifier, application.bundleIdentifier)
+        XCTAssertEqual(result.target.detectionContext?.applicationBundleId, application.bundleIdentifier)
+        XCTAssertEqual(result.target.app?.processStartIdentity, application.processStartIdentity)
     }
 
     func testGenerationlessRemoteExactObservationStaysReadOnly() async throws {

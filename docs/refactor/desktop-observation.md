@@ -239,6 +239,7 @@ Landed:
 - `peekaboo capture live` now keeps scope resolution, option normalization, output rendering, focus policy, and Commander binding in focused command-support files.
 - `peekaboo capture live` now applies the resolution cap consistently to live frames whose source images lack reusable color-space metadata.
 - `peekaboo see --mode screen --json` now suppresses human screen-summary lines so stdout remains a single JSON document.
+- Exact PID/window observations skip broad application inventory when WindowServer supplies a matching owner and live process-generation receipt; capture metadata then hydrates the bundle identity, while generationless hosts retain the read-only inventory fallback.
 - Screen capture operations now keep ScreenCaptureKit permission probing inside the same serialized transaction as capture work; `peekaboo capture live` now honors `--capture-engine`, and live area capture defaults to the native `screencapture -R` path so it stays fast during concurrent `see` commands.
 - Legacy window capture now tries the private ScreenCaptureKit window-ID lookup behind `screencapture -l <windowID>` before falling back to the system `screencapture` binary and public ScreenCaptureKit enumeration.
 - Legacy window capture fallbacks now live in focused private-ScreenCaptureKit and system-screencapture operator companions; `LegacyScreenCaptureOperator+Support.swift` is back to shared scale/display/configuration helpers.
@@ -880,7 +881,7 @@ These identities must flow through:
 
 ### Request-Scoped Desktop State
 
-Observation should build one request-scoped desktop inventory and pass it through the pipeline.
+Broad observation should build one request-scoped desktop inventory and pass it through the pipeline. An exact PID/window request may instead bind directly to matching WindowServer owner-generation metadata, then require the capture receipt to confirm and hydrate that same target; if generation evidence is unavailable, it falls back to the read-only inventory path.
 
 ```swift
 public struct DesktopStateSnapshot: Sendable {

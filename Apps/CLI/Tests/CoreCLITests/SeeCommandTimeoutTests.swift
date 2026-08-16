@@ -74,25 +74,28 @@ struct SeeCommandTimeoutTests {
             .appendingPathComponent("peekaboo-local-timeout-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = DesktopMutationWatermarkStore(directoryURL: root)
+        let gate = IgnoredCancellationWorkGate()
+        defer { Task { await gate.release() } }
 
-        await #expect(throws: PeekabooError.self) {
+        let operation = Task { @MainActor in
             try await withMainActorCommandTimeout(
                 seconds: 0.01,
                 operationName: "delayed mutation",
                 desktopMutationWatermarkStore: store
             ) {
-                await withCheckedContinuation { continuation in
-                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
-                        continuation.resume(returning: ())
-                    }
-                }
+                await gate.waitUntilReleased()
             }
+        }
+        await gate.waitUntilStarted()
+        await #expect(throws: PeekabooError.self) {
+            try await operation.value
         }
 
         let firstPendingRead = try #require(store.effectiveWatermark())
         try await Task.sleep(for: .milliseconds(2))
         #expect(try #require(store.effectiveWatermark()) > firstPendingRead)
 
+        await gate.release()
         #expect(try await Self.waitForStableWatermark(store))
     }
 
@@ -105,18 +108,20 @@ struct SeeCommandTimeoutTests {
         let store = DesktopMutationWatermarkStore(directoryURL: root)
         let tracker = InteractionMutationTracker(desktopMutationWatermarkStore: store)
         #expect(try tracker.beginDurableMutation())
+        let gate = IgnoredCancellationWorkGate()
+        defer { Task { await gate.release() } }
 
-        await #expect(throws: CaptureError.self) {
+        let operation = Task { @MainActor in
             try await SeeCommand.withWallClockTimeout(
                 seconds: 0.01,
                 interactionMutationTracker: tracker
             ) {
-                await withCheckedContinuation { continuation in
-                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
-                        continuation.resume(returning: ())
-                    }
-                }
+                await gate.waitUntilReleased()
             }
+        }
+        await gate.waitUntilStarted()
+        await #expect(throws: CaptureError.self) {
+            try await operation.value
         }
 
         #expect(try tracker.completeDurableMutation(through: Date()) == nil)
@@ -124,6 +129,7 @@ struct SeeCommandTimeoutTests {
         try await Task.sleep(for: .milliseconds(2))
         #expect(try #require(store.effectiveWatermark()) > firstPendingRead)
 
+        await gate.release()
         #expect(try await Self.waitForStableWatermark(store))
     }
 
@@ -145,5 +151,38 @@ struct SeeCommandTimeoutTests {
         } while clock.now < deadline
 
         return false
+    }
+}
+
+private actor IgnoredCancellationWorkGate {
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var startedContinuations: [CheckedContinuation<Void, Never>] = []
+    private var released = false
+    private var started = false
+
+    func waitUntilReleased() async {
+        self.started = true
+        let startedContinuations = self.startedContinuations
+        self.startedContinuations.removeAll()
+        for continuation in startedContinuations {
+            continuation.resume()
+        }
+        guard !self.released else { return }
+        await withCheckedContinuation { continuation in
+            self.releaseContinuation = continuation
+        }
+    }
+
+    func waitUntilStarted() async {
+        guard !self.started else { return }
+        await withCheckedContinuation { continuation in
+            self.startedContinuations.append(continuation)
+        }
+    }
+
+    func release() {
+        self.released = true
+        self.releaseContinuation?.resume()
+        self.releaseContinuation = nil
     }
 }

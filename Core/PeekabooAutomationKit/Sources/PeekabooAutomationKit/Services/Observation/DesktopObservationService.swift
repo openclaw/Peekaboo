@@ -644,8 +644,13 @@ public final class DesktopObservationService: DesktopObservationActionResultProv
             }
             let capture = Self.normalize(capture: rawCapture, for: target)
             let captureBoundTarget = Self.bindingCaptureReceipt(to: target, capture: capture)
+            let captureBoundResolution = UIAutomationActionResult(
+                payload: captureBoundTarget,
+                outcome: resolution.outcome,
+                targetIdentity: resolution.targetIdentity,
+                selectedLeafEvidence: resolution.selectedLeafEvidence)
             let captureResolution = try Self.composingForegroundCapture(
-                with: resolution,
+                with: captureBoundResolution,
                 target: captureBoundTarget,
                 request: request,
                 requireCompatibleTarget: true)

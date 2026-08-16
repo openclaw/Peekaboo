@@ -18,6 +18,11 @@ public final class DesktopStateSnapshotProvider: DesktopStateSnapshotProviding {
         case .allScreens, .area, .menubar, .menubarPopover, .screen, .windowID:
             return DesktopStateSnapshot()
 
+        case let .pid(_, window) where window?.isExactID == true:
+            // Exact PID/window observations resolve the live owner and process generation directly from
+            // WindowServer metadata. Older generationless hosts fall back to application discovery in the resolver.
+            return DesktopStateSnapshot()
+
         case .app, .pid:
             return try await self.snapshotWithRunningApplications(frontmost: nil)
 
@@ -34,6 +39,15 @@ public final class DesktopStateSnapshotProvider: DesktopStateSnapshotProviding {
         return DesktopStateSnapshot(
             runningApplications: applications.map(ApplicationIdentity.init),
             frontmostApplication: frontmost.map(ApplicationIdentity.init))
+    }
+}
+
+extension WindowSelection {
+    fileprivate var isExactID: Bool {
+        if case .id = self {
+            return true
+        }
+        return false
     }
 }
 

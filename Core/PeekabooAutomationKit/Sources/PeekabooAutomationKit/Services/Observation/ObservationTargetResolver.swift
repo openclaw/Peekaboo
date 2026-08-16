@@ -102,14 +102,18 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
         selection: WindowSelection?,
         snapshot: DesktopStateSnapshot) async throws -> ResolvedObservationTarget
     {
-        let app: ServiceApplicationInfo? = if let snapshotApp = snapshot.runningApplications
-            .first(where: { $0.processIdentifier == pid })
+        if let snapshotApp = snapshot.runningApplications.first(where: { $0.processIdentifier == pid }) {
+            return try await self.resolveApplication(
+                Self.serviceApplicationInfo(from: snapshotApp),
+                selection: selection ?? .automatic)
+        }
+        if case let .id(windowID)? = selection,
+           let exact = try self.resolveExactWindowIfAvailable(windowID, expectedPID: pid)
         {
-            Self.serviceApplicationInfo(from: snapshotApp)
-        } else {
-            try await self.fallbackApplication(pid: pid)
+            return exact
         }
 
+        let app = try await self.fallbackApplication(pid: pid)
         guard let app else {
             throw DesktopObservationError.targetNotFound("pid \(pid)")
         }
@@ -311,6 +315,42 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
                 "window id \(windowID) owned by PID \(app.processIdentifier)")
         }
 
+        return Self.resolvedExactWindow(windowID, app: app, metadata: metadata)
+    }
+
+    private func resolveExactWindowIfAvailable(
+        _ windowID: CGWindowID,
+        expectedPID: Int32) throws -> ResolvedObservationTarget?
+    {
+        guard let metadata = self.exactWindowMetadataProvider.metadata(for: windowID) else {
+            return nil
+        }
+        guard metadata.ownerProcessIdentifier == expectedPID else {
+            throw DesktopObservationError.targetNotFound(
+                "window id \(windowID) owned by PID \(expectedPID)")
+        }
+        guard let liveProcessStartIdentity = self.exactWindowMetadataProvider.processStartIdentity(for: expectedPID)
+        else {
+            return nil
+        }
+        guard liveProcessStartIdentity == metadata.ownerProcessStartIdentity else {
+            throw DesktopObservationError.targetNotFound(
+                "live process generation for PID \(expectedPID)")
+        }
+        let app = ServiceApplicationInfo(
+            processIdentifier: expectedPID,
+            processStartIdentity: metadata.ownerProcessStartIdentity,
+            bundleIdentifier: nil,
+            name: metadata.applicationName ?? "PID:\(expectedPID)",
+            windowCount: 1)
+        return Self.resolvedExactWindow(windowID, app: app, metadata: metadata)
+    }
+
+    private static func resolvedExactWindow(
+        _ windowID: CGWindowID,
+        app: ServiceApplicationInfo,
+        metadata: ExactWindowObservationMetadata) -> ResolvedObservationTarget
+    {
         let window = WindowIdentity(
             windowID: Int(windowID),
             title: metadata.title,
