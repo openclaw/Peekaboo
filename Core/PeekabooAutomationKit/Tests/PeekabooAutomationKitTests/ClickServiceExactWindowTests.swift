@@ -1,12 +1,86 @@
+import AXorcist
 import CoreGraphics
 import Foundation
 import PeekabooAutomationKitTestSupport
+import enum PeekabooFoundation.ClickType
 import struct PeekabooFoundation.DesktopActionFailure
+import struct PeekabooFoundation.DesktopActionOutcome
 import enum PeekabooFoundation.PeekabooError
 import Testing
 @testable import PeekabooAutomationKit
 
 struct ClickServiceExactWindowTests {
+    @Test
+    @MainActor
+    func `Middle and triple clicks use only the exact-window routed synthesis owner`() async throws {
+        let identity = try WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: getpid(),
+            ownerProcessStartIdentity: #require(SystemIdentityResolver.processStartIdentity(getpid())),
+            capturedBounds: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let cases: [(ClickType, MouseButton, Int, Int)] = [
+            (.middle, .middle, 1, 3),
+            (.triple, .left, 3, 7),
+        ]
+
+        for (clickType, button, count, units) in cases {
+            let outcome = DesktopActionOutcome.dispatchedUnverified(
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .init(units))
+            let synthetic = ClickRecordingSyntheticInputDriver(targetedClickOutcome: outcome)
+            let service = ClickService(
+                snapshotManager: InMemorySnapshotManager(),
+                inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+                syntheticInputDriver: synthetic,
+                exactWindowIdentityValidator: { candidate, bounds in
+                    candidate == identity && bounds == identity.capturedBounds
+                })
+
+            let result = try await service.click(
+                target: .coordinates(CGPoint(x: 10, y: 20)),
+                clickType: clickType,
+                snapshotId: nil,
+                automationTarget: .exactWindow(.init(
+                    identity: identity,
+                    bounds: #require(identity.capturedBounds))),
+                validatesProcessIdentity: true)
+
+            #expect(result.path == .synth)
+            #expect(result.outcome == outcome)
+            #expect(result.outcome.dispatchState.unitCount?.rawValue == units)
+            #expect(synthetic.events == [
+                .targetedClick(
+                    point: CGPoint(x: 10, y: 20),
+                    button: button,
+                    count: count,
+                    targetProcessIdentifier: identity.ownerProcessIdentifier,
+                    targetWindowID: CGWindowID(identity.windowID)),
+            ])
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Middle and triple process-only requests refuse before synthesis`() async {
+        for clickType in [ClickType.middle, .triple] {
+            let synthetic = ClickRecordingSyntheticInputDriver()
+            let service = ClickService(
+                snapshotManager: InMemorySnapshotManager(),
+                inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+                syntheticInputDriver: synthetic)
+
+            await #expect(throws: PeekabooError.self) {
+                _ = try await service.click(
+                    target: .elementId("B1"),
+                    clickType: clickType,
+                    snapshotId: nil,
+                    targetProcessIdentifier: 12345)
+            }
+            #expect(synthetic.events.isEmpty)
+        }
+    }
+
     @Test
     @MainActor
     func `Snapshot refinement cannot replace the caller process generation`() async throws {

@@ -32,7 +32,14 @@ public enum ClickType: String, Sendable, Codable {
     case single
     case right
     case double
+    case middle
+    case triple
     case longPress
+
+    /// Click variants introduced with the protocol-1.30 stateless pointer vocabulary.
+    public var requiresStatelessVariantSupport: Bool {
+        self == .middle || self == .triple
+    }
 }
 
 // MARK: - Scroll & Swipe
@@ -233,6 +240,8 @@ extension ClickType: CustomStringConvertible {
         case .single: "single"
         case .right: "right"
         case .double: "double"
+        case .middle: "middle"
+        case .triple: "triple"
         case .longPress: "long press"
         }
     }

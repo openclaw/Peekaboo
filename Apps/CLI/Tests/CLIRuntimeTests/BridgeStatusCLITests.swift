@@ -128,6 +128,37 @@ struct BridgeStatusCLITests {
     }
 
     @Test
+    func `explicit missing Bridge socket blocks middle click local fallback`() async throws {
+        guard TestChildProcess.canLocatePeekabooBinary() else {
+            Issue.record("Build peekaboo before running CLI runtime tests.")
+            return
+        }
+
+        let socketPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-missing-middle-click-\(UUID().uuidString).sock").path
+        let result = try await TestChildProcess.runPeekaboo(
+            [
+                "click", "--on", "B1", "--snapshot", "fixture", "--middle",
+                "--bridge-socket", socketPath,
+                "--json",
+            ],
+            isolateFromRemoteHosts: false
+        )
+
+        #expect(result.status == .exited(1))
+        #expect(result.standardError.isEmpty)
+
+        let object = try JSONSerialization.jsonObject(with: Data(result.standardOutput.utf8))
+        let json = try #require(object as? [String: Any])
+        let error = try #require(json["error"] as? [String: Any])
+        #expect(json["success"] as? Bool == false)
+        #expect(error["code"] as? String == "BRIDGE_UNAVAILABLE")
+        #expect((error["message"] as? String)?.contains(socketPath) == true)
+        #expect(!result.standardOutput.contains("Runtime host: local"))
+        #expect(!result.standardOutput.contains("SNAPSHOT_NOT_FOUND"))
+    }
+
+    @Test
     func `no remote explicitly permits local execution alongside a socket override`() async throws {
         guard TestChildProcess.canLocatePeekabooBinary() else {
             Issue.record("Build peekaboo before running CLI runtime tests.")

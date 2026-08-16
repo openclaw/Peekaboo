@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import MCP
 import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
@@ -748,6 +749,102 @@ extension MCPToolExecutionTests {
     }
 
     @Test
+    func `Click tool rejects every conflicting variant before snapshot lookup or dispatch`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let variants = ["double", "right", "middle", "triple"]
+        for first in variants.indices {
+            for second in variants.indices where first < second {
+                let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+                let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
+                let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: [
+                    "coords": "40,50",
+                    "foreground": true,
+                    variants[first]: true,
+                    variants[second]: true,
+                ]))
+
+                #expect(response.isError)
+                #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+                #expect(response.meta?.objectValue?["retry_safe"] == .bool(true))
+                #expect(await MainActor.run { automation.clickCalls.isEmpty })
+                #expect(await MainActor.run { automation.targetedClickCalls.isEmpty })
+            }
+        }
+
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
+        let accepted = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: [
+            "coords": "40,50",
+            "foreground": true,
+            "middle": true,
+            "triple": false,
+            "double": false,
+            "right": false,
+        ]))
+        #expect(!accepted.isError)
+        #expect(await MainActor.run { automation.clickCalls.first?.clickType } == .middle)
+    }
+
+    @Test
+    func `Click tool forwards middle and triple and projects exact target receipts`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        for (variant, clickType, units) in [
+            ("middle", ClickType.middle, 3),
+            ("triple", ClickType.triple, 7),
+        ] {
+            let outcome = DesktopActionOutcome.dispatchedUnverified(
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .init(units))
+            let automation = await MainActor.run {
+                OutcomeMockAutomationService(
+                    accessibilityGranted: true,
+                    outcome: outcome)
+            }
+            let (snapshot, window) = await Self.makeExactCoordinateSnapshot()
+            let snapshotID = await snapshot.id
+            let context = await MCPToolTestHelpers.makeLegacyContext(
+                automation: automation,
+                windows: PointerPolicyWindowService(window: window))
+            let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: [
+                "coords": "200,200",
+                "snapshot": snapshotID,
+                variant: true,
+            ]))
+
+            #expect(response.isError)
+            let call = try #require(await MainActor.run { automation.targetedClickCalls.first })
+            #expect(call.clickType == clickType)
+            #expect(call.targetWindowID == window.windowID)
+            let metadata = try #require(response.meta?.objectValue)
+            #expect(metadata["click_type"] == .string(clickType.rawValue))
+            #expect(metadata["dispatched_unit_count"] == .int(units))
+            #expect(metadata["target_identity"]?.objectValue?["window_id"] == .int(window.windowID))
+            #expect(metadata["target_receipt"]?.objectValue?["window_id"] == .int(window.windowID))
+        }
+    }
+
+    @Test
+    func `Click tool refuses capability-missing middle click before dispatch`() async throws {
+        let automation = await MainActor.run {
+            let service = MockAutomationService(accessibilityGranted: true)
+            service.supportsStatelessClickVariants = false
+            return service
+        }
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
+        let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: [
+            "coords": "40,50",
+            "foreground": true,
+            "middle": true,
+        ]))
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["refusal_reason"] == .string("runtime_incompatible"))
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+        #expect(await MainActor.run { automation.clickCalls.isEmpty })
+    }
+
+    @Test
     func `Click tool maps ROI pixels while validating the full exact window receipt`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
@@ -1192,5 +1289,16 @@ extension MCPToolExecutionTests {
             return nil
         }
         return Int32(pid)
+    }
+}
+
+@MainActor
+private final class OutcomeMockAutomationService: MockAutomationService,
+ScriptedUIAutomationActionOutcomeProviding {
+    let uiAutomationOutcomeScript: UIAutomationOutcomeScript
+
+    init(accessibilityGranted: Bool, outcome: DesktopActionOutcome) {
+        self.uiAutomationOutcomeScript = UIAutomationOutcomeScript(defaultResponse: .outcome(outcome))
+        super.init(accessibilityGranted: accessibilityGranted)
     }
 }

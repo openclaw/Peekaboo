@@ -95,6 +95,16 @@ public enum UIAutomationToolDefinitions {
                 description: "Right-click instead of left-click",
                 required: false),
             ParameterDefinition(
+                name: "middle",
+                type: .boolean,
+                description: "Middle-click with the center mouse button",
+                required: false),
+            ParameterDefinition(
+                name: "triple",
+                type: .boolean,
+                description: "Triple-click instead of single click",
+                required: false),
+            ParameterDefinition(
                 name: "session",
                 type: .string,
                 description: "Snapshot/session state identifier from a prior UI observation",

@@ -28,6 +28,7 @@ extension PeekabooBridgeClient {
         operationReceiptRequirement: PeekabooBridgeOperationReceiptRequirement = .whenAvailable) async throws
         -> PeekabooBridgeTransportReply
     {
+        try self.requireStatelessClickVariantSupport(for: request)
         let explicitlyProjected = if case .projectedAction = request {
             true
         } else {
@@ -165,12 +166,12 @@ extension PeekabooBridgeClient {
         operationReceiptRequirement: PeekabooBridgeOperationReceiptRequirement) async throws
         -> PeekabooBridgePreparedRequest
     {
+        let preparedRequest: PeekabooBridgePreparedRequest
         do {
-            let preparedRequest = try await self.prepareWireRequest(projectedRequest, deadline: deadline)
+            preparedRequest = try await self.prepareWireRequest(projectedRequest, deadline: deadline)
             guard operationReceiptRequirement != .required || preparedRequest.context != nil else {
                 throw PeekabooBridgeClientOperationSessionError.handshakeRequired
             }
-            return preparedRequest
         } catch let cancellation as CancellationError {
             guard originalRequest.mayMutateDesktop,
                   !self.usesExplicitReceiptlessTransport()
@@ -179,6 +180,19 @@ extension PeekabooBridgeClient {
         } catch {
             guard originalRequest.mayMutateDesktop else { throw error }
             throw Self.preTransportSessionUnavailableFailure(operation: operation, cause: error)
+        }
+        try self.requireStatelessClickVariantSupport(for: originalRequest)
+        return preparedRequest
+    }
+
+    private func requireStatelessClickVariantSupport(for request: PeekabooBridgeRequest) throws {
+        guard request.requiresStatelessClickVariantSupport else { return }
+        guard self.statelessClickVariantsEnabled else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "Bridge protocol 1.30 middle/triple-click support is unavailable.",
+                hint: "Update or relaunch the Peekaboo Bridge host before retrying.")
         }
     }
 

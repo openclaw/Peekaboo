@@ -874,14 +874,17 @@ public final class PeekabooBridgeServer {
         _ request: PeekabooBridgeTargetedClickRequest,
         permissions: PermissionsStatus) throws
     {
-        // All background clicks are delivered through accessibility actions; positioned
-        // pid-routed mouse events are broken on modern macOS (they land at the window corner),
-        // so Event Synthesizing permission no longer enables any targeted click path.
         guard permissions.accessibility else {
             throw PeekabooBridgeErrorEnvelope(
                 code: .permissionDenied,
                 message: "Background clicks require Accessibility permission",
                 permission: .accessibility)
+        }
+        guard !request.requiresPostEventPermission || permissions.postEvent else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .permissionDenied,
+                message: "This background click requires Event Synthesizing permission",
+                permission: .postEvent)
         }
     }
 }
@@ -912,6 +915,9 @@ private func protocolHostCapabilities(
     }
     if supportedVersions.upperBound >= PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion {
         capabilities.insert(PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle)
+    }
+    if supportedVersions.upperBound >= PeekabooBridgeConstants.statelessClickVariantVersion {
+        capabilities.insert(PeekabooBridgeHostCapability.statelessClickVariants)
     }
     return capabilities
 }

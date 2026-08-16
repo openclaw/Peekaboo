@@ -119,6 +119,9 @@ extension PeekabooBridgeServer {
             """)
 
         var advertisedCapabilities = self.hostCapabilities
+        if negotiated < PeekabooBridgeConstants.statelessClickVariantVersion {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.statelessClickVariants)
+        }
         if supportsAttestedOperationReceipts {
             advertisedCapabilities.insert(PeekabooBridgeHostCapability.attestedOperationReceipts)
         }
@@ -303,9 +306,8 @@ extension PeekabooBridgeServer {
                 operation.requiredPermissions.isSubset(of: granted)
             })
 
-        // Targeted clicks are delivered exclusively through accessibility actions; the
-        // synthetic pid-routed mouse path was removed because macOS delivers those events at
-        // the window corner regardless of the requested point.
+        // Every targeted click needs Accessibility for element/window validation. Variants that
+        // use exact-window routed events receive their additional PostEvent check per request.
         if !permissions.accessibility {
             operations.remove(.targetedClick)
             operations.remove(.exactWindowTargetedClick)

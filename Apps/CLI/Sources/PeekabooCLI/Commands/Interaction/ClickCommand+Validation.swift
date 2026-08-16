@@ -34,8 +34,13 @@ extension ClickCommand: PreRuntimeValidatingCommand {
             throw ValidationError("--foreground cannot be combined with --focus-background")
         }
 
-        if self.longPress && (self.double || self.right) {
-            throw ValidationError("--long-press cannot be combined with --double or --right")
+        let selectedVariants = [self.double, self.right, self.middle, self.triple, self.longPress]
+            .filter(\.self).count
+        if selectedVariants > 1 {
+            throw ValidationError(
+                "Click variants are mutually exclusive; use only one of --double, --right, --middle, " +
+                    "--triple, or --long-press"
+            )
         }
 
         if self.longPress && !self.focusOptions.foreground {

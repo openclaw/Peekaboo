@@ -71,6 +71,8 @@ struct CommandRuntimeOptions {
     var requiresCallerDesktopMutationBarrier = false
     var usesPerToolSnapshotInvalidation = false
     var requiresExactWindowTargetedClicks = false
+    /// Protocol 1.30 and its raw capability are required before encoding middle/triple click cases.
+    var requiresStatelessClickVariants = false
     var requiresTargetedScroll = false
     var requiresPostEventPermission = false
     var requiresAccessibilityPermission = false
@@ -368,6 +370,10 @@ extension CommandRuntime {
 
     static func supportsTargetedClicks(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         BridgeCapabilityPolicy.supportsTargetedClicks(for: handshake)
+    }
+
+    static func supportsStatelessClickVariants(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        BridgeCapabilityPolicy.supportsStatelessClickVariants(for: handshake)
     }
 
     static func supportsApplicationLaunchOptions(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

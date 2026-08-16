@@ -206,6 +206,10 @@ enum BridgeCapabilityPolicy {
            !self.supportsExactWindowTargetedClicks(for: handshake) {
             return false
         }
+        if options.requiresStatelessClickVariants,
+           !self.supportsStatelessClickVariants(for: handshake) {
+            return false
+        }
         if options.requiresTargetedScroll, !self.supportsTargetedScroll(for: handshake) {
             return false
         }
@@ -652,6 +656,13 @@ enum BridgeCapabilityPolicy {
         }
         return (handshake.enabledOperations ?? handshake.supportedOperations)
             .contains(.exactWindowTargetedClick)
+    }
+
+    static func supportsStatelessClickVariants(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeConstants.statelessClickVariantVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.statelessClickVariants) == true &&
+            self.supportsOperation(.targetedClick, for: handshake) &&
+            self.supportsOperation(.exactWindowTargetedClick, for: handshake)
     }
 
     static func supportsTargetedScroll(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

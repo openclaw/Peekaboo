@@ -90,6 +90,8 @@ enum CommanderCLIBinder {
             commandType,
             parsedValues: parsedValues
         )
+        options.requiresStatelessClickVariants = commandType == ClickCommand.self &&
+            (commandValues.flag("middle") || commandValues.flag("triple"))
         options.requiresProcessGenerationPinnedClicks = commandType == ClickCommand.self && usesBackgroundInput &&
             !options.requiresExactWindowTargetedClicks
         let servesDynamicTools = Self.isAgentExecutionCommand(commandType) || commandType == MCPCommand.Serve.self
@@ -514,7 +516,11 @@ enum CommanderCLIBinder {
             return values.flag("foreground")
         }
         if commandType == ClickCommand.self {
-            return !self.usesBackgroundClickDelivery(values)
+            if !self.usesBackgroundClickDelivery(values) {
+                return true
+            }
+            return values.flag("middle") || values.flag("triple") || values.flag("double") ||
+                values.singleOption("at") != nil
         }
         return false
     }

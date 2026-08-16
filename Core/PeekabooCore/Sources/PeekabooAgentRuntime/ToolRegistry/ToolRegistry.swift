@@ -64,7 +64,7 @@ public enum ToolRegistry {
             - Snapshot-aware IDs avoid ambiguity when multiple matches exist
 
             CLICK KIND
-            - `--double` for a double-click, `--right` for a secondary click
+            - `--double`, `--triple`, `--right`, or `--middle` select one alternate click kind
             - `--long-press` presses and holds, and requires `--foreground`
 
             EXAMPLE

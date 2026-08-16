@@ -15,6 +15,17 @@ extension PeekabooBridgeRequest {
             self
         }
     }
+
+    var requiresStatelessClickVariantSupport: Bool {
+        switch self.unwrappedOperationRequest {
+        case let .click(payload):
+            payload.clickType.requiresStatelessVariantSupport
+        case let .targetedClick(payload):
+            payload.clickType.requiresStatelessVariantSupport
+        default:
+            false
+        }
+    }
 }
 
 enum PeekabooBridgeRequestContext {

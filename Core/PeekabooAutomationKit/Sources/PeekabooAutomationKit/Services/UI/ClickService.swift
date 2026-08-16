@@ -200,6 +200,8 @@ public final class ClickService {
             return try await self.actionInputDriver.tryRightClick(element: element)
         case .double:
             throw ActionInputError.unsupported(.actionUnsupported)
+        case .middle, .triple:
+            throw ActionInputError.unsupported(.actionUnsupported)
         case .longPress:
             throw ActionInputError.unsupported(.actionUnsupported)
         }
@@ -846,6 +848,18 @@ public final class ClickService {
                 button: .left,
                 count: 2,
                 destination: destination)
+        case .middle:
+            return try await self.performSyntheticClick(
+                at: point,
+                button: .middle,
+                count: 1,
+                destination: destination)
+        case .triple:
+            return try await self.performSyntheticClick(
+                at: point,
+                button: .left,
+                count: 3,
+                destination: destination)
         case .longPress:
             guard destination.processIdentifier == nil else {
                 throw PeekabooError.serviceUnavailable(
@@ -1233,6 +1247,13 @@ extension ClickService {
             throw PeekabooError.invalidInput(
                 "Background coordinate clicks require an exact capture-time window receipt; " +
                     "PID-only coordinate routing is refused")
+        }
+        if targetProcessIdentifier != nil,
+           request.automationTarget.exactWindow == nil,
+           clickType.requiresStatelessVariantSupport
+        {
+            throw PeekabooError.invalidInput(
+                "Background middle- and triple-clicks require an exact capture-time window receipt")
         }
         let requestedExactWindowReceipt = request.automationTarget.exactWindow
         let requestedCaptureReceipt = DesktopOperationPlan.CaptureReceipt(

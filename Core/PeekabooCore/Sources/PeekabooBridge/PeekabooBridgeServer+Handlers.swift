@@ -920,6 +920,20 @@ extension PeekabooBridgeServer {
                 code: .operationNotSupported,
                 message: "Background clicks are not supported by this bridge host")
         }
+        if payload.clickType.requiresStatelessVariantSupport {
+            guard targetedClickService.supportsStatelessClickVariants,
+                  self.hostCapabilities.contains(PeekabooBridgeHostCapability.statelessClickVariants)
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "This Bridge host does not support middle- or triple-click requests")
+            }
+            guard payload.targetWindowID != nil else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .invalidRequest,
+                    message: "Background middle- and triple-clicks require an exact-window receipt")
+            }
+        }
         if case .coordinates = payload.target, payload.targetWindowID == nil {
             throw PeekabooBridgeErrorEnvelope(
                 code: .invalidRequest,

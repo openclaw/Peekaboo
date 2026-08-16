@@ -12,6 +12,8 @@ struct ClickCommandAdvancedTests {
         #expect(command.at == nil)
         #expect(command.right == false)
         #expect(command.double == false)
+        #expect(command.middle == false)
+        #expect(command.triple == false)
     }
 
     @Test
@@ -33,6 +35,32 @@ struct ClickCommandAdvancedTests {
         let command = try ClickCommand.parse(["--on", "T1", "--right"])
         #expect(command.right == true)
         #expect(command.double == false)
+    }
+
+    @Test
+    func `Parse middle and triple click options`() throws {
+        let middle = try ClickCommand.parse(["--on", "B1", "--middle"])
+        let triple = try ClickCommand.parse(["--on", "B1", "--triple"])
+
+        #expect(middle.middle)
+        #expect(middle.requestedClickType == .middle)
+        #expect(triple.triple)
+        #expect(triple.requestedClickType == .triple)
+    }
+
+    @Test
+    func `Every pair of click variants is rejected`() throws {
+        let variants = ["--double", "--right", "--middle", "--triple", "--long-press"]
+        for first in variants.indices {
+            for second in variants.indices where first < second {
+                var command = try ClickCommand.parse([
+                    "--at", "100,200", "--foreground", variants[first], variants[second],
+                ])
+                #expect(throws: (any Error).self) {
+                    try command.validate()
+                }
+            }
+        }
     }
 
     @Test
@@ -228,5 +256,8 @@ struct ClickCommandAdvancedTests {
         // Right click
         let rightClick = ClickType.right
         #expect(rightClick.rawValue == "right")
+
+        #expect(ClickType.middle.rawValue == "middle")
+        #expect(ClickType.triple.rawValue == "triple")
     }
 }

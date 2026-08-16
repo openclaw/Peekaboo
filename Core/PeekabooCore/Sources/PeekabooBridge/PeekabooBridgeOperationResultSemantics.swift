@@ -2041,11 +2041,28 @@ extension PeekabooBridgeOperationResultSemantics {
     {
         let ax = DeliveryRule(delivery: axBackground, units: .exact(1))
         let process = DeliveryRule(delivery: processBackground, units: .variable)
-        let window = DeliveryRule(delivery: windowBackground, units: .variable)
-        guard payload.targetWindowID != nil else { return [ax, process, window] }
-        return switch payload.target {
-        case .coordinates: [window]
-        case .elementId, .query: [ax, window]
+        guard payload.targetWindowID != nil else {
+            return payload.clickType.requiresStatelessVariantSupport ? [] : [ax, process]
+        }
+        let routedUnits: Int? = switch payload.clickType {
+        case .single, .longPress: nil
+        case .right, .middle: 3
+        case .double: 5
+        case .triple: 7
+        }
+        let window = routedUnits.map { DeliveryRule(delivery: windowBackground, units: .exact($0)) }
+        return switch (payload.target, payload.clickType) {
+        case (.coordinates, .single): [ax]
+        case (.coordinates, .right), (.coordinates, .double), (.coordinates, .middle), (.coordinates, .triple):
+            window.map { [$0] } ?? []
+        case (.coordinates, .longPress): []
+        case (.elementId, .single), (.query, .single): [ax]
+        case (.elementId, .right), (.query, .right): [ax] + (window.map { [$0] } ?? [])
+        case (.elementId, .double), (.query, .double),
+             (.elementId, .middle), (.query, .middle),
+             (.elementId, .triple), (.query, .triple):
+            window.map { [$0] } ?? []
+        case (.elementId, .longPress), (.query, .longPress): []
         }
     }
 

@@ -46,6 +46,12 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     @Flag(help: "Right-click (secondary click)")
     var right = false
 
+    @Flag(help: "Middle-click with the center mouse button")
+    var middle = false
+
+    @Flag(help: "Triple-click instead of single click")
+    var triple = false
+
     @Flag(help: "Press and hold for 1.2 seconds at a stationary point (requires --foreground)")
     var longPress = false
 
@@ -264,13 +270,15 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             waitTime: context.waitResult.waitTime,
             executionTime: Date().timeIntervalSince(context.startTime),
             targetApp: appName,
-            targetWindowId: explicitWindowResolution?.windowInfo.windowID ?? coordinateResolution?.targetWindowID,
+            targetWindowId: explicitWindowResolution?.windowInfo.windowID ?? coordinateResolution?.targetWindowID ??
+                targetIdentity?.exactWindow?.identity.windowID,
             targetWindowTitle: explicitWindowResolution?.windowInfo.title ?? coordinateResolution?.targetWindowTitle,
             coordinateSpace: coordinateResolution?.coordinateSpace.rawValue,
             inputCoordinates: coordinateResolution?.inputPoint,
             screenCoordinates: coordinateResolution?.screenPoint,
             targetPoint: details.targetPointDiagnostics,
-            deliveryMode: self.deliveryMode.rawValue
+            deliveryMode: self.deliveryMode.rawValue,
+            clickType: self.requestedClickType.rawValue
         )
         self.output(
             result,
@@ -460,7 +468,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     }
 
     private func clickEffect(for target: ClickTarget) -> ActionEffect {
-        guard self.usesBackgroundDelivery, !self.right, !self.double else { return .unverifiable }
+        guard self.usesBackgroundDelivery, self.requestedClickType == .single else { return .unverifiable }
         switch target {
         case .elementId, .query:
             return .confirmed
@@ -649,6 +657,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         let coordinateResolution: InteractionCoordinateResolution?
         let explicitWindowResolution: InteractionWindowResolution?
         let backgroundProcessIdentity: ApplicationProcessIdentity?
+        let statelessWindowTarget: UIAutomationTarget.ExactWindow?
     }
 
     private func resolveAndDispatchClick(
@@ -668,14 +677,16 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             nil
         }
 
-        let clickType: ClickType = if self.longPress {
-            .longPress
-        } else if self.right {
-            .right
-        } else if self.double {
-            .double
+        let clickType = self.requestedClickType
+        let statelessWindowTarget: UIAutomationTarget.ExactWindow? = if self.usesBackgroundDelivery,
+                                                                        clickType
+                                                                            .requiresStatelessVariantSupport {
+            try await self.resolveStatelessClickWindowTarget(
+                snapshotId: snapshotId,
+                expectedProcessIdentity: backgroundProcessIdentity
+            )
         } else {
-            .single
+            nil
         }
         if self.usesBackgroundDelivery, case .coordinates = clickTarget {
             try await self.validateBackgroundCoordinateResolution(
@@ -696,7 +707,8 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                         resolvedElement: resolvedElement,
                         coordinateResolution: coordinateResolution,
                         explicitWindowResolution: explicitWindowResolution,
-                        backgroundProcessIdentity: backgroundProcessIdentity
+                        backgroundProcessIdentity: backgroundProcessIdentity,
+                        statelessWindowTarget: statelessWindowTarget
                     )
                 )
             },
@@ -721,8 +733,9 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             }
             let exactWindowInfo = context.explicitWindowResolution?.windowInfo ??
                 context.coordinateResolution?.windowInfo
-            let targetWindowID = exactWindowInfo?.windowID
-            let expectedWindowIdentity = exactWindowInfo?.mutationIdentity
+            let targetWindowID = context.statelessWindowTarget?.identity.windowID ?? exactWindowInfo?.windowID
+            let expectedWindowIdentity = context.statelessWindowTarget?.identity ?? exactWindowInfo?.mutationIdentity
+            let expectedWindowBounds = context.statelessWindowTarget?.bounds ?? exactWindowInfo?.bounds
             if targetWindowID != nil, expectedWindowIdentity == nil {
                 throw PeekabooError.snapshotStale(
                     "Exact-window click snapshot has no capture-time process-generation receipt; " +
@@ -737,7 +750,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 expectedProcessIdentity: backgroundProcessIdentity,
                 targetWindowID: targetWindowID,
                 expectedWindowIdentity: expectedWindowIdentity,
-                expectedWindowBounds: exactWindowInfo?.bounds
+                expectedWindowBounds: expectedWindowBounds
             )
         } else {
             // Foreground delivery is documented as "focus target and send a foreground mouse

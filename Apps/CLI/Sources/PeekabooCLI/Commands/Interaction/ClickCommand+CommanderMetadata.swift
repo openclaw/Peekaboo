@@ -40,6 +40,8 @@ extension ClickCommand: CommanderBindableCommand {
         }
         self.double = values.flag("double")
         self.right = values.flag("right")
+        self.middle = values.flag("middle")
+        self.triple = values.flag("triple")
         self.longPress = values.flag("longPress")
         self.focusOptions = try values.makeFocusOptions(includeBackgroundDelivery: true)
     }
@@ -89,6 +91,16 @@ extension ClickCommand: CommanderSignatureProviding {
                     "right",
                     help: "Right-click (secondary click)",
                     long: "right"
+                ),
+                .commandFlag(
+                    "middle",
+                    help: "Middle-click with the center mouse button",
+                    long: "middle"
+                ),
+                .commandFlag(
+                    "triple",
+                    help: "Triple-click instead of single click",
+                    long: "triple"
                 ),
                 .commandFlag(
                     "longPress",

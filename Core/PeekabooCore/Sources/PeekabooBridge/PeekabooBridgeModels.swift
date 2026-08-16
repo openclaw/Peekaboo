@@ -358,6 +358,7 @@ public enum PeekabooBridgeHostCapability {
     public static let attestedOperationReceipts = "attestedOperationReceipts"
     public static let plannerInventoryTransport = "plannerInventoryTransport"
     public static let exactWindowHeldPointerLifecycle = "exactWindowHeldPointerLifecycle"
+    public static let statelessClickVariants = "statelessClickVariants"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {

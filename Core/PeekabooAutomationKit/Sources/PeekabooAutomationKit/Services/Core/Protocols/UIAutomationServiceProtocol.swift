@@ -596,6 +596,7 @@ extension TargetedTypeServiceProtocol {
 public protocol TargetedClickServiceProtocol: UIAutomationServiceProtocol {
     var supportsTargetedClicks: Bool { get }
     var supportsProcessGenerationPinnedClicks: Bool { get }
+    var supportsStatelessClickVariants: Bool { get }
     var targetedClickUnavailableReason: String? { get }
     var targetedClickRequiresEventSynthesizingPermission: Bool { get }
 
@@ -649,6 +650,10 @@ extension TargetedClickServiceProtocol {
 
     public var supportsProcessGenerationPinnedClicks: Bool {
         false
+    }
+
+    public var supportsStatelessClickVariants: Bool {
+        true
     }
 
     public var targetedClickUnavailableReason: String? {

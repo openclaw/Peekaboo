@@ -157,12 +157,12 @@ struct WindowRoutedPointerDriver {
         allowedWindowLayers: Set<Int> = [Int(CGWindowLevelForKey(.normalWindow))]) async throws
         -> DesktopActionOutcome
     {
-        guard button == .left || button == .right else {
+        guard button == .left || button == .right || button == .middle else {
             throw PeekabooError.serviceUnavailable(
-                "Window-routed background pointer delivery supports left and right buttons only")
+                "Window-routed background pointer delivery supports left, right, and middle buttons only")
         }
-        guard (1...2).contains(count) else {
-            throw PeekabooError.invalidInput("Window-routed click count must be 1 or 2")
+        guard (1...3).contains(count) else {
+            throw PeekabooError.invalidInput("Window-routed click count must be between 1 and 3")
         }
         guard self.hasPostEventAccess() else {
             throw PeekabooError.permissionDeniedEventSynthesizing
@@ -200,16 +200,17 @@ struct WindowRoutedPointerDriver {
         for pairIndex in 0..<count {
             try Self.checkCancellation(afterPosting: postedEventCount)
             let clickState = Int64(pairIndex + 1)
+            let eventKinds = Self.eventKinds(for: button)
             let down = EventSpecification(
-                type: button == .right ? .rightMouseDown : .leftMouseDown,
-                button: button == .right ? .right : .left,
+                type: eventKinds.down,
+                button: eventKinds.button,
                 clickState: clickState,
-                buttonNumber: button == .right ? 1 : 0)
+                buttonNumber: eventKinds.buttonNumber)
             let up = EventSpecification(
-                type: button == .right ? .rightMouseUp : .leftMouseUp,
-                button: button == .right ? .right : .left,
+                type: eventKinds.up,
+                button: eventKinds.button,
                 clickState: clickState,
-                buttonNumber: button == .right ? 1 : 0)
+                buttonNumber: eventKinds.buttonNumber)
 
             try self.post(
                 down,
@@ -357,6 +358,22 @@ struct WindowRoutedPointerDriver {
             return .processGenerationChanged
         }
         return self.routeIsCurrent(dispatch.receipt) ? .current : .windowChanged
+    }
+
+    private static func eventKinds(for button: MouseButton) -> (
+        button: CGMouseButton,
+        down: CGEventType,
+        up: CGEventType,
+        buttonNumber: Int64)
+    {
+        switch button {
+        case .left:
+            (.left, .leftMouseDown, .leftMouseUp, 0)
+        case .right:
+            (.right, .rightMouseDown, .rightMouseUp, 1)
+        case .middle:
+            (.center, .otherMouseDown, .otherMouseUp, 2)
+        }
     }
 
     // swiftlint:disable function_parameter_count

@@ -769,7 +769,7 @@ struct CommanderBinderTests {
             ),
             commandType: ClickCommand.self
         )
-        let rightWinsConflictingFlags = try CommanderCLIBinder.makeRuntimeOptions(
+        let conflictingVariants = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
                 options: ["on": ["B1"]],
@@ -795,7 +795,7 @@ struct CommanderBinderTests {
         )
 
         #expect(!coordinate.requiresPostEventPermission)
-        #expect(!coordinateDouble.requiresPostEventPermission)
+        #expect(coordinateDouble.requiresPostEventPermission)
         #expect(!coordinateRight.requiresPostEventPermission)
         #expect(!unconsentedLongPress.requiresPostEventPermission)
         #expect(!unconsentedLongPress.requiresLongPressClick)
@@ -803,10 +803,10 @@ struct CommanderBinderTests {
         #expect(longPress.requiresPostEventPermission)
         #expect(longPress.requiresLongPressClick)
         #expect(!longPress.requiresAccessibilityPermission)
-        #expect(!doubleClick.requiresPostEventPermission)
+        #expect(doubleClick.requiresPostEventPermission)
         #expect(!singleClick.requiresPostEventPermission)
         #expect(!rightClick.requiresPostEventPermission)
-        #expect(!rightWinsConflictingFlags.requiresPostEventPermission)
+        #expect(conflictingVariants.requiresPostEventPermission)
         #expect(foregroundCoordinate.requiresPostEventPermission)
         #expect(foregroundDoubleClick.requiresPostEventPermission)
         #expect(coordinate.requiresAccessibilityPermission)
@@ -848,9 +848,10 @@ struct CommanderBinderTests {
         #expect(CommandRuntime.supportsRemoteRequirements(for: accessibilityOnly, options: singleClick))
         #expect(CommandRuntime.supportsRemoteRequirements(for: accessibilityOnly, options: rightClick))
         #expect(CommandRuntime.supportsRemoteRequirements(for: accessibilityOnly, options: coordinate))
-        #expect(CommandRuntime.supportsRemoteRequirements(for: accessibilityOnly, options: doubleClick))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: accessibilityOnly, options: doubleClick))
         #expect(!CommandRuntime.supportsRemoteRequirements(for: accessibilityOnly, options: foregroundCoordinate))
         #expect(CommandRuntime.supportsRemoteRequirements(for: fullyPermitted, options: coordinate))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: fullyPermitted, options: doubleClick))
         #expect(CommandRuntime.supportsRemoteRequirements(for: fullyPermitted, options: foregroundCoordinate))
     }
 }

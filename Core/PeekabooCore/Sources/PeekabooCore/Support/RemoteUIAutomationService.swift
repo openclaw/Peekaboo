@@ -24,6 +24,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public let targetedTypeRequiresEventSynthesizingPermission: Bool
     public let supportsTargetedClicks: Bool
     public let supportsProcessGenerationPinnedClicks: Bool
+    public let supportsStatelessClickVariants: Bool
     public let targetedClickUnavailableReason: String?
     public let targetedClickRequiresEventSynthesizingPermission: Bool
     public let supportsExactWindowTargetedClicks: Bool
@@ -45,6 +46,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         targetedTypeRequiresEventSynthesizingPermission: Bool = false,
         supportsTargetedClicks: Bool = false,
         supportsProcessGenerationPinnedClicks: Bool = false,
+        supportsStatelessClickVariants: Bool = false,
         targetedClickUnavailableReason: String? = nil,
         targetedClickRequiresEventSynthesizingPermission: Bool = false,
         supportsExactWindowTargetedClicks: Bool = false,
@@ -65,6 +67,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         self.targetedTypeRequiresEventSynthesizingPermission = targetedTypeRequiresEventSynthesizingPermission
         self.supportsTargetedClicks = supportsTargetedClicks
         self.supportsProcessGenerationPinnedClicks = supportsProcessGenerationPinnedClicks
+        self.supportsStatelessClickVariants = supportsStatelessClickVariants
         self.targetedClickUnavailableReason = targetedClickUnavailableReason
         self.targetedClickRequiresEventSynthesizingPermission = targetedClickRequiresEventSynthesizingPermission
         self.supportsExactWindowTargetedClicks = supportsExactWindowTargetedClicks
@@ -170,10 +173,8 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 requiresEventSynthesizingPermission: self.targetedClickRequiresEventSynthesizingPermission)
         }
 
-        // No Event Synthesizing preflight: current hosts deliver every targeted click (coordinates
-        // included) through accessibility, so a coordinate click on an Accessibility-only host must
-        // reach the server rather than being rejected here. Variants the host genuinely cannot
-        // deliver (e.g. background double-click) are rejected authoritatively by the server.
+        // The server owns request-specific permission checks: semantic single/right clicks can
+        // remain Accessibility-only, while exact-window routed variants also require PostEvent.
         do {
             try await self.client.click(
                 target: target,
@@ -223,7 +224,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 requiresEventSynthesizingPermission: self.targetedClickRequiresEventSynthesizingPermission)
         }
 
-        // See the process-targeted overload: no Event Synthesizing preflight, the server decides.
+        // See the process-targeted overload: request-specific Event Synthesizing checks stay server-owned.
         do {
             try await self.client.click(
                 target: target,

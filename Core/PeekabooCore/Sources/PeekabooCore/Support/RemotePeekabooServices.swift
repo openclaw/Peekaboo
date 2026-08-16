@@ -42,6 +42,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         targetedTypeUnavailableReason: String? = nil,
         targetedTypeRequiresEventSynthesizingPermission: Bool = false,
         supportsTargetedClicks: Bool = false,
+        supportsStatelessClickVariants: Bool = false,
         targetedClickUnavailableReason: String? = nil,
         targetedClickRequiresEventSynthesizingPermission: Bool = false,
         supportsExactWindowTargetedClicks: Bool = false,
@@ -109,6 +110,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 supportsTargetedClicks: supportsTargetedClicks,
                 supportsProcessGenerationPinnedClicks: supportsProcessGenerationPinnedInteractions &&
                     supportsTargetedClicks,
+                supportsStatelessClickVariants: supportsStatelessClickVariants,
                 targetedClickUnavailableReason: targetedClickUnavailableReason,
                 targetedClickRequiresEventSynthesizingPermission: targetedClickRequiresEventSynthesizingPermission,
                 supportsExactWindowTargetedClicks: supportsExactWindowTargetedClicks,
@@ -132,6 +134,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 supportsTargetedClicks: supportsTargetedClicks,
                 supportsProcessGenerationPinnedClicks: supportsProcessGenerationPinnedInteractions &&
                     supportsTargetedClicks,
+                supportsStatelessClickVariants: supportsStatelessClickVariants,
                 targetedClickUnavailableReason: targetedClickUnavailableReason,
                 targetedClickRequiresEventSynthesizingPermission: targetedClickRequiresEventSynthesizingPermission,
                 supportsExactWindowTargetedClicks: supportsExactWindowTargetedClicks,

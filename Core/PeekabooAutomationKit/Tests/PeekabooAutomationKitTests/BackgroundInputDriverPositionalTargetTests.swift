@@ -312,9 +312,8 @@ struct BackgroundInputDriverPositionalTargetTests {
     }
 
     @Test
-    func `unproven route and middle click messages point to foreground`() {
+    func `unproven route message points to foreground`() {
         #expect(BackgroundInputDriver.unprovenWindowRouteMessage.contains("--foreground"))
-        #expect(BackgroundInputDriver.middleClickUnsupportedMessage.contains("--foreground"))
     }
 
     @Test

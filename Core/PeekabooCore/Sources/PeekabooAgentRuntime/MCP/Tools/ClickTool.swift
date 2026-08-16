@@ -73,6 +73,12 @@ public struct ClickTool: MCPTool {
                 "right": SchemaBuilder.boolean(
                     description: "Optional. Right-click (secondary click) instead of left-click.",
                     default: false),
+                "middle": SchemaBuilder.boolean(
+                    description: "Optional. Middle-click with the center mouse button.",
+                    default: false),
+                "triple": SchemaBuilder.boolean(
+                    description: "Optional. Triple-click instead of single click.",
+                    default: false),
                 "foreground": SchemaBuilder.boolean(
                     description: "Use foreground/shared-pointer delivery. Background delivery is the default.",
                     default: false),
@@ -93,6 +99,7 @@ public struct ClickTool: MCPTool {
         guard case let .object(fields) = baseSchema else { return baseSchema }
         var schema = fields
         schema["oneOf"] = .array(Self.targetRouteSchemas)
+        schema["allOf"] = .array([Self.exclusiveClickVariantSchema])
         return .object(schema)
     }
 
@@ -133,6 +140,24 @@ public struct ClickTool: MCPTool {
         ])
     }
 
+    private static var exclusiveClickVariantSchema: Value {
+        let variants = ["double", "right", "middle", "triple"]
+        let noVariant = Value.object([
+            "properties": .object(Dictionary(uniqueKeysWithValues: variants.map {
+                ($0, Value.object(["enum": .array([.bool(false)])]))
+            })),
+        ])
+        let selectedVariants = variants.map { selected in
+            Value.object([
+                "properties": .object(Dictionary(uniqueKeysWithValues: variants.map { variant in
+                    (variant, Value.object(["enum": .array([.bool(variant == selected)])]))
+                })),
+                "required": .array([.string(selected)]),
+            ])
+        }
+        return .object(["oneOf": .array([noVariant] + selectedVariants)])
+    }
+
     public init(context: MCPToolContext = .shared) {
         self.context = context
     }
@@ -148,6 +173,7 @@ public struct ClickTool: MCPTool {
 
         let startTime = Date()
         var snapshotIdToInvalidate: String?
+        var actionTargetIdentity: DesktopTargetIdentity?
 
         do {
             let resolution = try await self.resolveClickTarget(for: request)
@@ -156,11 +182,13 @@ public struct ClickTool: MCPTool {
                 request: request,
                 resolution: resolution)
             let effectiveTargetProcessIdentifier = effectiveTargetProcessIdentity?.processIdentifier
-            let outcome = try await self.performClick(
+            let actionResult = try await self.performClick(
                 resolution: resolution,
                 intent: request.intent,
                 deliveryMode: request.deliveryMode,
                 targetProcessIdentity: effectiveTargetProcessIdentity)
+            actionTargetIdentity = actionResult.targetIdentity
+            let outcome = actionResult.outcome
             try DesktopActionFailure.requireConfirmedIfReported(
                 outcome,
                 operation: "Click")
@@ -177,14 +205,18 @@ public struct ClickTool: MCPTool {
                     targetProcessIdentifier: effectiveTargetProcessIdentifier,
                     executionTime: executionTime,
                     invalidatedSnapshotId: invalidatedSnapshotId,
-                    outcome: outcome))
+                    outcome: outcome,
+                    targetIdentity: actionResult.targetIdentity))
         } catch let error as ClickToolError {
             return try Self.preDispatchErrorResponse(error)
         } catch let failure as DesktopActionFailure {
+            var failureFields = (try? MCPDesktopTargetMetadataProjector.fields(actionTargetIdentity)) ?? [:]
+            failureFields["click_type"] = .string(request.intent.automationType.rawValue)
             return try await MCPDesktopActionFailureHandler.response(
                 for: failure,
                 uiSnapshots: self.context.uiSnapshots,
-                snapshotID: snapshotIdToInvalidate)
+                snapshotID: snapshotIdToInvalidate,
+                additionalFields: failureFields)
         } catch let error as InputDeliveryIndeterminateError {
             // Target mode does not prove the mechanism: element clicks can use Accessibility while
             // coordinate clicks synthesize events. Legacy errors do not carry that route.
@@ -252,14 +284,30 @@ public struct ClickTool: MCPTool {
         resolution: ClickResolution,
         intent: ClickIntent,
         deliveryMode: ClickToolDeliveryMode,
-        targetProcessIdentity: ApplicationProcessIdentity?) async throws -> DesktopActionOutcome?
+        targetProcessIdentity: ApplicationProcessIdentity?) async throws -> UIAutomationActionResult<Void>
     {
         let target = resolution.automationTarget
         let snapshotId = resolution.snapshotId
+        if intent.automationType.requiresStatelessVariantSupport {
+            guard let targeted = self.context.automation as? any TargetedClickServiceProtocol,
+                  targeted.supportsStatelessClickVariants
+            else {
+                throw ClickToolError(
+                    "This automation host requires protocol 1.30 middle/triple-click support.",
+                    refusalReason: .runtimeIncompatible)
+            }
+        }
         if deliveryMode == .background {
             guard let targetProcessIdentity else {
                 throw ClickToolError(
                     "Background click requires a capture-owned snapshot with an exact target process.",
+                    refusalReason: .targetUnavailable)
+            }
+            if intent.automationType.requiresStatelessVariantSupport,
+               resolution.targetWindowID == nil
+            {
+                throw ClickToolError(
+                    "Background middle- and triple-clicks require a fresh exact-window snapshot.",
                     refusalReason: .targetUnavailable)
             }
             let targetProcessIdentifier = targetProcessIdentity.processIdentifier
@@ -296,7 +344,7 @@ public struct ClickTool: MCPTool {
                         clickType: intent.automationType,
                         snapshotId: snapshotId,
                         expectedWindowIdentity: expectedWindowIdentity,
-                        expectedWindowBounds: expectedWindowBounds).outcome
+                        expectedWindowBounds: expectedWindowBounds)
                 }
                 try await exactWindowAutomation.click(
                     target: target,
@@ -304,6 +352,7 @@ public struct ClickTool: MCPTool {
                     snapshotId: snapshotId,
                     expectedWindowIdentity: expectedWindowIdentity,
                     expectedWindowBounds: expectedWindowBounds)
+                return UIAutomationActionResult(payload: (), outcome: nil)
             } else {
                 guard automation.supportsProcessGenerationPinnedClicks else {
                     throw ClickToolError(
@@ -315,27 +364,28 @@ public struct ClickTool: MCPTool {
                         target: target,
                         clickType: intent.automationType,
                         snapshotId: snapshotId,
-                        expectedProcessIdentity: targetProcessIdentity).outcome
+                        expectedProcessIdentity: targetProcessIdentity)
                 }
                 try await automation.click(
                     target: target,
                     clickType: intent.automationType,
                     snapshotId: snapshotId,
                     expectedProcessIdentity: targetProcessIdentity)
+                return UIAutomationActionResult(payload: (), outcome: nil)
             }
         } else {
             if let outcomeAutomation = self.context.automation as? any UIAutomationActionOutcomeProviding {
                 return try await outcomeAutomation.clickWithOutcome(
                     target: target,
                     clickType: intent.automationType,
-                    snapshotId: snapshotId).outcome
+                    snapshotId: snapshotId)
             }
             try await self.context.automation.click(
                 target: target,
                 clickType: intent.automationType,
                 snapshotId: snapshotId)
+            return UIAutomationActionResult(payload: (), outcome: nil)
         }
-        return nil
     }
 
     private func backgroundProcessIdentity(
@@ -422,7 +472,9 @@ public struct ClickTool: MCPTool {
             "execution_time": .double(execution.executionTime),
             "clicked_element": resolution.elementDescription.map(Value.string) ?? .null,
             "delivery_mode": .string(execution.targetProcessIdentifier == nil ? "foreground" : "background"),
+            "click_type": .string(intent.automationType.rawValue),
         ]
+        try metaDict.merge(MCPDesktopTargetMetadataProjector.fields(execution.targetIdentity)) { _, target in target }
         if let invalidatedSnapshotId = execution.invalidatedSnapshotId {
             metaDict["invalidated_snapshot"] = .string(invalidatedSnapshotId)
         }
@@ -749,7 +801,13 @@ private struct ClickRequest {
         self.coordinateReference = coordinateReference
         let isDouble = arguments.getBool("double") ?? false
         let isRight = arguments.getBool("right") ?? false
-        self.intent = ClickIntent(double: isDouble, right: isRight)
+        let isMiddle = arguments.getBool("middle") ?? false
+        let isTriple = arguments.getBool("triple") ?? false
+        self.intent = try ClickIntent(
+            double: isDouble,
+            right: isRight,
+            middle: isMiddle,
+            triple: isTriple)
         let foreground = arguments.getBool("foreground") ?? false
         self.deliveryMode = if foreground || arguments.getBool("background") == false {
             .foreground
@@ -851,6 +909,7 @@ private struct ClickResponseExecution {
     let executionTime: TimeInterval
     let invalidatedSnapshotId: String?
     let outcome: DesktopActionOutcome?
+    let targetIdentity: DesktopTargetIdentity?
 }
 
 private struct CapturedCoordinateSnapshot {
@@ -865,8 +924,19 @@ private struct ClickIntent {
     let automationType: ClickType
     let displayVerb: String
 
-    init(double: Bool, right: Bool) {
-        if right {
+    init(double: Bool, right: Bool, middle: Bool, triple: Bool) throws {
+        let variants = [double, right, middle, triple]
+        guard variants.filter(\.self).count <= 1 else {
+            throw ClickToolError(
+                "Click variants are mutually exclusive; use only one of double, right, middle, or triple.")
+        }
+        if middle {
+            self.automationType = .middle
+            self.displayVerb = "Middle-clicked"
+        } else if triple {
+            self.automationType = .triple
+            self.displayVerb = "Triple-clicked"
+        } else if right {
             self.automationType = .right
             self.displayVerb = "Right-clicked"
         } else if double {

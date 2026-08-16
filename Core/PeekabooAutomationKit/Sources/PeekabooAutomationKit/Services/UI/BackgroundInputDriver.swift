@@ -908,12 +908,6 @@ extension BackgroundInputDriver {
     requested PID and point. Capture or select a specific window, or use --foreground explicitly.
     """
 
-    static let middleClickUnsupportedMessage = """
-    Background middle-click is not supported: accessibility has no middle-button action and \
-    pid-targeted mouse events cannot be positioned. Re-run with --foreground to send a real \
-    middle-click.
-    """
-
     static let unverifiedPressMessage = """
     The accessibility press did not complete, so Peekaboo cannot verify that the click was delivered. \
     Re-run with --foreground --input-strategy synthOnly to focus the app and send a real mouse click.
@@ -971,10 +965,6 @@ extension BackgroundInputDriver {
                 "Background coordinate clicks require an exact capture-time window receipt; " +
                     "PID-only coordinate routing is refused")
         }
-        guard button != .middle else {
-            throw PeekabooError.serviceUnavailable(self.middleClickUnsupportedMessage)
-        }
-
         let resolvedWindowID = try self.resolveTargetWindowID(
             at: point,
             targetProcessIdentifier: targetProcessIdentifier,
@@ -994,7 +984,7 @@ extension BackgroundInputDriver {
             }
         }
 
-        if count == 2 || button == .right {
+        if count > 1 || button != .left {
             guard let resolvedWindowID else {
                 throw PeekabooError.serviceUnavailable(self.unprovenWindowRouteMessage)
             }
@@ -1008,7 +998,7 @@ extension BackgroundInputDriver {
                 expectedWindowBounds: expectedWindowBounds)
         }
         guard count == 1 else {
-            throw PeekabooError.invalidInput("Background click count must be 1 or 2")
+            throw PeekabooError.invalidInput("Background click count must be between 1 and 3")
         }
         guard AXIsProcessTrusted() else {
             throw PeekabooError.permissionDeniedAccessibility

@@ -285,17 +285,16 @@ public struct PeekabooBridgeTargetedClickRequest: Codable, Sendable {
         self.expectedWindowBounds = expectedWindowBounds
     }
 
-    /// Whether a legacy (protocol <= 1.8) host would deliver this request via the synthetic
-    /// pid-routed event path. Current hosts deliver every targeted click through accessibility;
-    /// this remains only so clients can refuse these variants against old hosts, whose synthetic
-    /// path mis-delivers positioned clicks at the window corner.
+    /// Whether this request's concrete click route needs native event synthesis.
+    /// Single clicks and semantic right-clicks can stay in Accessibility; multi-clicks,
+    /// middle-clicks, and coordinate right-clicks use exact-window routed events.
     public var requiresPostEventPermission: Bool {
         Self.requiresPostEventPermission(target: self.target, clickType: self.clickType)
     }
 
     public static func requiresPostEventPermission(target: ClickTarget, clickType: ClickType) -> Bool {
         switch (target, clickType) {
-        case (.coordinates, _), (_, .double), (_, .longPress):
+        case (_, .double), (_, .middle), (_, .triple), (_, .longPress), (.coordinates, .right):
             true
         case (_, .single), (_, .right):
             false
