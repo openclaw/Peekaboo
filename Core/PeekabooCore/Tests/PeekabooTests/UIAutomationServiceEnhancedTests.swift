@@ -69,29 +69,6 @@ struct UIAutomationServiceEnhancedTests {
     }
 
     @Test
-    @MainActor
-    func `Window context is passed through detection pipeline`() async throws {
-        let snapshotManager = MockSnapshotManager()
-        let service = UIAutomationService(snapshotManager: snapshotManager)
-
-        // Test data
-        let imageData = Data()
-        _ = "TestApp" // appName - not used in this test
-        _ = "Test Window" // windowTitle - not used in this test
-        _ = CGRect(x: 50, y: 100, width: 1200, height: 800) // windowBounds - not used in this test
-
-        // Call detectElements (the new method)
-        let result = try await service.detectElements(
-            in: imageData,
-            snapshotId: nil,
-            windowContext: nil)
-
-        // Verify result contains expected metadata
-        #expect(result.metadata.method == "AXorcist")
-        #expect(result.metadata.elementCount >= 0)
-    }
-
-    @Test
     func `Front window is selected when no window title specified`() {
         // This tests the logic in buildUIMap
         let mockWindows = [

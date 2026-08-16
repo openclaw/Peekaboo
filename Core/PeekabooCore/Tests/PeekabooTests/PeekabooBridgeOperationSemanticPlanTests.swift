@@ -219,6 +219,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
             expectedWindowBounds: bounds))
         #expect(request.operation == .exactWindowTargetedClick)
         let two = try #require(DesktopActionOutcome.DispatchUnitCount(2))
+        let three = try #require(DesktopActionOutcome.DispatchUnitCount(3))
         let valid = [
             DesktopActionOutcome.dispatchedUnverified(
                 route: .bridge,
@@ -229,7 +230,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
                 route: .bridge,
                 delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
                 evidence: .deliveryAccepted,
-                unitCount: two),
+                unitCount: three),
         ]
         for outcome in valid {
             #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
@@ -247,7 +248,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
                 route: .bridge,
                 delivery: .init(mechanism: .processTargetedEvents, mode: .background),
                 evidence: .deliveryAccepted,
-                unitCount: two),
+                unitCount: three),
             DesktopActionOutcome.dispatchedUnverified(
                 route: .bridge,
                 delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
@@ -257,7 +258,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
                 route: .bridge,
                 delivery: .init(mechanism: .windowTargetedEvents, mode: .foreground),
                 evidence: .deliveryAccepted,
-                unitCount: two),
+                unitCount: three),
             DesktopActionOutcome.dispatchedUnverified(
                 route: .bridge,
                 delivery: .init(mechanism: .accessibilityAction, mode: .background),

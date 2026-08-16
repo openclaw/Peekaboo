@@ -1551,7 +1551,7 @@ extension PeekabooBridgeOperationReceiptTests {
             targetWindowID: identity.windowID,
             expectedWindowIdentity: identity,
             expectedWindowBounds: bounds))))
-        let two = try #require(DesktopActionOutcome.DispatchUnitCount(2))
+        let three = try #require(DesktopActionOutcome.DispatchUnitCount(3))
         let ax = DesktopActionOutcome.dispatchedUnverified(
             route: .bridge,
             delivery: .init(mechanism: .accessibilityAction, mode: .background),
@@ -1561,7 +1561,7 @@ extension PeekabooBridgeOperationReceiptTests {
             route: .bridge,
             delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
             evidence: .deliveryAccepted,
-            unitCount: two)
+            unitCount: three)
         let global = DesktopActionOutcome.dispatchedUnverified(
             route: .bridge,
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
@@ -1571,7 +1571,7 @@ extension PeekabooBridgeOperationReceiptTests {
             route: .bridge,
             delivery: .init(mechanism: .processTargetedEvents, mode: .background),
             evidence: .deliveryAccepted,
-            unitCount: two)
+            unitCount: three)
 
         func makeBundle(
             sequence: UInt64,

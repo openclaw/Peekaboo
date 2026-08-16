@@ -2056,21 +2056,19 @@ extension PeekabooBridgeOperationResultSemantics {
             return payload.clickType.requiresStatelessVariantSupport ? [] : [ax, process]
         }
         let routedUnits: Int? = switch payload.clickType {
-        case .single, .longPress: nil
+        case .single: 3
+        case .longPress: nil
         case .right, .middle: 3
         case .double: 5
         case .triple: 7
         }
         let window = routedUnits.map { DeliveryRule(delivery: windowBackground, units: .exact($0)) }
         return switch (payload.target, payload.clickType) {
-        case (.coordinates, .single): [ax]
+        case (.coordinates, .single): window.map { [$0] } ?? []
         case (.coordinates, .right), (.coordinates, .double), (.coordinates, .middle), (.coordinates, .triple):
             window.map { [$0] } ?? []
         case (.coordinates, .longPress): []
-        case (.elementId, .single), (.query, .single): [
-                ax,
-                DeliveryRule(delivery: windowBackground, units: .variable),
-            ]
+        case (.elementId, .single), (.query, .single): [ax] + (window.map { [$0] } ?? [])
         case (.elementId, .right), (.query, .right): [ax] + (window.map { [$0] } ?? [])
         case (.elementId, .double), (.query, .double),
              (.elementId, .middle), (.query, .middle),
