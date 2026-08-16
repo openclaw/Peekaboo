@@ -193,24 +193,38 @@ struct WindowStateMutationPolicyTests {
 
     @Test
     func `exact offscreen lookup carries AX minimized state into mutation receipt`() throws {
+        let originalBounds = CGRect(x: 10, y: 20, width: 800, height: 600)
+        let refreshedBounds = CGRect(x: 30, y: 40, width: 900, height: 700)
+        let originalIdentity = WindowMutationIdentity(
+            windowID: 924,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: 7,
+            capturedBounds: originalBounds,
+            isMinimized: false)
         let cgWindow = ServiceWindowInfo(
             windowID: 924,
             title: "",
-            bounds: CGRect(x: 10, y: 20, width: 800, height: 600),
+            bounds: originalBounds,
             isOffScreen: true,
             isOnScreen: false,
-            mutationIdentity: self.identity.withMinimizedState(false))
+            mutationIdentity: originalIdentity)
 
         let enriched = cgWindow.withExactAXState(
             title: "Fixture",
-            bounds: CGRect(x: 30, y: 40, width: 900, height: 700),
+            bounds: refreshedBounds,
             isMinimized: true)
 
         #expect(enriched.title == "Fixture")
-        #expect(enriched.bounds == CGRect(x: 30, y: 40, width: 900, height: 700))
+        #expect(enriched.bounds == refreshedBounds)
         #expect(enriched.isMinimized)
         #expect(!enriched.isOnScreen)
-        #expect(try #require(enriched.mutationIdentity).isMinimized == true)
+        let enrichedIdentity = try #require(enriched.mutationIdentity)
+        #expect(enrichedIdentity.capturedBounds == refreshedBounds)
+        #expect(enrichedIdentity.isMinimized == true)
+        #expect(enrichedIdentity.processIdentity == originalIdentity.processIdentity)
+        try DesktopTargetPlanning.WindowCandidateSelector.validate(
+            enriched,
+            expectedOwner: originalIdentity.processIdentity)
     }
 
     @Test

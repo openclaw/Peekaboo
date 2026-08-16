@@ -338,7 +338,14 @@ extension ServiceWindowInfo {
             isOnScreen: isMinimized ? false : self.isOnScreen,
             sharingState: self.sharingState,
             isExcludedFromWindowsMenu: self.isExcludedFromWindowsMenu,
-            mutationIdentity: self.mutationIdentity?.withMinimizedState(isMinimized))
+            mutationIdentity: self.mutationIdentity.map { identity in
+                WindowMutationIdentity(
+                    windowID: identity.windowID,
+                    ownerProcessIdentifier: identity.ownerProcessIdentifier,
+                    ownerProcessStartIdentity: identity.ownerProcessStartIdentity,
+                    capturedBounds: bounds,
+                    isMinimized: isMinimized)
+            })
     }
 }
 

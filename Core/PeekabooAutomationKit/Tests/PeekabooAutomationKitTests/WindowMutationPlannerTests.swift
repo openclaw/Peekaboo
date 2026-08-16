@@ -58,6 +58,34 @@ struct WindowMutationPlannerTests {
     }
 
     @Test
+    func `AX-refreshed offscreen exact window plans and revalidates coherent bounds`() async throws {
+        let application = AutomationTestFixtures.application()
+        let original = AutomationTestFixtures.window(
+            bounds: CGRect(x: -2000, y: 100, width: 640, height: 480),
+            isMinimized: false)
+        let refreshedBounds = CGRect(x: 30, y: 40, width: 900, height: 700)
+        let refreshed = original.withExactAXState(
+            title: "Refreshed Fixture",
+            bounds: refreshedBounds,
+            isMinimized: true)
+        let applications = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: { .complete([application]) })
+        let planner = DesktopTargetPlanning.WindowMutationPlanner(
+            applicationPlanner: applications,
+            windowInventoryProvider: { target in
+                #expect(target == .windowId(refreshed.windowID))
+                return .complete([refreshed])
+            })
+
+        let plan = try await planner.plan(selector: InteractionTargetSelector(windowID: refreshed.windowID))
+        let revalidated = try await planner.revalidate(plan)
+
+        #expect(plan.identity.capturedBounds == refreshedBounds)
+        #expect(plan.identity.isMinimized == true)
+        #expect(revalidated.identity == plan.identity)
+    }
+
+    @Test
     func `window provider transport failures stay unavailable instead of impersonating target loss`() async throws {
         let application = AutomationTestFixtures.application()
         let window = AutomationTestFixtures.window()
