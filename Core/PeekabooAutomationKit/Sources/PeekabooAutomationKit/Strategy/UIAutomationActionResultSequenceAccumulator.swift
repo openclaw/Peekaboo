@@ -359,9 +359,20 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
             hint: hint ?? leafFailure.hint,
             causeDescription: causeDescription ?? leafFailure.causeDescription)
         let targetReceipt = self.failureTargetReceipt(leafFailure)
-        let evidence = self.combinedSelectedLeafEvidence(leafFailure.selectedLeafEvidence)
-        return self.assigning(targetReceipt, to: composed)
-            .selectingLeaves(evidence)
+        let evidence = self.combinedSelectedLeafEvidence(
+            leafFailure,
+            targetReceipt: targetReceipt)
+        guard let normalized = DesktopActionFailure(
+            outcome: composed.outcome,
+            message: composed.message,
+            hint: composed.hint,
+            causeDescription: composed.causeDescription,
+            targetReceipt: targetReceipt,
+            selectedLeafEvidence: evidence)
+        else {
+            preconditionFailure("Composed action failures must retain a non-confirmed canonical outcome")
+        }
+        return normalized
     }
 
     private mutating func recordTargetContribution(
@@ -406,10 +417,30 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
     }
 
     private func combinedSelectedLeafEvidence(
-        _ leafEvidence: [DesktopSelectedLeafEvidence]?) -> [DesktopSelectedLeafEvidence]?
+        _ leafFailure: DesktopActionFailure,
+        targetReceipt: DesktopActionTargetReceipt?) -> [DesktopSelectedLeafEvidence]?
     {
-        let evidence = self.selectedLeaves + (leafEvidence ?? [])
-        guard !evidence.isEmpty, evidence.allSatisfy(\.isCanonical) else { return nil }
+        let leafEvidence = leafFailure.selectedLeafEvidence ?? []
+        let evidence = self.selectedLeaves + leafEvidence
+        guard !evidence.isEmpty,
+              let targetReceipt,
+              evidence.allSatisfy(\.isCanonical),
+              evidence.allSatisfy({ leaf in
+                  TargetAccumulator.contains(
+                      leaf.selectedTargetReceipt,
+                      within: targetReceipt)
+              })
+        else { return nil }
+        if !leafEvidence.isEmpty {
+            guard leafFailure.outcome.dispatchState.mutationDispatched,
+                  let leafTargetReceipt = leafFailure.targetReceipt,
+                  leafEvidence.allSatisfy({ leaf in
+                      TargetAccumulator.contains(
+                          leaf.selectedTargetReceipt,
+                          within: leafTargetReceipt)
+                  })
+            else { return nil }
+        }
         return evidence
     }
 

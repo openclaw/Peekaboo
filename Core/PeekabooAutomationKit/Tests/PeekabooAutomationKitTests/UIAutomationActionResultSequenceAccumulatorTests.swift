@@ -250,6 +250,38 @@ struct UIAutomationActionResultSequenceAccumulatorTests {
     }
 
     @Test
+    func `terminal failure drops selected leaves outside its own target`() throws {
+        let target = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001),
+            windowID: 71,
+            bounds: Self.windowBounds)
+        let sibling = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: target.processIdentity,
+            windowID: 72,
+            bounds: Self.windowBounds)
+        let invalidEvidence = try self.leaf(index: 0, target: sibling.windowTargetReceipt)
+        var sequence = UIAutomationActionResultSequenceAccumulator()
+        sequence.record(
+            outcome: .confirmedChange(delivery: self.backgroundDelivery, unitCount: .one),
+            targetReceipt: target.windowTargetReceipt,
+            attribution: .mutationTarget)
+        let terminalFailure = DesktopActionFailure.indeterminate(
+            delivery: self.backgroundDelivery,
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: "Terminal failure")
+            .attributed(to: target.windowTargetReceipt)
+            .selectingLeaves([invalidEvidence])
+
+        let failure = sequence.failure(
+            combining: terminalFailure,
+            operation: "Invalid terminal evidence")
+
+        #expect(failure.targetReceipt == target.windowTargetReceipt)
+        #expect(failure.selectedLeafEvidence == nil)
+    }
+
+    @Test
     func `selected leaves require canonical dispatched evidence`() throws {
         let target = AutomationTestFixtures.linkedDesktopTarget(
             windowID: 71,
