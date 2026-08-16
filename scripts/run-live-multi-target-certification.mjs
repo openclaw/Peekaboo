@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { verifyCurrentBuildSourceBinding } from './finalize-multi-target-certification.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIRECTORY = path.dirname(SCRIPT_PATH);
@@ -19,6 +20,7 @@ const UUID_V8 = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 const UINT64_MAX = 0xffff_ffff_ffff_ffffn;
 const MAXIMUM_FILE_BYTES = 16 * 1024 * 1024;
 const POLL_MILLISECONDS = 25;
+const REPOSITORY_ROOT = path.resolve(SCRIPT_DIRECTORY, '..');
 
 const HELP = `\
 Run one source-owned live multi-target Peekaboo certification.
@@ -73,6 +75,61 @@ function canonicalBytes(value) {
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+function deriveCurrentBuildSource(catalog, testRuntime) {
+  if (!testRuntime) {
+    try {
+      return verifyCurrentBuildSourceBinding(catalog, REPOSITORY_ROOT);
+    } catch (error) {
+      throw new CoordinatorError(error.message);
+    }
+  }
+  const head = runSync(
+    '/usr/bin/git',
+    ['-C', REPOSITORY_ROOT, 'rev-parse', '--verify', 'HEAD'],
+    'test-runtime Git HEAD derivation',
+  ).stdout.trim();
+  if (!HEX40.test(head)) throw new CoordinatorError('test-runtime Git HEAD is not one exact commit');
+  return { commit: head, repository_root: REPOSITORY_ROOT };
+}
+
+function requirePeekabooSourceCommit(executable, expectedCommit) {
+  const run = runSync(executable, ['--version', '--json'], 'Peekaboo source-stamp preflight');
+  let version;
+  try {
+    version = JSON.parse(run.stdout);
+  } catch {
+    throw new CoordinatorError('Peekaboo source-stamp preflight did not return JSON');
+  }
+  if (version?.success !== true || version?.data?.sourceCommit !== expectedCommit) {
+    throw new CoordinatorError('Peekaboo validator source stamp differs from the clean Git HEAD');
+  }
+}
+
+function embeddedSourceCommit(executable, label) {
+  const section = runSync(
+    '/usr/bin/otool', ['-X', '-s', '__TEXT', '__info_plist', executable], `${label} source-stamp preflight`,
+  );
+  const bytes = Buffer.from((section.stdout.match(/\b[0-9a-f]{2}\b/gi) ?? []).join(''), 'hex');
+  let end = bytes.length;
+  while (end > 0 && bytes[end - 1] === 0) end -= 1;
+  const plist = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '-'], {
+    input: bytes.subarray(0, end),
+    encoding: 'utf8',
+    timeout: 10_000,
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  let value;
+  try {
+    value = JSON.parse(plist.stdout);
+  } catch {
+    throw new CoordinatorError(`${label} source-stamp preflight is unreadable`);
+  }
+  if (plist.status !== 0 || !HEX40.test(value?.PeekabooSourceCommit ?? '')) {
+    throw new CoordinatorError(`${label} has no exact embedded source stamp`);
+  }
+  return value.PeekabooSourceCommit;
 }
 
 function aggregateSHA256(domain, value) {
@@ -402,7 +459,7 @@ function receiptTarget(controllerTarget) {
   };
 }
 
-function validatePlan(plan, catalog, testRuntimeAllowed) {
+function validatePlan(plan, catalog, testRuntimeAllowed, currentBuildCommit) {
   const rootKeys = [
     'version', 'runs_directory', 'peekaboo_executable', 'controller_executable',
     'monitor_executable', 'bridge', 'controllers', 'observer', 'monitor',
@@ -432,7 +489,7 @@ function validatePlan(plan, catalog, testRuntimeAllowed) {
       || !HEX40.test(plan.bridge.expected_host.source_commit ?? '')
       || JSON.stringify([...plan.bridge.trusted_host_team_ids].sort())
         !== JSON.stringify([...catalog.trusted_bridge_host_team_ids].sort())
-      || plan.bridge.expected_host.source_commit !== catalog.protocol_source.commit) {
+      || plan.bridge.expected_host.source_commit !== currentBuildCommit) {
     throw new CoordinatorError('bridge plan is malformed');
   }
   if (!Array.isArray(plan.controllers) || plan.controllers.length !== 2) {
@@ -857,7 +914,7 @@ function childEntries(controllerStates, observerChild, monitorChild) {
   ];
 }
 
-async function runCoordinator(plan, catalog, finalizerPath, testRuntime) {
+async function runCoordinator(plan, catalog, finalizerPath, testRuntime, currentBuildCommit) {
   const runsDirectory = path.resolve(plan.runs_directory);
   const runRoot = fs.mkdtempSync(path.join(runsDirectory, 'peekaboo-live-certification-'));
   fs.chmodSync(runRoot, 0o700);
@@ -868,8 +925,14 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime) {
   const controllerExecutable = fs.realpathSync(plan.controller_executable);
   const monitorExecutable = fs.realpathSync(plan.monitor_executable);
   const peekabooExecutable = fs.realpathSync(plan.peekaboo_executable);
+  if (!testRuntime) {
+    if (embeddedSourceCommit(controllerExecutable, 'certification controller') !== currentBuildCommit) {
+      throw new CoordinatorError('certification controller source stamp differs from the clean Git HEAD');
+    }
+    requirePeekabooSourceCommit(peekabooExecutable, currentBuildCommit);
+  }
   const controllerBuild = {
-    source_commit: catalog.controller_source.commit,
+    source_commit: currentBuildCommit,
     executable_path: controllerExecutable,
     executable_sha256: sha256(fs.readFileSync(controllerExecutable)),
     team_id: catalog.trusted_controller_team_ids[0],
@@ -1346,7 +1409,7 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime) {
       execution_nonce: nonce,
       monitor_instance_id: monitorID,
       monitor_source_sha256: catalog.monitor_source.probe_sha256,
-      coordinator_source_sha256: catalog.coordinator_source.script_sha256,
+      coordinator_source_sha256: catalog.current_build_source.coordinator.sha256,
       monitor_process: monitorProcess,
       monitor_attestation_socket_path: shared.attestationSocket,
       sentinel: plan.monitor.sentinel,
@@ -1544,11 +1607,15 @@ async function main() {
   const finalizerPath = testRuntimeAllowed ? plan.test_runtime?.finalizer_path : DEFAULT_FINALIZER_PATH;
   if (!catalogPath || !finalizerPath) throw new CoordinatorError('test runtime requires explicit catalog/finalizer paths');
   const catalog = parseJSON(fs.readFileSync(catalogPath), 'certification catalog');
-  if (!testRuntimeAllowed && sha256(fs.readFileSync(SCRIPT_PATH)) !== catalog.coordinator_source?.script_sha256) {
-    throw new CoordinatorError('live coordinator bytes differ from the source-pinned certification catalog');
-  }
-  validatePlan(plan, catalog, testRuntimeAllowed);
-  await runCoordinator(plan, catalog, fs.realpathSync(finalizerPath), testRuntimeAllowed);
+  const currentBuildSource = deriveCurrentBuildSource(catalog, testRuntimeAllowed);
+  validatePlan(plan, catalog, testRuntimeAllowed, currentBuildSource.commit);
+  await runCoordinator(
+    plan,
+    catalog,
+    fs.realpathSync(finalizerPath),
+    testRuntimeAllowed,
+    currentBuildSource.commit,
+  );
 }
 
 main().catch((error) => {

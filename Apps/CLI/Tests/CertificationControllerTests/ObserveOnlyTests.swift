@@ -44,6 +44,13 @@ struct ObserveOnlyTests {
         #expect(try CertificationObserveOnlyPlan.decode(
             JSONSerialization.data(withJSONObject: object)
         ).semanticElement.title == "Fixture")
+
+        var host = try #require(object["expected_host"] as? [String: Any])
+        host["source_commit"] = String(repeating: "e", count: 40)
+        object["expected_host"] = host
+        #expect(throws: CertificationControllerError.self) {
+            try CertificationObserveOnlyPlan.decode(JSONSerialization.data(withJSONObject: object))
+        }
     }
 
     @Test
@@ -228,7 +235,7 @@ struct ObserveOnlyTests {
         "process_identifier": 9001,
         "process_start_identity_decimal": "900100",
         "code_signature_hash": "\(String(repeating: "a", count: 40))",
-        "source_commit": "\(String(repeating: "b", count: 40))"
+        "source_commit": "\(String(repeating: "c", count: 40))"
       },
       "target": {
         "scope": "window",

@@ -21,11 +21,11 @@
     "FWJYW4S8P8"
   ],
   "protocol_source": {
-    "commit": "7d7b5ba80bdd18331c431209d00d40e2885f5607",
-    "tree": "088c1d0bf101fd63045d38fe7ca986c5e4700cfa",
+    "commit": "aef709fea3d18f7ca989c3ab6c1a60428f2f3e51",
+    "tree": "2f3bed03cb1fc1538e473dfd4d28c5a98b0dab8d",
     "peer_binding": "darwin-audit-token-pidversion-euid-cdhash-v1",
-    "operation_semantic_plan_sha256": "b15908bf00920fd86c1858b624cb67081e9bb1f251c966318961629e7f233d1b",
-    "operation_receipts_sha256": "b23e91222eb99def125eb4a50e106cdcb97f051e094f102910a2f12aa1bf177e",
+    "operation_semantic_plan_sha256": "651768f4a73176b9ecbbfe71906c2fe380a42603e6c5b32d17efac3c62514989",
+    "operation_receipts_sha256": "46ca46b1ef173237f04b51c8bc7db3a462c482c9f35fca53fe48cc1be1a70630",
     "operation_receipt_models_sha256": "b107c717066c3521ce3db2315cdd26ada5e36e62174208c9f9bde2d1f954b5f9",
     "operation_receipt_archive_maintenance_sha256": "5a607e6acbcaaaec9adb6194d99b4e288a3a93de6911ed84a6c43a96d884cec9",
     "socket_io_sha256": "3cb418a2337b4c6a9da10bd02d06e37ab2adf207b19c9a7bc89d715bda55d37e",
@@ -33,23 +33,47 @@
     "private_archive_sha256": "40ef72a3cf1ce57e8da245b2fa1f620dfa1c3104dff9f9ac1e8d23d3c6a5d039",
     "bridge_constants_sha256": "82f545dde6f2ef95fbbbed906cc7a4632b1620340eb0bbf283bd1d94f3bfa728",
     "bridge_models_sha256": "0ba663f685d497c44c878c78cf594d5128be7981a7eb0d58da8b2f531acebe4e",
-    "server_handshake_sha256": "984e744fb3381f12f7636da2a37ef67abefbfea9dc879b6c64de88c8d17ff014",
+    "server_handshake_sha256": "fa0f0b0566105f90e71e758024d69be04ba22e3d016c6de67fe02a8853033c0a",
     "operation_session_claim_sha256": "28a375031fd0d428a865609577de4f8bf255f171d502bbdd56c17dd7d0fcc348",
     "server_operation_receipts_sha256": "ee205b5734192552478eaf826295b5d2ac690f8c7a3d4eafe4afc3e3bf28f854",
     "request_desktop_mutation_sha256": "47c1c350816f8236f82e9a74149139ffc74defef5ab80da214dbbf41416bb867",
-    "bridge_server_sha256": "cf39616620c8cde51b3cd76b67497d7fdce7e47f8aeca37d4981d0ffa9b17b8d",
-    "receipt_validator_sha256": "b18adf0a9ac1fc88e98312978653c025469a1bc9fdd49559825d2d217bf59d18"
+    "bridge_server_sha256": "8ae7f53a27e794b0a5a3faa1eba6e2781fe68411bbe4e73bf4841cd1a29b9b10"
   },
   "monitor_source": {
-    "commit": "59e692230db3a3a0cf04a881548fdef84f30e9e3",
-    "probe_sha256": "fe40e59e324c0d878f45721cf0fe86abcfaa79bd302166ef5b512dc1af869eb2"
+    "commit": "4a9b3405f542e00b408a5b03f50a8616094648ff",
+    "probe_sha256": "ede864a138f9f292f0ee0287708aff252e7aed0ed4c9c991265f4645aea8e1b1"
   },
-  "coordinator_source": {
-    "commit": "2d122c92aa0fc63f1e72ec6c924e9833ff3f4456",
-    "script_sha256": "a3b80e216b8040c810aa7bb65d9108b0f587e0cc1420bf065701919e204dbcbf"
-  },
-  "controller_source": {
-    "commit": "2d122c92aa0fc63f1e72ec6c924e9833ff3f4456"
+  "current_build_source": {
+    "kind": "peekaboo-current-build-source",
+    "version": 1,
+    "commit_derivation": "clean-git-head",
+    "controller_source_manifest": [
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ControllerBuildIdentity.swift", "sha256": "ed54e89c0fa8502b662e13e05ed3b27bfc22c2f4d367c9e2c42b33f3c4c07a92"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ControllerEvidence.swift", "sha256": "b8a26438755337a0a63e58ef3dedb0af2af677674a8977755e809582789f5796"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ControllerMain.swift", "sha256": "a9fbb59bc0e42dd96d04ece796a26cb9fd6669d9976550b48fdf3e515a0b089c"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ControllerPlan.swift", "sha256": "945b8967de0c81857dc89334df527e0e4a4b1fca97468e740fa8521902c21b95"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ControllerRunner.swift", "sha256": "a347f71fa00eca5d03738705915b877ac617656d3dccbb97210d8113b253c293"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ForegroundSemanticObserver.swift", "sha256": "b73d60be985406979129f25c17ec21960da8f4a7a1fedbf4af8500174f41bf85"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/LiveCertificationBridge.swift", "sha256": "ced3aa52f72bddd9f6b9fd70b063f09f583217642898444ecdc4eb3a4e0455b8"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/LocalPIDAttestation.swift", "sha256": "1835e0203d4cd6acaff5a028da58ed3c8f85b9ed1f3506ea86c41393cd56524a"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/MonitorAttestationRunner.swift", "sha256": "5c457b58f283dcd3550e60c2afbe4833f4f676108196567b9fc49a1ee7967347"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ObserveOnlyRunner.swift", "sha256": "1ca53dfae265d9d498164624190ef3093cf98e44fb71409a626acca462fda6ab"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ObserverPlan.swift", "sha256": "47ef7214b0b6e9892ad4cd3aa1bad9f76f922799395cc9cc569b169e4103b224"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/PrivateArtifacts.swift", "sha256": "b890010c63fc5775671e3547a35ac2726151de6bd6e66eb38076da13a9b572a0"}
+    ],
+    "coordinator": {
+      "path": "scripts/run-live-multi-target-certification.mjs",
+      "sha256": "dad1410cf2d24a50d74ac93c72dc4cb23f03d444e7ce836a7f67e92effb3ec09"
+    },
+    "receipt_validator": {
+      "path": "Apps/CLI/Sources/PeekabooCLI/Commands/Core/BridgeCommand+Receipt.swift",
+      "sha256": "618b6f18c7d770773e62a879c34e402fbd576ddd1a3ca2ddea01e374fbcb82f8"
+    },
+    "finalizer": {
+      "path": "scripts/finalize-multi-target-certification.mjs",
+      "projection": "normalize-builtin-catalog-sha256-to-zero-v1",
+      "projected_sha256": "b2e902ef40d81aa54240490c5c3d497bed869df19d2951f0f268eb8ffb9a916a"
+    }
   },
   "monitor_contract": {
     "version": 1,

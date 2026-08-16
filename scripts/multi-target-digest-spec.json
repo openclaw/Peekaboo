@@ -17,10 +17,11 @@
   },
   "run_binding_projection": {
     "input": "one version-4 live-physical contract object",
-    "output_keys": ["catalog_sha256", "listener_instance_id", "execution_nonce", "monitor_binding", "controller_build", "slots"],
+    "output_keys": ["catalog_sha256", "listener_instance_id", "execution_nonce", "current_build_source", "monitor_binding", "controller_build", "slots"],
     "catalog_sha256": "contract.catalog_sha256",
     "listener_instance_id": "contract.listener.instance_id",
     "execution_nonce": "contract.execution_nonce",
+    "current_build_source": "contract.current_build_source",
     "monitor_binding": "contract.monitor_binding",
     "controller_build": "contract.controller_build",
     "slot_order": "preserve contract.operation_slots array order",

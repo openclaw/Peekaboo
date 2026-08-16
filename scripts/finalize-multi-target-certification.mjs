@@ -21,11 +21,27 @@ const UUID_V8 = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 const UINT64_MAX = 0xffff_ffff_ffff_ffffn;
 const REQUEST_ID_DOMAIN = Buffer.from('peekaboo.bridge.operation-request.v1\0', 'utf8');
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
-const BUILTIN_CATALOG_SHA256 = '7987c584b4f5c2a7824b690611e8c17477e045c47e62d2010162bdc1800d3b21';
-const BUILTIN_DIGEST_SPEC_SHA256 = '12ad653e320713b139dc75dd75b5c4532a49968b57d35f4e2a82e729ef8bf722';
+const BUILTIN_CATALOG_SHA256 = 'bd55291425f50595dafd62cedee557790db56acc39dcb4b8bd1e356e4b66d714';
+const BUILTIN_DIGEST_SPEC_SHA256 = '6d80d6264a4d3b80c69cee0c68ce3b5c2fd801e8483bb4bbddd4402d87066a33';
 const CLI_VERSION = '2';
 const LIVE_CERTIFICATION_AUTHORITY = Symbol('peekaboo-live-certification-authority');
 const LIVE_CERTIFICATION_RESULT = Symbol('peekaboo-live-certification-result');
+const FINALIZER_CATALOG_DIGEST_PROJECTION = 'normalize-builtin-catalog-sha256-to-zero-v1';
+const CONTROLLER_SOURCE_DIRECTORY = 'Apps/CLI/Sources/PeekabooCertificationController/';
+const CONTROLLER_SOURCE_PATHS = [
+  'Apps/CLI/Sources/PeekabooCertificationController/ControllerBuildIdentity.swift',
+  'Apps/CLI/Sources/PeekabooCertificationController/ControllerEvidence.swift',
+  'Apps/CLI/Sources/PeekabooCertificationController/ControllerMain.swift',
+  'Apps/CLI/Sources/PeekabooCertificationController/ControllerPlan.swift',
+  'Apps/CLI/Sources/PeekabooCertificationController/ControllerRunner.swift',
+  'Apps/CLI/Sources/PeekabooCertificationController/ForegroundSemanticObserver.swift',
+  'Apps/CLI/Sources/PeekabooCertificationController/LiveCertificationBridge.swift',
+  'Apps/CLI/Sources/PeekabooCertificationController/LocalPIDAttestation.swift',
+  'Apps/CLI/Sources/PeekabooCertificationController/MonitorAttestationRunner.swift',
+  'Apps/CLI/Sources/PeekabooCertificationController/ObserveOnlyRunner.swift',
+  'Apps/CLI/Sources/PeekabooCertificationController/ObserverPlan.swift',
+  'Apps/CLI/Sources/PeekabooCertificationController/PrivateArtifacts.swift',
+];
 const CLI_HELP = `\
 Finalize one authenticated live-physical multi-target Peekaboo certification run.
 
@@ -175,6 +191,7 @@ function projectDigestJSON(kind, value) {
       catalogSHA256: value.catalog_sha256,
       listenerInstanceID: value.listener.instance_id,
       executionNonce: value.execution_nonce,
+      currentBuildSource: value.current_build_source,
       monitorBinding: value.monitor_binding,
       controllerBuild: value.controller_build,
       operationSlots: value.operation_slots,
@@ -216,6 +233,94 @@ export function computeDigestClaim({ kindID, inputBytes, projection = null }) {
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+export function projectFinalizerSourceBytes(bytes) {
+  const source = Buffer.from(bytes).toString('utf8');
+  const expression = /^const BUILTIN_CATALOG_SHA256 = '[0-9a-f]{64}';$/gm;
+  const matches = source.match(expression) ?? [];
+  if (matches.length !== 1) {
+    throw new TypeError('finalizer source must contain exactly one built-in catalog digest declaration');
+  }
+  return Buffer.from(source.replace(
+    expression,
+    `const BUILTIN_CATALOG_SHA256 = '${'0'.repeat(64)}';`,
+  ), 'utf8');
+}
+
+function gitOutput(repositoryRoot, args, label) {
+  const run = spawnSync('/usr/bin/git', ['-C', repositoryRoot, ...args], {
+    encoding: 'utf8',
+    timeout: 10_000,
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  if (run.status !== 0) throw new TypeError(`${label} is unavailable`);
+  return run.stdout.trim();
+}
+
+function sourceFileBytes(repositoryRoot, binding, label) {
+  const filePath = path.join(repositoryRoot, binding.path);
+  const relative = path.relative(repositoryRoot, filePath);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new TypeError(`${label} escapes the repository`);
+  }
+  const file = readStableRegularFile(filePath, label);
+  if (file.info.nlink !== 1) {
+    throw new TypeError(`${label} is not one regular source file`);
+  }
+  gitOutput(repositoryRoot, ['ls-files', '--error-unmatch', '--', binding.path], label);
+  return file.bytes;
+}
+
+export function verifyCurrentBuildSourceBinding(catalog, repositoryRoot, { requireClean = true } = {}) {
+  const failures = validateCatalog(catalog);
+  if (failures.length > 0) {
+    throw new TypeError(`catalog is invalid: ${failures.map((entry) => entry.rule).join(', ')}`);
+  }
+  const root = fs.realpathSync(repositoryRoot);
+  const commit = gitOutput(root, ['rev-parse', '--verify', 'HEAD'], 'current Git HEAD');
+  if (!HEX40.test(commit)) throw new TypeError('current Git HEAD is not one exact commit');
+  const statusArguments = ['status', '--porcelain=v1', '--untracked-files=all', '--ignore-submodules=none'];
+  const initialStatus = gitOutput(root, statusArguments, 'Git worktree state');
+  if (requireClean && initialStatus !== '') {
+    throw new TypeError('current-build certification requires a clean Git worktree');
+  }
+  const binding = catalog.current_build_source;
+  const controllerEntries = fs.readdirSync(path.join(root, CONTROLLER_SOURCE_DIRECTORY), {
+    withFileTypes: true,
+  }).filter((entry) => entry.name.endsWith('.swift'));
+  if (controllerEntries.some((entry) => !entry.isFile() || entry.isSymbolicLink())) {
+    throw new TypeError('controller source directory contains a non-regular Swift source');
+  }
+  const actualControllerPaths = controllerEntries
+    .map((entry) => `${CONTROLLER_SOURCE_DIRECTORY}${entry.name}`).sort();
+  const boundControllerPaths = binding.controller_source_manifest.map((entry) => entry.path);
+  if (!sameJSON(actualControllerPaths, boundControllerPaths)) {
+    throw new TypeError('controller source manifest differs from the exact source directory');
+  }
+  for (const entry of binding.controller_source_manifest) {
+    if (sha256(sourceFileBytes(root, entry, `controller source ${entry.path}`)) !== entry.sha256) {
+      throw new TypeError(`controller source ${entry.path} differs from the catalog binding`);
+    }
+  }
+  for (const [label, entry] of [
+    ['coordinator source', binding.coordinator],
+    ['receipt validator source', binding.receipt_validator],
+  ]) {
+    if (sha256(sourceFileBytes(root, entry, label)) !== entry.sha256) {
+      throw new TypeError(`${label} differs from the catalog binding`);
+    }
+  }
+  const finalizerBytes = sourceFileBytes(root, binding.finalizer, 'certification finalizer source');
+  if (sha256(projectFinalizerSourceBytes(finalizerBytes)) !== binding.finalizer.projected_sha256) {
+    throw new TypeError('certification finalizer projected bytes differ from the catalog binding');
+  }
+  const finalCommit = gitOutput(root, ['rev-parse', '--verify', 'HEAD'], 'final Git HEAD');
+  const finalStatus = gitOutput(root, statusArguments, 'final Git worktree state');
+  if (finalCommit !== commit || finalStatus !== initialStatus) {
+    throw new TypeError('Git HEAD or worktree state changed while current-build sources were verified');
+  }
+  return { commit, repository_root: root };
 }
 
 function positiveInteger(value) {
@@ -271,6 +376,7 @@ export function certificationRunBinding({
   catalogSHA256,
   listenerInstanceID,
   executionNonce,
+  currentBuildSource,
   monitorBinding,
   controllerBuild,
   operationSlots,
@@ -294,6 +400,7 @@ export function certificationRunBinding({
     catalog_sha256: catalogSHA256,
     listener_instance_id: listenerInstanceID,
     execution_nonce: executionNonce,
+    current_build_source: currentBuildSource,
     monitor_binding: monitorBinding,
     controller_build: controllerBuild,
     slots: signedBindings,
@@ -393,11 +500,11 @@ function validUnixSocketPath(value) {
     && !value.split('/').includes('..');
 }
 
-function validMonitorBinding(value, catalog, executionNonce) {
+function validMonitorBinding(value, catalog, executionNonce, currentBuildCommit) {
   if (!exactKeys(value, [
     'version', 'monitor_instance_id', 'execution_nonce',
     'monitor_source_commit', 'monitor_source_sha256',
-    'coordinator_source_commit', 'coordinator_source_sha256',
+    'coordinator_runtime_commit', 'coordinator_source_sha256',
     'monitor_process', 'monitor_attestation_socket_path',
     'sentinel', 'foreground_controller', 'foreground_target', 'revisions',
   ]) || value.version !== 1
@@ -405,8 +512,8 @@ function validMonitorBinding(value, catalog, executionNonce) {
       || value.execution_nonce !== executionNonce
       || value.monitor_source_commit !== catalog.monitor_source.commit
       || value.monitor_source_sha256 !== catalog.monitor_source.probe_sha256
-      || value.coordinator_source_commit !== catalog.coordinator_source.commit
-      || value.coordinator_source_sha256 !== catalog.coordinator_source.script_sha256
+      || value.coordinator_runtime_commit !== currentBuildCommit
+      || value.coordinator_source_sha256 !== catalog.current_build_source.coordinator.sha256
       || !validMonitorProcess(value.monitor_process)
       || !validUnixSocketPath(value.monitor_attestation_socket_path)
       || !catalog.trusted_monitor_team_ids.includes(value.monitor_process.team_id)
@@ -423,11 +530,12 @@ function validMonitorBinding(value, catalog, executionNonce) {
   return true;
 }
 
-function validControllerBuild(value, catalog) {
+function validControllerBuild(value, catalog, currentBuildCommit) {
   return exactKeys(value, [
     'source_commit', 'executable_path', 'executable_sha256', 'team_id',
   ])
-    && value.source_commit === catalog.controller_source.commit
+    && HEX40.test(value.source_commit ?? '')
+    && (currentBuildCommit === null || value.source_commit === currentBuildCommit)
     && typeof value.executable_path === 'string' && path.isAbsolute(value.executable_path)
     && HEX64.test(value.executable_sha256 ?? '')
     && catalog.trusted_controller_team_ids.includes(value.team_id);
@@ -492,7 +600,7 @@ function expectedForegroundValueSHA256(executionNonce) {
   return sha256(Buffer.from(`peekaboo-foreground-postcondition:${executionNonce}`, 'utf8'));
 }
 
-function validateCatalog(catalog) {
+export function validateCatalog(catalog) {
   const failures = [];
   const sourceKeys = [
     'commit', 'tree', 'peer_binding', 'operation_semantic_plan_sha256',
@@ -501,12 +609,12 @@ function validateCatalog(catalog) {
     'host_clients_sha256', 'private_archive_sha256', 'bridge_constants_sha256',
     'bridge_models_sha256', 'server_handshake_sha256', 'operation_session_claim_sha256',
     'server_operation_receipts_sha256', 'request_desktop_mutation_sha256',
-    'bridge_server_sha256', 'receipt_validator_sha256',
+    'bridge_server_sha256',
   ];
   if (!exactKeys(catalog, [
     'version', 'certification_kind', 'claim_scope', 'minimum_controlled_targets',
-    'protocol', 'protocol_source', 'monitor_source', 'coordinator_source',
-    'controller_source', 'monitor_contract',
+    'protocol', 'protocol_source', 'monitor_source', 'current_build_source',
+    'monitor_contract',
     'trusted_first_party_validator_team_ids', 'trusted_bridge_host_team_ids',
     'trusted_monitor_team_ids', 'trusted_controller_team_ids', 'controlled_target_ids', 'slots',
   ]) || catalog.version !== 2 || catalog.certification_kind !== LIVE_CERTIFICATION_KIND
@@ -534,15 +642,41 @@ function validateCatalog(catalog) {
   }
   if (!exactKeys(catalog.monitor_source, ['commit', 'probe_sha256'])
       || !HEX40.test(catalog.monitor_source.commit ?? '')
-      || !HEX64.test(catalog.monitor_source.probe_sha256 ?? '')
-      || !exactKeys(catalog.coordinator_source, ['commit', 'script_sha256'])
-      || !HEX40.test(catalog.coordinator_source.commit ?? '')
-      || !HEX64.test(catalog.coordinator_source.script_sha256 ?? '')) {
-    failures.push(failure('catalog_live_source', 'Catalog must pin the monitor and physical coordinator owners'));
+      || !HEX64.test(catalog.monitor_source.probe_sha256 ?? '')) {
+    failures.push(failure('catalog_live_source', 'Catalog must pin the physical monitor owner'));
   }
-  if (!exactKeys(catalog.controller_source, ['commit'])
-      || !HEX40.test(catalog.controller_source.commit ?? '')) {
-    failures.push(failure('catalog_controller_source', 'Catalog must pin the controller source owner'));
+  const currentBuild = catalog.current_build_source;
+  const controllerManifest = currentBuild?.controller_source_manifest;
+  const controllerPaths = Array.isArray(controllerManifest)
+    ? controllerManifest.map((entry) => entry?.path) : [];
+  if (!exactKeys(currentBuild, [
+    'kind', 'version', 'commit_derivation', 'controller_source_manifest',
+    'coordinator', 'receipt_validator', 'finalizer',
+  ]) || currentBuild.kind !== 'peekaboo-current-build-source'
+      || currentBuild.version !== 1 || currentBuild.commit_derivation !== 'clean-git-head'
+      || !Array.isArray(controllerManifest) || controllerManifest.length === 0
+      || controllerManifest.some((entry) => !exactKeys(entry, ['path', 'sha256'])
+        || typeof entry.path !== 'string'
+        || !entry.path.startsWith(CONTROLLER_SOURCE_DIRECTORY)
+        || !/^Apps\/CLI\/Sources\/PeekabooCertificationController\/[A-Za-z0-9+._-]+\.swift$/.test(entry.path)
+        || !HEX64.test(entry.sha256 ?? ''))
+      || new Set(controllerPaths).size !== controllerPaths.length
+      || !sameJSON(controllerPaths, CONTROLLER_SOURCE_PATHS)
+      || !exactKeys(currentBuild.coordinator, ['path', 'sha256'])
+      || currentBuild.coordinator.path !== 'scripts/run-live-multi-target-certification.mjs'
+      || !HEX64.test(currentBuild.coordinator.sha256 ?? '')
+      || !exactKeys(currentBuild.receipt_validator, ['path', 'sha256'])
+      || currentBuild.receipt_validator.path
+        !== 'Apps/CLI/Sources/PeekabooCLI/Commands/Core/BridgeCommand+Receipt.swift'
+      || !HEX64.test(currentBuild.receipt_validator.sha256 ?? '')
+      || !exactKeys(currentBuild.finalizer, ['path', 'projection', 'projected_sha256'])
+      || currentBuild.finalizer.path !== 'scripts/finalize-multi-target-certification.mjs'
+      || currentBuild.finalizer.projection !== FINALIZER_CATALOG_DIGEST_PROJECTION
+      || !HEX64.test(currentBuild.finalizer.projected_sha256 ?? '')) {
+    failures.push(failure(
+      'catalog_current_build_source',
+      'Catalog current-build source binding must be exact, sorted, acyclic, and commit-free',
+    ));
   }
   const requiredFences = [
     'baseline-stable', 'grant-stable', 'operations-start',
@@ -664,7 +798,7 @@ function validateContract(catalog, catalogSHA256, contract) {
   const failures = [];
   if (!exactKeys(contract, [
     'version', 'certification_kind', 'claim_scope', 'execution_nonce',
-    'catalog_sha256', 'certification_run_id', 'protocol', 'source',
+    'catalog_sha256', 'certification_run_id', 'protocol', 'source', 'current_build_source',
     'first_party_validator', 'listener', 'socket_endpoint', 'interval',
     'monitor_binding', 'controller_build', 'controlled_targets', 'operation_slots',
   ]) || contract.version !== 4
@@ -691,12 +825,20 @@ function validateContract(catalog, catalogSHA256, contract) {
   if (!sameJSON(contract.source, catalog.protocol_source)) {
     failures.push(failure('contract_source', 'Contract source differs from the source-controlled protocol owner'));
   }
+  const currentBuildCommit = contract.current_build_source?.commit;
+  if (!exactKeys(contract.current_build_source, ['commit']) || !HEX40.test(currentBuildCommit ?? '')) {
+    failures.push(failure(
+      'contract_current_build_source',
+      'Contract must bind the exact clean Git HEAD used for every current-build executable',
+    ));
+  }
   if (!exactKeys(contract.first_party_validator, [
     'id', 'source_commit', 'executable_sha256', 'code_signature_hash', 'team_id',
     'runtime_libraries', 'trusted_host_team_ids',
   ])
       || contract.first_party_validator.id !== 'peekaboo-bridge-receipt-validate-v1'
       || !HEX40.test(contract.first_party_validator.source_commit ?? '')
+      || contract.first_party_validator.source_commit !== currentBuildCommit
       || !HEX64.test(contract.first_party_validator.executable_sha256 ?? '')
       || !HEX40.test(contract.first_party_validator.code_signature_hash ?? '')
       || !catalog.trusted_first_party_validator_team_ids.includes(contract.first_party_validator.team_id)
@@ -734,6 +876,7 @@ function validateContract(catalog, catalogSHA256, contract) {
       || !validProcess(contract.listener.host)
       || !HEX40.test(contract.listener.source_commit ?? '')
       || contract.listener.source_commit !== contract.first_party_validator.source_commit
+      || contract.listener.source_commit !== currentBuildCommit
       || !milliseconds(contract.listener.created_at_milliseconds)
       || contract.listener.created_at_milliseconds > contract.interval?.started_at_milliseconds
       || typeof contract.listener.receipt_archive_directory !== 'string'
@@ -750,10 +893,15 @@ function validateContract(catalog, catalogSHA256, contract) {
   if (!validInterval(contract.interval)) {
     failures.push(failure('contract_interval', 'Contract interval is malformed'));
   }
-  if (!validMonitorBinding(contract.monitor_binding, catalog, contract.execution_nonce)) {
+  if (!validMonitorBinding(
+    contract.monitor_binding,
+    catalog,
+    contract.execution_nonce,
+    currentBuildCommit,
+  )) {
     failures.push(failure('contract_monitor', 'Contract monitor binding is incomplete or not source/run bound'));
   }
-  if (!validControllerBuild(contract.controller_build, catalog)) {
+  if (!validControllerBuild(contract.controller_build, catalog, currentBuildCommit)) {
     failures.push(failure('contract_controller_build', 'Controller build is not source/team pinned'));
   }
 
@@ -869,6 +1017,7 @@ function validateContract(catalog, catalogSHA256, contract) {
     catalogSHA256,
     listenerInstanceID: contract.listener.instance_id,
     executionNonce: contract.execution_nonce,
+    currentBuildSource: contract.current_build_source,
     monitorBinding: contract.monitor_binding,
     controllerBuild: contract.controller_build,
     operationSlots: slots,
@@ -1844,7 +1993,7 @@ function validateLiveMonitorEvidence(catalog, contract, monitorEvidence) {
       || monitorEvidence.execution_nonce !== contract.execution_nonce
       || monitorEvidence.monitor_instance_id !== contract.monitor_binding.monitor_instance_id
       || monitorEvidence.monitor_source_sha256 !== catalog.monitor_source.probe_sha256
-      || monitorEvidence.coordinator_source_sha256 !== catalog.coordinator_source.script_sha256
+      || monitorEvidence.coordinator_source_sha256 !== catalog.current_build_source.coordinator.sha256
       || !HEX64.test(monitorEvidence.history_commitment_sha256 ?? '')
       || !HEX64.test(monitorEvidence.baseline_commitment_sha256 ?? '')
       || !sameJSON(monitorEvidence.monitor_process, contract.monitor_binding.monitor_process)
@@ -2292,6 +2441,7 @@ async function buildMultiTargetCertificationSummary({
     catalogSHA256: catalogFileSHA256,
     listenerInstanceID: contract?.listener?.instance_id ?? '',
     executionNonce: contract?.execution_nonce ?? '',
+    currentBuildSource: contract?.current_build_source ?? null,
     monitorBinding: contract?.monitor_binding ?? null,
     controllerBuild: contract?.controller_build ?? null,
     operationSlots: contract?.operation_slots ?? [],
@@ -2432,6 +2582,7 @@ export function verifyDigestClaims({ catalogBytes, artifacts, summary }) {
     catalogSHA256: catalogDigest,
     listenerInstanceID: artifacts.contract?.listener?.instance_id ?? '',
     executionNonce: artifacts.contract?.execution_nonce ?? '',
+    currentBuildSource: artifacts.contract?.current_build_source ?? null,
     monitorBinding: artifacts.contract?.monitor_binding ?? null,
     controllerBuild: artifacts.contract?.controller_build ?? null,
     operationSlots: artifacts.contract?.operation_slots ?? [],
@@ -2940,7 +3091,7 @@ export function makeLiveCertificationContract({
         || typeof receipt.controller_id !== 'string' || typeof receipt.target_id !== 'string'
         || receiptByController.has(receipt.controller_id)
         || !validControllerHandshake(receipt.handshake)
-        || !validControllerBuild(receipt.build, catalog)
+        || !validControllerBuild(receipt.build, catalog, null)
         || !validProcess(receipt.controller)
         || !validTarget(receipt.target)
         || !validInterval(receipt.interval)
@@ -2952,6 +3103,7 @@ export function makeLiveCertificationContract({
   const firstTemplate = catalog.slots[0];
   const firstReceipt = receiptByController.get(firstTemplate.controller_id);
   const controllerBuild = structuredClone(firstReceipt.build);
+  const currentBuildCommit = controllerBuild.source_commit;
   if ([...receiptByController.values()].some((receipt) => (
     !sameJSON(receipt.build, controllerBuild)
   ))) {
@@ -2965,6 +3117,12 @@ export function makeLiveCertificationContract({
     firstBundle.document,
     firstReceipt.handshake?.host?.source_commit,
   );
+  if (firstPartyValidator.source_commit !== currentBuildCommit
+      || listener.source_commit !== currentBuildCommit) {
+    throw new TypeError(
+      'controller, validator, and listener host do not share one current-build commit',
+    );
+  }
   const controlledTargets = [];
   for (const targetID of catalog.controlled_target_ids) {
     const template = catalog.slots.find((slot) => slot.target_id === targetID);
@@ -3074,8 +3232,8 @@ export function makeLiveCertificationContract({
     execution_nonce: executionNonce,
     monitor_source_commit: catalog.monitor_source.commit,
     monitor_source_sha256: catalog.monitor_source.probe_sha256,
-    coordinator_source_commit: catalog.coordinator_source.commit,
-    coordinator_source_sha256: catalog.coordinator_source.script_sha256,
+    coordinator_runtime_commit: currentBuildCommit,
+    coordinator_source_sha256: catalog.current_build_source.coordinator.sha256,
     monitor_process: structuredClone(monitorEvidence.monitor_process),
     monitor_attestation_socket_path: monitorEvidence.monitor_attestation_socket_path,
     sentinel: structuredClone(monitorEvidence.sentinel),
@@ -3102,6 +3260,7 @@ export function makeLiveCertificationContract({
       receipt_protocol_floor: structuredClone(catalog.protocol.receipt_protocol_floor),
     },
     source: structuredClone(catalog.protocol_source),
+    current_build_source: { commit: currentBuildCommit },
     first_party_validator: structuredClone(firstPartyValidator),
     listener,
     socket_endpoint: structuredClone(socketEndpoint),
@@ -3118,6 +3277,7 @@ export function makeLiveCertificationContract({
     catalogSHA256,
     listenerInstanceID: listener.instance_id,
     executionNonce,
+    currentBuildSource: contract.current_build_source,
     monitorBinding,
     controllerBuild,
     operationSlots,
@@ -4016,6 +4176,10 @@ async function runCLI() {
     if (!result.success) process.exitCode = 1;
     return;
   }
+  const sourceBinding = verifyCurrentBuildSourceBinding(
+    catalog,
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
+  );
   if (args.command === 'prepare') {
     const controllerReceipts = readControllerReceiptDirectory(args['controller-receipts']);
     const bundles = readRawBundleDirectory(args.bundles);
@@ -4054,6 +4218,9 @@ async function runCLI() {
         inode: socketEvidence.inode,
       },
     });
+    if (contract.current_build_source.commit !== sourceBinding.commit) {
+      throw new TypeError('assembled contract does not match the finalizer clean Git HEAD');
+    }
     const manifest = makeOperationManifest(catalog, catalogSHA256, contract, bundles);
     const evidence = {
       version: 2,
@@ -4072,6 +4239,9 @@ async function runCLI() {
     createPreparedArtifacts(args.artifacts, contract, manifest, evidence, bundles);
   }
   const artifacts = readCertificationArtifacts(args.artifacts);
+  if (artifacts.contract?.current_build_source?.commit !== sourceBinding.commit) {
+    throw new TypeError('contract current-build commit differs from the finalizer clean Git HEAD');
+  }
   await executeFinalization(args, catalog, catalogBytes, artifacts);
 }
 

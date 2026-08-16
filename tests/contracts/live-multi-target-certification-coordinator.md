@@ -26,6 +26,9 @@ persisted summary is never itself certification authority; only the final live f
 
 - The plan schema is closed. Unknown fields, non-private inputs, wrong target/controller cardinality, and unbounded
   timeouts fail before child launch.
+- An eligible run derives its current-build commit from a clean Git HEAD. The controller executable, Peekaboo
+  validator, expected Bridge host, signed controller receipts, and observe-only witness build must all carry that same
+  commit; no catalog literal can stand in for it.
 - External markers are accepted only for the fresh execution nonce, monitor instance, and exact requested phase.
 - Baseline, grant, operations-start, operations-complete, revoke, and final fences are strictly ordered stable monitor
   heartbeats. Their safe-integer monotonic microseconds strictly increase, wall-clock milliseconds never decrease, and
@@ -47,6 +50,8 @@ persisted summary is never itself certification authority; only the final live f
 - Emit fractional or negative-zero committed coordinates, or a wall/monotonic fence drift greater than two seconds.
 - Return a sealed corpus or PID-attestation digest that differs from the exact evidence bytes.
 - Attempt to reuse a nonempty or non-private run input.
+- Dirty the checkout, drift a source-manifest file, substitute a differently stamped executable, or inject a current
+  commit literal into the acyclic catalog descriptor.
 
 ## Evidence Required
 

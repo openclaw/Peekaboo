@@ -150,10 +150,11 @@ struct CertificationObserveOnlyPlan: Codable, Equatable, Sendable {
               self.expectedHost.processIdentifier > 0,
               Self.isPositiveDecimal(self.expectedHost.processStartIdentityDecimal),
               Self.isLowerHex(self.expectedHost.codeSignatureHash, count: 40),
-              Self.isLowerHex(self.expectedHost.sourceCommit, count: 40)
+              Self.isLowerHex(self.expectedHost.sourceCommit, count: 40),
+              self.expectedHost.sourceCommit == self.expectedControllerBuild.sourceCommit
         else {
             throw CertificationControllerError.invalidPlan(
-                "Observe-only controller or Bridge host build identity is invalid."
+                "Observe-only controller and Bridge host must be one source-identical build."
             )
         }
         guard self.target.scope == "window",

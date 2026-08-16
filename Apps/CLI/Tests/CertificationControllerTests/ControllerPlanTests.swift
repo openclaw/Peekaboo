@@ -70,6 +70,14 @@ struct ControllerPlanTests {
         #expect(throws: CertificationControllerError.self) {
             try CertificationControllerPlan.decode(JSONSerialization.data(withJSONObject: object))
         }
+
+        object["start_path"] = "/private/tmp/peekaboo-controller-artifacts/start.json"
+        var host = try #require(object["expected_host"] as? [String: Any])
+        host["source_commit"] = String(repeating: "e", count: 40)
+        object["expected_host"] = host
+        #expect(throws: CertificationControllerError.self) {
+            try CertificationControllerPlan.decode(JSONSerialization.data(withJSONObject: object))
+        }
     }
 
     static let validPlanData = Data("""
@@ -93,7 +101,7 @@ struct ControllerPlanTests {
         "process_identifier": 9001,
         "process_start_identity_decimal": "900100",
         "code_signature_hash": "\(String(repeating: "a", count: 40))",
-        "source_commit": "\(String(repeating: "b", count: 40))"
+        "source_commit": "\(String(repeating: "c", count: 40))"
       },
       "target": {
         "process_identifier": 5101,

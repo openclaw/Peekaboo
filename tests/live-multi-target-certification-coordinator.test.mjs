@@ -13,11 +13,12 @@ const coordinator = path.join(repository, 'scripts/run-live-multi-target-certifi
 const contract = path.join(repository, 'tests/contracts/live-multi-target-certification-coordinator.md');
 const operatorDocumentation = path.join(repository, 'docs/testing/background-computer-use.md');
 const TEAM_ID = 'FWJYW4S8P8';
-const CONTROLLER_SOURCE = '1'.repeat(40);
 const MONITOR_SOURCE = '2'.repeat(40);
 const MONITOR_SHA = '3'.repeat(64);
-const COORDINATOR_SOURCE = '4'.repeat(40);
 const COORDINATOR_SHA = '5'.repeat(64);
+const CURRENT_BUILD_COMMIT = spawnSync(
+  '/usr/bin/git', ['-C', repository, 'rev-parse', '--verify', 'HEAD'], { encoding: 'utf8' },
+).stdout.trim();
 const HOST_PID = 9101;
 const SENTINEL_PID = 9201;
 const SENTINEL_WINDOW = 9202;
@@ -80,12 +81,11 @@ function fakeCatalog() {
   return {
     controlled_target_ids: ['target-a', 'target-b'],
     slots,
-    controller_source: { commit: CONTROLLER_SOURCE },
     protocol_source: { commit: 'e'.repeat(40) },
     trusted_bridge_host_team_ids: [TEAM_ID],
     trusted_controller_team_ids: [TEAM_ID],
     monitor_source: { commit: MONITOR_SOURCE, probe_sha256: MONITOR_SHA },
-    coordinator_source: { commit: COORDINATOR_SOURCE, script_sha256: COORDINATOR_SHA },
+    current_build_source: { coordinator: { sha256: COORDINATOR_SHA } },
     trusted_monitor_team_ids: [TEAM_ID],
     monitor_contract: {
       crash_report_prefixes: ['Peekaboo', 'peekaboo-certification-controller'],
@@ -501,7 +501,7 @@ function fixture() {
         process_identifier: HOST_PID,
         process_start_identity_decimal: `${HOST_PID}00`,
         code_signature_hash: 'd'.repeat(40),
-        source_commit: 'e'.repeat(40),
+        source_commit: CURRENT_BUILD_COMMIT,
       },
     },
     controllers: [
@@ -604,8 +604,8 @@ test('operator documentation exposes both bounded external marker handshakes', (
   const documentation = fs.readFileSync(operatorDocumentation, 'utf8');
   assert.match(documentation, /run-live-multi-target-certification\.mjs/);
   assert.match(documentation, /external-foreground-window/);
-  assert.match(documentation, /"phase":"task-complete"/);
-  assert.match(documentation, /"phase":"restore-complete"/);
+  assert.match(documentation, /task-complete/);
+  assert.match(documentation, /restore-complete/);
   assert.match(documentation, /certification_eligible:false/);
 });
 
@@ -619,6 +619,22 @@ test('closed plan rejects unknown caller fields before creating a run', () => {
     });
     assert.notEqual(run.status, 0);
     assert.match(run.stderr, /plan keys are not closed/);
+    assert.deepEqual(fs.readdirSync(fix.runs), []);
+  } finally {
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
+test('Bridge host commit must equal the coordinator Git HEAD even in test runtime', () => {
+  const fix = fixture();
+  try {
+    fix.plan.bridge.expected_host.source_commit = 'e'.repeat(40);
+    writePrivate(fix.planPath, fix.plan);
+    const run = spawnSync(process.execPath, [coordinator, '--plan', fix.planPath], {
+      encoding: 'utf8', env: coordinatorEnvironment(fix),
+    });
+    assert.notEqual(run.status, 0);
+    assert.match(run.stderr, /bridge plan is malformed/);
     assert.deepEqual(fs.readdirSync(fix.runs), []);
   } finally {
     fs.rmSync(fix.root, { recursive: true, force: true });

@@ -245,6 +245,7 @@ export function makeMultiTargetFixture(catalog, catalogFileSHA256, options = {})
     is_minimized: false,
   };
   const executionNonce = '9'.repeat(64);
+  const currentBuildCommit = options.currentBuildCommit ?? 'c'.repeat(40);
   const monitorInstanceID = randomUUID().toLowerCase();
   const monitorProcess = {
     pid: 8001,
@@ -283,7 +284,7 @@ export function makeMultiTargetFixture(catalog, catalogFileSHA256, options = {})
     public_key_base64: listenerPublicKeyBase64,
     public_key_sha256: listenerPublicKeySHA256,
     host,
-    source_commit: catalog.protocol_source.commit,
+    source_commit: currentBuildCommit,
     created_at_milliseconds: globalInterval.started_at_milliseconds - 1000,
     receipt_archive_directory: `/private/tmp/receipts/${listenerInstanceID}`,
   };
@@ -446,8 +447,8 @@ export function makeMultiTargetFixture(catalog, catalogFileSHA256, options = {})
     execution_nonce: executionNonce,
     monitor_source_commit: catalog.monitor_source.commit,
     monitor_source_sha256: catalog.monitor_source.probe_sha256,
-    coordinator_source_commit: catalog.coordinator_source.commit,
-    coordinator_source_sha256: catalog.coordinator_source.script_sha256,
+    coordinator_runtime_commit: currentBuildCommit,
+    coordinator_source_sha256: catalog.current_build_source.coordinator.sha256,
     monitor_process: monitorProcess,
     monitor_attestation_socket_path: '/private/tmp/peekaboo-monitor-attestation.sock',
     sentinel,
@@ -456,7 +457,7 @@ export function makeMultiTargetFixture(catalog, catalogFileSHA256, options = {})
     revisions: { baseline: 1, grant: 2, revoke: 3 },
   };
   const controllerBuild = {
-    source_commit: catalog.controller_source.commit,
+    source_commit: currentBuildCommit,
     executable_path: '/private/tmp/peekaboo-certification-controller',
     executable_sha256: '6'.repeat(64),
     team_id: catalog.trusted_controller_team_ids[0],
@@ -465,6 +466,7 @@ export function makeMultiTargetFixture(catalog, catalogFileSHA256, options = {})
     catalogSHA256: catalogFileSHA256,
     listenerInstanceID,
     executionNonce,
+    currentBuildSource: { commit: currentBuildCommit },
     monitorBinding,
     controllerBuild,
     operationSlots,
@@ -484,9 +486,10 @@ export function makeMultiTargetFixture(catalog, catalogFileSHA256, options = {})
       receipt_protocol_floor: structuredClone(catalog.protocol.receipt_protocol_floor),
     },
     source: structuredClone(catalog.protocol_source),
+    current_build_source: { commit: currentBuildCommit },
     first_party_validator: {
       id: 'peekaboo-bridge-receipt-validate-v1',
-      source_commit: catalog.protocol_source.commit,
+      source_commit: currentBuildCommit,
       executable_sha256: 'f'.repeat(64),
       code_signature_hash: '1'.repeat(40),
       team_id: catalog.trusted_first_party_validator_team_ids[0],
@@ -549,7 +552,7 @@ export function makeMultiTargetFixture(catalog, catalogFileSHA256, options = {})
         listener_instance_id: listenerInstanceID,
         listener_public_key_sha256: listenerPublicKeySHA256,
         host: structuredClone(host),
-        host_source_commit: catalog.protocol_source.commit,
+        host_source_commit: currentBuildCommit,
         client_instance_id: slot.session.client_instance_id,
         client: structuredClone(slot.client),
         request_sha256: slot.request_sha256,
@@ -622,7 +625,7 @@ export function makeMultiTargetFixture(catalog, catalogFileSHA256, options = {})
     execution_nonce: executionNonce,
     monitor_instance_id: monitorInstanceID,
     monitor_source_sha256: catalog.monitor_source.probe_sha256,
-    coordinator_source_sha256: catalog.coordinator_source.script_sha256,
+    coordinator_source_sha256: catalog.current_build_source.coordinator.sha256,
     monitor_process: structuredClone(monitorProcess),
     monitor_attestation_socket_path: '/private/tmp/peekaboo-monitor-attestation.sock',
     sentinel: structuredClone(sentinel),

@@ -305,10 +305,11 @@ struct CertificationControllerPlan: Codable, Equatable, Sendable {
               Self.isCanonicalPositiveDecimal(self.expectedHost.processStartIdentityDecimal),
               self.expectedHost.processStartIdentity != nil,
               Self.isLowerHex(self.expectedHost.codeSignatureHash, count: 40),
-              Self.isLowerHex(self.expectedHost.sourceCommit, count: 40)
+              Self.isLowerHex(self.expectedHost.sourceCommit, count: 40),
+              self.expectedHost.sourceCommit == self.expectedControllerBuild.sourceCommit
         else {
             throw CertificationControllerError
-                .invalidPlan("expected_host contains an invalid process or build identity.")
+                .invalidPlan("expected_host and expected_controller_build must be one source-identical build.")
         }
         guard self.target.processIdentifier > 0,
               Self.isCanonicalPositiveDecimal(self.target.processStartIdentityDecimal),

@@ -13,10 +13,13 @@ import {
   deriveCertificationRunID,
   makeLiveCertificationContract,
   monitorHistoryCommitmentSHA256,
+  projectFinalizerSourceBytes,
+  validateCatalog,
   validateMultiTargetCertificationStructure,
   makeOperationManifest,
   readCertificationArtifacts,
   verifyDigestClaims,
+  verifyCurrentBuildSourceBinding,
 } from '../scripts/finalize-multi-target-certification.mjs';
 import {
   makeMultiTargetFixture,
@@ -164,6 +167,31 @@ test('source-owned assembler rejects controller, socket, and bundle aggregation 
   const missingBundleReceipts = makeControllerReceipts(missingBundle);
   missingBundle.bundles.pop();
   assert.throws(() => assemble(missingBundle, missingBundleReceipts), /closed signed corpus/);
+});
+
+test('source-owned assembler requires one current-build commit across every signed executable', () => {
+  const wrongController = makeFixture();
+  const wrongControllerReceipts = makeControllerReceipts(wrongController);
+  wrongControllerReceipts[1].build.source_commit = 'd'.repeat(40);
+  assert.throws(
+    () => assemble(wrongController, wrongControllerReceipts),
+    /exact source-authenticated build/,
+  );
+
+  const wrongValidator = makeFixture();
+  wrongValidator.contract.first_party_validator.source_commit = 'd'.repeat(40);
+  assert.throws(
+    () => assemble(wrongValidator),
+    /controller, validator, and listener host/,
+  );
+
+  const wrongListener = makeFixture();
+  const wrongListenerReceipts = makeControllerReceipts(wrongListener);
+  for (const receipt of wrongListenerReceipts) receipt.handshake.host.source_commit = 'd'.repeat(40);
+  assert.throws(
+    () => assemble(wrongListener, wrongListenerReceipts),
+    /controller, validator, and listener host/,
+  );
 });
 
 test('documented digest command reproduces every aggregate root', async () => {
@@ -398,6 +426,7 @@ test('same-target checkpoint and final-bounds receipts cannot swap slots', async
     catalogSHA256: catalogFileSHA256,
     listenerInstanceID: fixture.contract.listener.instance_id,
     executionNonce: fixture.contract.execution_nonce,
+    currentBuildSource: fixture.contract.current_build_source,
     monitorBinding: fixture.contract.monitor_binding,
     controllerBuild: fixture.contract.controller_build,
     operationSlots: fixture.contract.operation_slots,
@@ -429,6 +458,50 @@ test('signed corpus cannot be relabeled as a different certification run', async
   assert.ok(result.failures.some((entry) => entry.rule === 'contract_run'));
 });
 
+test('current-build commit is part of the run binding and every runtime identity', async (t) => {
+  const baseline = makeFixture();
+  const changedRunID = deriveCertificationRunID({
+    catalogSHA256: catalogFileSHA256,
+    listenerInstanceID: baseline.contract.listener.instance_id,
+    executionNonce: baseline.contract.execution_nonce,
+    currentBuildSource: { commit: 'd'.repeat(40) },
+    monitorBinding: baseline.contract.monitor_binding,
+    controllerBuild: baseline.contract.controller_build,
+    operationSlots: baseline.contract.operation_slots,
+  });
+  assert.notEqual(changedRunID, baseline.contract.certification_run_id);
+
+  const cases = [
+    ['malformed binding', (fixture) => {
+      fixture.contract.current_build_source.extra = true;
+    }, 'contract_current_build_source'],
+    ['controller commit', (fixture) => {
+      fixture.contract.controller_build.source_commit = 'd'.repeat(40);
+    }, 'contract_controller_build'],
+    ['validator commit', (fixture) => {
+      fixture.contract.first_party_validator.source_commit = 'd'.repeat(40);
+    }, 'contract_first_party_validator'],
+    ['listener commit', (fixture) => {
+      fixture.contract.listener.source_commit = 'd'.repeat(40);
+    }, 'contract_listener'],
+    ['coordinator runtime commit', (fixture) => {
+      fixture.contract.monitor_binding.coordinator_runtime_commit = 'd'.repeat(40);
+    }, 'contract_monitor'],
+    ['observer commit', (fixture) => {
+      fixture.evidence.monitor_evidence.foreground_plan.observer_build.source_commit = 'd'.repeat(40);
+    }, 'monitor_foreground_plan'],
+  ];
+  for (const [name, mutate, rule] of cases) {
+    await t.test(name, async () => {
+      const fixture = makeFixture();
+      mutate(fixture);
+      rehashFixture(fixture, catalogFileSHA256);
+      const result = await assertRejected(fixture, name);
+      assert.ok(result.failures.some((entry) => entry.rule === rule));
+    });
+  }
+});
+
 test('host protocol cannot be inflated or collapsed into the receipt floor', async () => {
   const fixture = makeFixture();
   fixture.contract.protocol.host_handshake.minor = 999;
@@ -454,6 +527,108 @@ test('legacy non-live catalog and v3 contract cannot enter live finalization', a
   assert.equal('certified' in result, false);
   assert.equal(result.structural_validation_passed, false);
   assert.ok(result.failures.some((entry) => entry.rule === 'catalog_schema'));
+});
+
+test('current-build catalog binding is closed, sorted, commit-free, and acyclic', () => {
+  assert.deepEqual(validateCatalog(catalog), []);
+  assert.equal(JSON.stringify(catalog.current_build_source).includes('"commit"'), false);
+
+  const corruptions = [
+    (value) => { value.current_build_source.commit = '0'.repeat(40); },
+    (value) => { value.current_build_source.coordinator.commit = '0'.repeat(40); },
+    (value) => { value.current_build_source.controller_source_manifest.reverse(); },
+    (value) => { value.current_build_source.controller_source_manifest.push(
+      structuredClone(value.current_build_source.controller_source_manifest[0]),
+    ); },
+    (value) => { value.current_build_source.controller_source_manifest[0].path = 'scripts/not-controller.swift'; },
+    (value) => { value.current_build_source.coordinator.path = 'scripts/other.mjs'; },
+    (value) => { value.current_build_source.receipt_validator.path = 'scripts/other.swift'; },
+    (value) => { value.current_build_source.finalizer.path = 'scripts/other.mjs'; },
+    (value) => { value.current_build_source.finalizer.projection = 'identity'; },
+  ];
+  for (const corrupt of corruptions) {
+    const changed = structuredClone(catalog);
+    corrupt(changed);
+    assert.ok(validateCatalog(changed).some((entry) => entry.rule === 'catalog_current_build_source'));
+  }
+
+  const finalizerBytes = fs.readFileSync(path.join(root, catalog.current_build_source.finalizer.path));
+  const projected = projectFinalizerSourceBytes(finalizerBytes);
+  assert.equal(createHash('sha256').update(projected).digest('hex'),
+    catalog.current_build_source.finalizer.projected_sha256);
+  const replacement = Buffer.from(finalizerBytes.toString('utf8').replace(
+    /^const BUILTIN_CATALOG_SHA256 = '[0-9a-f]{64}';$/m,
+    `const BUILTIN_CATALOG_SHA256 = '${'f'.repeat(64)}';`,
+  ));
+  assert.deepEqual(projectFinalizerSourceBytes(replacement), projected);
+  assert.notEqual(
+    createHash('sha256').update(projectFinalizerSourceBytes(Buffer.concat([
+      finalizerBytes,
+      Buffer.from('\n// projected source drift\n'),
+    ]))).digest('hex'),
+    catalog.current_build_source.finalizer.projected_sha256,
+  );
+  assert.throws(
+    () => projectFinalizerSourceBytes(Buffer.concat([finalizerBytes, Buffer.from(
+      `\nconst BUILTIN_CATALOG_SHA256 = '${'0'.repeat(64)}';\n`,
+    )])),
+    /exactly one/,
+  );
+});
+
+test('source binding verifies exact files and rejects dirty or expanded source trees', () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'peekaboo-current-build-source-'));
+  try {
+    const bindings = [
+      ...catalog.current_build_source.controller_source_manifest,
+      catalog.current_build_source.coordinator,
+      catalog.current_build_source.receipt_validator,
+      catalog.current_build_source.finalizer,
+    ];
+    for (const binding of bindings) {
+      const destination = path.join(temporary, binding.path);
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.copyFileSync(path.join(root, binding.path), destination);
+    }
+    for (const args of [
+      ['init', '-q'],
+      ['config', 'user.name', 'Peekaboo Test'],
+      ['config', 'user.email', 'peekaboo-test@example.invalid'],
+      ['config', 'commit.gpgsign', 'false'],
+      ['add', '.'],
+      ['commit', '-qm', 'source fixture'],
+    ]) {
+      const run = spawnSync('/usr/bin/git', ['-C', temporary, ...args], { encoding: 'utf8' });
+      assert.equal(run.status, 0, run.stderr);
+    }
+    assert.match(verifyCurrentBuildSourceBinding(catalog, temporary).commit, /^[0-9a-f]{40}$/);
+
+    const badProjection = structuredClone(catalog);
+    badProjection.current_build_source.finalizer.projected_sha256 = '0'.repeat(64);
+    assert.throws(
+      () => verifyCurrentBuildSourceBinding(badProjection, temporary, { requireClean: false }),
+      /projected bytes differ/,
+    );
+
+    const extra = path.join(
+      temporary,
+      'Apps/CLI/Sources/PeekabooCertificationController/UnboundSource.swift',
+    );
+    fs.writeFileSync(extra, '// unbound source\n');
+    assert.throws(
+      () => verifyCurrentBuildSourceBinding(catalog, temporary, { requireClean: false }),
+      /manifest differs/,
+    );
+    fs.rmSync(extra);
+
+    fs.appendFileSync(path.join(temporary, catalog.current_build_source.receipt_validator.path), '\n');
+    assert.throws(
+      () => verifyCurrentBuildSourceBinding(catalog, temporary),
+      /clean Git worktree/,
+    );
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
 });
 
 test('live monitor run binding and stable fences fail closed under coherent evidence rehashing', async (t) => {
@@ -769,6 +944,7 @@ test('post-mutation and final-bounds slots require signed chronological order', 
     catalogSHA256: catalogFileSHA256,
     listenerInstanceID: fixture.contract.listener.instance_id,
     executionNonce: fixture.contract.execution_nonce,
+    currentBuildSource: fixture.contract.current_build_source,
     monitorBinding: fixture.contract.monitor_binding,
     controllerBuild: fixture.contract.controller_build,
     operationSlots: fixture.contract.operation_slots,
