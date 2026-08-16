@@ -78,13 +78,24 @@ function successfulOutcome() {
     effect: 'confirmed',
     evidence: 'verified_change',
     dispatchState: 'dispatched',
-    retrySafety: 'unsafe',
+    retrySafety: 'not_applicable',
     mutationDispatched: true,
     retrySafe: false,
   };
 }
 
+function unverifiedSuccessfulOutcome(evidence = 'delivery_accepted') {
+  return {
+    ...successfulOutcome(),
+    state: 'dispatched_unverified',
+    effect: 'unverifiable',
+    evidence,
+    retrySafety: 'unsafe',
+  };
+}
+
 function wireOutcome(outcome) {
+  const requiresFreshObservation = outcome.state === 'dispatched_unverified';
   const result = {
     state: outcome.state,
     route: outcome.route,
@@ -92,10 +103,10 @@ function wireOutcome(outcome) {
     evidence: outcome.evidence,
     dispatch_state: outcome.dispatchState,
     retry_safety: outcome.retrySafety,
-    escalation: 'none',
+    escalation: requiresFreshObservation ? 'observe_before_retry' : 'none',
     mutation_dispatched: outcome.mutationDispatched,
     retry_safe: outcome.retrySafe,
-    requires_fresh_observation: outcome.mutationDispatched && !outcome.retrySafe,
+    requires_fresh_observation: requiresFreshObservation,
   };
   if (outcome.deliveryMode !== null) {
     result.delivery_mechanism = 'process_targeted_events';
@@ -676,6 +687,19 @@ function replaceBridgeResponse(fixture, index, response) {
   resignBridgeReceipt(fixture, index);
 }
 
+function replaceBridgeSuccessfulOutcome(fixture, index, outcome) {
+  fixture.receiptDocuments[index].receipt.payload.outcome = wireOutcome(outcome);
+  fixture.contract.expectedOperations[index].outcome = structuredClone(outcome);
+  replaceBridgeResponse(fixture, index, {
+    projectedAction: {
+      _0: {
+        response: { typeResult: { _0: { fixture: true } } },
+        outcome: wireOutcome(outcome),
+      },
+    },
+  });
+}
+
 function replaceBridgeRequest(fixture, index, request) {
   const bundle = fixture.receiptDocuments[index];
   const bytes = canonicalBytes(request);
@@ -1112,6 +1136,43 @@ test('target ownership and background outcome cannot be weakened', async (t) => 
   assert.ok([...rules(modeResult)].some((rule) => [
     'receipt_schema', 'receipt_contract', 'background_outcome',
   ].includes(rule)));
+});
+
+test('successful mutations require one complete canonical outcome tuple', async (t) => {
+  const acceptedOutcomes = [
+    successfulOutcome(),
+    unverifiedSuccessfulOutcome(),
+    unverifiedSuccessfulOutcome('operation_still_running'),
+  ];
+  for (const outcome of acceptedOutcomes) {
+    const fixture = convertToBridgeBundles(makeFixture());
+    t.after(fixture.cleanup);
+    replaceBridgeSuccessfulOutcome(fixture, 1, outcome);
+    const result = await validate(fixture, bridgeBundleAdapter, bridgeBundleAdapterPath);
+    assert.equal(result.success, true, `${outcome.state}/${outcome.evidence}`);
+  }
+
+  const contradictions = [
+    ['state', 'refused'],
+    ['effect', 'refused'],
+    ['evidence', 'request_refused'],
+    ['dispatchState', 'none'],
+    ['retrySafety', 'safe'],
+    ['mutationDispatched', false],
+    ['retrySafe', true],
+  ];
+  for (const [field, contradictoryValue] of contradictions) {
+    const fixture = convertToBridgeBundles(makeFixture());
+    t.after(fixture.cleanup);
+    replaceBridgeSuccessfulOutcome(fixture, 1, {
+      ...successfulOutcome(),
+      [field]: contradictoryValue,
+    });
+    const result = await validate(fixture, bridgeBundleAdapter, bridgeBundleAdapterPath);
+    assert.equal(result.success, false, field);
+    assert.ok(rules(result).has('background_outcome'), field);
+    assert.ok(rules(result).has('contract_operation'), field);
+  }
 });
 
 test('operation timestamps must remain inside the observed overlap', async (t) => {

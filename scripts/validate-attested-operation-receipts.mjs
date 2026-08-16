@@ -188,11 +188,22 @@ function validOutcomeShape(value) {
 }
 
 function validSuccessfulOutcome(value) {
-  return validOutcomeShape(value)
-    && value.deliveryMode === 'background'
-    && ['confirmed', 'unverifiable'].includes(value.effect)
-    && value.mutationDispatched === true
-    && value.retrySafe === false;
+  if (!validOutcomeShape(value)
+      || value.deliveryMode !== 'background'
+      || value.mutationDispatched !== true
+      || value.retrySafe !== false) {
+    return false;
+  }
+  return (value.state === 'confirmed_change'
+      && value.effect === 'confirmed'
+      && value.evidence === 'verified_change'
+      && value.dispatchState === 'dispatched'
+      && value.retrySafety === 'not_applicable')
+    || (value.state === 'dispatched_unverified'
+      && value.effect === 'unverifiable'
+      && ['delivery_accepted', 'operation_still_running'].includes(value.evidence)
+      && value.dispatchState === 'dispatched'
+      && value.retrySafety === 'unsafe');
 }
 
 function validAttributionFailure(value) {
