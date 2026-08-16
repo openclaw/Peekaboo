@@ -2038,18 +2038,39 @@ if [[ "$(git -C "$ROOT_DIR" rev-parse HEAD)" != "$SOURCE_COMMIT" || \
 fi
 CATALOG_SHA256="$CATALOG_SHA256_INITIAL"
 
+pb window list --pid "$TARGET_A_PID" --json --bridge-socket "$BRIDGE_SOCKET" \
+    > "$ARTIFACT_ROOT/controllers/A-target-final.json"
+pb window list --pid "$TARGET_B_PID" --json --bridge-socket "$BRIDGE_SOCKET" \
+    > "$ARTIFACT_ROOT/controllers/B-target-final.json"
+TARGET_A_BOUNDS_JSON="$(jq -cer --argjson window "$TARGET_A_WINDOW_ID" '
+    .data.windows[] | select(.window_id == $window) | .bounds |
+    select((.x | type) == "number" and (.y | type) == "number" and
+        (.width | type) == "number" and (.height | type) == "number" and
+        .width > 0 and .height > 0)
+' "$ARTIFACT_ROOT/controllers/A-target-final.json")"
+TARGET_B_BOUNDS_JSON="$(jq -cer --argjson window "$TARGET_B_WINDOW_ID" '
+    .data.windows[] | select(.window_id == $window) | .bounds |
+    select((.x | type) == "number" and (.y | type) == "number" and
+        (.width | type) == "number" and (.height | type) == "number" and
+        .width > 0 and .height > 0)
+' "$ARTIFACT_ROOT/controllers/B-target-final.json")"
+
 jq -n \
     --arg id A --argjson clientPID "$CLIENT_A_RECEIPT_PID" \
     --arg clientIdentity "$CLIENT_A_IDENTITY" \
     --argjson targetPID "$TARGET_A_PID" --arg targetIdentity "$TARGET_A_IDENTITY" \
     --argjson targetWindow "$TARGET_A_WINDOW_ID" \
+    --argjson targetBounds "$TARGET_A_BOUNDS_JSON" \
     --slurpfile meta "$ARTIFACT_ROOT/controllers/A-meta.json" \
     --slurpfile mutations "$ARTIFACT_ROOT/controllers/A-mutations.json" \
     --slurpfile observations "$ARTIFACT_ROOT/controllers/A-observations.json" '
     {
         id: $id,
         controller_process: {pid: $clientPID, start_identity: $clientIdentity},
-        target: {pid: $targetPID, start_identity: $targetIdentity, window_id: $targetWindow},
+        target: {
+            scope: "window", pid: $targetPID, start_identity: $targetIdentity,
+            window_id: $targetWindow, bounds: $targetBounds
+        },
         started_at: $meta[0].started_at,
         finished_at: $meta[0].finished_at,
         mutations: $mutations[0],
@@ -2068,13 +2089,17 @@ jq -n \
     --arg clientIdentity "$CLIENT_B_IDENTITY" \
     --argjson targetPID "$TARGET_B_PID" --arg targetIdentity "$TARGET_B_IDENTITY" \
     --argjson targetWindow "$TARGET_B_WINDOW_ID" \
+    --argjson targetBounds "$TARGET_B_BOUNDS_JSON" \
     --slurpfile meta "$ARTIFACT_ROOT/controllers/B-meta.json" \
     --slurpfile mutations "$ARTIFACT_ROOT/controllers/B-mutations.json" \
     --slurpfile observations "$ARTIFACT_ROOT/controllers/B-observations.json" '
     {
         id: $id,
         controller_process: {pid: $clientPID, start_identity: $clientIdentity},
-        target: {pid: $targetPID, start_identity: $targetIdentity, window_id: $targetWindow},
+        target: {
+            scope: "window", pid: $targetPID, start_identity: $targetIdentity,
+            window_id: $targetWindow, bounds: $targetBounds
+        },
         started_at: $meta[0].started_at,
         finished_at: $meta[0].finished_at,
         mutations: $mutations[0],
@@ -2242,17 +2267,24 @@ jq -n \
                     ($operationReceipts | length)
             ),
             catalog_derived_exact_operation_manifest: (
-                ($receiptValidation[0].contract_sha256 | type) == "string"
+                ($receiptValidation[0].operation_manifest_sha256 | type) == "string" and
+                ($receiptValidation[0].offline_contract_sha256 | type) == "string"
+            ),
+            offline_policy_contract_binding: (
+                $receiptValidation[0].offline_contract_sha256 ==
+                    $receiptValidation[0].offline_result.contract_sha256
             )
         }
     }
 ' > "$ARTIFACT_ROOT/observed.json"
 
 node "$REPORTER" --catalog "$CATALOG" --report "$ARTIFACT_ROOT/observed.json" \
+    --offline-contract "$ARTIFACT_ROOT/receipt-validation-contract.json" \
     --finalize-operation-manifest "$ARTIFACT_ROOT/operation-manifest.json" \
     > "$ARTIFACT_ROOT/operation-manifest-finalization.json"
 node "$REPORTER" --catalog "$CATALOG" --report "$ARTIFACT_ROOT/observed.json" \
     --operation-manifest "$ARTIFACT_ROOT/operation-manifest.json" \
+    --offline-contract "$ARTIFACT_ROOT/receipt-validation-contract.json" \
     --output "$ARTIFACT_ROOT/certification.json"
 jq -n \
     --slurpfile certification "$ARTIFACT_ROOT/certification.json" \

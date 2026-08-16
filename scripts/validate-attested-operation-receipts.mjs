@@ -60,6 +60,10 @@ export function canonicalBytes(value) {
   return Buffer.from(JSON.stringify(canonicalValue(value)), 'utf8');
 }
 
+export function offlineContractSHA256(contract) {
+  return sha256(canonicalBytes(contract));
+}
+
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
@@ -892,9 +896,10 @@ export async function validateAttestedOperationReceipts({
   socketEvidence,
   sourceEvidence,
 }) {
+  const contractSHA256 = offlineContractSHA256(contract);
   const failures = validateContract(contract);
   if (failures.some((entry) => entry.rule === 'contract_schema')) {
-    return { success: false, adapter: null, receipts: [], failures };
+    return { success: false, contract_sha256: contractSHA256, adapter: null, receipts: [], failures };
   }
   if (!adapter || adapter.adapterAPIVersion !== 3 || typeof adapter.adapterID !== 'string'
       || typeof adapter.embedsAttestation !== 'boolean'
@@ -903,13 +908,14 @@ export async function validateAttestedOperationReceipts({
       || typeof adapter.hostReceiptBytes !== 'function'
       || typeof adapter.hostSessionAttestationBytes !== 'function') {
     failures.push(failure('adapter_contract', 'Receipt adapter does not implement API version 3'));
-    return { success: false, adapter: null, receipts: [], failures };
+    return { success: false, contract_sha256: contractSHA256, adapter: null, receipts: [], failures };
   }
   if (adapter.adapterID !== contract.adapter?.id
       || typeof adapterSHA256 !== 'string' || adapterSHA256 !== contract.adapter?.sha256) {
     failures.push(failure('adapter_identity', 'Receipt adapter differs from the run-pinned ID or source digest'));
     return {
       success: false,
+      contract_sha256: contractSHA256,
       adapter: { id: adapter.adapterID, api_version: adapter.adapterAPIVersion, sha256: adapterSHA256 ?? null },
       receipts: [],
       failures,
@@ -1085,6 +1091,7 @@ export async function validateAttestedOperationReceipts({
   );
   return {
     success: failures.length === 0,
+    contract_sha256: contractSHA256,
     adapter: { id: adapter.adapterID, api_version: adapter.adapterAPIVersion, sha256: adapterSHA256 },
     receipts: decodedReceipts.sort((left, right) => left.request_id.localeCompare(right.request_id)),
     failures,

@@ -25,6 +25,7 @@
     "complete_anchored_receipt_verdict_set",
     "first_party_offline_bundle_bijection",
     "exact_operation_request_session_binding",
-    "catalog_derived_exact_operation_manifest"
+    "catalog_derived_exact_operation_manifest",
+    "offline_policy_contract_binding"
   ]
 }

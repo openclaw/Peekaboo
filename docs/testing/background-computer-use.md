@@ -149,10 +149,13 @@ identity, target, timing, and outcome checks. A producer format change therefore
 Receipt completeness is not inferred from the mutable report. Version 2 of the overlap catalog defines the exact
 mutation, observation, route, and restoration-checkpoint slots. The reporter derives a canonical operation manifest
 from those independently hashed catalog bytes, binds each slot to one exact client/request/session/digest receipt,
-emits that mapping as a separate owner-private file, and writes its SHA-256 into the version-2 receipt-validation
-summary before final validation. Every report reference must equal its frozen manifest row byte-for-byte, and every row
-must have exactly one first-party verdict and offline bundle. Missing, duplicate, substituted, or unmanifested auxiliary
-operations fail certification even if every summary count and hash is recomputed afterward.
+emits that mapping as a separate owner-private file, and writes its SHA-256 into the version-3 receipt-validation
+summary before final validation. The summary separately binds the canonical version-3 offline policy-contract digest;
+each contract `operationID` must equal its catalog manifest slot and bind the same request, client generation, operation,
+request digest, and response digest. Every report reference must equal its frozen manifest row byte-for-byte, and every
+row must have exactly one first-party verdict and offline bundle. Missing, duplicate, substituted, wrong-slot, or
+unmanifested auxiliary operations—and a result produced under a different target, interval, outcome, or source
+contract—fail certification even if every summary count and hash is recomputed afterward.
 
 The run-specific contract pins the exact audited protocol source, including its Darwin audit-token, PID-version,
 effective-UID, and CDHash peer-binding owners. It also pins the signed listener instance and public key, Bridge and client

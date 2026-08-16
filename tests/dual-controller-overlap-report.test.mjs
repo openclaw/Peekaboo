@@ -9,22 +9,36 @@ import { fileURLToPath } from 'node:url';
 
 import {
   firstPartyResultSetSHA256,
+  makeOfflineContractForReport,
   makeOperationManifest,
   makePassingOverlapReport,
   operationManifestSHA256,
   receiptValidationResultSHA256,
   validateOverlapCertification,
 } from '../scripts/validate-dual-controller-overlap-report.mjs';
+import { offlineContractSHA256 } from '../scripts/validate-attested-operation-receipts.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const catalogPath = path.join(root, 'scripts/dual-controller-overlap-catalog.json');
 const catalogBytes = fs.readFileSync(catalogPath);
 const catalog = JSON.parse(catalogBytes);
 const catalogSHA256 = createHash('sha256').update(catalogBytes).digest('hex');
-const defaultManifest = makeOperationManifest(catalog, makePassingOverlapReport(catalog));
+const defaultReport = makePassingOverlapReport(catalog);
+const defaultOfflineContract = makeOfflineContractForReport(catalog, defaultReport);
+const defaultManifest = makeOperationManifest(catalog, defaultReport, defaultOfflineContract);
 
-function validate(report, manifest = defaultManifest) {
-  return validateOverlapCertification(catalog, report, report.catalog_sha256, manifest);
+function validate(
+  report,
+  manifest = defaultManifest,
+  offlineContract = defaultOfflineContract,
+) {
+  return validateOverlapCertification(
+    catalog,
+    report,
+    report.catalog_sha256,
+    manifest,
+    offlineContract,
+  );
 }
 
 function rules(result) {
@@ -261,29 +275,45 @@ test('reporter emits and requires the independently frozen operation manifest', 
   try {
     const reportPath = path.join(directory, 'report.json');
     const manifestPath = path.join(directory, 'operation-manifest.json');
+    const offlineContractPath = path.join(directory, 'offline-contract.json');
     const report = makePassingOverlapReport(catalog, catalogSHA256);
-    report.receipt_validation.version = 1;
-    report.receipt_validation.contract_sha256 = '0'.repeat(64);
+    const offlineContract = makeOfflineContractForReport(catalog, report);
+    report.receipt_validation.version = 2;
+    report.receipt_validation.contract_sha256 = 'legacy-v2-contract-hash';
+    report.receipt_validation.operation_manifest_sha256 = '0'.repeat(64);
+    report.receipt_validation.offline_contract_sha256 = '0'.repeat(64);
+    report.evidence.catalog_derived_exact_operation_manifest = false;
+    report.evidence.offline_policy_contract_binding = false;
     fs.writeFileSync(reportPath, `${JSON.stringify(report)}\n`);
+    fs.writeFileSync(offlineContractPath, `${JSON.stringify(offlineContract)}\n`);
     const reporter = path.join(root, 'scripts/validate-dual-controller-overlap-report.mjs');
     execFileSync(process.execPath, [
       reporter,
       '--catalog', catalogPath,
       '--report', reportPath,
+      '--offline-contract', offlineContractPath,
       '--finalize-operation-manifest', manifestPath,
     ]);
     const finalized = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    assert.equal(finalized.receipt_validation.version, 2);
+    assert.equal(finalized.receipt_validation.version, 3);
+    assert.equal('contract_sha256' in finalized.receipt_validation, false);
     assert.equal(
-      finalized.receipt_validation.contract_sha256,
+      finalized.receipt_validation.operation_manifest_sha256,
       operationManifestSHA256(manifest),
     );
+    assert.equal(
+      finalized.receipt_validation.offline_contract_sha256,
+      manifest.offline_contract_sha256,
+    );
+    assert.equal(finalized.evidence.catalog_derived_exact_operation_manifest, true);
+    assert.equal(finalized.evidence.offline_policy_contract_binding, true);
     const validation = JSON.parse(execFileSync(process.execPath, [
       reporter,
       '--catalog', catalogPath,
       '--report', reportPath,
       '--operation-manifest', manifestPath,
+      '--offline-contract', offlineContractPath,
     ], { encoding: 'utf8' }));
     assert.equal(validation.success, true);
   } finally {
@@ -350,9 +380,10 @@ test('first-party verdicts and offline bundle rows form one exact bijection', ()
   donor.receipt_validation.offline_result.receipts[0].file_sha256 = 'e'.repeat(64);
   refreshFirstPartySummary(donor);
   refreshOfflineSummary(donor);
-  const donorManifest = makeOperationManifest(catalog, donor);
-  donor.receipt_validation.contract_sha256 = operationManifestSHA256(donorManifest);
-  assert.equal(validate(donor, donorManifest).success, true);
+  const donorOfflineContract = makeOfflineContractForReport(catalog, donor);
+  const donorManifest = makeOperationManifest(catalog, donor, donorOfflineContract);
+  donor.receipt_validation.operation_manifest_sha256 = operationManifestSHA256(donorManifest);
+  assert.equal(validate(donor, donorManifest, donorOfflineContract).success, true);
   const splicedSets = makePassingOverlapReport(catalog);
   splicedSets.receipt_validation.offline_result.receipts[0] = structuredClone(
     donor.receipt_validation.offline_result.receipts[0],
@@ -378,6 +409,52 @@ test('first-party verdicts and offline bundle rows form one exact bijection', ()
   const summaryOnly = makePassingOverlapReport(catalog);
   delete summaryOnly.receipt_validation.offline_result;
   assert.ok(rules(validate(summaryOnly)).has('receipt_validation'));
+});
+
+test('offline policy contract and operation IDs cannot be transplanted', () => {
+  const targetMutators = [
+    (target) => { target.scope = 'screen'; },
+    (target) => { target.pid += 1; },
+    (target) => { target.processStartIdentity = `${target.processStartIdentity}1`; },
+    (target) => { target.windowID += 1; },
+    (target) => { target.bounds.x += 1; },
+    (target) => { target.bounds.y += 1; },
+    (target) => { target.bounds.width += 1; },
+    (target) => { target.bounds.height += 1; },
+  ];
+  const mutations = targetMutators.map((mutateTarget) => (contract) => {
+    const originalPID = contract.ownedTarget.pid;
+    mutateTarget(contract.ownedTarget);
+    contract.expectedOperations.filter((entry) => (
+      entry.target.pid === originalPID
+    )).forEach((entry) => { mutateTarget(entry.target); });
+  }).concat([
+    (contract) => { contract.interval.completedAtMilliseconds += 1; },
+    (contract) => { contract.protocolImplementation.sourceCommit = 'f'.repeat(40); },
+    (contract) => { contract.expectedOperations[0].outcome.retrySafe = true; },
+  ]);
+  for (const mutate of mutations) {
+    const report = makePassingOverlapReport(catalog);
+    const transplantedContract = structuredClone(defaultOfflineContract);
+    mutate(transplantedContract);
+    const digest = offlineContractSHA256(transplantedContract);
+    report.receipt_validation.offline_contract_sha256 = digest;
+    report.receipt_validation.offline_result.contract_sha256 = digest;
+    refreshOfflineSummary(report);
+    assert.throws(
+      () => makeOperationManifest(catalog, report, transplantedContract),
+      /Offline contract does not contain|Offline contract does not bind/,
+    );
+    assert.ok(rules(validate(report, defaultManifest, transplantedContract)).has(
+      'operation_manifest',
+    ));
+  }
+
+  const wrongSlot = makePassingOverlapReport(catalog);
+  wrongSlot.receipt_validation.offline_result.receipts[0].operation_id =
+    defaultManifest.slots[1].offline_operation_id;
+  refreshOfflineSummary(wrongSlot);
+  assert.ok(rules(validate(wrongSlot)).has('receipt_validation'));
 });
 
 test('exact operation receipt instances cannot be overwritten or spliced', () => {
@@ -434,7 +511,7 @@ test('exact operation receipt instances cannot be overwritten or spliced', () =>
   assert.ok(pairedDeletionRules.has('receipt_validation'));
 
   const staleManifest = makePassingOverlapReport(catalog);
-  staleManifest.receipt_validation.contract_sha256 = '2'.repeat(64);
+  staleManifest.receipt_validation.operation_manifest_sha256 = '2'.repeat(64);
   assert.ok(rules(validate(staleManifest)).has('receipt_validation'));
 
   const sameOperationReplacement = makePassingOverlapReport(catalog);

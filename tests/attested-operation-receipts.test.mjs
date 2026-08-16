@@ -16,6 +16,7 @@ import * as bridgeBundleAdapter from '../scripts/receipt-adapters/peekaboo-bridg
 import {
   canonicalBytes,
   deterministicRequestID,
+  offlineContractSHA256,
   validateAttestedOperationReceipts,
 } from '../scripts/validate-attested-operation-receipts.mjs';
 
@@ -725,6 +726,7 @@ test('accepts exact signed receipts for one isolated background target', async (
     result.receipts.map((entry) => entry.request_id),
     fixture.contract.expectedOperations.map((entry) => entry.requestID).sort(),
   );
+  assert.equal(result.contract_sha256, offlineContractSHA256(fixture.contract));
 });
 
 test('protocol 1.29 adapter verifies the real same-connection bundle shape', async (t) => {

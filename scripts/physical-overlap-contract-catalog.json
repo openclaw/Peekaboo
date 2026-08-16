@@ -94,7 +94,8 @@
     "complete-anchored-first-party-verdict-set",
     "first-party-offline-bundle-bijection",
     "exact-operation-request-session-binding",
-    "catalog-derived-exact-operation-manifest"
+    "catalog-derived-exact-operation-manifest",
+    "canonical-offline-policy-contract-digest"
   ],
   "foreground_attribution_requirements": {
     "minimum_event_count": 1,
