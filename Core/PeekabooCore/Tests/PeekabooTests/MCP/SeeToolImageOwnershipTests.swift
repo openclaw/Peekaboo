@@ -135,6 +135,61 @@ struct SeeToolImageOwnershipTests {
     }
 
     @Test
+    func `post-processing failure preserves dispatched web focus outcome and process target`() async throws {
+        let observation = await MainActor.run { OutcomeMissingArtifactObservationService() }
+        let context = await self.makeContext(desktopObservation: observation)
+
+        let response = try await SeeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "web_focus": true,
+        ]))
+
+        #expect(response.isError)
+        guard case let .object(meta)? = response.meta,
+              case let .object(targetReceipt)? = meta["target_receipt"]
+        else {
+            Issue.record("Expected canonical action metadata")
+            return
+        }
+        #expect(meta["state"] == .string("dispatched_unverified"))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["requires_fresh_observation"] == .bool(true))
+        #expect(targetReceipt["pid"] == .int(5351))
+        #expect(targetReceipt["process_start_identity_decimal"] == .string("6351"))
+        #expect(targetReceipt["window_id"] == nil)
+    }
+
+    @Test
+    func `See rejects a nonthrowing suspected-noop provider outcome before publication`() async throws {
+        let target = try DesktopTargetIdentity(processIdentity: .init(
+            processIdentifier: 5352,
+            processStartIdentity: 6352))
+        let observation = await MainActor.run {
+            OutcomeFileObservationService(
+                outcome: .suspectedNoop(
+                    route: .bridge,
+                    delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                    unitCount: .one),
+                targetIdentity: target)
+        }
+        let context = await self.makeContext(desktopObservation: observation)
+
+        let response = try await SeeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "web_focus": true,
+        ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        let receipt = try #require(meta["target_receipt"]?.objectValue)
+        #expect(meta["state"] == .string("suspected_noop"))
+        #expect(meta["dispatched_unit_count"] == .int(1))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(receipt["pid"] == .int(5352))
+        #expect(receipt["process_start_identity_decimal"] == .string("6352"))
+        #expect(receipt["window_id"] == nil)
+    }
+
+    @Test
     func `ROI response exposes local elements and snapshot bound coordinate metadata`() async throws {
         let observation = await MainActor.run { ROIFileObservationService() }
         let context = await self.makeContext(desktopObservation: observation)
@@ -385,5 +440,81 @@ private final class ROIFileObservationService: DesktopObservationServiceProtocol
                         metadata: metadata,
                         referenceID: snapshotID))),
             files: DesktopObservationFiles(rawScreenshotPath: path))
+    }
+}
+
+@MainActor
+private final class OutcomeMissingArtifactObservationService: DesktopObservationActionResultProviding {
+    func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
+        try await self.observeActionResult(request).payload
+    }
+
+    func observeActionResult(
+        _ request: DesktopObservationRequest) async throws -> UIAutomationActionResult<DesktopObservationResult>
+    {
+        let path = try #require(request.output.path)
+        let result = DesktopObservationResult(
+            target: ResolvedObservationTarget(kind: .screen(index: 0)),
+            capture: CaptureResult(
+                imageData: Data(),
+                savedPath: path,
+                metadata: CaptureMetadata(
+                    size: CGSize(width: 1, height: 1),
+                    mode: .screen,
+                    timestamp: Date())),
+            elements: nil,
+            files: DesktopObservationFiles(rawScreenshotPath: path))
+        return try UIAutomationActionResult(
+            payload: result,
+            outcome: .dispatchedUnverified(
+                route: .bridge,
+                delivery: .init(mechanism: .capturePipeline, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .one),
+            targetIdentity: DesktopTargetIdentity(processIdentity: .init(
+                processIdentifier: 5351,
+                processStartIdentity: 6351)))
+    }
+}
+
+@MainActor
+private final class OutcomeFileObservationService: DesktopObservationActionResultProviding {
+    private let outcome: DesktopActionOutcome
+    private let targetIdentity: DesktopTargetIdentity
+
+    init(outcome: DesktopActionOutcome, targetIdentity: DesktopTargetIdentity) {
+        self.outcome = outcome
+        self.targetIdentity = targetIdentity
+    }
+
+    func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
+        try await self.observeActionResult(request).payload
+    }
+
+    func observeActionResult(
+        _ request: DesktopObservationRequest) async throws -> UIAutomationActionResult<DesktopObservationResult>
+    {
+        let path = try #require(request.output.path)
+        let pixels = Data("provider-outcome".utf8)
+        try pixels.write(to: URL(fileURLWithPath: path), options: .atomic)
+        let result = DesktopObservationResult(
+            target: ResolvedObservationTarget(kind: .screen(index: 0)),
+            capture: CaptureResult(
+                imageData: pixels,
+                savedPath: path,
+                metadata: CaptureMetadata(
+                    size: CGSize(width: 1, height: 1),
+                    mode: .screen,
+                    timestamp: Date())),
+            elements: ElementDetectionResult(
+                snapshotId: request.output.snapshotID ?? "snapshot",
+                screenshotPath: path,
+                elements: DetectedElements(),
+                metadata: DetectionMetadata(detectionTime: 0, elementCount: 0, method: "fixture")),
+            files: DesktopObservationFiles(rawScreenshotPath: path))
+        return UIAutomationActionResult(
+            payload: result,
+            outcome: self.outcome,
+            targetIdentity: self.targetIdentity)
     }
 }

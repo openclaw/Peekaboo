@@ -2,9 +2,11 @@ import CoreGraphics
 import PeekabooAutomation
 import PeekabooAutomationKit
 import PeekabooAutomationKitTestSupport
+import PeekabooFoundation
 import PeekabooFoundationTestSupport
 import TachikomaMCP
 import Testing
+import UniformTypeIdentifiers
 @testable import PeekabooAgentRuntime
 @testable import PeekabooCore
 
@@ -114,6 +116,106 @@ struct MCPInteractionTargetTests {
             windows: ReceiptWindowService(window: valid))
         #expect(resolved.exactWindow?.identity == valid.mutationIdentity)
         #expect(resolved.exactWindow?.bounds == bounds)
+    }
+
+    @MainActor
+    @Test
+    func `legacy nil focus outcome refuses before foreground typing`() async throws {
+        try await self.expectForegroundTypingRefusal(
+            outcome: nil,
+            expectedState: .indeterminate,
+            expectedRoute: .local)
+    }
+
+    @MainActor
+    @Test
+    func `current suspected no-op focus refuses before foreground typing`() async throws {
+        try await self.expectForegroundTypingRefusal(
+            outcome: .suspectedNoop(
+                delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                unitCount: .one),
+            expectedState: .suspectedNoop,
+            expectedRoute: .local)
+    }
+
+    @MainActor
+    @Test
+    func `remote suspected no-op focus retains bridge route and exact target`() async throws {
+        try await self.expectForegroundTypingRefusal(
+            outcome: .suspectedNoop(
+                route: .bridge,
+                delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                unitCount: .one),
+            expectedState: .suspectedNoop,
+            expectedRoute: .bridge)
+    }
+
+    @Test
+    func `focus composition drops an incompatible leaf target`() throws {
+        let service = MCPFocusResultWindowService()
+        let bounds = try #require(service.identity.capturedBounds)
+        let targetIdentity = try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+            identity: service.identity,
+            bounds: bounds))
+        let focus = MCPInteractionFocusResult(
+            target: .windowId(service.identity.windowID),
+            actionResult: UIAutomationActionResult(
+                payload: (),
+                outcome: .confirmedChange(
+                    delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                    unitCount: .one),
+                targetIdentity: targetIdentity))
+        let leaf = DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "Leaf selected another process")
+            .attributed(to: DesktopActionTargetReceipt(
+                processIdentifier: 999,
+                processStartIdentity: 1))
+
+        let composed = focus.preservingFailure(leaf, operation: "Focused leaf")
+
+        #expect(composed.outcome.state == .indeterminate)
+        #expect(composed.targetReceipt == nil)
+    }
+
+    @Test
+    func `focus and completed leaf target mismatch retains both dispatched units`() throws {
+        let service = MCPFocusResultWindowService()
+        let bounds = try #require(service.identity.capturedBounds)
+        let focusTarget = try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+            identity: service.identity,
+            bounds: bounds))
+        let focus = MCPInteractionFocusResult(
+            target: .windowId(service.identity.windowID),
+            actionResult: UIAutomationActionResult(
+                payload: (),
+                outcome: .confirmedChange(
+                    delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                    unitCount: .one),
+                targetIdentity: focusTarget))
+        let otherIdentity = WindowMutationIdentity(
+            windowID: 701,
+            ownerProcessIdentifier: 999,
+            ownerProcessStartIdentity: 1,
+            capturedBounds: bounds)
+        let leaf = try UIAutomationActionResult(
+            payload: (),
+            outcome: .confirmedChange(
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                unitCount: .one),
+            targetIdentity: DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+                identity: otherIdentity,
+                bounds: bounds)))
+
+        do {
+            _ = try focus.combining(leaf, operation: "Focused leaf")
+            Issue.record("Expected the completed leaf target mismatch to fail")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.dispatchState == .mayHaveDispatched(
+                unitCount: DesktopActionOutcome.DispatchUnitCount(2)))
+            #expect(failure.targetReceipt == nil)
+        }
     }
 
     enum InvalidConsumerFixture: CaseIterable, Sendable {
@@ -280,6 +382,49 @@ struct MCPInteractionTargetTests {
         }
     }
 
+    @MainActor
+    @Test
+    func `foreground interaction consumers refuse ambiguous partial window titles before dispatch`() async throws {
+        let windows = AmbiguousForegroundWindowService()
+        let automation = MockAutomationService(accessibilityGranted: true)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: windows,
+            clipboard: AmbiguousFocusClipboardService())
+        let selector: [String: Any] = [
+            "app": "Editor",
+            "window_title": "Document",
+            "foreground": true,
+        ]
+
+        let responses = try await [
+            TypeTool(context: context).execute(arguments: ToolArguments(raw: selector.merging([
+                "text": "hello",
+            ]) { current, _ in current })),
+            PressTool(context: context).execute(arguments: ToolArguments(raw: selector.merging([
+                "keys": ["cmd+c"],
+            ]) { current, _ in current })),
+            PasteTool(context: context).execute(arguments: ToolArguments(raw: selector.merging([
+                "text": "hello",
+                "restore_delay_ms": 0,
+            ]) { current, _ in current })),
+            DialogTool(context: context).execute(arguments: ToolArguments(raw: selector.merging([
+                "action": "click",
+                "button": "OK",
+            ]) { current, _ in current })),
+        ]
+
+        for response in responses {
+            #expect(response.isError)
+            try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(
+                .refused(reason: .targetUnavailable),
+                in: response)
+        }
+        #expect(windows.focusCalls == 0)
+        #expect(automation.lastTypeActions == nil)
+        #expect(automation.lastHotkeyKeys == nil)
+    }
+
     private static func makeTarget(_ selectors: Selectors) throws -> MCPInteractionTarget {
         try MCPInteractionTarget(
             app: selectors.app,
@@ -313,6 +458,169 @@ struct MCPInteractionTargetTests {
                 ownerProcessIdentifier: processIdentity.processIdentifier,
                 ownerProcessStartIdentity: processIdentity.processStartIdentity,
                 capturedBounds: capturedBounds))
+    }
+
+    @MainActor
+    private func expectForegroundTypingRefusal(
+        outcome: DesktopActionOutcome?,
+        expectedState: DesktopActionOutcome.State,
+        expectedRoute: DesktopActionOutcome.Route) async throws
+    {
+        let automation = MockAutomationService(accessibilityGranted: true)
+        let windows = MCPFocusResultWindowService(outcome: outcome)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: windows)
+
+        let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "foreground": true,
+            "text": "must not type",
+        ]))
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["state"] == .string(expectedState.rawValue))
+        #expect(response.meta?.objectValue?["route"] == .string(expectedRoute.rawValue))
+        #expect(response.meta?.objectValue?["target_receipt"]?.objectValue?["window_id"] == .int(700))
+        #expect(automation.lastTypeActions == nil)
+        #expect(windows.focusCalls == 1)
+    }
+}
+
+@MainActor
+private final class AmbiguousFocusClipboardService: ClipboardServiceProtocol {
+    func get(prefer _: UTType?) throws -> ClipboardReadResult? {
+        nil
+    }
+
+    func set(_: ClipboardWriteRequest) throws -> ClipboardReadResult {
+        throw ClipboardServiceError.writeFailed("Ambiguous focus must fail before clipboard mutation")
+    }
+
+    func clear() {}
+    func save(slot _: String) throws {}
+
+    func restore(slot: String) throws -> ClipboardReadResult {
+        throw ClipboardServiceError.slotNotFound(slot)
+    }
+}
+
+private final class AmbiguousForegroundWindowService: WindowManagementPinnedFocusActionResultProviding,
+    @unchecked Sendable
+{
+    private(set) nonisolated(unsafe) var focusCalls = 0
+
+    func listWindows(target _: WindowTarget) async throws -> [ServiceWindowInfo] {
+        [
+            Self.window(id: 701, index: 0),
+            Self.window(id: 702, index: 1),
+        ]
+    }
+
+    func focusWindow(target _: WindowTarget) async throws {
+        self.focusCalls += 1
+    }
+
+    func focusWindowActionResult(target _: WindowTarget) async throws -> UIAutomationActionResult<Void> {
+        self.focusCalls += 1
+        throw PeekabooError.commandFailed("Ambiguous focus must not dispatch")
+    }
+
+    func focusWindowActionResult(
+        target _: WindowTarget,
+        expectedIdentity _: WindowMutationIdentity) async throws -> UIAutomationActionResult<Void>
+    {
+        self.focusCalls += 1
+        throw PeekabooError.commandFailed("Ambiguous focus must not dispatch")
+    }
+
+    func closeWindow(target _: WindowTarget) async throws {}
+    func minimizeWindow(target _: WindowTarget) async throws {}
+    func restoreWindow(target _: WindowTarget) async throws {}
+    func maximizeWindow(target _: WindowTarget) async throws {}
+    func moveWindow(target _: WindowTarget, to _: CGPoint) async throws {}
+    func resizeWindow(target _: WindowTarget, to _: CGSize) async throws {}
+    func setWindowBounds(target _: WindowTarget, bounds _: CGRect) async throws {}
+    func getFocusedWindow() async throws -> ServiceWindowInfo? {
+        nil
+    }
+
+    private static func window(id: Int, index: Int) -> ServiceWindowInfo {
+        let bounds = CGRect(x: index * 20, y: index * 20, width: 640, height: 480)
+        return ServiceWindowInfo(
+            windowID: id,
+            title: "Document \(index)",
+            bounds: bounds,
+            index: index,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: id,
+                ownerProcessIdentifier: 89,
+                ownerProcessStartIdentity: 890,
+                capturedBounds: bounds))
+    }
+}
+
+final class MCPFocusResultWindowService: WindowManagementPinnedFocusActionResultProviding, @unchecked Sendable {
+    let identity = WindowMutationIdentity(
+        windowID: 700,
+        ownerProcessIdentifier: 89,
+        ownerProcessStartIdentity: 890,
+        capturedBounds: CGRect(x: 20, y: 30, width: 640, height: 480))
+    nonisolated(unsafe) var outcome: DesktopActionOutcome?
+    private(set) nonisolated(unsafe) var focusCalls = 0
+
+    init(outcome: DesktopActionOutcome? = .confirmedChange(
+        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+        unitCount: .one))
+    {
+        self.outcome = outcome
+    }
+
+    func listWindows(target _: WindowTarget) async throws -> [ServiceWindowInfo] {
+        [ServiceWindowInfo(
+            windowID: self.identity.windowID,
+            title: "Editor",
+            bounds: self.identity.capturedBounds ?? .zero,
+            mutationIdentity: self.identity)]
+    }
+
+    func focusWindow(target _: WindowTarget) async throws {
+        throw PeekabooError.commandFailed("Legacy void focus must not be used")
+    }
+
+    func focusWindowActionResult(target _: WindowTarget) async throws -> UIAutomationActionResult<Void> {
+        throw PeekabooError.commandFailed("Unpinned focus must not be used")
+    }
+
+    func focusWindowActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> UIAutomationActionResult<Void>
+    {
+        self.focusCalls += 1
+        guard case let .windowId(windowID) = target,
+              windowID == self.identity.windowID,
+              expectedIdentity.hasSameStableReceipt(as: self.identity),
+              let bounds = self.identity.capturedBounds
+        else {
+            throw PeekabooError.commandFailed("Unexpected exact focus target")
+        }
+        return try UIAutomationActionResult(
+            payload: (),
+            outcome: self.outcome,
+            targetIdentity: DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+                identity: self.identity,
+                bounds: bounds)))
+    }
+
+    func closeWindow(target _: WindowTarget) async throws {}
+    func minimizeWindow(target _: WindowTarget) async throws {}
+    func restoreWindow(target _: WindowTarget) async throws {}
+    func maximizeWindow(target _: WindowTarget) async throws {}
+    func moveWindow(target _: WindowTarget, to _: CGPoint) async throws {}
+    func resizeWindow(target _: WindowTarget, to _: CGSize) async throws {}
+    func setWindowBounds(target _: WindowTarget, bounds _: CGRect) async throws {}
+    func getFocusedWindow() async throws -> ServiceWindowInfo? {
+        nil
     }
 }
 

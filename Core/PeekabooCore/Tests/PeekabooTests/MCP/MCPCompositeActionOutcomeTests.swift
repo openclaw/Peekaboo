@@ -139,7 +139,7 @@ struct MCPCompositeActionOutcomeTests {
         automation.actionOutcome = .refused(reason: .permissionDenied)
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
-            windows: EmptyRecordingWindowService())
+            windows: MCPFocusResultWindowService())
 
         let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
             "keys": ["cmd+a"],

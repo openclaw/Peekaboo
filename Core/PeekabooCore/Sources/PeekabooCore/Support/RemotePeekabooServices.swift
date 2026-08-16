@@ -8,6 +8,7 @@ import PeekabooFoundation
 
 @MainActor
 public final class RemotePeekabooServices: PeekabooServiceProviding {
+    public let executionHost: PeekabooServiceExecutionHost = .remote
     public let logging: any LoggingServiceProtocol
     public let desktopObservation: any DesktopObservationServiceProtocol
     public let screenCapture: any ScreenCaptureServiceProtocol
@@ -70,6 +71,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         supportsApplicationRelaunch: Bool = false,
         supportsProcessGenerationPinnedApplicationQuit: Bool = false,
         supportsProcessGenerationPinnedApplicationActivation: Bool = false,
+        supportsProcessGenerationPinnedApplicationHide: Bool = false,
         allowLocalApplicationFallback: Bool = false,
         desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil)
     {
@@ -90,7 +92,8 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
             supportsWindowReadiness: supportsApplicationWindowReadiness,
             supportsRelaunch: supportsApplicationRelaunch,
             supportsPinnedQuit: supportsProcessGenerationPinnedApplicationQuit,
-            supportsPinnedActivation: supportsProcessGenerationPinnedApplicationActivation)
+            supportsPinnedActivation: supportsProcessGenerationPinnedApplicationActivation,
+            supportsPinnedHide: supportsProcessGenerationPinnedApplicationHide)
         self.automation = if supportsElementActions {
             RemoteElementActionUIAutomationService(
                 client: client,
@@ -176,6 +179,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
             exactClick: dialogCapabilities.exactClick,
             exactDismiss: dialogCapabilities.exactDismiss,
             exactInput: dialogCapabilities.exactInput,
+            backgroundExactInput: dialogCapabilities.backgroundExactInput,
             exactForceDismiss: dialogCapabilities.exactForceDismiss,
             legacyInputFocusPolicy: dialogCapabilities.legacyInputFocusPolicy)
         self.dialogs = RemoteDialogService(client: client, capabilities: resolvedDialogCapabilities)

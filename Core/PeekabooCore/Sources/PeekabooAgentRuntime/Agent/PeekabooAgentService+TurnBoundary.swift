@@ -47,6 +47,11 @@ extension PeekabooAgentService {
                 resultsByID.removeValue(forKey: toolCall.id)
             }
             _ = boundary.record(toolName: toolCall.name, arguments: toolCall.arguments)
+            if let toolResult {
+                _ = boundary.recordResult(
+                    toolName: toolCall.name,
+                    result: toolResult.failure?.metadata ?? toolResult.result)
+            }
             if let toolResult, !AgentToolResultSemantics.isFailure(toolResult) {
                 boundary.recordSuccessfulCompletion(
                     toolName: toolCall.name,
@@ -66,7 +71,8 @@ extension PeekabooAgentService {
     }
 
     private static func resultRequiresFreshPerception(_ result: AgentToolResult) -> Bool {
-        switch AgentToolResultSemantics.normalizedClaims(from: result.result).turnBoundary {
+        let semanticValue = result.failure?.metadata ?? result.result
+        return switch AgentToolResultSemantics.normalizedClaims(from: semanticValue).turnBoundary {
         case .absent:
             false
         case .invalid:

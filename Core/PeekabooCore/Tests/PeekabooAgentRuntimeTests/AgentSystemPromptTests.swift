@@ -117,7 +117,8 @@ struct AgentSystemPromptTests {
         #expect(prompt.contains("predicates are structured JSON objects"))
         #expect(prompt.contains("never prose strings or AX expressions"))
         #expect(prompt.contains("Raw keyboard shortcuts require explicit foreground consent"))
-        #expect(prompt.contains("`press` with xdotool-style chords such as `cmd+shift+t` and `foreground: true`"))
+        #expect(prompt.contains("Keyboard shortcuts → unavailable in this background-only session"))
+        #expect(!prompt.contains(#""foreground": true"#))
         #expect(prompt.contains("predicate schema and examples exactly"))
     }
 
@@ -132,15 +133,30 @@ struct AgentSystemPromptTests {
     }
 
     @Test
-    func `generated prompt keeps launch navigation and observation in background`() {
+    func `unrestricted prompt describes foreground and Shell authority without background ceiling claims`() {
+        guard #available(macOS 14.0, *) else { return }
+        let prompt = AgentSystemPrompt.generate(executionPolicy: .unrestricted)
+
+        #expect(prompt.contains("unrestricted tool authority"))
+        #expect(prompt.contains("foreground/global UI and Shell"))
+        #expect(prompt.contains(#""foreground": true"#))
+        #expect(!prompt.contains("immutable background-only authority"))
+        #expect(!prompt.contains("but not Shell authority"))
+        #expect(!prompt.contains("shell behavior are impossible"))
+    }
+
+    @Test
+    func `default generated prompt recommends only background-reachable launch and navigation`() {
         guard #available(macOS 14.0, *) else { return }
         let prompt = AgentSystemPrompt.generate()
 
-        #expect(prompt.contains(#""action": "launch", "name": "Safari", "foreground": true"#))
-        #expect(prompt.contains("only an exact already-running"))
-        #expect(prompt.contains("relaunch, and unhide require `foreground: true`"))
-        #expect(prompt.contains(#""action": "open", "name": "Safari""#))
-        #expect(prompt.contains("`new_page` and `select_page` stay in the background by default"))
+        #expect(prompt.contains(#""action": "launch", "name": "Safari", "waitUntilReady": true"#))
+        #expect(prompt.contains("already-running readiness check"))
+        #expect(prompt.contains("Cold launch,"))
+        #expect(prompt.contains("focus, and switch are unavailable in this session"))
+        #expect(!prompt.contains(#""action": "open", "name": "Safari""#))
+        #expect(prompt.contains("Reuse only an existing exact connection"))
+        #expect(prompt.contains("Create background DevTools pages"))
         #expect(prompt.contains("Observation never focuses the target by default"))
         #expect(prompt.contains("Only set `web_focus: true`"))
         #expect(!prompt.contains("capture and focus background apps"))
@@ -152,11 +168,11 @@ struct AgentSystemPromptTests {
         guard #available(macOS 14.0, *) else { return }
         let prompt = AgentSystemPrompt.generate()
 
-        #expect(prompt.contains("raw `press`"))
+        #expect(prompt.contains("Raw `press`"))
         #expect(prompt.contains("persistent clipboard"))
-        #expect(prompt.contains("browser setup/fronting"))
+        #expect(prompt.contains("setup/fronting"))
         #expect(prompt.contains("Space switch/follow"))
-        #expect(prompt.contains("Space list and unfollowed"))
-        #expect(prompt.contains("Do not retry or route around a policy refusal"))
+        #expect(prompt.contains("Space list, unfollowed"))
+        #expect(prompt.contains("retry/routing workarounds"))
     }
 }

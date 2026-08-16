@@ -13,14 +13,22 @@ extension AppToolActions {
         extraMeta: [String: Value] = [:],
         outcome: DesktopActionOutcome? = nil) throws -> ToolResponse
     {
+        try ApplicationActionResultSemantics.requireSuccessfulOutcome(
+            outcome,
+            operation: self.actionDescription(from: message))
         var meta: [String: Value] = [
             "app_name": .string(app.name),
             "process_id": .double(Double(app.processIdentifier)),
             "process_start_identity": app.processStartIdentity
                 .map { .double(Double($0)) } ?? .null,
+            "process_start_identity_decimal": app.processStartIdentity
+                .map { .string(String($0)) } ?? .null,
             "bundle_id": app.bundleIdentifier != nil ? .string(app.bundleIdentifier!) : .null,
             "execution_time": .double(self.executionTime(since: startTime)),
         ]
+        if let processIdentity = app.processIdentity {
+            meta["target_identity"] = Self.processTargetIdentityMetadata(processIdentity)
+        }
         meta.merge(extraMeta) { $1 }
 
         let summary = self.makeSummary(for: app, action: self.actionDescription(from: message), notes: nil)
@@ -37,12 +45,20 @@ extension AppToolActions {
         verb: String,
         outcome: DesktopActionOutcome?) throws -> ToolResponse
     {
+        try ApplicationActionResultSemantics.requireSuccessfulOutcome(outcome, operation: verb)
         let statusLine = "\(AgentDisplayTokens.Status.success) \(verb) \(app.name) (PID: \(app.processIdentifier))"
-        let baseMeta: [String: Value] = [
+        var baseMeta: [String: Value] = [
             "app_name": .string(app.name),
             "process_id": .double(Double(app.processIdentifier)),
+            "process_start_identity": app.processStartIdentity
+                .map { .double(Double($0)) } ?? .null,
+            "process_start_identity_decimal": app.processStartIdentity
+                .map { .string(String($0)) } ?? .null,
             "execution_time": .double(self.executionTime(since: startTime)),
         ]
+        if let processIdentity = app.processIdentity {
+            baseMeta["target_identity"] = Self.processTargetIdentityMetadata(processIdentity)
+        }
         let summary = self.makeSummary(for: app, action: verb, notes: nil)
         return try ToolResponse(
             content: [.text(text: statusLine, annotations: nil, _meta: nil)],
@@ -83,5 +99,13 @@ extension AppToolActions {
             return "App"
         }
         return String(token)
+    }
+
+    private static func processTargetIdentityMetadata(_ identity: ApplicationProcessIdentity) -> Value {
+        .object([
+            "kind": .string("process"),
+            "pid": .int(Int(identity.processIdentifier)),
+            "process_start_identity_decimal": .string(String(identity.processStartIdentity)),
+        ])
     }
 }

@@ -3,11 +3,12 @@ import PeekabooFoundation
 import Tachikoma
 import TachikomaMCP
 
-/// Immutable execution authority applied before an MCP tool can validate or dispatch.
+/// Immutable execution authority applied before an MCP tool can dispatch.
 ///
-/// Standalone MCP and CLI tools use ``unrestricted``. Agent sessions default to
-/// ``backgroundOnly``. A stored foreground choice is an immutable maximum; each resumed
-/// process invocation still requires fresh human foreground authorization.
+/// Public MCP, CLI, and Agent entry points default to ``backgroundOnly``. Unrestricted or
+/// foreground authority must be selected explicitly by a trusted caller. A stored Agent
+/// foreground choice is an immutable maximum; each resumed process invocation still requires
+/// fresh human foreground authorization.
 public enum MCPToolExecutionPolicy: String, Codable, Sendable {
     case unrestricted
     case backgroundOnly = "background_only"
@@ -64,8 +65,17 @@ public enum MCPToolExecutionPolicy: String, Codable, Sendable {
         }
         return self.refusal(
             toolName: toolName,
-            message: "the selected mutation target could not be proven background-safe: \(detail)",
+            message: "the selected operation target could not be proven background-safe: \(detail)",
             reason: .targetUnavailable)
+    }
+
+    func nestedAgentAuthorityRejection() -> ToolResponse? {
+        guard self != .backgroundOnly else { return nil }
+        return self.refusal(
+            toolName: "agent",
+            message: "nested Agent execution must retain immutable background-only authority without Shell access " +
+                "or foreground escalation",
+            reason: .operationUnsupported)
     }
 
     private func refusal(
@@ -74,8 +84,9 @@ public enum MCPToolExecutionPolicy: String, Codable, Sendable {
         reason: DesktopActionOutcome.RefusalReason) -> ToolResponse
     {
         MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
-            message: "Agent session policy refused '\(toolName)' before dispatch because \(message). " +
-                "Only a human can authorize a different Agent execution policy.",
+            message: "Execution policy refused '\(toolName)' before dispatch because \(message). " +
+                "A trusted caller must explicitly authorize foreground execution; standalone CLI commands that " +
+                "support it use --foreground.",
             reason: reason,
             additionalFields: [
                 "error_code": .string(Self.refusalErrorCode),
@@ -162,6 +173,13 @@ private enum BackgroundOnlyToolPolicy {
             self.rawPressViolation(arguments)
         case "action":
             self.actionViolation(arguments)
+        default:
+            self.extendedViolation(toolName: toolName, arguments: arguments)
+        }
+    }
+
+    private static func extendedViolation(toolName: String, arguments: ToolArguments) -> Violation? {
+        switch toolName {
         case "image", "capture":
             self.captureViolation(arguments)
         case "app":
@@ -178,22 +196,43 @@ private enum BackgroundOnlyToolPolicy {
             self.spaceViolation(arguments)
         case "browser":
             self.browserViolation(arguments)
-        case "drag", "move", "paste":
+        case "paste":
+            self.pasteViolation(arguments)
+        case "drag", "move":
             self.sharedInputViolation(toolName: toolName)
         case "shell":
             .sharedDesktop("shell execution can bypass the Agent's background-only tool boundary")
         case "agent":
-            .unclassified
+            nil
         default:
             .unclassified
         }
     }
 
-    private static func sharedInputViolation(toolName: String) -> Violation {
-        if toolName == "paste" {
-            return .sharedDesktop("paste cannot yet prove that its focused window is not a dialog or sheet")
+    private static func sharedInputViolation(toolName _: String) -> Violation {
+        .sharedDesktop("it uses the shared physical pointer")
+    }
+
+    private static func pasteViolation(_ arguments: ToolArguments) -> Violation? {
+        if let foreground = self.explicitForeground(arguments) {
+            return foreground
         }
-        return .sharedDesktop("it uses the shared physical pointer")
+        guard arguments.getValue(for: "text") != nil else {
+            return .sharedDesktop(
+                "clipboard-backed paste changes shared clipboard state or sends Cmd+V without an exact text result")
+        }
+        let disallowedPayloadKeys = ["filePath", "imagePath", "dataBase64", "uti", "alsoText"]
+        guard !disallowedPayloadKeys.contains(where: { arguments.getValue(for: $0) != nil }) else {
+            return .sharedDesktop(
+                "background-only paste accepts one direct text payload and never shared clipboard data")
+        }
+        let hasTarget = ["app", "pid", "window_id", "window_title", "window_index"].contains {
+            arguments.getValue(for: $0) != nil
+        }
+        guard hasTarget else {
+            return .sharedDesktop("targetless paste would send input to the user's shared foreground keyboard focus")
+        }
+        return nil
     }
 
     private static func explicitForeground(
@@ -210,12 +249,10 @@ private enum BackgroundOnlyToolPolicy {
     }
 
     private static func actionViolation(_ arguments: ToolArguments) -> Violation? {
-        guard let action = self.normalized(arguments.getString("action")) else { return nil }
-        let canonicalAction = action.hasPrefix("ax") ? String(action.dropFirst(2)) : action
-        if ["raise", "showmenu", "showalternateui", "showdefaultui"].contains(canonicalAction) {
-            return .activation("the requested Accessibility action can raise or expose foreground UI")
-        }
-        return nil
+        guard let action = arguments.getString("action"),
+              AccessibilityActionPolicy.requiresForegroundConsent(action)
+        else { return nil }
+        return .activation("the requested Accessibility action can raise or expose foreground UI")
     }
 
     private static func rawPressViolation(_ arguments: ToolArguments) -> Violation? {
@@ -330,7 +367,11 @@ private enum BackgroundOnlyToolPolicy {
             return self.hasDialogTarget(arguments)
                 ? nil
                 : .invalidRequest("dialog dismiss requires an explicit app, PID, or window target")
-        case .input, .file:
+        case .input:
+            return self.hasDialogTarget(arguments)
+                ? nil
+                : .sharedDesktop("targetless dialog keyboard input requires foreground consent")
+        case .file:
             return .sharedDesktop("dialog keyboard/file interaction requires foreground consent")
         }
     }
@@ -448,6 +489,9 @@ private enum ForegroundAllowedAgentToolPolicy {
         if toolName == "shell" {
             return "shell execution is a separate privilege and can bypass native UI automation, including through " +
                 "AppleScript, JXA, OSA, or arbitrary subprocesses"
+        }
+        if toolName == "agent" {
+            return "nested Agent execution is classified only for immutable background-only authority"
         }
         guard self.allowedToolNames.contains(toolName) else {
             return "the tool is not classified for Agent execution"

@@ -3,6 +3,7 @@ import Foundation
 import MCP
 import os.log
 import PeekabooAutomation
+import PeekabooFoundation
 import TachikomaMCP
 
 /// MCP tool for interacting with the macOS Dock
@@ -103,6 +104,11 @@ public struct DockTool: MCPTool {
                     .error("Unknown action: \(action). Supported actions: launch, right-click, hide, show, list")
             }
 
+        } catch let failure as DesktopActionFailure {
+            return try await MCPDesktopActionFailureHandler.response(
+                for: failure,
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: nil)
         } catch {
             self.logger.error("Dock operation execution failed: \(error)")
             return ToolResponse.error("Failed to \(action) dock: \(error.localizedDescription)")
@@ -120,12 +126,32 @@ public struct DockTool: MCPTool {
             return ToolResponse.error("Must specify 'app' for launch action")
         }
 
-        try await service.launchFromDock(appName: app)
+        let result = try await service.launchFromDockResult(appName: app)
+        let outcome: DesktopActionOutcome
+        do {
+            outcome = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                result,
+                policy: .confirmedOrDispatched(requiring: .foreground),
+                targetRequirement: service is any DockServiceActionResultProviding ? .required : .optional,
+                operation: "Dock launch",
+                missingTargetMessage: "Dock launch returned without its resolved target identity.",
+                rejectedOutcomeMessage: "Dock launch did not return a successful outcome.")
+        } catch let failure as DesktopActionFailure {
+            return try await MCPDesktopActionFailureHandler.response(
+                for: failure,
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: nil,
+                additionalFields: MCPDesktopTargetMetadataProjector.fields(result.targetIdentity))
+        }
 
         let executionTime = Date().timeIntervalSince(startTime)
 
         let duration = self.formatDuration(executionTime)
-        let message = "\(AgentDisplayTokens.Status.success) Launched \(app) from dock in \(duration)"
+        let message = if outcome.state == .confirmedNoChange {
+            "\(AgentDisplayTokens.Status.success) \(app) was already running; no Dock launch was needed in \(duration)"
+        } else {
+            "\(AgentDisplayTokens.Status.success) Launched \(app) from dock in \(duration)"
+        }
 
         let baseMeta: [String: Value] = [
             "app_name": .string(app),
@@ -135,9 +161,14 @@ public struct DockTool: MCPTool {
             targetApp: app,
             actionDescription: "Dock Launch",
             notes: nil)
-        return ToolResponse(
+        let metadata = try MCPDesktopTargetMetadataProjector.fields(result.targetIdentity, merging: baseMeta)
+        return try ToolResponse(
             content: [.text(text: message, annotations: nil, _meta: nil)],
-            meta: ToolEventSummary.merge(summary: summary, into: .object(baseMeta)))
+            meta: ToolEventSummary.merge(
+                summary: summary,
+                into: MCPToolResponseMetadataProjector.metadata(
+                    merging: metadata,
+                    outcome: outcome)))
     }
 
     private func handleRightClick(
@@ -150,13 +181,35 @@ public struct DockTool: MCPTool {
             return ToolResponse.error("Must specify 'app' for right-click action")
         }
 
-        try await service.rightClickDockItem(appName: app, menuItem: menuItem)
+        let result = try await service.rightClickDockItemResult(appName: app, menuItem: menuItem)
+        let outcome: DesktopActionOutcome
+        do {
+            outcome = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                result,
+                policy: .confirmedOrDispatched(requiring: .foreground),
+                targetRequirement: service is any DockServiceActionResultProviding ? .required : .optional,
+                operation: "Dock context-menu action",
+                missingTargetMessage: "Dock context-menu action returned without its resolved target identity.",
+                rejectedOutcomeMessage: "Dock context-menu action did not return a successful outcome.")
+        } catch let failure as DesktopActionFailure {
+            return try await MCPDesktopActionFailureHandler.response(
+                for: failure,
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: nil,
+                additionalFields: MCPDesktopTargetMetadataProjector.fields(result.targetIdentity))
+        }
 
         let executionTime = Date().timeIntervalSince(startTime)
 
-        var message = "\(AgentDisplayTokens.Status.success) Right-clicked \(app) in dock"
-        if let menuItem {
-            message += " and selected '\(menuItem)'"
+        var message: String
+        if outcome.state == .confirmedNoChange {
+            message = "\(AgentDisplayTokens.Status.success) The Dock context already matched " +
+                "the requested state for \(app)"
+        } else {
+            message = "\(AgentDisplayTokens.Status.success) Right-clicked \(app) in dock"
+            if let menuItem {
+                message += " and selected '\(menuItem)'"
+            }
         }
         message += " in \(self.formatDuration(executionTime))"
 
@@ -169,51 +222,78 @@ public struct DockTool: MCPTool {
             targetApp: app,
             actionDescription: "Dock Menu",
             notes: menuItem ?? "Context menu")
-        return ToolResponse(
+        let metadata = try MCPDesktopTargetMetadataProjector.fields(result.targetIdentity, merging: baseMeta)
+        return try ToolResponse(
             content: [.text(text: message, annotations: nil, _meta: nil)],
-            meta: ToolEventSummary.merge(summary: summary, into: .object(baseMeta)))
+            meta: ToolEventSummary.merge(
+                summary: summary,
+                into: MCPToolResponseMetadataProjector.metadata(
+                    merging: metadata,
+                    outcome: outcome)))
     }
 
     private func handleHide(
         service: any DockServiceProtocol,
         startTime: Date) async throws -> ToolResponse
     {
-        try await service.hideDock()
+        let result = try await service.hideDockResult()
+        let outcome = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+            result.outcome,
+            policy: .confirmedOrDispatched(requiring: .background),
+            operation: "Dock hide",
+            rejectedOutcomeMessage: "Dock hide did not return a successful outcome.")
 
         let executionTime = Date().timeIntervalSince(startTime)
 
         let duration = self.formatDuration(executionTime)
-        let message = "\(AgentDisplayTokens.Status.success) Hidden dock (enabled auto-hide) in \(duration)"
+        let message = if outcome.state == .confirmedNoChange {
+            "\(AgentDisplayTokens.Status.success) Dock was already hidden (auto-hide enabled) in \(duration)"
+        } else {
+            "\(AgentDisplayTokens.Status.success) Hidden dock (enabled auto-hide) in \(duration)"
+        }
 
         let baseMeta: [String: Value] = [
             "auto_hide_enabled": .bool(true),
             "execution_time": .double(executionTime),
         ]
         let summary = ToolEventSummary(actionDescription: "Dock Hide", notes: nil)
-        return ToolResponse(
+        return try ToolResponse(
             content: [.text(text: message, annotations: nil, _meta: nil)],
-            meta: ToolEventSummary.merge(summary: summary, into: .object(baseMeta)))
+            meta: ToolEventSummary.merge(
+                summary: summary,
+                into: MCPToolResponseMetadataProjector.metadata(merging: baseMeta, outcome: outcome)))
     }
 
     private func handleShow(
         service: any DockServiceProtocol,
         startTime: Date) async throws -> ToolResponse
     {
-        try await service.showDock()
+        let result = try await service.showDockResult()
+        let outcome = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+            result.outcome,
+            policy: .confirmedOrDispatched(requiring: .background),
+            operation: "Dock show",
+            rejectedOutcomeMessage: "Dock show did not return a successful outcome.")
 
         let executionTime = Date().timeIntervalSince(startTime)
 
         let duration = self.formatDuration(executionTime)
-        let message = "\(AgentDisplayTokens.Status.success) Shown dock (disabled auto-hide) in \(duration)"
+        let message = if outcome.state == .confirmedNoChange {
+            "\(AgentDisplayTokens.Status.success) Dock was already shown (auto-hide disabled) in \(duration)"
+        } else {
+            "\(AgentDisplayTokens.Status.success) Shown dock (disabled auto-hide) in \(duration)"
+        }
 
         let baseMeta: [String: Value] = [
             "auto_hide_enabled": .bool(false),
             "execution_time": .double(executionTime),
         ]
         let summary = ToolEventSummary(actionDescription: "Dock Show", notes: nil)
-        return ToolResponse(
+        return try ToolResponse(
             content: [.text(text: message, annotations: nil, _meta: nil)],
-            meta: ToolEventSummary.merge(summary: summary, into: .object(baseMeta)))
+            meta: ToolEventSummary.merge(
+                summary: summary,
+                into: MCPToolResponseMetadataProjector.metadata(merging: baseMeta, outcome: outcome)))
     }
 
     private func handleList(

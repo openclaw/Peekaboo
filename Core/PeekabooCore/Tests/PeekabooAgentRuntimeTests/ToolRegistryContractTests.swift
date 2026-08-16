@@ -50,6 +50,7 @@ struct ToolRegistryContractTests {
         let context = MCPToolContext.shared
         #expect(ObjectIdentifier(context.automation as AnyObject) ==
             ObjectIdentifier(services.automation as AnyObject))
+        #expect(context.executionPolicy == .backgroundOnly)
     }
 
     @Test

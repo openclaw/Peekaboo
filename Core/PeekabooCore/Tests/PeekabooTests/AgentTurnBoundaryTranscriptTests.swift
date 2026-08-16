@@ -1,3 +1,5 @@
+import Foundation
+import PeekabooFoundation
 import Tachikoma
 import Testing
 @testable import PeekabooAgentRuntime
@@ -25,7 +27,8 @@ struct AgentTurnBoundaryTranscriptTests {
             model: .anthropic(.sonnet45),
             tools: tools,
             eventHandler: nil,
-            sessionId: "test-session")
+            sessionId: "test-session",
+            executionPolicy: .unrestricted)
 
         let step = try await service.handleToolCalls(
             stepText: "",
@@ -54,6 +57,240 @@ struct AgentTurnBoundaryTranscriptTests {
         let skippedBoundary = try #require(skippedJSON["turn_boundary"] as? [String: Any])
         #expect(skippedBoundary["continue_next_step"] as? Bool == true)
         #expect(skippedBoundary["stop_after_current_step"] as? Bool == true)
+    }
+
+    @Test
+    func `canonical browser outcome ends the provider step only after dispatch`() async throws {
+        let service = try PeekabooAgentService(services: PeekabooServices())
+        var messages: [ModelMessage] = []
+        let browserOutcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            evidence: .deliveryAccepted)
+        let browserResult = try Self.canonicalResult(browserOutcome)
+        let toolCalls = [
+            AgentToolCall(id: "browser-call", name: "browser", arguments: [
+                "action": AnyAgentToolValue(string: "click"),
+            ]),
+            AgentToolCall(id: "later-call", name: "later", arguments: [:]),
+        ]
+        let tools = [
+            AgentTool(
+                name: "browser",
+                description: "browser",
+                parameters: AgentToolParameters(properties: [:], required: []),
+                execute: { _ in browserResult }),
+            AgentTool(
+                name: "later",
+                description: "later",
+                parameters: AgentToolParameters(properties: [:], required: []),
+                execute: { _ in AnyAgentToolValue(string: "must-not-run") }),
+        ]
+        let context = PeekabooAgentService.ToolHandlingContext(
+            model: .anthropic(.sonnet45),
+            tools: tools,
+            eventHandler: nil,
+            sessionId: "test-session",
+            executionPolicy: .unrestricted)
+
+        let step = try await service.handleToolCalls(
+            stepText: "",
+            toolCalls: toolCalls,
+            context: context,
+            currentMessages: &messages,
+            stepIndex: 0)
+
+        #expect(step.toolResults.count == 2)
+        #expect(service.turnBoundarySignal(from: step.toolResults) == .continueNextStep(
+            reason: "Stopped after browser; call `see` before the next UI action."))
+        let skipped = try #require(try step.toolResults[1].result.toJSON() as? [String: Any])
+        #expect(skipped["skipped"] as? Bool == true)
+    }
+
+    @Test
+    func `canonical browser failure outcome ends the provider step after possible dispatch`() async throws {
+        let service = try PeekabooAgentService(services: PeekabooServices())
+        var messages: [ModelMessage] = []
+        let outcome = DesktopActionOutcome.indeterminate(
+            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            evidence: .completionUnknown)
+        let browserFailure = try AgentToolExecutionFailure(
+            message: "browser completion unknown",
+            metadata: Self.canonicalResult(outcome))
+        let tools = [
+            AgentTool(
+                name: "browser",
+                description: "browser",
+                parameters: AgentToolParameters(properties: [:], required: []),
+                execute: { _ in throw browserFailure }),
+            AgentTool(
+                name: "later",
+                description: "later",
+                parameters: AgentToolParameters(properties: [:], required: []),
+                execute: { _ in AnyAgentToolValue(string: "must-not-run") }),
+        ]
+        let context = PeekabooAgentService.ToolHandlingContext(
+            model: .anthropic(.sonnet45),
+            tools: tools,
+            eventHandler: nil,
+            sessionId: "test-session",
+            executionPolicy: .unrestricted)
+
+        let step = try await service.handleToolCalls(
+            stepText: "",
+            toolCalls: [
+                AgentToolCall(id: "browser-call", name: "browser", arguments: [:]),
+                AgentToolCall(id: "later-call", name: "later", arguments: [:]),
+            ],
+            context: context,
+            currentMessages: &messages,
+            stepIndex: 0)
+
+        #expect(step.toolResults.count == 2)
+        #expect(service.turnBoundarySignal(from: step.toolResults) == .continueNextStep(
+            reason: "Stopped after browser; call `see` before the next UI action."))
+        #expect(step.toolResults[1].isError)
+    }
+
+    @Test
+    func `resumed browser failure restores perception debt from failure metadata`() throws {
+        let call = AgentToolCall(id: "browser-failure", name: "browser", arguments: [
+            "action": AnyAgentToolValue(string: "click"),
+        ])
+        let outcome = DesktopActionOutcome.indeterminate(
+            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: .one)
+        let result = try AgentToolResult(
+            toolCallId: call.id,
+            failure: AgentToolExecutionFailure(
+                message: "Browser completion is unknown",
+                metadata: Self.canonicalResult(outcome)))
+
+        let restored = PeekabooAgentService.restoredTurnBoundary(from: [
+            ModelMessage(role: .assistant, content: [.toolCall(call)]),
+            ModelMessage(role: .tool, content: [.toolResult(result)]),
+        ])
+
+        #expect(restored.record(toolName: "click") == .skipUntilPerception(
+            reason: "Skipped click; call `see` successfully before another UI action."))
+    }
+
+    @Test
+    func `background app launch readiness failure ends the live provider step after dispatch`() async throws {
+        let service = try PeekabooAgentService(services: PeekabooServices())
+        var messages: [ModelMessage] = []
+        let outcome = DesktopActionOutcome.indeterminate(
+            route: .bridge,
+            delivery: .init(mechanism: .nativeFramework, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: .one)
+        let readinessFailure = try AgentToolExecutionFailure(
+            message: "App launch readiness is unknown",
+            metadata: Self.canonicalResult(outcome))
+        let tools = [
+            AgentTool(
+                name: "app",
+                description: "app",
+                parameters: AgentToolParameters(properties: [:], required: []),
+                execute: { _ in throw readinessFailure }),
+            AgentTool(
+                name: "click",
+                description: "click",
+                parameters: AgentToolParameters(properties: [:], required: []),
+                execute: { _ in AnyAgentToolValue(string: "must-not-run") }),
+        ]
+        let context = PeekabooAgentService.ToolHandlingContext(
+            model: .anthropic(.sonnet45),
+            tools: tools,
+            eventHandler: nil,
+            sessionId: "test-session",
+            executionPolicy: .unrestricted)
+
+        let step = try await service.handleToolCalls(
+            stepText: "",
+            toolCalls: [
+                AgentToolCall(id: "app-call", name: "app", arguments: [
+                    "action": AnyAgentToolValue(string: "launch"),
+                    "name": AnyAgentToolValue(string: "TextEdit"),
+                ]),
+                AgentToolCall(id: "click-call", name: "click", arguments: [:]),
+            ],
+            context: context,
+            currentMessages: &messages,
+            stepIndex: 0)
+
+        #expect(step.toolResults.count == 2)
+        #expect(service.turnBoundarySignal(from: step.toolResults) == .continueNextStep(
+            reason: "Stopped after app; call `see` before the next UI action."))
+        #expect(step.toolResults[1].isError)
+    }
+
+    @Test
+    func `resumed background app launch readiness failure restores perception debt`() throws {
+        let call = AgentToolCall(id: "app-failure", name: "app", arguments: [
+            "action": AnyAgentToolValue(string: "launch"),
+            "name": AnyAgentToolValue(string: "TextEdit"),
+        ])
+        let outcome = DesktopActionOutcome.indeterminate(
+            route: .bridge,
+            delivery: .init(mechanism: .nativeFramework, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: .one)
+        let result = try AgentToolResult(
+            toolCallId: call.id,
+            failure: AgentToolExecutionFailure(
+                message: "App launch readiness is unknown",
+                metadata: Self.canonicalResult(outcome)))
+
+        let restored = PeekabooAgentService.restoredTurnBoundary(from: [
+            ModelMessage(role: .assistant, content: [.toolCall(call)]),
+            ModelMessage(role: .tool, content: [.toolResult(result)]),
+        ])
+
+        #expect(restored.record(toolName: "click") == .skipUntilPerception(
+            reason: "Skipped click; call `see` successfully before another UI action."))
+    }
+
+    @Test
+    func `canonical browser pre-dispatch refusal does not skip later calls`() async throws {
+        let service = try PeekabooAgentService(services: PeekabooServices())
+        var messages: [ModelMessage] = []
+        let refusal = DesktopActionOutcome.refused(reason: .targetUnavailable)
+        let browserFailure = try AgentToolExecutionFailure(
+            message: "browser target changed",
+            metadata: Self.canonicalResult(refusal))
+        let tools = [
+            AgentTool(
+                name: "browser",
+                description: "browser",
+                parameters: AgentToolParameters(properties: [:], required: []),
+                execute: { _ in throw browserFailure }),
+            AgentTool(
+                name: "later",
+                description: "later",
+                parameters: AgentToolParameters(properties: [:], required: []),
+                execute: { _ in AnyAgentToolValue(string: "ran") }),
+        ]
+        let context = PeekabooAgentService.ToolHandlingContext(
+            model: .anthropic(.sonnet45),
+            tools: tools,
+            eventHandler: nil,
+            sessionId: "test-session",
+            executionPolicy: .unrestricted)
+
+        let step = try await service.handleToolCalls(
+            stepText: "",
+            toolCalls: [
+                AgentToolCall(id: "browser-call", name: "browser", arguments: [:]),
+                AgentToolCall(id: "later-call", name: "later", arguments: [:]),
+            ],
+            context: context,
+            currentMessages: &messages,
+            stepIndex: 0)
+
+        #expect(step.toolResults.count == 2)
+        #expect(step.toolResults[1].result.stringValue == "ran")
+        #expect(service.turnBoundarySignal(from: step.toolResults) == nil)
     }
 
     @Test
@@ -197,7 +434,8 @@ struct AgentTurnBoundaryTranscriptTests {
             model: .anthropic(.sonnet45),
             tools: tools,
             eventHandler: nil,
-            sessionId: "test-session")
+            sessionId: "test-session",
+            executionPolicy: .unrestricted)
 
         let step = try await service.handleToolCalls(
             stepText: "",
@@ -229,7 +467,8 @@ struct AgentTurnBoundaryTranscriptTests {
             model: .anthropic(.sonnet45),
             tools: tools,
             eventHandler: nil,
-            sessionId: "test-session")
+            sessionId: "test-session",
+            executionPolicy: .unrestricted)
 
         var cancelled = false
         do {
@@ -288,7 +527,8 @@ struct AgentTurnBoundaryTranscriptTests {
             model: .anthropic(.sonnet45),
             tools: tools,
             eventHandler: nil,
-            sessionId: "test-session")
+            sessionId: "test-session",
+            executionPolicy: .unrestricted)
 
         let task = Task { @MainActor () -> CancellationWorkerOutcome in
             var messages: [ModelMessage] = []
@@ -374,7 +614,8 @@ struct AgentTurnBoundaryTranscriptTests {
             model: .anthropic(.sonnet45),
             tools: tools,
             eventHandler: nil,
-            sessionId: "test-session")
+            sessionId: "test-session",
+            executionPolicy: .unrestricted)
 
         await #expect(throws: CancellationError.self) {
             _ = try await service.handleToolCalls(
@@ -391,6 +632,11 @@ struct AgentTurnBoundaryTranscriptTests {
         #expect(captured.toolResults.map(\.isError) == [true, true])
         #expect(messages.count(where: { $0.role == .tool }) == toolCalls.count)
         #expect(await probe.thirdExecutionCount == 0)
+    }
+
+    private static func canonicalResult(_ outcome: DesktopActionOutcome) throws -> AnyAgentToolValue {
+        let data = try JSONEncoder().encode(outcome.projection)
+        return try AnyAgentToolValue.fromJSON(JSONSerialization.jsonObject(with: data))
     }
 }
 

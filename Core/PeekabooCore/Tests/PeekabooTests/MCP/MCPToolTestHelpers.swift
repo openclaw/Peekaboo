@@ -20,7 +20,7 @@ enum MCPToolTestHelpers {
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
         snapshotExecutionGate: MCPToolSnapshotExecutionGate = MCPToolSnapshotExecutionGate(),
         snapshotOwner: MCPToolSnapshotOwner = MCPToolSnapshotOwner(),
-        executionPolicy: MCPToolExecutionPolicy = .unrestricted,
+        executionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
         exactWindowMetadataProvider: any ExactWindowMetadataProviding = SystemExactWindowMetadataProvider()) async
         -> MCPToolContext
     {
@@ -80,7 +80,7 @@ enum MCPToolTestHelpers {
         permissionsStatusProvider: (any PermissionsStatusProviding)? = nil,
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
         snapshotExecutionGate: MCPToolSnapshotExecutionGate = MCPToolSnapshotExecutionGate(),
-        executionPolicy: MCPToolExecutionPolicy = .unrestricted,
+        executionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
         exactWindowMetadataProvider: any ExactWindowMetadataProviding = SystemExactWindowMetadataProvider()) async
         -> MCPToolContext
     {

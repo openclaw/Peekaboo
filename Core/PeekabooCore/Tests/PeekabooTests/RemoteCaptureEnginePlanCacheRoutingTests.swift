@@ -14,13 +14,7 @@ struct RemoteCaptureEnginePlanCacheRoutingTests {
         let socketPath = "/tmp/peekaboo-capture-engine-plan-route-\(UUID().uuidString).sock"
         let observation = CountingCaptureEngineObservationService()
         let fixtureBounds = Self.windowBounds
-        let hostIdentity = PeekabooBridgeHostIdentity(
-            processIdentifier: getpid(),
-            processStartIdentity: SystemIdentityResolver.processStartIdentity(getpid()),
-            bundleIdentifier: "test.capture-engine.host",
-            bundleShortVersion: "4.0.1",
-            bundleVersion: "401",
-            codeSignatureHash: "fixture-cache-host-build")
+        let hostIdentity = PeekabooBridgeHostIdentity.current()
         let server = PeekabooBridgeServer(
             services: StubServices(desktopObservation: observation),
             hostKind: .onDemand,
@@ -65,8 +59,13 @@ struct RemoteCaptureEnginePlanCacheRoutingTests {
         let firstRemote = RemoteDesktopObservationService(
             client: firstClient,
             supportsDesktopObservationCaptureEngine: true)
+        let secondClient = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await secondClient.handshake(client: .init(
+            bundleIdentifier: "test.capture-engine.second",
+            teamIdentifier: nil,
+            processIdentifier: getpid()))
         let secondRemote = RemoteDesktopObservationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
+            client: secondClient,
             supportsDesktopObservationCaptureEngine: true)
 
         let first = try await firstRemote.observe(Self.request(engine: .modern))

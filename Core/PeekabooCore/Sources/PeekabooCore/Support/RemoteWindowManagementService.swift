@@ -8,7 +8,8 @@ import PeekabooFoundation
 @MainActor
 public final class RemoteWindowManagementService: WindowManagementServiceProtocol,
     WindowManagementActionOutcomeProviding,
-    WindowManagementActionResultProviding
+    WindowManagementActionResultProviding,
+    WindowManagementPinnedFocusActionResultProviding
 {
     private let client: PeekabooBridgeClient
     private let supportsBackgroundClose: Bool
@@ -291,7 +292,20 @@ public final class RemoteWindowManagementService: WindowManagementServiceProtoco
     }
 
     public func focusWindow(target: WindowTarget) async throws {
-        try await self.client.focusWindow(target: target)
+        _ = try await self.focusWindowActionResult(target: target)
+    }
+
+    public func focusWindowActionResult(target: WindowTarget) async throws -> UIAutomationActionResult<Void> {
+        try await self.client.focusWindowResult(target: target)
+    }
+
+    public func focusWindowActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.client.focusWindowResult(
+            target: target,
+            expectedIdentity: expectedIdentity)
     }
 
     public func listWindows(target: WindowTarget) async throws -> [ServiceWindowInfo] {

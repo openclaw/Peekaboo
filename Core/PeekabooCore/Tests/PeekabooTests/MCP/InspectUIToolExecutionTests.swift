@@ -111,7 +111,10 @@ struct InspectUIToolExecutionTests {
                 inspectError: POSIXError(.ETIMEDOUT))
         }
         let snapshots = await MainActor.run { InMemorySnapshotManager() }
-        let context = await Self.makeContext(automation: automation, snapshots: snapshots)
+        let context = await Self.makeContext(
+            automation: automation,
+            snapshots: snapshots,
+            executionPolicy: .unrestricted)
         let tool = InspectUITool(context: context)
 
         let response = try await context.execute(
@@ -186,6 +189,228 @@ struct InspectUIToolExecutionTests {
         #expect(try await snapshots.listSnapshots().isEmpty)
     }
 
+    @Test
+    func `Inspect UI preserves a dispatched web focus outcome when post-validation times out`() async throws {
+        let bounds = CGRect(x: 10, y: 20, width: 800, height: 600)
+        let identity = WindowMutationIdentity(
+            windowID: 4242,
+            ownerProcessIdentifier: 5151,
+            ownerProcessStartIdentity: 6161,
+            capturedBounds: bounds)
+        let targetIdentity = try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+            identity: identity,
+            bounds: bounds))
+        let detectionResult = ElementDetectionResult(
+            snapshotId: "web-focus-timeout",
+            screenshotPath: "",
+            elements: DetectedElements(),
+            metadata: DetectionMetadata(
+                detectionTime: 1,
+                elementCount: 0,
+                method: "AXorcist",
+                windowContext: WindowContext(
+                    applicationProcessId: identity.ownerProcessIdentifier,
+                    windowID: identity.windowID,
+                    windowBounds: bounds,
+                    windowMutationIdentity: identity),
+                truncationInfo: DetectionTruncationInfo(deadlineReached: true)))
+        let automation = await MainActor.run {
+            OutcomeInspectAutomationService(
+                result: UIAutomationActionResult(
+                    payload: detectionResult,
+                    outcome: .dispatchedUnverified(
+                        route: .bridge,
+                        delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                        evidence: .deliveryAccepted,
+                        unitCount: .one),
+                    targetIdentity: targetIdentity))
+        }
+        let snapshots = await MainActor.run { InMemorySnapshotManager() }
+        let context = await Self.makeContext(automation: automation, snapshots: snapshots)
+
+        let response = try await InspectUITool(context: context).execute(arguments: ToolArguments(raw: [
+            "web_focus": true,
+        ]))
+
+        #expect(response.isError)
+        guard case let .object(meta)? = response.meta,
+              case let .object(targetReceipt)? = meta["target_receipt"]
+        else {
+            Issue.record("Expected canonical action and target metadata")
+            return
+        }
+        #expect(meta["error_code"] == .string("TIMEOUT"))
+        #expect(meta["state"] == .string("dispatched_unverified"))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["requires_fresh_observation"] == .bool(true))
+        #expect(targetReceipt["pid"] == .int(5151))
+        #expect(targetReceipt["window_id"] == .int(4242))
+    }
+
+    @Test
+    func `Inspect UI publishes a process-only action target receipt`() async throws {
+        let targetIdentity = try DesktopTargetIdentity(processIdentity: .init(
+            processIdentifier: 5251,
+            processStartIdentity: 6251))
+        let detectionResult = Self.emptyDetectionResult(id: "process-only-inspect")
+        let automation = await MainActor.run {
+            OutcomeInspectAutomationService(result: UIAutomationActionResult(
+                payload: detectionResult,
+                outcome: .dispatchedUnverified(
+                    route: .bridge,
+                    delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one),
+                targetIdentity: targetIdentity))
+        }
+        let context = await Self.makeContext(automation: automation)
+
+        let response = try await InspectUITool(context: context).execute(arguments: ToolArguments(raw: [
+            "web_focus": true,
+        ]))
+
+        #expect(!response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        let receipt = try #require(meta["target_receipt"]?.objectValue)
+        #expect(receipt["pid"] == .int(5251))
+        #expect(receipt["process_start_identity_decimal"] == .string("6251"))
+        #expect(receipt["window_id"] == nil)
+    }
+}
+
+extension InspectUIToolExecutionTests {
+    @Test
+    func `Inspect UI rejects a nonthrowing refused provider outcome before publication`() async throws {
+        let bounds = CGRect(x: 20, y: 30, width: 400, height: 240)
+        let identity = WindowMutationIdentity(
+            windowID: 4252,
+            ownerProcessIdentifier: 5252,
+            ownerProcessStartIdentity: 6252,
+            capturedBounds: bounds)
+        let targetIdentity = try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+            identity: identity,
+            bounds: bounds))
+        let automation = await MainActor.run {
+            OutcomeInspectAutomationService(result: UIAutomationActionResult(
+                payload: Self.emptyDetectionResult(id: "refused-inspect"),
+                outcome: .refused(route: .bridge, reason: .permissionDenied),
+                targetIdentity: targetIdentity))
+        }
+        let context = await Self.makeContext(automation: automation)
+
+        let response = try await InspectUITool(context: context).execute(arguments: ToolArguments(raw: [
+            "web_focus": true,
+        ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        let receipt = try #require(meta["target_receipt"]?.objectValue)
+        #expect(meta["state"] == .string("refused"))
+        #expect(meta["refusal_reason"] == .string("permission_denied"))
+        #expect(meta["dispatch_state"] == .string("none"))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(receipt["pid"] == .int(5252))
+        #expect(receipt["window_id"] == .int(4252))
+    }
+
+    @Test
+    func `Inspect UI rejects mismatched local provider and payload targets`() async throws {
+        let payload = Self.targetedDetectionResult(
+            id: "mismatched-inspect",
+            processIdentifier: 5253,
+            processStartIdentity: 6253,
+            windowID: 4253)
+        let providerTarget = try DesktopTargetIdentity(processIdentity: .init(
+            processIdentifier: 5254,
+            processStartIdentity: 6254))
+        let automation = await MainActor.run {
+            OutcomeInspectAutomationService(result: UIAutomationActionResult(
+                payload: payload,
+                outcome: .dispatchedUnverified(
+                    delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                    evidence: .deliveryAccepted,
+                    unitCount: DesktopActionOutcome.DispatchUnitCount(2)),
+                targetIdentity: providerTarget))
+        }
+        let snapshots = await MainActor.run { InMemorySnapshotManager() }
+        let context = await Self.makeContext(automation: automation, snapshots: snapshots)
+
+        let response = try await InspectUITool(context: context).execute(arguments: ToolArguments(raw: [
+            "app_target": "PID:5253",
+            "web_focus": true,
+        ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("indeterminate"))
+        #expect(meta["dispatched_unit_count"] == .int(2))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["target_receipt"] == nil)
+        #expect(try await snapshots.listSnapshots().isEmpty)
+    }
+
+    @Test
+    func `Inspect UI coalesces compatible process provider and exact payload target`() async throws {
+        let payload = Self.targetedDetectionResult(
+            id: "coalesced-inspect",
+            processIdentifier: 5255,
+            processStartIdentity: 6255,
+            windowID: 4255)
+        let providerTarget = try DesktopTargetIdentity(processIdentity: .init(
+            processIdentifier: 5255,
+            processStartIdentity: 6255))
+        let automation = await MainActor.run {
+            OutcomeInspectAutomationService(result: UIAutomationActionResult(
+                payload: payload,
+                outcome: .dispatchedUnverified(
+                    delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one),
+                targetIdentity: providerTarget))
+        }
+        let context = await Self.makeContext(automation: automation)
+
+        let response = try await InspectUITool(context: context).execute(arguments: ToolArguments(raw: [
+            "app_target": "PID:5255",
+            "web_focus": true,
+        ]))
+
+        #expect(!response.isError)
+        let receipt = try #require(response.meta?.objectValue?["target_receipt"]?.objectValue)
+        #expect(receipt["pid"] == .int(5255))
+        #expect(receipt["window_id"] == .int(4255))
+    }
+
+    private static func targetedDetectionResult(
+        id: String,
+        processIdentifier: Int32,
+        processStartIdentity: UInt64,
+        windowID: Int) -> ElementDetectionResult
+    {
+        let bounds = CGRect(x: 20, y: 30, width: 400, height: 240)
+        let identity = WindowMutationIdentity(
+            windowID: windowID,
+            ownerProcessIdentifier: processIdentifier,
+            ownerProcessStartIdentity: processStartIdentity,
+            capturedBounds: bounds)
+        return ElementDetectionResult(
+            snapshotId: id,
+            screenshotPath: "",
+            elements: DetectedElements(),
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: 0,
+                method: "fixture",
+                windowContext: WindowContext(
+                    applicationProcessId: processIdentifier,
+                    windowID: windowID,
+                    windowBounds: bounds,
+                    windowMutationIdentity: identity)))
+    }
+}
+
+extension InspectUIToolExecutionTests {
     @Test
     func `Inspect UI returns typed retry-safe failure for Calendar-shaped incomplete evidence`() async throws {
         let detectionResult = ElementDetectionResult(
@@ -743,7 +968,8 @@ struct InspectUIToolExecutionTests {
     private static func makeContext(
         automation: any UIAutomationServiceProtocol,
         snapshots: (any SnapshotManagerProtocol)? = nil,
-        windows: (any WindowManagementServiceProtocol)? = nil) -> MCPToolContext
+        windows: (any WindowManagementServiceProtocol)? = nil,
+        executionPolicy: MCPToolExecutionPolicy = .backgroundOnly) -> MCPToolContext
     {
         let services = PeekabooServices()
         return MCPToolContext(
@@ -765,7 +991,8 @@ struct InspectUIToolExecutionTests {
             permissions: services.permissions,
             clipboard: services.clipboard,
             browser: services.browser,
-            snapshotOwner: Self.uiSnapshots.owner)
+            snapshotOwner: Self.uiSnapshots.owner,
+            executionPolicy: executionPolicy)
     }
 
     private static func emptyDetectionResult(id: String) -> ElementDetectionResult {
@@ -812,5 +1039,31 @@ private final class UnexpectedWindowListingService: WindowManagementServiceProto
 
     func getFocusedWindow() async throws -> ServiceWindowInfo? {
         fatalError("unused")
+    }
+}
+
+@MainActor
+private final class OutcomeInspectAutomationService: InspectUITestAutomationService,
+UIAutomationObservationActionResultProviding {
+    private let result: UIAutomationActionResult<ElementDetectionResult>
+
+    init(result: UIAutomationActionResult<ElementDetectionResult>) {
+        self.result = result
+        super.init(accessibilityGranted: true, detectionResult: result.payload)
+    }
+
+    func detectElementsActionResult(
+        in _: Data,
+        snapshotId _: String?,
+        windowContext _: WindowContext?,
+        requestTimeoutSec _: TimeInterval?) async throws -> UIAutomationActionResult<ElementDetectionResult>
+    {
+        self.result
+    }
+
+    func inspectAccessibilityTreeActionResult(
+        windowContext _: WindowContext?) async throws -> UIAutomationActionResult<ElementDetectionResult>
+    {
+        self.result
     }
 }

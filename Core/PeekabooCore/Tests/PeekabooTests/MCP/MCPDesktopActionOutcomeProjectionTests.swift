@@ -132,6 +132,28 @@ struct MCPDesktopActionOutcomeProjectionTests {
     }
 
     @Test
+    func `process target identity is reserved and preserved only from Peekaboo metadata`() {
+        let identity: Value = .object([
+            "kind": .string("process"),
+            "pid": .int(42),
+            "process_start_identity_decimal": .string("9007199254740993"),
+        ])
+        let trusted: Value = .object([
+            "target_identity": identity,
+            "untrusted": .string("drop"),
+        ])
+
+        #expect(MCPToolResponseMetadataProjector.externalFields(
+            from: trusted,
+            toolName: "browser")["target_identity"] == identity)
+        #expect(MCPToolResponseMetadataProjector.agentFields(from: trusted)["target_identity"] == identity)
+
+        let provider = MCPToolResponseMetadataProjector.providerFields(from: trusted)
+        #expect(provider["target_identity"] == nil)
+        #expect(provider["provider_meta"]?.objectValue == ["untrusted": .string("drop")])
+    }
+
+    @Test
     @MainActor
     func `action tool projects every native outcome state without inferring from invalidation`() async throws {
         let automation = StubAutomationService()
@@ -287,7 +309,7 @@ struct MCPDesktopActionOutcomeProjectionTests {
         automation.actionOutcome = .confirmedNoChange()
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
-            windows: EmptyRecordingWindowService())
+            windows: MCPFocusResultWindowService())
         await context.uiSnapshots.removeOwner()
         let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
 
@@ -300,12 +322,12 @@ struct MCPDesktopActionOutcomeProjectionTests {
 
         #expect(!response.isError)
         let meta = try #require(response.meta?.objectValue)
-        #expect(meta["state"] == nil)
-        #expect(meta["effect"] == .string("unverifiable"))
+        #expect(meta["state"] == .string("confirmed_change"))
+        #expect(meta["effect"] == .string("confirmed"))
+        #expect(meta["dispatched_unit_count"] == .int(1))
         #expect(meta["mutation_dispatched"] == .bool(true))
         #expect(meta["retry_safe"] == .bool(false))
-        #expect(meta["requires_fresh_observation"] == .bool(true))
-        #expect(meta["delivery_mode"] == nil)
+        #expect(meta["requires_fresh_observation"] == .bool(false))
         #expect(meta["invalidated_snapshot"] == .string(snapshotID))
         #expect(await context.uiSnapshots.getSnapshot(id: nil) == nil)
     }
@@ -317,7 +339,7 @@ struct MCPDesktopActionOutcomeProjectionTests {
         automation.actionOutcome = .refused(reason: .permissionDenied)
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
-            windows: EmptyRecordingWindowService())
+            windows: MCPFocusResultWindowService())
         await context.uiSnapshots.removeOwner()
         let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
 
@@ -417,13 +439,13 @@ extension MCPDesktopActionOutcomeProjectionTests {
 
     @Test
     @MainActor
-    func `target focus stays separate from authoritative no change chords`() async throws {
+    func `target focus remains canonical with authoritative no change chords`() async throws {
         let automation = StubAutomationService()
         automation.uiAutomationOutcomeScript.append(.confirmedNoChange(route: .local), for: .hotkey)
         automation.uiAutomationOutcomeScript.append(.confirmedNoChange(route: .bridge), for: .hotkey)
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
-            windows: EmptyRecordingWindowService())
+            windows: MCPFocusResultWindowService())
 
         let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
             "keys": ["cmd+a", "cmd+c"],
@@ -437,13 +459,12 @@ extension MCPDesktopActionOutcomeProjectionTests {
             return
         }
         let meta = try #require(response.meta?.objectValue)
-        #expect(text.contains("all chords confirmed no change"))
-        #expect(text.contains("setup-focus effect is unverifiable"))
-        #expect(!text.contains("Dispatched"))
-        #expect(meta["effect"] == .string("unverifiable"))
+        #expect(text.contains("effect confirmed"))
+        #expect(meta["state"] == .string("confirmed_change"))
+        #expect(meta["effect"] == .string("confirmed"))
+        #expect(meta["dispatched_unit_count"] == .int(1))
         #expect(meta["mutation_dispatched"] == .bool(true))
-        #expect(meta["requires_fresh_observation"] == .bool(true))
-        #expect(meta["delivery_mode"] == nil)
+        #expect(meta["requires_fresh_observation"] == .bool(false))
     }
 
     @Test
@@ -565,7 +586,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
         let outcome = DesktopActionOutcome.suspectedNoop(
             delivery: .init(mechanism: .accessibilityAction, mode: .background))
         automation.actionOutcome = outcome
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await Self.makeBackgroundTypingContext(automation: automation)
         await context.uiSnapshots.removeOwner()
         let snapshot = await context.uiSnapshots.createSnapshot()
         let snapshotID = await snapshot.id
@@ -615,7 +636,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
         automation.targetedTypeError = DesktopActionFailure.refused(
             reason: .permissionDenied,
             message: "Typing was refused")
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await Self.makeBackgroundTypingContext(automation: automation)
         await context.uiSnapshots.removeOwner()
         let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
 
@@ -641,7 +662,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
         automation.actionOutcome = .confirmedChange(
             delivery: .init(mechanism: .accessibilityAction, mode: .background))
         automation.uiAutomationOutcomeScript.append(.refused(reason: .permissionDenied), for: .typeActions)
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await Self.makeBackgroundTypingContext(automation: automation)
         let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
 
         let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -666,7 +687,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
         let automation = StubAutomationService()
         automation.actionOutcome = .confirmedNoChange()
         automation.targetedTypeError = PeekabooError.invalidInput("typing refused before dispatch")
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await Self.makeBackgroundTypingContext(automation: automation)
         let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
 
         let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -726,7 +747,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
     }
 
     @Test
-    func `type omits a leaf delivery for heterogeneous partial typing after focus`() {
+    func `type composes delivery for heterogeneous partial typing after focus`() {
         let focusOutcome = DesktopActionOutcome.confirmedChange(
             delivery: .init(mechanism: .accessibilityAction, mode: .background))
         let leafFailure = DesktopActionFailure.partial(
@@ -738,11 +759,11 @@ extension MCPDesktopActionOutcomeProjectionTests {
         sequence.record(.reportedOutcome(focusOutcome, defaultDispatchedUnitCount: .one))
         let aggregate = sequence.failure(combining: leafFailure, message: leafFailure.message)
 
-        #expect(aggregate.outcome.state == .indeterminate)
+        #expect(aggregate.outcome.state == .partial)
         #expect(aggregate.outcome.dispatchState.unitCount?.rawValue == 3)
-        #expect(aggregate.outcome.delivery == nil)
-        #expect(aggregate.outcome.escalation == .observeBeforeRetry)
-        #expect(aggregate.outcome.projection.requiresFreshObservation)
+        #expect(aggregate.outcome.delivery == .init(mechanism: .composite, mode: .background))
+        #expect(aggregate.outcome.escalation == .recoverSideEffect)
+        #expect(!aggregate.outcome.projection.requiresFreshObservation)
     }
 
     @Test
@@ -835,7 +856,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
         let automation = StubAutomationService()
         automation.actionOutcome = .confirmedChange(
             delivery: .init(mechanism: .accessibilityAction, mode: .background))
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await Self.makeBackgroundTypingContext(automation: automation)
         await context.uiSnapshots.removeOwner()
         let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
 
@@ -864,7 +885,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
         automation.actionOutcome = .confirmedChange(
             delivery: .init(mechanism: .accessibilityAction, mode: .background))
         automation.uiAutomationOutcomeScript.append(.confirmedNoChange(), for: .typeActions)
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await Self.makeBackgroundTypingContext(automation: automation)
         await context.uiSnapshots.removeOwner()
         let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
 
@@ -894,14 +915,14 @@ extension MCPDesktopActionOutcomeProjectionTests {
 
     @Test
     @MainActor
-    func `type omits delivery for heterogeneous successful focus and typing outcomes`() async throws {
+    func `type composes heterogeneous successful focus and typing delivery`() async throws {
         let automation = StubAutomationService()
         automation.actionOutcome = .confirmedChange(
             delivery: .init(mechanism: .accessibilityAction, mode: .background))
         automation.uiAutomationOutcomeScript.append(
             .confirmedChange(delivery: .init(mechanism: .processTargetedEvents, mode: .background)),
             for: .typeActions)
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await Self.makeBackgroundTypingContext(automation: automation)
         let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
 
         let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -912,13 +933,14 @@ extension MCPDesktopActionOutcomeProjectionTests {
 
         #expect(!response.isError)
         let meta = try #require(response.meta?.objectValue)
-        #expect(meta["state"] == nil)
-        #expect(meta["effect"] == .string("unverifiable"))
+        #expect(meta["state"] == .string("confirmed_change"))
+        #expect(meta["effect"] == .string("confirmed"))
         #expect(meta["mutation_dispatched"] == .bool(true))
         #expect(meta["retry_safe"] == .bool(false))
-        #expect(meta["delivery_mechanism"] == nil)
-        #expect(meta["delivery_mode"] == nil)
-        #expect(meta["requires_fresh_observation"] == .bool(true))
+        #expect(meta["delivery_mechanism"] == .string("composite"))
+        #expect(meta["delivery_mode"] == .string("background"))
+        #expect(meta["dispatched_unit_count"] == .int(2))
+        #expect(meta["requires_fresh_observation"] == .bool(false))
         #expect(meta["invalidated_snapshot"] == .string(snapshotID))
     }
 
@@ -1032,6 +1054,29 @@ extension MCPDesktopActionOutcomeProjectionTests {
 
         #expect(response.isError)
         try MCPToolTestHelpers.expectCanonicalRefusalMetadata(reason: .targetUnavailable, in: response)
+    }
+
+    @MainActor
+    private static func makeBackgroundTypingContext(
+        automation: any UIAutomationServiceProtocol) async -> MCPToolContext
+    {
+        let applications = MockApplicationService(applications: [
+            ServiceApplicationInfo(
+                processIdentifier: 777,
+                processStartIdentity: 77,
+                bundleIdentifier: "com.example.focus-editor",
+                name: "Focus Editor",
+                activationPolicy: .regular),
+            ServiceApplicationInfo(
+                processIdentifier: 778,
+                processStartIdentity: 78,
+                bundleIdentifier: "com.example.editor",
+                name: "Editor",
+                activationPolicy: .regular),
+        ])
+        return await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications)
     }
 
     @MainActor

@@ -28,6 +28,15 @@ struct MCPToolArgumentSchemaError: LocalizedError, Sendable, Equatable {
     }
 }
 
+/// Side-effect-free semantic validation that must complete before execution authority is evaluated.
+///
+/// JSON Schema catches wire shapes, while individual tools own cross-field and domain-specific rules. Keeping this
+/// hook in the shared argument validator ensures malformed input is reported as an invalid request instead of being
+/// masked by a stricter execution-policy refusal.
+protocol MCPToolArgumentSemanticValidating {
+    func validateArgumentSemantics(_ arguments: ToolArguments) throws
+}
+
 extension ToolArguments {
     func validatedInt(_ key: String) throws -> Int? {
         guard self.getValue(for: key) != nil else { return nil }
@@ -84,6 +93,7 @@ enum MCPToolArgumentValidator {
                     continue
                 }
             }
+            try (tool as? any MCPToolArgumentSemanticValidating)?.validateArgumentSemantics(arguments)
             return nil
         } catch let error as MCPToolArgumentSchemaError {
             return self.rejectionResponse(
@@ -218,7 +228,7 @@ enum MCPToolArgumentValidator {
         snapshotEffect: MCPToolSnapshotEffect) -> ToolResponse
     {
         switch snapshotEffect {
-        case .mutation, .mutationProducingFreshObservation:
+        case .conditionalMutation, .mutation, .mutationProducingFreshObservation:
             MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
                 message: message,
                 reason: .invalidRequest,

@@ -17,33 +17,48 @@ extension PeekabooAgentService {
         for toolCall: AgentToolCall,
         context: ToolHandlingContext) -> AgentToolResult?
     {
+        let tool = context.tool(named: toolCall.name)
+        if let tool,
+           let rejection = AgentToolArgumentValidator.rejection(
+               tool: tool,
+               arguments: AgentToolArguments(toolCall.arguments))
+        {
+            return Self.preflightResult(for: toolCall, response: rejection)
+        }
         if let refusal = context.executionPolicy.rejection(
             toolName: toolCall.name,
             agentArguments: toolCall.arguments)
         {
-            let bridged = AgentToolMCPBridge.convert(refusal)
-            if let failure = bridged.failure {
-                var metadata = failure.metadata?.objectValue ?? [:]
-                metadata["skipped"] = AnyAgentToolValue(bool: true)
-                return AgentToolResult(
-                    toolCallId: toolCall.id,
-                    failure: AgentToolExecutionFailure(
-                        message: failure.message,
-                        content: failure.content,
-                        structuredValue: failure.structuredValue,
-                        metadata: AnyAgentToolValue(object: metadata)))
-            }
-            return AgentToolResult(
-                toolCallId: toolCall.id,
-                result: bridged.value,
-                isError: true)
+            return Self.preflightResult(for: toolCall, response: refusal)
         }
-        guard context.tool(named: toolCall.name) == nil else { return nil }
+        guard tool == nil else { return nil }
         return AgentToolResult(
             toolCallId: toolCall.id,
             result: AnyAgentToolValue(object: [
                 "error": AnyAgentToolValue(string: "Tool '\(toolCall.name)' is not available in this context"),
             ]),
+            isError: true)
+    }
+
+    private static func preflightResult(
+        for toolCall: AgentToolCall,
+        response: ToolResponse) -> AgentToolResult
+    {
+        let bridged = AgentToolMCPBridge.convert(response)
+        if let failure = bridged.failure {
+            var metadata = failure.metadata?.objectValue ?? [:]
+            metadata["skipped"] = AnyAgentToolValue(bool: true)
+            return AgentToolResult(
+                toolCallId: toolCall.id,
+                failure: AgentToolExecutionFailure(
+                    message: failure.message,
+                    content: failure.content,
+                    structuredValue: failure.structuredValue,
+                    metadata: AnyAgentToolValue(object: metadata)))
+        }
+        return AgentToolResult(
+            toolCallId: toolCall.id,
+            result: bridged.value,
             isError: true)
     }
 

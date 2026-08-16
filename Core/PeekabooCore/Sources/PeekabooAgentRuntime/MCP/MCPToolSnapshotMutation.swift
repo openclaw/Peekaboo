@@ -4,8 +4,55 @@ import TachikomaMCP
 public enum MCPToolSnapshotEffect: Sendable, Equatable {
     case none
     case freshObservation
+    case conditionalMutation
     case mutation
     case mutationProducingFreshObservation
+}
+
+/// Shared request semantics used by both snapshot planning and Agent turn boundaries.
+///
+/// Keep this classification argument-only and conservative. Leaf services still prove that an advertised read did
+/// not dispatch a mutation; this planner only decides whether the request needs the mutation gate and fresh-UI debt.
+enum MCPToolRequestSemantics {
+    static func isReadOnly(toolName: String, arguments: ToolArguments) -> Bool {
+        let action = self.normalized(arguments.getString("action"))
+        return switch toolName {
+        case "app":
+            action == "list" || self.isSafeBackgroundApplicationLaunchNoOp(arguments)
+        case "dialog", "dock", "space", "window":
+            action == "list"
+        case "menu":
+            action == "list" && self.isFalseOrAbsent(arguments, key: "foreground")
+        default:
+            false
+        }
+    }
+
+    static func isSafeBackgroundApplicationLaunchNoOp(_ arguments: ToolArguments) -> Bool {
+        self.normalized(arguments.getString("action")) == "launch" &&
+            self.isFalseOrAbsent(arguments, key: "foreground") &&
+            self.isFalseOrAbsent(arguments, key: "newInstance") &&
+            self.isAbsentOrEmptyStringArray(arguments, key: "openTargets")
+    }
+
+    private static func isFalseOrAbsent(_ arguments: ToolArguments, key: String) -> Bool {
+        guard let value = arguments.getValue(for: key) else { return true }
+        return value == .bool(false)
+    }
+
+    private static func isAbsentOrEmptyStringArray(_ arguments: ToolArguments, key: String) -> Bool {
+        guard let value = arguments.getValue(for: key) else { return true }
+        guard case let .array(values) = value else { return false }
+        return values.isEmpty
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        value?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: "_", with: "")
+    }
 }
 
 enum MCPToolCaptureRequirement: Sendable, Equatable {
@@ -256,15 +303,23 @@ enum MCPToolSnapshotMutationPolicy {
         case "capture":
             self.captureEffect(arguments: arguments)
         case "app":
-            arguments.getString("action") == "list" ? MCPToolSnapshotEffect.none : .mutation
-        case "window":
-            arguments.getString("action") == "list" ? MCPToolSnapshotEffect.none : .mutation
-        case "menu":
-            arguments.getString("action") == "click" ? .mutation : MCPToolSnapshotEffect.none
+            if MCPToolRequestSemantics.isSafeBackgroundApplicationLaunchNoOp(arguments) {
+                .conditionalMutation
+            } else {
+                MCPToolRequestSemantics.isReadOnly(toolName: toolName, arguments: arguments)
+                    ? MCPToolSnapshotEffect.none
+                    : .mutation
+            }
+        case "window", "menu":
+            MCPToolRequestSemantics.isReadOnly(toolName: toolName, arguments: arguments)
+                ? MCPToolSnapshotEffect.none
+                : .mutation
         case "dialog":
             self.dialogEffect(arguments: arguments)
         case "dock", "space":
-            arguments.getString("action") == "list" ? MCPToolSnapshotEffect.none : .mutation
+            MCPToolRequestSemantics.isReadOnly(toolName: toolName, arguments: arguments)
+                ? MCPToolSnapshotEffect.none
+                : .mutation
         case "clipboard":
             self.clipboardEffect(arguments: arguments)
         case "browser":
@@ -309,7 +364,7 @@ enum MCPToolSnapshotMutationPolicy {
     }
 
     private static func dialogEffect(arguments: ToolArguments) -> MCPToolSnapshotEffect {
-        arguments.getString("action") == "list" ? .none : .mutation
+        MCPToolRequestSemantics.isReadOnly(toolName: "dialog", arguments: arguments) ? .none : .mutation
     }
 
     private static func clipboardEffect(arguments: ToolArguments) -> MCPToolSnapshotEffect {
@@ -322,18 +377,11 @@ enum MCPToolSnapshotMutationPolicy {
     }
 
     private static func browserEffect(arguments: ToolArguments) -> MCPToolSnapshotEffect {
-        guard let action = arguments.getString("action") else { return .none }
-        let readOnlyActions = [
-            "status",
-            "connect",
-            "disconnect",
-            "list_pages",
-            "snapshot",
-            "screenshot",
-            "console",
-            "network",
-            "wait_for",
-        ]
-        return readOnlyActions.contains(action) ? .none : .mutation
+        guard let actionName = arguments.getString("action"),
+              let action = BrowserAction(rawValue: actionName)
+        else { return .none }
+        return BrowserMCPCallMapper.actionSemantics(action: action, arguments: arguments) == .mutating
+            ? .mutation
+            : .none
     }
 }

@@ -230,6 +230,12 @@ struct PeekabooMCPServerTests {
                 guard case let .text(text, _, _) = content else { return false }
                 return text.contains("keys must contain at least one chord")
             })
+            let encoded = try JSONEncoder().encode(result)
+            let json = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+            let metadata = try #require(json["_meta"] as? [String: Any])
+            #expect(metadata["refusal_reason"] as? String == "invalid_request")
+            #expect(metadata["mutation_dispatched"] as? Bool == false)
+            #expect(metadata["retry_safe"] as? Bool == true)
             #expect(automation.lastHotkeyKeys == nil)
             #expect(automation.targetedHotkeyCalls.isEmpty)
         } catch {
@@ -340,6 +346,40 @@ struct PeekabooMCPServerTests {
                 #expect(automation.lastHotkeyKeys == nil)
                 #expect(automation.targetedHotkeyCalls.isEmpty)
             }
+        } catch {
+            await session.stop()
+            throw error
+        }
+
+        await session.stop()
+    }
+
+    @Test
+    @MainActor
+    func `press wire still enforces background policy after semantic validation`() async throws {
+        let automation = MockAutomationService(accessibilityGranted: true)
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let session = try await MCPWireSession.connect(context: context)
+
+        do {
+            let request: RequestContext<CallTool.Result> = try await session.client.callTool(
+                name: "press",
+                arguments: [
+                    "key": .string("c"),
+                    "modifiers": .array([.string("cmd")]),
+                    "foreground": .bool(true),
+                ])
+            let result = try await request.value
+            #expect(result.isError == true)
+            let encoded = try JSONEncoder().encode(result)
+            let json = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+            let metadata = try #require(json["_meta"] as? [String: Any])
+            #expect(metadata["error_code"] as? String == MCPToolExecutionPolicy.refusalErrorCode)
+            #expect(metadata["refusal_reason"] as? String == "foreground_consent_required")
+            #expect(metadata["mutation_dispatched"] as? Bool == false)
+            #expect(metadata["retry_safe"] as? Bool == true)
+            #expect(automation.lastHotkeyKeys == nil)
+            #expect(automation.targetedHotkeyCalls.isEmpty)
         } catch {
             await session.stop()
             throw error

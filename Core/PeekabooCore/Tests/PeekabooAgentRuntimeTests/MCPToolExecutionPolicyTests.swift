@@ -9,6 +9,18 @@ import Testing
 
 @Suite(.serialized)
 struct MCPToolExecutionPolicyTests {
+    @Test
+    @MainActor
+    func `Tool handling context defaults to background only`() {
+        let context = PeekabooAgentService.ToolHandlingContext(
+            model: .anthropic(.sonnet45),
+            tools: [],
+            eventHandler: nil,
+            sessionId: "default-background-policy")
+
+        #expect(context.executionPolicy == .backgroundOnly)
+    }
+
     private struct PolicyCase {
         let tool: String
         let arguments: [String: Any]
@@ -79,10 +91,16 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "permissions", arguments: ["action": "request"]),
             .init(tool: "action", arguments: ["action": "AXRaise"]),
             .init(tool: "action", arguments: ["action": "AXShowMenu"]),
+            .init(tool: "action", arguments: ["action": "AXShowAlternateUI"]),
+            .init(tool: "action", arguments: ["action": "AXShowDefaultUI"]),
+            .init(tool: "action", arguments: ["action": "AXPress"]),
+            .init(tool: "action", arguments: ["action": "press"]),
+            .init(tool: "action", arguments: ["action": "AXPick"]),
+            .init(tool: "action", arguments: ["action": "pick"]),
+            .init(tool: "action", arguments: ["action": "AXCustomAction"]),
             .init(tool: "drag", arguments: ["foreground": true]),
             .init(tool: "move", arguments: ["foreground": true]),
             .init(tool: "shell", arguments: ["command": "/usr/bin/osascript -e ignored"]),
-            .init(tool: "agent", arguments: [:]),
             .init(tool: "future_desktop_tool", arguments: [:]),
         ]
 
@@ -103,7 +121,7 @@ struct MCPToolExecutionPolicyTests {
             #expect(meta["requires_fresh_observation"] == .bool(false))
             #expect(meta["execution_policy"] == .string("background_only"))
             let expectedReason: DesktopActionOutcome.RefusalReason =
-                if ["agent", "future_desktop_tool"].contains(item.tool) {
+                if item.tool == "future_desktop_tool" {
                     .operationUnsupported
                 } else if item.tool == "dialog",
                           ["click", "dismiss"].contains(item.arguments["action"] as? String ?? ""),
@@ -127,7 +145,7 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "click", arguments: ["foreground": false]),
             .init(tool: "type", arguments: ["foreground": false]),
             .init(tool: "press", arguments: ["snapshot": "exact-window"]),
-            .init(tool: "action", arguments: ["action": "AXPress"]),
+            .init(tool: "action", arguments: ["action": "AXIncrement"]),
             .init(tool: "set_value", arguments: [:]),
             .init(tool: "image", arguments: [:]),
             .init(tool: "image", arguments: ["capture_focus": "background"]),
@@ -180,6 +198,7 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "permissions", arguments: [:]),
             .init(tool: "analyze", arguments: [:]),
             .init(tool: "sleep", arguments: [:]),
+            .init(tool: "agent", arguments: [:]),
             .init(tool: "done", arguments: [:]),
             .init(tool: "need_info", arguments: [:]),
         ]
@@ -272,7 +291,7 @@ struct MCPToolExecutionPolicyTests {
 
     @Test
     @MainActor
-    func `context refuses before argument validation mutation gates or tool invocation`() async throws {
+    func `context validates arguments then refuses before mutation gates or tool invocation`() async throws {
         let counter = PolicyInvocationCounter()
         let shell = PolicyProbeTool(name: "shell", counter: counter)
         let arguments = ToolArguments(raw: ["command": "/usr/bin/osascript -e ignored"])
@@ -288,6 +307,44 @@ struct MCPToolExecutionPolicyTests {
         let directResponse = try await directContext.execute(tool: shell, arguments: arguments)
         #expect(!directResponse.isError)
         #expect(await counter.value == 1)
+    }
+
+    @Test
+    @MainActor
+    func `public Agent tool factory defaults executable tools to background-only`() async throws {
+        let service = try PeekabooAgentService(services: PeekabooServices())
+        let tools = service.createAgentTools()
+        let shell = try #require(tools.first { $0.name == "shell" })
+        let move = try #require(tools.first { $0.name == "move" })
+        let sleep = try #require(tools.first { $0.name == "sleep" })
+
+        for (tool, arguments) in [
+            (shell, AgentToolArguments(["command": "/usr/bin/true"])),
+            (move, AgentToolArguments(["to": "10,10", "foreground": true])),
+        ] {
+            do {
+                _ = try await tool.execute(arguments, context: ToolExecutionContext())
+                Issue.record("Expected public Agent tool \(tool.name) to retain background-only authority")
+            } catch let failure as AgentToolExecutionFailure {
+                let metadata = try #require(failure.metadata?.objectValue)
+                #expect(
+                    metadata["error_code"]?.stringValue == MCPToolExecutionPolicy.refusalErrorCode,
+                    "Unexpected rejection for \(tool.name)")
+                #expect(
+                    metadata["execution_policy"]?.stringValue == "background_only",
+                    "Missing policy metadata for \(tool.name)")
+                #expect(metadata["mutation_dispatched"]?.boolValue == false)
+                #expect(metadata["retry_safe"]?.boolValue == true)
+            }
+        }
+
+        let sleepResult = try await sleep.execute(
+            AgentToolArguments(["duration": 1]),
+            context: ToolExecutionContext())
+        #expect(!AgentToolResultSemantics.valueEncodesFailure(sleepResult))
+
+        let sessionTools = await service.buildToolset(for: .anthropic(.sonnet45))
+        #expect(!sessionTools.contains(where: { $0.name == "shell" }))
     }
 
     @Test
@@ -403,7 +460,7 @@ struct MCPToolExecutionPolicyTests {
             tool: PolicySnapshotProbeTool(capture: capture),
             arguments: ToolArguments(raw: [
                 "on": "B1",
-                "action": "AXPress",
+                "action": "AXIncrement",
             ]))
         await UISnapshotManager.shared.removeSnapshot(id: snapshotID)
 
@@ -719,7 +776,9 @@ private struct PolicyProbeTool: MCPTool {
     let description = "Policy invocation probe"
 
     var inputSchema: Value {
-        SchemaBuilder.object(properties: [:], required: [])
+        SchemaBuilder.object(
+            properties: ["command": SchemaBuilder.string()],
+            required: [])
     }
 
     func execute(arguments _: ToolArguments) async throws -> ToolResponse {
@@ -746,6 +805,7 @@ private struct PolicySnapshotProbeTool: MCPTool {
                 "app": SchemaBuilder.string(),
                 "coords": SchemaBuilder.string(),
                 "coordinate_reference": SchemaBuilder.string(),
+                "keys": SchemaBuilder.array(items: SchemaBuilder.string()),
                 "pid": SchemaBuilder.integer(),
                 "snapshot": SchemaBuilder.string(),
                 "text": SchemaBuilder.string(),
@@ -760,8 +820,14 @@ private struct PolicySnapshotProbeTool: MCPTool {
         await self.capture.record(
             snapshotID: arguments.getString("snapshot"),
             coordinateReference: arguments.getString("coordinate_reference"))
-        return ToolResponse.text(
+        let mechanism: DesktopActionOutcome.Delivery.Mechanism =
+            self.name == "press" ? .windowTargetedEvents : .accessibilityAction
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: mechanism, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        return try ToolResponse.text(
             "captured",
-            meta: .object(["mutation_dispatched": .bool(false)]))
+            meta: MCPToolResponseMetadataProjector.metadata(outcome: outcome))
     }
 }

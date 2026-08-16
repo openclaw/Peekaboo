@@ -4,7 +4,7 @@ import PeekabooAutomationKit
 import PeekabooFoundation
 
 @MainActor
-final class InspectUITestAutomationService: UIAutomationServiceProtocol {
+class InspectUITestAutomationService: UIAutomationServiceProtocol {
     private let accessibilityGranted: Bool
     private let detectionResult: ElementDetectionResult?
     private let inspectError: (any Error)?

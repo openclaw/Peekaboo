@@ -128,6 +128,14 @@ struct DragPointDescription {
     }
 }
 
+struct DragResponseContext {
+    let movement: MovementParameters
+    let executionTime: TimeInterval
+    let request: DragRequest
+    let actionResult: UIAutomationActionResult<Void>
+    let invalidatedSnapshotID: String?
+}
+
 extension UIElement {
     var dragCenterPoint: CGPoint {
         CGPoint(x: self.frame.midX, y: self.frame.midY)

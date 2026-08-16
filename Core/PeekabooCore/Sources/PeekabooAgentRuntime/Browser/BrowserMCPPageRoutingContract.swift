@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooFoundation
 
 /// Audited routing contract for the exactly pinned chrome-devtools-mcp dependency.
 ///
@@ -10,6 +11,8 @@ enum BrowserMCPPageRoutingContract {
         case global
         case blockedSelectedPage
     }
+
+    typealias ActionSemantics = BrowserToolActionSemantics
 
     static let dependencyVersion = "1.6.0"
 
@@ -91,6 +94,10 @@ enum BrowserMCPPageRoutingContract {
     static let allToolNames = pageTargetedToolNames
         .union(globalToolNames)
         .union(blockedSelectedPageToolNames)
+    static let readOnlyToolNames = BrowserToolActionSemantics.readOnlyToolNames
+    static let mutatingToolNames = BrowserToolActionSemantics.mutatingToolNames
+    static let argumentDependentToolNames = BrowserToolActionSemantics.argumentDependentToolNames
+    static let allSemanticToolNames = BrowserToolActionSemantics.allToolNames
 
     static func routing(for toolName: String) -> Routing? {
         if self.pageTargetedToolNames.contains(toolName) {
@@ -103,5 +110,14 @@ enum BrowserMCPPageRoutingContract {
             return .blockedSelectedPage
         }
         return nil
+    }
+
+    static func actionSemantics(
+        for toolName: String,
+        arguments: [String: Any]) -> ActionSemantics?
+    {
+        BrowserToolActionSemantics.classify(toolName: toolName) { name in
+            arguments[name] as? Bool
+        }
     }
 }

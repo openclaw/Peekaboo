@@ -84,9 +84,20 @@ public struct PasteTool: MCPTool {
         self.context = context
     }
 
+    func validateArgumentSemantics(_ arguments: ToolArguments) throws {
+        _ = try MCPInteractionTarget(
+            app: arguments.getString("app"),
+            pid: arguments.validatedInt("pid"),
+            windowTitle: arguments.getString("window_title"),
+            windowIndex: arguments.validatedInt("window_index"),
+            windowId: arguments.validatedInt("window_id"))
+        try Self.validatePayloadShape(arguments)
+    }
+
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
         let startTime = Date()
+        var setupFocusResult: MCPInteractionFocusResult?
 
         do {
             let target = try MCPInteractionTarget(
@@ -97,7 +108,7 @@ public struct PasteTool: MCPTool {
                 windowId: arguments.validatedInt("window_id"))
 
             let foreground = arguments.getBool("foreground") ?? false
-            let expectedPIDIdentity = try Self.explicitPIDIdentity(target: target)
+            let expectedPIDIdentity = try self.explicitPIDIdentity(target: target)
             let payload = try self.makePayload(arguments: arguments)
             let restoreDelayMs = try max(0, arguments.validatedInt("restore_delay_ms") ?? 150)
 
@@ -126,14 +137,25 @@ public struct PasteTool: MCPTool {
                         foreground: foreground,
                         expectedPIDIdentity: expectedPIDIdentity)
                     if destination.processIdentifier == nil {
-                        _ = try await target.focusIfRequested(windows: self.context.windows)
+                        setupFocusResult = try await target.focusResultIfRequested(windows: self.context.windows)
                     }
                     return try await self.performCurrentClipboardPaste(
                         destination: destination,
                         restoreDelayMs: restoreDelayMs)
                 }
+                let actionResult: UIAutomationActionResult<Void>
+                do {
+                    actionResult = try self.combinedPasteActionResult(
+                        outcome.actionResult,
+                        focusResult: setupFocusResult)
+                } catch {
+                    // `combining` already preserves the completed focus in its failure.
+                    setupFocusResult = nil
+                    throw error
+                }
                 return try await self.currentClipboardResponse(
                     outcome: outcome,
+                    actionResult: actionResult,
                     target: target,
                     restoreDelayMs: restoreDelayMs,
                     startedAt: startTime)
@@ -148,12 +170,22 @@ public struct PasteTool: MCPTool {
                     foreground: foreground,
                     expectedPIDIdentity: expectedPIDIdentity)
                 if destination.processIdentifier == nil {
-                    _ = try await target.focusIfRequested(windows: self.context.windows)
+                    setupFocusResult = try await target.focusResultIfRequested(windows: self.context.windows)
                 }
                 return try await self.performClipboardPasteTransaction(
                     request: request,
                     destination: destination,
                     restoreDelayMs: restoreDelayMs)
+            }
+            let actionResult: UIAutomationActionResult<Void>
+            do {
+                actionResult = try self.combinedPasteActionResult(
+                    outcome.actionResult,
+                    focusResult: setupFocusResult)
+            } catch {
+                // `combining` already preserves the completed focus in its failure.
+                setupFocusResult = nil
+                throw error
             }
 
             let executionTime = Date().timeIntervalSince(startTime)
@@ -179,7 +211,7 @@ public struct PasteTool: MCPTool {
                 "size": restoredSize,
             ]
 
-            let meta: Value = .object([
+            var metaFields: [String: Value] = [
                 "pasted": .object(pastedObject),
                 "previous_clipboard_present": .bool(outcome.previousClipboardPresent),
                 "restored": .object(restoredObject),
@@ -190,7 +222,11 @@ public struct PasteTool: MCPTool {
                 "delivery_mode": .string(outcome.targetPID == nil ? "foreground" : "background"),
                 "target_pid": outcome.targetPID.map { .int(Int($0)) } ?? .null,
                 "target_window_id": outcome.targetWindowID.map(Value.int) ?? .null,
-            ])
+            ]
+            try metaFields.merge(Self.targetMetadataFields(actionResult.targetIdentity)) { _, target in target }
+            let meta = try MCPToolResponseMetadataProjector.metadata(
+                merging: metaFields,
+                outcome: actionResult.outcome)
 
             let resolvedWindowTitle = try? await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
             if Task.isCancelled {
@@ -215,45 +251,109 @@ public struct PasteTool: MCPTool {
                 message: error.localizedDescription,
                 reason: error.refusalReason)
         } catch let failure as DesktopActionFailure {
-            return try await MCPDesktopActionFailureHandler.response(
-                for: failure,
-                uiSnapshots: self.context.uiSnapshots,
-                snapshotID: nil)
+            return try await self.failureResponse(failure, focusResult: setupFocusResult)
         } catch let error as ClipboardPasteOutcomeError {
-            self.logger.error("Paste outcome was \(error.kind.rawValue, privacy: .public)")
-            return ToolResponse.error(
-                error.localizedDescription,
-                meta: .object([
-                    "paste_outcome": .string(error.kind.rawValue),
-                    "may_have_pasted": .bool(true),
-                    "retry_safe": .bool(false),
-                    "clipboard_restore_attempted": .bool(error.clipboardRestoreAttempted),
-                    "clipboard_restore_succeeded": error.clipboardRestoreAttempted
-                        ? .bool(error.clipboardRestoreErrorDescription == nil)
-                        : .null,
-                    "clipboard_restore_error": error.clipboardRestoreErrorDescription.map(Value.string) ?? .null,
-                    "target_pid": error.targetProcessIdentifier.map { .int(Int($0)) } ?? .null,
-                    "requires_fresh_observation": .bool(true),
-                ]))
+            return try await self.pasteOutcomeResponse(error, focusResult: setupFocusResult)
         } catch let error as PasteToolError {
-            return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
-                message: error.message,
-                reason: error.refusalReason)
+            return try await self.pasteToolErrorResponse(error, focusResult: setupFocusResult)
         } catch {
-            self.logger.error("Paste failed: \(error.localizedDescription)")
-            return ToolResponse.error("Paste failed: \(error.localizedDescription)")
+            return try await self.unexpectedErrorResponse(error, focusResult: setupFocusResult)
         }
     }
 
-    private func directTextOutcomeResponse(
-        _ error: InputDeliveryIndeterminateError,
-        requestedCharacterCount: Int,
-        destination: UIAutomationTarget) -> ToolResponse
+    @MainActor
+    private func failureResponse(
+        _ failure: DesktopActionFailure,
+        focusResult: MCPInteractionFocusResult?) async throws -> ToolResponse
     {
-        self.logger.error("Direct text paste outcome was indeterminate")
+        let failure = focusResult?.preservingFailure(failure, operation: "Paste") ?? failure
+        return try await MCPDesktopActionFailureHandler.response(
+            for: failure,
+            uiSnapshots: self.context.uiSnapshots,
+            snapshotID: nil)
+    }
+
+    @MainActor
+    private func pasteOutcomeResponse(
+        _ error: ClipboardPasteOutcomeError,
+        focusResult: MCPInteractionFocusResult?) async throws -> ToolResponse
+    {
+        if let focusResult {
+            let leaf = DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .clipboardTransaction, mode: .foreground),
+                evidence: .completionUnknown,
+                message: error.localizedDescription,
+                hint: "Observe the focused target and clipboard before retrying.",
+                causeDescription: error.causeDescription)
+            return try await self.failureResponse(
+                focusResult.preservingFailure(leaf, operation: "Paste"),
+                focusResult: nil)
+        }
+        self.logger.error("Paste outcome was \(error.kind.rawValue, privacy: .public)")
         return ToolResponse.error(
             error.localizedDescription,
             meta: .object([
+                "paste_outcome": .string(error.kind.rawValue),
+                "may_have_pasted": .bool(true),
+                "retry_safe": .bool(false),
+                "clipboard_restore_attempted": .bool(error.clipboardRestoreAttempted),
+                "clipboard_restore_succeeded": error.clipboardRestoreAttempted
+                    ? .bool(error.clipboardRestoreErrorDescription == nil)
+                    : .null,
+                "clipboard_restore_error": error.clipboardRestoreErrorDescription.map(Value.string) ?? .null,
+                "target_pid": error.targetProcessIdentifier.map { .int(Int($0)) } ?? .null,
+                "requires_fresh_observation": .bool(true),
+            ]))
+    }
+
+    @MainActor
+    private func pasteToolErrorResponse(
+        _ error: PasteToolError,
+        focusResult: MCPInteractionFocusResult?) async throws -> ToolResponse
+    {
+        guard let focusResult else {
+            return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+                message: error.message,
+                reason: error.refusalReason)
+        }
+        let failure = DesktopActionFailure.preDispatchRefusal(
+            reason: error.refusalReason,
+            message: error.message)
+        return try await self.failureResponse(
+            focusResult.preservingFailure(failure, operation: "Paste"),
+            focusResult: nil)
+    }
+
+    @MainActor
+    private func unexpectedErrorResponse(
+        _ error: any Error,
+        focusResult: MCPInteractionFocusResult?) async throws -> ToolResponse
+    {
+        if let focusResult {
+            return try await self.failureResponse(
+                focusResult.preservingFailure(error, operation: "Paste"),
+                focusResult: nil)
+        }
+        self.logger.error("Paste failed: \(error.localizedDescription)")
+        return ToolResponse.error("Paste failed: \(error.localizedDescription)")
+    }
+
+    @MainActor
+    private func directTextOutcomeResponse(
+        _ error: InputDeliveryIndeterminateError,
+        requestedCharacterCount: Int,
+        destination: UIAutomationTarget) async throws -> ToolResponse
+    {
+        self.logger.error("Direct text paste outcome was indeterminate")
+        let identity = try Self.desktopTargetIdentity(destination)
+        let failure = Self.attributing(
+            error.desktopActionFailure(delivery: Self.backgroundDelivery(for: destination)),
+            to: identity)
+        return try await MCPDesktopActionFailureHandler.response(
+            for: failure,
+            uiSnapshots: self.context.uiSnapshots,
+            snapshotID: nil,
+            additionalFields: [
                 "paste_outcome": .string("indeterminate"),
                 "paste_method": .string("background_text"),
                 "delivery_mode": .string("background"),
@@ -268,8 +368,7 @@ public struct PasteTool: MCPTool {
                 "characters_typed": error.emittedUnitCount.map(Value.int) ?? .null,
                 "target_pid": destination.processIdentifier.map { .int(Int($0)) } ?? .null,
                 "target_window_id": destination.exactWindow.map { .int($0.identity.windowID) } ?? .null,
-                "requires_fresh_observation": .bool(true),
-            ]))
+            ])
     }
 
     @MainActor
@@ -302,7 +401,7 @@ public struct PasteTool: MCPTool {
     @MainActor
     private func dispatchPasteHotkey(
         route: PasteHotkeyRoute,
-        destination: UIAutomationTarget) async throws
+        destination: UIAutomationTarget) async throws -> UIAutomationActionResult<Void>
     {
         switch route {
         case let .exact(automation):
@@ -324,16 +423,33 @@ public struct PasteTool: MCPTool {
             try DesktopActionFailure.requireConfirmedIfReported(
                 validated.outcome,
                 operation: "Paste hotkey")
+            return validated
         case let .process(automation):
             guard let processIdentity = destination.processIdentity else {
                 throw PasteToolError("Background paste requires a process-generation receipt.")
             }
-            try await automation.hotkey(
-                keys: "cmd,v",
-                holdDuration: 50,
-                expectedProcessIdentity: processIdentity)
+            if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
+                let result = try await outcomeAutomation.hotkeyWithOutcome(
+                    keys: "cmd,v",
+                    holdDuration: 50,
+                    expectedProcessIdentity: processIdentity)
+                try DesktopActionFailure.requireConfirmedIfReported(
+                    result.outcome,
+                    operation: "Paste hotkey")
+                return result
+            }
+            try await automation.hotkey(keys: "cmd,v", holdDuration: 50, expectedProcessIdentity: processIdentity)
+            return UIAutomationActionResult(payload: (), outcome: nil)
         case .foreground:
+            if let outcomeAutomation = self.context.automation as? any UIAutomationActionOutcomeProviding {
+                let result = try await outcomeAutomation.hotkeyWithOutcome(keys: "cmd,v", holdDuration: 50)
+                try DesktopActionFailure.requireConfirmedIfReported(
+                    result.outcome,
+                    operation: "Paste hotkey")
+                return result
+            }
             try await self.context.automation.hotkey(keys: "cmd,v", holdDuration: 50)
+            return UIAutomationActionResult(payload: (), outcome: nil)
         }
     }
 
@@ -403,14 +519,17 @@ public struct PasteTool: MCPTool {
 
         let dispatchFailure: DesktopActionFailure?
         let dispatchErrorDescription: String?
+        let actionResult: UIAutomationActionResult<Void>?
         do {
-            try await self.dispatchPasteHotkey(route: hotkeyRoute, destination: destination)
+            actionResult = try await self.dispatchPasteHotkey(route: hotkeyRoute, destination: destination)
             dispatchFailure = nil
             dispatchErrorDescription = nil
         } catch let failure as DesktopActionFailure {
+            actionResult = nil
             dispatchFailure = failure
             dispatchErrorDescription = nil
         } catch {
+            actionResult = nil
             dispatchFailure = nil
             dispatchErrorDescription = error.localizedDescription
         }
@@ -453,6 +572,9 @@ public struct PasteTool: MCPTool {
                 clipboardRestoreErrorDescription: restoreErrorDescription,
                 targetProcessIdentifier: destination.processIdentifier)
         }
+        guard let actionResult else {
+            preconditionFailure("A successful paste dispatch must retain its action result")
+        }
 
         return ClipboardPasteTransactionOutcome(
             setResult: setResult,
@@ -460,7 +582,8 @@ public struct PasteTool: MCPTool {
             restoreResult: restoreResult,
             restoreErrorDescription: restoreErrorDescription,
             targetPID: destination.processIdentifier,
-            targetWindowID: destination.exactWindow?.identity.windowID)
+            targetWindowID: destination.exactWindow?.identity.windowID,
+            actionResult: actionResult)
     }
 
     @MainActor
@@ -474,14 +597,17 @@ public struct PasteTool: MCPTool {
         try Task.checkCancellation()
         let dispatchFailure: DesktopActionFailure?
         let dispatchErrorDescription: String?
+        let actionResult: UIAutomationActionResult<Void>?
         do {
-            try await self.dispatchPasteHotkey(route: hotkeyRoute, destination: destination)
+            actionResult = try await self.dispatchPasteHotkey(route: hotkeyRoute, destination: destination)
             dispatchFailure = nil
             dispatchErrorDescription = nil
         } catch let failure as DesktopActionFailure {
+            actionResult = nil
             dispatchFailure = failure
             dispatchErrorDescription = nil
         } catch {
+            actionResult = nil
             dispatchFailure = nil
             dispatchErrorDescription = error.localizedDescription
         }
@@ -504,10 +630,14 @@ public struct PasteTool: MCPTool {
                 clipboardRestoreAttempted: false,
                 targetProcessIdentifier: destination.processIdentifier)
         }
+        guard let actionResult else {
+            preconditionFailure("A successful paste dispatch must retain its action result")
+        }
         return CurrentClipboardPasteOutcome(
             clipboard: currentClipboard,
             targetPID: destination.processIdentifier,
-            targetWindowID: destination.exactWindow?.identity.windowID)
+            targetWindowID: destination.exactWindow?.identity.windowID,
+            actionResult: actionResult)
     }
 
     @MainActor
@@ -542,7 +672,7 @@ public struct PasteTool: MCPTool {
                             focusedElement: focusedElement)),
                     operation: "Exact-window background text delivery")
             } catch let error as InputDeliveryIndeterminateError {
-                return self.directTextOutcomeResponse(
+                return try await self.directTextOutcomeResponse(
                     Self.pasteDeliveryError(from: error),
                     requestedCharacterCount: text.count,
                     destination: destination)
@@ -575,18 +705,18 @@ public struct PasteTool: MCPTool {
                         outcome: nil)
                 }
             } catch let error as InputDeliveryIndeterminateError {
-                return self.directTextOutcomeResponse(
+                return try await self.directTextOutcomeResponse(
                     Self.pasteDeliveryError(from: error),
                     requestedCharacterCount: text.count,
                     destination: destination)
             }
         }
-        try DesktopActionFailure.requireConfirmedIfReported(
-            actionResult.outcome,
-            operation: "Background text paste")
-        let typeResult = actionResult.payload
+        let validatedActionResult = try self.validatedBackgroundTextResult(
+            actionResult,
+            destination: destination)
+        let typeResult = validatedActionResult.payload
         if Task.isCancelled {
-            return self.directTextOutcomeResponse(
+            return try await self.directTextOutcomeResponse(
                 InputDeliveryIndeterminateError(
                     operation: .paste,
                     emittedUnitCount: typeResult.totalCharacters,
@@ -596,7 +726,9 @@ public struct PasteTool: MCPTool {
         }
         let setResult = try Self.readResult(for: request)
         let executionTime = Date().timeIntervalSince(startedAt)
-        let metaFields: [String: Value] = [
+        let resultIdentity = validatedActionResult.targetIdentity
+        let resultTarget = resultIdentity?.target ?? destination
+        var metaFields: [String: Value] = [
             "pasted": .object([
                 "uti": .string(setResult.utiIdentifier),
                 "size": .int(setResult.data.count),
@@ -606,9 +738,10 @@ public struct PasteTool: MCPTool {
             "characters_typed": .int(typeResult.totalCharacters),
             "execution_time": .double(executionTime),
             "delivery_mode": .string("background"),
-            "target_pid": .int(Int(targetPID)),
-            "target_window_id": destination.exactWindow.map { .int($0.identity.windowID) } ?? .null,
+            "target_pid": resultTarget.processIdentifier.map { .int(Int($0)) } ?? .int(Int(targetPID)),
+            "target_window_id": resultTarget.exactWindow.map { .int($0.identity.windowID) } ?? .null,
         ]
+        try metaFields.merge(Self.targetMetadataFields(resultIdentity)) { _, target in target }
         let summary = ToolEventSummary(
             targetApp: target.appIdentifier,
             windowTitle: nil,
@@ -624,7 +757,7 @@ public struct PasteTool: MCPTool {
                 summary: summary,
                 into: MCPToolResponseMetadataProjector.metadata(
                     merging: metaFields,
-                    outcome: actionResult.outcome)))
+                    outcome: validatedActionResult.outcome)))
     }
 
     private static func pasteDeliveryError(
@@ -636,15 +769,129 @@ public struct PasteTool: MCPTool {
             causeDescription: error.causeDescription ?? error.localizedDescription)
     }
 
+    private func validatedBackgroundTextResult(
+        _ result: UIAutomationActionResult<TypeResult>,
+        destination: UIAutomationTarget) throws -> UIAutomationActionResult<TypeResult>
+    {
+        guard let authorizedPlan = AuthorizedDesktopTargetPlan.current else {
+            try DesktopActionFailure.requireConfirmedIfReported(
+                result.outcome,
+                operation: "Background text paste")
+            return result
+        }
+
+        let destinationIdentity = try Self.desktopTargetIdentity(destination)
+        let authorizedIdentity: DesktopTargetIdentity
+        do {
+            authorizedIdentity = try authorizedPlan.coalescing(
+                destinationIdentity,
+                operation: "Background text paste")
+        } catch let failure as DesktopActionFailure {
+            throw Self.attributing(failure, to: authorizedPlan.targetIdentity)
+        }
+
+        guard let returnedIdentity = result.targetIdentity else {
+            throw Self.attributing(
+                .indeterminate(
+                    route: result.outcome?.route ?? .local,
+                    delivery: result.outcome?.delivery ?? Self.backgroundDelivery(for: destination),
+                    evidence: .completionUnknown,
+                    unitCount: result.outcome?.dispatchState.unitCount ?? .one,
+                    message: "Background text paste returned without its exact target identity.",
+                    hint: "Observe the exact target before retrying and update the runtime host."),
+                to: authorizedIdentity)
+        }
+        let resultIdentity: DesktopTargetIdentity
+        do {
+            resultIdentity = try authorizedIdentity.coalescing(returnedIdentity)
+        } catch {
+            // A contradictory provider target is not safely attributable to either claimed identity.
+            throw DesktopActionFailure.indeterminate(
+                route: result.outcome?.route ?? .local,
+                delivery: result.outcome?.delivery ?? Self.backgroundDelivery(for: destination),
+                evidence: .completionUnknown,
+                unitCount: result.outcome?.dispatchState.unitCount ?? .one,
+                message: "Background text paste returned a target different from its authorization.",
+                hint: "Observe both targets before retrying and update the runtime host.",
+                causeDescription: error.localizedDescription)
+        }
+        guard let outcome = result.outcome else {
+            throw Self.attributing(
+                .indeterminate(
+                    delivery: Self.backgroundDelivery(for: destination),
+                    evidence: .completionUnknown,
+                    unitCount: .one,
+                    message: "Background text paste returned without a canonical outcome.",
+                    hint: "Observe the exact target before retrying and update the runtime host."),
+                to: resultIdentity)
+        }
+        do {
+            try DesktopActionFailure.requireConfirmedIfReported(
+                outcome,
+                operation: "Background text paste")
+        } catch let failure as DesktopActionFailure {
+            throw Self.attributing(failure, to: resultIdentity)
+        }
+        if let delivery = outcome.delivery, delivery.mode != .background {
+            throw Self.attributing(
+                .indeterminate(
+                    route: outcome.route,
+                    delivery: delivery,
+                    evidence: .completionUnknown,
+                    unitCount: outcome.dispatchState.unitCount,
+                    message: "Background text paste reported foreground delivery.",
+                    hint: "Observe the exact target before retrying and update the runtime host."),
+                to: resultIdentity)
+        }
+        return UIAutomationActionResult(
+            payload: result.payload,
+            outcome: outcome,
+            targetIdentity: resultIdentity)
+    }
+
+    private static func desktopTargetIdentity(_ target: UIAutomationTarget) throws -> DesktopTargetIdentity {
+        if let exactWindow = target.exactWindow {
+            return DesktopTargetIdentity(exactWindow: exactWindow)
+        }
+        guard let processIdentity = target.processIdentity else {
+            throw PasteToolError(
+                "Background text paste requires a process-generation target.",
+                refusalReason: .targetUnavailable)
+        }
+        return try DesktopTargetIdentity(processIdentity: processIdentity)
+    }
+
+    private static func backgroundDelivery(for target: UIAutomationTarget) -> DesktopActionOutcome.Delivery {
+        .init(
+            mechanism: target.exactWindow == nil ? .processTargetedEvents : .windowTargetedEvents,
+            mode: .background)
+    }
+
+    private static func attributing(
+        _ failure: DesktopActionFailure,
+        to identity: DesktopTargetIdentity) -> DesktopActionFailure
+    {
+        if let exactWindow = identity.exactWindow {
+            return failure.attributed(to: DesktopActionTargetReceipt(
+                processIdentifier: exactWindow.identity.ownerProcessIdentifier,
+                processStartIdentity: exactWindow.identity.ownerProcessStartIdentity,
+                windowID: exactWindow.identity.windowID))
+        }
+        return failure.attributed(to: DesktopActionTargetReceipt(
+            processIdentifier: identity.processIdentity.processIdentifier,
+            processStartIdentity: identity.processIdentity.processStartIdentity))
+    }
+
     @MainActor
     private func currentClipboardResponse(
         outcome: CurrentClipboardPasteOutcome,
+        actionResult: UIAutomationActionResult<Void>,
         target: MCPInteractionTarget,
         restoreDelayMs: Int,
         startedAt: Date) async throws -> ToolResponse
     {
         let executionTime = Date().timeIntervalSince(startedAt)
-        let meta: Value = .object([
+        var metaFields: [String: Value] = [
             "pasted": .object([
                 "uti": .string(outcome.clipboard?.utiIdentifier ?? "current-clipboard"),
                 "size": .int(outcome.clipboard?.data.count ?? 0),
@@ -658,7 +905,11 @@ public struct PasteTool: MCPTool {
             "delivery_mode": .string(outcome.targetPID == nil ? "foreground" : "background"),
             "target_pid": outcome.targetPID.map { .int(Int($0)) } ?? .null,
             "target_window_id": outcome.targetWindowID.map(Value.int) ?? .null,
-        ])
+        ]
+        try metaFields.merge(Self.targetMetadataFields(actionResult.targetIdentity)) { _, target in target }
+        let meta = try MCPToolResponseMetadataProjector.metadata(
+            merging: metaFields,
+            outcome: actionResult.outcome)
         let resolvedWindowTitle = try? await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
         if Task.isCancelled {
             throw ClipboardPasteOutcomeError(
@@ -680,6 +931,42 @@ public struct PasteTool: MCPTool {
             meta: ToolEventSummary.merge(summary: summary, into: meta))
     }
 
+    private func combinedPasteActionResult(
+        _ leaf: UIAutomationActionResult<Void>,
+        focusResult: MCPInteractionFocusResult?) throws -> UIAutomationActionResult<Void>
+    {
+        guard let focusResult else { return leaf }
+        guard leaf.outcome != nil else {
+            let legacyLeaf = UIAutomationActionResult(
+                payload: leaf.payload,
+                outcome: .dispatchedUnverified(
+                    route: focusResult.outcome.route,
+                    delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one),
+                targetIdentity: leaf.targetIdentity)
+            return try focusResult.combining(legacyLeaf, operation: "Paste")
+        }
+        return try focusResult.combining(leaf, operation: "Paste")
+    }
+
+    private static func targetMetadataFields(
+        _ identity: DesktopTargetIdentity?) throws -> [String: Value]
+    {
+        guard let identity else { return [:] }
+        let receipt = if let exactWindow = identity.exactWindow {
+            DesktopActionTargetReceipt(
+                processIdentifier: exactWindow.identity.ownerProcessIdentifier,
+                processStartIdentity: exactWindow.identity.ownerProcessStartIdentity,
+                windowID: exactWindow.identity.windowID)
+        } else {
+            DesktopActionTargetReceipt(
+                processIdentifier: identity.processIdentity.processIdentifier,
+                processStartIdentity: identity.processIdentity.processStartIdentity)
+        }
+        return try ["target_receipt": Value(receipt)]
+    }
+
     @MainActor
     private func resolveDeliveryDestination(
         target: MCPInteractionTarget,
@@ -693,17 +980,18 @@ public struct PasteTool: MCPTool {
         let plannedTarget = try await target.requireBackgroundKeyboardTarget(
             applications: self.context.applications,
             windows: self.context.windows)
-        guard let processIdentifier = plannedTarget.processIdentifier else {
+        let authorizedTarget = try self.authorizedBackgroundDestination(plannedTarget)
+        guard let processIdentifier = authorizedTarget.processIdentifier else {
             throw PasteToolError("Background paste requires a resolved target process.")
         }
         if target.pid != nil {
             guard let expectedPIDIdentity,
-                  ClipboardPasteTransactionGate.processStartIdentity(processIdentifier) == expectedPIDIdentity
+                  authorizedTarget.processIdentity?.processStartIdentity == expectedPIDIdentity
             else {
                 throw PasteToolError("Target process PID \(processIdentifier) changed identity while waiting.")
             }
         }
-        guard plannedTarget.exactWindow != nil else { return plannedTarget }
+        guard authorizedTarget.exactWindow != nil else { return authorizedTarget }
         do {
             _ = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
                 automation: self.context.automation,
@@ -718,12 +1006,19 @@ public struct PasteTool: MCPTool {
                 "This automation host does not support focused exact-window background paste.",
                 refusalReason: .runtimeIncompatible)
         }
-        return try await plannedTarget.pinningCurrentFocusedElement(using: self.context.automation)
+        let focusedTarget = try await authorizedTarget.pinningCurrentFocusedElement(using: self.context.automation)
+        return try self.authorizedBackgroundDestination(focusedTarget)
     }
 
-    private static func explicitPIDIdentity(target: MCPInteractionTarget) throws -> UInt64? {
+    private func explicitPIDIdentity(target: MCPInteractionTarget) throws -> UInt64? {
         guard let pid = target.pid else { return nil }
         let processIdentifier = try Self.checkedProcessIdentifier(pid)
+        if let plan = AuthorizedDesktopTargetPlan.current {
+            guard plan.processIdentity.processIdentifier == processIdentifier else {
+                throw PasteToolError("Authorized paste target does not match pid \(pid).")
+            }
+            return plan.processIdentity.processStartIdentity
+        }
         guard let identity = ClipboardPasteTransactionGate.processStartIdentity(processIdentifier) else {
             throw PasteToolError("Could not verify process identity for pid \(pid).")
         }
@@ -748,6 +1043,51 @@ public struct PasteTool: MCPTool {
             throw MCPInteractionTargetError.invalidProcessIdentifier
         }
         return processIdentifier
+    }
+
+    private static func validatePayloadShape(_ arguments: ToolArguments) throws {
+        let stringKeys = [
+            "app", "window_title", "text", "filePath", "imagePath", "dataBase64", "uti", "alsoText",
+        ]
+        for key in stringKeys {
+            guard let value = arguments.getValue(for: key) else { continue }
+            guard case .string = value else {
+                throw PasteToolError("Parameter '\(key)' must be a string.", refusalReason: .invalidRequest)
+            }
+        }
+        for key in ["allowLarge", "foreground"] {
+            guard let value = arguments.getValue(for: key) else { continue }
+            guard case .bool = value else {
+                throw PasteToolError("Parameter '\(key)' must be a boolean.", refusalReason: .invalidRequest)
+            }
+        }
+
+        let hasText = arguments.getValue(for: "text") != nil
+        let hasFilePath = arguments.getValue(for: "filePath") != nil
+        let hasImagePath = arguments.getValue(for: "imagePath") != nil
+        let hasData = arguments.getValue(for: "dataBase64") != nil
+        let primaryPayloadCount = [hasText, hasFilePath || hasImagePath, hasData].count(where: { $0 })
+        guard primaryPayloadCount <= 1 else {
+            throw PasteToolError(
+                "Provide exactly one of text, filePath/imagePath, or dataBase64+uti.",
+                refusalReason: .invalidRequest)
+        }
+        guard !(hasFilePath && hasImagePath) else {
+            throw PasteToolError(
+                "filePath and imagePath are aliases; provide only one.",
+                refusalReason: .invalidRequest)
+        }
+        if hasData, arguments.getValue(for: "uti") == nil {
+            throw PasteToolError("dataBase64 requires uti.", refusalReason: .invalidRequest)
+        }
+        let hasPayloadModifier = ["uti", "alsoText", "allowLarge"].contains {
+            arguments.getValue(for: $0) != nil
+        }
+        if primaryPayloadCount == 0, hasPayloadModifier {
+            throw PasteToolError(
+                "Provide text, filePath/imagePath, or dataBase64+uti before payload modifiers.",
+                refusalReason: .invalidRequest)
+        }
     }
 
     private func makePayload(arguments: ToolArguments) throws -> PasteToolPayload {
@@ -790,7 +1130,17 @@ public struct PasteTool: MCPTool {
         }
         return .current
     }
+
+    private func authorizedBackgroundDestination(_ candidate: UIAutomationTarget) throws -> UIAutomationTarget {
+        guard AuthorizedDesktopTargetPlan.current != nil else { return candidate }
+        let identity = try Self.desktopTargetIdentity(candidate)
+        return try self.context.coalesceAuthorizedDesktopTarget(
+            identity,
+            operation: "Background text paste").target
+    }
 }
+
+extension PasteTool: MCPToolArgumentSemanticValidating {}
 
 extension PasteTool {
     fileprivate static func readResult(for request: ClipboardWriteRequest) throws -> ClipboardReadResult {
@@ -842,15 +1192,17 @@ private struct ClipboardPasteTransactionOutcome: Sendable {
     let restoreErrorDescription: String?
     let targetPID: pid_t?
     let targetWindowID: Int?
+    let actionResult: UIAutomationActionResult<Void>
 }
 
 private struct CurrentClipboardPasteOutcome: Sendable {
     let clipboard: ClipboardReadResult?
     let targetPID: pid_t?
     let targetWindowID: Int?
+    let actionResult: UIAutomationActionResult<Void>
 }
 
-private struct PasteToolError: Error {
+private struct PasteToolError: LocalizedError {
     let message: String
     let refusalReason: DesktopActionOutcome.RefusalReason
 
@@ -860,5 +1212,9 @@ private struct PasteToolError: Error {
     {
         self.message = message
         self.refusalReason = refusalReason
+    }
+
+    var errorDescription: String? {
+        self.message
     }
 }

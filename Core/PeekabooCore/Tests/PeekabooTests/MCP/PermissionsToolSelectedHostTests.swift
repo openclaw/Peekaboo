@@ -117,12 +117,17 @@ struct PermissionsToolSelectedHostTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
-        let remote = RemotePeekabooServices(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1))
+        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1)
+        _ = try await client.handshake(client: PeekabooBridgeClientIdentity(
+            bundleIdentifier: "dev.peekaboo.permissions-tests",
+            teamIdentifier: nil,
+            processIdentifier: getpid()))
+        let handshakeEvaluationCount = evaluations.callCount
+        let remote = RemotePeekabooServices(client: client)
         let context = MCPToolContext(services: remote)
         let response = try await PermissionsTool(context: context).execute(arguments: ToolArguments(raw: [:]))
 
-        #expect(evaluations.callCount == 1)
+        #expect(evaluations.callCount == handshakeEvaluationCount + 1)
         #expect(response.isError)
         let meta = try #require(Self.meta(from: response))
         #expect(meta["screen_recording"] == .bool(false))

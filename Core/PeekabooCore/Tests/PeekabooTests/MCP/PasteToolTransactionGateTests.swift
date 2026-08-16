@@ -32,7 +32,8 @@ struct PasteToolTransactionGateTests {
             automation: automation,
             applications: applications,
             clipboard: clipboard,
-            snapshotOwner: Self.uiSnapshots.owner)
+            snapshotOwner: Self.uiSnapshots.owner,
+            executionPolicy: .unrestricted)
 
         let command = Task { @MainActor in
             try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -440,8 +441,8 @@ struct PasteToolTransactionGateTests {
         #expect(response.isError)
         let focusCalls = windows.focusCalls
         #expect(focusCalls.count == 1)
-        if case .application("Editor")? = focusCalls.first {} else {
-            Issue.record("Expected the queued foreground target to be revalidated")
+        if case .windowId(700)? = focusCalls.first {} else {
+            Issue.record("Expected the queued foreground target to be resolved and revalidated exactly")
         }
         #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
         #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
@@ -620,6 +621,168 @@ struct PasteToolTransactionGateTests {
         #expect(meta["paste_method"] == .string("current_clipboard"))
         #expect(meta["clipboard_mutated"] == .bool(false))
     }
+}
+
+extension PasteToolTransactionGateTests {
+    @Test
+    func `Foreground paste composes focus with a compatible legacy hotkey result`() async throws {
+        let leafTargetIdentity = try RecordingWindowService.targetIdentity()
+        let automation = await MainActor.run {
+            OutcomePasteAutomationService(
+                hotkeyResponse: .outcome(nil),
+                targetIdentity: leafTargetIdentity)
+        }
+        let windows = RecordingWindowService()
+        let clipboard = await MainActor.run { TransactionGateClipboardService() }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: windows,
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
+
+        let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "foreground": true,
+            "dataBase64": "cGF5bG9hZA==",
+            "uti": "public.data",
+            "restore_delay_ms": 0,
+        ]))
+
+        #expect(!response.isError)
+        let twoUnits = try #require(DesktopActionOutcome.DispatchUnitCount(2))
+        try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(
+            .dispatchedUnverified(
+                delivery: .init(mechanism: .composite, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: twoUnits),
+            in: response)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["target_receipt"]?.objectValue?["pid"] == .int(89))
+        #expect(meta["target_receipt"]?.objectValue?["window_id"] == .int(700))
+        #expect(windows.focusCalls.count == 1)
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == "cmd,v")
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
+    }
+
+    @Test
+    func `Foreground paste rejects a contradictory legacy hotkey target after focus`() async throws {
+        let leafTargetIdentity = try DesktopTargetIdentity(processIdentity: AutomationTestFixtures.processIdentity(
+            processIdentifier: 987,
+            processStartIdentity: 9870))
+        let automation = await MainActor.run {
+            OutcomePasteAutomationService(
+                hotkeyResponse: .outcome(nil),
+                targetIdentity: leafTargetIdentity)
+        }
+        let windows = RecordingWindowService()
+        let clipboard = await MainActor.run { TransactionGateClipboardService() }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: windows,
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
+
+        let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "foreground": true,
+            "dataBase64": "cGF5bG9hZA==",
+            "uti": "public.data",
+            "restore_delay_ms": 0,
+        ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("indeterminate"))
+        #expect(meta["dispatch_state"] == .string("may_have_dispatched"))
+        #expect(meta["dispatched_unit_count"] == .int(2))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["requires_fresh_observation"] == .bool(true))
+        #expect(meta["target_receipt"] == nil)
+        #expect(windows.focusCalls.count == 1)
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == "cmd,v")
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
+    }
+}
+
+extension PasteToolTransactionGateTests {
+    @Test
+    func `Foreground paste composes exact setup focus with result-aware hotkey`() async throws {
+        let automation = await MainActor.run {
+            OutcomePasteAutomationService(hotkeyResponse: .outcome(.confirmedChange(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                unitCount: .one)))
+        }
+        let windows = RecordingWindowService()
+        let clipboard = await MainActor.run { TransactionGateClipboardService() }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: windows,
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
+
+        let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "foreground": true,
+            "dataBase64": "cGF5bG9hZA==",
+            "uti": "public.data",
+            "restore_delay_ms": 0,
+        ]))
+
+        #expect(!response.isError)
+        let twoUnits = try #require(DesktopActionOutcome.DispatchUnitCount(2))
+        try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(
+            .confirmedChange(
+                delivery: .init(mechanism: .composite, mode: .foreground),
+                unitCount: twoUnits),
+            in: response)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["target_receipt"]?.objectValue?["pid"] == .int(89))
+        #expect(meta["target_receipt"]?.objectValue?["window_id"] == .int(700))
+        #expect(windows.focusCalls.count == 1)
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == "cmd,v")
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
+    }
+
+    @Test
+    func `Foreground paste preserves completed focus when result-aware hotkey refuses`() async throws {
+        let refusal = DesktopActionFailure.preDispatchRefusal(
+            reason: .permissionDenied,
+            message: "Hotkey refused")
+        let automation = await MainActor.run {
+            OutcomePasteAutomationService(hotkeyResponse: .failure(refusal))
+        }
+        let windows = RecordingWindowService()
+        let clipboard = await MainActor.run { TransactionGateClipboardService() }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: windows,
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
+
+        let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "foreground": true,
+            "dataBase64": "cGF5bG9hZA==",
+            "uti": "public.data",
+            "restore_delay_ms": 0,
+        ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("indeterminate"))
+        #expect(meta["dispatch_state"] == .string("may_have_dispatched"))
+        #expect(meta["dispatched_unit_count"] == .int(1))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["requires_fresh_observation"] == .bool(true))
+        #expect(meta["target_receipt"]?.objectValue?["window_id"] == .int(700))
+        #expect(windows.focusCalls.count == 1)
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
+    }
 
     @Test
     func `Cancelled foreground current clipboard paste settles then reports indeterminate`() async throws {
@@ -662,7 +825,8 @@ struct PasteToolTransactionGateTests {
             automation: automation,
             applications: applications,
             clipboard: clipboard,
-            snapshotOwner: Self.uiSnapshots.owner)
+            snapshotOwner: Self.uiSnapshots.owner,
+            executionPolicy: .unrestricted)
         let arguments = ToolArguments(raw: [
             "app": "Editor",
             "restore_delay_ms": 0,
@@ -756,8 +920,32 @@ private enum ExpectedPasteToolDispatchError: Error {
     case afterPosting
 }
 
-private final class RecordingWindowService: WindowManagementServiceProtocol, @unchecked Sendable {
+@MainActor
+private final class OutcomePasteAutomationService: MockAutomationService,
+    ScriptedUIAutomationActionOutcomeProviding
+{
+    let uiAutomationOutcomeScript: UIAutomationOutcomeScript
+    let uiAutomationOutcomeTargetIdentity: DesktopTargetIdentity?
+
+    init(
+        hotkeyResponse: UIAutomationOutcomeScript.Response,
+        targetIdentity: DesktopTargetIdentity? = nil)
+    {
+        self.uiAutomationOutcomeScript = UIAutomationOutcomeScript(responses: [
+            .hotkey: [hotkeyResponse],
+        ])
+        self.uiAutomationOutcomeTargetIdentity = targetIdentity
+        super.init(accessibilityGranted: true)
+    }
+}
+
+private final class RecordingWindowService: WindowManagementPinnedFocusActionResultProviding, @unchecked Sendable {
     private let lock = NSLock()
+    private static let identity = WindowMutationIdentity(
+        windowID: 700,
+        ownerProcessIdentifier: 89,
+        ownerProcessStartIdentity: 890,
+        capturedBounds: CGRect(x: 20, y: 30, width: 640, height: 480))
     private var storedFocusCalls: [WindowTarget] = []
     private var storedFocusError: (any Error)?
 
@@ -768,6 +956,12 @@ private final class RecordingWindowService: WindowManagementServiceProtocol, @un
     var focusError: (any Error)? {
         get { self.lock.withLock { self.storedFocusError } }
         set { self.lock.withLock { self.storedFocusError = newValue } }
+    }
+
+    static func targetIdentity() throws -> DesktopTargetIdentity {
+        try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+            identity: self.identity,
+            bounds: self.identity.capturedBounds ?? .zero))
     }
 
     func closeWindow(target _: WindowTarget) async throws {}
@@ -787,8 +981,36 @@ private final class RecordingWindowService: WindowManagementServiceProtocol, @un
         }
     }
 
+    func focusWindowActionResult(target _: WindowTarget) async throws -> UIAutomationActionResult<Void> {
+        throw PeekabooError.commandFailed("Unpinned focus must not be used")
+    }
+
+    func focusWindowActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.focusWindow(target: target)
+        guard expectedIdentity.hasSameStableReceipt(as: Self.identity),
+              let bounds = Self.identity.capturedBounds
+        else {
+            throw PeekabooError.commandFailed("Unexpected exact focus target")
+        }
+        return try UIAutomationActionResult(
+            payload: (),
+            outcome: .confirmedChange(
+                delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                unitCount: .one),
+            targetIdentity: DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+                identity: Self.identity,
+                bounds: bounds)))
+    }
+
     func listWindows(target _: WindowTarget) async throws -> [ServiceWindowInfo] {
-        []
+        [ServiceWindowInfo(
+            windowID: Self.identity.windowID,
+            title: "Editor",
+            bounds: Self.identity.capturedBounds ?? .zero,
+            mutationIdentity: Self.identity)]
     }
 
     func getFocusedWindow() async throws -> ServiceWindowInfo? {

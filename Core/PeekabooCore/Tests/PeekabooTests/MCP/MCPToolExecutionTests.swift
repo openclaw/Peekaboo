@@ -78,40 +78,6 @@ struct MCPToolExecutionTests {
     }
 
     @Test
-    func `Image tool app target uses observation best window selection`() async throws {
-        let (app, windows) = await MainActor.run {
-            Self.makeWindowedTestApp()
-        }
-        let applications = await MainActor.run {
-            MockApplicationService(applications: [app], windowsByIdentifier: [
-                app.bundleIdentifier ?? app.name: windows,
-            ])
-        }
-        let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: true) }
-        let context = await MCPToolTestHelpers.makeLegacyContext(
-            screenCapture: screenCapture,
-            applications: applications)
-        let tool = ImageTool(context: context)
-        let outputPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("peekaboo-mcp-image-\(UUID().uuidString).png")
-            .path
-        defer { try? FileManager.default.removeItem(atPath: outputPath) }
-
-        let response = try await tool.execute(arguments: ToolArguments(raw: [
-            "path": outputPath,
-            "format": "png",
-            "app_target": app.name,
-        ]))
-
-        #expect(response.isError == false)
-        #expect(await MainActor.run { screenCapture.lastWindowID } == 42)
-        #expect(await MainActor.run { screenCapture.captureAttemptCount } == 1)
-        #expect(FileManager.default.fileExists(atPath: outputPath))
-        #expect(Self.observationSpanNames(from: response).contains("output.raw.write"))
-        #expect(Self.observationSpanNames(from: response).contains("desktop.observe"))
-    }
-
-    @Test
     func `Image tool menubar target uses observation menu bar bounds`() async throws {
         let screen = ScreenInfo(
             index: 0,
@@ -169,6 +135,10 @@ struct MCPToolExecutionTests {
         ]))
 
         #expect(response.isError == true)
+        #expect(!FileManager.default.fileExists(atPath: outputPath))
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["retry_safe"] == .bool(true))
         guard case let .text(text: output, annotations: _, _meta: _) = response.content.first else {
             Issue.record("Expected text error response")
             return
@@ -290,12 +260,17 @@ struct MCPToolExecutionTests {
             .path
         defer { try? FileManager.default.removeItem(atPath: outputPath) }
         try highResPNG.write(to: URL(fileURLWithPath: outputPath))
+        let capture = CaptureResult(
+            imageData: Data(),
+            savedPath: outputPath,
+            metadata: CaptureMetadata(size: CGSize(width: 3000, height: 2000), mode: .screen))
+        let observation = DesktopObservationResult(
+            target: ResolvedObservationTarget(kind: .screen(index: 0)),
+            capture: capture,
+            elements: nil)
         let captureSet = ImageCaptureSet(
-            captures: [CaptureResult(
-                imageData: Data(),
-                savedPath: outputPath,
-                metadata: CaptureMetadata(size: CGSize(width: 3000, height: 2000), mode: .screen))],
-            observation: nil)
+            captures: [capture],
+            actionResult: UIAutomationActionResult(payload: observation, outcome: nil))
         let request = try ImageRequest(arguments: ToolArguments(raw: [
             "format": "data",
             "max_dimension": 600,
@@ -303,9 +278,9 @@ struct MCPToolExecutionTests {
 
         let result = try tool.downscaledCaptureSetIfNeeded(captureSet, request: request)
 
-        let capture = try #require(result.captures.first)
-        #expect(Self.imageDimensions(from: capture.imageData) == CGSize(width: 600, height: 400))
-        #expect(capture.metadata.size == CGSize(width: 600, height: 400))
+        let deliveredCapture = try #require(result.captures.first)
+        #expect(Self.imageDimensions(from: deliveredCapture.imageData) == CGSize(width: 600, height: 400))
+        #expect(deliveredCapture.metadata.size == CGSize(width: 600, height: 400))
         let savedData = try Data(contentsOf: URL(fileURLWithPath: outputPath))
         #expect(Self.imageDimensions(from: savedData) == CGSize(width: 600, height: 400))
     }
@@ -552,8 +527,14 @@ struct MCPToolExecutionTests {
         let detectionResult = ElementDetectionResult(
             snapshotId: "snapshot-pid-window",
             screenshotPath: "/tmp/peekaboo-see-pid-window-test.png",
-            elements: DetectedElements(),
-            metadata: DetectionMetadata(detectionTime: 0.01, elementCount: 0, method: "mock"))
+            elements: DetectedElements(buttons: [
+                DetectedElement(
+                    id: "B1",
+                    type: .button,
+                    label: "Continue",
+                    bounds: CGRect(x: 10, y: 10, width: 80, height: 30)),
+            ]),
+            metadata: DetectionMetadata(detectionTime: 0.01, elementCount: 1, method: "mock"))
         let automation = await MainActor.run {
             MockAutomationService(accessibilityGranted: true, detectionResult: detectionResult)
         }
@@ -1162,6 +1143,7 @@ final class MockScreenCaptureService: ScreenCaptureServiceProtocol {
     private let screenRecordingGranted: Bool
     private let imageData: Data
     private let metadata: CaptureMetadata?
+    private let windowMetadata: [CGWindowID: CaptureMetadata]
     private(set) var captureAttemptCount = 0
     private(set) var lastWindowID: CGWindowID?
     private(set) var lastAppIdentifier: String?
@@ -1172,18 +1154,28 @@ final class MockScreenCaptureService: ScreenCaptureServiceProtocol {
         self.screenRecordingGranted = screenRecordingGranted
         self.imageData = Self.validPNGData
         self.metadata = nil
+        self.windowMetadata = [:]
     }
 
     init(screenRecordingGranted: Bool, metadata: CaptureMetadata) {
         self.screenRecordingGranted = screenRecordingGranted
         self.imageData = Self.validPNGData
         self.metadata = metadata
+        self.windowMetadata = [:]
     }
 
     init(screenRecordingGranted: Bool, imageData: Data, metadata: CaptureMetadata? = nil) {
         self.screenRecordingGranted = screenRecordingGranted
         self.imageData = imageData
         self.metadata = metadata
+        self.windowMetadata = [:]
+    }
+
+    init(screenRecordingGranted: Bool, windowMetadata: [CGWindowID: CaptureMetadata]) {
+        self.screenRecordingGranted = screenRecordingGranted
+        self.imageData = Self.validPNGData
+        self.metadata = nil
+        self.windowMetadata = windowMetadata
     }
 
     func captureScreen(
@@ -1222,6 +1214,9 @@ final class MockScreenCaptureService: ScreenCaptureServiceProtocol {
         self.captureAttemptCount += 1
         self.lastWindowID = windowID
         self.lastScale = scale
+        if let metadata = self.windowMetadata[windowID] {
+            return CaptureResult(imageData: self.imageData, metadata: metadata)
+        }
         return self.makeResult(
             mode: .window,
             window: ServiceWindowInfo(
@@ -1480,21 +1475,22 @@ struct MCPToolErrorHandlingTests {
 
     @Test
     func `Window tool reports missing target as validation error`() async throws {
-        try await MCPToolTestHelpers.withContext {
-            let tool = WindowTool()
+        let context = await MCPToolTestHelpers.makeContext(executionPolicy: .foregroundAllowed)
+        let tool = WindowTool(context: context)
 
-            let response = try await tool.execute(arguments: ToolArguments(raw: ["action": "focus"]))
+        let response = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "focus"]))
 
-            #expect(response.isError == true)
+        #expect(response.isError == true)
 
-            guard case let .text(text: error, annotations: _, _meta: _) = response.content.first else {
-                Issue.record("Expected text error response")
-                return
-            }
-
-            #expect(error.contains("Must specify at least 'window_id', 'app', or 'title'"))
-            #expect(!error.contains("Failed to focus window"))
+        guard case let .text(text: error, annotations: _, _meta: _) = response.content.first else {
+            Issue.record("Expected text error response")
+            return
         }
+
+        #expect(error.contains("Must specify at least 'window_id', 'app', or 'title'"))
+        #expect(!error.contains("Failed to focus window"))
     }
 
     @Test

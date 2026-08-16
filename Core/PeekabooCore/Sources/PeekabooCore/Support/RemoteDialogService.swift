@@ -12,6 +12,7 @@ public struct RemoteDialogCapabilities: Sendable {
     public let exactClick: Bool
     public let exactDismiss: Bool
     public let exactInput: Bool
+    public let backgroundExactInput: Bool
     public let exactForceDismiss: Bool
     public let legacyInputFocusPolicy: Bool
 
@@ -22,6 +23,7 @@ public struct RemoteDialogCapabilities: Sendable {
         exactClick: Bool = false,
         exactDismiss: Bool = false,
         exactInput: Bool = false,
+        backgroundExactInput: Bool = false,
         exactForceDismiss: Bool = false,
         legacyInputFocusPolicy: Bool = false)
     {
@@ -31,6 +33,7 @@ public struct RemoteDialogCapabilities: Sendable {
         self.exactClick = exactClick
         self.exactDismiss = exactDismiss
         self.exactInput = exactInput
+        self.backgroundExactInput = backgroundExactInput
         self.exactForceDismiss = exactForceDismiss
         self.legacyInputFocusPolicy = legacyInputFocusPolicy
     }
@@ -39,6 +42,7 @@ public struct RemoteDialogCapabilities: Sendable {
 @MainActor
 public final class RemoteDialogService: DialogServiceProtocol {
     public let foregroundOutcomeRoute = DesktopActionOutcome.Route.bridge
+    public let supportsBackgroundExactDialogInput: Bool
 
     private let client: PeekabooBridgeClient
     private let supportsBackgroundButtonClick: Bool
@@ -67,6 +71,7 @@ public final class RemoteDialogService: DialogServiceProtocol {
         self.supportsExactClick = capabilities.exactClick
         self.supportsExactDismiss = capabilities.exactDismiss
         self.supportsExactInput = capabilities.exactInput
+        self.supportsBackgroundExactDialogInput = capabilities.backgroundExactInput
         self.supportsExactForceDismiss = capabilities.exactForceDismiss
         self.supportsLegacyInputFocusPolicy = capabilities.legacyInputFocusPolicy
     }
@@ -126,7 +131,30 @@ public final class RemoteDialogService: DialogServiceProtocol {
         } catch let failure as DesktopActionFailure {
             throw failure
         } catch let envelope as PeekabooBridgeErrorEnvelope {
-            throw Self.inputActionFailure(for: envelope)
+            throw Self.inputActionFailure(
+                for: envelope,
+                delivery: .init(mechanism: .accessibilityValue, mode: .background))
+        }
+    }
+
+    public func enterTextForegroundCompatible(
+        _ request: DialogInputExecutionRequest) async throws -> DialogActionResult
+    {
+        guard self.supportsExactInput, !self.supportsBackgroundExactDialogInput else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "The selected Bridge host cannot provide foreground-compatible exact dialog input.",
+                hint: "Use background exact input or select a protocol 1.28 foreground-compatible host.")
+        }
+        do {
+            return try await self.client.exactDialogEnterText(request)
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.inputActionFailure(
+                for: envelope,
+                delivery: .init(mechanism: .globalEvents, mode: .foreground))
         }
     }
 
@@ -178,7 +206,9 @@ public final class RemoteDialogService: DialogServiceProtocol {
         } catch let failure as DesktopActionFailure {
             throw failure
         } catch let envelope as PeekabooBridgeErrorEnvelope {
-            throw Self.inputActionFailure(for: envelope)
+            throw Self.inputActionFailure(
+                for: envelope,
+                delivery: .init(mechanism: .globalEvents, mode: .foreground))
         }
     }
 
@@ -254,8 +284,12 @@ public final class RemoteDialogService: DialogServiceProtocol {
             .runtimeIncompatible
         case .invalidRequest:
             .invalidRequest
-        case .notFound, .serverBusy, .timeout, .unauthorizedClient, .internalError:
+        case .notFound:
             .targetUnavailable
+        case .serverBusy, .timeout, .unauthorizedClient:
+            .transportSessionUnavailable
+        case .internalError:
+            .runtimeIncompatible
         }
         return .preDispatchRefusal(
             route: .bridge,
@@ -279,13 +313,16 @@ public final class RemoteDialogService: DialogServiceProtocol {
             causeDescription: envelope.details)
     }
 
-    static func inputActionFailure(for envelope: PeekabooBridgeErrorEnvelope) -> DesktopActionFailure {
+    static func inputActionFailure(
+        for envelope: PeekabooBridgeErrorEnvelope,
+        delivery: DesktopActionOutcome.Delivery) -> DesktopActionFailure
+    {
         guard envelope.operationMayHaveCompleted else {
             return self.preDispatchFailure(for: envelope)
         }
         return .indeterminate(
             route: .bridge,
-            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            delivery: delivery,
             evidence: .completionUnknown,
             unitCount: nil,
             message: envelope.message,

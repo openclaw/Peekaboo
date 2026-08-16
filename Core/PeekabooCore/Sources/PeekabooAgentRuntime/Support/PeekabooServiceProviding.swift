@@ -2,9 +2,15 @@ import Foundation
 import PeekabooAutomation
 import PeekabooAutomationKit
 
+public enum PeekabooServiceExecutionHost: String, Codable, Sendable {
+    case local
+    case remote
+}
+
 /// Aggregated service provider protocol exposed to higher-level modules.
 @MainActor
 public protocol PeekabooServiceProviding: AnyObject, Sendable, PermissionsStatusProviding {
+    var executionHost: PeekabooServiceExecutionHost { get }
     var logging: any LoggingServiceProtocol { get }
     var desktopObservation: any DesktopObservationServiceProtocol { get }
     var screenCapture: any ScreenCaptureServiceProtocol { get }
@@ -29,6 +35,10 @@ public protocol PeekabooServiceProviding: AnyObject, Sendable, PermissionsStatus
 
 @MainActor
 extension PeekabooServiceProviding {
+    public var executionHost: PeekabooServiceExecutionHost {
+        .local
+    }
+
     public func permissionsStatus() async throws -> PermissionsStatus {
         let screenRecording = await self.screenCapture.hasScreenRecordingPermission()
         let accessibility = await self.automation.hasAccessibilityPermission()
@@ -56,7 +66,8 @@ extension PeekabooServiceProviding {
             MCPToolContext(
                 services: services,
                 snapshotExecutionGate: (services.agent as? PeekabooAgentService)?.snapshotExecutionGate
-                    ?? fallbackSnapshotExecutionGate)
+                    ?? fallbackSnapshotExecutionGate,
+                executionPolicy: .backgroundOnly)
         }
 
         ToolRegistry.configureDefaultServices { [unowned services = self] in

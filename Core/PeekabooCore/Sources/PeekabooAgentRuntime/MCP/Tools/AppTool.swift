@@ -17,6 +17,8 @@ public struct AppTool: MCPTool {
         Control applications - verify an already-running app in the background, or explicitly launch/open/relaunch,
         unhide, focus, switch, quit, hide, and list apps. Cold launch, open, new-instance, relaunch, and unhide require
         foreground=true because macOS cannot guarantee those operations will preserve the user's foreground work.
+        Process-generation chaining must use `target_identity.process_start_identity_decimal`; the numeric
+        `process_start_identity` field remains compatibility-only and can lose precision above 2^53.
 
         Always include the `action` field in your JSON payload. Examples:
         - { "action": "launch", "name": "Finder" }
@@ -103,7 +105,8 @@ public struct AppTool: MCPTool {
             let actions = AppToolActions(
                 service: self.context.applications,
                 automation: self.context.automation,
-                logger: self.logger)
+                logger: self.logger,
+                context: self.context)
             return try await actions.perform(action: action, request: request)
         } catch {
             self.logger.error("App control execution failed: \(error, privacy: .public)")
@@ -116,14 +119,24 @@ public struct AppTool: MCPTool {
                let metadata = lifecycleFailure.applicationLifecycleFailureMetadata
             {
                 var meta: [String: Value] = [
-                    "effect": .string(metadata.effect),
                     "error_code": .string(metadata.errorCode.rawValue),
-                    "mutation_dispatched": .bool(metadata.mutationDispatched),
-                    "retry_safe": .bool(metadata.retrySafe),
                 ]
                 if let hint = metadata.hint {
                     meta["hint"] = .string(hint)
                 }
+                if metadata.effect == "refused" {
+                    let failure = DesktopActionFailure.preDispatchRefusal(
+                        reason: .foregroundConsentRequired,
+                        message: "Failed to \(action) application: \(error.localizedDescription)",
+                        hint: metadata.hint)
+                    return try MCPToolResponseMetadataProjector.errorResponse(
+                        for: failure,
+                        invalidatedSnapshotID: nil,
+                        additionalFields: meta)
+                }
+                meta["effect"] = .string(metadata.effect)
+                meta["mutation_dispatched"] = .bool(metadata.mutationDispatched)
+                meta["retry_safe"] = .bool(metadata.retrySafe)
                 return ToolResponse.error(
                     "Failed to \(action) application: \(error.localizedDescription)",
                     meta: .object(meta))

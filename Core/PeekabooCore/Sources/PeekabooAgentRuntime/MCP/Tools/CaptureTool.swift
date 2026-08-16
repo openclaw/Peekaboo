@@ -96,6 +96,7 @@ public struct CaptureTool: MCPTool {
         do {
             let request = try await CaptureRequest(arguments: arguments, windows: self.context.windows)
             try await self.prepareCaptureFocus(request, receipt: focusReceipt)
+            let targetIdentity = try Self.exactTargetIdentity(for: request.scope)
             let dependencies = WatchCaptureDependencies(
                 screenCapture: self.context.screenCapture,
                 screenService: self.context.screens,
@@ -137,32 +138,81 @@ public struct CaptureTool: MCPTool {
                 actionDescription: "Capture",
                 notes: summary)
 
-            return ToolResponse.text(
-                summary,
-                meta: ToolEventSummary.merge(
-                    summary: meta,
-                    into: CaptureMetaBuilder.buildMeta(
-                        from: result,
-                        mutationDispatched: focusReceipt.mutationDispatched)))
+            return try Self.successResponse(
+                summary: summary,
+                eventSummary: meta,
+                result: result,
+                focusResult: focusReceipt.result,
+                targetIdentity: targetIdentity)
         } catch let error as CaptureArtifactCleanupError {
-            return Self.failureResponse(error, mutationDispatched: focusReceipt.mutationDispatched)
+            return Self.failureResponse(error, focusResult: focusReceipt.result)
         } catch let error as CancellationError {
+            if focusReceipt.result != nil {
+                return Self.failureResponse(error, focusResult: focusReceipt.result)
+            }
             throw error
         } catch {
             try Task.checkCancellation()
-            return Self.failureResponse(error, mutationDispatched: focusReceipt.mutationDispatched)
+            return Self.failureResponse(error, focusResult: focusReceipt.result)
         }
+    }
+
+    static func successResponse(
+        summary: String,
+        eventSummary: ToolEventSummary,
+        result: CaptureSessionResult,
+        focusResult: UIAutomationActionResult<Void>?,
+        targetIdentity: DesktopTargetIdentity?) throws -> ToolResponse
+    {
+        var fields = CaptureMetaBuilder.buildMeta(
+            from: result,
+            mutationDispatched: focusResult?.outcome?.dispatchState.mutationDispatched ?? false).objectValue ?? [:]
+        fields["scope"] = try Value(result.scope)
+        fields = try MCPDesktopTargetMetadataProjector.fields(targetIdentity, merging: fields)
+        let actionMeta = try MCPToolResponseMetadataProjector.metadata(
+            merging: fields,
+            outcome: focusResult?.outcome)
+        return ToolResponse.text(
+            summary,
+            meta: ToolEventSummary.merge(summary: eventSummary, into: actionMeta))
+    }
+
+    static func failureResponse(
+        _ error: any Error,
+        focusResult: UIAutomationActionResult<Void>?) -> ToolResponse
+    {
+        let preserved = ObservationActionResultSupport.preservingFailure(
+            error,
+            after: focusResult,
+            operation: "live capture after foreground focus")
+        if let failure = preserved as? DesktopActionFailure {
+            let fields = CaptureMetaBuilder.failureMeta(
+                error,
+                mutationDispatched: failure.outcome.dispatchState.mutationDispatched).objectValue ?? [:]
+            return (try? MCPToolResponseMetadataProjector.errorResponse(
+                for: failure,
+                invalidatedSnapshotID: nil,
+                additionalFields: fields)) ?? ToolResponse.error(failure.message)
+        }
+        return ToolResponse.error(
+            error.localizedDescription,
+            meta: CaptureMetaBuilder.failureMeta(error, mutationDispatched: false))
     }
 
     static func failureResponse(
         _ error: any Error,
         mutationDispatched: Bool) -> ToolResponse
     {
-        ToolResponse.error(
-            error.localizedDescription,
-            meta: CaptureMetaBuilder.failureMeta(
+        if mutationDispatched {
+            let outcome = DesktopActionOutcome.indeterminate(
+                delivery: .init(mechanism: .capturePipeline, mode: .foreground),
+                evidence: .completionUnknown,
+                unitCount: .one)
+            return self.failureResponse(
                 error,
-                mutationDispatched: mutationDispatched))
+                focusResult: UIAutomationActionResult(payload: (), outcome: outcome))
+        }
+        return self.failureResponse(error, focusResult: nil)
     }
 
     @MainActor
@@ -172,20 +222,46 @@ public struct CaptureTool: MCPTool {
     {
         guard request.source == .live, request.options.captureFocus != .background else { return }
 
-        if request.options.captureFocus == .foreground, let windowID = request.scope.windowId {
-            receipt.mutationDispatched = true
-            try await self.context.windows.focusWindow(target: .windowId(Int(windowID)))
-        } else if let identifier = request.scope.applicationIdentifier {
-            receipt.mutationDispatched = true
-            try await self.context.applications.activateApplication(identifier: identifier)
-        } else {
-            return
+        guard let identity = request.scope.windowMutationIdentity,
+              let windowID = request.scope.windowId,
+              identity.windowID == Int(windowID)
+        else { return }
+        do {
+            let focusResult = try await self.context.windows.focusWindowResult(
+                target: .windowId(identity.windowID),
+                expectedIdentity: identity)
+            receipt.result = try self.context.windows.validatedWindowMutationResult(
+                focusResult,
+                expectedIdentity: identity,
+                operation: "Live capture focus")
+        } catch let failure as DesktopActionFailure {
+            throw failure.attributed(to: DesktopActionTargetReceipt(
+                processIdentifier: identity.ownerProcessIdentifier,
+                processStartIdentity: identity.ownerProcessStartIdentity,
+                windowID: identity.windowID))
         }
         try await Task.sleep(nanoseconds: 50_000_000)
+    }
+
+    private static func exactTargetIdentity(for scope: CaptureScope) throws -> DesktopTargetIdentity? {
+        guard scope.kind == .window else { return nil }
+        guard let identity = scope.windowMutationIdentity,
+              let windowID = scope.windowId,
+              identity.windowID == Int(windowID),
+              let bounds = identity.capturedBounds
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Live window capture lost its exact target receipt.",
+                hint: "Refresh the window inventory before retrying.")
+        }
+        return try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+            identity: identity,
+            bounds: bounds))
     }
 }
 
 @MainActor
-private final class CaptureFocusDispatchReceipt {
-    var mutationDispatched = false
+final class CaptureFocusDispatchReceipt {
+    var result: UIAutomationActionResult<Void>?
 }

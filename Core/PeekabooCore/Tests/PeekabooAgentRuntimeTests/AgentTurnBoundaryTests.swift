@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooFoundation
 import Tachikoma
 import Testing
 @testable import PeekabooAgentRuntime
@@ -123,6 +124,119 @@ struct AgentTurnBoundaryTests {
         boundary.recordSuccessfulCompletion(toolName: "see")
         #expect(boundary.record(toolName: "click") == .continueNextStep(
             reason: "Stopped after click; call `see` again before the next UI action."))
+    }
+
+    @Test
+    func `validated browser outcome creates fresh perception debt after dispatch`() throws {
+        let boundary = AgentTurnBoundary()
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            evidence: .deliveryAccepted)
+
+        #expect(boundary.record(
+            toolName: "browser",
+            arguments: ["action": AnyAgentToolValue(string: "click")]) == .continueTurn)
+        #expect(try boundary.recordResult(
+            toolName: "browser",
+            result: Self.canonicalResult(outcome)) == .continueNextStep(
+            reason: "Stopped after browser; call `see` before the next UI action."))
+        #expect(boundary.requiresFreshPerception)
+        #expect(boundary.record(toolName: "click") == .skipUntilPerception(
+            reason: "Skipped click; call `see` successfully before another UI action."))
+    }
+
+    @Test
+    func `foreground browser connect outcome creates fresh perception debt`() throws {
+        let boundary = AgentTurnBoundary()
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .browserProtocol, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+
+        #expect(boundary.record(
+            toolName: "browser",
+            arguments: ["action": AnyAgentToolValue(string: "connect")]) == .continueTurn)
+        #expect(try boundary.recordResult(
+            toolName: "browser",
+            result: Self.canonicalResult(outcome)) == .continueNextStep(
+            reason: "Stopped after browser; call `see` before the next UI action."))
+        #expect(boundary.requiresFreshPerception)
+    }
+
+    @Test
+    func `browser read without mutation outcome does not create fresh perception debt`() {
+        let boundary = AgentTurnBoundary()
+        #expect(boundary.record(toolName: "see") == .continueTurn)
+        boundary.recordSuccessfulCompletion(toolName: "see")
+
+        #expect(boundary.record(
+            toolName: "browser",
+            arguments: ["action": AnyAgentToolValue(string: "list_pages")]) == .continueTurn)
+        #expect(boundary.recordResult(
+            toolName: "browser",
+            result: AnyAgentToolValue(object: [
+                "content": AnyAgentToolValue(string: "page list"),
+            ])) == .continueTurn)
+        #expect(!boundary.requiresFreshPerception)
+        #expect(boundary.record(toolName: "click") == .continueNextStep(
+            reason: "Stopped after click; call `see` again before the next UI action."))
+    }
+
+    @Test
+    func `zero dispatch browser refusal does not create fresh perception debt`() throws {
+        let boundary = AgentTurnBoundary()
+        let refusal = DesktopActionOutcome.refused(reason: .targetUnavailable)
+
+        #expect(try boundary.recordResult(
+            toolName: "browser",
+            result: Self.canonicalResult(refusal)) == .continueTurn)
+        #expect(!boundary.requiresFreshPerception)
+        #expect(boundary.record(toolName: "done") == .stopAgentAfterSuccessfulTool(
+            reason: "Task completed successfully."))
+    }
+
+    @Test
+    func `conditional app launch derives perception debt only from a dispatched canonical outcome`() throws {
+        let noOpBoundary = AgentTurnBoundary()
+        let launchArguments = [
+            "action": AnyAgentToolValue(string: "launch"),
+            "name": AnyAgentToolValue(string: "TextEdit"),
+        ]
+
+        #expect(noOpBoundary.record(toolName: "app", arguments: launchArguments) == .continueTurn)
+        #expect(try noOpBoundary.recordResult(
+            toolName: "app",
+            result: Self.canonicalResult(.confirmedNoChange(route: .bridge))) == .continueTurn)
+        #expect(!noOpBoundary.requiresFreshPerception)
+        #expect(noOpBoundary.record(toolName: "click") == .continueNextStep(
+            reason: "Stopped after click; call `see` before the next UI action."))
+
+        let dispatchedBoundary = AgentTurnBoundary()
+        let indeterminate = DesktopActionOutcome.indeterminate(
+            route: .bridge,
+            delivery: .init(mechanism: .nativeFramework, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: .one)
+
+        #expect(dispatchedBoundary.record(toolName: "app", arguments: launchArguments) == .continueTurn)
+        #expect(try dispatchedBoundary.recordResult(
+            toolName: "app",
+            result: Self.canonicalResult(indeterminate)) == .continueNextStep(
+            reason: "Stopped after app; call `see` before the next UI action."))
+        #expect(dispatchedBoundary.requiresFreshPerception)
+    }
+
+    @Test
+    func `legacy browser metadata remains compatible and cannot create canonical perception debt`() {
+        let boundary = AgentTurnBoundary()
+        let legacy = AnyAgentToolValue(object: [
+            "mutation_dispatched": AnyAgentToolValue(bool: true),
+            "requires_fresh_observation": AnyAgentToolValue(bool: true),
+            "retry_safe": AnyAgentToolValue(bool: false),
+        ])
+
+        #expect(boundary.recordResult(toolName: "browser", result: legacy) == .continueTurn)
+        #expect(!boundary.requiresFreshPerception)
     }
 
     @Test
@@ -475,6 +589,27 @@ struct AgentTurnBoundaryTests {
             reason: "Skipped click; call `see` successfully before another UI action."))
     }
 
+    @Test
+    func `restored transcript derives browser perception debt from canonical outcome`() throws {
+        let browserCall = AgentToolCall(id: "browser-call", name: "browser", arguments: [
+            "action": AnyAgentToolValue(string: "click"),
+        ])
+        let outcome = DesktopActionOutcome.indeterminate(
+            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            evidence: .completionUnknown)
+        let browserResult = try AgentToolResult.success(
+            toolCallId: browserCall.id,
+            result: Self.canonicalResult(outcome))
+
+        let boundary = PeekabooAgentService.restoredTurnBoundary(from: [
+            ModelMessage(role: .assistant, content: [.toolCall(browserCall)]),
+            ModelMessage(role: .tool, content: [.toolResult(browserResult)]),
+        ])
+
+        #expect(boundary.record(toolName: "click") == .skipUntilPerception(
+            reason: "Skipped click; call `see` successfully before another UI action."))
+    }
+
     private static func verificationResult(
         status: String,
         pid: Int,
@@ -492,6 +627,11 @@ struct AgentTurnBoundaryTests {
                 "predicates": AnyAgentToolValue(array: [predicate]),
             ]),
         ])
+    }
+
+    private static func canonicalResult(_ outcome: DesktopActionOutcome) throws -> AnyAgentToolValue {
+        let data = try JSONEncoder().encode(outcome.projection)
+        return try AnyAgentToolValue.fromJSON(JSONSerialization.jsonObject(with: data))
     }
 
     private static func boundaryWithIncompleteEvidence() -> (

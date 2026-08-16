@@ -10,7 +10,8 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     TargetedTypeServiceProtocol,
     ExactWindowTargetedClickServiceProtocol,
     TargetedFocusedElementServiceProtocol,
-    ExactWindowTargetedKeyboardServiceProtocol
+    ExactWindowTargetedKeyboardServiceProtocol,
+    UIAutomationObservationActionResultProviding
 {
     let client: PeekabooBridgeClient
     public let supportsTargetedHotkeys: Bool
@@ -79,11 +80,11 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         snapshotId: String?,
         windowContext: WindowContext?) async throws -> ElementDetectionResult
     {
-        try await self.detectElements(
+        try await self.detectElementsActionResult(
             in: imageData,
             snapshotId: snapshotId,
             windowContext: windowContext,
-            requestTimeoutSec: 30)
+            requestTimeoutSec: 30).payload
     }
 
     public func detectElements(
@@ -92,7 +93,20 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         windowContext: WindowContext?,
         requestTimeoutSec: TimeInterval) async throws -> ElementDetectionResult
     {
-        try await self.client.detectElements(
+        try await self.detectElementsActionResult(
+            in: imageData,
+            snapshotId: snapshotId,
+            windowContext: windowContext,
+            requestTimeoutSec: requestTimeoutSec).payload
+    }
+
+    public func detectElementsActionResult(
+        in imageData: Data,
+        snapshotId: String?,
+        windowContext: WindowContext?,
+        requestTimeoutSec: TimeInterval?) async throws -> UIAutomationActionResult<ElementDetectionResult>
+    {
+        try await self.client.detectElementsWithOutcome(
             in: imageData,
             snapshotId: snapshotId,
             windowContext: windowContext,
@@ -100,12 +114,18 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     }
 
     public func inspectAccessibilityTree(windowContext: WindowContext?) async throws -> ElementDetectionResult {
+        try await self.inspectAccessibilityTreeActionResult(windowContext: windowContext).payload
+    }
+
+    public func inspectAccessibilityTreeActionResult(
+        windowContext: WindowContext?) async throws -> UIAutomationActionResult<ElementDetectionResult>
+    {
         guard self.supportsInspectAccessibilityTree else {
             throw Self.inspectAccessibilityTreeUnavailableError(reason: self.inspectAccessibilityTreeUnavailableReason)
         }
 
         do {
-            return try await self.client.inspectAccessibilityTree(
+            return try await self.client.inspectAccessibilityTreeWithOutcome(
                 windowContext: windowContext,
                 requestTimeoutSec: Self.inspectAccessibilityTreeRequestTimeoutSeconds(
                     accessibilityTimeoutSeconds: windowContext?.accessibilityTimeoutSeconds))
@@ -483,11 +503,11 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     }
 
     public func drag(_ request: DragOperationRequest) async throws {
-        try await self.client.drag(PeekabooBridgeDragRequest(request))
+        _ = try await self.dragWithOutcome(request)
     }
 
     public func moveMouse(to: CGPoint, duration: Int, steps: Int, profile: MouseMovementProfile) async throws {
-        try await self.client.moveMouse(to: to, duration: duration, steps: steps, profile: profile)
+        _ = try await self.moveMouseWithOutcome(to: to, duration: duration, steps: steps, profile: profile)
     }
 
     public func getFocusedElement() -> UIFocusInfo? {

@@ -14,6 +14,19 @@ struct AppToolActions {
     let service: any ApplicationServiceProtocol
     let automation: any UIAutomationServiceProtocol
     let logger: Logger
+    let context: MCPToolContext?
+
+    init(
+        service: any ApplicationServiceProtocol,
+        automation: any UIAutomationServiceProtocol,
+        logger: Logger,
+        context: MCPToolContext? = nil)
+    {
+        self.service = service
+        self.automation = automation
+        self.logger = logger
+        self.context = context
+    }
 
     func perform(action: String, request: AppToolRequest) async throws -> ToolResponse {
         switch action {

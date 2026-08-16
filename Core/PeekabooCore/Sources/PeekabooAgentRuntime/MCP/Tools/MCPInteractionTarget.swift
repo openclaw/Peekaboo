@@ -77,6 +77,178 @@ enum MCPInteractionTargetError: LocalizedError, Equatable {
     }
 }
 
+struct MCPInteractionFocusResult {
+    let target: WindowTarget
+    let actionResult: UIAutomationActionResult<Void>
+
+    var outcome: DesktopActionOutcome {
+        guard let outcome = self.actionResult.outcome else {
+            preconditionFailure("A validated interaction focus result must retain its outcome")
+        }
+        return outcome
+    }
+
+    var targetIdentity: DesktopTargetIdentity {
+        guard let targetIdentity = self.actionResult.targetIdentity else {
+            preconditionFailure("A validated interaction focus result must retain its target")
+        }
+        return targetIdentity
+    }
+
+    func record(into sequence: inout DesktopActionSequenceAccumulator) {
+        sequence.record(.reportedOutcome(self.outcome, defaultDispatchedUnitCount: .one))
+    }
+
+    func preservingFailure(
+        _ error: any Error,
+        operation: String) -> DesktopActionFailure
+    {
+        let leaf = error as? DesktopActionFailure ?? .preDispatchRefusal(
+            reason: .operationUnsupported,
+            message: error.localizedDescription,
+            causeDescription: String(describing: error))
+        var sequence = DesktopActionSequenceAccumulator()
+        self.record(into: &sequence)
+        let failure = sequence.failure(
+            combining: leaf,
+            message: "\(operation) failed after its exact setup focus completed.",
+            hint: "Observe the focused target before deciding whether to retry.",
+            causeDescription: leaf.causeDescription ?? error.localizedDescription)
+        return self.assigningCompatibleTarget(to: failure, leafTarget: leaf.targetReceipt)
+    }
+
+    /// Composes an exact setup focus with a global pointer failure without attributing the
+    /// shared-pointer leaf to the focused window.
+    func preservingGlobalFailure(
+        _ error: any Error,
+        operation: String) -> DesktopActionFailure
+    {
+        let leaf = error as? DesktopActionFailure ?? .preDispatchRefusal(
+            reason: .operationUnsupported,
+            message: error.localizedDescription,
+            causeDescription: String(describing: error))
+        var sequence = DesktopActionSequenceAccumulator()
+        self.record(into: &sequence)
+        let failure = sequence.failure(
+            combining: leaf,
+            message: "\(operation) failed after its exact setup focus completed.",
+            hint: "Observe the desktop before deciding whether to retry.",
+            causeDescription: leaf.causeDescription ?? error.localizedDescription)
+        guard let unattributed = DesktopActionFailure(
+            outcome: failure.outcome,
+            message: failure.message,
+            hint: failure.hint,
+            causeDescription: failure.causeDescription)
+        else {
+            preconditionFailure("A composed global pointer failure must remain non-confirmed")
+        }
+        return unattributed
+    }
+
+    func attributing(_ failure: DesktopActionFailure) -> DesktopActionFailure {
+        self.assigningCompatibleTarget(to: failure, leafTarget: failure.targetReceipt)
+    }
+
+    func combining<Payload: Sendable>(
+        _ leaf: UIAutomationActionResult<Payload>,
+        operation: String) throws -> UIAutomationActionResult<Payload>
+    {
+        guard let leafOutcome = leaf.outcome else {
+            throw self.preservingFailure(
+                DesktopActionFailure.indeterminate(
+                    evidence: .completionUnknown,
+                    message: "\(operation) returned without a canonical outcome.",
+                    hint: "Observe the target before retrying and update the runtime host."),
+                operation: operation)
+        }
+        var sequence = DesktopActionSequenceAccumulator()
+        self.record(into: &sequence)
+        sequence.record(.reportedOutcome(leafOutcome, defaultDispatchedUnitCount: .one))
+        let targetIdentity: DesktopTargetIdentity
+        do {
+            targetIdentity = try self.targetIdentity.coalescing(leaf.targetIdentity ?? self.targetIdentity)
+        } catch {
+            throw self.preservingLeafResultFailure(
+                DesktopActionFailure.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "\(operation) returned a target different from its setup focus.",
+                    hint: "Observe both targets before retrying.",
+                    causeDescription: error.localizedDescription),
+                leafOutcome: leafOutcome,
+                leafTarget: leaf.targetIdentity?.actionTargetReceipt,
+                operation: operation)
+        }
+        guard let outcome = sequence.successResolution().outcome else {
+            throw self.preservingLeafResultFailure(
+                DesktopActionFailure.indeterminate(
+                    evidence: .completionUnknown,
+                    message: "\(operation) returned incompatible focus and leaf outcomes.",
+                    hint: "Observe the target before retrying."),
+                leafOutcome: leafOutcome,
+                leafTarget: leaf.targetIdentity?.actionTargetReceipt,
+                operation: operation)
+        }
+        return UIAutomationActionResult(
+            payload: leaf.payload,
+            outcome: outcome,
+            targetIdentity: targetIdentity)
+    }
+
+    func preservingLeafResultFailure(
+        _ error: any Error,
+        leafOutcome: DesktopActionOutcome,
+        leafTarget: DesktopActionTargetReceipt?,
+        operation: String) -> DesktopActionFailure
+    {
+        let leafFailure = error as? DesktopActionFailure ?? .preDispatchRefusal(
+            reason: .operationUnsupported,
+            message: error.localizedDescription,
+            causeDescription: String(describing: error))
+        var sequence = DesktopActionSequenceAccumulator()
+        self.record(into: &sequence)
+        sequence.record(.reportedOutcome(leafOutcome, defaultDispatchedUnitCount: .one))
+        let failure = sequence.failure(
+            combining: leafFailure,
+            message: "\(operation) returned untrustworthy target evidence after its exact setup focus completed.",
+            hint: "Observe the focused target before deciding whether to retry.",
+            causeDescription: leafFailure.causeDescription ?? error.localizedDescription)
+        return self.assigningCompatibleTarget(to: failure, leafTarget: leafTarget)
+    }
+
+    private func compatibleTarget(
+        with leaf: DesktopActionTargetReceipt?) -> DesktopActionTargetReceipt?
+    {
+        let focus = self.targetIdentity.actionTargetReceipt
+        guard let leaf else { return focus }
+        guard focus.processIdentifier == leaf.processIdentifier,
+              focus.processStartIdentity == leaf.processStartIdentity,
+              focus.windowID == leaf.windowID || focus.windowID == nil || leaf.windowID == nil
+        else { return nil }
+        return focus.windowID == leaf.windowID ? focus : DesktopActionTargetReceipt(
+            processIdentifier: focus.processIdentifier,
+            processStartIdentity: focus.processStartIdentity)
+    }
+
+    private func assigningCompatibleTarget(
+        to failure: DesktopActionFailure,
+        leafTarget: DesktopActionTargetReceipt?) -> DesktopActionFailure
+    {
+        let target = self.compatibleTarget(with: leafTarget)
+        guard target == nil, leafTarget != nil else {
+            return failure.attributed(to: target)
+        }
+        guard let unattributed = DesktopActionFailure(
+            outcome: failure.outcome,
+            message: failure.message,
+            hint: failure.hint,
+            causeDescription: failure.causeDescription)
+        else {
+            preconditionFailure("A desktop action failure must remain non-confirmed")
+        }
+        return unattributed
+    }
+}
+
 struct MCPInteractionTarget {
     let app: String?
     let pid: Int?
@@ -172,10 +344,42 @@ struct MCPInteractionTarget {
     }
 
     func focusIfRequested(windows: any WindowManagementServiceProtocol) async throws -> WindowTarget? {
-        let target = try self.toWindowTarget()
-        guard let target else { return nil }
-        try await windows.focusWindow(target: target)
-        return target
+        try await self.focusResultIfRequested(windows: windows)?.target
+    }
+
+    func focusResultIfRequested(
+        windows: any WindowManagementServiceProtocol,
+        onlyWhenTargeted: Bool = false) async throws -> MCPInteractionFocusResult?
+    {
+        guard !onlyWhenTargeted || self.hasTarget else { return nil }
+        guard let requestedTarget = try self.toWindowTarget() else { return nil }
+        let matches = try await windows.listWindows(target: requestedTarget)
+        if self.selector.normalizedWindowTitle != nil, matches.count != 1 {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Foreground window-title targeting must resolve exactly one window.",
+                hint: "Use a more specific title or select the window by ID after refreshing the window inventory.")
+        }
+        guard let window = matches.first,
+              let identity = window.mutationIdentity,
+              identity.windowID == window.windowID,
+              let bounds = identity.capturedBounds,
+              bounds == window.bounds
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Foreground focus requires one window with a stable exact target receipt.",
+                hint: "Refresh the window inventory before retrying.")
+        }
+        let target = WindowTarget.windowId(window.windowID)
+        let result = try await windows.focusWindowResult(
+            target: target,
+            expectedIdentity: identity)
+        let validated = try windows.validatedWindowMutationResult(
+            result,
+            expectedIdentity: identity,
+            operation: "Foreground setup focus")
+        return MCPInteractionFocusResult(target: target, actionResult: validated)
     }
 
     func processIdentifier(
@@ -441,8 +645,9 @@ struct MCPInteractionTarget {
     func focusIfRequested(windows: any WindowManagementServiceProtocol, onlyWhenTargeted: Bool) async throws
         -> WindowTarget?
     {
-        guard !onlyWhenTargeted || self.hasTarget else { return nil }
-        return try await self.focusIfRequested(windows: windows)
+        try await self.focusResultIfRequested(
+            windows: windows,
+            onlyWhenTargeted: onlyWhenTargeted)?.target
     }
 
     func processIdentifierIfTargeted(

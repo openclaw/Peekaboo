@@ -13,8 +13,12 @@ struct MCPSeeExactWindowTests {
         let detectionResult = ElementDetectionResult(
             snapshotId: "snapshot-exact-window",
             screenshotPath: "/tmp/peekaboo-see-exact-window-test.png",
-            elements: DetectedElements(),
-            metadata: DetectionMetadata(detectionTime: 0.01, elementCount: 0, method: "mock"))
+            elements: DetectedElements(buttons: [DetectedElement(
+                id: "B1",
+                type: .button,
+                label: "Fixture",
+                bounds: CGRect(x: 30, y: 30, width: 80, height: 32))]),
+            metadata: DetectionMetadata(detectionTime: 0.01, elementCount: 1, method: "mock"))
         let automation = await MainActor.run {
             MockAutomationService(accessibilityGranted: true, detectionResult: detectionResult)
         }
@@ -47,11 +51,13 @@ struct MCPSeeExactWindowTests {
         let screenCapture = await MainActor.run {
             MockScreenCaptureService(
                 screenRecordingGranted: true,
-                metadata: CaptureMetadata(
-                    size: capturedWindow.bounds.size,
-                    mode: .window,
-                    applicationInfo: app,
-                    windowInfo: capturedWindow))
+                windowMetadata: Dictionary(uniqueKeysWithValues: windows.dropFirst().map { window in
+                    (CGWindowID(window.windowID), CaptureMetadata(
+                        size: window.bounds.size,
+                        mode: .window,
+                        applicationInfo: app,
+                        windowInfo: window))
+                }))
         }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
@@ -71,29 +77,37 @@ struct MCPSeeExactWindowTests {
             ]))
         let tool = SeeTool(context: context)
 
-        let legacyIndex = try await tool.execute(arguments: ToolArguments(raw: [
-            "app_target": "\(app.name):1",
-        ]))
+        let legacyIndex = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "app_target": "\(app.name):1",
+            ]))
         #expect(legacyIndex.isError == false)
         #expect(await MainActor.run { screenCapture.lastWindowID } == 41)
 
-        let exact = try await tool.execute(arguments: ToolArguments(raw: [
-            "app_target": app.name,
-            "window_id": 42,
-        ]))
+        let exact = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "app_target": app.name,
+                "window_id": 42,
+            ]))
         #expect(exact.isError == false)
         #expect(await MainActor.run { screenCapture.lastWindowID } == 42)
 
-        let mixedSelectors = try await tool.execute(arguments: ToolArguments(raw: [
-            "app_target": "\(app.name):1",
-            "window_id": 42,
-        ]))
+        let mixedSelectors = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "app_target": "\(app.name):1",
+                "window_id": 42,
+            ]))
         #expect(mixedSelectors.isError)
 
-        let wrongOwner = try await tool.execute(arguments: ToolArguments(raw: [
-            "app_target": app.name,
-            "window_id": 99999,
-        ]))
+        let wrongOwner = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "app_target": app.name,
+                "window_id": 99999,
+            ]))
         #expect(wrongOwner.isError)
         #expect(await MainActor.run { screenCapture.captureAttemptCount } == 2)
     }
@@ -103,9 +117,11 @@ struct MCPSeeExactWindowTests {
         let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(screenCapture: screenCapture)
 
-        let response = try await SeeTool(context: context).execute(arguments: ToolArguments(raw: [
-            "window_id": 42,
-        ]))
+        let response = try await context.execute(
+            tool: SeeTool(context: context),
+            arguments: ToolArguments(raw: [
+                "window_id": 42,
+            ]))
 
         #expect(response.isError)
         #expect(await MainActor.run { screenCapture.captureAttemptCount } == 0)
@@ -127,16 +143,20 @@ struct MCPSeeExactWindowTests {
         ]
 
         for invalidValue in invalidValues {
-            let response = try await tool.execute(arguments: ToolArguments(raw: [
-                "app_target": "Safari",
-                "window_id": invalidValue,
-            ]))
+            let response = try await context.execute(
+                tool: tool,
+                arguments: ToolArguments(raw: [
+                    "app_target": "Safari",
+                    "window_id": invalidValue,
+                ]))
             #expect(response.isError, "Expected window_id \(String(describing: invalidValue)) to fail")
         }
-        let conflictingSelectors = try await tool.execute(arguments: ToolArguments(raw: [
-            "app_target": "Safari:Main",
-            "window_id": 42,
-        ]))
+        let conflictingSelectors = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "app_target": "Safari:Main",
+                "window_id": 42,
+            ]))
         #expect(conflictingSelectors.isError)
         #expect(await MainActor.run { screenCapture.captureAttemptCount } == 0)
     }
@@ -182,12 +202,22 @@ struct MCPSeeExactWindowTests {
                 windowID: 41,
                 title: "Small Utility",
                 bounds: CGRect(origin: visibleOrigin, size: CGSize(width: 120, height: 90)),
-                index: 1),
+                index: 1,
+                mutationIdentity: WindowMutationIdentity(
+                    windowID: 41,
+                    ownerProcessIdentifier: app.processIdentifier,
+                    ownerProcessStartIdentity: 700,
+                    capturedBounds: CGRect(origin: visibleOrigin, size: CGSize(width: 120, height: 90)))),
             ServiceWindowInfo(
                 windowID: 42,
                 title: "Zephyr Agency",
                 bounds: CGRect(origin: visibleOrigin, size: CGSize(width: 1460, height: 945)),
-                index: 2),
+                index: 2,
+                mutationIdentity: WindowMutationIdentity(
+                    windowID: 42,
+                    ownerProcessIdentifier: app.processIdentifier,
+                    ownerProcessStartIdentity: 700,
+                    capturedBounds: CGRect(origin: visibleOrigin, size: CGSize(width: 1460, height: 945)))),
         ])
     }
 }

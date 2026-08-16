@@ -7,7 +7,9 @@ import PeekabooBridge
 import PeekabooFoundation
 
 @MainActor
-public final class RemoteApplicationService: ApplicationServiceProtocol, ApplicationServiceActionResultProviding {
+public final class RemoteApplicationService: ApplicationServiceProtocol, ApplicationServiceActionResultProviding,
+    ApplicationServiceTargetedActionResultProviding
+{
     private let client: PeekabooBridgeClient
     private let localFallback: (any ApplicationServiceProtocol)?
     private let supportsLaunchOptions: Bool
@@ -17,6 +19,7 @@ public final class RemoteApplicationService: ApplicationServiceProtocol, Applica
     private let supportsRelaunch: Bool
     private let supportsPinnedQuit: Bool
     private let supportsPinnedActivation: Bool
+    private let supportsPinnedHide: Bool
 
     public var supportsApplicationLaunchOptions: Bool {
         self.supportsLaunchOptions
@@ -46,6 +49,10 @@ public final class RemoteApplicationService: ApplicationServiceProtocol, Applica
         self.supportsPinnedActivation
     }
 
+    public var supportsProcessGenerationPinnedApplicationHide: Bool {
+        self.supportsPinnedHide
+    }
+
     public init(
         client: PeekabooBridgeClient,
         localFallback: (any ApplicationServiceProtocol)? = nil,
@@ -55,7 +62,8 @@ public final class RemoteApplicationService: ApplicationServiceProtocol, Applica
         supportsWindowReadiness: Bool = false,
         supportsRelaunch: Bool = false,
         supportsPinnedQuit: Bool = false,
-        supportsPinnedActivation: Bool = false)
+        supportsPinnedActivation: Bool = false,
+        supportsPinnedHide: Bool = false)
     {
         self.client = client
         self.localFallback = localFallback
@@ -66,6 +74,7 @@ public final class RemoteApplicationService: ApplicationServiceProtocol, Applica
         self.supportsRelaunch = supportsRelaunch
         self.supportsPinnedQuit = supportsPinnedQuit
         self.supportsPinnedActivation = supportsPinnedActivation
+        self.supportsPinnedHide = supportsPinnedHide
     }
 
     public func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
@@ -201,15 +210,21 @@ public final class RemoteApplicationService: ApplicationServiceProtocol, Applica
     public func activateApplicationActionResult(
         request: ApplicationActivationRequest) async throws -> DesktopActionResult<Void>
     {
+        try await self.activateApplicationTargetedActionResult(request: request).desktopActionResult
+    }
+
+    public func activateApplicationTargetedActionResult(
+        request: ApplicationActivationRequest) async throws -> UIAutomationActionResult<Void>
+    {
         guard request.expectedIdentity == nil || self.supportsPinnedActivation else {
             throw PeekabooBridgeErrorEnvelope(
                 code: .operationNotSupported,
                 message: "The selected Peekaboo host does not support process-generation-pinned activation")
         }
         return try await self.runWithLifecycleFallback {
-            try await self.client.activateApplicationResult(request: request)
+            try await self.client.activateApplicationTargetedResult(request: request)
         } fallback: { fallback in
-            try await fallback.activateApplicationResult(request: request)
+            try await fallback.activateApplicationTargetedResult(request: request)
         }
     }
 
@@ -245,10 +260,31 @@ public final class RemoteApplicationService: ApplicationServiceProtocol, Applica
     }
 
     public func hideApplicationActionResult(identifier: String) async throws -> DesktopActionResult<Void> {
+        try await self.hideApplicationTargetedActionResult(identifier: identifier).desktopActionResult
+    }
+
+    public func hideApplicationTargetedActionResult(
+        identifier: String) async throws -> UIAutomationActionResult<Void>
+    {
         try await self.runWithLifecycleFallback {
-            try await self.client.hideApplicationResult(identifier: identifier)
+            try await self.client.hideApplicationTargetedResult(identifier: identifier)
         } fallback: { fallback in
-            try await fallback.hideApplicationResult(identifier: identifier)
+            try await fallback.hideApplicationTargetedResult(identifier: identifier)
+        }
+    }
+
+    public func hideApplicationTargetedActionResult(
+        request: ApplicationHideRequest) async throws -> UIAutomationActionResult<Void>
+    {
+        guard self.supportsPinnedHide else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "The selected Peekaboo host does not support process-generation-pinned application hide")
+        }
+        return try await self.runWithLifecycleFallback {
+            try await self.client.hideApplicationTargetedResult(request: request)
+        } fallback: { fallback in
+            try await fallback.hideApplicationTargetedResult(request: request)
         }
     }
 
@@ -265,18 +301,26 @@ public final class RemoteApplicationService: ApplicationServiceProtocol, Applica
     }
 
     public func hideOtherApplications(identifier: String) async throws {
+        _ = try await self.hideOtherApplicationsActionResult(identifier: identifier)
+    }
+
+    public func hideOtherApplicationsActionResult(identifier: String) async throws -> DesktopActionResult<Void> {
         try await self.runWithLifecycleFallback {
-            try await self.client.hideOtherApplications(identifier: identifier)
+            try await self.client.hideOtherApplicationsResult(identifier: identifier)
         } fallback: { fallback in
-            try await fallback.hideOtherApplications(identifier: identifier)
+            try await fallback.hideOtherApplicationsResult(identifier: identifier)
         }
     }
 
     public func showAllApplications() async throws {
+        _ = try await self.showAllApplicationsActionResult()
+    }
+
+    public func showAllApplicationsActionResult() async throws -> DesktopActionResult<Void> {
         try await self.runWithLifecycleFallback {
-            try await self.client.showAllApplications()
+            try await self.client.showAllApplicationsResult()
         } fallback: { fallback in
-            try await fallback.showAllApplications()
+            try await fallback.showAllApplicationsResult()
         }
     }
 

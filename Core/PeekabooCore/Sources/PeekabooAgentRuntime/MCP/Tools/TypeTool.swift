@@ -243,32 +243,32 @@ public struct TypeTool: MCPTool {
                 }
             }
         } catch let failure as DesktopActionFailure {
-            throw sequence.failure(
+            throw focusResult.attributing(sequence.failure(
                 combining: failure,
                 message: "Typing failed after its element focus action completed.",
-                hint: "Observe the target before deciding whether to retry typing.")
+                hint: "Observe the target before deciding whether to retry typing."))
         } catch let error as InputDeliveryIndeterminateError {
             mutationTracker.charactersTyped = error.emittedUnitCount
             if sequence.mutationDisposition.mutationDispatched {
                 mutationTracker.delivery = nil
             }
             let failure = error.desktopActionFailure(delivery: mutationTracker.delivery)
-            throw sequence.failure(
+            throw focusResult.attributing(sequence.failure(
                 combining: failure,
                 message: "Typing failed after its element focus action completed.",
                 hint: "Observe the target before deciding whether to retry typing.",
-                causeDescription: error.causeDescription ?? error.localizedDescription)
+                causeDescription: error.causeDescription ?? error.localizedDescription))
         } catch {
             guard sequence.mutationDisposition.mutationDispatched else { throw error }
             mutationTracker.delivery = nil
             let leaf = DesktopActionFailure.preDispatchRefusal(
                 reason: .operationUnsupported,
                 message: error.localizedDescription)
-            throw sequence.failure(
+            throw focusResult.attributing(sequence.failure(
                 combining: leaf,
                 message: "Typing failed after its element focus action completed.",
                 hint: "Observe the target before deciding whether to retry typing.",
-                causeDescription: error.localizedDescription)
+                causeDescription: error.localizedDescription))
         }
 
         do {
@@ -276,10 +276,10 @@ public struct TypeTool: MCPTool {
                 typeActionResult.outcome,
                 operation: "Typing")
         } catch let failure as DesktopActionFailure {
-            throw sequence.failure(
+            throw focusResult.attributing(sequence.failure(
                 combining: failure,
                 message: "Typing failed after its element focus action completed.",
-                hint: "Observe the target before deciding whether to retry typing.")
+                hint: "Observe the target before deciding whether to retry typing."))
         }
 
         if let outcome = typeActionResult.outcome {
@@ -419,10 +419,10 @@ public struct TypeTool: MCPTool {
     {
         guard let context = targetContext else {
             if target == nil {
-                let focusedTarget = try await request.target.focusIfRequested(
+                let focusResult = try await request.target.focusResultIfRequested(
                     windows: self.context.windows,
                     onlyWhenTargeted: true)
-                return focusedTarget == nil ? .none : .completed(outcome: nil)
+                return focusResult.map(TypeFocusResult.completed(focusResult:)) ?? .none
             }
             return .none
         }
@@ -781,14 +781,27 @@ struct TypeFocusResult {
     let completed: Bool
     let outcome: DesktopActionOutcome?
     let focusedElement: FocusedElementIdentity?
+    let focusResult: MCPInteractionFocusResult?
 
-    static let none = Self(completed: false, outcome: nil, focusedElement: nil)
+    static let none = Self(completed: false, outcome: nil, focusedElement: nil, focusResult: nil)
 
     static func completed(
         outcome: DesktopActionOutcome?,
         focusedElement: FocusedElementIdentity? = nil) -> Self
     {
-        Self(completed: true, outcome: outcome, focusedElement: focusedElement)
+        Self(completed: true, outcome: outcome, focusedElement: focusedElement, focusResult: nil)
+    }
+
+    static func completed(focusResult: MCPInteractionFocusResult) -> Self {
+        Self(
+            completed: true,
+            outcome: focusResult.outcome,
+            focusedElement: nil,
+            focusResult: focusResult)
+    }
+
+    func attributing(_ failure: DesktopActionFailure) -> DesktopActionFailure {
+        self.focusResult?.attributing(failure) ?? failure
     }
 }
 

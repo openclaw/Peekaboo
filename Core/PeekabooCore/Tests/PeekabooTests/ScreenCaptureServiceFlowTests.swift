@@ -216,6 +216,51 @@ struct ScreenCaptureServiceFlowTests {
     }
 
     @Test
+    func `Concrete capture service defaults visible-capable operations to silent`() async throws {
+        let display = ScreenCaptureService.TestFixtures.Display(
+            name: "Primary",
+            bounds: CGRect(x: 0, y: 0, width: 100, height: 100),
+            scaleFactor: 1,
+            imageSize: CGSize(width: 100, height: 100),
+            imageData: ScreenCaptureService.TestFixtures.makeImage(width: 4, height: 4))
+        let app = ServiceApplicationInfo(
+            processIdentifier: 4242,
+            processStartIdentity: 9001,
+            bundleIdentifier: "com.peekaboo.capture-defaults",
+            name: "Capture Defaults",
+            windowCount: 1)
+        let window = ScreenCaptureService.TestFixtures.Window(
+            application: app,
+            title: "Fixture",
+            bounds: CGRect(x: 10, y: 10, width: 80, height: 80),
+            imageData: ScreenCaptureService.TestFixtures.makeImage(width: 4, height: 4))
+        let fixtures = ScreenCaptureService.TestFixtures(
+            displays: [display],
+            windows: [window],
+            frontmostApplication: app)
+        let captureOperator = FixtureCaptureOperator(fixtures: fixtures)
+        let dependencies = ScreenCaptureService.Dependencies(
+            feedbackClient: StubAutomationFeedbackClient(),
+            permissionEvaluator: CountingPermissionEvaluator(),
+            fallbackRunner: ScreenCaptureFallbackRunner(apis: [.modern]),
+            applicationResolver: FixtureResolver(fixtures: fixtures),
+            makeFrameSource: { _ in NoOpCaptureFrameSource() },
+            makeModernOperator: { _, _ in captureOperator },
+            makeLegacyOperator: { _ in captureOperator })
+        let service = ScreenCaptureService(
+            loggingService: MockLoggingService(),
+            dependencies: dependencies)
+
+        _ = try await service.captureScreen(displayIndex: nil)
+        _ = try await service.captureWindow(
+            appIdentifier: "com.peekaboo.capture-defaults",
+            windowIndex: nil)
+        _ = try await service.captureFrontmost()
+
+        #expect(captureOperator.visualizerModes == [.none, .none, .none])
+    }
+
+    @Test
     func `modern timeout falls back to legacy`() async throws {
         let fixtures = self.makeFixtures()
         let failingOperator = TimeoutModernOperator()
@@ -409,6 +454,7 @@ private final class FixtureCaptureOperator: ModernScreenCaptureOperating, Legacy
 @unchecked Sendable {
     private let fixtures: ScreenCaptureService.TestFixtures
     private(set) var captureWindowIDAttempts = 0
+    private(set) var visualizerModes: [CaptureVisualizerMode] = []
 
     init(fixtures: ScreenCaptureService.TestFixtures) {
         self.fixtures = fixtures
@@ -417,9 +463,10 @@ private final class FixtureCaptureOperator: ModernScreenCaptureOperating, Legacy
     func captureScreen(
         displayIndex: Int?,
         correlationId: String,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale: CaptureScalePreference) async throws -> CaptureResult
     {
+        self.visualizerModes.append(visualizerMode)
         let display = try fixtures.display(at: displayIndex)
         let scaleFactor = scale == .native ? display.scaleFactor : 1.0
         let outputSize = CGSize(width: display.bounds.width * scaleFactor, height: display.bounds.height * scaleFactor)
@@ -442,9 +489,10 @@ private final class FixtureCaptureOperator: ModernScreenCaptureOperating, Legacy
         app: ServiceApplicationInfo,
         windowIndex: Int?,
         correlationId: String,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale: CaptureScalePreference) async throws -> CaptureResult
     {
+        self.visualizerModes.append(visualizerMode)
         let windows = self.fixtures.windows(for: app)
         guard !windows.isEmpty else {
             throw NotFoundError.window(app: app.name)
@@ -492,10 +540,11 @@ private final class FixtureCaptureOperator: ModernScreenCaptureOperating, Legacy
     func captureWindow(
         windowID: CGWindowID,
         correlationId _: String,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale: CaptureScalePreference) async throws -> CaptureResult
     {
         self.captureWindowIDAttempts += 1
+        self.visualizerModes.append(visualizerMode)
         let allWindows = self.fixtures.windowsByPID.values.flatMap(\.self)
         guard let target = allWindows.first(where: { CGWindowID(truncatingIfNeeded: $0.title.hashValue) == windowID })
         else {

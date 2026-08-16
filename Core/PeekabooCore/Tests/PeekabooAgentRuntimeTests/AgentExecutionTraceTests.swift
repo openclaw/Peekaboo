@@ -26,7 +26,8 @@ struct AgentExecutionTraceTests {
             model: .anthropic(.sonnet45),
             tools: tools,
             eventHandler: nil,
-            sessionId: "trace-test")
+            sessionId: "trace-test",
+            executionPolicy: .unrestricted)
         var messages: [ModelMessage] = []
 
         _ = try await service.handleToolCalls(

@@ -32,10 +32,13 @@ extension AppToolActions {
             createsNewInstance: request.newInstance)
         let actionResult = try await self.service.launchApplicationResult(request: launchRequest)
         let app = actionResult.payload
+        let outcome = try self.validatedBackgroundLaunchNoOpOutcome(
+            actionResult,
+            request: launchRequest)
 
         let timing = self.executionTimeString(since: request.startTime)
         let message = if launchRequest.isSafeBackgroundNoOp ||
-            actionResult.outcome?.state == .confirmedNoChange
+            outcome?.state == .confirmedNoChange
         {
             "\(AgentDisplayTokens.Status.success) \(app.name) was already running "
                 + "(PID: \(app.processIdentifier)); no launch was needed (\(timing))"
@@ -58,7 +61,57 @@ extension AppToolActions {
                 "window_ids": app.windowIDs.map { .array($0.map { .double(Double($0)) }) } ?? .null,
                 "window_identity": .string(app.windowIDs == nil ? "unknown" : "exact"),
             ],
-            outcome: actionResult.outcome)
+            outcome: outcome)
+    }
+
+    private func validatedBackgroundLaunchNoOpOutcome(
+        _ result: DesktopActionResult<ServiceApplicationInfo>,
+        request: ApplicationLaunchRequest) throws -> DesktopActionOutcome?
+    {
+        guard request.isSafeBackgroundNoOp,
+              let context,
+              let authorization = AuthorizedDesktopTargetPlan.current
+        else { return result.outcome }
+
+        let authorizedIdentity = authorization.processIdentity
+        guard let returnedIdentity = result.payload.processIdentity else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Background application readiness returned no process-generation identity.",
+                hint: "Refresh the application inventory before retrying.")
+                .attributed(to: Self.targetReceipt(authorizedIdentity))
+        }
+        _ = try context.coalesceAuthorizedDesktopTarget(
+            DesktopTargetIdentity(processIdentity: returnedIdentity),
+            operation: "Background application readiness")
+
+        guard let outcome = result.outcome else {
+            throw DesktopActionFailure.indeterminate(
+                evidence: .completionUnknown,
+                message: "Background application readiness returned without a canonical no-dispatch outcome.",
+                hint: "Inspect the selected application before retrying and update the runtime host.")
+                .attributed(to: Self.targetReceipt(authorizedIdentity))
+        }
+        guard outcome.state == .confirmedNoChange,
+              outcome.dispatchState == .none,
+              outcome.delivery == nil
+        else {
+            throw DesktopActionFailure.indeterminate(
+                route: outcome.route,
+                delivery: outcome.delivery,
+                evidence: .completionUnknown,
+                unitCount: outcome.dispatchState.unitCount,
+                message: "Background application readiness did not prove an exact read-only no-op.",
+                hint: "Inspect the selected application before retrying and update the runtime host.")
+                .attributed(to: Self.targetReceipt(authorizedIdentity))
+        }
+        return outcome
+    }
+
+    private static func targetReceipt(_ identity: ApplicationProcessIdentity) -> DesktopActionTargetReceipt {
+        DesktopActionTargetReceipt(
+            processIdentifier: identity.processIdentifier,
+            processStartIdentity: identity.processStartIdentity)
     }
 
     func handleOpen(request: AppToolRequest) async throws -> ToolResponse {
@@ -125,21 +178,41 @@ extension AppToolActions {
         }
 
         let appInfo = try await self.service.findApplication(identifier: name)
-        let quitRequest = try Self.pinnedQuitRequest(for: appInfo, force: request.force)
+        let expectedIdentity = try self.authorizedProcessIdentity(
+            for: appInfo,
+            operation: "Application quit")
+        let quitRequest = ApplicationQuitRequest(
+            identifier: "PID:\(expectedIdentity.processIdentifier)",
+            force: request.force,
+            expectedIdentity: expectedIdentity)
         let actionResult = try await self.service.quitApplicationResult(request: quitRequest)
         let success = actionResult.payload
 
-        guard success else {
-            if let outcome = actionResult.outcome,
-               let failure = DesktopActionFailure(
-                   outcome: outcome,
-                   message: "Failed to quit \(appInfo.name). The application may have refused to quit.",
-                   hint: Self.quitFailureHint(for: outcome, force: request.force))
+        do {
+            try ApplicationActionResultSemantics.requireConsistentQuitResult(
+                actionResult,
+                expectedIdentity: expectedIdentity,
+                operation: "Application quit")
+        } catch let failure as DesktopActionFailure {
+            let presentedFailure = if !success,
+                                      let outcome = actionResult.outcome,
+                                      let contextual = DesktopActionFailure(
+                                          outcome: failure.outcome,
+                                          message: failure.message,
+                                          hint: Self.quitFailureHint(for: outcome, force: request.force),
+                                          causeDescription: failure.causeDescription,
+                                          targetReceipt: failure.targetReceipt)
             {
-                return try MCPToolResponseMetadataProjector.errorResponse(
-                    for: failure,
-                    invalidatedSnapshotID: nil)
+                contextual
+            } else {
+                failure
             }
+            return try MCPToolResponseMetadataProjector.errorResponse(
+                for: presentedFailure,
+                invalidatedSnapshotID: nil)
+        }
+
+        guard success else {
             return ToolResponse.error("Failed to quit \(appInfo.name). The application may have refused to quit.")
         }
 
@@ -196,6 +269,13 @@ extension AppToolActions {
             startTime: request.startTime,
             extraMeta: [
                 "previous_pid": .double(Double(appInfo.processIdentifier)),
+                "previous_process_start_identity": .double(Double(originalProcessIdentity.processStartIdentity)),
+                "previous_process_start_identity_decimal": .string(String(
+                    originalProcessIdentity.processStartIdentity)),
+                "new_process_start_identity": refreshedInfo.processStartIdentity
+                    .map { .double(Double($0)) } ?? .null,
+                "new_process_start_identity_decimal": refreshedInfo.processStartIdentity
+                    .map { .string(String($0)) } ?? .null,
                 "wait": .double(request.wait),
                 "wait_until_ready": .bool(request.waitUntilReady),
                 "wait_for_window": .bool(request.waitForWindow),
@@ -210,14 +290,34 @@ extension AppToolActions {
             return ToolResponse.error("Must specify 'name' for hide action")
         }
         let app = try await self.service.findApplication(identifier: name)
-        let actionResult = try await self.service.hideApplicationResult(identifier: name)
+        let expectedIdentity = try self.authorizedProcessIdentity(
+            for: app,
+            operation: "Application hide")
+        let actionResult = try await self.service.hideApplicationTargetedResult(request: .init(
+            identifier: "PID:\(expectedIdentity.processIdentifier)",
+            expectedIdentity: expectedIdentity))
+        let returnedExactTarget = actionResult.targetIdentity?.processIdentity == expectedIdentity
+        let targetMetadata: [String: Value] = returnedExactTarget ? [
+            "process_start_identity_decimal": .string(String(expectedIdentity.processStartIdentity)),
+            "target_identity": .object([
+                "kind": .string("process"),
+                "pid": .int(Int(expectedIdentity.processIdentifier)),
+                "process_start_identity_decimal": .string(String(expectedIdentity.processStartIdentity)),
+            ]),
+        ] : [:]
+        try ApplicationActionResultSemantics.requireSuccessfulExactProcessResult(
+            actionResult,
+            expectedIdentity: expectedIdentity,
+            operation: "Application hide")
+        let outcome = actionResult.outcome
         let message = "\(AgentDisplayTokens.Status.success) Hid \(app.name) "
             + "(PID: \(app.processIdentifier)) in \(self.executionTimeString(since: request.startTime))"
         return try self.buildResponse(
             message: message,
             app: app,
             startTime: request.startTime,
-            outcome: actionResult.outcome)
+            extraMeta: targetMetadata,
+            outcome: outcome)
     }
 
     func handleUnhide(request: AppToolRequest) async throws -> ToolResponse {
@@ -257,8 +357,10 @@ extension AppToolActions {
 
         var quitCount = 0
         var failed = [String]()
+        var failedTargetReceipts = [DesktopActionTargetReceipt]()
         var outcomes = [DesktopActionOutcome?]()
         var wasCancelled = false
+        var cancellationInterruptedAttempt = false
         for app in targets {
             if Task.isCancelled {
                 guard !outcomes.isEmpty else { throw CancellationError() }
@@ -268,6 +370,16 @@ extension AppToolActions {
             do {
                 let quitRequest = try Self.pinnedQuitRequest(for: app, force: request.force)
                 let result = try await self.service.quitApplicationResult(request: quitRequest)
+                guard let expectedIdentity = quitRequest.expectedIdentity else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: .invalidRequest,
+                        message: "Application quit requires a process-generation identity.")
+                }
+                try ApplicationActionResultSemantics.requireConsistentQuitResult(
+                    result,
+                    expectedIdentity: expectedIdentity,
+                    operation: "Application quit",
+                    requiresCanonicalOutcome: false)
                 let success = result.payload
                 outcomes.append(result.outcome)
                 if success {
@@ -275,12 +387,15 @@ extension AppToolActions {
                 } else {
                     failed.append(app.name)
                 }
-            } catch let cancellation as CancellationError {
-                guard !outcomes.isEmpty else { throw cancellation }
+            } catch is CancellationError {
                 wasCancelled = true
+                cancellationInterruptedAttempt = true
                 break
             } catch let failure as DesktopActionFailure {
                 outcomes.append(failure.outcome)
+                if let targetReceipt = failure.targetReceipt {
+                    failedTargetReceipts.append(targetReceipt)
+                }
                 self.logger.error("Failed to quit \(app.name, privacy: .public): \(failure, privacy: .public)")
                 failed.append(app.name)
             } catch {
@@ -306,7 +421,7 @@ extension AppToolActions {
                 "\(outcomes.count) of \(targets.count) targets"
         }
 
-        let baseMeta: [String: Value] = [
+        var baseMeta: [String: Value] = [
             "quit_count": .double(Double(quitCount)),
             "failed": .array(failed.map(Value.string)),
             "except": .array(excluded.map(Value.string)),
@@ -314,14 +429,30 @@ extension AppToolActions {
             "force": .bool(request.force),
             "cancelled": .bool(wasCancelled),
         ]
+        if targets.count == 1,
+           failed.count == 1,
+           failedTargetReceipts.count == 1,
+           let targetReceipt = failedTargetReceipts.first
+        {
+            baseMeta["target_receipt"] = try Value(targetReceipt)
+        }
         let summary = self.makeSummary(for: nil, action: "Quit Applications", notes: "Quit \(quitCount) apps")
-        let outcome = DesktopActionSequenceAccumulator.completedBatch(
-            outcomes: outcomes,
-            succeededCount: quitCount,
-            attemptedCount: outcomes.count)
+        let outcome = if wasCancelled {
+            DesktopActionSequenceAccumulator.interruptedBatch(
+                completedOutcomes: outcomes,
+                succeededCount: quitCount,
+                attemptedCount: outcomes.count,
+                plannedCount: targets.count,
+                inFlightAttemptMayHaveDispatched: cancellationInterruptedAttempt)?.outcome
+        } else {
+            DesktopActionSequenceAccumulator.completedBatch(
+                outcomes: outcomes,
+                succeededCount: quitCount,
+                attemptedCount: outcomes.count)
+        }
         return try ToolResponse(
             content: [.text(text: message, annotations: nil, _meta: nil)],
-            isError: wasCancelled,
+            isError: wasCancelled || !failed.isEmpty,
             meta: MCPToolResponseMetadataProjector.metadata(
                 merging: ToolEventSummary.merge(summary: summary, into: .object(baseMeta)).objectValue ?? [:],
                 outcome: outcome))
@@ -339,6 +470,23 @@ extension AppToolActions {
             identifier: "PID:\(application.processIdentifier)",
             force: force,
             expectedIdentity: identity)
+    }
+
+    private func authorizedProcessIdentity(
+        for application: ServiceApplicationInfo,
+        operation: String) throws -> ApplicationProcessIdentity
+    {
+        guard let identity = application.processIdentity else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Application discovery did not return a process-generation identity for exact mutation.",
+                hint: "Refresh the application inventory before retrying.")
+        }
+        guard let context = self.context else { return identity }
+        let target = try context.coalesceAuthorizedDesktopTarget(
+            DesktopTargetIdentity(processIdentity: identity),
+            operation: operation)
+        return target.processIdentity
     }
 
     private static func quitFailureHint(
@@ -365,6 +513,8 @@ extension AppToolActions {
             "Grant the required permission before retrying."
         case .refreshTarget:
             "Refresh the application target before retrying."
+        case .reconnectSession:
+            "Reconnect the transport session before retrying."
         case .updateRuntime:
             "Update the runtime before retrying."
         case .recoverSideEffect:

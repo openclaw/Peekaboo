@@ -4,6 +4,7 @@ import Tachikoma
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
+@testable import PeekabooBridge
 @testable import PeekabooCore
 
 @Suite(.serialized)
@@ -28,7 +29,7 @@ struct MCPToolContextTests {
 
     @Test
     @MainActor
-    func `context uses injected services`() {
+    func `context uses injected services and defaults to background only`() {
         let services = PeekabooServices()
         let context = MCPToolContext(services: services)
 
@@ -36,7 +37,31 @@ struct MCPToolContextTests {
             ObjectIdentifier(services.menu as AnyObject))
         #expect(ObjectIdentifier(context.automation as AnyObject) ==
             ObjectIdentifier(services.automation as AnyObject))
-        #expect(context.executionPolicy == .unrestricted)
+        #expect(context.executionPolicy == .backgroundOnly)
+        #expect(context.executionHost == .local)
+    }
+
+    @Test
+    @MainActor
+    func `low level context initializer defaults to background only`() {
+        let services = PeekabooServices()
+        let context = MCPToolContext(
+            automation: services.automation,
+            menu: services.menu,
+            windows: services.windows,
+            applications: services.applications,
+            dialogs: services.dialogs,
+            dock: services.dock,
+            screenCapture: services.screenCapture,
+            desktopObservation: services.desktopObservation,
+            snapshots: services.snapshots,
+            screens: services.screens,
+            agent: services.agent,
+            permissions: services.permissions,
+            clipboard: services.clipboard,
+            browser: services.browser)
+
+        #expect(context.executionPolicy == .backgroundOnly)
     }
 
     @Test
@@ -58,7 +83,7 @@ struct MCPToolContextTests {
         #expect(background.uiSnapshots.owner == owner)
         #expect(foreground.executionPolicy == .foregroundAllowed)
         #expect(foreground.uiSnapshots.owner != owner)
-        #expect(agent.makeToolContext().executionPolicy == .unrestricted)
+        #expect(agent.makeToolContext().executionPolicy == .backgroundOnly)
     }
 
     @Test
@@ -68,7 +93,10 @@ struct MCPToolContextTests {
         let refusal = MCPToolCapturePreflightRefusal(
             message: "Legacy ScreenCaptureKit owner is live. No capture was dispatched.",
             hint: "Relaunch that exact owner before retrying.")
-        let context = MCPToolContext(services: services, capturePreflightRefusal: refusal)
+        let context = MCPToolContext(
+            services: services,
+            executionPolicy: .unrestricted,
+            capturePreflightRefusal: refusal)
         let serverContext = context.replacingSnapshotOwner(with: MCPToolSnapshotOwner())
         #expect(serverContext.capturePreflightRefusal == refusal)
 
@@ -149,6 +177,21 @@ struct MCPToolContextTests {
 
         #expect(first.uiSnapshots.owner == second.uiSnapshots.owner)
         #expect(first.uiSnapshots.owner != isolated.uiSnapshots.owner)
+        #expect(first.executionHost == .local)
+        #expect(isolated.executionHost == .local)
+    }
+
+    @Test
+    @MainActor
+    func `remote services mark contexts remote and owner replacement preserves the host`() {
+        let services = RemotePeekabooServices(
+            client: PeekabooBridgeClient(socketPath: "/tmp/peekaboo-unused-context-test.sock"))
+        let context = MCPToolContext(services: services)
+        let replacement = context.replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+
+        #expect(services.executionHost == .remote)
+        #expect(context.executionHost == .remote)
+        #expect(replacement.executionHost == .remote)
     }
 
     @Test

@@ -1,9 +1,12 @@
 import Foundation
 import MCP
+import PeekabooFoundation
 import TachikomaMCP
 
 public struct BrowserTool: MCPTool {
     private let client: any BrowserMCPClientProviding
+    private let connectionPolicy: BrowserMCPExecutionConnectionPolicy
+    private let executionPolicy: MCPToolExecutionPolicy
 
     public let name = "browser"
     public let description = """
@@ -16,6 +19,8 @@ public struct BrowserTool: MCPTool {
     Chrome DevTools MCP requires Chrome 144+ with remote debugging enabled at
     chrome://inspect/#remote-debugging. The user must accept Chrome's remote debugging prompt.
     Peekaboo starts chrome-devtools-mcp with usage statistics and CrUX lookups disabled.
+    Background-only Agent sessions reuse an existing exact connection and never auto-connect;
+    ask the user to connect explicitly when status reports no live connection receipt.
     """
 
     public var inputSchema: Value {
@@ -24,12 +29,14 @@ public struct BrowserTool: MCPTool {
                 "action": SchemaBuilder.string(
                     description: """
                     Browser action to perform. Use `status` before connecting. Use `connect` after the user
-                    enables remote debugging and accepts Chrome's prompt.
+                    enables remote debugging and accepts Chrome's prompt. Connect is a foreground-consent action
+                    and is refused by background-only contexts.
                     """,
                     enum: BrowserAction.allCases.map(\.rawValue)),
                 "channel": SchemaBuilder.string(
                     description: """
-                    Chrome channel for auto-connect. Defaults to the running Chrome channel, then stable.
+                    Chrome channel selected by explicit connect. Defaults to the running Chrome channel, then stable.
+                    Other actions never auto-connect in a background-only context.
                     """,
                     enum: BrowserMCPChannel.allCases.map(\.rawValue)),
                 "browser_url": SchemaBuilder.string(description: """
@@ -103,14 +110,28 @@ public struct BrowserTool: MCPTool {
 
     public init(context: MCPToolContext = .shared, client: (any BrowserMCPClientProviding)? = nil) {
         self.client = client ?? context.browser
+        self.executionPolicy = context.executionPolicy
+        self.connectionPolicy = context.executionPolicy == .backgroundOnly
+            ? .requireExistingLiveReceipt
+            : .allowAutoConnect
     }
 
-    public init(client: any BrowserMCPClientProviding) {
+    public init(
+        client: any BrowserMCPClientProviding,
+        executionPolicy: MCPToolExecutionPolicy = .backgroundOnly)
+    {
         self.client = client
+        self.executionPolicy = executionPolicy
+        self.connectionPolicy = executionPolicy == .backgroundOnly
+            ? .requireExistingLiveReceipt
+            : .allowAutoConnect
     }
 
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
+        if let rejection = self.executionPolicy.rejection(toolName: self.name, arguments: arguments) {
+            return rejection
+        }
         guard let actionName = arguments.getString("action"),
               let action = BrowserAction(rawValue: actionName)
         else {
@@ -134,10 +155,22 @@ public struct BrowserTool: MCPTool {
         do {
             switch action {
             case .status:
-                return await self.statusResponse(channel: channel)
+                return try await self.statusResponse(channel: channel)
             case .connect:
-                let status = try await self.client.connect(channel: channel, browserURL: browserURL)
-                return self.formatStatus(status, headline: "Connected Chrome DevTools MCP")
+                guard let resultClient = self.client as? any BrowserMCPConnectionResultProviding else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: .operationUnsupported,
+                        message: "Browser connect requires a provider that reports canonical action outcomes.",
+                        hint: "Update the runtime host before retrying browser connect.")
+                }
+                let result = try await resultClient.connectWithOutcome(
+                    channel: channel,
+                    browserURL: browserURL)
+                let outcome = try Self.validatedConnectOutcome(result.outcome)
+                return try self.formatStatus(
+                    result.payload,
+                    headline: "Connected Chrome DevTools MCP",
+                    outcome: outcome)
             case .disconnect:
                 await self.client.disconnect()
                 return ToolResponse.text("Disconnected Chrome DevTools MCP.")
@@ -145,7 +178,7 @@ public struct BrowserTool: MCPTool {
                 return try await self.executeRawCall(arguments: arguments, channel: channel)
             default:
                 let calls = try BrowserMCPCallMapper.mapSequence(action: action, arguments: arguments)
-                return try await self.client.executeSequence(calls, channel: channel)
+                return try await self.executeSequence(calls, channel: channel)
             }
         } catch let error as BrowserToolError {
             return ToolResponse.error(error.localizedDescription)
@@ -153,35 +186,157 @@ public struct BrowserTool: MCPTool {
             return ToolResponse.error(error.localizedDescription)
         } catch let error as BrowserMCPUploadStagingError {
             return ToolResponse.error(error.localizedDescription)
+        } catch let failure as DesktopActionFailure {
+            return try MCPToolResponseMetadataProjector.errorResponse(
+                for: failure,
+                invalidatedSnapshotID: nil)
         } catch {
             return ToolResponse.error(Self.permissionHelp(error: error))
         }
     }
 
     @MainActor
-    private func statusResponse(channel: BrowserMCPChannel?) async -> ToolResponse {
+    private func statusResponse(channel: BrowserMCPChannel?) async throws -> ToolResponse {
         let status = await self.client.status(channel: channel)
-        return self.formatStatus(status, headline: "Chrome DevTools MCP Status")
+        return try self.formatStatus(status, headline: "Chrome DevTools MCP Status")
     }
 
     private func executeRawCall(arguments: ToolArguments, channel: BrowserMCPChannel?) async throws -> ToolResponse {
-        guard let toolName = arguments.getString("mcp_tool"), !toolName.isEmpty else {
-            return ToolResponse.error("Missing required parameter: mcp_tool")
-        }
-        guard let routing = BrowserMCPPageRoutingContract.routing(for: toolName) else {
-            throw BrowserToolError.unsupportedRawTool(toolName)
-        }
-        if routing == .blockedSelectedPage {
-            throw BrowserToolError.selectedPageRoutingUnsupported(toolName)
-        }
-        var rawArgs = try Self.parseJSONObject(arguments.getString("mcp_args_json") ?? "{}")
-        if routing == .pageTargeted || arguments.getValue(for: "page_id") != nil {
-            rawArgs["pageId"] = try BrowserMCPCallMapper.requiredPageID(arguments)
-        }
-        return try await self.client.execute(toolName: toolName, arguments: rawArgs, channel: channel)
+        try await self.executeSequence(
+            [BrowserMCPCallMapper.mapRawCall(arguments: arguments)],
+            channel: channel)
     }
 
-    private func formatStatus(_ status: BrowserMCPStatus, headline: String) -> ToolResponse {
+    @MainActor
+    private func executeSequence(
+        _ calls: [BrowserMCPMappedCall],
+        channel: BrowserMCPChannel?) async throws -> ToolResponse
+    {
+        let semantics = Self.sequenceSemantics(calls)
+        guard let resultClient = self.client as? any BrowserMCPActionResultProviding else {
+            if self.connectionPolicy == .requireExistingLiveReceipt {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .operationUnsupported,
+                    message: "The browser provider cannot enforce existing-connection-only execution.",
+                    hint: "Update the runtime host before retrying this background-only browser action.")
+            }
+            guard semantics == .readOnly else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .operationUnsupported,
+                    message: "Browser mutations require a provider that reports canonical action outcomes.",
+                    hint: "Update the runtime host before retrying this browser mutation.")
+            }
+            return try await self.client.executeSequence(calls, channel: channel)
+        }
+        let result = try await resultClient.executeSequenceWithOutcome(
+            calls,
+            channel: channel,
+            connectionPolicy: self.connectionPolicy)
+        let outcome = try Self.validatedOutcome(
+            result.outcome,
+            payloadIsError: result.payload.isError,
+            semantics: semantics)
+        let executionMetadata = BrowserMCPExecutionEvidence.split(result.payload.meta)
+        var providerFields = MCPToolResponseMetadataProjector.providerFields(
+            from: executionMetadata.providerMeta)
+        if let evidence = executionMetadata.evidence {
+            providerFields[BrowserMCPExecutionEvidence.metadataKey] = evidence
+        }
+        return try ToolResponse(
+            content: result.payload.content,
+            isError: result.payload.isError,
+            meta: MCPToolResponseMetadataProjector.metadata(
+                merging: providerFields,
+                outcome: outcome))
+    }
+
+    private static func sequenceSemantics(
+        _ calls: [BrowserMCPMappedCall]) -> BrowserMCPPageRoutingContract.ActionSemantics
+    {
+        guard !calls.isEmpty else { return .mutating }
+        return calls.allSatisfy { call in
+            BrowserMCPPageRoutingContract.actionSemantics(
+                for: call.toolName,
+                arguments: call.arguments) == .readOnly
+        } ? .readOnly : .mutating
+    }
+
+    private static func validatedOutcome(
+        _ outcome: DesktopActionOutcome?,
+        payloadIsError: Bool,
+        semantics: BrowserMCPPageRoutingContract.ActionSemantics) throws -> DesktopActionOutcome?
+    {
+        guard let outcome else {
+            guard semantics == .readOnly else {
+                throw DesktopActionFailure.indeterminate(
+                    delivery: .init(mechanism: .browserProtocol, mode: .background),
+                    evidence: .completionUnknown,
+                    message: "Browser mutation returned without a canonical action outcome.",
+                    hint: "Observe the browser before retrying and update the runtime host.")
+            }
+            return nil
+        }
+
+        let isSuccessCompatible = outcome.isAccepted(by: .confirmedOrDispatched)
+        if !payloadIsError, !isSuccessCompatible {
+            guard let failure = DesktopActionFailure(
+                outcome: outcome,
+                message: "Browser mutation did not return a successful canonical outcome.",
+                hint: "Follow the canonical outcome metadata before deciding whether to retry.")
+            else {
+                preconditionFailure("A browser non-success outcome must construct a failure")
+            }
+            throw failure
+        }
+        if payloadIsError, isSuccessCompatible {
+            throw DesktopActionFailure.indeterminate(
+                route: outcome.route,
+                delivery: outcome.delivery,
+                evidence: .completionUnknown,
+                unitCount: outcome.dispatchState.unitCount,
+                message: "Browser provider returned an error payload with a successful canonical outcome.",
+                hint: "Observe the browser before retrying and update the runtime host.")
+        }
+        return outcome
+    }
+
+    private static func validatedConnectOutcome(_ outcome: DesktopActionOutcome?) throws -> DesktopActionOutcome {
+        guard let outcome else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .browserProtocol, mode: .foreground),
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "Browser connect returned without a canonical action outcome.",
+                hint: "Check browser status before deciding whether to reconnect.")
+        }
+        switch outcome.state {
+        case .confirmedNoChange:
+            guard outcome.delivery == nil,
+                  outcome.dispatchState == .none
+            else { break }
+            return outcome
+        case .dispatchedUnverified:
+            guard outcome.delivery == .init(mechanism: .browserProtocol, mode: .foreground),
+                  outcome.dispatchState.unitCount == .one
+            else { break }
+            return outcome
+        case .confirmedChange, .partial, .suspectedNoop, .refused, .indeterminate:
+            break
+        }
+        throw DesktopActionFailure.indeterminate(
+            route: outcome.route,
+            delivery: outcome.delivery,
+            evidence: .completionUnknown,
+            unitCount: outcome.dispatchState.unitCount,
+            message: "Browser connect returned contradictory canonical action semantics.",
+            hint: "Check browser status before deciding whether to reconnect and update the runtime host.")
+    }
+
+    private func formatStatus(
+        _ status: BrowserMCPStatus,
+        headline: String,
+        outcome: DesktopActionOutcome? = nil) throws -> ToolResponse
+    {
         var lines = [headline, ""]
         lines.append("Connected: \(status.isConnected ? "yes" : "no")")
         lines.append("Tools: \(status.toolCount)")
@@ -220,10 +375,14 @@ public struct BrowserTool: MCPTool {
             lines.append(contentsOf: Self.permissionInstructions())
         }
 
-        return ToolResponse.text(lines.joined(separator: "\n"), meta: self.statusMeta(status))
+        return try ToolResponse.text(
+            lines.joined(separator: "\n"),
+            meta: MCPToolResponseMetadataProjector.metadata(
+                merging: self.statusMetaFields(status),
+                outcome: outcome))
     }
 
-    private func statusMeta(_ status: BrowserMCPStatus) -> Value {
+    private func statusMetaFields(_ status: BrowserMCPStatus) -> [String: Value] {
         var meta: [String: Value] = [
             "connected": .bool(status.isConnected),
             "tool_count": .int(status.toolCount),
@@ -258,7 +417,7 @@ public struct BrowserTool: MCPTool {
             }
             meta["connection_receipt"] = .object(receiptMeta)
         }
-        return .object(meta)
+        return meta
     }
 
     private static func permissionHelp(error: any Error) -> String {
@@ -278,17 +437,24 @@ public struct BrowserTool: MCPTool {
             "If multiple Chrome processes share a channel, pass browser_url for one exact loopback DevTools port.",
         ]
     }
+}
 
-    private static func parseJSONObject(_ json: String) throws -> [String: Any] {
-        guard let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data)
+extension BrowserTool: MCPToolArgumentSemanticValidating {
+    func validateArgumentSemantics(_ arguments: ToolArguments) throws {
+        guard let actionName = arguments.getString("action"),
+              let action = BrowserAction(rawValue: actionName)
         else {
-            throw BrowserToolError.invalidJSONArguments
+            throw BrowserToolError.missingParameter("action")
         }
-        guard let dictionary = object as? [String: Any] else {
-            throw BrowserToolError.invalidJSONArguments
+
+        switch action {
+        case .status, .connect, .disconnect:
+            return
+        case .call:
+            _ = try BrowserMCPCallMapper.mapRawCall(arguments: arguments)
+        default:
+            _ = try BrowserMCPCallMapper.mapSequence(action: action, arguments: arguments)
         }
-        return dictionary
     }
 }
 
@@ -358,6 +524,72 @@ public struct BrowserMCPMappedCall {
 }
 
 public enum BrowserMCPCallMapper {
+    static func actionSemantics(
+        action: BrowserAction,
+        arguments: ToolArguments) -> BrowserMCPPageRoutingContract.ActionSemantics
+    {
+        let calls: [BrowserMCPMappedCall]?
+        switch action {
+        case .status, .disconnect:
+            return .readOnly
+        case .connect:
+            return .mutating
+        case .call:
+            calls = try? [self.mapRawCall(arguments: arguments)]
+        default:
+            calls = try? self.mapSequence(action: action, arguments: arguments)
+        }
+        guard let calls else {
+            return self.fallbackActionSemantics(action: action, arguments: arguments)
+        }
+        return calls.contains { call in
+            BrowserMCPPageRoutingContract.actionSemantics(
+                for: call.toolName,
+                arguments: call.arguments) != .readOnly
+        } ? .mutating : .readOnly
+    }
+
+    private static func fallbackActionSemantics(
+        action: BrowserAction,
+        arguments: ToolArguments) -> BrowserMCPPageRoutingContract.ActionSemantics
+    {
+        switch action {
+        case .status, .disconnect, .listPages, .waitFor, .snapshot, .console, .network, .screenshot:
+            .readOnly
+        case .connect:
+            .mutating
+        case .selectPage:
+            arguments.getBool("bring_to_front") == true ? .mutating : .readOnly
+        case .performanceTrace:
+            (arguments.getString("trace_action") ?? "start") == "start" && arguments.getBool("reload") != false
+                ? .mutating
+                : .readOnly
+        case .call:
+            // Invalid/unknown raw calls are rejected by the audited catalog before provider dispatch.
+            .readOnly
+        case .closePage, .newPage, .navigate, .click, .fill, .fillForm, .drag, .hover, .type, .pressKey,
+             .uploadFile, .handleDialog:
+            .mutating
+        }
+    }
+
+    static func mapRawCall(arguments: ToolArguments) throws -> BrowserMCPMappedCall {
+        guard let toolName = arguments.getString("mcp_tool"), !toolName.isEmpty else {
+            throw BrowserToolError.missingParameter("mcp_tool")
+        }
+        guard let routing = BrowserMCPPageRoutingContract.routing(for: toolName) else {
+            throw BrowserToolError.unsupportedRawTool(toolName)
+        }
+        if routing == .blockedSelectedPage {
+            throw BrowserToolError.selectedPageRoutingUnsupported(toolName)
+        }
+        var rawArguments = try self.parseJSONObject(arguments.getString("mcp_args_json") ?? "{}")
+        if routing == .pageTargeted || arguments.getValue(for: "page_id") != nil {
+            rawArguments["pageId"] = try self.requiredPageID(arguments)
+        }
+        return BrowserMCPMappedCall(toolName: toolName, arguments: rawArguments)
+    }
+
     public static func map(action: BrowserAction, arguments: ToolArguments) throws -> BrowserMCPMappedCall {
         guard action != .type, action != .pressKey else {
             throw BrowserToolError.invalidAction("\(action.rawValue) requires an exact atomic call sequence")
@@ -631,6 +863,16 @@ public enum BrowserMCPCallMapper {
         default:
             return nil
         }
+    }
+
+    private static func parseJSONObject(_ json: String) throws -> [String: Any] {
+        guard let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let dictionary = object as? [String: Any]
+        else {
+            throw BrowserToolError.invalidJSONArguments
+        }
+        return dictionary
     }
 
     fileprivate static func requiredPageID(_ arguments: ToolArguments) throws -> Int {

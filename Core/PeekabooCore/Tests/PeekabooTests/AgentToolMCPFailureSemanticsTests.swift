@@ -601,13 +601,16 @@ struct AgentToolMCPFailureSemanticsTests {
         let outcome = DesktopActionOutcome.refused(reason: .permissionDenied)
         let response = try ToolResponse.text("incorrect success", meta: Value(outcome.projection))
         let service = try PeekabooAgentService(services: PeekabooServices())
-        let tool = service.makeAgentTool(from: AgentFailureProbeTool(name: "see", response: response))
+        let tool = PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(.unrestricted) {
+            service.makeAgentTool(from: AgentFailureProbeTool(name: "see", response: response))
+        }
         let call = AgentToolCall(id: "nonconfirmed-see", name: "see", arguments: [:])
         let context = PeekabooAgentService.ToolHandlingContext(
             model: .anthropic(.sonnet45),
             tools: [tool],
             eventHandler: nil,
-            sessionId: "nonconfirmed-success")
+            sessionId: "nonconfirmed-success",
+            executionPolicy: .unrestricted)
         var messages: [ModelMessage] = []
 
         let step = try await service.handleToolCalls(
@@ -701,13 +704,16 @@ struct AgentToolMCPFailureSemanticsTests {
                 "details": .string(oversized),
             ]))
         let service = try PeekabooAgentService(services: PeekabooServices())
-        let tool = service.makeAgentTool(from: AgentFailureProbeTool(response: response))
+        let tool = PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(.unrestricted) {
+            service.makeAgentTool(from: AgentFailureProbeTool(response: response))
+        }
         let call = AgentToolCall(id: "typed-refusal", name: "click", arguments: [:])
         let context = PeekabooAgentService.ToolHandlingContext(
             model: .anthropic(.sonnet45),
             tools: [tool],
             eventHandler: nil,
-            sessionId: "typed-failure-session")
+            sessionId: "typed-failure-session",
+            executionPolicy: .unrestricted)
         var messages: [ModelMessage] = []
 
         let step = try await service.handleToolCalls(

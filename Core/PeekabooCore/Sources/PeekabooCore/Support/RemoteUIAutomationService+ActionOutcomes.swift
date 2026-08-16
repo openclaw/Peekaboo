@@ -4,7 +4,8 @@ import PeekabooAutomationKit
 import PeekabooBridge
 import PeekabooFoundation
 
-extension RemoteUIAutomationService: UIAutomationActionOutcomeProviding {
+extension RemoteUIAutomationService: UIAutomationActionOutcomeProviding,
+UIAutomationGlobalPointerActionResultProviding {
     public func clickWithOutcome(
         target: ClickTarget,
         clickType: ClickType,
@@ -181,6 +182,27 @@ extension RemoteUIAutomationService: UIAutomationActionOutcomeProviding {
         }
         return try await self.remoteAction(snapshotId: request.snapshotId) {
             try await self.client.scrollWithOutcome(request)
+        }
+    }
+
+    public func dragWithOutcome(_ request: DragOperationRequest) async throws -> UIAutomationActionResult<Void> {
+        try await self.remoteAction(snapshotId: nil) {
+            try await self.client.dragWithOutcome(PeekabooBridgeDragRequest(request))
+        }
+    }
+
+    public func moveMouseWithOutcome(
+        to: CGPoint,
+        duration: Int,
+        steps: Int,
+        profile: MouseMovementProfile) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.remoteAction(snapshotId: nil) {
+            try await self.client.moveMouseWithOutcome(
+                to: to,
+                duration: duration,
+                steps: steps,
+                profile: profile)
         }
     }
 

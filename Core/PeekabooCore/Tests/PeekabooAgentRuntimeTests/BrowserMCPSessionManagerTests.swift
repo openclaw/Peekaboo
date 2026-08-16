@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import MCP
+import PeekabooFoundation
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
@@ -29,7 +30,8 @@ struct BrowserMCPSessionManagerTests {
         let browser = Self.browser(pid: 51, generation: 2051)
         let session = Self.session(manager: manager, browsers: [browser])
 
-        let status = try await session.connect(channel: .stable)
+        let result = try await session.connectWithOutcome(channel: .stable)
+        let status = result.payload
 
         #expect(status.isConnected)
         #expect(status.toolCount == 29)
@@ -38,16 +40,78 @@ struct BrowserMCPSessionManagerTests {
         #expect(manager.executedTools == ["list_pages"])
         #expect(manager.addedConfigs.count == 1)
         #expect(manager.addedConfigs[0].autoReconnect == false)
+        #expect(result.outcome?.state == .dispatchedUnverified)
+        #expect(result.outcome?.delivery == .init(mechanism: .browserProtocol, mode: .foreground))
+        #expect(result.outcome?.dispatchState.unitCount == .one)
     }
 
     @Test
-    func `failed connection probe clears unknown MCP child`() async {
+    func `repeated connect confirms no change without another connection dispatch`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.session(manager: manager, browsers: [Self.browser(pid: 52, generation: 2052)])
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+
+        let result = try await session.connectWithOutcome(channel: .stable)
+
+        #expect(result.payload.isConnected)
+        #expect(result.outcome?.state == .confirmedNoChange)
+        #expect(result.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(manager.addedConfigs.count == 1)
+        #expect(manager.executedTools.isEmpty)
+    }
+
+    @Test
+    func `status waits for an in flight connection lifecycle`() async throws {
+        let manager = MockBrowserMCPManager()
+        let barrier = SequenceBarrier()
+        manager.executeHandler = { toolName, _ in
+            if toolName == "list_pages" {
+                await barrier.block()
+            }
+            return ToolResponse.text("ok")
+        }
+        let session = Self.exactSession(manager: manager)
+
+        let connection = Task { @MainActor in
+            try await session.connect(channel: .stable)
+        }
+        await barrier.waitUntilBlocked()
+        let concurrentStatus = Task { @MainActor in
+            await session.status(channel: .stable)
+        }
+        await Task.yield()
+        await Task.yield()
+
+        #expect(manager.executedTools == ["list_pages"])
+        #expect(manager.removeCount == 0)
+        #expect(manager.connected)
+
+        await barrier.release()
+        let connected = try await connection.value
+        let observed = await concurrentStatus.value
+        #expect(connected.isConnected)
+        #expect(observed.isConnected)
+        #expect(observed.connectionReceipt == connected.connectionReceipt)
+        #expect(manager.removeCount == 0)
+    }
+
+    @Test
+    func `failed connection probe reports indeterminate foreground dispatch and clears child`() async {
         let manager = MockBrowserMCPManager()
         manager.executeError = MockBrowserError.probe
         let session = Self.session(manager: manager, browsers: [Self.browser(pid: 61, generation: 3061)])
 
-        await #expect(throws: BrowserMCPConnectionError.self) {
-            _ = try await session.connect(channel: .stable)
+        do {
+            _ = try await session.connectWithOutcome(channel: .stable)
+            Issue.record("Expected the accepted browser connection attempt to fail indeterminately")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.delivery == .init(mechanism: .browserProtocol, mode: .foreground))
+            #expect(failure.outcome.dispatchState.unitCount == .one)
+            #expect(failure.outcome.retrySafety == .unsafe)
+        } catch {
+            Issue.record("Expected a canonical indeterminate connection failure, got \(error)")
         }
         #expect(manager.removeCount == 1)
         #expect(!manager.connected)
@@ -75,7 +139,7 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
-    func `process generation drift refuses before browser tool execution`() async throws {
+    func `unbound process generation drift clears stale connection and preserves error`() async throws {
         let manager = MockBrowserMCPManager()
         let currentGeneration = GenerationBox(5081)
         let browser = Self.browser(pid: 81, generation: 5081)
@@ -89,9 +153,869 @@ struct BrowserMCPSessionManagerTests {
         manager.executedTools.removeAll()
         currentGeneration.set(5082)
 
-        await #expect(throws: BrowserMCPConnectionError.self) {
+        await #expect(throws: BrowserMCPConnectionError.connectionLost(
+            "Chrome PID 81 changed process generation"))
+        {
             _ = try await session.execute(toolName: "take_snapshot", arguments: [:], channel: nil)
         }
+        #expect(manager.executedTools.isEmpty)
+        #expect(manager.removeCount == 1)
+        #expect(!manager.connected)
+        #expect(await (session.status(channel: .stable)).connectionReceipt == nil)
+    }
+
+    @Test
+    func `receipt bound execution returns the exact dispatch connection`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        let connected = try await session.connect(channel: .stable)
+        let receipt = try #require(connected.connectionReceipt)
+        manager.executedTools.removeAll()
+
+        let result = try await session.executeSequence(
+            [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: [:])],
+            channel: nil,
+            expectedConnectionReceipt: receipt)
+
+        #expect(result.connectionReceipt == receipt)
+        #expect(result.completedCallCount == 1)
+        #expect(result.dispatchedCallCount == 1)
+        #expect(result.actionFailure == nil)
+        #expect(manager.executedTools == ["take_snapshot"])
+    }
+
+    @Test
+    func `action result service maps exact connection drift to zero dispatch refusal`() async throws {
+        let manager = MockBrowserMCPManager()
+        let endpoints = EndpointMap()
+        await endpoints.set("browser-a", port: 9222)
+        let session = BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: manager,
+            detectedBrowsers: { _ in [] },
+            processStartIdentity: { _ in nil },
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { url in
+                try await endpoints.resolve(url)
+            },
+            environment: [:])
+        _ = try await session.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        manager.executedTools.removeAll()
+        manager.isConnectedHandler = {
+            await endpoints.set("browser-b", port: 9222)
+            return true
+        }
+        let service = BrowserMCPService(sessionManager: session)
+
+        do {
+            _ = try await service.executeSequenceWithOutcome(
+                [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "71_1"])],
+                channel: nil)
+            Issue.record("Expected exact browser connection drift to be refused")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+            #expect(failure.hint == "Refresh browser status and retry against its new connection receipt.")
+        }
+        #expect(manager.executedTools.isEmpty)
+    }
+
+    @Test
+    func `Browser tool projects receipt binding incompatibility as canonical refusal`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.session(manager: manager, browsers: [Self.browser(pid: 822, generation: 5822)])
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        let service = BrowserMCPService(sessionManager: session)
+
+        let response = try await BrowserTool(client: service, executionPolicy: .unrestricted)
+            .execute(arguments: ToolArguments(raw: [
+                "action": "click",
+                "channel": "stable",
+                "page_id": 7,
+                "uid": "7_1",
+            ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("refused"))
+        #expect(meta["refusal_reason"] == .string("operation_unsupported"))
+        #expect(meta["dispatch_state"] == .string("none"))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(manager.executedTools.isEmpty)
+    }
+
+    @Test
+    func `action result service preserves unrelated connection errors`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        let service = BrowserMCPService(sessionManager: session)
+
+        await #expect(throws: BrowserMCPConnectionError.connectionLost(
+            "the browser action sequence was empty"))
+        {
+            _ = try await service.executeSequenceWithOutcome([], channel: .stable)
+        }
+        #expect(manager.executedTools.isEmpty)
+    }
+}
+
+extension BrowserMCPSessionManagerTests {
+    @Test
+    func `existing receipt policy refuses a disconnected read without connecting or dispatching`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.session(manager: manager, browsers: [Self.browser(pid: 821, generation: 5821)])
+
+        do {
+            _ = try await session.executeSequenceResult(
+                [BrowserMCPMappedCall(toolName: "list_pages", arguments: [:])],
+                channel: .stable,
+                connectionPolicy: .requireExistingLiveReceipt)
+            Issue.record("Expected existing-receipt browser execution to be refused")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+            #expect(failure.message == "Browser execution requires an existing live exact connection receipt.")
+        }
+
+        #expect(manager.addedConfigs.isEmpty)
+        #expect(manager.executedTools.isEmpty)
+        #expect(manager.removeCount == 0)
+    }
+
+    @Test
+    func `existing receipt policy allows a preconnected read without reconnecting`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.session(manager: manager, browsers: [Self.browser(pid: 822, generation: 5822)])
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+
+        let result = try await session.executeSequenceResult(
+            [BrowserMCPMappedCall(toolName: "list_pages", arguments: [:])],
+            channel: .stable,
+            connectionPolicy: .requireExistingLiveReceipt)
+
+        #expect(!result.response.isError)
+        #expect(manager.addedConfigs.count == 1)
+        #expect(manager.executedTools == ["list_pages"])
+        #expect(manager.removeCount == 0)
+    }
+
+    @Test
+    func `existing receipt policy clears a lost child without reconnecting`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.session(manager: manager, browsers: [Self.browser(pid: 824, generation: 5824)])
+        _ = try await session.connect(channel: .stable)
+        manager.connected = false
+        manager.executedTools.removeAll()
+
+        do {
+            _ = try await session.executeSequenceResult(
+                [BrowserMCPMappedCall(toolName: "list_pages", arguments: [:])],
+                channel: .stable,
+                connectionPolicy: .requireExistingLiveReceipt)
+            Issue.record("Expected a lost existing browser connection to be refused")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        }
+
+        #expect(manager.addedConfigs.count == 1)
+        #expect(manager.executedTools.isEmpty)
+        #expect(manager.removeCount == 1)
+    }
+
+    @Test
+    func `action result service omits mutation outcome for successful read sequence`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        let service = BrowserMCPService(sessionManager: session)
+
+        let result = try await service.executeSequenceWithOutcome(
+            [
+                BrowserMCPMappedCall(toolName: "list_pages", arguments: [:]),
+                BrowserMCPMappedCall(toolName: "take_snapshot", arguments: ["pageId": 7]),
+            ],
+            channel: .stable)
+
+        #expect(!result.payload.isError)
+        #expect(result.outcome == nil)
+        #expect(manager.executedTools == ["list_pages", "take_snapshot"])
+        let evidence = try #require(
+            result.payload.meta?.objectValue?[BrowserMCPExecutionEvidence.metadataKey]?.objectValue)
+        #expect(evidence["completed_call_count"] == .int(2))
+        #expect(evidence["dispatched_call_count"] == .int(2))
+        let receipt = try #require(evidence["connection_receipt"]?.objectValue)
+        #expect(receipt["browser_url"] == .string("http://127.0.0.1:9222/"))
+        #expect(receipt["browser_id"] == .string("browser-a"))
+    }
+
+    @Test(arguments: ["list_pages", "take_snapshot"])
+    func `successful existing connection read publishes exact execution evidence`(toolName: String) async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        let service = BrowserMCPService(sessionManager: session)
+        let arguments: [String: Any] = toolName == "take_snapshot" ? ["pageId": 7] : [:]
+
+        let result = try await service.executeSequenceWithOutcome(
+            [BrowserMCPMappedCall(toolName: toolName, arguments: arguments)],
+            channel: .stable)
+
+        #expect(!result.payload.isError)
+        #expect(result.outcome == nil)
+        #expect(manager.executedTools == [toolName])
+        let evidence = try #require(
+            result.payload.meta?.objectValue?[BrowserMCPExecutionEvidence.metadataKey]?.objectValue)
+        #expect(evidence["completed_call_count"] == .int(1))
+        #expect(evidence["dispatched_call_count"] == .int(1))
+        let receipt = try #require(evidence["connection_receipt"]?.objectValue)
+        #expect(receipt["browser_url"] == .string("http://127.0.0.1:9222/"))
+        #expect(receipt["websocket_debugger_url"] ==
+            .string("ws://127.0.0.1:9222/devtools/browser/browser-a"))
+        #expect(receipt["browser_id"] == .string("browser-a"))
+    }
+
+    @Test
+    func `action result service omits mutation outcome for failed read sequence`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        manager.executeHandler = { toolName, _ in
+            toolName == "take_snapshot" ? .error("fixture snapshot failed") : .text("ok")
+        }
+        let service = BrowserMCPService(sessionManager: session)
+
+        let result = try await service.executeSequenceWithOutcome(
+            [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: ["pageId": 7])],
+            channel: .stable)
+
+        #expect(result.payload.isError)
+        #expect(result.outcome == nil)
+        #expect(result.payload.meta?.objectValue?[BrowserMCPExecutionEvidence.metadataKey] == nil)
+        #expect(manager.executedTools == ["take_snapshot"])
+    }
+
+    @Test
+    func `action result service omits mutation outcome for uncertain read transport failure`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        manager.executeHandler = { _, _ in throw MockBrowserError.probe }
+        let service = BrowserMCPService(sessionManager: session)
+
+        let result = try await service.executeSequenceWithOutcome(
+            [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: ["pageId": 7])],
+            channel: .stable)
+
+        #expect(result.payload.isError)
+        #expect(result.outcome == nil)
+        #expect(result.payload.meta?.objectValue?[BrowserMCPExecutionEvidence.metadataKey] == nil)
+        #expect(manager.executedTools == ["take_snapshot"])
+        #expect(!manager.connected)
+    }
+
+    @Test
+    func `action result service retains exact units for mutating sequence`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        let service = BrowserMCPService(sessionManager: session)
+
+        let result = try await service.executeSequenceWithOutcome(
+            [
+                BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "7_1"]),
+                BrowserMCPMappedCall(toolName: "type_text", arguments: ["text": "value"]),
+            ],
+            channel: .stable)
+
+        #expect(result.outcome?.state == .dispatchedUnverified)
+        #expect(result.outcome?.dispatchState.unitCount?.rawValue == 2)
+        #expect(manager.executedTools == ["click", "type_text"])
+    }
+
+    @Test
+    func `action result service auto connects a mutating sequence when allowed`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.session(
+            manager: manager,
+            browsers: [Self.browser(pid: 824, generation: 5824)])
+        let service = BrowserMCPService(sessionManager: session)
+
+        let result = try await service.executeSequenceWithOutcome(
+            [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "7_1"])],
+            channel: .stable,
+            connectionPolicy: .allowAutoConnect)
+
+        #expect(result.outcome?.state == .dispatchedUnverified)
+        #expect(result.outcome?.delivery == .init(mechanism: .browserProtocol, mode: .foreground))
+        #expect(result.outcome?.dispatchState.unitCount?.rawValue == 2)
+        #expect(manager.addedConfigs.count == 1)
+        #expect(manager.executedTools == ["list_pages", "click"])
+        let evidence = try #require(
+            result.payload.meta?.objectValue?[BrowserMCPExecutionEvidence.metadataKey]?.objectValue)
+        #expect(evidence["completed_call_count"] == .int(1))
+        #expect(evidence["dispatched_call_count"] == .int(1))
+    }
+
+    @Test
+    func `action result service exposes implicit foreground connect before a read`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.session(
+            manager: manager,
+            browsers: [Self.browser(pid: 826, generation: 5826)])
+        let service = BrowserMCPService(sessionManager: session)
+
+        let result = try await service.executeSequenceWithOutcome(
+            [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: ["pageId": 7])],
+            channel: .stable,
+            connectionPolicy: .allowAutoConnect)
+
+        #expect(!result.payload.isError)
+        #expect(result.outcome?.state == .dispatchedUnverified)
+        #expect(result.outcome?.delivery == .init(mechanism: .browserProtocol, mode: .foreground))
+        #expect(result.outcome?.dispatchState.unitCount == .one)
+        #expect(manager.executedTools == ["list_pages", "take_snapshot"])
+    }
+
+    @Test
+    func `already connected auto policy reports only the requested background mutation`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        let service = BrowserMCPService(sessionManager: session)
+
+        let result = try await service.executeSequenceWithOutcome(
+            [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "7_1"])],
+            channel: .stable,
+            connectionPolicy: .allowAutoConnect)
+
+        #expect(result.outcome?.state == .dispatchedUnverified)
+        #expect(result.outcome?.delivery == .init(mechanism: .browserProtocol, mode: .background))
+        #expect(result.outcome?.dispatchState.unitCount == .one)
+        #expect(manager.addedConfigs.count == 1)
+        #expect(manager.executedTools == ["click"])
+    }
+
+    @Test
+    func `read failure after implicit connect preserves the foreground setup unit`() async throws {
+        let manager = MockBrowserMCPManager()
+        manager.executeHandler = { toolName, _ in
+            toolName == "take_snapshot" ? .error("fixture read failed") : .text("ok")
+        }
+        let session = Self.session(
+            manager: manager,
+            browsers: [Self.browser(pid: 828, generation: 5828)])
+        let service = BrowserMCPService(sessionManager: session)
+
+        let result = try await service.executeSequenceWithOutcome(
+            [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: ["pageId": 7])],
+            channel: .stable,
+            connectionPolicy: .allowAutoConnect)
+
+        #expect(result.payload.isError)
+        #expect(result.outcome?.state == .indeterminate)
+        #expect(result.outcome?.delivery == .init(mechanism: .browserProtocol, mode: .foreground))
+        #expect(result.outcome?.dispatchState.unitCount == .one)
+        #expect(result.outcome?.retrySafety == .unsafe)
+        #expect(manager.executedTools == ["list_pages", "take_snapshot"])
+    }
+
+    @Test
+    func `cancellation after implicit connect preserves setup and uncertain mutation units`() async throws {
+        let manager = MockBrowserMCPManager()
+        manager.executeHandler = { toolName, _ in
+            if toolName == "click" {
+                throw CancellationError()
+            }
+            return .text("ok")
+        }
+        let session = Self.session(
+            manager: manager,
+            browsers: [Self.browser(pid: 829, generation: 5829)])
+        let service = BrowserMCPService(sessionManager: session)
+
+        let result = try await service.executeSequenceWithOutcome(
+            [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "7_1"])],
+            channel: .stable,
+            connectionPolicy: .allowAutoConnect)
+
+        #expect(result.payload.isError)
+        #expect(result.outcome?.state == .indeterminate)
+        #expect(result.outcome?.delivery == .init(mechanism: .browserProtocol, mode: .foreground))
+        #expect(result.outcome?.dispatchState.unitCount?.rawValue == 2)
+        #expect(result.outcome?.retrySafety == .unsafe)
+        #expect(manager.executedTools == ["list_pages", "click"])
+    }
+
+    @Test
+    func `cancellation after implicit connect but before leaf dispatch preserves only setup`() async throws {
+        let manager = MockBrowserMCPManager()
+        manager.executeHandler = { toolName, _ in
+            if toolName == "list_pages" {
+                withUnsafeCurrentTask { $0?.cancel() }
+            }
+            return .text("ok")
+        }
+        let session = Self.session(
+            manager: manager,
+            browsers: [Self.browser(pid: 830, generation: 5830)])
+        let service = BrowserMCPService(sessionManager: session)
+
+        let result = try await Task { @MainActor in
+            try await service.executeSequenceWithOutcome(
+                [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "7_1"])],
+                channel: .stable,
+                connectionPolicy: .allowAutoConnect)
+        }.value
+
+        #expect(result.payload.isError)
+        #expect(result.outcome?.state == .indeterminate)
+        #expect(result.outcome?.delivery == .init(mechanism: .browserProtocol, mode: .foreground))
+        #expect(result.outcome?.dispatchState.unitCount == .one)
+        #expect(result.outcome?.retrySafety == .unsafe)
+        #expect(manager.executedTools == ["list_pages"])
+    }
+
+    @Test
+    func `auto connected unbound session refuses a repeated mutation`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.session(
+            manager: manager,
+            browsers: [Self.browser(pid: 825, generation: 5825)])
+        let service = BrowserMCPService(sessionManager: session)
+
+        let first = try await service.executeSequenceWithOutcome(
+            [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "7_1"])],
+            channel: .stable,
+            connectionPolicy: .allowAutoConnect)
+        #expect(first.outcome?.state == .dispatchedUnverified)
+        #expect(manager.executedTools == ["list_pages", "click"])
+
+        do {
+            _ = try await service.executeSequenceWithOutcome(
+                [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "7_2"])],
+                channel: .stable,
+                connectionPolicy: .allowAutoConnect)
+            Issue.record("Expected the repeated unbound mutation to be refused")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .operationUnsupported)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        }
+        #expect(manager.executedTools == ["list_pages", "click"])
+    }
+
+    @Test
+    func `mixed successful sequence counts only mutating calls`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        let service = BrowserMCPService(sessionManager: session)
+
+        let result = try await service.executeSequenceWithOutcome(
+            [
+                BrowserMCPMappedCall(toolName: "take_snapshot", arguments: ["pageId": 7]),
+                BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "7_1"]),
+                BrowserMCPMappedCall(toolName: "list_console_messages", arguments: ["pageId": 7]),
+            ],
+            channel: .stable)
+
+        #expect(result.outcome?.state == .dispatchedUnverified)
+        #expect(result.outcome?.dispatchState.unitCount == .one)
+        #expect(manager.executedTools == ["take_snapshot", "click", "list_console_messages"])
+    }
+
+    @Test
+    func `read failure before mutation is a retry safe no-dispatch refusal`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        manager.executeHandler = { toolName, _ in
+            toolName == "take_snapshot" ? .error("fixture read failed") : .text("ok")
+        }
+        let service = BrowserMCPService(sessionManager: session)
+
+        let result = try await service.executeSequenceWithOutcome(
+            [
+                BrowserMCPMappedCall(toolName: "take_snapshot", arguments: ["pageId": 7]),
+                BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "7_1"]),
+            ],
+            channel: .stable)
+
+        #expect(result.payload.isError)
+        #expect(result.outcome?.state == .refused)
+        #expect(result.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(result.outcome?.retrySafety == .safe)
+        #expect(result.outcome?.refusalReason == .targetUnavailable)
+        #expect(manager.executedTools == ["take_snapshot"])
+    }
+
+    @Test
+    func `read then mutate failure projects only uncertain mutation unit`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        manager.executeHandler = { toolName, _ in
+            toolName == "click" ? .error("fixture click failed") : .text("ok")
+        }
+        let service = BrowserMCPService(sessionManager: session)
+
+        let result = try await service.executeSequenceWithOutcome(
+            [
+                BrowserMCPMappedCall(toolName: "take_snapshot", arguments: ["pageId": 7]),
+                BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "7_1"]),
+            ],
+            channel: .stable)
+
+        #expect(result.payload.isError)
+        #expect(result.outcome?.state == .indeterminate)
+        #expect(result.outcome?.dispatchState.unitCount == .one)
+        #expect(manager.executedTools == ["take_snapshot", "click"])
+    }
+
+    @Test
+    func `mutate then read failure preserves only accepted mutation prefix`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        manager.executeHandler = { toolName, _ in
+            toolName == "take_snapshot" ? .error("fixture read failed") : .text("ok")
+        }
+        let service = BrowserMCPService(sessionManager: session)
+
+        let result = try await service.executeSequenceWithOutcome(
+            [
+                BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "7_1"]),
+                BrowserMCPMappedCall(toolName: "take_snapshot", arguments: ["pageId": 7]),
+            ],
+            channel: .stable)
+
+        #expect(result.payload.isError)
+        #expect(result.outcome?.state == .partial)
+        #expect(result.outcome?.dispatchState.unitCount == .one)
+        #expect(result.outcome?.retrySafety == .unsafe)
+        #expect(manager.executedTools == ["click", "take_snapshot"])
+    }
+
+    @Test
+    func `auto connect receipt incompatible session allows read outcome path`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.session(manager: manager, browsers: [Self.browser(pid: 823, generation: 5823)])
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        let service = BrowserMCPService(sessionManager: session)
+
+        let result = try await service.executeSequenceWithOutcome(
+            [BrowserMCPMappedCall(toolName: "list_pages", arguments: [:])],
+            channel: .stable)
+
+        #expect(!result.payload.isError)
+        #expect(result.outcome == nil)
+        let evidence = try #require(
+            result.payload.meta?.objectValue?[BrowserMCPExecutionEvidence.metadataKey]?.objectValue)
+        #expect(evidence["completed_call_count"] == .int(1))
+        #expect(evidence["dispatched_call_count"] == .int(1))
+        #expect(manager.executedTools == ["list_pages"])
+    }
+
+    @Test
+    func `isolated receipt incompatible session allows raw snapshot read`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: manager,
+            detectedBrowsers: { _ in [] },
+            processStartIdentity: { _ in nil },
+            endpointResolver: Self.endpointResolver(),
+            environment: ["PEEKABOO_BROWSER_MCP_ISOLATED": "1"])
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        let service = BrowserMCPService(sessionManager: session)
+
+        let response = try await BrowserTool(client: service, executionPolicy: .unrestricted)
+            .execute(arguments: ToolArguments(raw: [
+                "action": "call",
+                "mcp_tool": "take_snapshot",
+                "page_id": 7,
+            ]))
+
+        #expect(!response.isError)
+        let evidence = try #require(
+            response.meta?.objectValue?[BrowserMCPExecutionEvidence.metadataKey]?.objectValue)
+        #expect(evidence["completed_call_count"] == .int(1))
+        #expect(evidence["dispatched_call_count"] == .int(1))
+        #expect(evidence["connection_receipt"]?.objectValue?["channel"] == .string("stable"))
+        #expect(MCPToolResponseMetadataProjector.actionOutcomeKeys.allSatisfy {
+            response.meta?.objectValue?[$0] == nil
+        })
+        #expect(manager.executedTools == ["take_snapshot"])
+    }
+
+    @Test
+    func `raw list pages read publishes execution evidence without mutation metadata`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.session(manager: manager, browsers: [Self.browser(pid: 824, generation: 5824)])
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        let service = BrowserMCPService(sessionManager: session)
+
+        let response = try await BrowserTool(client: service, executionPolicy: .unrestricted)
+            .execute(arguments: ToolArguments(raw: [
+                "action": "call",
+                "mcp_tool": "list_pages",
+            ]))
+
+        #expect(!response.isError)
+        let evidence = try #require(
+            response.meta?.objectValue?[BrowserMCPExecutionEvidence.metadataKey]?.objectValue)
+        #expect(evidence["completed_call_count"] == .int(1))
+        #expect(evidence["dispatched_call_count"] == .int(1))
+        #expect(evidence["connection_receipt"]?.objectValue?["pid"] == .int(824))
+        #expect(MCPToolResponseMetadataProjector.actionOutcomeKeys.allSatisfy {
+            response.meta?.objectValue?[$0] == nil
+        })
+        #expect(manager.executedTools == ["list_pages"])
+    }
+
+    @Test
+    func `action result cancellation while waiting for execution gate is retry safe`() async throws {
+        let manager = MockBrowserMCPManager()
+        let barrier = SequenceBarrier()
+        manager.executeHandler = { toolName, _ in
+            if toolName == "take_snapshot" {
+                await barrier.block()
+            }
+            return ToolResponse.text("ok")
+        }
+        let session = Self.exactSession(manager: manager)
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        let service = BrowserMCPService(sessionManager: session)
+        let occupyingExecution = Task { @MainActor in
+            try await session.executeSequence(
+                [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: [:])],
+                channel: .stable)
+        }
+        await barrier.waitUntilBlocked()
+
+        let waitingExecution = Task { @MainActor () -> DesktopActionFailure? in
+            do {
+                _ = try await service.executeSequenceWithOutcome(
+                    [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "81_1"])],
+                    channel: .stable)
+                Issue.record("Expected gate-waiting browser execution to be cancelled")
+                return nil
+            } catch let failure as DesktopActionFailure {
+                return failure
+            } catch {
+                Issue.record("Expected canonical cancellation failure, got \(error)")
+                return nil
+            }
+        }
+        await Task.yield()
+        await Task.yield()
+        waitingExecution.cancel()
+        let failure = try #require(await waitingExecution.value)
+
+        #expect(failure.outcome.state == .refused)
+        #expect(failure.outcome.refusalReason == .requestCancelled)
+        #expect(failure.outcome.escalation == .none)
+        #expect(failure.outcome.dispatchState == .none)
+        #expect(failure.outcome.retrySafety == .safe)
+        #expect(manager.executedTools == ["take_snapshot"])
+
+        await barrier.release()
+        _ = try await occupyingExecution.value
+    }
+
+    @Test
+    func `action result cancellation during endpoint status probe is retry safe`() async throws {
+        let manager = MockBrowserMCPManager()
+        let endpoints = EndpointMap()
+        await endpoints.set("browser-a", port: 9222)
+        let session = BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: manager,
+            detectedBrowsers: { _ in [] },
+            processStartIdentity: { _ in nil },
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { url in
+                try await endpoints.resolve(url)
+            },
+            environment: [:])
+        _ = try await session.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        manager.executedTools.removeAll()
+        await endpoints.cancelResolution()
+        let service = BrowserMCPService(sessionManager: session)
+
+        do {
+            _ = try await service.executeSequenceWithOutcome(
+                [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "7_1"])],
+                channel: nil)
+            Issue.record("Expected endpoint-probe cancellation to be refused")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .requestCancelled)
+            #expect(failure.outcome.escalation == .none)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        }
+        #expect(manager.executedTools.isEmpty)
+        #expect(manager.removeCount == 0)
+    }
+
+    @Test
+    func `ordinary disconnected action result remains target unavailable`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        let service = BrowserMCPService(sessionManager: session)
+
+        do {
+            _ = try await service.executeSequenceWithOutcome(
+                [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "7_1"])],
+                channel: .stable)
+            Issue.record("Expected disconnected browser execution to be refused")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        }
+        #expect(manager.executedTools.isEmpty)
+    }
+}
+
+extension BrowserMCPSessionManagerTests {
+    @Test
+    func `channel auto connect refuses receipt bound execution before dispatch`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.session(manager: manager, browsers: [Self.browser(pid: 821, generation: 5821)])
+        let receipt = try #require(try await (session.connect(channel: .stable)).connectionReceipt)
+        manager.executedTools.removeAll()
+
+        await #expect(throws: BrowserMCPConnectionError.receiptBindingUnsupported) {
+            _ = try await session.executeSequence(
+                [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "821_1"])],
+                channel: .stable,
+                expectedConnectionReceipt: receipt)
+        }
+
+        #expect(manager.executedTools.isEmpty)
+        let legacy = try await session.execute(
+            toolName: "click",
+            arguments: ["uid": "821_1"],
+            channel: .stable)
+        #expect(!legacy.isError)
+        #expect(manager.executedTools == ["click"])
+    }
+
+    @Test
+    func `environment browser URL resolves one exact endpoint receipt and config`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: manager,
+            detectedBrowsers: { _ in [] },
+            processStartIdentity: { _ in nil },
+            endpointResolver: Self.endpointResolver(),
+            environment: ["PEEKABOO_BROWSER_MCP_BROWSER_URL": "http://127.0.0.1:9222"])
+
+        let status = try await session.connect(channel: .stable)
+
+        #expect(status.connectionReceipt?.browserURL == "http://127.0.0.1:9222/")
+        #expect(status.connectionReceipt?.processIdentifier == nil)
+        #expect(manager.addedConfigs[0].args.contains(
+            "--wsEndpoint=ws://127.0.0.1:9222/devtools/browser/browser-a"))
+        #expect(!manager.addedConfigs[0].args.contains("--browserUrl=http://127.0.0.1:9222"))
+        #expect(!manager.addedConfigs[0].args.contains("--auto-connect"))
+    }
+
+    @Test
+    func `isolated browser remains legacy only and cannot mint an exact receipt`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: manager,
+            detectedBrowsers: { _ in [] },
+            processStartIdentity: { _ in nil },
+            endpointResolver: Self.endpointResolver(),
+            environment: ["PEEKABOO_BROWSER_MCP_ISOLATED": "1"])
+        let receipt = try #require(try await (session.connect(channel: .stable)).connectionReceipt)
+        #expect(receipt.processIdentifier == nil)
+        #expect(receipt.browserURL == nil)
+        #expect(manager.addedConfigs[0].args.contains("--isolated"))
+        manager.executedTools.removeAll()
+
+        await #expect(throws: BrowserMCPConnectionError.receiptBindingUnsupported) {
+            _ = try await session.executeSequence(
+                [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "1_1"])],
+                channel: .stable,
+                expectedConnectionReceipt: receipt)
+        }
+        #expect(manager.executedTools.isEmpty)
+        let legacy = try await session.execute(
+            toolName: "click",
+            arguments: ["uid": "1_1"],
+            channel: .stable)
+        #expect(!legacy.isError)
+        #expect(manager.executedTools == ["click"])
+    }
+
+    @Test
+    func `concurrent reconnect refuses an old receipt before read-only dispatch`() async throws {
+        let manager = MockBrowserMCPManager()
+        let stable = Self.browser(pid: 83, generation: 5083)
+        let canary = DetectedBrowser(
+            name: "Google Chrome Canary",
+            bundleIdentifier: "com.google.Chrome.canary",
+            processIdentifier: 84,
+            processStartIdentity: 5084,
+            version: "151.0",
+            channel: .canary)
+        let browsers = BrowserListBox([stable])
+        let generations: [Int32: UInt64] = [83: 5083, 84: 5084]
+        let session = BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: manager,
+            detectedBrowsers: { channel in
+                browsers.get(channel: channel)
+            },
+            processStartIdentity: { generations[$0] },
+            endpointResolver: Self.endpointResolver())
+        let connected = try await session.connect(channel: .stable)
+        let original = try #require(connected.connectionReceipt)
+        await session.disconnect()
+        browsers.set([canary])
+        _ = try await session.connect(channel: .canary)
+        manager.executedTools.removeAll()
+
+        await #expect(throws: BrowserMCPConnectionError.expectedConnectionReceiptMismatch) {
+            _ = try await session.executeSequence(
+                [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: [:])],
+                channel: nil,
+                expectedConnectionReceipt: original)
+        }
+
         #expect(manager.executedTools.isEmpty)
     }
 
@@ -121,7 +1045,7 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
-    func `endpoint identity replacement refuses before execution`() async throws {
+    func `unbound endpoint identity replacement clears stale connection and preserves error`() async throws {
         let manager = MockBrowserMCPManager()
         let endpoints = EndpointMap()
         await endpoints.set("browser-a", port: 9222)
@@ -137,10 +1061,77 @@ struct BrowserMCPSessionManagerTests {
         manager.executedTools.removeAll()
         await endpoints.set("browser-b", port: 9222)
 
-        await #expect(throws: BrowserMCPConnectionError.self) {
+        await #expect(throws: BrowserMCPConnectionError.connectionLost(
+            "the DevTools browser endpoint changed identity"))
+        {
             _ = try await session.execute(toolName: "take_snapshot", arguments: [:], channel: nil)
         }
         #expect(manager.executedTools.isEmpty)
+        #expect(manager.removeCount == 1)
+        #expect(!manager.connected)
+        #expect(await (session.status(channel: nil)).connectionReceipt == nil)
+    }
+
+    @Test
+    func `receipt bound endpoint drift refuses before tool dispatch`() async throws {
+        let manager = MockBrowserMCPManager()
+        let endpoints = EndpointMap()
+        await endpoints.set("browser-a", port: 9222)
+        let session = BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: manager,
+            detectedBrowsers: { _ in [] },
+            processStartIdentity: { _ in nil },
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { url in
+                try await endpoints.resolve(url)
+            })
+        let status = try await session.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        let receipt = try #require(status.connectionReceipt)
+        manager.executedTools.removeAll()
+        await endpoints.set("browser-b", port: 9222)
+
+        await #expect(throws: BrowserMCPConnectionError.expectedConnectionReceiptMismatch) {
+            _ = try await session.executeSequence(
+                [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: [:])],
+                channel: nil,
+                expectedConnectionReceipt: receipt)
+        }
+        #expect(manager.executedTools.isEmpty)
+    }
+
+    @Test
+    func `receipt bound endpoint validation preserves cancellation before dispatch`() async throws {
+        let manager = MockBrowserMCPManager()
+        let endpoints = EndpointMap()
+        await endpoints.set("browser-a", port: 9222)
+        let session = BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: manager,
+            detectedBrowsers: { _ in [] },
+            processStartIdentity: { _ in nil },
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { url in
+                try await endpoints.resolve(url)
+            })
+        let status = try await session.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        let receipt = try #require(status.connectionReceipt)
+        manager.executedTools.removeAll()
+        await endpoints.cancelResolution()
+
+        do {
+            _ = try await session.executeSequence(
+                [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: [:])],
+                channel: nil,
+                expectedConnectionReceipt: receipt)
+            Issue.record("Expected a typed pre-dispatch cancellation")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .requestCancelled)
+            #expect(failure.outcome.dispatchState == .none)
+        }
+        #expect(manager.executedTools.isEmpty)
+        #expect(manager.removeCount == 1)
+        #expect(!manager.connected)
+        #expect(await (session.status(channel: nil)).connectionReceipt == nil)
     }
 
     @Test
@@ -175,6 +1166,107 @@ struct BrowserMCPSessionManagerTests {
         _ = try await sequence.value
         _ = try await contender.value
         #expect(manager.executedTools == ["click", "type_text", "hover"])
+    }
+
+    @Test
+    func `second tool error returns exact completed indeterminate progress`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        let receipt = try #require(try await (session.connect(channel: .stable)).connectionReceipt)
+        manager.executedTools.removeAll()
+        manager.executeHandler = { toolName, _ in
+            toolName == "type_text" ? .error("fixture rejected input") : .text("ok")
+        }
+
+        let result = try await session.executeSequence(
+            [
+                BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "92_1"]),
+                BrowserMCPMappedCall(toolName: "type_text", arguments: ["text": "value"]),
+                BrowserMCPMappedCall(toolName: "hover", arguments: ["uid": "92_2"]),
+            ],
+            channel: nil,
+            expectedConnectionReceipt: receipt)
+
+        #expect(manager.executedTools == ["click", "type_text"])
+        #expect(result.completedCallCount == 2)
+        #expect(result.dispatchedCallCount == 2)
+        #expect(result.actionFailure?.outcome.state == .indeterminate)
+        #expect(result.actionFailure?.outcome.dispatchState.unitCount?.rawValue == 2)
+        #expect(result.actionFailure?.outcome.retrySafety == .unsafe)
+    }
+
+    @Test
+    func `second pre dispatch failure returns exact completed partial progress`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        let receipt = try #require(try await (session.connect(channel: .stable)).connectionReceipt)
+        manager.executedTools.removeAll()
+
+        let result = try await session.executeSequence(
+            [
+                BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "93_1"]),
+                BrowserMCPMappedCall(toolName: "upload_file", arguments: ["filePath": "relative.txt"]),
+            ],
+            channel: nil,
+            expectedConnectionReceipt: receipt)
+
+        #expect(manager.executedTools == ["click"])
+        #expect(result.completedCallCount == 1)
+        #expect(result.dispatchedCallCount == 1)
+        #expect(result.actionFailure?.outcome.state == .partial)
+        #expect(result.actionFailure?.outcome.dispatchState.unitCount == .one)
+    }
+
+    @Test
+    func `second in flight failure distinguishes completed from dispatched progress`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        let receipt = try #require(try await (session.connect(channel: .stable)).connectionReceipt)
+        manager.executedTools.removeAll()
+        manager.executeHandler = { toolName, _ in
+            if toolName == "type_text" {
+                throw MockBrowserError.probe
+            }
+            return .text("ok")
+        }
+
+        let result = try await session.executeSequence(
+            [
+                BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "94_1"]),
+                BrowserMCPMappedCall(toolName: "type_text", arguments: ["text": "value"]),
+            ],
+            channel: nil,
+            expectedConnectionReceipt: receipt)
+
+        #expect(manager.executedTools == ["click", "type_text"])
+        #expect(result.completedCallCount == 1)
+        #expect(result.dispatchedCallCount == 2)
+        #expect(result.actionFailure?.outcome.state == .indeterminate)
+        #expect(result.actionFailure?.outcome.dispatchState.unitCount?.rawValue == 2)
+    }
+
+    @Test
+    func `first pre dispatch upload failure stays typed retry safe and dispatch free`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        let receipt = try #require(try await (session.connect(channel: .stable)).connectionReceipt)
+        manager.executedTools.removeAll()
+
+        do {
+            _ = try await session.executeSequence(
+                [BrowserMCPMappedCall(toolName: "upload_file", arguments: ["filePath": "relative.txt"])],
+                channel: .stable,
+                expectedConnectionReceipt: receipt)
+            Issue.record("Expected a typed pre-dispatch upload refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .invalidRequest)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        }
+        #expect(manager.executedTools.isEmpty)
+        #expect(manager.connected)
+        #expect(await (session.status(channel: .stable)).isConnected)
     }
 
     @Test
@@ -271,6 +1363,11 @@ struct BrowserMCPSessionManagerTests {
             channel: .stable)
 
         #expect(response.isError)
+        guard case let .text(text, _, _) = response.content.first else {
+            Issue.record("Expected the MCP tool error response to remain unchanged")
+            return
+        }
+        #expect(text == "fixture rejected upload")
         #expect(try FileManager.default.fileExists(atPath: #require(stagedPath)))
         #expect(FileManager.default.fileExists(atPath: advertisedRoot))
         #expect(manager.connected)
@@ -318,8 +1415,13 @@ struct BrowserMCPSessionManagerTests {
         #expect(stagedFileExistedWhenChildRemoved)
         #expect(!FileManager.default.fileExists(atPath: actualStagedPath))
         await barrier.release()
-        await #expect(throws: CancellationError.self) {
+        do {
             _ = try await upload.value
+            Issue.record("Expected an indeterminate cancellation failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.dispatchState.unitCount == .one)
+            #expect(failure.outcome.retrySafety == .unsafe)
         }
     }
 
@@ -359,7 +1461,22 @@ struct BrowserMCPSessionManagerTests {
             },
             processStartIdentity: { generations[$0] },
             endpointResolver: self.endpointResolver(),
-            uploadStager: uploadStager)
+            uploadStager: uploadStager,
+            environment: [:])
+    }
+
+    private static func exactSession(
+        manager: MockBrowserMCPManager,
+        uploadStager: BrowserMCPUploadStager = .live) -> BrowserMCPSessionManager
+    {
+        BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: manager,
+            detectedBrowsers: { _ in [] },
+            processStartIdentity: { _ in nil },
+            endpointResolver: self.endpointResolver(),
+            uploadStager: uploadStager,
+            environment: ["PEEKABOO_BROWSER_MCP_BROWSER_URL": "http://127.0.0.1:9222"])
     }
 
     private static func browser(pid: Int32, generation: UInt64) -> DetectedBrowser {
@@ -413,6 +1530,7 @@ private final class MockBrowserMCPManager: BrowserMCPManaging {
     var removeCount = 0
     var executeError: (any Error)?
     var executeHandler: (@MainActor (String, [String: Any]) async throws -> ToolResponse)?
+    var isConnectedHandler: (@MainActor () async -> Bool)?
     var removeHandler: (@MainActor () async -> Void)?
 
     func hasServer(name _: String) -> Bool {
@@ -420,7 +1538,10 @@ private final class MockBrowserMCPManager: BrowserMCPManaging {
     }
 
     func isServerConnected(name _: String) async -> Bool {
-        self.connected
+        if let isConnectedHandler {
+            return await isConnectedHandler()
+        }
+        return self.connected
     }
 
     func serverToolCount(name _: String) async -> Int {
@@ -478,14 +1599,43 @@ private final class GenerationBox: @unchecked Sendable {
     }
 }
 
+private final class BrowserListBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var browsers: [DetectedBrowser]
+
+    init(_ browsers: [DetectedBrowser]) {
+        self.browsers = browsers
+    }
+
+    func get(channel: BrowserMCPChannel?) -> [DetectedBrowser] {
+        self.lock.withLock {
+            self.browsers.filter { channel == nil || $0.channel == channel }
+        }
+    }
+
+    func set(_ browsers: [DetectedBrowser]) {
+        self.lock.withLock {
+            self.browsers = browsers
+        }
+    }
+}
+
 private actor EndpointMap {
     private var endpoints: [Int: String] = [:]
+    private var shouldCancelResolution = false
 
     func set(_ browserID: String, port: Int) {
         self.endpoints[port] = browserID
     }
 
+    func cancelResolution() {
+        self.shouldCancelResolution = true
+    }
+
     func resolve(_ url: String) throws -> BrowserMCPDevToolsEndpoint {
+        if self.shouldCancelResolution {
+            throw CancellationError()
+        }
         guard let port = URL(string: url)?.port,
               let browserID = self.endpoints[port]
         else {

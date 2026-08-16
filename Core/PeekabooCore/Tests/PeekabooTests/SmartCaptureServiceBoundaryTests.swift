@@ -91,11 +91,12 @@ struct SmartCaptureServiceBoundaryTests {
 
         #expect(refreshed.changed)
         #expect(capture.captureScreenCount == 3)
+        #expect(capture.capturedScreenVisualizerModes == [.none, .none, .none])
         #expect(appResolver.frontmostCallCount == 5)
     }
 
     @Test
-    func `Region capture forwards silent mode to region and context captures`() async throws {
+    func `Region and post-action capture defaults stay silent`() async throws {
         let capture = StubSmartScreenCaptureService()
         let service = SmartCaptureService(
             captureService: capture,
@@ -104,11 +105,13 @@ struct SmartCaptureServiceBoundaryTests {
 
         _ = try await service.captureAroundPoint(
             CGPoint(x: 50, y: 50),
-            radius: 20,
-            visualizerMode: .none)
+            radius: 20)
+        _ = try await service.captureAfterAction(
+            toolName: "click",
+            targetPoint: CGPoint(x: 50, y: 50))
 
-        #expect(capture.capturedAreaVisualizerModes == [.none])
-        #expect(capture.capturedScreenVisualizerModes == [.none])
+        #expect(capture.capturedAreaVisualizerModes == [.none, .none])
+        #expect(capture.capturedScreenVisualizerModes == [.none, .none])
     }
 }
 

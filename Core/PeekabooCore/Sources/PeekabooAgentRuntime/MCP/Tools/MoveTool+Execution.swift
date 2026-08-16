@@ -57,46 +57,81 @@ extension MoveTool {
     }
 
     @MainActor
-    func focusTargetIfNeeded(_ target: ResolvedMoveTarget) async throws {
-        if let windowID = target.windowID {
-            try await self.context.windows.focusWindow(target: .windowId(windowID))
+    func focusTargetIfNeeded(_ target: ResolvedMoveTarget) async throws -> MCPInteractionFocusResult? {
+        let interactionTarget: MCPInteractionTarget? = if let windowID = target.windowID {
+            try MCPInteractionTarget(
+                app: nil,
+                pid: nil,
+                windowTitle: nil,
+                windowIndex: nil,
+                windowId: windowID)
         } else if let appName = target.targetApp, let windowTitle = target.windowTitle {
-            try await self.context.windows.focusWindow(target: .applicationAndTitle(app: appName, title: windowTitle))
+            try MCPInteractionTarget(
+                app: appName,
+                pid: nil,
+                windowTitle: windowTitle,
+                windowIndex: nil,
+                windowId: nil)
         } else if let appName = target.targetApp {
-            try await self.context.windows.focusWindow(target: .application(appName))
+            try MCPInteractionTarget(
+                app: appName,
+                pid: nil,
+                windowTitle: nil,
+                windowIndex: nil,
+                windowId: nil)
+        } else {
+            nil
         }
+        guard let interactionTarget else { return nil }
+        return try await interactionTarget.focusResultIfRequested(
+            windows: self.context.windows,
+            onlyWhenTargeted: true)
     }
 
-    func performMovement(to location: CGPoint, request: MoveRequest) async throws -> MovementExecution {
+    @MainActor
+    func performMovement(
+        to location: CGPoint,
+        request: MoveRequest,
+        setupFocus: MCPInteractionFocusResult?) async throws -> MovementExecution
+    {
         let automation = self.context.automation
-        let currentLocation = await automation.currentMouseLocation() ?? .zero
+        let currentLocation = automation.currentMouseLocation() ?? .zero
         let distance = hypot(location.x - currentLocation.x, location.y - currentLocation.y)
         let movement = self.resolveMovementParameters(for: request, distance: distance)
 
-        if movement.smooth {
-            try await automation.moveMouse(
+        let pointerAction: UIAutomationActionResult<Void> = if movement.smooth {
+            try await MCPGlobalPointerActionResult.move(
+                automation: automation,
                 to: location,
                 duration: movement.duration,
                 steps: movement.steps,
                 profile: movement.profile)
         } else {
-            try await automation.moveMouse(
+            try await MCPGlobalPointerActionResult.move(
+                automation: automation,
                 to: location,
                 duration: 0,
                 steps: 1,
                 profile: movement.profile)
         }
+        let actionResult = try MCPGlobalPointerActionResult.compose(
+            setupFocus: setupFocus,
+            pointerAction: pointerAction,
+            operation: "Cursor move",
+            route: MCPGlobalPointerActionResult.route(for: self.context))
         return MovementExecution(
             parameters: movement,
             startPoint: currentLocation,
             distance: distance,
-            direction: pointerDirection(from: currentLocation, to: location))
+            direction: pointerDirection(from: currentLocation, to: location),
+            actionResult: actionResult)
     }
 
     func buildResponse(
         target: ResolvedMoveTarget,
         movement: MovementExecution,
-        executionTime: TimeInterval) -> ToolResponse
+        executionTime: TimeInterval,
+        invalidatedSnapshotID: String?) throws -> ToolResponse
     {
         var message = "\(AgentDisplayTokens.Status.success) Moved mouse cursor to \(target.description)"
         message += " using \(movement.parameters.profileName) profile"
@@ -126,6 +161,9 @@ extension MoveTool {
         if let direction = movement.direction {
             metaDict["direction"] = .string(direction)
         }
+        if let invalidatedSnapshotID {
+            metaDict["invalidated_snapshot"] = .string(invalidatedSnapshotID)
+        }
 
         let summary = ToolEventSummary(
             targetApp: target.targetApp,
@@ -142,7 +180,10 @@ extension MoveTool {
             pointerDurationMs: Double(movement.parameters.duration),
             notes: target.description)
 
-        let metaValue = ToolEventSummary.merge(summary: summary, into: .object(metaDict))
+        let meta = try MCPToolResponseMetadataProjector.metadata(
+            merging: metaDict,
+            outcome: movement.actionResult.outcome)
+        let metaValue = ToolEventSummary.merge(summary: summary, into: meta)
 
         return ToolResponse(
             content: [.text(text: message, annotations: nil, _meta: nil)],

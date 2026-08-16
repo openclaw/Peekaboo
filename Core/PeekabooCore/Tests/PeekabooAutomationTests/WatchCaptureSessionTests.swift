@@ -754,27 +754,41 @@ struct WatchCaptureSessionTests {
         let png = Self.makePNG(size: CGSize(width: 20, height: 20))
         let capture = StubScreenCaptureService(result: png, size: CGSize(width: 20, height: 20))
         let screens = StubScreenService()
+        let bounds = CGRect(x: 10, y: 20, width: 600, height: 400)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 111,
+            ownerProcessStartIdentity: 222,
+            capturedBounds: bounds)
+        var validationCount = 0
         let provider = WatchCaptureFrameProvider(
             screenCapture: capture,
             frameSource: nil,
             scope: CaptureScope(
                 kind: .window,
                 windowId: 42,
+                windowMutationIdentity: identity,
                 applicationIdentifier: "TextEdit",
                 windowIndex: 3),
             options: Self.defaultWatchOptions(),
-            regionValidator: WatchCaptureRegionValidator(screenService: screens))
+            regionValidator: WatchCaptureRegionValidator(screenService: screens),
+            windowIdentityValidator: { candidate in
+                validationCount += 1
+                return candidate == identity
+            })
 
+        _ = try await provider.captureFrame()
         _ = try await provider.captureFrame()
 
         #expect(capture.capturedWindowID == 42)
         #expect(capture.capturedAppIdentifier == nil)
         #expect(capture.capturedWindowIndex == nil)
+        #expect(validationCount == 4)
     }
 
     @Test
     @MainActor
-    func `Frame provider falls back to app window index without stable id`() async throws {
+    func `Frame provider rejects app window fallback without exact identity`() async throws {
         let png = Self.makePNG(size: CGSize(width: 20, height: 20))
         let capture = StubScreenCaptureService(result: png, size: CGSize(width: 20, height: 20))
         let screens = StubScreenService()
@@ -788,11 +802,42 @@ struct WatchCaptureSessionTests {
             options: Self.defaultWatchOptions(),
             regionValidator: WatchCaptureRegionValidator(screenService: screens))
 
-        _ = try await provider.captureFrame()
+        await #expect(throws: PeekabooError.self) {
+            _ = try await provider.captureFrame()
+        }
 
         #expect(capture.capturedWindowID == nil)
-        #expect(capture.capturedAppIdentifier == "TextEdit")
-        #expect(capture.capturedWindowIndex == 3)
+        #expect(capture.capturedAppIdentifier == nil)
+        #expect(capture.capturedWindowIndex == nil)
+    }
+
+    @Test
+    @MainActor
+    func `Frame provider rejects identity drift after exact capture`() async throws {
+        let png = Self.makePNG(size: CGSize(width: 20, height: 20))
+        let capture = StubScreenCaptureService(result: png, size: CGSize(width: 20, height: 20))
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 111,
+            ownerProcessStartIdentity: 222,
+            capturedBounds: CGRect(x: 10, y: 20, width: 600, height: 400))
+        var validations = [true, false]
+        let provider = WatchCaptureFrameProvider(
+            screenCapture: capture,
+            frameSource: nil,
+            scope: CaptureScope(
+                kind: .window,
+                windowId: 42,
+                windowMutationIdentity: identity),
+            options: Self.defaultWatchOptions(),
+            regionValidator: WatchCaptureRegionValidator(screenService: StubScreenService()),
+            windowIdentityValidator: { _ in validations.removeFirst() })
+
+        await #expect(throws: PeekabooError.self) {
+            _ = try await provider.captureFrame()
+        }
+        #expect(capture.capturedWindowID == 42)
+        #expect(validations.isEmpty)
     }
 
     @Test

@@ -7,6 +7,7 @@ import TachikomaMCP
 extension DialogTool {
     struct ActionResultContext {
         let verb: String
+        let expectedAction: DialogActionType
         let notes: String?
         let windowTitle: String?
         let appHint: String?
@@ -16,8 +17,14 @@ extension DialogTool {
         context: ActionResultContext,
         result: DialogActionResult,
         outcome: DesktopActionOutcome,
-        startTime: Date) -> ToolResponse
+        targetIdentity: DesktopTargetIdentity?,
+        startTime: Date) throws -> ToolResponse
     {
+        try Self.requireSuccessfulActionResult(
+            result,
+            outcome: outcome,
+            operation: "Dialog \(context.verb.lowercased())",
+            expectedAction: context.expectedAction)
         let executionTime = Date().timeIntervalSince(startTime)
         let prefix = if outcome.effect == .unverifiable {
             AgentDisplayTokens.Status.warning
@@ -35,8 +42,12 @@ extension DialogTool {
             "execution_time": .double(executionTime),
             "details": .object(result.details.mapValues { .string($0) }),
         ]
-        let meta = try? MCPToolResponseMetadataProjector.metadata(
-            merging: baseMeta,
+        var targetFields = try MCPDesktopTargetMetadataProjector.fields(targetIdentity)
+        if let targetReceipt = result.targetReceipt {
+            targetFields["target_receipt"] = try Value(targetReceipt)
+        }
+        let meta = try MCPToolResponseMetadataProjector.metadata(
+            merging: baseMeta.merging(targetFields) { _, target in target },
             outcome: outcome)
 
         let summary = ToolEventSummary(
@@ -50,11 +61,76 @@ extension DialogTool {
             meta: ToolEventSummary.merge(summary: summary, into: meta))
     }
 
+    static func requireSuccessfulActionResult(
+        _ result: DialogActionResult,
+        outcome: DesktopActionOutcome,
+        operation: String,
+        expectedAction: DialogActionType) throws
+    {
+        if !result.success {
+            guard result.outcome != nil else {
+                throw DesktopActionFailure.indeterminate(
+                    route: outcome.route,
+                    evidence: .completionUnknown,
+                    message: "\(operation) returned unsuccessful without a canonical outcome.",
+                    hint: "Observe the dialog before retrying and update the execution provider.")
+                    .attributed(to: result.targetReceipt)
+            }
+            if let failure = DesktopActionFailure(
+                outcome: outcome,
+                message: "\(operation) did not complete successfully.",
+                hint: "Follow the canonical outcome metadata before retrying.",
+                targetReceipt: result.targetReceipt)
+            {
+                throw failure
+            }
+            throw DesktopActionFailure.indeterminate(
+                route: outcome.route,
+                delivery: outcome.delivery,
+                evidence: .completionUnknown,
+                unitCount: outcome.dispatchState.unitCount,
+                message: "\(operation) contradicted its confirmed outcome.",
+                hint: "Observe the dialog before retrying and update the execution provider.")
+                .attributed(to: result.targetReceipt)
+        }
+
+        if !outcome.isAccepted(by: .confirmedOrDispatched) {
+            guard let failure = DesktopActionFailure(
+                outcome: outcome,
+                message: "\(operation) did not return a successful outcome.",
+                hint: "Follow the canonical outcome metadata before retrying.",
+                targetReceipt: result.targetReceipt)
+            else {
+                throw DesktopActionFailure.indeterminate(
+                    route: outcome.route,
+                    delivery: outcome.delivery,
+                    evidence: .completionUnknown,
+                    unitCount: outcome.dispatchState.unitCount,
+                    message: "\(operation) returned contradictory failure metadata.",
+                    hint: "Observe the dialog before retrying and update the execution provider.")
+                    .attributed(to: result.targetReceipt)
+            }
+            throw failure
+        }
+        guard result.action == expectedAction else {
+            throw DesktopActionFailure.indeterminate(
+                route: outcome.route,
+                delivery: outcome.delivery,
+                evidence: .completionUnknown,
+                unitCount: outcome.dispatchState.unitCount,
+                message: "\(operation) returned action \(result.action.rawValue) instead of " +
+                    "\(expectedAction.rawValue).",
+                hint: "Observe the dialog before retrying and update the execution provider.")
+                .attributed(to: result.targetReceipt)
+        }
+    }
+
     func formatList(
         elements: DialogElements,
         executionTime: TimeInterval,
         windowTitle: String?,
-        appHint: String?) -> ToolResponse
+        appHint: String?,
+        targetIdentity: DesktopTargetIdentity?) throws -> ToolResponse
     {
         let dialogTitle = elements.dialogInfo.title
         let buttonTitles = elements.buttons.map(\.title)
@@ -71,14 +147,15 @@ extension DialogTool {
             "(buttons=\(buttonTitles.count), fields=\(textFields.count), text=\(staticTexts.count)) " +
             "in \(Self.formattedDuration(executionTime))"
 
-        let meta: Value = .object([
+        var meta: [String: Value] = [
             "title": .string(dialogTitle),
             "role": .string(elements.dialogInfo.role),
             "buttons": .array(buttonTitles.map(Value.string)),
             "text_fields": .array(textFields.map { .object($0.mapValues(Value.string)) }),
             "text_elements": .array(staticTexts.map(Value.string)),
             "execution_time": .double(executionTime),
-        ])
+        ]
+        try meta.merge(MCPDesktopTargetMetadataProjector.fields(targetIdentity)) { _, target in target }
 
         let summary = ToolEventSummary(
             targetApp: appHint,
@@ -88,7 +165,7 @@ extension DialogTool {
 
         return ToolResponse(
             content: [.text(text: message, annotations: nil, _meta: nil)],
-            meta: ToolEventSummary.merge(summary: summary, into: meta))
+            meta: ToolEventSummary.merge(summary: summary, into: .object(meta)))
     }
 
     static func formattedDuration(_ duration: TimeInterval) -> String {

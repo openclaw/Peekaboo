@@ -14,10 +14,6 @@ enum CaptureToolWindowResolver {
         let appIdentifier = CaptureToolArgumentResolver.applicationIdentifier(app: app, pid: pid)
         let title = self.normalizedTitle(windowTitle)
 
-        guard title != nil || windowIndex != nil else {
-            return CaptureScope(kind: .window, applicationIdentifier: appIdentifier, windowIndex: nil)
-        }
-
         guard let selectedWindow = try await self.selectWindow(
             appIdentifier: appIdentifier,
             hasExplicitApp: self.hasExplicitApplication(app: app, pid: pid),
@@ -31,10 +27,21 @@ enum CaptureToolWindowResolver {
             throw PeekabooError.windowNotFound(criteria: "window index \(windowIndex ?? 0) for \(appIdentifier)")
         }
 
-        // The watch loop captures repeatedly; resolve human selectors once so frame acquisition is by stable CG ID.
+        guard let identity = selectedWindow.mutationIdentity,
+              identity.windowID == selectedWindow.windowID,
+              identity.capturedBounds == selectedWindow.bounds,
+              let windowID = UInt32(exactly: selectedWindow.windowID)
+        else {
+            throw PeekabooError.windowNotFound(
+                criteria: "capture target has no exact process-generation and bounds receipt")
+        }
+
+        // The watch loop captures repeatedly; resolve every selector, including automatic app selection,
+        // exactly once and retain the process generation plus immutable bounds beside the WindowServer ID.
         return CaptureScope(
             kind: .window,
-            windowId: UInt32(exactly: selectedWindow.windowID),
+            windowId: windowID,
+            windowMutationIdentity: identity,
             applicationIdentifier: appIdentifier,
             windowIndex: selectedWindow.index)
     }
@@ -50,23 +57,44 @@ enum CaptureToolWindowResolver {
             let candidates = try await self.captureCandidates(
                 target: .application(appIdentifier),
                 windows: windows)
-            return candidates.first { $0.title.localizedCaseInsensitiveContains(title) }
+            return try self.selectExactWindow(
+                from: candidates,
+                selection: .title(title),
+                operation: "Capture window selection")
         }
 
         if let title {
             let candidates = try await self.captureCandidates(
                 target: .title(title),
                 windows: windows)
-            return candidates.first { $0.title.localizedCaseInsensitiveContains(title) }
+            return try self.selectExactWindow(
+                from: candidates,
+                selection: .title(title),
+                operation: "Capture window selection")
         }
 
-        guard let index else { return nil }
-        guard hasExplicitApp else { return nil }
+        if index != nil, !hasExplicitApp {
+            return nil
+        }
+        let target: WindowTarget = hasExplicitApp ? .application(appIdentifier) : .frontmost
+        let candidates = try await self.captureCandidates(target: target, windows: windows)
+        let selection = index.map(ExactWindowSelectorResolver.Selection.index) ?? .automatic
+        return try self.selectExactWindow(from: candidates, selection: selection, operation: "Capture window selection")
+    }
 
-        let candidates = try await self.captureCandidates(
-            target: .application(appIdentifier),
-            windows: windows)
-        return candidates.first { $0.index == index }
+    private static func selectExactWindow(
+        from windows: [ServiceWindowInfo],
+        selection: ExactWindowSelectorResolver.Selection,
+        operation: String) throws -> ServiceWindowInfo
+    {
+        do {
+            return try ExactWindowSelectorResolver.select(
+                from: windows,
+                selection: selection,
+                operation: operation)
+        } catch {
+            throw PeekabooError.windowNotFound(criteria: error.localizedDescription)
+        }
     }
 
     private static func captureCandidates(

@@ -1,5 +1,6 @@
 import CoreGraphics
 import PeekabooAutomation
+import PeekabooFoundation
 
 enum MoveTarget {
     case center
@@ -49,6 +50,7 @@ struct MovementExecution {
     let startPoint: CGPoint
     let distance: CGFloat
     let direction: String?
+    let actionResult: UIAutomationActionResult<Void>
 }
 
 struct MoveToolValidationError: Error {

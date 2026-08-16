@@ -35,9 +35,15 @@ enum MCPToolResponseMetadataProjector {
     ]
 
     private static let safetyKeys = Self.actionOutcomeKeys.union([
+        "browser_execution",
         "error_code",
         "execution_policy",
+        "target_identity",
         "target_receipt",
+    ])
+
+    private static let providerReservedKeys = Self.safetyKeys.union([
+        "turn_boundary",
     ])
 
     private static let captureErrorKeys: Set<String> = [
@@ -95,6 +101,21 @@ enum MCPToolResponseMetadataProjector {
             .union(Self.captureErrorKeys)
             .union(Self.permissionKeys)
         return fields.filter { allowed.contains($0.key) }
+    }
+
+    /// Keeps untrusted provider diagnostics available without allowing them to assert
+    /// Peekaboo-owned action, target, policy, or turn-boundary semantics.
+    static func providerFields(from value: Value?) -> [String: Value] {
+        guard let value else { return [:] }
+        let sanitized: Value
+        if case let .object(fields) = value {
+            let providerFields = fields.filter { !Self.providerReservedKeys.contains($0.key) }
+            guard !providerFields.isEmpty else { return [:] }
+            sanitized = .object(providerFields)
+        } else {
+            sanitized = value
+        }
+        return ["provider_meta": sanitized]
     }
 
     static func fields(

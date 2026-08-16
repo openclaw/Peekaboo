@@ -310,6 +310,7 @@ struct MCPSpecificToolTests {
         #expect(props["window_index"] != nil)
         #expect(props["to_current"] != nil)
         #expect(props["follow"] != nil)
+        #expect(props["foreground"] != nil)
         #expect(props["detailed"] != nil)
 
         // Check action types
@@ -661,7 +662,8 @@ struct MCPSpecificToolTests {
         #expect(description.contains("Space listing and unfollowed"))
         #expect(description.contains("Shell-tool access"))
         #expect(description.contains("not a process sandbox"))
-        #expect(description.contains("background paste is refused"))
+        #expect(description.contains("Direct text paste is available only"))
+        #expect(description.contains("current-clipboard, and binary paste remain"))
         #expect(!description.contains("shell commands"))
         #expect(!description.contains("Process-targeted keyboard chords"))
         #expect(!description.contains("Open Safari and navigate"))

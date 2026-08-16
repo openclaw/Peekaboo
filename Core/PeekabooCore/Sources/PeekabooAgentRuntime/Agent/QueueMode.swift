@@ -1,5 +1,6 @@
 import Foundation
 import Tachikoma
+import TachikomaMCP
 
 /// QueueMode mirrors pi-mono's message queue behavior: send queued user messages
 /// either one at a time per turn, or all queued together before the next turn.
@@ -53,15 +54,6 @@ final class AgentTurnBoundary {
         "space",
         "type",
         "window",
-    ]
-
-    private static let readOnlyActionsByTool: [String: Set<String>] = [
-        "app": ["list"],
-        "dialog": ["list"],
-        "dock": ["list"],
-        "menu": ["list"],
-        "space": ["list"],
-        "window": ["list"],
     ]
 
     private enum PerceptionState {
@@ -127,6 +119,25 @@ final class AgentTurnBoundary {
             return .skipUntilPerception(
                 reason: "Skipped \(normalizedName); call `see` successfully before another UI action.")
         }
+    }
+
+    /// Conditional calls can be read-only, refused before dispatch, or mutating under one tool name.
+    /// Only a complete canonical outcome can therefore create result-derived fresh-perception debt.
+    func recordResult(
+        toolName: String,
+        result: AnyAgentToolValue?) -> Decision
+    {
+        let normalizedName = Self.normalized(toolName)
+        guard let result,
+              case let .valid(projection) = AgentToolResultSemantics.actionOutcomeResolution(from: result),
+              projection.requiresFreshObservation
+        else {
+            return .continueTurn
+        }
+
+        self.perceptionState = .required
+        return .continueNextStep(
+            reason: "Stopped after \(normalizedName); call `see` before the next UI action.")
     }
 
     func recordSuccessfulCompletion(
@@ -210,13 +221,10 @@ final class AgentTurnBoundary {
             return false
         }
 
-        guard let readOnlyActions = self.readOnlyActionsByTool[normalizedName],
-              let action = arguments["action"]?.stringValue
-        else {
-            return true
-        }
-
-        return !readOnlyActions.contains(self.normalized(action))
+        let toolArguments = ToolArguments(from: AgentToolArguments(arguments))
+        return !MCPToolRequestSemantics.isReadOnly(
+            toolName: normalizedName,
+            arguments: toolArguments)
     }
 
     private static let incompleteCompletionEvidenceReason =

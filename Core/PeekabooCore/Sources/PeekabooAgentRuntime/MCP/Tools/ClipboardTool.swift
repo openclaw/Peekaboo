@@ -1,6 +1,7 @@
 import Foundation
 import MCP
 import PeekabooAutomation
+import PeekabooFoundation
 import TachikomaMCP
 import UniformTypeIdentifiers
 
@@ -59,7 +60,7 @@ public struct ClipboardTool: MCPTool {
             case "set":
                 return try self.handleSet(arguments: arguments)
             case "clear":
-                return self.handleClear()
+                return try self.handleClear()
             case "save":
                 return try self.handleSave(arguments: arguments)
             case "restore":
@@ -67,6 +68,11 @@ public struct ClipboardTool: MCPTool {
             default:
                 return ToolResponse.error("Invalid action: \(action)")
             }
+        } catch let failure as DesktopActionFailure {
+            return try await MCPDesktopActionFailureHandler.response(
+                for: failure,
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: nil)
         } catch {
             return ToolResponse.error(error.localizedDescription)
         }
@@ -117,17 +123,44 @@ public struct ClipboardTool: MCPTool {
 
     @MainActor
     private func handleSet(arguments: ToolArguments) throws -> ToolResponse {
-        let request = try self.makeWriteRequest(arguments: arguments)
-        let result = try self.context.clipboard.set(request)
-        return ToolResponse.text(
-            "Set clipboard (\(result.utiIdentifier), \(result.data.count) bytes)",
-            meta: self.meta(result: result, filePath: nil))
+        let request: ClipboardWriteRequest
+        do {
+            request = try self.makeWriteRequest(arguments: arguments)
+        } catch {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "Clipboard set was refused before dispatch.",
+                hint: "Provide text, file_path, or data_base64+uti with valid data.",
+                causeDescription: error.localizedDescription)
+        }
+        let actionResult = try self.context.clipboard.setResult(request)
+        let outcome = try ClipboardMutationResultSemantics.requireSuccessfulOutcome(
+            actionResult.outcome,
+            operation: "Clipboard set")
+        do {
+            return try ToolResponse.text(
+                "Set clipboard (\(actionResult.payload.utiIdentifier), \(actionResult.payload.data.count) bytes)",
+                meta: MCPToolResponseMetadataProjector.metadata(
+                    merging: self.metaFields(result: actionResult.payload, filePath: nil),
+                    outcome: outcome))
+        } catch {
+            throw ClipboardMutationResultSemantics.postWriteFailure(error, operation: "Clipboard set")
+        }
     }
 
     @MainActor
-    private func handleClear() -> ToolResponse {
-        self.context.clipboard.clear()
-        return ToolResponse.text("Cleared clipboard.")
+    private func handleClear() throws -> ToolResponse {
+        let actionResult = try self.context.clipboard.clearResult()
+        let outcome = try ClipboardMutationResultSemantics.requireSuccessfulOutcome(
+            actionResult.outcome,
+            operation: "Clipboard clear")
+        do {
+            return try ToolResponse.text(
+                "Cleared clipboard.",
+                meta: MCPToolResponseMetadataProjector.metadata(outcome: outcome))
+        } catch {
+            throw ClipboardMutationResultSemantics.postWriteFailure(error, operation: "Clipboard clear")
+        }
     }
 
     @MainActor
@@ -140,10 +173,23 @@ public struct ClipboardTool: MCPTool {
     @MainActor
     private func handleRestore(arguments: ToolArguments) throws -> ToolResponse {
         let slot = arguments.getString("slot") ?? "0"
-        let result = try self.context.clipboard.restore(slot: slot)
-        return ToolResponse.text(
-            "Restored clipboard from slot \"\(slot)\" (\(result.utiIdentifier), \(result.data.count) bytes).",
-            meta: self.meta(result: result, filePath: nil, extra: ["slot": .string(slot)]))
+        let actionResult = try self.context.clipboard.restoreResult(slot: slot)
+        let outcome = try ClipboardMutationResultSemantics.requireSuccessfulOutcome(
+            actionResult.outcome,
+            operation: "Clipboard restore")
+        do {
+            return try ToolResponse.text(
+                "Restored clipboard from slot \"\(slot)\" " +
+                    "(\(actionResult.payload.utiIdentifier), \(actionResult.payload.data.count) bytes).",
+                meta: MCPToolResponseMetadataProjector.metadata(
+                    merging: self.metaFields(
+                        result: actionResult.payload,
+                        filePath: nil,
+                        extra: ["slot": .string(slot)]),
+                    outcome: outcome))
+        } catch {
+            throw ClipboardMutationResultSemantics.postWriteFailure(error, operation: "Clipboard restore")
+        }
     }
 
     // MARK: - Helpers
@@ -180,6 +226,14 @@ public struct ClipboardTool: MCPTool {
     }
 
     private func meta(result: ClipboardReadResult, filePath: String?, extra: [String: Value] = [:]) -> Value {
+        .object(self.metaFields(result: result, filePath: filePath, extra: extra))
+    }
+
+    private func metaFields(
+        result: ClipboardReadResult,
+        filePath: String?,
+        extra: [String: Value] = [:]) -> [String: Value]
+    {
         var object: [String: Value] = [
             "uti": .string(result.utiIdentifier),
             "size": .int(result.data.count),
@@ -193,6 +247,6 @@ public struct ClipboardTool: MCPTool {
         for (key, value) in extra {
             object[key] = value
         }
-        return .object(object)
+        return object
     }
 }

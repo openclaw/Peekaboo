@@ -80,6 +80,8 @@ public struct InspectUITool: MCPTool {
         }
         var newlyCreatedSnapshotID: String?
         var newlyCreatedSnapshotWasPending = false
+        var activeSnapshotID: String?
+        var observationActionResult: UIAutomationActionResult<ElementDetectionResult>?
 
         do {
             let target = try self.parseTarget(request.appTarget, windowIDValue: request.windowIDValue)
@@ -87,13 +89,31 @@ public struct InspectUITool: MCPTool {
             let snapshot = selection.snapshot
             newlyCreatedSnapshotID = selection.isNew ? snapshot.id : nil
             newlyCreatedSnapshotWasPending = selection.isNew && MCPToolContext.snapshotObservationStartedAt != nil
+            activeSnapshotID = snapshot.id
             let windowContext = try self.makeWindowContext(
                 for: target,
                 webFocus: request.webFocus,
                 traversalBudget: request.traversalBudget)
 
-            let result = try await self.context.automation.inspectAccessibilityTree(
+            let actionResult = try await self.context.automation.inspectAccessibilityTreeResult(
                 windowContext: windowContext)
+            try ObservationActionResultSemantics.requirePublishableOutcome(
+                actionResult.outcome,
+                targetIdentity: actionResult.targetIdentity,
+                operation: "Inspect UI",
+                requiresOutcome: request.webFocus)
+            let result = actionResult.payload
+            let resolvedTarget = try ObservationActionResultSemantics.coalescedTarget(
+                actionTarget: actionResult.targetIdentity,
+                payload: result,
+                outcome: actionResult.outcome,
+                operation: "Inspect UI",
+                requiresTarget: request.webFocus && target.requiresStableMutationTarget)
+            let validatedActionResult = UIAutomationActionResult(
+                payload: result,
+                outcome: actionResult.outcome,
+                targetIdentity: resolvedTarget)
+            observationActionResult = validatedActionResult
             try Self.requireUsableAXOnlyEvidence(result)
             let snapshotResult = self.bindResult(result, to: snapshot.id)
 
@@ -123,7 +143,9 @@ public struct InspectUITool: MCPTool {
             if let allowed = snapshotResult.metadata.desktopMutationPreservationAllowed {
                 metadataValues["desktop_mutation_preservation_allowed"] = .bool(allowed)
             }
-            let metadata: Value = .object(metadataValues)
+            let metadata = try ObservationActionResultSupport.metadata(
+                merging: metadataValues,
+                result: validatedActionResult)
 
             var summary = ToolEventSummary(
                 targetApp: snapshotResult.metadata.windowContext?.applicationName,
@@ -139,16 +161,27 @@ public struct InspectUITool: MCPTool {
                 content: [.text(text: summaryText, annotations: nil, _meta: nil)],
                 meta: mergedMeta)
         } catch {
+            let presentedError = ObservationActionResultSupport.preservingFailure(
+                error,
+                after: observationActionResult,
+                operation: "inspect_ui")
             if let newlyCreatedSnapshotID {
                 let preserveReservation = newlyCreatedSnapshotWasPending &&
-                    PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: error)
+                    PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: presentedError)
                 if !preserveReservation {
                     try? await self.context.snapshots.cleanSnapshot(snapshotId: newlyCreatedSnapshotID)
                     await self.context.uiSnapshots.removeSnapshot(id: newlyCreatedSnapshotID)
                 }
             }
-            self.logger.error("Inspect UI tool execution failed: \(error.localizedDescription)")
-            return Self.failureResponse(error)
+            self.logger.error("Inspect UI tool execution failed: \(presentedError.localizedDescription)")
+            if let failure = presentedError as? DesktopActionFailure {
+                return try await MCPDesktopActionFailureHandler.response(
+                    for: failure,
+                    uiSnapshots: self.context.uiSnapshots,
+                    snapshotID: activeSnapshotID,
+                    additionalFields: ObservationActionResultSupport.standardErrorFields(error))
+            }
+            return Self.failureResponse(presentedError)
         }
     }
 

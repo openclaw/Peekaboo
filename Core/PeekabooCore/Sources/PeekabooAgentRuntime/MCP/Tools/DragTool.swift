@@ -2,6 +2,7 @@ import Foundation
 import MCP
 import os.log
 import PeekabooAutomation
+import PeekabooFoundation
 import TachikomaMCP
 
 /// MCP tool for performing drag and drop operations between UI elements or coordinates
@@ -88,7 +89,7 @@ public struct DragTool: MCPTool {
                 return ToolResponse.error("Start and end points must be different")
             }
 
-            try await self.focusTargetIfNeeded(request: request, from: fromPoint, to: toPoint)
+            let setupFocus = try await self.focusTargetIfNeeded(request: request, from: fromPoint, to: toPoint)
 
             let distance = hypot(toPoint.point.x - fromPoint.point.x, toPoint.point.y - fromPoint.point.y)
             let movement = request.profile.resolveParameters(
@@ -99,23 +100,54 @@ public struct DragTool: MCPTool {
                 defaultSteps: 20,
                 distance: distance)
 
-            try await self.context.automation.drag(
-                DragOperationRequest(
-                    from: fromPoint.point,
-                    to: toPoint.point,
-                    duration: movement.duration,
-                    steps: movement.steps,
-                    modifiers: request.modifiers,
-                    button: request.button,
-                    profile: movement.profile))
+            let actionResult: UIAutomationActionResult<Void>
+            do {
+                let pointerAction = try await MCPGlobalPointerActionResult.drag(
+                    automation: self.context.automation,
+                    request: DragOperationRequest(
+                        from: fromPoint.point,
+                        to: toPoint.point,
+                        duration: movement.duration,
+                        steps: movement.steps,
+                        modifiers: request.modifiers,
+                        button: request.button,
+                        profile: movement.profile))
+                actionResult = try MCPGlobalPointerActionResult.compose(
+                    setupFocus: setupFocus,
+                    pointerAction: pointerAction,
+                    operation: "Drag",
+                    route: MCPGlobalPointerActionResult.route(for: self.context))
+            } catch {
+                let failure = MCPGlobalPointerActionResult.failure(
+                    error,
+                    setupFocus: setupFocus,
+                    operation: "Drag",
+                    route: MCPGlobalPointerActionResult.route(for: self.context))
+                return try await MCPDesktopActionFailureHandler.response(
+                    for: failure,
+                    uiSnapshots: self.context.uiSnapshots,
+                    snapshotID: request.snapshotId)
+            }
 
             let executionTime = Date().timeIntervalSince(startTime)
-            return self.buildResponse(
+            let invalidatedSnapshotID = await MCPDesktopActionSnapshotInvalidator.invalidate(
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: request.snapshotId,
+                outcome: actionResult.outcome)
+            return try self.buildResponse(
                 from: fromPoint,
                 to: toPoint,
-                movement: movement,
-                executionTime: executionTime,
-                request: request)
+                context: DragResponseContext(
+                    movement: movement,
+                    executionTime: executionTime,
+                    request: request,
+                    actionResult: actionResult,
+                    invalidatedSnapshotID: invalidatedSnapshotID))
+        } catch let failure as DesktopActionFailure {
+            return try await MCPDesktopActionFailureHandler.response(
+                for: failure,
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: request.snapshotId)
         } catch let error as CoordinateParseError {
             return ToolResponse.error(error.message)
         } catch let error as DragToolError {

@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import MCP
 import os.log
+import PeekabooFoundation
 import TachikomaMCP
 
 /// MCP tool for moving the mouse cursor
@@ -61,21 +62,51 @@ public struct MoveTool: MCPTool {
 
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
+        let request: MoveRequest
         do {
-            let request = try self.parseRequest(arguments: arguments)
-            let startTime = Date()
-            let target = try await self.resolveMoveTarget(request: request)
-            try await self.focusTargetIfNeeded(target)
-            let movement = try await self.performMovement(to: target.location, request: request)
-            let executionTime = Date().timeIntervalSince(startTime)
-            return self.buildResponse(
-                target: target,
-                movement: movement,
-                executionTime: executionTime)
+            request = try self.parseRequest(arguments: arguments)
         } catch let error as MoveToolValidationError {
             return ToolResponse.error(error.message)
         } catch let coordinateError as CoordinateParseError {
             return ToolResponse.error(coordinateError.message)
+        }
+
+        do {
+            let startTime = Date()
+            let target = try await self.resolveMoveTarget(request: request)
+            let setupFocus = try await self.focusTargetIfNeeded(target)
+            let movement: MovementExecution
+            do {
+                movement = try await self.performMovement(
+                    to: target.location,
+                    request: request,
+                    setupFocus: setupFocus)
+            } catch {
+                let failure = MCPGlobalPointerActionResult.failure(
+                    error,
+                    setupFocus: setupFocus,
+                    operation: "Cursor move",
+                    route: MCPGlobalPointerActionResult.route(for: self.context))
+                return try await MCPDesktopActionFailureHandler.response(
+                    for: failure,
+                    uiSnapshots: self.context.uiSnapshots,
+                    snapshotID: request.snapshotId)
+            }
+            let executionTime = Date().timeIntervalSince(startTime)
+            let invalidatedSnapshotID = await MCPDesktopActionSnapshotInvalidator.invalidate(
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: request.snapshotId,
+                outcome: movement.actionResult.outcome)
+            return try self.buildResponse(
+                target: target,
+                movement: movement,
+                executionTime: executionTime,
+                invalidatedSnapshotID: invalidatedSnapshotID)
+        } catch let failure as DesktopActionFailure {
+            return try await MCPDesktopActionFailureHandler.response(
+                for: failure,
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: request.snapshotId)
         } catch {
             self.logger.error("Mouse movement execution failed: \(error)")
             return ToolResponse.error("Failed to move mouse: \(error.localizedDescription)")

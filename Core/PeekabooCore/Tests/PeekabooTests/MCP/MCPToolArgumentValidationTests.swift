@@ -8,7 +8,7 @@ import Testing
 struct MCPToolArgumentValidationTests {
     @Test
     func `generic numeric validation probes remain ordinary errors`() async throws {
-        let context = await MCPToolTestHelpers.makeContext()
+        let context = await MCPToolTestHelpers.makeContext(executionPolicy: .unrestricted)
         let counter = MCPNumericDispatchCounter()
         let typeTool = TypeTool(context: context)
         let cases: [(any MCPTool, String, Value)] = [
@@ -70,7 +70,7 @@ struct MCPToolArgumentValidationTests {
 
     @Test
     func `exact whole numeric representations remain accepted`() async throws {
-        let context = await MCPToolTestHelpers.makeContext()
+        let context = await MCPToolTestHelpers.makeContext(executionPolicy: .unrestricted)
         let counter = MCPNumericDispatchCounter()
         let probe = MCPNumericSchemaProbeTool(
             name: "numeric-probe-valid",
@@ -90,7 +90,9 @@ struct MCPToolArgumentValidationTests {
     @Test
     func `unsafe interaction numerics dispatch no automation service calls`() async throws {
         let automation = MockAutomationService(accessibilityGranted: true)
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            executionPolicy: .unrestricted)
         let cases: [(any MCPTool, [String: Value])] = [
             (TypeTool(context: context), [
                 "text": .string("must-not-type"),
@@ -135,7 +137,7 @@ struct MCPToolArgumentValidationTests {
 
     @Test
     func `invalid read-only numerics omit desktop-action metadata`() async throws {
-        let context = await MCPToolTestHelpers.makeContext()
+        let context = await MCPToolTestHelpers.makeContext(executionPolicy: .unrestricted)
         let counter = MCPNumericDispatchCounter()
         let cases: [(name: String, schema: Value, arguments: [String: Value])] = [
             (
@@ -165,7 +167,7 @@ struct MCPToolArgumentValidationTests {
 
     @Test
     func `every closed catalog schema rejects unknown top-level properties before dispatch`() async throws {
-        let context = await MCPToolTestHelpers.makeContext()
+        let context = await MCPToolTestHelpers.makeContext(executionPolicy: .unrestricted)
         let counter = MCPUnknownPropertyDispatchCounter()
         let tools = MCPToolCatalog.unfilteredTools(context: context)
         let probeValues: [Value] = [
@@ -202,7 +204,7 @@ struct MCPToolArgumentValidationTests {
 
     @Test
     func `closed nested schemas reject unknown properties and accept declared properties`() async throws {
-        let context = await MCPToolTestHelpers.makeContext()
+        let context = await MCPToolTestHelpers.makeContext(executionPolicy: .unrestricted)
         let counter = MCPUnknownPropertyDispatchCounter()
         let cases: [(name: String, schema: Value, invalid: [String: Value], valid: [String: Value])] = [
             (

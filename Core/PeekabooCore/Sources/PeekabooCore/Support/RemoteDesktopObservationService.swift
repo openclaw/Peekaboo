@@ -19,7 +19,9 @@ enum RemoteDesktopObservationCapabilityPolicy {
             """)
     }
 
-    static func requiresCaptureEnginePreferenceCapability(_ request: DesktopObservationRequest) -> Bool {
+    static func requiresCaptureEnginePreferenceCapability(_ request: DesktopObservationRequest)
+        -> Bool
+    {
         request.capture.engine != .auto
     }
 
@@ -34,7 +36,7 @@ enum RemoteDesktopObservationCapabilityPolicy {
 }
 
 @MainActor
-public final class RemoteDesktopObservationService: DesktopObservationServiceProtocol {
+public final class RemoteDesktopObservationService: DesktopObservationActionResultProviding {
     private let client: PeekabooBridgeClient
     private let supportsDesktopObservationOCR: Bool
     private let supportsDesktopObservationCaptureEngine: Bool
@@ -70,24 +72,42 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
     }
 
     public func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
-        guard !RemoteDesktopObservationCapabilityPolicy.requiresOCRCapability(request) ||
-            self.supportsDesktopObservationOCR
+        try await self.observeActionResult(request).payload
+    }
+
+    public func observeActionResult(
+        _ request: DesktopObservationRequest) async throws -> UIAutomationActionResult<DesktopObservationResult>
+    {
+        guard
+            !RemoteDesktopObservationCapabilityPolicy.requiresOCRCapability(request)
+            || self.supportsDesktopObservationOCR
         else {
             throw RemoteDesktopObservationCapabilityPolicy.ocrUnavailableError()
         }
-        guard !RemoteDesktopObservationCapabilityPolicy.requiresCaptureEnginePreferenceCapability(request) ||
-            self.supportsDesktopObservationCaptureEngine
+        guard
+            !RemoteDesktopObservationCapabilityPolicy.requiresCaptureEnginePreferenceCapability(request)
+            || self.supportsDesktopObservationCaptureEngine
         else {
             throw RemoteDesktopObservationCapabilityPolicy.captureEnginePreferenceUnavailableError()
         }
         guard request.capture.roi != nil else {
-            let result = try await self.client.desktopObservation(request)
-            try DesktopObservationEvidencePolicy.requireUsableAccessibilityEvidence(
-                result.elements,
-                target: result.target,
-                capture: result.capture,
-                request: request)
-            return result
+            let actionResult = try await self.client.desktopObservationWithOutcome(request)
+            do {
+                if actionResult.payload.files.rawScreenshotPath != nil {
+                    _ = try actionResult.payload.verifiedRawScreenshotData()
+                }
+                if actionResult.payload.files.annotatedScreenshotPath != nil {
+                    _ = try actionResult.payload.verifiedAnnotatedScreenshotData()
+                }
+                try DesktopObservationEvidencePolicy.requireUsableAccessibilityEvidence(
+                    actionResult.payload.elements,
+                    target: actionResult.payload.target,
+                    capture: actionResult.payload.capture,
+                    request: request)
+                return actionResult
+            } catch {
+                throw Self.failurePreservingOutcome(error, from: actionResult)
+            }
         }
         guard self.supportsExactWindowROIObservation else {
             throw PeekabooBridgeErrorEnvelope(
@@ -102,9 +122,10 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
             .appendingPathComponent("peekaboo-remote-roi-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let quarantinePath = directory
-            .appendingPathComponent("capture.\(request.output.format.rawValue)")
-            .path
+        let quarantinePath =
+            directory
+                .appendingPathComponent("capture.\(request.output.format.rawValue)")
+                .path
         var remoteRequest = request
         remoteRequest.output.path = quarantinePath
         // The client owns ROI validation and publication. Force one quarantined raster for proof,
@@ -112,9 +133,9 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
         remoteRequest.output.saveRawScreenshot = true
         remoteRequest.output.saveSnapshot = false
 
-        let result: DesktopObservationResult
+        let remoteResult: UIAutomationActionResult<DesktopObservationResult>
         do {
-            result = try await self.client.desktopObservation(remoteRequest)
+            remoteResult = try await self.client.desktopObservationWithOutcome(remoteRequest)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             if let context = envelope.context,
                context.hasPrefix("capture_roi:"),
@@ -124,57 +145,76 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
             }
             throw envelope
         }
-        let evidenceError = DesktopObservationEvidencePolicy.accessibilityEvidenceError(
-            result.elements,
-            target: result.target,
-            capture: result.capture,
-            request: request)
-        try DesktopObservationROIProcessor.validateApplied(
-            request.capture.roi,
-            requestTarget: request.target,
-            resolvedTarget: result.target,
-            capture: result.capture)
-        try Self.checkPostProcessingAllowance(deadline: deadline, timeout: overallTimeout)
-        let prepared = try self.prepareROIResult(
-            result,
-            request: request,
-            quarantinePath: quarantinePath,
-            deadline: deadline,
-            timeout: overallTimeout)
-        let stagedArtifacts = try Self.stageArtifacts(
-            prepared.artifacts,
-            deadline: deadline,
-            timeout: overallTimeout)
-        defer { Self.discardStagedArtifacts(stagedArtifacts) }
-        try Self.checkPostProcessingAllowance(deadline: deadline, timeout: overallTimeout)
-        let commitTask = Task { @MainActor in
-            if evidenceError == nil {
-                try await self.storeSnapshotIfNeeded(
-                    prepared,
-                    request: request,
-                    deadline: deadline,
-                    timeout: overallTimeout)
-            }
-            let installedArtifacts: [ArtifactPublication]
-            try self.artifactInstallationPreflight()
-            do {
-                installedArtifacts = try Self.installArtifacts(stagedArtifacts)
-            } catch is ArtifactPublicationError {
+        do {
+            let result = remoteResult.payload
+            let evidenceError = DesktopObservationEvidencePolicy.accessibilityEvidenceError(
+                result.elements,
+                target: result.target,
+                capture: result.capture,
+                request: request)
+            try DesktopObservationROIProcessor.validateApplied(
+                request.capture.roi,
+                requestTarget: request.target,
+                resolvedTarget: result.target,
+                capture: result.capture)
+            try Self.checkPostProcessingAllowance(deadline: deadline, timeout: overallTimeout)
+            let prepared = try self.prepareROIResult(
+                result,
+                request: request,
+                quarantinePath: quarantinePath,
+                deadline: deadline,
+                timeout: overallTimeout)
+            let stagedArtifacts = try Self.stageArtifacts(
+                prepared.artifacts,
+                deadline: deadline,
+                timeout: overallTimeout)
+            defer { Self.discardStagedArtifacts(stagedArtifacts) }
+            try Self.checkPostProcessingAllowance(deadline: deadline, timeout: overallTimeout)
+            let commitTask = Task { @MainActor in
+                if evidenceError == nil {
+                    try await self.storeSnapshotIfNeeded(
+                        prepared,
+                        request: request,
+                        deadline: deadline,
+                        timeout: overallTimeout)
+                }
+                let installedArtifacts: [ArtifactPublication]
+                try self.artifactInstallationPreflight()
+                do {
+                    installedArtifacts = try Self.installArtifacts(stagedArtifacts)
+                } catch is ArtifactPublicationError {
+                    if let evidenceError {
+                        throw evidenceError
+                    }
+                    guard request.output.saveSnapshot else {
+                        throw CaptureROIError.invalidSourceImage
+                    }
+                    return Self.snapshotOnlyResult(prepared.result)
+                }
+                Self.finalizeArtifacts(installedArtifacts)
                 if let evidenceError {
                     throw evidenceError
                 }
-                guard request.output.saveSnapshot else {
-                    throw CaptureROIError.invalidSourceImage
-                }
-                return Self.snapshotOnlyResult(prepared.result)
+                return prepared.result
             }
-            Self.finalizeArtifacts(installedArtifacts)
-            if let evidenceError {
-                throw evidenceError
-            }
-            return prepared.result
+            return try await UIAutomationActionResult(
+                payload: commitTask.value,
+                outcome: remoteResult.outcome,
+                targetIdentity: remoteResult.targetIdentity)
+        } catch {
+            throw Self.failurePreservingOutcome(error, from: remoteResult)
         }
-        return try await commitTask.value
+    }
+
+    static func failurePreservingOutcome(
+        _ error: any Error,
+        from result: UIAutomationActionResult<some Sendable>) -> any Error
+    {
+        ObservationActionResultSemantics.preservingFailure(
+            error,
+            after: result.outcome,
+            targetIdentity: result.targetIdentity,
+            operation: "remote desktop observation post-processing")
     }
 
     private struct PreparedROIResult {
@@ -195,30 +235,32 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
         guard Self.sameFile(result.files.rawScreenshotPath, quarantinePath) else {
             throw CaptureROIError.hostDidNotApplyROI
         }
-        let rawData = try Self.validatedArtifactData(
-            at: quarantinePath,
+        let rawData = try Self.validatedRasterData(
+            result.verifiedRawScreenshotData(),
             expectedPixelSize: result.capture.metadata.size)
         try Self.checkPostProcessingAllowance(deadline: deadline, timeout: timeout)
-        let expectsRawArtifact = request.output.saveRawScreenshot ||
-            request.output.saveAnnotatedScreenshot ||
-            request.output.saveSnapshot
-        let rawPath = expectsRawArtifact
-            ? ObservationOutputPathResolver.resolve(
-                path: request.output.path,
-                format: request.output.format,
-                defaultFileName: "peekaboo-roi-\(UUID().uuidString).\(request.output.format.rawValue)")
-            .standardizedFileURL
-            .path
-            : nil
+        let expectsRawArtifact =
+            request.output.saveRawScreenshot || request.output.saveAnnotatedScreenshot
+                || request.output.saveSnapshot
+        let outputBasePath =
+            expectsRawArtifact
+                ? ObservationOutputPathResolver.resolve(
+                    path: request.output.path,
+                    format: request.output.format,
+                    defaultFileName: "peekaboo-roi-\(UUID().uuidString).\(request.output.format.rawValue)")
+                .standardizedFileURL
+                .path
+                : nil
+        let rawPath = request.output.saveRawScreenshot ? outputBasePath : nil
 
         var annotatedPath: String?
         var annotatedData: Data?
         var quarantineAnnotatedPath: String?
         if request.output.saveAnnotatedScreenshot {
-            guard let rawPath else {
+            guard let outputBasePath else {
                 throw CaptureROIError.hostDidNotApplyROI
             }
-            annotatedPath = ObservationOutputWriter.annotatedScreenshotPath(forRawScreenshotPath: rawPath)
+            annotatedPath = ObservationOutputWriter.annotatedScreenshotPath(forRawScreenshotPath: outputBasePath)
             quarantineAnnotatedPath = ObservationOutputWriter.annotatedScreenshotPath(
                 forRawScreenshotPath: quarantinePath)
             guard let quarantineAnnotatedPath,
@@ -226,14 +268,14 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
             else {
                 throw CaptureROIError.hostDidNotApplyROI
             }
-            annotatedData = try Self.validatedArtifactData(
-                at: quarantineAnnotatedPath,
+            annotatedData = try Self.validatedRasterData(
+                result.verifiedAnnotatedScreenshotData(),
                 expectedPixelSize: result.capture.metadata.size)
             try Self.checkPostProcessingAllowance(deadline: deadline, timeout: timeout)
         }
 
         var artifacts: [(data: Data, path: String)] = []
-        if let rawPath {
+        if request.output.saveRawScreenshot, let rawPath {
             artifacts.append((rawData, rawPath))
         }
         if let annotatedPath, let annotatedData {
@@ -251,17 +293,21 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
                 elements: $0.elements,
                 metadata: $0.metadata)
         }
+        let preparedResult = DesktopObservationResult(
+            target: result.target,
+            capture: capture,
+            elements: elements,
+            ocr: result.ocr,
+            files: DesktopObservationFiles(
+                rawScreenshotPath: rawPath,
+                annotatedScreenshotPath: annotatedPath),
+            timings: result.timings,
+            diagnostics: result.diagnostics)
+            .withCaptureContentDigest(
+                rawScreenshotData: rawData,
+                annotatedScreenshotData: annotatedData)
         return PreparedROIResult(
-            result: DesktopObservationResult(
-                target: result.target,
-                capture: capture,
-                elements: elements,
-                ocr: result.ocr,
-                files: DesktopObservationFiles(
-                    rawScreenshotPath: rawPath,
-                    annotatedScreenshotPath: annotatedPath),
-                timings: result.timings,
-                diagnostics: result.diagnostics),
+            result: preparedResult,
             artifacts: artifacts,
             quarantineRawPath: quarantinePath,
             quarantineAnnotatedPath: quarantineAnnotatedPath)
@@ -292,16 +338,20 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
                 screenshot: SnapshotScreenshotRequest(
                     snapshotId: snapshotID,
                     screenshotPath: prepared.quarantineRawPath,
-                    applicationBundleId: windowContext?.applicationBundleId ?? result.capture.metadata.applicationInfo?
+                    applicationBundleId: windowContext?.applicationBundleId
+                        ?? result.capture.metadata.applicationInfo?
                         .bundleIdentifier,
-                    applicationProcessId: windowContext?.applicationProcessId ?? result.capture.metadata
+                    applicationProcessId: windowContext?.applicationProcessId
+                        ?? result.capture.metadata
                         .applicationInfo?
                         .processIdentifier,
-                    applicationName: windowContext?.applicationName ?? result.capture.metadata.applicationInfo?.name,
+                    applicationName: windowContext?.applicationName
+                        ?? result.capture.metadata.applicationInfo?.name,
                     windowTitle: windowContext?.windowTitle ?? result.capture.metadata.windowInfo?.title,
                     windowBounds: windowContext?.windowBounds ?? result.capture.metadata.windowInfo?.bounds,
                     windowID: windowContext?.windowID ?? result.capture.metadata.windowInfo?.windowID,
-                    windowMutationIdentity: windowContext?.windowMutationIdentity ?? result.capture.metadata.windowInfo?
+                    windowMutationIdentity: windowContext?.windowMutationIdentity
+                        ?? result.capture.metadata.windowInfo?
                         .mutationIdentity,
                     captureCoordinateContext: CaptureCoordinateContext(
                         metadata: result.capture.metadata,
@@ -339,8 +389,8 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
         guard let deadline else { return nil }
         let duration = ContinuousClock.now.duration(to: deadline)
         let components = duration.components
-        let seconds = Double(components.seconds) +
-            Double(components.attoseconds) / 1_000_000_000_000_000_000
+        let seconds =
+            Double(components.seconds) + Double(components.attoseconds) / 1_000_000_000_000_000_000
         guard seconds > 0 else {
             throw CaptureError.detectionTimedOut(timeout ?? 0)
         }
@@ -349,17 +399,8 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
 
     private static func sameFile(_ lhs: String?, _ rhs: String) -> Bool {
         guard let lhs else { return false }
-        return URL(fileURLWithPath: lhs).standardizedFileURL == URL(fileURLWithPath: rhs).standardizedFileURL
-    }
-
-    private static func validatedArtifactData(at path: String, expectedPixelSize: CGSize) throws -> Data {
-        let data: Data
-        do {
-            data = try Data(contentsOf: URL(fileURLWithPath: path))
-        } catch {
-            throw CaptureROIError.invalidSourceImage
-        }
-        return try self.validatedRasterData(data, expectedPixelSize: expectedPixelSize)
+        return URL(fileURLWithPath: lhs).standardizedFileURL
+            == URL(fileURLWithPath: rhs).standardizedFileURL
     }
 
     private static func validatedRasterData(_ data: Data, expectedPixelSize: CGSize) throws -> Data {
@@ -406,10 +447,11 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
                 let stagedURL = directory.appendingPathComponent(".peekaboo-stage-\(token)")
                 let backupURL = directory.appendingPathComponent(".peekaboo-backup-\(token)")
                 try artifact.data.write(to: stagedURL, options: .atomic)
-                publications.append(ArtifactPublication(
-                    destinationURL: destinationURL,
-                    stagedURL: stagedURL,
-                    backupURL: backupURL))
+                publications.append(
+                    ArtifactPublication(
+                        destinationURL: destinationURL,
+                        stagedURL: stagedURL,
+                        backupURL: backupURL))
             }
             return publications
         } catch {
@@ -423,7 +465,9 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
         }
     }
 
-    private static func installArtifacts(_ stagedArtifacts: [ArtifactPublication]) throws -> [ArtifactPublication] {
+    private static func installArtifacts(_ stagedArtifacts: [ArtifactPublication]) throws
+        -> [ArtifactPublication]
+    {
         var publications = stagedArtifacts
         do {
             for index in publications.indices {
@@ -465,8 +509,11 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
         }
     }
 
-    private static func snapshotOnlyResult(_ result: DesktopObservationResult) -> DesktopObservationResult {
-        let warning = "Snapshot publication succeeded, but caller-visible ROI artifacts could not be published"
+    private static func snapshotOnlyResult(_ result: DesktopObservationResult)
+        -> DesktopObservationResult
+    {
+        let warning =
+            "Snapshot publication succeeded, but caller-visible ROI artifacts could not be published"
         var warnings = result.diagnostics.warnings
         if !warnings.contains(warning) {
             warnings.append(warning)
@@ -496,6 +543,7 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
                 target: result.diagnostics.target,
                 desktopMutationCompletedAt: result.diagnostics.desktopMutationCompletedAt,
                 desktopMutationPreservationAllowed: result.diagnostics.desktopMutationPreservationAllowed))
+            .withCaptureContentDigest(rawScreenshotData: nil, annotatedScreenshotData: nil)
     }
 
     private static func rollbackArtifacts(_ publications: [ArtifactPublication]) throws {

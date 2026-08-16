@@ -25,9 +25,10 @@ struct RemoteApplicationServiceTests {
             requestTimeoutSec: 2)
         try await host.startChecked()
         defer { Task { await host.stop() } }
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
         let remote = await MainActor.run {
-            RemoteApplicationService(
-                client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2))
+            RemoteApplicationService(client: client)
         }
 
         let output = try await remote.listApplications()
@@ -42,12 +43,25 @@ struct RemoteApplicationServiceTests {
     }
 
     @Test
-    func `remote running check propagates transport failure instead of returning false`() async {
+    func `remote running check propagates transport failure instead of returning false`() async throws {
+        let socketPath = "/tmp/peekaboo-bridge-transport-failure-\(UUID().uuidString).sock"
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: StubServices(),
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [])
+        }
+        let host = PeekabooBridgeHost(socketPath: socketPath, server: server, allowedTeamIDs: [])
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(
+            client: Self.clientIdentity,
+            protocolVersion: PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion)
+        await host.stop()
         let remote = await MainActor.run {
-            RemoteApplicationService(
-                client: PeekabooBridgeClient(
-                    socketPath: "/tmp/peekaboo-missing-\(UUID().uuidString).sock",
-                    requestTimeoutSec: 0.1))
+            RemoteApplicationService(client: client)
         }
 
         await #expect(throws: (any Error).self) {
@@ -114,9 +128,37 @@ struct RemoteApplicationServiceTests {
     }
 
     @Test
+    func `old bridge rejects pinned hide before transport`() async throws {
+        let remote = await MainActor.run {
+            RemoteApplicationService(
+                client: PeekabooBridgeClient(
+                    socketPath: "/tmp/peekaboo-missing-\(UUID().uuidString).sock",
+                    requestTimeoutSec: 0.1),
+                supportsPinnedHide: false)
+        }
+        let request = try ApplicationHideRequest(
+            identifier: "PID:123",
+            expectedIdentity: .init(processIdentifier: 123, processStartIdentity: 456))
+
+        do {
+            _ = try await remote.hideApplicationTargetedResult(request: request)
+            Issue.record("Expected pinned-hide capability rejection")
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            #expect(envelope.code == .operationNotSupported)
+            #expect(envelope.message.contains("process-generation-pinned application hide"))
+        }
+    }
+
+    @Test
     func `protocol 1 29 void activation request auto pins the live process`() async throws {
         let socketPath = "/tmp/peekaboo-remote-app-activation-pin-\(UUID().uuidString).sock"
-        let applications = await MainActor.run { StubApplicationService() }
+        let applications = await MainActor.run {
+            let applications = StubApplicationService()
+            applications.actionOutcome = .confirmedChange(
+                delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                unitCount: .one)
+            return applications
+        }
         let server = await MainActor.run {
             PeekabooBridgeServer(
                 services: StubServices(applications: applications),
@@ -132,7 +174,7 @@ struct RemoteApplicationServiceTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
-        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
         _ = try await client.handshake(client: .init(
             bundleIdentifier: "dev.peekaboo.activation-pin-tests",
             teamIdentifier: nil,
@@ -164,7 +206,7 @@ struct RemoteApplicationServiceTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
-        let handshake = try await PeekabooBridgeClient(socketPath: socketPath).handshake(client: .init(
+        let handshake = try await TrustedBridgeClientFixture.make(socketPath: socketPath).handshake(client: .init(
             bundleIdentifier: "dev.peekaboo.activation-dependency-tests",
             teamIdentifier: nil,
             processIdentifier: getpid()))
@@ -174,11 +216,16 @@ struct RemoteApplicationServiceTests {
     }
 
     @Test
-    func `protocol 1 28 activation starts without receipt authority or lookup`() async throws {
+    func `protocol 1 28 activation and hide preserve outcomes without receipt authority`() async throws {
         let root = URL(fileURLWithPath: "/tmp/peekaboo-legacy-activation-\(UUID().uuidString)", isDirectory: true)
         let socketPath = root.appendingPathComponent("bridge.sock").path
         defer { try? FileManager.default.removeItem(at: root) }
         let applications = await MainActor.run { StubApplicationService() }
+        await MainActor.run {
+            applications.actionOutcome = .confirmedChange(
+                delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                unitCount: .one)
+        }
         let legacyVersion = PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion
         let server = await MainActor.run {
             PeekabooBridgeServer(
@@ -187,7 +234,7 @@ struct RemoteApplicationServiceTests {
                 allowlistedTeams: [],
                 allowlistedBundles: [],
                 supportedVersions: legacyVersion...legacyVersion,
-                allowedOperations: [.activateApplication])
+                allowedOperations: [.activateApplication, .findApplication, .hideApplication])
         }
         let host = PeekabooBridgeHost(socketPath: socketPath, server: server, allowedTeamIDs: [])
         try await host.startChecked()
@@ -202,10 +249,28 @@ struct RemoteApplicationServiceTests {
             protocolVersion: legacyVersion)
         #expect(handshake.supportedOperations.contains(.activateApplication))
         #expect(handshake.operationAttestation == nil)
-        try await client.activateApplication(identifier: "StubApp")
+        let activationResult = try await client.activateApplicationTargetedResult(request: .init(
+            identifier: "StubApp"))
+        #expect(activationResult.outcome == DesktopActionOutcome.confirmedChange(
+            delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+            unitCount: .one).routed(to: .bridge))
+        #expect(activationResult.targetIdentity == nil)
         let request = try #require(await MainActor.run { applications.activationRequests.first })
         #expect(request.identifier == "StubApp")
         #expect(request.expectedIdentity == nil)
+
+        await MainActor.run {
+            applications.actionOutcome = .dispatchedUnverified(
+                delivery: .init(mechanism: .nativeFramework, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .one)
+        }
+        let hideResult = try await client.hideApplicationTargetedResult(identifier: "StubApp")
+        #expect(hideResult.outcome == DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .nativeFramework, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one).routed(to: .bridge))
+        #expect(hideResult.targetIdentity == nil)
         let artifacts = try FileManager.default.contentsOfDirectory(atPath: root.path)
         #expect(!artifacts.contains { $0.contains(".receipts") })
         await host.stop()
@@ -292,9 +357,11 @@ struct RemoteApplicationServiceTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
         let remote = await MainActor.run {
             RemoteApplicationService(
-                client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
+                client: client,
                 supportsPinnedQuit: true)
         }
         let request = ApplicationQuitRequest(
@@ -332,7 +399,7 @@ struct RemoteApplicationServiceTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
-        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
         _ = try await client.handshake(client: PeekabooBridgeClientIdentity(
             bundleIdentifier: "dev.peekaboo.tests",
             teamIdentifier: nil,
@@ -352,7 +419,7 @@ struct RemoteApplicationServiceTests {
     }
 
     @Test
-    func `quit rejection remains false for Bool clients and retains projected outcome`() async throws {
+    func `quit rejection remains false for legacy clients and canonical for current clients`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-quit-refusal-\(UUID().uuidString).sock"
         let applications = await MainActor.run { StubApplicationService() }
         let refusal = DesktopActionFailure.preDispatchRefusal(
@@ -378,7 +445,10 @@ struct RemoteApplicationServiceTests {
             identifier: "PID:123",
             force: false,
             expectedIdentity: .init(processIdentifier: 123, processStartIdentity: 456))
-        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(
+            client: Self.clientIdentity,
+            protocolVersion: PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion)
 
         let legacySucceeded = try await client.quitApplication(
             request: request,
@@ -393,16 +463,20 @@ struct RemoteApplicationServiceTests {
         let remote = await MainActor.run {
             RemoteApplicationService(client: client, supportsPinnedQuit: true)
         }
-        let remoteSucceeded = try await remote.quitApplication(request: request)
-        #expect(!remoteSucceeded)
-        let identifierSucceeded = try await remote.quitApplication(identifier: "StubApp", force: false)
-        #expect(!identifierSucceeded)
-
-        let projected = try await remote.quitApplicationResult(request: request)
-        #expect(!projected.payload)
-        #expect(projected.outcome == refusal.outcome.routed(to: .bridge))
-        #expect(projected.outcome?.refusalReason == .targetUnavailable)
-        #expect(projected.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
+        for operation in [
+            { _ = try await remote.quitApplication(request: request) },
+            { _ = try await remote.quitApplication(identifier: "StubApp", force: false) },
+            { _ = try await remote.quitApplicationResult(request: request) },
+        ] {
+            do {
+                try await operation()
+                Issue.record("Expected current quit refusal")
+            } catch let failure as DesktopActionFailure {
+                #expect(failure.outcome == refusal.outcome.routed(to: .bridge))
+                #expect(failure.outcome.refusalReason == .targetUnavailable)
+                #expect(failure.outcome.dispatchState == .none)
+            }
+        }
         await host.stop()
     }
 
@@ -424,9 +498,11 @@ struct RemoteApplicationServiceTests {
             requestTimeoutSec: 2)
         try await host.startChecked()
         defer { Task { await host.stop() } }
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
         let remote = await MainActor.run {
             RemoteApplicationService(
-                client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
+                client: client,
                 supportsPinnedQuit: true)
         }
 
@@ -459,9 +535,11 @@ struct RemoteApplicationServiceTests {
             requestTimeoutSec: 2)
         try await host.startChecked()
         defer { Task { await host.stop() } }
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
         let remote = await MainActor.run {
             RemoteApplicationService(
-                client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
+                client: client,
                 supportsPinnedQuit: true)
         }
 
@@ -592,7 +670,20 @@ struct RemoteApplicationServiceTests {
     @Test
     func `current bridge forwards protocol 1_13 relaunch options`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-relaunch-\(UUID().uuidString).sock"
-        let applications = await MainActor.run { StubApplicationService() }
+        let applications = await MainActor.run {
+            let service = StubApplicationService()
+            service.relaunchResult = ServiceApplicationInfo(
+                processIdentifier: 124,
+                processStartIdentity: 789,
+                bundleIdentifier: "com.apple.TextEdit",
+                name: "TextEdit",
+                bundlePath: nil,
+                isActive: true,
+                isHidden: false,
+                windowCount: 1)
+                .withUniqueTestSelectorProof(for: "TextEdit")
+            return service
+        }
         let server = await MainActor.run {
             PeekabooBridgeServer(
                 services: StubServices(applications: applications),
@@ -609,9 +700,11 @@ struct RemoteApplicationServiceTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
         let remote = await MainActor.run {
             RemoteApplicationService(
-                client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
+                client: client,
                 supportsLaunchOptions: true,
                 supportsNewInstanceLaunch: true,
                 supportsWindowReadiness: true,
@@ -632,8 +725,8 @@ struct RemoteApplicationServiceTests {
 
         #expect(await MainActor.run { applications.relaunchRequests } == [request])
         #expect(relaunched.processIdentity == ApplicationProcessIdentity(
-            processIdentifier: 123,
-            processStartIdentity: 456))
+            processIdentifier: 124,
+            processStartIdentity: 789))
         await host.stop()
     }
 
@@ -664,20 +757,23 @@ struct RemoteApplicationServiceTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
-        let directClient = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        let directClient = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await directClient.handshake(client: Self.clientIdentity)
         try await directClient.hideApplication(identifier: "Finder")
 
         let fallback = await MainActor.run { RecordingApplicationFallback() }
+        let remoteClient = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await remoteClient.handshake(client: Self.clientIdentity)
         let remote = await MainActor.run {
             RemoteApplicationService(
-                client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
+                client: remoteClient,
                 localFallback: fallback)
         }
 
         try await remote.hideApplication(identifier: "Finder")
         let bridgedIdentifiers = await MainActor.run { bridgedApplications.hiddenIdentifiers }
         let hiddenIdentifiers = await MainActor.run { fallback.hiddenIdentifiers }
-        #expect(bridgedIdentifiers == ["Finder", "Finder"])
+        #expect(bridgedIdentifiers == ["PID:123", "PID:123"])
         #expect(hiddenIdentifiers.isEmpty)
     }
 
@@ -721,15 +817,26 @@ struct RemoteApplicationServiceTests {
         defer { Task { await host.stop() } }
 
         let fallback = await MainActor.run { RecordingApplicationFallback() }
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
         let remote = await MainActor.run {
             RemoteApplicationService(
-                client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
+                client: client,
                 localFallback: fallback)
         }
         let hideTask = Task {
-            try await remote.hideApplication(identifier: "Finder")
+            try await remote.hideApplication(identifier: "dev.stub")
         }
-        await applicationService.waitUntilHideStarted()
+        guard await applicationService.waitUntilHideStarted() else {
+            do {
+                try await hideTask.value
+                Issue.record("Bridge hide completed without reaching the controlled provider")
+            } catch {
+                Issue.record("Bridge hide failed before provider dispatch: \(error)")
+            }
+            await host.stop()
+            return
+        }
 
         try FileManager.default.moveItem(at: root, to: displacedRoot)
         try Data().write(to: root)
@@ -744,12 +851,20 @@ struct RemoteApplicationServiceTests {
             #expect(failure.outcome.evidence == .completionUnknown)
             #expect(failure.outcome.retrySafety == .unsafe)
             #expect(failure.outcome.projection.requiresFreshObservation)
+        } catch {
+            Issue.record("Unexpected lifecycle failure: \(error)")
         }
 
         let hiddenIdentifiers = await MainActor.run { fallback.hiddenIdentifiers }
         #expect(hiddenIdentifiers.isEmpty)
         await host.stop()
     }
+
+    private static let clientIdentity = PeekabooBridgeClientIdentity(
+        bundleIdentifier: "dev.peekaboo.remote-application-tests",
+        teamIdentifier: nil,
+        processIdentifier: getpid(),
+        hostname: nil)
 }
 
 @MainActor
@@ -784,9 +899,9 @@ private final class ReusedPIDQuitApplicationService: StubApplicationService {
     private(set) var receivedQuitRequests: [ApplicationQuitRequest] = []
     private(set) var terminationCount = 0
 
-    override func findApplication(identifier _: String) async throws -> ServiceApplicationInfo {
+    override func findApplication(identifier: String) async throws -> ServiceApplicationInfo {
         defer { self.currentProcessStartIdentity = 71 }
-        return self.selectedApplication
+        return self.selectedApplication.withUniqueTestSelectorProof(for: identifier)
     }
 
     override func quitApplication(request: ApplicationQuitRequest) async throws -> Bool {
@@ -802,35 +917,46 @@ private final class ReusedPIDQuitApplicationService: StubApplicationService {
 @MainActor
 private final class BlockingHideApplicationService: StubApplicationService {
     private var hideContinuation: CheckedContinuation<Void, Never>?
-    private var startWaiters: [CheckedContinuation<Void, Never>] = []
     private var hideStarted = false
+    private var releaseRequested = false
 
     override func hideApplication(identifier _: String) async throws {
-        self.hideStarted = true
-        self.startWaiters.forEach { $0.resume() }
-        self.startWaiters.removeAll()
+        if self.releaseRequested {
+            self.releaseRequested = false
+            return
+        }
         await withCheckedContinuation { continuation in
             self.hideContinuation = continuation
+            self.hideStarted = true
         }
     }
 
-    func waitUntilHideStarted() async {
-        guard !self.hideStarted else { return }
-        await withCheckedContinuation { continuation in
-            self.startWaiters.append(continuation)
+    func waitUntilHideStarted() async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !self.hideStarted, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
         }
+        return self.hideStarted
     }
 
     func releaseHide() {
-        self.hideContinuation?.resume()
+        guard let hideContinuation else {
+            self.releaseRequested = true
+            return
+        }
+        hideContinuation.resume()
         self.hideContinuation = nil
     }
 }
 
 @MainActor
-private final class RecordingApplicationFallback: ApplicationServiceProtocol {
+private final class RecordingApplicationFallback:
+    ApplicationServiceProtocol,
+    ApplicationServiceTargetedActionResultProviding
+{
     private let app = ServiceApplicationInfo(
         processIdentifier: 123,
+        processStartIdentity: 456,
         bundleIdentifier: "com.apple.finder",
         name: "Finder",
         bundlePath: nil,
@@ -839,6 +965,11 @@ private final class RecordingApplicationFallback: ApplicationServiceProtocol {
         windowCount: 1)
 
     private(set) var hiddenIdentifiers: [String] = []
+    private(set) var hideRequests: [ApplicationHideRequest] = []
+
+    var supportsProcessGenerationPinnedApplicationHide: Bool {
+        true
+    }
 
     func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
         UnifiedToolOutput(
@@ -847,8 +978,8 @@ private final class RecordingApplicationFallback: ApplicationServiceProtocol {
             metadata: .init(duration: 0))
     }
 
-    func findApplication(identifier _: String) async throws -> ServiceApplicationInfo {
-        self.app
+    func findApplication(identifier: String) async throws -> ServiceApplicationInfo {
+        self.app.withUniqueTestSelectorProof(for: identifier)
     }
 
     func listWindows(for _: String, timeout _: Float?) async throws -> UnifiedToolOutput<ServiceWindowListData> {
@@ -885,4 +1016,58 @@ private final class RecordingApplicationFallback: ApplicationServiceProtocol {
     func hideOtherApplications(identifier _: String) async throws {}
 
     func showAllApplications() async throws {}
+
+    func activateApplicationTargetedActionResult(
+        request: ApplicationActivationRequest) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.activateApplication(identifier: request.identifier)
+        return try UIAutomationActionResult(
+            payload: (),
+            outcome: Self.applicationOutcome(mode: .foreground),
+            targetIdentity: self.targetIdentity())
+    }
+
+    func hideApplicationTargetedActionResult(identifier: String) async throws -> UIAutomationActionResult<Void> {
+        try await self.hideApplication(identifier: identifier)
+        return try UIAutomationActionResult(
+            payload: (),
+            outcome: Self.applicationOutcome(mode: .background),
+            targetIdentity: self.targetIdentity())
+    }
+
+    func hideApplicationTargetedActionResult(
+        request: ApplicationHideRequest) async throws -> UIAutomationActionResult<Void>
+    {
+        self.hideRequests.append(request)
+        try await self.hideApplication(identifier: request.identifier)
+        return try UIAutomationActionResult(
+            payload: (),
+            outcome: Self.applicationOutcome(mode: .background),
+            targetIdentity: DesktopTargetIdentity(processIdentity: request.expectedIdentity))
+    }
+
+    func hideOtherApplicationsActionResult(identifier: String) async throws -> DesktopActionResult<Void> {
+        try await self.hideOtherApplications(identifier: identifier)
+        return DesktopActionResult(outcome: Self.applicationOutcome(mode: .background))
+    }
+
+    func showAllApplicationsActionResult() async throws -> DesktopActionResult<Void> {
+        try await self.showAllApplications()
+        return DesktopActionResult(outcome: Self.applicationOutcome(mode: .background))
+    }
+
+    private func targetIdentity() throws -> DesktopTargetIdentity {
+        guard let processIdentity = self.app.processIdentity else {
+            throw PeekabooError.commandFailed("Recording application has no process-generation identity")
+        }
+        return try DesktopTargetIdentity(processIdentity: processIdentity)
+    }
+
+    private static func applicationOutcome(
+        mode: DesktopActionOutcome.Delivery.Mode) -> DesktopActionOutcome
+    {
+        .dispatchedUnverified(
+            delivery: .init(mechanism: .nativeFramework, mode: mode),
+            evidence: .deliveryAccepted)
+    }
 }

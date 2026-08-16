@@ -11,6 +11,9 @@ extension AppToolActions {
         switch mode {
         case .appSwitch where request.cycle:
             let actionResult = try await self.cycleApplications()
+            try ApplicationActionResultSemantics.requireSuccessfulOutcome(
+                actionResult.outcome,
+                operation: "Application switch cycle")
             return try ToolResponse(
                 content: [.text(
                     text: "\(AgentDisplayTokens.Status.success) Switched to next application",

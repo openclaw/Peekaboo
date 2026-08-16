@@ -6,9 +6,9 @@ import PeekabooAutomationKit
 import PeekabooFoundation
 import PeekabooProtocols
 import PeekabooVisualizer
+import TachikomaMCP
 
 private typealias AutomationDetectedElement = PeekabooAutomation.DetectedElement
-import TachikomaMCP
 
 /// MCP tool for capturing UI state and element detection
 public struct SeeTool: MCPTool {
@@ -80,7 +80,8 @@ public struct SeeTool: MCPTool {
                     description: "Optional. Maximum AX traversal depth. Env fallback: PEEKABOO_AX_MAX_DEPTH.",
                     minimum: 1),
                 "max_elements": SchemaBuilder.integer(
-                    description: "Optional. Maximum AX elements to collect. Env fallback: PEEKABOO_AX_MAX_ELEMENTS.",
+                    description:
+                    "Optional. Maximum AX elements to collect. Env fallback: PEEKABOO_AX_MAX_ELEMENTS.",
                     minimum: 1),
                 "max_children": SchemaBuilder.integer(
                     description: """
@@ -101,6 +102,8 @@ public struct SeeTool: MCPTool {
         let request = try SeeRequest(arguments: arguments)
         var newlyCreatedSnapshotID: String?
         var newlyCreatedSnapshotWasPending = false
+        var activeSnapshotID: String?
+        var observationActionResult: UIAutomationActionResult<DesktopObservationResult>?
 
         do {
             let target = try ObservationTargetArgument.parse(
@@ -112,12 +115,31 @@ public struct SeeTool: MCPTool {
             let selection = try await self.getOrCreateSnapshot(snapshotId: request.snapshotId)
             let snapshot = selection.snapshot
             newlyCreatedSnapshotID = selection.isNew ? snapshot.id : nil
-            newlyCreatedSnapshotWasPending = selection.isNew && MCPToolContext.snapshotObservationStartedAt != nil
-            let observation = try await self.observeDesktop(
+            newlyCreatedSnapshotWasPending =
+                selection.isNew && MCPToolContext.snapshotObservationStartedAt != nil
+            activeSnapshotID = snapshot.id
+            let actionResult = try await self.observeDesktop(
                 target: target,
                 request: request,
                 path: captureArtifact.observationPath,
                 snapshot: snapshot)
+            try ObservationActionResultSemantics.requirePublishableOutcome(
+                actionResult.outcome,
+                targetIdentity: actionResult.targetIdentity,
+                operation: "See",
+                requiresOutcome: request.webFocus)
+            let observation = actionResult.payload
+            let resolvedTarget = try ObservationActionResultSemantics.coalescedTarget(
+                actionTarget: actionResult.targetIdentity,
+                payload: observation,
+                outcome: actionResult.outcome,
+                operation: "See",
+                requiresTarget: request.webFocus && target.requiresStableMutationTarget)
+            let validatedActionResult = UIAutomationActionResult(
+                payload: observation,
+                outcome: actionResult.outcome,
+                targetIdentity: resolvedTarget)
+            observationActionResult = validatedActionResult
             let (elements, detectedElements) = try await self.detectUIElements(
                 observation: observation,
                 snapshot: snapshot)
@@ -147,27 +169,44 @@ public struct SeeTool: MCPTool {
                     annotatedPath: publishedPaths.annotatedPath,
                     imageData: responseImages.annotated ?? responseImages.raw),
                 target: target,
-                observation: observation)
+                actionResult: validatedActionResult)
         } catch {
+            let presentedError = ObservationActionResultSupport.preservingFailure(
+                error,
+                after: observationActionResult,
+                operation: "see")
             if let newlyCreatedSnapshotID {
-                let preserveReservation = newlyCreatedSnapshotWasPending &&
-                    PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: error)
+                let preserveReservation =
+                    newlyCreatedSnapshotWasPending
+                        && PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: presentedError)
                 if !preserveReservation {
                     try? await self.context.snapshots.cleanSnapshot(snapshotId: newlyCreatedSnapshotID)
                     await self.context.uiSnapshots.removeSnapshot(id: newlyCreatedSnapshotID)
                 }
             }
-            self.logger.error("See tool execution failed: \(error.localizedDescription)")
-            return ToolResponse.error("Failed to capture UI state: \(error.localizedDescription)")
+            self.logger.error("See tool execution failed: \(presentedError.localizedDescription)")
+            if let failure = presentedError as? DesktopActionFailure {
+                return try await MCPDesktopActionFailureHandler.response(
+                    for: failure,
+                    uiSnapshots: self.context.uiSnapshots,
+                    snapshotID: activeSnapshotID,
+                    additionalFields: ObservationActionResultSupport.standardErrorFields(error))
+            }
+            return ToolResponse.error(
+                "Failed to capture UI state: \(presentedError.localizedDescription)")
         }
     }
 
     // MARK: - Private Helpers
 
-    private func getOrCreateSnapshot(snapshotId: String?) async throws -> (snapshot: UISnapshot, isNew: Bool) {
+    private func getOrCreateSnapshot(snapshotId: String?) async throws -> (
+        snapshot: UISnapshot, isNew: Bool)
+    {
         if let snapshotId {
             // Try to get existing snapshot
-            let hostHasSnapshot = try await self.context.snapshots.listSnapshots().contains { $0.id == snapshotId }
+            let hostHasSnapshot = try await self.context.snapshots.listSnapshots().contains {
+                $0.id == snapshotId
+            }
             if hostHasSnapshot,
                let existingSnapshot = await self.context.uiSnapshots.getSnapshot(id: snapshotId)
             {
@@ -176,11 +215,12 @@ public struct SeeTool: MCPTool {
         }
 
         let observationStartedAt = MCPToolContext.snapshotObservationStartedAt
-        let snapshotId = if let observationStartedAt {
-            try await self.context.snapshots.createSnapshot(pendingAt: observationStartedAt)
-        } else {
-            try await self.context.snapshots.createSnapshot()
-        }
+        let snapshotId =
+            if let observationStartedAt {
+                try await self.context.snapshots.createSnapshot(pendingAt: observationStartedAt)
+            } else {
+                try await self.context.snapshots.createSnapshot()
+            }
         let snapshot = await self.context.uiSnapshots.createSnapshot(
             id: snapshotId,
             at: observationStartedAt ?? Date(),
@@ -192,22 +232,23 @@ public struct SeeTool: MCPTool {
         target: ObservationTargetArgument,
         request: SeeRequest,
         path: String?,
-        snapshot: UISnapshot) async throws -> DesktopObservationResult
+        snapshot: UISnapshot) async throws -> UIAutomationActionResult<DesktopObservationResult>
     {
-        try await self.context.desktopObservation.observe(DesktopObservationRequest(
-            target: target.observationTarget,
-            capture: DesktopCaptureOptions(visualizerMode: .none, roi: request.roi),
-            detection: DesktopDetectionOptions(
-                mode: request.ocr ? .accessibilityAndOCR : .accessibility,
-                allowWebFocusFallback: request.webFocus,
-                preferOCR: false,
-                traversalBudget: request.traversalBudget),
-            output: DesktopObservationOutputOptions(
-                path: path,
-                saveRawScreenshot: true,
-                saveAnnotatedScreenshot: request.annotate,
-                saveSnapshot: true,
-                snapshotID: snapshot.id)))
+        try await self.context.desktopObservation.observeResult(
+            DesktopObservationRequest(
+                target: target.observationTarget,
+                capture: DesktopCaptureOptions(visualizerMode: .none, roi: request.roi),
+                detection: DesktopDetectionOptions(
+                    mode: request.ocr ? .accessibilityAndOCR : .accessibility,
+                    allowWebFocusFallback: request.webFocus,
+                    preferOCR: false,
+                    traversalBudget: request.traversalBudget),
+                output: DesktopObservationOutputOptions(
+                    path: path,
+                    saveRawScreenshot: true,
+                    saveAnnotatedScreenshot: request.annotate,
+                    saveSnapshot: true,
+                    snapshotID: snapshot.id)))
     }
 
     private func registerObservationScreenshot(
@@ -230,11 +271,12 @@ public struct SeeTool: MCPTool {
     {
         guard annotate else { return nil }
         guard let annotated = observation.files.annotatedScreenshotPath else {
-            throw OperationError.captureFailed(reason: "Observation did not produce an annotated screenshot path")
+            throw OperationError.captureFailed(
+                reason: "Observation did not produce an annotated screenshot path")
         }
         if Self.shouldEmitAnnotationOverlay(captureFocus: .background) {
-            await self.emitAnnotatedScreenshotVisualizer(
-                annotatedPath: annotated,
+            try await self.emitAnnotatedScreenshotVisualizer(
+                imageData: observation.verifiedAnnotatedScreenshotData(),
                 detectedElements: detectedElements,
                 snapshot: snapshot)
         }
@@ -253,30 +295,25 @@ public struct SeeTool: MCPTool {
         guard Self.sameFile(observation.files.rawScreenshotPath, captureArtifact.observationPath) else {
             throw OperationError.captureFailed(reason: "Observation did not produce a screenshot path")
         }
-        let rawData = try Self.readCaptureArtifact(captureArtifact.observationPath, label: "raw screenshot")
+        let rawData = try observation.verifiedRawScreenshotData()
         guard annotate else {
             return (rawData, nil)
         }
-        guard Self.sameFile(observation.files.annotatedScreenshotPath, captureArtifact.observationAnnotatedPath) else {
+        guard
+            Self.sameFile(
+                observation.files.annotatedScreenshotPath, captureArtifact.observationAnnotatedPath)
+        else {
             return (rawData, nil)
         }
         return try (
             rawData,
-            Self.readCaptureArtifact(captureArtifact.observationAnnotatedPath, label: "annotated screenshot"))
+            observation.verifiedAnnotatedScreenshotData())
     }
 
     private static func sameFile(_ reportedPath: String?, _ expectedPath: String) -> Bool {
         guard let reportedPath else { return false }
-        return URL(fileURLWithPath: reportedPath).standardizedFileURL ==
-            URL(fileURLWithPath: expectedPath).standardizedFileURL
-    }
-
-    private static func readCaptureArtifact(_ path: String, label: String) throws -> Data {
-        do {
-            return try Data(contentsOf: URL(fileURLWithPath: path))
-        } catch {
-            throw OperationError.captureFailed(reason: "Failed to read response-owned \(label)")
-        }
+        return URL(fileURLWithPath: reportedPath).standardizedFileURL
+            == URL(fileURLWithPath: expectedPath).standardizedFileURL
     }
 
     private func detectUIElements(
@@ -307,8 +344,9 @@ public struct SeeTool: MCPTool {
         elements: [UIElement],
         output: ScreenshotOutput,
         target: ObservationTargetArgument,
-        observation: DesktopObservationResult) async throws -> ToolResponse
+        actionResult: UIAutomationActionResult<DesktopObservationResult>) async throws -> ToolResponse
     {
+        let observation = actionResult.payload
         let finalScreenshot = output.annotatedPath ?? output.screenshotPath
         let summaryText = await buildSummary(
             snapshot: snapshot,
@@ -318,16 +356,18 @@ public struct SeeTool: MCPTool {
             traversalBudget: observation.elements?.metadata.windowContext?.traversalBudget)
 
         var content: [MCP.Tool.Content] = [.text(text: summaryText, annotations: nil, _meta: nil)]
-        content.append(.image(
-            data: output.imageData.base64EncodedString(),
-            mimeType: "image/png",
-            annotations: nil,
-            _meta: nil))
+        content.append(
+            .image(
+                data: output.imageData.base64EncodedString(),
+                mimeType: "image/png",
+                annotations: nil,
+                _meta: nil))
 
-        let baseMeta = self.makeMetadata(
+        let baseMeta = try self.makeMetadata(
             snapshot: snapshot,
             elements: elements,
-            observation: observation)
+            observation: observation,
+            actionResult: actionResult)
         var summary = ToolEventSummary(
             targetApp: snapshot.applicationName,
             windowTitle: snapshot.windowTitle,
@@ -343,16 +383,28 @@ public struct SeeTool: MCPTool {
     private func makeMetadata(
         snapshot: UISnapshot,
         elements: [UIElement],
-        observation: DesktopObservationResult) -> Value
+        observation: DesktopObservationResult,
+        actionResult: UIAutomationActionResult<DesktopObservationResult>) throws -> Value
     {
-        ObservationDiagnosticsMetadata.merge(observation, into: .object([
-            "snapshot_id": .string(snapshot.id),
-            "coordinate_context": CaptureCoordinateContextMetadata.value(
-                for: observation.capture.metadata,
-                referenceID: snapshot.id),
-            "element_count": .double(Double(elements.count)),
-            "actionable_count": .double(Double(elements.count(where: { $0.isActionable }))),
-        ]))
+        let diagnostics = ObservationDiagnosticsMetadata.merge(
+            observation,
+            into: .object([
+                "snapshot_id": .string(snapshot.id),
+                "coordinate_context": CaptureCoordinateContextMetadata.value(
+                    for: observation.capture.metadata,
+                    referenceID: snapshot.id),
+                "element_count": .double(Double(elements.count)),
+                "actionable_count": .double(Double(elements.count(where: { $0.isActionable }))),
+            ]))
+        let fields: [String: Value] =
+            if case let .object(fields) = diagnostics {
+                fields
+            } else {
+                [:]
+            }
+        return try ObservationActionResultSupport.metadata(
+            merging: fields,
+            result: actionResult) ?? diagnostics
     }
 
     // Removed getRolePrefix - no longer needed after refactoring to use main UIElement struct
@@ -382,9 +434,10 @@ public struct SeeTool: MCPTool {
         // Pick up config edits made after this (possibly long-lived MCP) process started,
         // e.g. the Mac app writing the toggle into config.json. Cheap: a stat unless it changed.
         ConfigurationManager.shared.reloadConfigurationIfChanged()
-        guard Self.elementDetectionVisualsEnabled(
-            environment: ProcessInfo.processInfo.environment,
-            configuration: ConfigurationManager.shared.getConfiguration())
+        guard
+            Self.elementDetectionVisualsEnabled(
+                environment: ProcessInfo.processInfo.environment,
+                configuration: ConfigurationManager.shared.getConfiguration())
         else {
             return
         }
@@ -395,28 +448,29 @@ public struct SeeTool: MCPTool {
         // the highlights render vertically mirrored across the screen.
         let screens = self.context.screens.listScreens()
         let primaryFrame = (screens.first(where: \.isPrimary) ?? screens.first)?.frame
-        let map = Dictionary(uniqueKeysWithValues: detected.map { element in
-            (
-                element.id,
-                VisualizerScreenGeometry.appKitRect(
-                    fromGlobalDisplay: element.bounds,
-                    primaryScreenFrame: primaryFrame))
-        })
+        let map = Dictionary(
+            uniqueKeysWithValues: detected.map { element in
+                (
+                    element.id,
+                    VisualizerScreenGeometry.appKitRect(
+                        fromGlobalDisplay: element.bounds,
+                        primaryScreenFrame: primaryFrame))
+            })
         _ = await VisualizationClient.shared.showElementDetection(elements: map)
     }
 
     @MainActor
     private func emitAnnotatedScreenshotVisualizer(
-        annotatedPath: String,
+        imageData: Data,
         detectedElements: [AutomationDetectedElement],
         snapshot: UISnapshot) async
     {
         guard !detectedElements.isEmpty else { return }
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: annotatedPath)) else { return }
         let metadata = await snapshot.screenshotMetadata
-        let globalDisplayWindowBounds = metadata?.windowInfo?.bounds
-            ?? metadata?.displayInfo?.bounds
-            ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let globalDisplayWindowBounds =
+            metadata?.windowInfo?.bounds
+                ?? metadata?.displayInfo?.bounds
+                ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
         let screens = self.context.screens.listScreens()
         let primaryFrame = (screens.first(where: \.isPrimary) ?? screens.first)?.frame
         let windowBounds = VisualizerScreenGeometry.appKitRect(
@@ -426,7 +480,7 @@ public struct SeeTool: MCPTool {
             from: detectedElements,
             primaryScreenFrame: primaryFrame)
         _ = await VisualizationClient.shared.showAnnotatedScreenshot(
-            imageData: data,
+            imageData: imageData,
             elements: protocolElements,
             windowBounds: windowBounds)
     }

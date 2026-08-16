@@ -984,7 +984,7 @@ extension MCPToolExecutionTests {
         let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
         #expect(preserved != nil)
         #expect(implicitLatest == nil)
-        #expect(!MCPResponseMeta.requiresFreshObservation(response))
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
@@ -1014,7 +1014,7 @@ extension MCPToolExecutionTests {
         #expect(explicitHistory != nil)
         #expect(latestHistory != nil)
         #expect(implicitLatest == nil)
-        #expect(!MCPResponseMeta.requiresFreshObservation(response))
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 

@@ -1,6 +1,7 @@
 import Foundation
 import MCP
 import PeekabooCore
+import PeekabooFoundation
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
@@ -217,7 +218,7 @@ struct BrowserToolTests {
             isConnected: false,
             toolCount: 0,
             detectedBrowsers: []))
-        let tool = BrowserTool(client: client)
+        let tool = BrowserTool(client: client, executionPolicy: .unrestricted)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: ["action": "status"]))
 
@@ -229,39 +230,48 @@ struct BrowserToolTests {
     }
 
     @Test
-    func `Browser tool connect and mapped execute use client`() async throws {
+    func `Browser tool legacy client refuses connect and mapped mutation without outcomes`() async throws {
         let client = MockBrowserMCPClient(status: BrowserMCPStatus(
             isConnected: true,
             toolCount: 31,
             detectedBrowsers: []))
-        let tool = BrowserTool(client: client)
+        let tool = BrowserTool(client: client, executionPolicy: .unrestricted)
 
         let connect = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "connect",
             "channel": "canary",
         ]))
-        #expect(connect.isError == false)
-        #expect(client.connectedChannels == [.canary])
+        #expect(connect.isError)
+        #expect(client.connectedChannels.isEmpty)
+        #expect(Self.text(from: connect).contains(
+            "Browser connect requires a provider that reports canonical action outcomes."))
+        #expect(connect.meta?.objectValue?["refusal_reason"] == .string("operation_unsupported"))
 
         let click = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "click",
             "page_id": 4,
             "uid": "7_1",
         ]))
-        #expect(click.isError == false)
-        #expect(client.executedTools.last?.toolName == "click")
-        #expect(client.executedTools.last?.arguments["pageId"] as? Int == 4)
-        #expect(client.executedTools.last?.arguments["uid"] as? String == "7_1")
-        #expect(client.executedTools.last?.channel == nil)
+        #expect(click.isError)
+        #expect(Self.text(from: click).contains(
+            "Browser mutations require a provider that reports canonical action outcomes."))
+        let meta = try #require(click.meta?.objectValue)
+        #expect(meta["state"] == .string("refused"))
+        #expect(meta["refusal_reason"] == .string("operation_unsupported"))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(client.executedTools.isEmpty)
     }
 
     @Test
     func `Browser tool sends targeted type as one client-owned sequence`() async throws {
-        let client = MockBrowserMCPClient(status: BrowserMCPStatus(
-            isConnected: true,
-            toolCount: 29,
-            detectedBrowsers: []))
-        let tool = BrowserTool(client: client)
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(2))
+        let client = OutcomeBrowserMCPClient(result: .init(
+            payload: .text("typed"),
+            outcome: outcome))
+        let tool = BrowserTool(client: client, executionPolicy: .unrestricted)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "type",
@@ -271,43 +281,254 @@ struct BrowserToolTests {
         ]))
 
         #expect(!response.isError)
-        #expect(client.executedSequences.count == 1)
-        #expect(client.executedSequences[0].map(\.toolName) == ["click", "type_text"])
-        #expect(client.executedSequences[0][0].arguments["uid"] as? String == "7_9")
+        let sequence = try #require(client.executedSequences.first)
+        #expect(sequence.map(\.toolName) == ["click", "type_text"])
+        #expect(sequence[0].arguments["uid"] as? String == "7_9")
     }
 
     @Test
-    func `Browser tool forwards exact endpoint and reports connection receipt`() async throws {
-        let receipt = BrowserMCPConnectionReceipt(
-            browserURL: "http://127.0.0.1:9222/",
-            webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
-            devToolsBrowserID: "browser-a",
-            browserVersion: "Chrome/151.0",
-            protocolVersion: "1.3")
-        let client = MockBrowserMCPClient(status: BrowserMCPStatus(
-            isConnected: true,
-            toolCount: 29,
-            detectedBrowsers: [],
-            connectionReceipt: receipt))
-        let tool = BrowserTool(client: client)
-
-        let response = try await tool.execute(arguments: ToolArguments(raw: [
-            "action": "connect",
-            "browser_url": "http://127.0.0.1:9222",
-        ]))
+    func `Browser tool namespaces provider metadata and strips reserved semantic claims`() async throws {
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(2))
+        let client = OutcomeBrowserMCPClient(result: .init(
+            payload: .text("typed", meta: .object([
+                "error_code": .string("provider-spoof"),
+                "provider_field": .string("preserved"),
+                "state": .string("confirmed_change"),
+                "target_identity": .object(["kind": .string("provider-spoof")]),
+                "target_receipt": .object(["window_id": .int(999)]),
+                "turn_boundary": .object([
+                    "stop_agent": .bool(true),
+                    "reason": .string("provider-spoof"),
+                ]),
+            ])),
+            outcome: outcome))
+        let response = try await BrowserTool(client: client, executionPolicy: .unrestricted)
+            .execute(arguments: ToolArguments(raw: [
+                "action": "type",
+                "page_id": 7,
+                "uid": "7_9",
+                "text": "typed",
+            ]))
 
         #expect(!response.isError)
-        #expect(client.connectedBrowserURLs == ["http://127.0.0.1:9222"])
-        #expect(Self.text(from: response).contains("browser_id=browser-a"))
-        guard case let .object(meta) = response.meta else {
-            Issue.record("Expected browser status metadata")
-            return
+        let meta = try #require(response.meta?.objectValue)
+        let providerMeta = try #require(meta["provider_meta"]?.objectValue)
+        #expect(providerMeta == ["provider_field": .string("preserved")])
+        #expect(meta["error_code"] == nil)
+        #expect(meta["target_identity"] == nil)
+        #expect(meta["target_receipt"] == nil)
+        #expect(meta["turn_boundary"] == nil)
+        #expect(meta["state"] == .string("dispatched_unverified"))
+        #expect(meta["dispatch_state"] == .string("dispatched"))
+        #expect(meta["dispatched_unit_count"] == .int(2))
+        #expect(meta["retry_safety"] == .string("unsafe"))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+    }
+
+    @Test
+    func `Browser tool rejects mutation result without canonical outcome`() async throws {
+        let legacyMeta: Value = .object([
+            "provider_field": .string("legacy"),
+            "state": .string("provider-defined"),
+        ])
+        let client = OutcomeBrowserMCPClient(result: .init(
+            payload: .text("legacy", meta: legacyMeta),
+            outcome: nil))
+        let response = try await BrowserTool(client: client, executionPolicy: .unrestricted)
+            .execute(arguments: ToolArguments(raw: [
+                "action": "click",
+                "page_id": 7,
+                "uid": "7_9",
+            ]))
+
+        #expect(response.isError)
+        #expect(Self.text(from: response).contains("Browser mutation returned without a canonical action outcome."))
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("indeterminate"))
+        #expect(meta["dispatch_state"] == .string("may_have_dispatched"))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["requires_fresh_observation"] == .bool(true))
+        #expect(meta["provider_meta"] == nil)
+    }
+
+    @Test
+    func `Browser tool allows outcome-free result from read-only provider call`() async throws {
+        let legacyMeta: Value = .object([
+            "provider_field": .string("legacy"),
+            "state": .string("provider-defined"),
+        ])
+        let client = OutcomeBrowserMCPClient(result: .init(
+            payload: .text("snapshot", meta: legacyMeta),
+            outcome: nil))
+        let response = try await BrowserTool(client: client, executionPolicy: .unrestricted)
+            .execute(arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": 7,
+            ]))
+
+        #expect(!response.isError)
+        #expect(response.meta == .object([
+            "provider_meta": .object(["provider_field": .string("legacy")]),
+        ]))
+    }
+
+    @Test
+    func `Browser tool rejects successful payload paired with non-success outcome`() async throws {
+        let delivery = DesktopActionOutcome.Delivery(mechanism: .browserProtocol, mode: .background)
+        let cases: [DesktopActionOutcome] = [
+            .partial(delivery: delivery, unitCount: .one),
+            .suspectedNoop(delivery: delivery, unitCount: .one),
+            .refused(reason: .targetUnavailable),
+            .indeterminate(delivery: delivery, evidence: .completionUnknown, unitCount: .one),
+        ]
+
+        for outcome in cases {
+            let client = OutcomeBrowserMCPClient(result: .init(
+                payload: .text("provider claimed success"),
+                outcome: outcome))
+            let response = try await BrowserTool(client: client, executionPolicy: .unrestricted)
+                .execute(arguments: ToolArguments(raw: [
+                    "action": "click",
+                    "page_id": 7,
+                    "uid": "7_9",
+                ]))
+
+            #expect(response.isError, "Expected \(outcome.state.rawValue) to reject a successful payload")
+            #expect(Self.text(from: response).contains(
+                "Browser mutation did not return a successful canonical outcome."))
+            let meta = try #require(response.meta?.objectValue)
+            #expect(meta["state"] == .string(outcome.state.rawValue))
         }
-        guard case let .object(receiptMeta) = meta["connection_receipt"] else {
-            Issue.record("Expected exact connection receipt")
-            return
+    }
+
+    @Test
+    func `Browser tool rejects error payload paired with success-compatible outcome`() async throws {
+        let delivery = DesktopActionOutcome.Delivery(mechanism: .browserProtocol, mode: .background)
+        let cases: [DesktopActionOutcome] = [
+            .confirmedChange(delivery: delivery, unitCount: .one),
+            .confirmedNoChange(),
+            .dispatchedUnverified(delivery: delivery, evidence: .deliveryAccepted, unitCount: .one),
+        ]
+
+        for outcome in cases {
+            let client = OutcomeBrowserMCPClient(result: .init(
+                payload: .error("provider claimed failure"),
+                outcome: outcome))
+            let response = try await BrowserTool(client: client, executionPolicy: .unrestricted)
+                .execute(arguments: ToolArguments(raw: [
+                    "action": "click",
+                    "page_id": 7,
+                    "uid": "7_9",
+                ]))
+
+            #expect(response.isError, "Expected \(outcome.state.rawValue) to reject an error payload")
+            #expect(Self.text(from: response).contains(
+                "Browser provider returned an error payload with a successful canonical outcome."))
+            let meta = try #require(response.meta?.objectValue)
+            #expect(meta["state"] == .string("indeterminate"))
+            #expect(meta["requires_fresh_observation"] == .bool(true))
         }
-        #expect(receiptMeta["browser_id"] == .string("browser-a"))
+    }
+
+    @Test
+    func `Browser tool projects retry safe zero progress refusal`() async throws {
+        let outcome = DesktopActionOutcome.refused(route: .bridge, reason: .targetUnavailable)
+        let client = OutcomeBrowserMCPClient(result: .init(
+            payload: .error("browser target changed"),
+            outcome: outcome))
+        let response = try await BrowserTool(client: client, executionPolicy: .unrestricted)
+            .execute(arguments: ToolArguments(raw: [
+                "action": "click",
+                "page_id": 7,
+                "uid": "7_9",
+            ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("refused"))
+        #expect(meta["dispatch_state"] == .string("none"))
+        #expect(meta["dispatched_unit_count"] == nil)
+        #expect(meta["refusal_reason"] == .string("target_unavailable"))
+        #expect(meta["retry_safety"] == .string("safe"))
+        #expect(meta["retry_safe"] == .bool(true))
+    }
+
+    @Test
+    func `Browser tool projects positive failed progress with exact unsafe unit count`() async throws {
+        let outcome = DesktopActionOutcome.indeterminate(
+            route: .bridge,
+            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(2))
+        let client = OutcomeBrowserMCPClient(result: .init(
+            payload: .error("second browser call completion unknown"),
+            outcome: outcome))
+        let response = try await BrowserTool(client: client, executionPolicy: .unrestricted)
+            .execute(arguments: ToolArguments(raw: [
+                "action": "type",
+                "page_id": 7,
+                "uid": "7_9",
+                "text": "typed",
+            ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("indeterminate"))
+        #expect(meta["dispatch_state"] == .string("may_have_dispatched"))
+        #expect(meta["dispatched_unit_count"] == .int(2))
+        #expect(meta["retry_safety"] == .string("unsafe"))
+        #expect(meta["requires_fresh_observation"] == .bool(true))
+    }
+
+    @Test
+    func `Browser tool projects unknown progress without inventing a unit count`() async throws {
+        let outcome = DesktopActionOutcome.indeterminate(
+            route: .bridge,
+            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            evidence: .completionUnknown)
+        let client = OutcomeBrowserMCPClient(result: .init(
+            payload: .error("browser completion unknown"),
+            outcome: outcome))
+        let response = try await BrowserTool(client: client, executionPolicy: .unrestricted)
+            .execute(arguments: ToolArguments(raw: [
+                "action": "click",
+                "page_id": 7,
+                "uid": "7_9",
+            ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("indeterminate"))
+        #expect(meta["dispatch_state"] == .string("may_have_dispatched"))
+        #expect(meta["dispatched_unit_count"] == nil)
+        #expect(meta["retry_safety"] == .string("unsafe"))
+        #expect(meta["requires_fresh_observation"] == .bool(true))
+    }
+
+    @Test
+    func `Browser tool projects a thrown canonical refusal for result-aware clients`() async throws {
+        let failure = DesktopActionFailure.preDispatchRefusal(
+            route: .bridge,
+            reason: .operationUnsupported,
+            message: "browser provider is unsupported")
+        let client = OutcomeBrowserMCPClient(failure: failure)
+        let response = try await BrowserTool(client: client, executionPolicy: .unrestricted)
+            .execute(arguments: ToolArguments(raw: [
+                "action": "click",
+                "page_id": 7,
+                "uid": "7_9",
+            ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("refused"))
+        #expect(meta["refusal_reason"] == .string("operation_unsupported"))
+        #expect(meta["retry_safe"] == .bool(true))
     }
 
     @Test
@@ -316,7 +537,7 @@ struct BrowserToolTests {
             isConnected: false,
             toolCount: 0,
             detectedBrowsers: []))
-        let tool = BrowserTool(client: client)
+        let tool = BrowserTool(client: client, executionPolicy: .unrestricted)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "list_pages",
@@ -334,7 +555,7 @@ struct BrowserToolTests {
             isConnected: true,
             toolCount: 31,
             detectedBrowsers: []))
-        let tool = BrowserTool(client: client)
+        let tool = BrowserTool(client: client, executionPolicy: .unrestricted)
 
         let snapshot = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "snapshot",
@@ -353,7 +574,7 @@ struct BrowserToolTests {
             isConnected: true,
             toolCount: 31,
             detectedBrowsers: []))
-        let tool = BrowserTool(client: client)
+        let tool = BrowserTool(client: client, executionPolicy: .unrestricted)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "list_pages",
@@ -371,7 +592,7 @@ struct BrowserToolTests {
             isConnected: true,
             toolCount: 31,
             detectedBrowsers: []))
-        let tool = BrowserTool(client: client)
+        let tool = BrowserTool(client: client, executionPolicy: .unrestricted)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "snapshot",
@@ -390,7 +611,7 @@ struct BrowserToolTests {
             isConnected: true,
             toolCount: 31,
             detectedBrowsers: []))
-        let tool = BrowserTool(client: client)
+        let tool = BrowserTool(client: client, executionPolicy: .unrestricted)
 
         _ = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "call",
@@ -409,7 +630,7 @@ struct BrowserToolTests {
             isConnected: true,
             toolCount: 31,
             detectedBrowsers: []))
-        let tool = BrowserTool(client: client)
+        let tool = BrowserTool(client: client, executionPolicy: .unrestricted)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "call",
@@ -428,7 +649,7 @@ struct BrowserToolTests {
             isConnected: true,
             toolCount: 31,
             detectedBrowsers: []))
-        let tool = BrowserTool(client: client)
+        let tool = BrowserTool(client: client, executionPolicy: .unrestricted)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "call",
@@ -447,7 +668,7 @@ struct BrowserToolTests {
             isConnected: true,
             toolCount: 31,
             detectedBrowsers: []))
-        let tool = BrowserTool(client: client)
+        let tool = BrowserTool(client: client, executionPolicy: .unrestricted)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "call",
@@ -465,7 +686,7 @@ struct BrowserToolTests {
             isConnected: true,
             toolCount: 31,
             detectedBrowsers: []))
-        let tool = BrowserTool(client: client)
+        let tool = BrowserTool(client: client, executionPolicy: .unrestricted)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "call",
@@ -486,7 +707,7 @@ struct BrowserToolTests {
             isConnected: true,
             toolCount: 31,
             detectedBrowsers: []))
-        let tool = BrowserTool(client: client)
+        let tool = BrowserTool(client: client, executionPolicy: .unrestricted)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "call",
@@ -513,6 +734,107 @@ struct BrowserToolTests {
         #expect(BrowserMCPPageRoutingContract.globalToolNames.isDisjoint(
             with: BrowserMCPPageRoutingContract.blockedSelectedPageToolNames))
         #expect(BrowserMCPPageRoutingContract.routing(for: "trigger_extension_action") == .blockedSelectedPage)
+        #expect(BrowserMCPPageRoutingContract.readOnlyToolNames.count == 27)
+        #expect(BrowserMCPPageRoutingContract.mutatingToolNames.count == 23)
+        #expect(BrowserMCPPageRoutingContract.argumentDependentToolNames == [
+            "performance_start_trace",
+            "select_page",
+        ])
+        #expect(BrowserMCPPageRoutingContract.allSemanticToolNames == BrowserMCPPageRoutingContract.allToolNames)
+        #expect(BrowserMCPPageRoutingContract.readOnlyToolNames.isDisjoint(
+            with: BrowserMCPPageRoutingContract.mutatingToolNames))
+        #expect(BrowserMCPPageRoutingContract.readOnlyToolNames.isDisjoint(
+            with: BrowserMCPPageRoutingContract.argumentDependentToolNames))
+        #expect(BrowserMCPPageRoutingContract.mutatingToolNames.isDisjoint(
+            with: BrowserMCPPageRoutingContract.argumentDependentToolNames))
+    }
+
+    @Test
+    func `Audited browser semantics classify mapped and raw argument dependent calls`() {
+        #expect(BrowserMCPPageRoutingContract.actionSemantics(
+            for: "list_pages",
+            arguments: [:]) == .readOnly)
+        #expect(BrowserMCPPageRoutingContract.actionSemantics(
+            for: "take_snapshot",
+            arguments: ["filePath": "/tmp/page.txt"]) == .readOnly)
+        #expect(BrowserMCPPageRoutingContract.actionSemantics(
+            for: "click",
+            arguments: ["uid": "7_1"]) == .mutating)
+        #expect(BrowserMCPPageRoutingContract.actionSemantics(
+            for: "select_page",
+            arguments: ["bringToFront": false]) == .readOnly)
+        #expect(BrowserMCPPageRoutingContract.actionSemantics(
+            for: "select_page",
+            arguments: ["bringToFront": true]) == .mutating)
+        #expect(BrowserMCPPageRoutingContract.actionSemantics(
+            for: "performance_start_trace",
+            arguments: ["reload": false]) == .readOnly)
+        #expect(BrowserMCPPageRoutingContract.actionSemantics(
+            for: "performance_start_trace",
+            arguments: [:]) == .mutating)
+        #expect(BrowserMCPPageRoutingContract.actionSemantics(
+            for: "unknown_future_tool",
+            arguments: [:]) == nil)
+    }
+
+    @Test
+    func `Browser snapshot mutation policy shares mapped and raw call semantics`() {
+        func effect(_ raw: [String: Any]) -> MCPToolSnapshotEffect {
+            MCPToolSnapshotMutationPolicy.effect(
+                toolName: "browser",
+                arguments: ToolArguments(raw: raw))
+        }
+
+        #expect(effect(["action": "list_pages"]) == .none)
+        #expect(effect(["action": "status"]) == .none)
+        #expect(effect(["action": "disconnect"]) == .none)
+        #expect(effect(["action": "connect"]) == .mutation)
+        #expect(effect([
+            "action": "call",
+            "mcp_tool": "take_snapshot",
+            "page_id": 7,
+        ]) == .none)
+        #expect(effect([
+            "action": "call",
+            "mcp_tool": "list_pages",
+        ]) == .none)
+        #expect(effect([
+            "action": "select_page",
+            "page_id": 7,
+            "bring_to_front": false,
+        ]) == .none)
+        #expect(effect([
+            "action": "performance_trace",
+            "page_id": 7,
+            "trace_action": "start",
+            "reload": false,
+        ]) == .none)
+
+        #expect(effect([
+            "action": "click",
+            "page_id": 7,
+            "uid": "7_1",
+        ]) == .mutation)
+        #expect(effect([
+            "action": "call",
+            "mcp_tool": "click",
+            "page_id": 7,
+            "mcp_args_json": #"{"uid":"7_1"}"#,
+        ]) == .mutation)
+        #expect(effect([
+            "action": "select_page",
+            "page_id": 7,
+            "bring_to_front": true,
+        ]) == .mutation)
+        #expect(effect([
+            "action": "performance_trace",
+            "page_id": 7,
+            "trace_action": "start",
+        ]) == .mutation)
+        #expect(effect([
+            "action": "call",
+            "mcp_tool": "future_tool",
+        ]) == .none)
     }
 
     @Test
@@ -536,7 +858,8 @@ struct BrowserToolTests {
             agent: nil,
             permissions: services.permissions,
             clipboard: services.clipboard,
-            browser: client)
+            browser: client,
+            executionPolicy: .unrestricted)
         let tool = BrowserTool(context: context)
 
         _ = try await tool.execute(arguments: ToolArguments(raw: [
@@ -546,11 +869,170 @@ struct BrowserToolTests {
         #expect(client.executedTools.last?.toolName == "list_pages")
     }
 
+    @Test
+    func `Browser execution publishes exact connection and progress evidence`() async throws {
+        let payload = BrowserMCPExecutionEvidence.attaching(
+            to: .text("ok"),
+            connectionReceipt: BrowserMCPConnectionReceipt(
+                channel: .stable,
+                processIdentifier: 42,
+                processStartIdentity: 1001,
+                bundleIdentifier: "com.google.Chrome",
+                browserURL: "http://127.0.0.1:9222/",
+                webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
+                devToolsBrowserID: "browser-a"),
+            completedCallCount: 1,
+            dispatchedCallCount: 1)
+        let client = OutcomeBrowserMCPClient(result: DesktopActionResult(payload: payload, outcome: nil))
+        let response = try await BrowserTool(client: client, executionPolicy: .unrestricted).execute(
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+
+        let meta = try #require(response.meta?.objectValue)
+        let execution = try #require(meta[BrowserMCPExecutionEvidence.metadataKey]?.objectValue)
+        #expect(execution["completed_call_count"] == .int(1))
+        #expect(execution["dispatched_call_count"] == .int(1))
+        let receipt = try #require(execution["connection_receipt"]?.objectValue)
+        #expect(receipt["channel"] == .string("stable"))
+        #expect(receipt["pid"] == .int(42))
+        #expect(receipt["process_start_identity_decimal"] == .string("1001"))
+        #expect(receipt["browser_id"] == .string("browser-a"))
+    }
+
     private static func text(from response: ToolResponse) -> String {
         guard case let .text(text: text, annotations: _, _meta: _) = response.content.first else {
             return ""
         }
         return text
+    }
+}
+
+extension BrowserToolTests {
+    @Test
+    func `default Browser tool requires an existing connection and returns canonical refusal`() async throws {
+        let client = ConnectionPolicyBrowserMCPClient()
+        let response = try await BrowserTool(client: client).execute(arguments: ToolArguments(raw: [
+            "action": "list_pages",
+        ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("refused"))
+        #expect(meta["refusal_reason"] == .string("target_unavailable"))
+        #expect(meta["dispatch_state"] == .string("none"))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(client.connectionPolicies == [.requireExistingLiveReceipt])
+        #expect(client.connectCount == 0)
+        #expect(client.executedTools.isEmpty)
+    }
+
+    @Test
+    func `default standalone Browser tool refuses connect before provider invocation`() async throws {
+        let client = ConnectionPolicyBrowserMCPClient()
+        let response = try await BrowserTool(client: client).execute(arguments: ToolArguments(raw: [
+            "action": "connect",
+            "channel": "stable",
+        ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["execution_policy"] == .string("background_only"))
+        #expect(meta["refusal_reason"] == .string("foreground_consent_required"))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(client.connectionPolicies.isEmpty)
+        #expect(client.connectCount == 0)
+        #expect(client.executedTools.isEmpty)
+    }
+
+    @Test
+    func `background only Browser tool refuses legacy read provider before execution`() async throws {
+        let client = MockBrowserMCPClient(status: BrowserMCPStatus(
+            isConnected: false,
+            toolCount: 0,
+            detectedBrowsers: []))
+        let services = PeekabooServices()
+        let context = MCPToolContext(
+            automation: services.automation,
+            menu: services.menu,
+            windows: services.windows,
+            applications: services.applications,
+            dialogs: services.dialogs,
+            dock: services.dock,
+            screenCapture: services.screenCapture,
+            desktopObservation: services.desktopObservation,
+            snapshots: services.snapshots,
+            screens: services.screens,
+            agent: nil,
+            permissions: services.permissions,
+            clipboard: services.clipboard,
+            browser: client,
+            executionPolicy: .backgroundOnly)
+
+        let response = try await BrowserTool(context: context).execute(arguments: ToolArguments(raw: [
+            "action": "list_pages",
+        ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("refused"))
+        #expect(meta["refusal_reason"] == .string("operation_unsupported"))
+        #expect(meta["dispatch_state"] == .string("none"))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(client.connectedChannels.isEmpty)
+        #expect(client.executedSequences.isEmpty)
+        #expect(client.executedTools.isEmpty)
+    }
+}
+
+@MainActor
+private final class ConnectionPolicyBrowserMCPClient: BrowserMCPClientProviding, BrowserMCPActionResultProviding,
+    @unchecked Sendable
+{
+    private(set) var connectionPolicies: [BrowserMCPExecutionConnectionPolicy] = []
+    private(set) var connectCount = 0
+    private(set) var executedTools: [String] = []
+
+    func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
+        BrowserMCPStatus(isConnected: false, toolCount: 0, detectedBrowsers: [])
+    }
+
+    func connect(channel: BrowserMCPChannel?) async throws -> BrowserMCPStatus {
+        self.connectCount += 1
+        return await self.status(channel: channel)
+    }
+
+    func disconnect() async {}
+
+    func execute(
+        toolName: String,
+        arguments _: [String: Any],
+        channel _: BrowserMCPChannel?) async throws -> ToolResponse
+    {
+        self.executedTools.append(toolName)
+        return .text("unexpected dispatch")
+    }
+
+    func executeSequenceWithOutcome(
+        _ calls: [BrowserMCPMappedCall],
+        channel _: BrowserMCPChannel?) async throws -> DesktopActionResult<ToolResponse>
+    {
+        self.executedTools.append(contentsOf: calls.map(\.toolName))
+        return DesktopActionResult(payload: .text("unexpected dispatch"), outcome: nil)
+    }
+
+    func executeSequenceWithOutcome(
+        _: [BrowserMCPMappedCall],
+        channel _: BrowserMCPChannel?,
+        connectionPolicy: BrowserMCPExecutionConnectionPolicy) async throws -> DesktopActionResult<ToolResponse>
+    {
+        self.connectionPolicies.append(connectionPolicy)
+        guard connectionPolicy == .allowAutoConnect else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Browser execution requires an existing live exact connection receipt.",
+                hint: "Connect the intended browser explicitly and retry.")
+        }
+        return DesktopActionResult(payload: .text("allowed"), outcome: nil)
     }
 }
 
@@ -611,5 +1093,57 @@ private final class MockBrowserMCPClient: BrowserMCPClientProviding, @unchecked 
         self.executedSequences.append(sequence)
         self.executedTools.append(contentsOf: sequence)
         return ToolResponse.text("called \(calls.last?.toolName ?? "none")")
+    }
+}
+
+@MainActor
+private final class OutcomeBrowserMCPClient: BrowserMCPClientProviding, BrowserMCPActionResultProviding,
+    @unchecked Sendable
+{
+    private let result: DesktopActionResult<ToolResponse>?
+    private let failure: DesktopActionFailure?
+    private(set) var executedSequences: [[BrowserMCPMappedCall]] = []
+
+    init(result: DesktopActionResult<ToolResponse>) {
+        self.result = result
+        self.failure = nil
+    }
+
+    init(failure: DesktopActionFailure) {
+        self.result = nil
+        self.failure = failure
+    }
+
+    func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
+        BrowserMCPStatus(isConnected: true, toolCount: 1, detectedBrowsers: [])
+    }
+
+    func connect(channel: BrowserMCPChannel?) async throws -> BrowserMCPStatus {
+        await self.status(channel: channel)
+    }
+
+    func disconnect() async {}
+
+    func execute(
+        toolName _: String,
+        arguments _: [String: Any],
+        channel _: BrowserMCPChannel?) async throws -> ToolResponse
+    {
+        try self.resolvedResult().payload
+    }
+
+    func executeSequenceWithOutcome(
+        _ calls: [BrowserMCPMappedCall],
+        channel _: BrowserMCPChannel?) async throws -> DesktopActionResult<ToolResponse>
+    {
+        self.executedSequences.append(calls)
+        return try self.resolvedResult()
+    }
+
+    private func resolvedResult() throws -> DesktopActionResult<ToolResponse> {
+        if let failure {
+            throw failure
+        }
+        return try #require(self.result)
     }
 }

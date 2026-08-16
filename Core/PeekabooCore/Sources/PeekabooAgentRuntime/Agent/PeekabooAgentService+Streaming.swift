@@ -94,7 +94,7 @@ extension PeekabooAgentService {
             imageContextID: String = UUID().uuidString,
             initialMessages: [ModelMessage] = [],
             enhancementOptions: AgentEnhancementOptions? = nil,
-            executionPolicy: MCPToolExecutionPolicy = .unrestricted)
+            executionPolicy: MCPToolExecutionPolicy = .backgroundOnly)
         {
             self.model = model
             self.supportsVision = model.supportsVision && (providerSupportsVision ?? true)
@@ -1100,6 +1100,12 @@ extension PeekabooAgentService {
                 executionContext: executionContext,
                 options: context.enhancementOptions)
             let result = execution.result
+            let resultBoundaryDecision = context.turnBoundary.recordResult(
+                toolName: toolCall.name,
+                result: result)
+            let effectiveBoundaryDecision = Self.effectiveBoundaryDecision(
+                initial: boundaryDecision,
+                afterResult: resultBoundaryDecision)
             if !Self.resultEncodesToolFailure(result) {
                 context.turnBoundary.recordSuccessfulCompletion(
                     toolName: toolCall.name,
@@ -1111,7 +1117,7 @@ extension PeekabooAgentService {
                 toolValue = self.addVerification(verification, to: toolValue)
                 await context.eventHandler?.send(.verificationCompleted(toolName: toolCall.name, result: verification))
             }
-            switch boundaryDecision {
+            switch effectiveBoundaryDecision {
             case let .continueNextStep(reason):
                 toolValue = self.addTurnBoundarySignal(.continueNextStep(reason: reason), to: toolValue)
             case let .stopAgentAfterSuccessfulTool(reason)
@@ -1139,8 +1145,14 @@ extension PeekabooAgentService {
             }
             let errorResult: AgentToolResult
             if let failure = error as? AgentToolExecutionFailure {
+                let resultBoundaryDecision = context.turnBoundary.recordResult(
+                    toolName: toolCall.name,
+                    result: failure.metadata)
+                let effectiveBoundaryDecision = Self.effectiveBoundaryDecision(
+                    initial: boundaryDecision,
+                    afterResult: resultBoundaryDecision)
                 let decoratedFailure: AgentToolExecutionFailure = if case let .continueNextStep(reason) =
-                    boundaryDecision
+                    effectiveBoundaryDecision
                 {
                     self.addTurnBoundarySignal(.continueNextStep(reason: reason), to: failure)
                 } else {
@@ -1164,6 +1176,13 @@ extension PeekabooAgentService {
             currentMessages.append(ModelMessage(role: .tool, content: [.toolResult(errorResult)]))
             return errorResult
         }
+    }
+
+    private static func effectiveBoundaryDecision(
+        initial: AgentTurnBoundary.Decision,
+        afterResult: AgentTurnBoundary.Decision) -> AgentTurnBoundary.Decision
+    {
+        afterResult == .continueTurn ? initial : afterResult
     }
 
     private func executeTool(

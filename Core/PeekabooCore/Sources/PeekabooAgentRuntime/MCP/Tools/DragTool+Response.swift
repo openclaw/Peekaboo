@@ -7,10 +7,11 @@ extension DragTool {
     func buildResponse(
         from: DragPointDescription,
         to: DragPointDescription,
-        movement: MovementParameters,
-        executionTime: TimeInterval,
-        request: DragRequest) -> ToolResponse
+        context: DragResponseContext) throws -> ToolResponse
     {
+        let movement = context.movement
+        let executionTime = context.executionTime
+        let request = context.request
         let deltaX = to.point.x - from.point.x
         let deltaY = to.point.y - from.point.y
         let distance = sqrt(deltaX * deltaX + deltaY * deltaY)
@@ -51,6 +52,9 @@ extension DragTool {
         if let toApp = request.targetApp {
             metaData["target_app"] = .string(toApp)
         }
+        if let invalidatedSnapshotID = context.invalidatedSnapshotID {
+            metaData["invalidated_snapshot"] = .string(invalidatedSnapshotID)
+        }
 
         let summary = ToolEventSummary(
             targetApp: request.targetApp ?? to.targetApp ?? from.targetApp,
@@ -67,7 +71,10 @@ extension DragTool {
             pointerDurationMs: Double(movement.duration),
             notes: "from \(from.description) to \(to.description)")
 
-        let metaValue = ToolEventSummary.merge(summary: summary, into: .object(metaData))
+        let meta = try MCPToolResponseMetadataProjector.metadata(
+            merging: metaData,
+            outcome: context.actionResult.outcome)
+        let metaValue = ToolEventSummary.merge(summary: summary, into: meta)
 
         return ToolResponse(content: [.text(text: message, annotations: nil, _meta: nil)], meta: metaValue)
     }

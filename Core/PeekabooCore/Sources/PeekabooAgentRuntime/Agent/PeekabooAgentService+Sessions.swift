@@ -47,7 +47,9 @@ extension PeekabooAgentService {
         let startTime = Date()
         let sessionId = UUID().uuidString
         let messages = [
-            ModelMessage.system(AgentSystemPrompt.generate(for: model)),
+            ModelMessage.system(AgentSystemPrompt.generate(
+                for: model,
+                executionPolicy: toolExecutionPolicy)),
             ModelMessage.user(task),
         ]
         let configuration = TachikomaConfiguration.resolve(.current)
@@ -206,6 +208,21 @@ extension PeekabooAgentService {
         toolExecutionPolicy: MCPToolExecutionPolicy = .backgroundOnly) -> SessionContext
     {
         var updatedMessages = session.messages
+        let authorityPrompt = AgentSystemPrompt.generate(
+            for: model,
+            executionPolicy: toolExecutionPolicy)
+        if let systemIndex = updatedMessages.firstIndex(where: { $0.role == .system }) {
+            let existing = updatedMessages[systemIndex]
+            updatedMessages[systemIndex] = ModelMessage(
+                id: existing.id,
+                role: .system,
+                content: [.text(authorityPrompt)],
+                timestamp: existing.timestamp,
+                channel: existing.channel,
+                metadata: existing.metadata)
+        } else {
+            updatedMessages.insert(.system(authorityPrompt), at: 0)
+        }
         if let userMessage {
             updatedMessages.append(.user(userMessage))
         }

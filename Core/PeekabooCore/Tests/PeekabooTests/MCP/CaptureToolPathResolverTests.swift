@@ -183,6 +183,51 @@ struct CaptureToolPathResolverTests {
     }
 
     @Test
+    func `window resolver freezes automatic app selection to exact identity`() async throws {
+        let selectedBounds = CGRect(x: 20, y: 30, width: 800, height: 600)
+        let windows = CaptureWindowResolverWindowService(windows: [
+            Self.window(id: 7, title: "", index: 0, bounds: CGRect(x: 0, y: 0, width: 500, height: 30)),
+            Self.window(id: 42, title: "Main Document", index: 1, bounds: selectedBounds),
+        ])
+
+        let scope = try await CaptureToolWindowResolver.scope(
+            app: "Preview",
+            pid: nil,
+            windowTitle: nil,
+            windowIndex: nil,
+            windows: windows)
+
+        #expect(scope.windowId == 42)
+        #expect(scope.windowMutationIdentity == WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: 7,
+            capturedBounds: selectedBounds))
+        #expect(scope.applicationIdentifier == "Preview")
+        #expect(windows.requestedTargets.map(\.description) == ["application(Preview)"])
+    }
+
+    @Test
+    func `window resolver freezes untargeted automatic selection to exact frontmost candidate`() async throws {
+        let bounds = CGRect(x: 40, y: 50, width: 700, height: 500)
+        let windows = CaptureWindowResolverWindowService(windows: [
+            Self.window(id: 77, title: "Frontmost", index: 0, bounds: bounds),
+        ])
+
+        let scope = try await CaptureToolWindowResolver.scope(
+            app: nil,
+            pid: nil,
+            windowTitle: nil,
+            windowIndex: nil,
+            windows: windows)
+
+        #expect(scope.windowId == 77)
+        #expect(scope.windowMutationIdentity?.windowID == 77)
+        #expect(scope.windowMutationIdentity?.capturedBounds == bounds)
+        #expect(windows.requestedTargets.map(\.description) == ["frontmost"])
+    }
+
+    @Test
     func `window resolver maps title-only selection to stable window id`() async throws {
         let windows = CaptureWindowResolverWindowService(windows: [
             Self.window(id: 99, title: "Inspector", index: 4),
@@ -198,6 +243,42 @@ struct CaptureToolPathResolverTests {
         #expect(scope.windowId == 99)
         #expect(scope.applicationIdentifier == "frontmost")
         #expect(windows.requestedTargets.map(\.description) == ["title(Inspector)"])
+    }
+
+    @Test
+    func `window resolver refuses ambiguous partial titles instead of pinning the first result`() async {
+        let windows = CaptureWindowResolverWindowService(windows: [
+            Self.window(id: 41, title: "Project Notes", index: 0),
+            Self.window(id: 42, title: "Project Plan", index: 1),
+        ])
+
+        await #expect(throws: PeekabooError.self) {
+            _ = try await CaptureToolWindowResolver.scope(
+                app: "Preview",
+                pid: nil,
+                windowTitle: "Project",
+                windowIndex: nil,
+                windows: windows)
+        }
+        #expect(windows.requestedTargets.map(\.description) == ["application(Preview)"])
+    }
+
+    @Test
+    func `window resolver exact title remains stable when inventory order differs`() async throws {
+        let windows = CaptureWindowResolverWindowService(windows: [
+            Self.window(id: 42, title: "Project Plan", index: 1),
+            Self.window(id: 41, title: "Project", index: 0),
+        ])
+
+        let scope = try await CaptureToolWindowResolver.scope(
+            app: "Preview",
+            pid: nil,
+            windowTitle: "Project",
+            windowIndex: nil,
+            windows: windows)
+
+        #expect(scope.windowId == 41)
+        #expect(scope.windowIndex == 0)
     }
 
     @Test
@@ -237,7 +318,8 @@ struct CaptureToolPathResolverTests {
 
         let foreground = CaptureTool.failureResponse(error, mutationDispatched: true)
         let foregroundMeta = try #require(Self.meta(from: foreground))
-        #expect(foregroundMeta["effect"] == .string("partial"))
+        #expect(foregroundMeta["effect"] == .string("unverifiable"))
+        #expect(foregroundMeta["state"] == .string("indeterminate"))
         #expect(foregroundMeta["mutation_dispatched"] == .bool(true))
         #expect(foregroundMeta["retry_safe"] == .bool(false))
     }
@@ -257,7 +339,8 @@ struct CaptureToolPathResolverTests {
         #expect(foreground.isError)
         #expect(foregroundMeta["mutation_dispatched"] == .bool(true))
         #expect(foregroundMeta["retry_safe"] == .bool(false))
-        #expect(foregroundMeta["effect"] == .string("partial"))
+        #expect(foregroundMeta["effect"] == .string("unverifiable"))
+        #expect(foregroundMeta["state"] == .string("indeterminate"))
     }
 
     @Test
@@ -276,7 +359,11 @@ struct CaptureToolPathResolverTests {
     @Test
     @MainActor
     func `partial focus failure returns conservative capture dispatch receipt`() async throws {
-        let focusError = PeekabooError.operationError(message: "focus verification failed after dispatch")
+        let focusError = DesktopActionFailure.indeterminate(
+            delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: "focus verification failed after dispatch")
         let windows = CaptureWindowResolverWindowService(
             windows: [Self.window(id: 42, title: "Main Document", index: 0)],
             focusError: focusError)
@@ -309,25 +396,146 @@ struct CaptureToolPathResolverTests {
         #expect(windows.focusCallCount == 1)
         #expect(meta["mutation_dispatched"] == .bool(true))
         #expect(meta["retry_safe"] == .bool(false))
-        #expect(meta["effect"] == .string("partial"))
+        #expect(meta["effect"] == .string("unverifiable"))
+        #expect(meta["state"] == .string("indeterminate"))
+        #expect(meta["target_receipt"] != nil)
+    }
+
+    @Test
+    func `live capture response preserves focus outcome and exact scope receipt`() throws {
+        let bounds = CGRect(x: 20, y: 30, width: 800, height: 600)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 99,
+            ownerProcessStartIdentity: 1234,
+            capturedBounds: bounds)
+        let scope = CaptureScope(
+            kind: .window,
+            windowId: 42,
+            windowMutationIdentity: identity,
+            applicationIdentifier: "Preview",
+            windowIndex: 0)
+        let target = try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+            identity: identity,
+            bounds: bounds))
+        let focus = UIAutomationActionResult(
+            payload: (),
+            outcome: .confirmedChange(
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                unitCount: .one),
+            targetIdentity: target)
+        let result = CaptureSessionResult(
+            source: .live,
+            videoIn: nil,
+            videoOut: nil,
+            frames: [],
+            contactSheet: CaptureContactSheet(
+                path: "/tmp/contact.png",
+                file: "contact.png",
+                columns: 1,
+                rows: 1,
+                thumbSize: CGSize(width: 100, height: 100),
+                sampledFrameIndexes: []),
+            metadataFile: "/tmp/metadata.json",
+            stats: CaptureStats(
+                durationMs: 1,
+                fpsIdle: 1,
+                fpsActive: 1,
+                fpsEffective: 1,
+                framesKept: 0,
+                framesDropped: 0,
+                maxFramesHit: false,
+                maxMbHit: false),
+            scope: scope,
+            diffAlgorithm: "fast",
+            diffScale: "w256",
+            options: CaptureOptionsSnapshot(
+                duration: 1,
+                idleFps: 1,
+                activeFps: 1,
+                changeThresholdPercent: 0,
+                heartbeatSeconds: 0,
+                quietMsToIdle: 0,
+                maxFrames: 1,
+                maxMegabytes: nil,
+                highlightChanges: false,
+                captureFocus: .foreground,
+                resolutionCap: nil,
+                diffStrategy: .fast,
+                diffBudgetMs: nil),
+            warnings: [])
+
+        let response = try CaptureTool.successResponse(
+            summary: "captured",
+            eventSummary: ToolEventSummary(actionDescription: "Capture"),
+            result: result,
+            focusResult: focus,
+            targetIdentity: target)
+        let meta = try #require(Self.meta(from: response))
+
+        #expect(meta["state"] == .string("confirmed_change"))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["dispatched_unit_count"] == .int(1))
+        #expect(meta["target_identity"]?.objectValue?["window_id"] == .int(42))
+        #expect(meta["target_receipt"] != nil)
+        #expect(meta["scope"] != nil)
+    }
+
+    @Test
+    func `cancellation after capture focus preserves indeterminate exact receipt`() throws {
+        let bounds = CGRect(x: 20, y: 30, width: 800, height: 600)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 99,
+            ownerProcessStartIdentity: 1234,
+            capturedBounds: bounds)
+        let target = try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+            identity: identity,
+            bounds: bounds))
+        let focus = UIAutomationActionResult(
+            payload: (),
+            outcome: .confirmedChange(
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                unitCount: .one),
+            targetIdentity: target)
+
+        let response = CaptureTool.failureResponse(CancellationError(), focusResult: focus)
+        let meta = try #require(Self.meta(from: response))
+
+        #expect(response.isError)
+        #expect(meta["state"] == .string("indeterminate"))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["target_receipt"] != nil)
     }
 
     @Test
     @MainActor
-    func `successful image response reports actual focus dispatch`() throws {
+    func `successful image response projects canonical observation outcome`() throws {
         let tool = ImageTool(context: MCPToolContext(services: PeekabooServices()))
-        let background = tool.buildCaptureResponse(
+        let capture = CaptureResult(
+            imageData: Data(),
+            metadata: CaptureMetadata(size: .zero, mode: .screen))
+        let observation = DesktopObservationResult(
+            target: ResolvedObservationTarget(kind: .screen(index: 0)),
+            capture: capture,
+            elements: nil)
+        let background = try tool.buildCaptureResponse(
             format: .png,
             savedFiles: [],
             captureResults: [],
-            observation: nil,
-            mutationDispatched: false)
-        let foreground = tool.buildCaptureResponse(
+            actionResult: UIAutomationActionResult(payload: observation, outcome: nil))
+        let foregroundOutcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .capturePipeline, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let foreground = try tool.buildCaptureResponse(
             format: .png,
             savedFiles: [],
             captureResults: [],
-            observation: nil,
-            mutationDispatched: true)
+            actionResult: UIAutomationActionResult(
+                payload: observation,
+                outcome: foregroundOutcome))
         let backgroundMeta = try #require(Self.meta(from: background))
         let foregroundMeta = try #require(Self.meta(from: foreground))
 
@@ -336,7 +544,10 @@ struct CaptureToolPathResolverTests {
         #expect(backgroundMeta["effect"] == nil)
         #expect(foregroundMeta["mutation_dispatched"] == .bool(true))
         #expect(foregroundMeta["retry_safe"] == .bool(false))
-        #expect(foregroundMeta["effect"] == nil)
+        #expect(foregroundMeta["effect"] == .string("unverifiable"))
+        #expect(foregroundMeta["state"] == .string("dispatched_unverified"))
+        #expect(foregroundMeta["delivery_mode"] == .string("foreground"))
+        #expect(foregroundMeta["dispatched_unit_count"] == .int(1))
     }
 
     private static func meta(from response: ToolResponse) -> [String: Value]? {
@@ -354,11 +565,18 @@ struct CaptureToolPathResolverTests {
             windowID: id,
             title: title,
             bounds: bounds,
-            index: index)
+            index: index,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: id,
+                ownerProcessIdentifier: 42,
+                ownerProcessStartIdentity: 7,
+                capturedBounds: bounds))
     }
 }
 
-private final class CaptureWindowResolverWindowService: WindowManagementServiceProtocol, @unchecked Sendable {
+private final class CaptureWindowResolverWindowService: WindowManagementPinnedFocusActionResultProviding,
+    @unchecked Sendable
+{
     let windows: [ServiceWindowInfo]
     let focusError: (any Error)?
     var requestedTargets: [WindowTarget] = []
@@ -386,6 +604,36 @@ private final class CaptureWindowResolverWindowService: WindowManagementServiceP
         if let focusError {
             throw focusError
         }
+    }
+
+    func focusWindowActionResult(target: WindowTarget) async throws -> UIAutomationActionResult<Void> {
+        guard let window = self.windows.first,
+              let identity = window.mutationIdentity
+        else {
+            throw PeekabooError.windowNotFound(criteria: target.description)
+        }
+        return try await self.focusWindowActionResult(target: target, expectedIdentity: identity)
+    }
+
+    func focusWindowActionResult(
+        target _: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> UIAutomationActionResult<Void>
+    {
+        self.focusCallCount += 1
+        if let focusError {
+            throw focusError
+        }
+        guard let bounds = expectedIdentity.capturedBounds else {
+            throw PeekabooError.windowNotFound(criteria: "missing exact focus bounds")
+        }
+        return try UIAutomationActionResult(
+            payload: (),
+            outcome: .confirmedChange(
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                unitCount: .one),
+            targetIdentity: DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+                identity: expectedIdentity,
+                bounds: bounds)))
     }
 
     func listWindows(target: WindowTarget) async throws -> [ServiceWindowInfo] {

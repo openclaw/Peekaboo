@@ -165,9 +165,10 @@ public struct WindowTool: MCPTool {
             return ToolResponse.error(validationError.message)
         } catch let failure as DesktopActionFailure {
             self.logger.error("Window operation execution failed: \(failure)")
-            return try MCPToolResponseMetadataProjector.errorResponse(
+            return try await MCPDesktopActionFailureHandler.response(
                 for: failure,
-                invalidatedSnapshotID: nil)
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: nil)
         } catch {
             self.logger.error("Window operation execution failed: \(error)")
             return ToolResponse.error("Failed to \(action.description) window: \(error.localizedDescription)")
@@ -180,13 +181,22 @@ public struct WindowTool: MCPTool {
         service: any WindowManagementServiceProtocol,
         startTime: Date) async throws -> ToolResponse
     {
-        let rawTarget = try self.createWindowTarget(
-            app: inputs.app,
-            title: inputs.title,
-            index: inputs.index,
-            windowId: inputs.windowId)
+        let operation = "Window \(action.description)"
+        let authorizedPlan = try self.context.authorizedDesktopTargetPlan(operation: operation)
+        let authorizedWindow = try authorizedPlan?.requireSelectedWindow(operation: operation)
+        let rawTarget = if let authorizedWindow {
+            WindowTarget.windowId(authorizedWindow.windowID)
+        } else {
+            try self.createWindowTarget(
+                app: inputs.app,
+                title: inputs.title,
+                index: inputs.index,
+                windowId: inputs.windowId)
+        }
         let expectedOwnerIdentity: ApplicationProcessIdentity?
-        if inputs.windowId != nil, let app = inputs.app {
+        if let authorizedPlan {
+            expectedOwnerIdentity = authorizedPlan.processIdentity
+        } else if inputs.windowId != nil, let app = inputs.app {
             let application = try await self.context.applications.findApplication(identifier: app)
             guard let identity = application.processIdentity else {
                 throw PeekabooError.commandFailed("The selected application did not include a process receipt")
@@ -195,7 +205,10 @@ public struct WindowTool: MCPTool {
         } else {
             expectedOwnerIdentity = nil
         }
-        let target = WindowActionTarget(target: rawTarget, expectedOwnerIdentity: expectedOwnerIdentity)
+        let target = WindowActionTarget(
+            target: rawTarget,
+            expectedOwnerIdentity: expectedOwnerIdentity,
+            authorizedWindow: authorizedWindow)
 
         switch action {
         case .list:
@@ -313,6 +326,17 @@ public struct WindowTool: MCPTool {
 struct WindowActionTarget {
     let target: WindowTarget
     let expectedOwnerIdentity: ApplicationProcessIdentity?
+    let authorizedWindow: ServiceWindowInfo?
+
+    init(
+        target: WindowTarget,
+        expectedOwnerIdentity: ApplicationProcessIdentity?,
+        authorizedWindow: ServiceWindowInfo? = nil)
+    {
+        self.target = target
+        self.expectedOwnerIdentity = expectedOwnerIdentity
+        self.authorizedWindow = authorizedWindow
+    }
 }
 
 private enum WindowAction: String, CaseIterable, Equatable {

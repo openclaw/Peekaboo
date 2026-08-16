@@ -6,7 +6,9 @@ import PeekabooBridge
 import PeekabooFoundation
 
 @MainActor
-public final class RemoteMenuService: MenuServiceProtocol {
+public final class RemoteMenuService: MenuServiceProtocol, MenuServiceGenerationPinnedActionResultProviding,
+    MenuServiceExactLeafActionResultProviding
+{
     private let client: PeekabooBridgeClient
 
     public init(client: PeekabooBridgeClient) {
@@ -25,12 +27,42 @@ public final class RemoteMenuService: MenuServiceProtocol {
         try await self.client.clickMenuItem(appIdentifier: app, itemPath: itemPath)
     }
 
+    public func clickMenuItemActionResult(
+        app: String,
+        itemPath: String) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.client.clickMenuItemResult(appIdentifier: app, itemPath: itemPath)
+    }
+
+    public func clickMenuItemActionResult(
+        request: MenuItemActionRequest) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.client.clickMenuItemResult(request: request)
+    }
+
     public func clickMenuItemByName(app: String, itemName: String) async throws {
         try await self.client.clickMenuItemByName(appIdentifier: app, itemName: itemName)
     }
 
+    public func clickMenuItemByNameActionResult(
+        app: String,
+        itemName: String) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.client.clickMenuItemByNameResult(appIdentifier: app, itemName: itemName)
+    }
+
+    public func clickMenuItemByNameActionResult(
+        request: MenuItemByNameActionRequest) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.client.clickMenuItemByNameResult(request: request)
+    }
+
     public func clickMenuExtra(title: String) async throws {
         try await self.client.clickMenuExtra(title: title)
+    }
+
+    public func clickMenuExtraActionResult(title: String) async throws -> UIAutomationActionResult<Void> {
+        try await self.client.clickMenuExtraResult(title: title)
     }
 
     public func isMenuExtraMenuOpen(title: String, ownerPID: pid_t?) async throws -> Bool {
@@ -53,7 +85,21 @@ public final class RemoteMenuService: MenuServiceProtocol {
         try await self.client.clickMenuBarItem(named: name)
     }
 
+    public func clickMenuBarItemActionResult(named name: String) async throws -> UIAutomationActionResult<ClickResult> {
+        try await self.client.clickMenuBarItemResult(named: name)
+    }
+
     public func clickMenuBarItem(at index: Int) async throws -> ClickResult {
         try await self.client.clickMenuBarItem(at: index)
+    }
+
+    public func clickMenuBarItemActionResult(at index: Int) async throws -> UIAutomationActionResult<ClickResult> {
+        try await self.client.clickMenuBarItemResult(at: index)
+    }
+
+    public func clickMenuBarItemActionResult(request: MenuBarItemActionRequest) async throws
+        -> UIAutomationActionResult<ClickResult>
+    {
+        try await self.client.clickMenuBarItemResult(request: request)
     }
 }

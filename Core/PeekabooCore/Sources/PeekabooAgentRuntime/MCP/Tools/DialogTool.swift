@@ -12,6 +12,7 @@ public struct DialogTool: MCPTool {
         let windowTitle: String?
         let appHint: String?
         let preparedReceipt: PreparedDialogActionReceipt?
+        let focusResult: MCPInteractionFocusResult?
     }
 
     private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "DialogTool")
@@ -32,16 +33,16 @@ public struct DialogTool: MCPTool {
 
         Targeting:
         - click and non-forced dismiss require app/pid or an exact window_id target.
-        - input and file may use the current dialog only with foreground=true; an explicit target is recommended.
+        - targeted input defaults to background AXValue delivery; targetless input requires foreground=true.
+        - file interaction always requires foreground=true.
         - list may be targetless; targeted list remains read-only and must resolve exactly one dialog.
         - app and pid are alternatives. Provide at most one window selector; title/index require app or pid.
-        - Set foreground=true only for keyboard/file interaction or an explicit global fallback.
+        - Set foreground=true only for explicit keyboard/file interaction or a global fallback.
 
         Examples:
         - Click OK: { "action": "click", "button": "OK", "app": "TextEdit" }
         - Default action: { "action": "click", "button": "default", "app": "TextEdit" }
-        - Input password: { "action": "input", "text": "hunter2", "field": "Password", "clear": true,
-          "app": "Safari", "foreground": true }
+        - Background input: { "action": "input", "text": "hello", "field": "Name", "app": "TextEdit" }
         - Save file (OKButton): { "action": "file", "path": "/tmp", "name": "poem.rtf",
           "select": "default", "ensure_expanded": true, "app": "TextEdit", "foreground": true }
         """
@@ -61,7 +62,7 @@ public struct DialogTool: MCPTool {
                 "window_title": SchemaBuilder.string(description: "Window title (substring match)."),
                 "window_index": SchemaBuilder.integer(description: "Window index (0-based); requires app/pid."),
                 "foreground": SchemaBuilder.boolean(
-                    description: "Allow focus/global input. Required for input, file, and forced dismiss.",
+                    description: "Allow focus/global input. Required for targetless input, file, and forced dismiss.",
                     default: false),
 
                 // click
@@ -98,6 +99,7 @@ public struct DialogTool: MCPTool {
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
         let startTime = Date()
+        var setupFocusResult: MCPInteractionFocusResult?
 
         do {
             let action = try DialogToolAction(arguments: arguments)
@@ -106,7 +108,7 @@ public struct DialogTool: MCPTool {
             if action == .list, inputs.foreground {
                 throw DialogToolInputError.invalid("foreground", "dialog list is always read-only/background")
             }
-            if action == .input || action == .file, !inputs.foreground {
+            if action == .file, !inputs.foreground {
                 throw DialogToolInputError.foregroundRequired(action)
             }
             if action == .dismiss, inputs.force == true, !inputs.foreground {
@@ -120,6 +122,9 @@ public struct DialogTool: MCPTool {
                 windowIndex: inputs.windowIndex,
                 windowId: inputs.windowId)
             let dialogTarget = try inputs.targetSelector()
+            if action == .input, !dialogTarget.hasTarget, !inputs.foreground {
+                throw DialogToolInputError.foregroundRequired(action)
+            }
             let requiresPreparedTarget = action == .click || (action == .dismiss && inputs.force != true)
             if requiresPreparedTarget, !dialogTarget.hasTarget {
                 throw DialogToolInputError.missingForAction(action: action, field: "app, pid, or window_id target")
@@ -148,7 +153,7 @@ public struct DialogTool: MCPTool {
             let hostOwnsForegroundDialogFocus = action == .input ||
                 (action == .dismiss && inputs.force == true && dialogTarget.hasTarget)
             if inputs.foreground, inputs.hasAnyTargeting, !hostOwnsForegroundDialogFocus {
-                _ = try await target.focusIfRequested(windows: self.context.windows)
+                setupFocusResult = try await target.focusResultIfRequested(windows: self.context.windows)
             }
             if inputs.foreground, let preparationRequest {
                 preparedReceipt = try await self.context.dialogs.prepareDialogAction(preparationRequest)
@@ -174,7 +179,8 @@ public struct DialogTool: MCPTool {
                     selector: dialogTarget,
                     windowTitle: resolvedWindowTitle,
                     appHint: appHint,
-                    preparedReceipt: preparedReceipt),
+                    preparedReceipt: preparedReceipt,
+                    focusResult: setupFocusResult),
                 startTime: startTime)
         } catch let error as MCPInteractionTargetError {
             return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
@@ -185,16 +191,27 @@ public struct DialogTool: MCPTool {
                 message: error.localizedDescription,
                 reason: error.refusalReason)
         } catch let failure as DesktopActionFailure {
+            let failure = setupFocusResult?.preservingFailure(
+                failure,
+                operation: "Dialog action") ?? failure
             return try await MCPDesktopActionFailureHandler.response(
                 for: failure,
                 uiSnapshots: self.context.uiSnapshots,
                 snapshotID: nil)
         } catch {
+            if let setupFocusResult {
+                return try await MCPDesktopActionFailureHandler.response(
+                    for: setupFocusResult.preservingFailure(error, operation: "Dialog action"),
+                    uiSnapshots: self.context.uiSnapshots,
+                    snapshotID: nil)
+            }
             self.logger.error("Dialog execution failed: \(error.localizedDescription)")
             return ToolResponse.error("Dialog failed: \(error.localizedDescription)")
         }
     }
 
+    @MainActor
+    // swiftlint:disable:next function_body_length
     private func perform(
         action: DialogToolAction,
         inputs: DialogToolInputs,
@@ -210,12 +227,17 @@ public struct DialogTool: MCPTool {
             } else {
                 try await self.context.dialogs.listDialogElements(windowTitle: nil, appName: nil)
             }
+            let targetIdentity = try self.validatedDialogListTarget(
+                elements,
+                selector: target.selector,
+                operation: "Dialog list")
             let executionTime = Date().timeIntervalSince(startTime)
-            return self.formatList(
+            return try self.formatList(
                 elements: elements,
                 executionTime: executionTime,
                 windowTitle: windowTitle,
-                appHint: appHint)
+                appHint: appHint,
+                targetIdentity: targetIdentity)
 
         case .click:
             let button = try inputs.requireButton()
@@ -225,16 +247,27 @@ public struct DialogTool: MCPTool {
                     message: "Dialog click lost its prepared action receipt before execution.",
                     hint: "Prepare the dialog action again before retrying.")
             }
+            try self.validatePreparedReceiptAgainstAuthorization(
+                receipt,
+                operation: "Dialog click")
             let result = try await self.context.dialogs.performPreparedDialogAction(receipt)
-            let outcome = try result.requiredPreparedOutcome(kind: .clickButton)
-            return self.formatActionResult(
+            let leafOutcome = try result.requiredPreparedOutcome(kind: .clickButton)
+            let actionResult = try self.combinedResult(
+                leafOutcome,
+                result: result,
+                target: target,
+                operation: "Dialog click")
+            let outcome = try self.requiredOutcome(actionResult, operation: "Dialog click")
+            return try self.formatActionResult(
                 context: ActionResultContext(
                     verb: "Clicked",
+                    expectedAction: .clickButton,
                     notes: button,
                     windowTitle: windowTitle,
                     appHint: appHint),
                 result: result,
                 outcome: outcome,
+                targetIdentity: actionResult.targetIdentity,
                 startTime: startTime)
 
         case .input:
@@ -247,12 +280,16 @@ public struct DialogTool: MCPTool {
                     fieldIdentifier: request.fieldIdentifier,
                     clearExisting: request.clearExisting,
                     focus: DialogForegroundFocusPolicy(
-                        autoFocus: true,
+                        autoFocus: inputs.foreground,
                         timeout: 5,
                         retryCount: 3,
                         switchSpace: false,
                         bringToCurrentSpace: false))
-                result = try await self.context.dialogs.enterText(exactRequest)
+                result = if inputs.foreground {
+                    try await self.context.dialogs.enterTextForegroundCompatible(exactRequest)
+                } else {
+                    try await self.context.dialogs.enterText(exactRequest)
+                }
             } else {
                 result = try await self.context.dialogs.enterText(
                     text: request.text,
@@ -261,72 +298,39 @@ public struct DialogTool: MCPTool {
                     windowTitle: nil,
                     appName: nil)
             }
-            let outcome = await result.foregroundOutcomeOrUnverified(
-                route: self.context.dialogs.foregroundOutcomeRoute)
+            let leafOutcome = try self.dialogInputOutcome(
+                result,
+                foreground: inputs.foreground,
+                targetIsExact: target.selector.hasTarget)
+            let actionResult = try self.combinedResult(
+                leafOutcome,
+                result: result,
+                target: target,
+                operation: "Dialog input")
+            let outcome = try self.requiredOutcome(actionResult, operation: "Dialog input")
             let notes = request.fieldIdentifier ?? "field"
-            return self.formatActionResult(
+            return try self.formatActionResult(
                 context: ActionResultContext(
                     verb: "Entered text",
+                    expectedAction: .enterText,
                     notes: notes,
                     windowTitle: windowTitle,
                     appHint: appHint),
                 result: result,
                 outcome: outcome,
+                targetIdentity: actionResult.targetIdentity,
                 startTime: startTime)
 
         case .file:
-            let request = inputs.fileRequest()
-            let actionButton: String?
-            if let select = request.select {
-                let normalized = select.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                actionButton = normalized == "default" ? nil : select
-            } else {
-                actionButton = nil
-            }
-
-            let result = try await self.context.dialogs.handleFileDialog(
-                path: request.path,
-                filename: request.name,
-                actionButton: actionButton,
-                ensureExpanded: request.ensureExpanded,
-                appName: appHint)
-
-            let executionTime = Date().timeIntervalSince(startTime)
-            let clicked = result.details["button_clicked"] ?? (request.select ?? "default")
-            let savedPath = result.details["saved_path"]
-            let savedVerified = result.details["saved_path_verified"] == "true" ||
-                result.details["saved_path_exists"] == "true"
-
-            var message = "\(AgentDisplayTokens.Status.success) Handled file dialog"
-            if let savedPath {
-                let verifySuffix = savedVerified ? " (verified)" : ""
-                message += ": \(clicked) → \(savedPath)\(verifySuffix)"
-            } else {
-                message += ": clicked \(clicked)"
-            }
-            message += " in \(Self.formattedDuration(executionTime))"
-
-            let meta: Value = .object([
-                "action": .string(result.action.rawValue),
-                "success": .bool(result.success),
-                "execution_time": .double(executionTime),
-                "details": .object(result.details.mapValues { .string($0) }),
-            ])
-
-            let summary = ToolEventSummary(
-                targetApp: appHint,
-                windowTitle: windowTitle,
-                actionDescription: "Dialog File",
-                notes: savedPath ?? clicked)
-
-            return ToolResponse(
-                content: [.text(text: message, annotations: nil, _meta: nil)],
-                meta: ToolEventSummary.merge(summary: summary, into: meta))
+            return try await self.handleFileAction(
+                inputs: inputs,
+                target: target,
+                startTime: startTime)
 
         case .dismiss:
             let force = inputs.force ?? false
             let result: DialogActionResult
-            let outcome: DesktopActionOutcome
+            let actionResult: UIAutomationActionResult<Void>
             if force {
                 if target.selector.hasTarget {
                     result = try await self.context.dialogs.forceDismissDialog(
@@ -337,8 +341,13 @@ public struct DialogTool: MCPTool {
                         windowTitle: windowTitle,
                         appName: appHint)
                 }
-                outcome = await result.foregroundOutcomeOrUnverified(
+                let leafOutcome = result.foregroundOutcomeOrUnverified(
                     route: self.context.dialogs.foregroundOutcomeRoute)
+                actionResult = try self.combinedResult(
+                    leafOutcome,
+                    result: result,
+                    target: target,
+                    operation: "Dialog dismiss")
             } else {
                 guard let receipt = target.preparedReceipt else {
                     throw DesktopActionFailure.preDispatchRefusal(
@@ -346,19 +355,342 @@ public struct DialogTool: MCPTool {
                         message: "Dialog dismiss lost its prepared action receipt before execution.",
                         hint: "Prepare the dialog action again before retrying.")
                 }
+                try self.validatePreparedReceiptAgainstAuthorization(
+                    receipt,
+                    operation: "Dialog dismiss")
                 result = try await self.context.dialogs.performPreparedDialogAction(receipt)
-                outcome = try result.requiredPreparedOutcome(kind: .dismiss)
+                let leafOutcome = try result.requiredPreparedOutcome(kind: .dismiss)
+                actionResult = try self.combinedResult(
+                    leafOutcome,
+                    result: result,
+                    target: target,
+                    operation: "Dialog dismiss")
             }
+            let outcome = try self.requiredOutcome(actionResult, operation: "Dialog dismiss")
             let verb = force ? "Dismissed (forced)" : "Dismissed"
-            return self.formatActionResult(
+            return try self.formatActionResult(
                 context: ActionResultContext(
                     verb: verb,
+                    expectedAction: .dismiss,
                     notes: nil,
                     windowTitle: windowTitle,
                     appHint: appHint),
                 result: result,
                 outcome: outcome,
+                targetIdentity: actionResult.targetIdentity,
                 startTime: startTime)
         }
+    }
+
+    private func validatePreparedReceiptAgainstAuthorization(
+        _ receipt: PreparedDialogActionReceipt,
+        operation: String) throws
+    {
+        _ = try self.context.coalesceAuthorizedDesktopTarget(
+            DesktopTargetIdentity(exactWindow: receipt.target),
+            operation: operation)
+    }
+
+    @MainActor
+    private func handleFileAction(
+        inputs: DialogToolInputs,
+        target: ExecutionTarget,
+        startTime: Date) async throws -> ToolResponse
+    {
+        let request = inputs.fileRequest()
+        let actionButton: String?
+        if let select = request.select {
+            let normalized = select.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            actionButton = normalized == "default" ? nil : select
+        } else {
+            actionButton = nil
+        }
+
+        let result = try await self.context.dialogs.handleFileDialog(
+            path: request.path,
+            filename: request.name,
+            actionButton: actionButton,
+            ensureExpanded: request.ensureExpanded,
+            appName: target.appHint)
+        let leafOutcome = result.foregroundOutcomeOrUnverified(
+            route: self.context.dialogs.foregroundOutcomeRoute)
+        let actionResult = try self.combinedResult(
+            leafOutcome,
+            result: result,
+            target: target,
+            operation: "Dialog file action")
+        let outcome = try self.requiredOutcome(actionResult, operation: "Dialog file action")
+        try Self.requireSuccessfulActionResult(
+            result,
+            outcome: outcome,
+            operation: "Dialog file action",
+            expectedAction: .handleFileDialog)
+
+        let executionTime = Date().timeIntervalSince(startTime)
+        let clicked = result.details["button_clicked"] ?? (request.select ?? "default")
+        let savedPath = result.details["saved_path"]
+        let savedVerified = result.details["saved_path_verified"] == "true" ||
+            result.details["saved_path_exists"] == "true"
+
+        let prefix = outcome.effect == .unverifiable
+            ? AgentDisplayTokens.Status.warning
+            : AgentDisplayTokens.Status.success
+        var message = "\(prefix) Handled file dialog"
+        if let savedPath {
+            let verifySuffix = savedVerified ? " (verified)" : ""
+            message += ": \(clicked) → \(savedPath)\(verifySuffix)"
+        } else {
+            message += ": clicked \(clicked)"
+        }
+        message += " in \(Self.formattedDuration(executionTime))"
+        if outcome.effect == .unverifiable {
+            message += "; effect is unverifiable, observe before retrying"
+        }
+
+        var targetFields = try MCPDesktopTargetMetadataProjector.fields(actionResult.targetIdentity)
+        if let targetReceipt = result.targetReceipt {
+            targetFields["target_receipt"] = try Value(targetReceipt)
+        }
+        let meta = try MCPToolResponseMetadataProjector.metadata(merging: [
+            "action": .string(result.action.rawValue),
+            "success": .bool(result.success),
+            "execution_time": .double(executionTime),
+            "details": .object(result.details.mapValues { .string($0) }),
+        ].merging(targetFields) { _, target in target }, outcome: outcome)
+
+        let summary = ToolEventSummary(
+            targetApp: target.appHint,
+            windowTitle: target.windowTitle,
+            actionDescription: "Dialog File",
+            notes: savedPath ?? clicked)
+
+        return ToolResponse(
+            content: [.text(text: message, annotations: nil, _meta: nil)],
+            meta: ToolEventSummary.merge(summary: summary, into: meta))
+    }
+
+    @MainActor
+    private func combinedResult(
+        _ leafOutcome: DesktopActionOutcome,
+        result: DialogActionResult,
+        target: ExecutionTarget,
+        operation: String) throws -> UIAutomationActionResult<Void>
+    {
+        let resultTarget = try self.validatedDialogResultTarget(
+            result,
+            target: target,
+            leafOutcome: leafOutcome,
+            operation: operation)
+        let leafResult = UIAutomationActionResult(
+            payload: (),
+            outcome: leafOutcome,
+            targetIdentity: resultTarget)
+        guard let focusResult = target.focusResult else { return leafResult }
+        return try focusResult.combining(
+            leafResult,
+            operation: operation)
+    }
+
+    @MainActor
+    private func requiredOutcome(
+        _ result: UIAutomationActionResult<Void>,
+        operation: String) throws -> DesktopActionOutcome
+    {
+        guard let outcome = result.outcome else {
+            throw DesktopActionFailure.indeterminate(
+                route: self.context.dialogs.foregroundOutcomeRoute,
+                evidence: .completionUnknown,
+                message: "\(operation) lost its canonical action outcome.",
+                hint: "Observe the exact dialog before retrying and update the execution provider.")
+                .attributed(to: result.targetIdentity?.actionTargetReceipt)
+        }
+        return outcome
+    }
+
+    @MainActor
+    private func dialogInputOutcome(
+        _ result: DialogActionResult,
+        foreground: Bool,
+        targetIsExact: Bool) throws -> DesktopActionOutcome
+    {
+        guard targetIsExact, !foreground else {
+            return result.foregroundOutcomeOrUnverified(route: self.context.dialogs.foregroundOutcomeRoute)
+        }
+        guard let outcome = result.outcome?.routed(to: self.context.dialogs.foregroundOutcomeRoute),
+              result.success,
+              result.action == .enterText,
+              outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background),
+              outcome.isAccepted(by: .confirmedOrDispatched)
+        else {
+            throw DesktopActionFailure.indeterminate(
+                route: self.context.dialogs.foregroundOutcomeRoute,
+                delivery: result.outcome?.delivery,
+                evidence: .completionUnknown,
+                unitCount: result.outcome?.dispatchState.unitCount,
+                message: "Exact background dialog input returned contradictory result semantics.",
+                hint: "Observe the exact dialog before retrying and update the execution provider.")
+                .attributed(to: result.targetReceipt)
+        }
+        return outcome
+    }
+
+    @MainActor
+    private func validatedDialogResultTarget(
+        _ result: DialogActionResult,
+        target: ExecutionTarget,
+        leafOutcome: DesktopActionOutcome,
+        operation: String) throws -> DesktopTargetIdentity?
+    {
+        let hasWindowEvidence = result.targetWindowIdentity != nil ||
+            result.targetWindowBounds != nil ||
+            result.focusedElement != nil
+        let hasResultTargetEvidence = hasWindowEvidence || result.targetReceipt != nil || result.resolvedTarget != nil
+        if target.selector.hasTarget, !hasResultTargetEvidence {
+            throw self.dialogLeafTargetFailure(
+                result: result,
+                leafOutcome: leafOutcome,
+                operation: operation,
+                cause: "The targeted dialog result omitted its exact target evidence.")
+        }
+        var candidates: [DesktopTargetIdentity?] = [
+            target.preparedReceipt.map { DesktopTargetIdentity(exactWindow: $0.target) },
+            target.focusResult?.targetIdentity,
+        ]
+        if let resolved = result.resolvedTarget {
+            guard !target.selector.hasTarget || resolved.matches(target.selector) else {
+                throw self.dialogLeafTargetFailure(
+                    result: result,
+                    leafOutcome: leafOutcome,
+                    operation: operation,
+                    cause: "The resolved dialog target does not match the requested selector.")
+            }
+            candidates.append(DesktopTargetIdentity(exactWindow: resolved.target))
+        }
+        if hasWindowEvidence {
+            guard let identity = result.targetWindowIdentity,
+                  let bounds = result.targetWindowBounds
+            else {
+                throw self.dialogLeafTargetFailure(
+                    result: result,
+                    leafOutcome: leafOutcome,
+                    operation: operation,
+                    cause: "The dialog result carried incomplete window target evidence.")
+            }
+            do {
+                try candidates.append(DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+                    identity: identity,
+                    bounds: bounds,
+                    focusedElement: result.focusedElement)))
+            } catch {
+                throw self.dialogLeafTargetFailure(
+                    result: result,
+                    leafOutcome: leafOutcome,
+                    operation: operation,
+                    cause: error.localizedDescription)
+            }
+        }
+
+        if let receipt = result.targetReceipt {
+            let receiptIdentity: DesktopTargetIdentity
+            do {
+                receiptIdentity = try DesktopTargetIdentity(processIdentity: .init(
+                    processIdentifier: receipt.processIdentifier,
+                    processStartIdentity: receipt.processStartIdentity))
+            } catch {
+                throw self.dialogLeafTargetFailure(
+                    result: result,
+                    leafOutcome: leafOutcome,
+                    operation: operation,
+                    cause: error.localizedDescription)
+            }
+            candidates.append(receiptIdentity)
+        }
+
+        guard candidates.contains(where: { $0 != nil }) else {
+            guard !target.selector.hasTarget else {
+                throw self.dialogLeafTargetFailure(
+                    result: result,
+                    leafOutcome: leafOutcome,
+                    operation: operation,
+                    cause: "The targeted dialog result omitted its exact target evidence.")
+            }
+            return nil
+        }
+        do {
+            guard let resultTarget = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.coalesce(candidates)
+            else { return nil }
+            let authorizedTarget = try self.context.coalesceAuthorizedDesktopTarget(
+                resultTarget,
+                operation: operation)
+            if target.selector.hasTarget, authorizedTarget.exactWindow == nil {
+                guard let receipt = result.targetReceipt,
+                      target.selector.applicationIdentifier == nil,
+                      target.selector.windowTitle == nil,
+                      target.selector.windowIndex == nil,
+                      target.selector.processIdentifier == receipt.processIdentifier,
+                      target.selector.windowID.map({ $0 == receipt.windowID }) ?? true
+                else {
+                    throw DesktopTargetIdentityError.incompleteExactWindow
+                }
+            }
+            if let receiptWindowID = result.targetReceipt?.windowID,
+               let exactWindowID = authorizedTarget.exactWindow?.identity.windowID,
+               receiptWindowID != exactWindowID
+            {
+                throw DesktopTargetIdentityError.contradictoryWindowIdentifier
+            }
+            return authorizedTarget
+        } catch {
+            throw self.dialogLeafTargetFailure(
+                result: result,
+                leafOutcome: leafOutcome,
+                operation: operation,
+                cause: error.localizedDescription)
+        }
+    }
+
+    @MainActor
+    private func validatedDialogListTarget(
+        _ elements: DialogElements,
+        selector: DialogTargetSelector,
+        operation: String) throws -> DesktopTargetIdentity?
+    {
+        guard selector.hasTarget else {
+            guard elements.resolvedTarget == nil else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .invalidRequest,
+                    message: "Targetless dialog list returned unexpected exact-target evidence.",
+                    hint: "Retry against a provider that preserves the requested list scope.")
+            }
+            return nil
+        }
+        guard let resolved = elements.resolvedTarget, resolved.matches(selector) else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Targeted dialog list did not return matching exact-target evidence.",
+                hint: "Refresh the dialog target and retry the read.")
+        }
+        return DesktopTargetIdentity(exactWindow: resolved.target)
+    }
+
+    private func dialogLeafTargetFailure(
+        result: DialogActionResult,
+        leafOutcome: DesktopActionOutcome,
+        operation: String,
+        cause: String) -> DesktopActionFailure
+    {
+        let validationFailure = DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "\(operation) returned target evidence that did not match its setup focus.",
+            hint: "Observe both targets before retrying.",
+            causeDescription: cause)
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.reportedOutcome(leafOutcome, defaultDispatchedUnitCount: .one))
+        return sequence.failure(
+            combining: validationFailure,
+            message: validationFailure.message,
+            hint: validationFailure.hint,
+            causeDescription: validationFailure.causeDescription)
+            .attributed(to: result.targetReceipt)
     }
 }

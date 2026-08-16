@@ -23,6 +23,7 @@ public struct MCPToolCapturePreflightRefusal: Sendable, Equatable {
 /// global singletons directly. Each tool can receive the subset of
 /// services it needs, which keeps tests deterministic and unlocks DI.
 public struct MCPToolContext: @unchecked Sendable {
+    public let executionHost: PeekabooServiceExecutionHost
     public let automation: any UIAutomationServiceProtocol
     public let menu: any MenuServiceProtocol
     public let windows: any WindowManagementServiceProtocol
@@ -156,9 +157,11 @@ public struct MCPToolContext: @unchecked Sendable {
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
         snapshotExecutionGate: MCPToolSnapshotExecutionGate? = nil,
         snapshotOwner: MCPToolSnapshotOwner = .legacyProcess,
-        executionPolicy: MCPToolExecutionPolicy = .unrestricted,
+        executionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
+        executionHost: PeekabooServiceExecutionHost = .local,
         capturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil)
     {
+        self.executionHost = executionHost
         self.automation = automation
         self.menu = menu
         self.windows = windows
@@ -189,7 +192,7 @@ public struct MCPToolContext: @unchecked Sendable {
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
         snapshotExecutionGate: MCPToolSnapshotExecutionGate? = nil,
         snapshotOwner: MCPToolSnapshotOwner = .legacyProcess,
-        executionPolicy: MCPToolExecutionPolicy = .unrestricted,
+        executionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
         capturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil)
     {
         let resolvedSnapshotExecutionGate = snapshotExecutionGate
@@ -215,6 +218,7 @@ public struct MCPToolContext: @unchecked Sendable {
             snapshotExecutionGate: resolvedSnapshotExecutionGate,
             snapshotOwner: snapshotOwner,
             executionPolicy: executionPolicy,
+            executionHost: services.executionHost,
             capturePreflightRefusal: capturePreflightRefusal)
     }
 
@@ -223,9 +227,6 @@ public struct MCPToolContext: @unchecked Sendable {
         tool: any MCPTool,
         arguments: ToolArguments) async throws -> ToolResponse
     {
-        if let rejection = self.executionPolicy.rejection(toolName: tool.name, arguments: arguments) {
-            return rejection
-        }
         let effect = MCPToolSnapshotMutationPolicy.effect(toolName: tool.name, arguments: arguments)
         if let rejection = MCPToolArgumentValidator.rejection(
             tool: tool,
@@ -234,16 +235,16 @@ public struct MCPToolContext: @unchecked Sendable {
         {
             return rejection
         }
+        if let rejection = self.executionPolicy.rejection(toolName: tool.name, arguments: arguments) {
+            return rejection
+        }
         if let capturePreflightResponse = self.capturePreflightResponse(tool: tool, arguments: arguments) {
             return capturePreflightResponse
         }
         await self.uiSnapshots.synchronizeImplicitLatestInvalidationWatermark(
             self.snapshots.effectiveImplicitLatestInvalidationWatermark)
         guard effect != .none else {
-            try Task.checkCancellation()
-            let response = try await tool.execute(arguments: arguments)
-            try Task.checkCancellation()
-            return response
+            return try await self.executeReadOnlyTool(tool, arguments: arguments)
         }
 
         try await self.snapshotExecutionGate.acquire()
@@ -284,6 +285,13 @@ public struct MCPToolContext: @unchecked Sendable {
             await self.snapshotExecutionGate.release()
             return rejection
         }
+        if let rejection = self.backgroundMutationCapabilityRejection(
+            toolName: tool.name,
+            effect: effect)
+        {
+            await self.snapshotExecutionGate.release()
+            return rejection
+        }
         let executionArguments = targetAuthorization.arguments
 
         // All potentially suspending coordinator work completed before authorization. From this generation check to
@@ -301,13 +309,19 @@ public struct MCPToolContext: @unchecked Sendable {
             try Task.checkCancellation()
             try self.snapshotMutationCoordinator?.prepareMutation(scope)
             toolStarted = true
-            let response = try await Self.$snapshotObservationStartedAt.withValue(
-                effect == .mutationProducingFreshObservation ? scope.startedAt : nil)
+            var response = try await AuthorizedDesktopTargetPlan.$current.withValue(
+                targetAuthorization.targetPlan)
             {
-                try await tool.execute(arguments: executionArguments)
+                try await Self.$snapshotObservationStartedAt.withValue(
+                    effect == .mutationProducingFreshObservation ? scope.startedAt : nil)
+                {
+                    try await tool.execute(arguments: executionArguments)
+                }
             }
-            try Task.checkCancellation()
-            if Self.explicitlyNotDispatched(response) {
+            if Self.explicitlyNotDispatched(
+                response,
+                requiresCanonicalOutcome: self.executionPolicy == .backgroundOnly)
+            {
                 let cancelled = await self.snapshotMutationCoordinator?.cancelMutation(scope) ?? true
                 await self.snapshotExecutionGate.release()
                 guard cancelled else {
@@ -317,6 +331,12 @@ public struct MCPToolContext: @unchecked Sendable {
                 }
                 return response
             }
+            response = Self.validatedBackgroundMutationResponse(
+                response,
+                toolName: tool.name,
+                effect: effect,
+                executionPolicy: self.executionPolicy)
+            try Self.checkCancellationUnlessResponseIsCanonical(response)
             let completionCertificate = Self.mutationCompletionCertificate(response: response)
             let completedScope = scope.completed(
                 at: Date(),
@@ -324,13 +344,13 @@ public struct MCPToolContext: @unchecked Sendable {
                 confirmedMutationCompletedAt: completionCertificate.completedAt,
                 observationPreservationAllowed: completionCertificate.preservationAllowed)
             let completionSucceeded = await self.completeMutation(completedScope, succeeded: !response.isError)
-            try Task.checkCancellation()
+            try Self.checkCancellationUnlessResponseIsCanonical(response)
             if !completionSucceeded {
                 if !response.isError,
                    effect == .freshObservation || effect == .mutationProducingFreshObservation
                 {
                     let rollbackSucceeded = await self.completeMutation(completedScope, succeeded: false)
-                    try Task.checkCancellation()
+                    try Self.checkCancellationUnlessResponseIsCanonical(response)
                     if !rollbackSucceeded {
                         await self.snapshotExecutionGate.recordPendingInvalidation(
                             completedScope,
@@ -368,6 +388,41 @@ public struct MCPToolContext: @unchecked Sendable {
             await self.snapshotExecutionGate.release()
             throw error
         }
+    }
+
+    private func executeReadOnlyTool(
+        _ tool: any MCPTool,
+        arguments: ToolArguments) async throws -> ToolResponse
+    {
+        let authorization: BackgroundTargetAuthorization
+        if self.executionPolicy == .backgroundOnly,
+           MCPToolRequestSemantics.isSafeBackgroundApplicationLaunchNoOp(arguments)
+        {
+            authorization = await self.backgroundTargetAuthorization(
+                toolName: tool.name,
+                arguments: arguments)
+            if let rejection = authorization.rejection {
+                return rejection
+            }
+            if let rejection = await self.backgroundTargetRevalidation(
+                authorization,
+                toolName: tool.name)
+            {
+                return rejection
+            }
+        } else {
+            authorization = BackgroundTargetAuthorization(
+                arguments: arguments,
+                rejection: nil,
+                targetPlan: nil)
+        }
+
+        try Task.checkCancellation()
+        let response = try await AuthorizedDesktopTargetPlan.$current.withValue(authorization.targetPlan) {
+            try await tool.execute(arguments: authorization.arguments)
+        }
+        try Task.checkCancellation()
+        return response
     }
 
     private func capturePreflightResponse(
@@ -420,13 +475,14 @@ public struct MCPToolContext: @unchecked Sendable {
             snapshotExecutionGate: self.snapshotExecutionGate,
             snapshotOwner: owner,
             executionPolicy: self.executionPolicy,
+            executionHost: self.executionHost,
             capturePreflightRefusal: self.capturePreflightRefusal)
     }
 
-    private struct BackgroundTargetAuthorization {
+    struct BackgroundTargetAuthorization {
         let arguments: ToolArguments
         let rejection: ToolResponse?
-        var processIdentities: [ApplicationProcessIdentity] = []
+        let targetPlan: AuthorizedDesktopTargetPlan?
     }
 
     private func backgroundTargetAuthorization(
@@ -434,10 +490,10 @@ public struct MCPToolContext: @unchecked Sendable {
         arguments: ToolArguments) async -> BackgroundTargetAuthorization
     {
         func permitted(_ arguments: ToolArguments) -> BackgroundTargetAuthorization {
-            BackgroundTargetAuthorization(arguments: arguments, rejection: nil)
+            BackgroundTargetAuthorization(arguments: arguments, rejection: nil, targetPlan: nil)
         }
         func refused(_ response: ToolResponse?) -> BackgroundTargetAuthorization {
-            BackgroundTargetAuthorization(arguments: arguments, rejection: response)
+            BackgroundTargetAuthorization(arguments: arguments, rejection: response, targetPlan: nil)
         }
 
         guard self.executionPolicy == .backgroundOnly else { return permitted(arguments) }
@@ -453,7 +509,8 @@ public struct MCPToolContext: @unchecked Sendable {
                     rejection: self.executionPolicy.unresolvedTargetRejection(
                         toolName: toolName,
                         detail: "background Agent keyboard input requires an exact non-dialog snapshot " +
-                            "or element target"))
+                            "or element target"),
+                    targetPlan: nil)
             }
             return await self.backgroundApplicationTargetAuthorization(
                 toolName: toolName,
@@ -468,7 +525,8 @@ public struct MCPToolContext: @unchecked Sendable {
                 arguments: arguments,
                 rejection: self.executionPolicy.unresolvedTargetRejection(
                     toolName: toolName,
-                    detail: "snapshot keyboard input cannot include competing app, PID, or window selectors"))
+                    detail: "snapshot keyboard input cannot include competing app, PID, or window selectors"),
+                targetPlan: nil)
         }
         let snapshotSelector = Self.strictString(arguments, key: "snapshot")
         let coordinateSelector = Self.strictString(arguments, key: "coordinate_reference")
@@ -558,14 +616,21 @@ public struct MCPToolContext: @unchecked Sendable {
         arguments: ToolArguments) async -> BackgroundTargetAuthorization
     {
         guard let schema = Self.backgroundApplicationTargetSchema(toolName: toolName) else {
-            return BackgroundTargetAuthorization(arguments: arguments, rejection: nil)
+            return BackgroundTargetAuthorization(arguments: arguments, rejection: nil, targetPlan: nil)
         }
 
         do {
+            if let authorization = try await self.backgroundExactWindowTargetAuthorization(
+                toolName: toolName,
+                arguments: arguments)
+            {
+                return authorization
+            }
             var identifiers = try Self.applicationIdentifiers(arguments: arguments, schema: schema)
-            let windowProcessIdentities = try await self.windowProcessIdentities(
+            let windowTargetIdentities = try await self.windowTargetIdentities(
                 arguments: arguments,
                 keys: schema.windowIDKeys)
+            let windowProcessIdentities = windowTargetIdentities.map(\.processIdentity)
             identifiers.append(contentsOf: windowProcessIdentities.map { "PID:\($0.processIdentifier)" })
             guard !identifiers.isEmpty else {
                 throw BackgroundTargetResolutionError(
@@ -581,8 +646,15 @@ public struct MCPToolContext: @unchecked Sendable {
                     applicationBundleIdentifier: application.bundleIdentifier,
                     applicationName: application.name)
                 {
-                    return BackgroundTargetAuthorization(arguments: arguments, rejection: rejection)
+                    return BackgroundTargetAuthorization(
+                        arguments: arguments,
+                        rejection: rejection,
+                        targetPlan: nil)
                 }
+            }
+            let processTarget = try DesktopTargetIdentity(processIdentity: processIdentity)
+            let authorizedTarget = try windowTargetIdentities.reduce(processTarget) { partial, windowTarget in
+                try partial.coalescing(windowTarget)
             }
             return BackgroundTargetAuthorization(
                 arguments: Self.argumentsPinnedToProcess(
@@ -590,7 +662,7 @@ public struct MCPToolContext: @unchecked Sendable {
                     toolName: toolName,
                     processIdentifier: processIdentity.processIdentifier),
                 rejection: nil,
-                processIdentities: [processIdentity])
+                targetPlan: AuthorizedDesktopTargetPlan(targetIdentity: authorizedTarget))
         } catch let error as BackgroundTargetResolutionError {
             let detail = if toolName == "app",
                             arguments.getString("action")?.lowercased() == "launch"
@@ -604,44 +676,16 @@ public struct MCPToolContext: @unchecked Sendable {
                 arguments: arguments,
                 rejection: self.executionPolicy.unresolvedTargetRejection(
                     toolName: toolName,
-                    detail: detail))
+                    detail: detail),
+                targetPlan: nil)
         } catch {
             return BackgroundTargetAuthorization(
                 arguments: arguments,
                 rejection: self.executionPolicy.unresolvedTargetRejection(
                     toolName: toolName,
-                    detail: "the selected target owner could not be validated before dispatch"))
+                    detail: "the selected target owner could not be validated before dispatch"),
+                targetPlan: nil)
         }
-    }
-
-    private func backgroundTargetRevalidation(
-        _ authorization: BackgroundTargetAuthorization,
-        toolName: String) async -> ToolResponse?
-    {
-        for identity in authorization.processIdentities {
-            let application: ServiceApplicationInfo
-            do {
-                application = try await self.applications.findApplication(
-                    identifier: "PID:\(identity.processIdentifier)")
-            } catch {
-                return self.executionPolicy.unresolvedTargetRejection(
-                    toolName: toolName,
-                    detail: "the selected application disappeared before dispatch")
-            }
-            guard application.processStartIdentity == identity.processStartIdentity else {
-                return self.executionPolicy.unresolvedTargetRejection(
-                    toolName: toolName,
-                    detail: "the selected application changed process generation before dispatch")
-            }
-            if let rejection = self.executionPolicy.systemSurfaceRejection(
-                toolName: toolName,
-                applicationBundleIdentifier: application.bundleIdentifier,
-                applicationName: application.name)
-            {
-                return rejection
-            }
-        }
-        return nil
     }
 
     static func nonEmpty(_ value: String?) -> String? {
@@ -779,11 +823,110 @@ public struct MCPToolContext: @unchecked Sendable {
         return (completedAt, preservationAllowed)
     }
 
-    private static func explicitlyNotDispatched(_ response: ToolResponse) -> Bool {
+    private static func explicitlyNotDispatched(
+        _ response: ToolResponse,
+        requiresCanonicalOutcome: Bool) -> Bool
+    {
         guard case let .object(meta)? = response.meta,
               case .bool(false)? = meta["mutation_dispatched"]
         else { return false }
+        if requiresCanonicalOutcome {
+            guard case let .valid(projection) =
+                MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta)
+            else { return false }
+            return projection.dispatchState == .none
+        }
         return true
+    }
+
+    private static func checkCancellationUnlessResponseIsCanonical(_ response: ToolResponse) throws {
+        guard Task.isCancelled else { return }
+        if case .valid = MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta) {
+            return
+        }
+        throw CancellationError()
+    }
+
+    private static func validatedBackgroundMutationResponse(
+        _ response: ToolResponse,
+        toolName: String,
+        effect: MCPToolSnapshotEffect,
+        executionPolicy: MCPToolExecutionPolicy) -> ToolResponse
+    {
+        guard executionPolicy == .backgroundOnly,
+              effect == .conditionalMutation || effect == .mutation ||
+              effect == .mutationProducingFreshObservation
+        else { return response }
+
+        switch MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta) {
+        case let .valid(projection):
+            if projection.outcome.isAccepted(by: .confirmedOrDispatched),
+               let delivery = projection.outcome.delivery,
+               delivery.mode != .background
+            {
+                let downgraded = DesktopActionOutcome.dispatchedUnverified(
+                    route: projection.outcome.route,
+                    delivery: delivery,
+                    evidence: projection.outcome.evidence == .operationStillRunning
+                        ? .operationStillRunning
+                        : .deliveryAccepted,
+                    unitCount: projection.outcome.dispatchState.unitCount)
+                let externalFields = MCPToolResponseMetadataProjector.externalFields(
+                    from: response.meta,
+                    toolName: toolName)
+                return ToolResponse.error(
+                    "The \(toolName) mutation violated background-only authority by reporting foreground delivery.",
+                    meta: try? MCPToolResponseMetadataProjector.metadata(
+                        merging: externalFields,
+                        outcome: downgraded))
+            }
+            guard !projection.outcome.isAccepted(by: .confirmedOrDispatched) else { return response }
+            guard !response.isError else { return response }
+            return ToolResponse.error(
+                "The \(toolName) mutation returned a non-success canonical outcome.",
+                meta: response.meta)
+        case .absent, .invalid:
+            let failure = DesktopActionFailure.indeterminate(
+                evidence: .completionUnknown,
+                message: "The \(toolName) mutation returned without valid canonical result semantics.",
+                hint: "Observe the intended target before retrying and update the runtime host.")
+            var additionalFields = MCPToolResponseMetadataProjector.externalFields(
+                from: response.meta,
+                toolName: toolName)
+            for key in MCPToolResponseMetadataProjector.actionOutcomeKeys {
+                additionalFields.removeValue(forKey: key)
+            }
+            return (try? MCPToolResponseMetadataProjector.errorResponse(
+                for: failure,
+                invalidatedSnapshotID: nil,
+                additionalFields: additionalFields)) ?? ToolResponse.error(failure.message)
+        }
+    }
+
+    func backgroundMutationCapabilityRejection(
+        toolName: String,
+        effect: MCPToolSnapshotEffect) -> ToolResponse?
+    {
+        guard self.executionPolicy == .backgroundOnly,
+              effect == .conditionalMutation || effect == .mutation ||
+              effect == .mutationProducingFreshObservation
+        else { return nil }
+
+        let supported: Bool? = switch toolName {
+        case "click", "type", "set_value", "action", "scroll", "press", "paste":
+            self.automation is any UIAutomationActionOutcomeProviding
+        case "see", "inspect_ui":
+            self.automation is any UIAutomationObservationActionResultProviding
+        default:
+            nil
+        }
+        guard supported == false else { return nil }
+        return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+            message: "The selected runtime cannot provide canonical result semantics for background \(toolName).",
+            reason: .runtimeIncompatible,
+            additionalFields: [
+                "execution_policy": .string(self.executionPolicy.rawValue),
+            ])
     }
 
     private static func refreshedSnapshotID(

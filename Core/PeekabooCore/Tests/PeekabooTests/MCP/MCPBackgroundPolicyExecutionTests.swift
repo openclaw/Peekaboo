@@ -188,6 +188,12 @@ struct MCPBackgroundPolicyExecutionTests {
             return
         }
         #expect(meta["effect"] == .string("refused"))
+        #expect(meta["state"] == .string("refused"))
+        #expect(meta["dispatch_state"] == .string("none"))
+        #expect(meta["evidence"] == .string("request_refused"))
+        #expect(meta["refusal_reason"] == .string("foreground_consent_required"))
+        #expect(meta["escalation"] == .string("correct_request"))
+        #expect(meta["requires_fresh_observation"] == .bool(false))
         #expect(meta["error_code"] == .string("INTERACTION_FAILED"))
         #expect(meta["mutation_dispatched"] == .bool(false))
         #expect(meta["retry_safe"] == .bool(true))
@@ -219,6 +225,9 @@ struct MCPBackgroundPolicyExecutionTests {
         #expect(meta["mutation_dispatched"] == .bool(false))
         #expect(meta["retry_safe"] == .bool(true))
         #expect(meta["hint"] == nil)
+        #expect(meta["state"] == nil)
+        #expect(meta["dispatch_state"] == nil)
+        #expect(meta["refusal_reason"] == nil)
     }
 
     @Test(arguments: ["launch", "open", "relaunch", "unhide"])
@@ -516,7 +525,20 @@ private struct BackgroundPolicyMutationProbe: MCPTool {
 
     func execute(arguments: ToolArguments) async throws -> ToolResponse {
         await self.counter.record(arguments)
-        return ToolResponse.text("invoked")
+        guard let plan = AuthorizedDesktopTargetPlan.current else {
+            return ToolResponse.text("invoked")
+        }
+        let identity = plan.processIdentity
+        let receipt = DesktopActionTargetReceipt(
+            processIdentifier: identity.processIdentifier,
+            processStartIdentity: identity.processStartIdentity)
+        return try ToolResponse(
+            content: [.text(text: "invoked", annotations: nil, _meta: nil)],
+            meta: MCPToolResponseMetadataProjector.metadata(
+                merging: ["target_receipt": Value(receipt)],
+                outcome: .confirmedChange(
+                    delivery: .init(mechanism: .nativeFramework, mode: .background),
+                    unitCount: .one)))
     }
 }
 

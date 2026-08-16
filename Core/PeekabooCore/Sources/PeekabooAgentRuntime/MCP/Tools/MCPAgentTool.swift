@@ -33,12 +33,15 @@ public struct MCPAgentTool: MCPTool {
         - Background text delivery and native Accessibility actions
 
         MCP-started Agent sessions are always background-only. They refuse raw keyboard press, focus/activation,
-        shared-pointer/global input, foreground capture, persistent clipboard writes, dialog/shared system UI
-        mutations, Space switch/follow, browser setup/fronting, and Shell-tool access before dispatch. Dialog listing
-        remains available. Space listing and unfollowed window placement remain available. This UI authority boundary
+        shared-pointer/global input, foreground capture, persistent clipboard writes, targetless dialog input, dialog
+        file actions, shared system UI mutations, Space switch/follow, browser setup/fronting, and Shell-tool access
+        before dispatch. Exact prepared dialog actions remain available. Space listing and unfollowed window placement
+        remain available. This UI authority boundary
         is not a process sandbox; trusted prompts can operate terminal or scripting apps through their UI. Only the
         human-facing CLI can explicitly authorize foreground UI for a session. Background typing requires an exact
-        non-dialog snapshot/element; background paste is refused until dialog/sheet ownership is exact.
+        non-dialog snapshot/element. Direct text paste is available only with a generation-pinned app/PID/window
+        target and a canonical background result; targetless, foreground, current-clipboard, and binary paste remain
+        refused.
 
         Example tasks:
         - "Inspect the current page in an already-running Safari window"
@@ -108,17 +111,22 @@ public struct MCPAgentTool: MCPTool {
                 resume: input.resume,
                 resumeSession: input.resumeSession,
                 listSessions: input.listSessions)
+            _ = try Self.validatedMaxSteps(input.maxSteps)
+            guard input.listSessions || input.task != nil else {
+                throw AgentToolError("Missing required parameter: task")
+            }
         } catch let error as AgentToolError {
             return ToolResponse.error(error.message)
+        }
+        if let rejection = self.context.executionPolicy.nestedAgentAuthorityRejection() {
+            return rejection
         }
 
         if input.listSessions {
             return try await self.listSessionsResponse()
         }
 
-        guard let task = input.task else {
-            return ToolResponse.error("Missing required parameter: task")
-        }
+        guard let task = input.task else { preconditionFailure("Agent task validation must run before dispatch") }
 
         do {
             let result = try await self.runAgentTask(task: task, input: input)
@@ -199,7 +207,8 @@ public struct MCPAgentTool: MCPTool {
             return try await agent.resumeSession(
                 sessionId: sessionId,
                 model: modelOverride,
-                maxSteps: maxSteps)
+                maxSteps: maxSteps,
+                requestedToolExecutionPolicy: .backgroundOnly)
         }
 
         if input.resume {
@@ -210,7 +219,8 @@ public struct MCPAgentTool: MCPTool {
             return try await agent.resumeSession(
                 sessionId: latest.id,
                 model: modelOverride,
-                maxSteps: maxSteps)
+                maxSteps: maxSteps,
+                requestedToolExecutionPolicy: .backgroundOnly)
         }
 
         return try await agent.executeTask(
@@ -219,7 +229,8 @@ public struct MCPAgentTool: MCPTool {
             model: modelOverride,
             dryRun: input.dryRun,
             eventDelegate: nil,
-            persistSession: !input.noCache)
+            persistSession: !input.noCache,
+            toolExecutionPolicy: .backgroundOnly)
     }
 
     static func validateSessionOptions(
@@ -391,9 +402,28 @@ struct AgentInput: Codable {
     }
 }
 
-private struct AgentToolError: Error {
+extension MCPAgentTool: MCPToolArgumentSemanticValidating {
+    func validateArgumentSemantics(_ arguments: ToolArguments) throws {
+        let input = try arguments.decode(AgentInput.self)
+        try Self.validateSessionOptions(
+            noCache: input.noCache,
+            resume: input.resume,
+            resumeSession: input.resumeSession,
+            listSessions: input.listSessions)
+        _ = try Self.validatedMaxSteps(input.maxSteps)
+        guard input.listSessions || input.task != nil else {
+            throw AgentToolError("Missing required parameter: task")
+        }
+    }
+}
+
+private struct AgentToolError: LocalizedError {
     let message: String
     init(_ message: String) {
         self.message = message
+    }
+
+    var errorDescription: String? {
+        self.message
     }
 }

@@ -126,8 +126,8 @@ struct RemoteSnapshotManagerTests {
             requestTimeoutSec: 2)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteSnapshotManager(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2))
+        let remote = try await RemoteSnapshotManager(
+            client: Self.currentClient(socketPath: socketPath))
 
         let lease = try await remote.beginSnapshotMutation(snapshotId: snapshotId)
         try await remote.finishSnapshotMutation(lease, requiresFreshObservation: true)
@@ -172,8 +172,8 @@ struct RemoteSnapshotManagerTests {
             requestTimeoutSec: 2)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteSnapshotManager(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2))
+        let remote = try await RemoteSnapshotManager(
+            client: Self.currentClient(socketPath: socketPath))
 
         let invalidatedSnapshotId = try await remote.invalidateImplicitLatestSnapshot(through: cutoff)
 
@@ -201,8 +201,8 @@ struct RemoteSnapshotManagerTests {
             requestTimeoutSec: 2)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteSnapshotManager(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2))
+        let remote = try await RemoteSnapshotManager(
+            client: Self.currentClient(socketPath: socketPath))
         let observationStart = Date()
 
         _ = try await remote.invalidateImplicitLatestSnapshot(
@@ -235,8 +235,8 @@ struct RemoteSnapshotManagerTests {
             requestTimeoutSec: 2)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteSnapshotManager(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2))
+        let remote = try await RemoteSnapshotManager(
+            client: Self.currentClient(socketPath: socketPath))
         let observationStart = Date()
 
         let snapshotId = try await remote.createSnapshot(pendingAt: observationStart)
@@ -280,7 +280,7 @@ struct RemoteSnapshotManagerTests {
         #expect(oldHandshake.negotiatedVersion == .init(major: 1, minor: 25))
         let priorSnapshotID = try await oldClient.createSnapshot()
 
-        let currentClient = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        let currentClient = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
         let remote = RemoteSnapshotManager(
             client: currentClient,
             supportsImplicitLatestSnapshotInvalidation: true,
@@ -344,8 +344,8 @@ struct RemoteSnapshotManagerTests {
             requestTimeoutSec: 2)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteSnapshotManager(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2))
+        let remote = try await RemoteSnapshotManager(
+            client: Self.currentClient(socketPath: socketPath))
 
         do {
             _ = try await remote.invalidateImplicitLatestSnapshot(through: cutoff)
@@ -357,5 +357,14 @@ struct RemoteSnapshotManagerTests {
 
         #expect(try await snapshots.listSnapshots().map(\.id) == [freshSnapshotId, olderSnapshotId])
         #expect(await snapshots.getMostRecentSnapshot() == freshSnapshotId)
+    }
+
+    private static func currentClient(socketPath: String) async throws -> PeekabooBridgeClient {
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: .init(
+            bundleIdentifier: "boo.peekaboo.snapshot-tests",
+            teamIdentifier: nil,
+            processIdentifier: getpid()))
+        return client
     }
 }

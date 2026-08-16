@@ -40,6 +40,15 @@ enum ObservationTargetArgument: Equatable, CustomStringConvertible {
         }
     }
 
+    var requiresStableMutationTarget: Bool {
+        switch self {
+        case .pid, .windowID:
+            true
+        case .screen, .frontmost, .application, .menubar:
+            false
+        }
+    }
+
     var description: String {
         switch self {
         case let .screen(index):

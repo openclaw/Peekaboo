@@ -6,7 +6,7 @@ import PeekabooBridge
 import PeekabooFoundation
 
 @MainActor
-public final class RemoteDockService: DockServiceProtocol {
+public final class RemoteDockService: DockServiceProtocol, DockServiceActionResultProviding {
     private let client: PeekabooBridgeClient
 
     public init(client: PeekabooBridgeClient) {
@@ -21,6 +21,10 @@ public final class RemoteDockService: DockServiceProtocol {
         try await self.client.launchDockItem(appName: appName)
     }
 
+    public func launchFromDockActionResult(appName: String) async throws -> UIAutomationActionResult<Void> {
+        try await self.client.launchDockItemResult(appName: appName)
+    }
+
     public func addToDock(path _: String, persistent _: Bool) async throws {
         throw PeekabooError.operationError(message: "addToDock not available via XPC")
     }
@@ -33,12 +37,27 @@ public final class RemoteDockService: DockServiceProtocol {
         try await self.client.rightClickDockItem(appName: appName, menuItem: menuItem)
     }
 
+    public func rightClickDockItemActionResult(
+        appName: String,
+        menuItem: String?) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.client.rightClickDockItemResult(appName: appName, menuItem: menuItem)
+    }
+
     public func hideDock() async throws {
-        try await self.client.hideDock()
+        _ = try await self.hideDockActionResult()
+    }
+
+    public func hideDockActionResult() async throws -> DesktopActionResult<Void> {
+        try await self.client.hideDockResult()
     }
 
     public func showDock() async throws {
-        try await self.client.showDock()
+        _ = try await self.showDockActionResult()
+    }
+
+    public func showDockActionResult() async throws -> DesktopActionResult<Void> {
+        try await self.client.showDockResult()
     }
 
     public func isDockAutoHidden() async -> Bool {

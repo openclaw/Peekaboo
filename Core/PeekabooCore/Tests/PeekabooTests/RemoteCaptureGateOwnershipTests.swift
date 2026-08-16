@@ -11,6 +11,35 @@ import UniformTypeIdentifiers
 @MainActor
 struct RemoteCaptureGateOwnershipTests {
     private static let roiFixtureBounds = CGRect(x: 100, y: 200, width: 100, height: 80)
+    private static let receiptlessProtocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 28)
+    private static let clientIdentity = PeekabooBridgeClientIdentity(
+        bundleIdentifier: "dev.peekaboo.remote-capture-tests",
+        teamIdentifier: nil,
+        processIdentifier: getpid(),
+        hostname: nil)
+
+    private func makeNegotiatedClient(
+        socketPath: String,
+        requestTimeoutSec: TimeInterval,
+        protocolVersion: PeekabooBridgeProtocolVersion = PeekabooBridgeConstants.protocolVersion) async throws
+        -> PeekabooBridgeClient
+    {
+        let client = TrustedBridgeClientFixture.make(
+            socketPath: socketPath,
+            requestTimeoutSec: requestTimeoutSec)
+        let handshake = try await client.handshake(
+            client: Self.clientIdentity,
+            protocolVersion: protocolVersion)
+        #expect(handshake.negotiatedVersion == protocolVersion)
+        if protocolVersion >= PeekabooBridgeConstants.attestedOperationReceiptVersion {
+            #expect(handshake.operationAttestation != nil)
+            #expect(handshake.operationSessionAttestation != nil)
+        } else {
+            #expect(handshake.operationAttestation == nil)
+            #expect(handshake.operationSessionAttestation == nil)
+        }
+        return client
+    }
 
     private func makeROIServer(
         services: any PeekabooBridgeServiceProviding,
@@ -39,7 +68,9 @@ struct RemoteCaptureGateOwnershipTests {
                 processIdentifier == 123 ? 456 : nil
             })
     }
+}
 
+extension RemoteCaptureGateOwnershipTests {
     @Test
     func `remote ROI rejects a pre 1_21 host before transport`() async {
         let remote = RemoteDesktopObservationService(client: PeekabooBridgeClient(
@@ -128,7 +159,8 @@ struct RemoteCaptureGateOwnershipTests {
     @Test
     func `remote OCR gates the new mode but preserves legacy preferred OCR`() async throws {
         let socketPath = "/tmp/peekaboo-remote-capable-ocr-\(UUID().uuidString).sock"
-        let services = StubServices()
+        let observation = PathlessTrackingObservationService()
+        let services = StubServices(desktopObservation: observation)
         let server = PeekabooBridgeServer(
             services: services,
             allowlistedTeams: [],
@@ -148,7 +180,10 @@ struct RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1)
+        let client = try await self.makeNegotiatedClient(
+            socketPath: socketPath,
+            requestTimeoutSec: 1,
+            protocolVersion: Self.receiptlessProtocolVersion)
         let remote = RemoteDesktopObservationService(
             client: client,
             supportsDesktopObservationOCR: true)
@@ -158,7 +193,7 @@ struct RemoteCaptureGateOwnershipTests {
 
         _ = try await remote.observe(explicitOCRRequest)
 
-        #expect(services.desktopObservationStub.lastRequest == explicitOCRRequest)
+        #expect(observation.lastRequest == explicitOCRRequest)
 
         let legacyRemote = RemoteDesktopObservationService(
             client: client,
@@ -169,7 +204,7 @@ struct RemoteCaptureGateOwnershipTests {
 
         _ = try await legacyRemote.observe(preferredOCRRequest)
 
-        #expect(services.desktopObservationStub.lastRequest == preferredOCRRequest)
+        #expect(observation.lastRequest == preferredOCRRequest)
 
         let engineRemote = RemoteDesktopObservationService(
             client: client,
@@ -181,7 +216,7 @@ struct RemoteCaptureGateOwnershipTests {
 
         _ = try await engineRemote.observe(engineRequest)
 
-        #expect(services.desktopObservationStub.lastRequest == engineRequest)
+        #expect(observation.lastRequest == engineRequest)
         await host.stop()
     }
 
@@ -197,8 +232,10 @@ struct RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 5)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteDesktopObservationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 5))
+        let client = try await self.makeNegotiatedClient(
+            socketPath: socketPath,
+            requestTimeoutSec: 5)
+        let remote = RemoteDesktopObservationService(client: client)
 
         let error = await #expect(throws: PeekabooError.self) {
             _ = try await remote.observe(DesktopObservationRequest(
@@ -215,6 +252,7 @@ struct RemoteCaptureGateOwnershipTests {
             target: .windowID(42),
             detection: DesktopDetectionOptions(mode: .none)))
         #expect(screenshotOnly.elements == nil)
+        #expect(await client.lastOperationReceipt()?.payload.operation == .desktopObservation)
         #expect(observation.requests.map(\.detection.mode) == [.accessibility, .none])
         await host.stop()
     }
@@ -277,8 +315,12 @@ struct RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
+        let client = try await self.makeNegotiatedClient(
+            socketPath: socketPath,
+            requestTimeoutSec: 1,
+            protocolVersion: Self.receiptlessProtocolVersion)
         let remote = RemotePeekabooServices(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1),
+            client: client,
             supportsDesktopObservation: false)
 
         let result = try await remote.desktopObservation.observe(DesktopObservationRequest(
@@ -311,8 +353,11 @@ struct RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteDesktopObservationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1),
+        let remote = try await RemoteDesktopObservationService(
+            client: self.makeNegotiatedClient(
+                socketPath: socketPath,
+                requestTimeoutSec: 1,
+                protocolVersion: Self.receiptlessProtocolVersion),
             supportsExactWindowROIObservation: true)
         let request = DesktopObservationRequest(
             target: .windowID(42),
@@ -352,8 +397,10 @@ struct RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteDesktopObservationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1),
+        let remote = try await RemoteDesktopObservationService(
+            client: self.makeNegotiatedClient(
+                socketPath: socketPath,
+                requestTimeoutSec: 1),
             supportsExactWindowROIObservation: true)
         let request = DesktopObservationRequest(
             target: .windowID(42),
@@ -389,8 +436,10 @@ struct RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteDesktopObservationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1),
+        let remote = try await RemoteDesktopObservationService(
+            client: self.makeNegotiatedClient(
+                socketPath: socketPath,
+                requestTimeoutSec: 1),
             supportsExactWindowROIObservation: true)
 
         let result = try await remote.observe(DesktopObservationRequest(
@@ -426,8 +475,10 @@ struct RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteDesktopObservationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1),
+        let remote = try await RemoteDesktopObservationService(
+            client: self.makeNegotiatedClient(
+                socketPath: socketPath,
+                requestTimeoutSec: 1),
             supportsExactWindowROIObservation: true)
 
         let result = try await remote.observe(DesktopObservationRequest(
@@ -472,11 +523,13 @@ struct RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteDesktopObservationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1),
+        let remote = try await RemoteDesktopObservationService(
+            client: self.makeNegotiatedClient(
+                socketPath: socketPath,
+                requestTimeoutSec: 1),
             supportsExactWindowROIObservation: true)
 
-        _ = try await remote.observe(DesktopObservationRequest(
+        let result = try await remote.observe(DesktopObservationRequest(
             target: .windowID(42),
             capture: DesktopCaptureOptions(
                 roi: CaptureRegionOfInterest(bounds: CGRect(x: 0, y: 0, width: 10, height: 10))),
@@ -486,6 +539,8 @@ struct RemoteCaptureGateOwnershipTests {
                 snapshotID: snapshotID)))
 
         #expect(observation.lastOutputOptions?.saveSnapshot == false)
+        #expect(result.files.rawScreenshotPath == nil)
+        #expect(!FileManager.default.fileExists(atPath: outputURL.path))
         let snapshot = try #require(try await snapshots.getUIAutomationSnapshot(snapshotId: snapshotID))
         #expect(snapshot.captureCoordinateContext?.viewport?.requestedWindowRelativeBounds ==
             CGRect(x: 0, y: 0, width: 10, height: 10))
@@ -527,8 +582,10 @@ struct RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteDesktopObservationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1),
+        let remote = try await RemoteDesktopObservationService(
+            client: self.makeNegotiatedClient(
+                socketPath: socketPath,
+                requestTimeoutSec: 1),
             supportsExactWindowROIObservation: true)
 
         let error = await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
@@ -577,8 +634,10 @@ struct RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteDesktopObservationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1),
+        let remote = try await RemoteDesktopObservationService(
+            client: self.makeNegotiatedClient(
+                socketPath: socketPath,
+                requestTimeoutSec: 1),
             supportsExactWindowROIObservation: true,
             artifactInstallationPreflight: {
                 try FileManager.default.removeItem(at: outputURL)
@@ -630,8 +689,10 @@ struct RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteDesktopObservationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1),
+        let remote = try await RemoteDesktopObservationService(
+            client: self.makeNegotiatedClient(
+                socketPath: socketPath,
+                requestTimeoutSec: 1),
             supportsExactWindowROIObservation: true,
             artifactInstallationPreflight: {
                 throw StagedArtifactPreflightError.expected
@@ -667,8 +728,10 @@ struct RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteDesktopObservationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1),
+        let remote = try await RemoteDesktopObservationService(
+            client: self.makeNegotiatedClient(
+                socketPath: socketPath,
+                requestTimeoutSec: 1),
             supportsExactWindowROIObservation: true)
 
         await #expect(throws: CaptureROIError.hostDidNotApplyROI) {
@@ -706,8 +769,10 @@ struct RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteDesktopObservationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1),
+        let remote = try await RemoteDesktopObservationService(
+            client: self.makeNegotiatedClient(
+                socketPath: socketPath,
+                requestTimeoutSec: 1),
             supportsExactWindowROIObservation: true)
 
         await #expect(throws: CaptureROIError.hostDidNotApplyROI) {
@@ -748,8 +813,10 @@ struct RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteDesktopObservationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1),
+        let remote = try await RemoteDesktopObservationService(
+            client: self.makeNegotiatedClient(
+                socketPath: socketPath,
+                requestTimeoutSec: 1),
             supportsExactWindowROIObservation: true)
 
         await #expect(throws: CaptureROIError.invalidSourceImage) {
@@ -779,8 +846,11 @@ struct RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteDesktopObservationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1),
+        let remote = try await RemoteDesktopObservationService(
+            client: self.makeNegotiatedClient(
+                socketPath: socketPath,
+                requestTimeoutSec: 1,
+                protocolVersion: Self.receiptlessProtocolVersion),
             supportsExactWindowROIObservation: true)
         let request = DesktopObservationRequest(
             target: .windowID(42),
@@ -805,8 +875,11 @@ struct RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = RemoteDesktopObservationService(
-            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1),
+        let remote = try await RemoteDesktopObservationService(
+            client: self.makeNegotiatedClient(
+                socketPath: socketPath,
+                requestTimeoutSec: 1,
+                protocolVersion: Self.receiptlessProtocolVersion),
             supportsExactWindowROIObservation: true)
 
         let error = await #expect(throws: CaptureROIError.self) {
@@ -817,6 +890,21 @@ struct RemoteCaptureGateOwnershipTests {
         }
         #expect(error == .outOfBounds)
         await host.stop()
+    }
+}
+
+@MainActor
+private final class PathlessTrackingObservationService: DesktopObservationServiceProtocol {
+    private(set) var lastRequest: DesktopObservationRequest?
+
+    func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
+        self.lastRequest = request
+        return DesktopObservationResult(
+            target: ResolvedObservationTarget(kind: .screen(index: 0)),
+            capture: CaptureResult(
+                imageData: StubScreenCaptureService.sampleData,
+                metadata: CaptureMetadata(size: .init(width: 1, height: 1), mode: .screen)),
+            elements: nil)
     }
 }
 
@@ -871,12 +959,50 @@ private final class ROIFileObservationService: DesktopObservationServiceProtocol
             try annotatedData.write(to: URL(fileURLWithPath: annotatedPath), options: .atomic)
         }
         guard self.mode != .ignored else {
+            let bounds = CGRect(x: 100, y: 200, width: 100, height: 80)
+            let identity = WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: 123,
+                ownerProcessStartIdentity: 456,
+                capturedBounds: bounds)
+            let context = WindowContext(
+                applicationName: "ROI Fixture",
+                applicationBundleId: "test.valid-roi",
+                applicationProcessId: 123,
+                windowTitle: "ROI",
+                windowID: 42,
+                windowBounds: bounds,
+                windowMutationIdentity: identity)
             return DesktopObservationResult(
-                target: ResolvedObservationTarget(kind: .windowID(42)),
+                target: ResolvedObservationTarget(
+                    kind: .windowID(42),
+                    app: ApplicationIdentity(
+                        processIdentifier: 123,
+                        processStartIdentity: 456,
+                        bundleIdentifier: "test.valid-roi",
+                        name: "ROI Fixture"),
+                    window: WindowIdentity(windowID: 42, title: "ROI", bounds: bounds, index: 0),
+                    bounds: bounds,
+                    detectionContext: context),
                 capture: CaptureResult(
                     imageData: Self.croppedData,
                     savedPath: path,
-                    metadata: CaptureMetadata(size: CGSize(width: 100, height: 80), mode: .window)),
+                    metadata: CaptureMetadata(
+                        size: CGSize(width: 100, height: 80),
+                        mode: .window,
+                        applicationInfo: ServiceApplicationInfo(
+                            processIdentifier: 123,
+                            processStartIdentity: 456,
+                            bundleIdentifier: "test.valid-roi",
+                            name: "ROI Fixture"),
+                        windowInfo: ServiceWindowInfo(
+                            windowID: 42,
+                            title: "ROI",
+                            bounds: bounds,
+                            mutationIdentity: identity),
+                        diagnostics: Self.captureDiagnostics(
+                            size: CGSize(width: 100, height: 80),
+                            scale: request.capture.scale))),
                 elements: nil,
                 files: DesktopObservationFiles(rawScreenshotPath: path))
         }
@@ -900,7 +1026,7 @@ private final class ROIFileObservationService: DesktopObservationServiceProtocol
             windowID: 42,
             windowBounds: bounds,
             windowMutationIdentity: identity)
-        let elements = self.mode == .validWithElements
+        let elements = request.detection.mode != .none
             ? ElementDetectionResult(
                 snapshotId: request.output.snapshotID ?? "roi-fixture",
                 screenshotPath: path,
@@ -914,7 +1040,17 @@ private final class ROIFileObservationService: DesktopObservationServiceProtocol
                     detectionTime: 0,
                     elementCount: 1,
                     method: "fixture",
-                    windowContext: windowContext))
+                    windowContext: WindowContext(
+                        applicationName: windowContext.applicationName,
+                        applicationBundleId: windowContext.applicationBundleId,
+                        applicationProcessId: windowContext.applicationProcessId,
+                        windowTitle: windowContext.windowTitle,
+                        windowID: windowContext.windowID,
+                        windowBounds: windowContext.windowBounds,
+                        windowMutationIdentity: windowContext.windowMutationIdentity,
+                        shouldFocusWebContent: request.detection.allowWebFocusFallback,
+                        includeMenuBarElements: request.detection.includeMenuBarElements,
+                        traversalBudget: request.detection.traversalBudget)))
             : nil
         return DesktopObservationResult(
             target: ResolvedObservationTarget(
@@ -943,6 +1079,9 @@ private final class ROIFileObservationService: DesktopObservationServiceProtocol
                         title: "ROI",
                         bounds: bounds,
                         mutationIdentity: identity),
+                    diagnostics: Self.captureDiagnostics(
+                        size: roi.bounds.size,
+                        scale: request.capture.scale),
                     viewport: CaptureViewport(
                         sourceLogicalBounds: bounds,
                         requestedWindowRelativeBounds: roi.bounds,
@@ -959,6 +1098,19 @@ private final class ROIFileObservationService: DesktopObservationServiceProtocol
                 annotatedScreenshotPath: request.output.saveAnnotatedScreenshot
                     ? ObservationOutputWriter.annotatedScreenshotPath(forRawScreenshotPath: path)
                     : nil))
+    }
+
+    private static func captureDiagnostics(
+        size: CGSize,
+        scale: CaptureScalePreference) -> CaptureDiagnostics
+    {
+        CaptureDiagnostics(
+            requestedScale: scale,
+            nativeScale: 2,
+            outputScale: scale == .native ? 2 : 1,
+            scaleSource: "fixture",
+            finalPixelSize: size,
+            engine: "ScreenCaptureKit")
     }
 }
 
@@ -996,7 +1148,17 @@ private final class LegacyEmptyExactObservationService: DesktopObservationServic
                     detectionTime: 0.01,
                     elementCount: 0,
                     method: "legacy AX",
-                    windowContext: context))
+                    windowContext: WindowContext(
+                        applicationName: context.applicationName,
+                        applicationBundleId: context.applicationBundleId,
+                        applicationProcessId: context.applicationProcessId,
+                        windowTitle: context.windowTitle,
+                        windowID: context.windowID,
+                        windowBounds: context.windowBounds,
+                        windowMutationIdentity: context.windowMutationIdentity,
+                        shouldFocusWebContent: request.detection.allowWebFocusFallback,
+                        includeMenuBarElements: request.detection.includeMenuBarElements,
+                        traversalBudget: request.detection.traversalBudget)))
         return DesktopObservationResult(
             target: ResolvedObservationTarget(
                 kind: .windowID(42),
@@ -1022,7 +1184,14 @@ private final class LegacyEmptyExactObservationService: DesktopObservationServic
                         windowID: 42,
                         title: "Empty",
                         bounds: bounds,
-                        mutationIdentity: identity))),
+                        mutationIdentity: identity),
+                    diagnostics: CaptureDiagnostics(
+                        requestedScale: request.capture.scale,
+                        nativeScale: 2,
+                        outputScale: request.capture.scale == .native ? 2 : 1,
+                        scaleSource: "fixture",
+                        finalPixelSize: bounds.size,
+                        engine: "ScreenCaptureKit"))),
             elements: elements,
             files: DesktopObservationFiles(rawScreenshotPath: request.output.path))
     }

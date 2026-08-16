@@ -19,7 +19,8 @@ public struct PressTool: MCPTool {
         ["cmd+c", "Return"], or use `key` plus `modifiers` for a single chord. The two input shapes are
         mutually exclusive. Raw chords require foreground=true or an exact window/snapshot receipt whose focused
         element can be pinned through native background dispatch. App/PID-only and targetless background press are
-        refused. app and pid are alternatives; provide at most one window selector; pair title/index with app or pid.
+        refused. Raw chords cannot prove semantic intent or effect; observe the target after unverified delivery.
+        app and pid are alternatives; provide at most one window selector; pair title/index with app or pid.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
         """
     }
@@ -72,7 +73,8 @@ public struct PressTool: MCPTool {
                 "snapshot": SchemaBuilder.string(
                     description: "Optional fresh exact-window snapshot for receipt-pinned background press."),
                 "foreground": SchemaBuilder.boolean(
-                    description: "Focus a target or intentionally send OS-global raw keyboard input.",
+                    description: "Required true for targetless, app-only, or PID-only raw input; false is allowed " +
+                        "only with an exact window or fresh snapshot receipt.",
                     default: false),
             ],
             required: [])
@@ -80,6 +82,11 @@ public struct PressTool: MCPTool {
 
     public init(context: MCPToolContext = .shared) {
         self.context = context
+    }
+
+    func validateArgumentSemantics(_ arguments: ToolArguments) throws {
+        _ = try Self.parseChords(arguments: arguments)
+        _ = try Self.executionParameters(arguments: arguments)
     }
 
     @MainActor
@@ -113,14 +120,14 @@ public struct PressTool: MCPTool {
                 foreground: foreground,
                 target: target,
                 snapshotID: snapshotID)
-            let targetFocusCompleted = deliveryPlan.targetFocusCompleted
+            let targetFocusCompleted = deliveryPlan.focusResult != nil
 
             let startTime = Date()
             let run = try await self.dispatchSequence(
                 chords: chords,
                 parameters: parameters,
                 target: deliveryPlan.target,
-                targetFocusCompleted: targetFocusCompleted)
+                focusResult: deliveryPlan.focusResult)
             let display = chords.map(\.displayValue)
             let elapsed = Date().timeIntervalSince(startTime)
             let sequenceResolution = run.resolution
@@ -208,11 +215,11 @@ public struct PressTool: MCPTool {
         chords: [KeyboardChord],
         parameters: PressExecutionParameters,
         target: UIAutomationTarget,
-        targetFocusCompleted: Bool) async throws -> PressSequenceRun
+        focusResult: MCPInteractionFocusResult?) async throws -> PressSequenceRun
     {
         var sequence = DesktopActionSequenceAccumulator()
-        if targetFocusCompleted {
-            sequence.record(.dispatched(route: nil, delivery: nil, unitCount: Self.singleDispatchUnit))
+        if let focusResult {
+            focusResult.record(into: &sequence)
         }
         var chordSequence = DesktopActionSequenceAccumulator()
         var completedPresses = 0
@@ -255,12 +262,14 @@ public struct PressTool: MCPTool {
             throw Self.sequenceFailure(
                 failure,
                 sequence: sequence,
+                focusResult: focusResult,
                 completedPresses: completedPresses,
                 chordDisposition: chordSequence.mutationDisposition)
         } catch let error as InputDeliveryIndeterminateError {
             throw Self.sequenceFailure(
                 error.desktopActionFailure(delivery: Self.delivery(for: target)),
                 sequence: sequence,
+                focusResult: focusResult,
                 completedPresses: completedPresses,
                 chordDisposition: chordSequence.mutationDisposition,
                 causeDescription: error.causeDescription ?? error.localizedDescription)
@@ -269,6 +278,7 @@ public struct PressTool: MCPTool {
             throw Self.sequenceFailure(
                 .preDispatchRefusal(reason: .operationUnsupported, message: error.localizedDescription),
                 sequence: sequence,
+                focusResult: focusResult,
                 completedPresses: completedPresses,
                 chordDisposition: chordSequence.mutationDisposition,
                 causeDescription: error.localizedDescription)
@@ -313,6 +323,7 @@ public struct PressTool: MCPTool {
     private static func sequenceFailure(
         _ leafFailure: DesktopActionFailure,
         sequence: DesktopActionSequenceAccumulator,
+        focusResult: MCPInteractionFocusResult?,
         completedPresses: Int,
         chordDisposition: DesktopActionMutationDisposition,
         causeDescription: String? = nil) -> PressSequenceFailure
@@ -323,7 +334,7 @@ public struct PressTool: MCPTool {
             hint: "Observe the target before deciding whether to continue the sequence.",
             causeDescription: causeDescription)
         return PressSequenceFailure(
-            failure: failure,
+            failure: focusResult?.attributing(failure) ?? failure,
             compatibility: PressFailureCompatibility(
                 prefixDisposition: chordDisposition,
                 leafFailure: leafFailure))
@@ -400,10 +411,10 @@ public struct PressTool: MCPTool {
         snapshotID: String?) async throws -> PressDeliveryPlan
     {
         if foreground {
-            let targetFocusCompleted = try await target.focusIfRequested(
+            let focusResult = try await target.focusResultIfRequested(
                 windows: self.context.windows,
-                onlyWhenTargeted: true) != nil
-            return PressDeliveryPlan(target: .foreground, targetFocusCompleted: targetFocusCompleted)
+                onlyWhenTargeted: true)
+            return PressDeliveryPlan(target: .foreground, focusResult: focusResult)
         }
 
         let snapshotExactWindow = try await self.snapshotExactWindow(id: snapshotID)
@@ -445,7 +456,7 @@ public struct PressTool: MCPTool {
         do {
             let deliveryTarget = try await plannedTarget.pinningCurrentFocusedElement(
                 using: self.context.automation)
-            return PressDeliveryPlan(target: deliveryTarget, targetFocusCompleted: false)
+            return PressDeliveryPlan(target: deliveryTarget, focusResult: nil)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -624,7 +635,7 @@ private struct PressSequenceFailure: Error {
 
 private struct PressDeliveryPlan {
     let target: UIAutomationTarget
-    let targetFocusCompleted: Bool
+    let focusResult: MCPInteractionFocusResult?
 }
 
 private struct PressResponseMessageInput {
@@ -636,7 +647,7 @@ private struct PressResponseMessageInput {
     let targetFocusCompleted: Bool
 }
 
-struct PressToolValidationError: Error {
+struct PressToolValidationError: LocalizedError {
     let message: String
     let refusalReason: DesktopActionOutcome.RefusalReason
 
@@ -647,4 +658,10 @@ struct PressToolValidationError: Error {
         self.message = message
         self.refusalReason = refusalReason
     }
+
+    var errorDescription: String? {
+        self.message
+    }
 }
+
+extension PressTool: MCPToolArgumentSemanticValidating {}

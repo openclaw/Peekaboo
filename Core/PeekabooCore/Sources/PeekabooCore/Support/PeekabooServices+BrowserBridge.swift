@@ -1,13 +1,15 @@
 import Foundation
 import MCP
 import PeekabooAgentRuntime
+import PeekabooAutomationKit
 import PeekabooBridge
+import PeekabooFoundation
 import TachikomaMCP
 
 @MainActor
-extension PeekabooServices {
+extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
     public func browserStatus(channel: String?) async throws -> PeekabooBridgeBrowserStatus {
-        let status = await self.browser.status(channel: channel.flatMap(BrowserMCPChannel.init(rawValue:)))
+        let status = try await self.browser.status(channel: Self.browserChannel(from: channel))
         return Self.bridgeStatus(from: status)
     }
 
@@ -17,9 +19,27 @@ extension PeekabooServices {
 
     public func browserConnect(channel: String?, browserURL: String?) async throws -> PeekabooBridgeBrowserStatus {
         let status = try await self.browser.connect(
-            channel: channel.flatMap(BrowserMCPChannel.init(rawValue:)),
+            channel: Self.browserChannel(from: channel),
             browserURL: browserURL)
         return Self.bridgeStatus(from: status)
+    }
+
+    public func browserConnectResult(
+        channel: String?,
+        browserURL: String?) async throws -> DesktopActionResult<PeekabooBridgeBrowserStatus>
+    {
+        guard let resultBrowser = self.browser as? any BrowserMCPConnectionResultProviding else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "The browser provider cannot report canonical connection outcomes.",
+                hint: "Update the runtime host before retrying browser connect.")
+        }
+        let result = try await resultBrowser.connectWithOutcome(
+            channel: Self.browserChannel(from: channel),
+            browserURL: browserURL)
+        return DesktopActionResult(
+            payload: Self.bridgeStatus(from: result.payload),
+            outcome: result.outcome)
     }
 
     public func browserDisconnect() async throws {
@@ -34,10 +54,85 @@ extension PeekabooServices {
                 toolName: call.toolName,
                 arguments: call.arguments.mapValues { $0.toAny() })
         }
+        if let expectedConnectionReceipt = request.expectedConnectionReceipt {
+            do {
+                let result = try await self.browser.executeSequence(
+                    calls,
+                    channel: Self.browserChannel(from: request.channel),
+                    expectedConnectionReceipt: Self.browserReceipt(from: expectedConnectionReceipt))
+                return try Self.bridgeToolResponse(from: result)
+            } catch BrowserMCPConnectionError.expectedConnectionReceiptMismatch {
+                return Self.bridgeBrowserRefusalResponse(.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "The exact browser connection changed before tool dispatch.",
+                    hint: "Refresh browser status and retry against its new connection receipt."))
+            } catch BrowserMCPConnectionError.receiptBindingUnsupported {
+                return Self.bridgeBrowserRefusalResponse(.preDispatchRefusal(
+                    reason: .operationUnsupported,
+                    message: "The browser provider cannot atomically bind execution to a connection receipt.",
+                    hint: "Update the runtime host before retrying target-attested browser execution."))
+            } catch let failure as DesktopActionFailure {
+                return Self.bridgeBrowserRefusalResponse(failure)
+            }
+        }
+        if request.connectionPolicy == .requireExistingLiveReceipt {
+            return Self.bridgeBrowserRefusalResponse(.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "Existing-connection-only browser execution requires an exact connection receipt.",
+                hint: "Refresh browser status and bind its complete receipt before retrying."))
+        }
         let response = try await self.browser.executeSequence(
             calls,
-            channel: request.channel.flatMap(BrowserMCPChannel.init(rawValue:)))
+            channel: Self.browserChannel(from: request.channel))
         return try Self.bridgeToolResponse(from: response)
+    }
+
+    public func browserExecute(
+        _ request: PeekabooBridgeBrowserExecuteRequest,
+        expectedConnectionReceipt: PeekabooBridgeBrowserConnectionReceipt) async throws
+        -> PeekabooBridgeBrowserExecutionResult
+    {
+        let calls = request.resolvedCalls.map { call in
+            BrowserMCPMappedCall(
+                toolName: call.toolName,
+                arguments: call.arguments.mapValues { $0.toAny() })
+        }
+        let expectedReceipt = try Self.browserReceipt(from: expectedConnectionReceipt)
+        let result: BrowserMCPExecutionResult
+        do {
+            result = try await self.browser.executeSequence(
+                calls,
+                channel: Self.browserChannel(from: request.channel),
+                expectedConnectionReceipt: expectedReceipt)
+        } catch BrowserMCPConnectionError.expectedConnectionReceiptMismatch {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The exact browser connection changed before tool dispatch.",
+                hint: "Refresh browser status and retry against its new connection receipt.")
+        } catch BrowserMCPConnectionError.receiptBindingUnsupported {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "The browser provider cannot atomically bind execution to a connection receipt.",
+                hint: "Update the runtime host before retrying target-attested browser execution.")
+        }
+        let projected = try result.projectingMutationProgress(for: calls)
+        return try PeekabooBridgeBrowserExecutionResult(
+            response: Self.bridgeToolResponse(from: projected.response),
+            connectionReceipt: Self.bridgeReceipt(from: projected.connectionReceipt),
+            completedCallCount: projected.completedCallCount,
+            dispatchedCallCount: projected.dispatchedCallCount,
+            actionFailure: projected.actionFailure)
+    }
+
+    static func browserChannel(from rawChannel: String?) throws -> BrowserMCPChannel? {
+        guard let rawChannel else { return nil }
+        guard let channel = BrowserMCPChannel(rawValue: rawChannel) else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "The browser request has an invalid channel.",
+                hint: "Use one of: stable, beta, dev, or canary.")
+        }
+        return channel
     }
 
     private static func bridgeStatus(from status: BrowserMCPStatus) -> PeekabooBridgeBrowserStatus {
@@ -49,22 +144,54 @@ extension PeekabooServices {
                     name: $0.name,
                     bundleIdentifier: $0.bundleIdentifier,
                     processIdentifier: $0.processIdentifier,
+                    processStartIdentity: $0.processStartIdentity,
                     version: $0.version,
                     channel: $0.channel.rawValue)
             },
-            connectionReceipt: status.connectionReceipt.map {
-                PeekabooBridgeBrowserConnectionReceipt(
-                    channel: $0.channel?.rawValue,
-                    processIdentifier: $0.processIdentifier,
-                    processStartIdentity: $0.processStartIdentity,
-                    bundleIdentifier: $0.bundleIdentifier,
-                    browserURL: $0.browserURL,
-                    webSocketDebuggerURL: $0.webSocketDebuggerURL,
-                    devToolsBrowserID: $0.devToolsBrowserID,
-                    browserVersion: $0.browserVersion,
-                    protocolVersion: $0.protocolVersion)
-            },
+            connectionReceipt: status.connectionReceipt.map(self.bridgeReceipt),
             error: status.error)
+    }
+
+    private static func bridgeReceipt(
+        from receipt: BrowserMCPConnectionReceipt) -> PeekabooBridgeBrowserConnectionReceipt
+    {
+        PeekabooBridgeBrowserConnectionReceipt(
+            channel: receipt.channel?.rawValue,
+            processIdentifier: receipt.processIdentifier,
+            processStartIdentity: receipt.processStartIdentity,
+            bundleIdentifier: receipt.bundleIdentifier,
+            browserURL: receipt.browserURL,
+            webSocketDebuggerURL: receipt.webSocketDebuggerURL,
+            devToolsBrowserID: receipt.devToolsBrowserID,
+            browserVersion: receipt.browserVersion,
+            protocolVersion: receipt.protocolVersion)
+    }
+
+    private static func browserReceipt(
+        from receipt: PeekabooBridgeBrowserConnectionReceipt) throws -> BrowserMCPConnectionReceipt
+    {
+        let channel: BrowserMCPChannel?
+        if let rawChannel = receipt.channel {
+            guard let parsedChannel = BrowserMCPChannel(rawValue: rawChannel) else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .invalidRequest,
+                    message: "The expected browser connection receipt has an invalid channel.",
+                    hint: "Refresh browser status and retry with its exact connection receipt.")
+            }
+            channel = parsedChannel
+        } else {
+            channel = nil
+        }
+        return BrowserMCPConnectionReceipt(
+            channel: channel,
+            processIdentifier: receipt.processIdentifier,
+            processStartIdentity: receipt.processStartIdentity,
+            bundleIdentifier: receipt.bundleIdentifier,
+            browserURL: receipt.browserURL,
+            webSocketDebuggerURL: receipt.webSocketDebuggerURL,
+            devToolsBrowserID: receipt.devToolsBrowserID,
+            browserVersion: receipt.browserVersion,
+            protocolVersion: receipt.protocolVersion)
     }
 
     private static func bridgeToolResponse(from response: ToolResponse) throws -> PeekabooBridgeBrowserToolResponse {
@@ -73,6 +200,30 @@ extension PeekabooServices {
             content: content,
             isError: response.isError,
             meta: response.meta.map { try PeekabooBridgeJSONValue.fromCodable($0) })
+    }
+
+    private static func bridgeToolResponse(
+        from result: BrowserMCPExecutionResult) throws -> PeekabooBridgeBrowserToolResponse
+    {
+        let response = try self.bridgeToolResponse(from: result.response)
+        return PeekabooBridgeBrowserToolResponse(
+            content: response.content,
+            isError: response.isError,
+            meta: response.meta,
+            connectionReceipt: self.bridgeReceipt(from: result.connectionReceipt),
+            completedCallCount: result.completedCallCount,
+            dispatchedCallCount: result.dispatchedCallCount,
+            actionFailure: result.actionFailure)
+    }
+
+    private static func bridgeBrowserRefusalResponse(
+        _ failure: DesktopActionFailure) -> PeekabooBridgeBrowserToolResponse
+    {
+        PeekabooBridgeBrowserToolResponse(
+            content: [],
+            isError: true,
+            meta: nil,
+            actionFailure: failure)
     }
 }
 

@@ -1,6 +1,7 @@
 import Foundation
 import MCP
 import PeekabooAutomationKit
+import PeekabooFoundation
 import Tachikoma
 import TachikomaMCP
 import Testing
@@ -15,9 +16,13 @@ struct MCPToolSnapshotMutationTests {
     @Test
     func `Mutation policy distinguishes reads mutations and fresh observations`() {
         #expect(Self.effect("app", ["action": "list"]) == .none)
-        #expect(Self.effect("app", ["action": "launch"]) == .mutation)
+        #expect(Self.effect("app", ["action": "launch"]) == .conditionalMutation)
+        #expect(Self.effect("app", ["action": "launch", "foreground": true]) == .mutation)
+        #expect(Self.effect("app", ["action": "launch", "newInstance": true]) == .mutation)
+        #expect(Self.effect("app", ["action": "launch", "openTargets": ["https://example.com"]]) == .mutation)
         #expect(Self.effect("menu", ["action": "click"]) == .mutation)
         #expect(Self.effect("menu", ["action": "list"]) == .none)
+        #expect(Self.effect("menu", ["action": "list", "foreground": true]) == .mutation)
         #expect(Self.effect("inspect_ui", [:]) == .freshObservation)
         #expect(Self.effect("see", [:]) == .freshObservation)
         #expect(Self.effect("inspect_ui", ["web_focus": true]) == .mutationProducingFreshObservation)
@@ -99,7 +104,8 @@ struct MCPToolSnapshotMutationTests {
         let coordinator = RecordingMutationCoordinator()
         let context = await MCPToolTestHelpers.makeContext(
             snapshotMutationCoordinator: coordinator,
-            snapshotOwner: self.uiSnapshots.owner)
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .unrestricted)
 
         _ = try await context.execute(
             tool: StubMCPTool(name: "click", responseIsError: false),
@@ -120,7 +126,8 @@ struct MCPToolSnapshotMutationTests {
         let coordinator = RecordingMutationCoordinator(completionResult: false)
         let context = await MCPToolTestHelpers.makeContext(
             snapshotMutationCoordinator: coordinator,
-            snapshotOwner: manager.owner)
+            snapshotOwner: manager.owner,
+            executionPolicy: .unrestricted)
         let snapshotID = "unpublished-snapshot"
 
         let response = try await context.execute(
@@ -146,7 +153,8 @@ struct MCPToolSnapshotMutationTests {
         let context = await MCPToolTestHelpers.makeContext(
             snapshotMutationCoordinator: coordinator,
             snapshotExecutionGate: gate,
-            snapshotOwner: self.uiSnapshots.owner)
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .unrestricted)
 
         let response = try await context.execute(
             tool: StubMCPTool(name: toolName),
@@ -173,7 +181,8 @@ struct MCPToolSnapshotMutationTests {
         let context = await MCPToolTestHelpers.makeContext(
             snapshotMutationCoordinator: coordinator,
             snapshotExecutionGate: gate,
-            snapshotOwner: self.uiSnapshots.owner)
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .unrestricted)
 
         let mutationResponse = try await context.execute(
             tool: StubMCPTool(name: "click"),
@@ -206,6 +215,7 @@ struct MCPToolSnapshotMutationTests {
     func `Pending invalidation retries against its originating snapshot owner`() async throws {
         let coordinator = SequencedMutationCoordinator(results: [false, true])
         let gate = MCPToolSnapshotExecutionGate()
+        let snapshots = InMemorySnapshotManager()
         let firstSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
         let secondSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
         await firstSnapshots.removeAllSnapshots()
@@ -213,13 +223,17 @@ struct MCPToolSnapshotMutationTests {
         let firstSnapshot = await firstSnapshots.createSnapshot(id: "session-a")
         let secondSnapshot = await secondSnapshots.createSnapshot(id: "session-b")
         let firstContext = await MCPToolTestHelpers.makeContext(
+            snapshots: snapshots,
             snapshotMutationCoordinator: coordinator,
             snapshotExecutionGate: gate,
-            snapshotOwner: firstSnapshots.owner)
+            snapshotOwner: firstSnapshots.owner,
+            executionPolicy: .unrestricted)
         let secondContext = await MCPToolTestHelpers.makeContext(
+            snapshots: snapshots,
             snapshotMutationCoordinator: coordinator,
             snapshotExecutionGate: gate,
-            snapshotOwner: secondSnapshots.owner)
+            snapshotOwner: secondSnapshots.owner,
+            executionPolicy: .unrestricted)
 
         let mutationResponse = try await firstContext.execute(
             tool: StubMCPTool(name: "click"),
@@ -249,7 +263,8 @@ struct MCPToolSnapshotMutationTests {
         let coordinator = RecordingMutationCoordinator(completionResult: false)
         let context = await MCPToolTestHelpers.makeContext(
             snapshotMutationCoordinator: coordinator,
-            snapshotOwner: self.uiSnapshots.owner)
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .unrestricted)
 
         let response = try await context.execute(
             tool: StubMCPTool(name: "click", responseIsError: true),
@@ -277,7 +292,8 @@ struct MCPToolSnapshotMutationTests {
         let context = await MCPToolTestHelpers.makeContext(
             snapshotMutationCoordinator: coordinator,
             snapshotExecutionGate: gate,
-            snapshotOwner: self.uiSnapshots.owner)
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .unrestricted)
 
         let mutationResponse = try await context.execute(
             tool: StubMCPTool(name: "click"),
@@ -308,7 +324,8 @@ struct MCPToolSnapshotMutationTests {
         let gate = MCPToolSnapshotExecutionGate()
         let context = await MCPToolTestHelpers.makeContext(
             snapshotExecutionGate: gate,
-            snapshotOwner: self.uiSnapshots.owner)
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .unrestricted)
         let observation = StubMCPTool(name: "inspect_ui", label: "observe", delay: .milliseconds(40), log: log)
         let mutation = StubMCPTool(name: "click", label: "mutate", log: log)
 
@@ -331,7 +348,9 @@ struct MCPToolSnapshotMutationTests {
         let directContext = MCPToolContext(
             services: services,
             snapshotExecutionGate: gate)
-        let nestedAgentContext = agent.makeToolContext()
+        let nestedAgentContext = PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(.unrestricted) {
+            agent.makeToolContext()
+        }
         let directObservation = StubMCPTool(
             name: "see",
             label: "direct-see",
@@ -352,7 +371,8 @@ struct MCPToolSnapshotMutationTests {
             arguments: ToolArguments(raw: [:]))
         _ = try await (observationResult, mutationResult)
 
-        #expect(await log.events == [
+        let events = await log.events
+        #expect(events == [
             "direct-see:start",
             "direct-see:end",
             "nested-click:start",
@@ -363,7 +383,9 @@ struct MCPToolSnapshotMutationTests {
     @Test
     func `Outer agent execution remains ungated for its nested mutation`() async throws {
         let log = ToolExecutionLog()
-        let context = await MCPToolTestHelpers.makeContext(snapshotOwner: self.uiSnapshots.owner)
+        let context = await MCPToolTestHelpers.makeContext(
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .unrestricted)
 
         let response = try await context.execute(
             tool: NestedAgentMCPTool(context: context, log: log),
@@ -384,7 +406,8 @@ struct MCPToolSnapshotMutationTests {
         let gate = MCPToolSnapshotExecutionGate()
         let context = await MCPToolTestHelpers.makeContext(
             snapshotExecutionGate: gate,
-            snapshotOwner: self.uiSnapshots.owner)
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .unrestricted)
         try await gate.acquire()
 
         let waiting = Task {
@@ -409,7 +432,8 @@ struct MCPToolSnapshotMutationTests {
         let context = await MCPToolTestHelpers.makeContext(
             snapshotMutationCoordinator: coordinator,
             snapshotExecutionGate: gate,
-            snapshotOwner: self.uiSnapshots.owner)
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .unrestricted)
         let canceledExecution = Task {
             try await context.execute(
                 tool: StubMCPTool(name: "click", cancelsCurrentTask: true),
@@ -449,13 +473,278 @@ struct MCPToolSnapshotMutationTests {
     }
 
     @Test
+    func `Cancellation after dispatch preserves a canonical failure response`() async throws {
+        let coordinator = RecordingMutationCoordinator()
+        let context = await MCPToolTestHelpers.makeContext(
+            snapshotMutationCoordinator: coordinator,
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .unrestricted)
+        let targetReceipt = DesktopActionTargetReceipt(
+            processIdentifier: 42,
+            processStartIdentity: 420,
+            windowID: 71)
+        let failure = DesktopActionFailure.indeterminate(
+            route: .bridge,
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: "The exact dispatched result must survive caller cancellation.")
+            .attributed(to: targetReceipt)
+        let canonicalResponse = try MCPToolResponseMetadataProjector.errorResponse(
+            for: failure,
+            invalidatedSnapshotID: nil)
+
+        let returned = try await Task {
+            try await context.execute(
+                tool: StubMCPTool(
+                    name: "click",
+                    providedResponse: canonicalResponse,
+                    cancelsCurrentTask: true),
+                arguments: ToolArguments(raw: [:]))
+        }.value
+
+        #expect(returned.isError)
+        try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(failure.outcome, in: returned)
+        #expect(returned.meta?.objectValue?["target_receipt"] != nil)
+        #expect(coordinator.completions.map(\.succeeded) == [false])
+    }
+
+    @Test
+    func `Cancellation during completion preserves a canonical mutation response`() async throws {
+        let coordinator = CancelingMutationCoordinator()
+        let context = await MCPToolTestHelpers.makeContext(
+            snapshotMutationCoordinator: coordinator,
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .unrestricted)
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let canonicalResponse = try ToolResponse.text(
+            "dispatched",
+            meta: MCPToolResponseMetadataProjector.metadata(outcome: outcome))
+
+        let returned = try await Task {
+            try await context.execute(
+                tool: StubMCPTool(name: "click", providedResponse: canonicalResponse),
+                arguments: ToolArguments(raw: [:]))
+        }.value
+
+        #expect(!returned.isError)
+        try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(outcome, in: returned)
+        #expect(coordinator.completions.map(\.succeeded) == [true])
+    }
+
+    @Test
+    func `Background mutation rejects a response without canonical result semantics`() async throws {
+        let coordinator = RecordingMutationCoordinator()
+        let context = await MCPToolTestHelpers.makeContext(
+            snapshotMutationCoordinator: coordinator,
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .backgroundOnly)
+
+        let response = try await context.execute(
+            tool: StubMCPTool(name: "browser"),
+            arguments: ToolArguments(raw: ["action": "click"]))
+
+        #expect(response.isError)
+        let resolution = MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta)
+        guard case let .valid(projection) = resolution else {
+            Issue.record("Expected a canonical indeterminate outcome")
+            return
+        }
+        #expect(projection.state == .indeterminate)
+        #expect(projection.retrySafety == .unsafe)
+        #expect(projection.escalation == .observeBeforeRetry)
+        #expect(coordinator.completions.map(\.succeeded) == [false])
+    }
+
+    @Test
+    func `Browser semantic validation refuses missing uid before mutation preparation`() async throws {
+        let coordinator = RecordingMutationCoordinator()
+        let context = await MCPToolTestHelpers.makeContext(
+            snapshotMutationCoordinator: coordinator,
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .backgroundOnly)
+
+        let response = try await context.execute(
+            tool: BrowserTool(context: context),
+            arguments: ToolArguments(raw: [
+                "action": "click",
+                "page_id": 7,
+            ]))
+
+        #expect(response.isError)
+        let resolution = MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta)
+        guard case let .valid(projection) = resolution else {
+            Issue.record("Expected canonical invalid-request semantics")
+            return
+        }
+        #expect(projection.state == .refused)
+        #expect(projection.refusalReason == .invalidRequest)
+        #expect(projection.dispatchState == .none)
+        #expect(projection.retrySafety == .safe)
+        #expect(coordinator.completions.isEmpty)
+    }
+
+    @Test
+    func `Background mutation does not trust a bare legacy no-dispatch boolean`() async throws {
+        let coordinator = RecordingMutationCoordinator()
+        let context = await MCPToolTestHelpers.makeContext(
+            snapshotMutationCoordinator: coordinator,
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .backgroundOnly)
+        let legacyResponse = ToolResponse.error(
+            "legacy refusal",
+            meta: .object([
+                "mutation_dispatched": .bool(false),
+                "retry_safe": .bool(true),
+            ]))
+
+        let response = try await context.execute(
+            tool: StubMCPTool(name: "browser", providedResponse: legacyResponse),
+            arguments: ToolArguments(raw: ["action": "click"]))
+
+        #expect(response.isError)
+        let resolution = MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta)
+        guard case let .valid(projection) = resolution else {
+            Issue.record("Expected a canonical indeterminate outcome")
+            return
+        }
+        #expect(projection.state == .indeterminate)
+        #expect(projection.retrySafety == .unsafe)
+        #expect(projection.escalation == .observeBeforeRetry)
+        #expect(coordinator.completions.map(\.succeeded) == [false])
+    }
+
+    @Test
+    func `Unrestricted mutation retains explicit legacy response compatibility`() async throws {
+        let coordinator = RecordingMutationCoordinator()
+        let context = await MCPToolTestHelpers.makeContext(
+            snapshotMutationCoordinator: coordinator,
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .unrestricted)
+
+        let response = try await context.execute(
+            tool: StubMCPTool(name: "browser"),
+            arguments: ToolArguments(raw: ["action": "click"]))
+
+        #expect(!response.isError)
+        #expect(MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta).projection == nil)
+        #expect(coordinator.completions.map(\.succeeded) == [true])
+    }
+
+    @Test
+    func `Background mutation cannot report success with a non-success outcome`() async throws {
+        let coordinator = RecordingMutationCoordinator()
+        let context = await MCPToolTestHelpers.makeContext(
+            snapshotMutationCoordinator: coordinator,
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .backgroundOnly)
+        let outcome = DesktopActionOutcome.indeterminate(
+            route: .bridge,
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: .one)
+        let contradictoryResponse = try ToolResponse.text(
+            "success",
+            meta: MCPToolResponseMetadataProjector.metadata(outcome: outcome))
+
+        let response = try await context.execute(
+            tool: StubMCPTool(name: "browser", providedResponse: contradictoryResponse),
+            arguments: ToolArguments(raw: ["action": "click"]))
+
+        #expect(response.isError)
+        try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(outcome, in: response)
+        #expect(coordinator.completions.map(\.succeeded) == [false])
+    }
+
+    @Test
+    func `Background mutation converts a reported foreground success into a retry-unsafe error`() async throws {
+        let targetReceipt = DesktopActionTargetReceipt(
+            processIdentifier: 42,
+            processStartIdentity: 420,
+            windowID: 71)
+        let outcomes: [DesktopActionOutcome] = [
+            .confirmedChange(
+                route: .bridge,
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                unitCount: .one),
+            .dispatchedUnverified(
+                route: .bridge,
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .operationStillRunning,
+                unitCount: .one),
+        ]
+
+        for outcome in outcomes {
+            let coordinator = RecordingMutationCoordinator()
+            let context = await MCPToolTestHelpers.makeContext(
+                snapshotMutationCoordinator: coordinator,
+                snapshotOwner: self.uiSnapshots.owner,
+                executionPolicy: .backgroundOnly)
+            var metadata = try #require(
+                MCPToolResponseMetadataProjector.metadata(outcome: outcome)?.objectValue)
+            let targetReceiptValue = try Value(targetReceipt)
+            metadata["target_receipt"] = targetReceiptValue
+            let providerResponse = ToolResponse.text(
+                "foreground provider success",
+                meta: .object(metadata))
+
+            let response = try await context.execute(
+                tool: StubMCPTool(name: "browser", providedResponse: providerResponse),
+                arguments: ToolArguments(raw: ["action": "click"]))
+
+            #expect(response.isError)
+            let resolution = MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta)
+            guard case let .valid(projection) = resolution else {
+                Issue.record("Expected a canonical retry-unsafe foreground delivery failure")
+                continue
+            }
+            #expect(projection.state == .dispatchedUnverified)
+            #expect(projection.route == .bridge)
+            #expect(projection.deliveryMechanism == .globalEvents)
+            #expect(projection.deliveryMode == .foreground)
+            #expect(projection.dispatchedUnitCount == .one)
+            #expect(projection.retrySafety == .unsafe)
+            #expect(response.meta?.objectValue?["target_receipt"] == targetReceiptValue)
+            #expect(coordinator.completions.map(\.succeeded) == [false])
+        }
+    }
+
+    @Test
+    func `Background observation mutation rejects a receipt-incapable provider before execution`() async throws {
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: StubNonTargetedAutomationService(),
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .backgroundOnly)
+
+        let response = try #require(context.backgroundMutationCapabilityRejection(
+            toolName: "click",
+            effect: .mutation))
+
+        #expect(response.isError)
+        let resolution = MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta)
+        guard case let .valid(projection) = resolution else {
+            Issue.record("Expected a canonical pre-dispatch refusal")
+            return
+        }
+        #expect(projection.state == .refused)
+        #expect(projection.refusalReason == .runtimeIncompatible)
+        #expect(projection.dispatchState == .none)
+        #expect(projection.retrySafety == .safe)
+    }
+
+    @Test
     func `Cancellation during successful completion rolls back observation publication`() async throws {
         let manager = self.uiSnapshots
         await manager.removeAllSnapshots()
         let coordinator = CancelingMutationCoordinator()
         let context = await MCPToolTestHelpers.makeContext(
             snapshotMutationCoordinator: coordinator,
-            snapshotOwner: manager.owner)
+            snapshotOwner: manager.owner,
+            executionPolicy: .unrestricted)
         let snapshotID = "canceled-after-completion"
         let canceledExecution = Task {
             try await context.execute(
@@ -483,7 +772,8 @@ struct MCPToolSnapshotMutationTests {
         let context = await MCPToolTestHelpers.makeContext(
             snapshotMutationCoordinator: coordinator,
             snapshotExecutionGate: gate,
-            snapshotOwner: self.uiSnapshots.owner)
+            snapshotOwner: self.uiSnapshots.owner,
+            executionPolicy: .unrestricted)
         try await gate.acquire()
         let waiting = Task {
             try await context.execute(
@@ -546,7 +836,9 @@ struct MCPToolSnapshotMutationTests {
         let manager = self.uiSnapshots
         await manager.removeAllSnapshots()
         let snapshotID = "pending-observation"
-        let context = await MCPToolTestHelpers.makeContext(snapshotOwner: manager.owner)
+        let context = await MCPToolTestHelpers.makeContext(
+            snapshotOwner: manager.owner,
+            executionPolicy: .unrestricted)
 
         _ = try await context.execute(
             tool: StubMCPTool(
@@ -575,7 +867,8 @@ struct MCPToolSnapshotMutationTests {
         _ = try store.advance(through: Date())
         let context = await MCPToolTestHelpers.makeContext(
             snapshots: snapshots,
-            snapshotOwner: manager.owner)
+            snapshotOwner: manager.owner,
+            executionPolicy: .unrestricted)
 
         _ = try await context.execute(
             tool: StubMCPTool(name: "app"),
@@ -598,7 +891,8 @@ struct MCPToolSnapshotMutationTests {
         let snapshotID = "host-completed-observation"
         let context = await MCPToolTestHelpers.makeContext(
             snapshots: snapshots,
-            snapshotOwner: manager.owner)
+            snapshotOwner: manager.owner,
+            executionPolicy: .unrestricted)
 
         let response = try await context.execute(
             tool: StubMCPTool(
@@ -629,7 +923,8 @@ struct MCPToolSnapshotMutationTests {
         let context = await MCPToolTestHelpers.makeContext(
             snapshots: snapshots,
             snapshotMutationCoordinator: coordinator,
-            snapshotOwner: manager.owner)
+            snapshotOwner: manager.owner,
+            executionPolicy: .unrestricted)
 
         let response = try await context.execute(
             tool: StubMCPTool(
@@ -659,7 +954,8 @@ struct MCPToolSnapshotMutationTests {
         let snapshotID = "superseded-host-observation"
         let context = await MCPToolTestHelpers.makeContext(
             snapshots: snapshots,
-            snapshotOwner: manager.owner)
+            snapshotOwner: manager.owner,
+            executionPolicy: .unrestricted)
 
         let response = try await context.execute(
             tool: StubMCPTool(
@@ -684,7 +980,9 @@ struct MCPToolSnapshotMutationTests {
         await manager.removeAllSnapshots()
         let snapshot = await manager.createSnapshot(at: Date().addingTimeInterval(-60))
         let snapshotID = await snapshot.id
-        let context = await MCPToolTestHelpers.makeContext(snapshotOwner: manager.owner)
+        let context = await MCPToolTestHelpers.makeContext(
+            snapshotOwner: manager.owner,
+            executionPolicy: .unrestricted)
         let arguments = ToolArguments(raw: ["snapshot": snapshotID, "web_focus": true])
 
         _ = try await context.execute(
@@ -725,7 +1023,9 @@ struct MCPToolSnapshotMutationTests {
     func `Focus-capable image mutation hides snapshots created during execution`(focus: String) async throws {
         let manager = self.uiSnapshots
         await manager.removeAllSnapshots()
-        let context = await MCPToolTestHelpers.makeContext(snapshotOwner: manager.owner)
+        let context = await MCPToolTestHelpers.makeContext(
+            snapshotOwner: manager.owner,
+            executionPolicy: .unrestricted)
         let arguments: [String: Any] = ["capture_focus": focus]
 
         _ = try await context.execute(
@@ -898,6 +1198,7 @@ private actor ToolExecutionLog {
 private struct StubMCPTool: MCPTool {
     let name: String
     let label: String
+    let providedResponse: ToolResponse?
     let responseIsError: Bool
     let responseSnapshotID: String?
     let createsUISnapshot: Bool
@@ -921,6 +1222,7 @@ private struct StubMCPTool: MCPTool {
     init(
         name: String,
         label: String = "stub",
+        providedResponse: ToolResponse? = nil,
         responseIsError: Bool = false,
         responseSnapshotID: String? = nil,
         createsUISnapshot: Bool = false,
@@ -935,6 +1237,7 @@ private struct StubMCPTool: MCPTool {
     {
         self.name = name
         self.label = label
+        self.providedResponse = providedResponse
         self.responseIsError = responseIsError
         self.responseSnapshotID = responseSnapshotID
         self.createsUISnapshot = createsUISnapshot
@@ -956,6 +1259,9 @@ private struct StubMCPTool: MCPTool {
         await self.log?.append("\(self.label):end")
         if self.cancelsCurrentTask {
             withUnsafeCurrentTask { $0?.cancel() }
+        }
+        if let providedResponse {
+            return providedResponse
         }
         if self.createsUISnapshot {
             _ = await self.uiSnapshots.createSnapshot()
