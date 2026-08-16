@@ -72,8 +72,9 @@ sealed epochs cannot reach a heartbeat while any reservation remains incomplete.
 exact Accessibility focus lookup rather than a broad WindowServer inventory. Each window lookup is bracketed by matching
 process-generation reads; generation drift discards the combined evidence instead of synthesizing a PID/window pair.
 Publishing a higher producer revision closes the old epoch before the new epoch can admit evidence; heartbeat closure
-uses the same cutoff, so there is no
-separate drain-to-heartbeat interval. Every higher revision is a transition barrier, including a producer-only update or
+uses the same cutoff, so there is no separate drain-to-heartbeat interval. Each heartbeat samples system state, drains
+callbacks that became ready during sampling, and only then closes/evaluates that epoch. Every higher revision is a
+transition barrier, including a producer-only update or
 an unchanged foreground target. A separate full callback run-loop turn and `beforeWaiting` idle barrier must finish before
 that revision becomes eligible for acknowledgement. A missed bounded idle barrier defers the transition while stable
 monitoring continues; persistent backlog eventually times out the harness acknowledgement wait rather than relabeling
@@ -83,8 +84,9 @@ input during
 revoke. The monitor will not publish an acknowledgement while its pre-ack bucket has a pending reservation or unevaluated
 event. Once that bucket is empty, observer reconciliation, the atomic heartbeat write, and the admission switch to the
 new authorization share one cutoff. Heartbeat bytes and the same-directory temporary file are prepared outside the
-cutoff, then a final adjacent idle barrier drains newly queued callbacks; any resulting evidence defers acknowledgement
-again. Current and prior controller generations and targets are revalidated inside the cutoff before observer retirement
+cutoff, then a final adjacent terminal-order idle barrier requires two `beforeWaiting` passes so work queued by another
+observer receives one more drain turn; any resulting evidence defers acknowledgement again. Current and prior controller
+generations and targets are revalidated inside the cutoff before observer retirement
 and atomic rename, so liveness cannot drift during the final barrier. Every evaluated transition summary is still published
 with `transitionAcknowledged: false` while waiting, so activation/focus counts are never discarded. The eventual
 acknowledgement advertises the new revision and target but cannot advance `lastCleanSequence`; the next fully closed stable

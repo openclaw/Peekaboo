@@ -636,14 +636,17 @@ private struct AttemptContaminationState {
 }
 
 private final class RunLoopIdleBarrierState: Sendable {
-    private let reached = Mutex(false)
+    private let idlePasses = Mutex(0)
 
-    func markReached() {
-        self.reached.withLock { $0 = true }
+    func recordIdlePass() -> Bool {
+        self.idlePasses.withLock { passes in
+            passes += 1
+            return passes >= 2
+        }
     }
 
-    func wasReached() -> Bool {
-        self.reached.withLock { $0 }
+    func reachedBarrier() -> Bool {
+        self.idlePasses.withLock { $0 >= 2 }
     }
 }
 
@@ -653,11 +656,15 @@ private func runLoopReachesIdle(timeout: TimeInterval) -> Bool {
     guard let observer = CFRunLoopObserverCreateWithHandler(
         kCFAllocatorDefault,
         CFRunLoopActivity.beforeWaiting.rawValue,
-        false,
-        0,
+        true,
+        CFIndex.max,
         { _, _ in
-            state.markReached()
-            CFRunLoopStop(runLoop)
+            if state.recordIdlePass() {
+                CFRunLoopStop(runLoop)
+            } else {
+                CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue) {}
+                CFRunLoopWakeUp(runLoop)
+            }
         })
     else {
         return false
@@ -668,7 +675,7 @@ private func runLoopReachesIdle(timeout: TimeInterval) -> Bool {
         CFRunLoopObserverInvalidate(observer)
     }
     _ = CFRunLoopRunInMode(.defaultMode, timeout, false)
-    return state.wasReached()
+    return state.reachedBarrier()
 }
 
 private final class InputEventTracker {
@@ -2020,10 +2027,12 @@ private func runWatch(arguments: [String]) throws -> Never {
         if !publishingHigherRevision || reachedIdleBarrier {
             applyMonitorAuthorization(allowedProducerSet, to: machine, observers: focusObservers)
         }
-        guard let closure = machine.closeForHeartbeat() else {
+        let current = try sample(includeClipboardDigest: false)
+        guard runLoopReachesIdle(timeout: max(Double(intervalMilliseconds) / 1000, 0.1)),
+              let closure = machine.closeForHeartbeat()
+        else {
             continue
         }
-        let current = try sample(includeClipboardDigest: false)
         let phase = try String(contentsOfFile: phasePath, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard ["setup", "running", "complete"].contains(phase) else {
@@ -2661,6 +2670,26 @@ private func idleBarrierDrainsQueuedCallbacksBeforePublication() -> Bool {
     let machine = MonitorEpochMachine(initialAuthorization: first)
     let callbacks = Mutex<[Int]>([])
     let runLoop = CFRunLoopGetCurrent()
+    guard let lateObserver = CFRunLoopObserverCreateWithHandler(
+        kCFAllocatorDefault,
+        CFRunLoopActivity.beforeWaiting.rawValue,
+        false,
+        0,
+        { _, _ in
+            CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue) {
+                callbacks.withLock { $0.append(3) }
+                machine.admitActivation { testEvidence(10, "1000", 100) }
+            }
+            CFRunLoopWakeUp(runLoop)
+        })
+    else {
+        return false
+    }
+    CFRunLoopAddObserver(runLoop, lateObserver, .defaultMode)
+    defer {
+        CFRunLoopRemoveObserver(runLoop, lateObserver, .defaultMode)
+        CFRunLoopObserverInvalidate(lateObserver)
+    }
     CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue) {
         callbacks.withLock { $0.append(1) }
     }
@@ -2669,15 +2698,47 @@ private func idleBarrierDrainsQueuedCallbacksBeforePublication() -> Bool {
         machine.admitActivation { testEvidence(10, "1000", 100) }
     }
     CFRunLoopWakeUp(runLoop)
-    guard runLoopReachesIdle(timeout: 1), callbacks.withLock({ $0 }) == [1, 2],
+    guard runLoopReachesIdle(timeout: 1), callbacks.withLock({ $0 }) == [1, 2, 3],
           machine.publish(second) == .published,
           let closure = machine.closeForHeartbeat(),
-          let event = closure.epochs.flatMap(\.events).first
+          closure.epochs.flatMap(\.events).count == 2
     else {
         return false
     }
-    return event.epoch.authorization.revision == first.revision &&
+    return closure.epochs.flatMap(\.events).allSatisfy { $0.epoch.authorization.revision == first.revision } &&
         closure.finalEpoch.epoch.authorization.revision == second.revision
+}
+
+private func sampleDrainCloseRetainsCallbackEvidence(
+    directory: String,
+    projection: InvariantProjection) throws -> Bool
+{
+    let desktop = selfTestDesktop()
+    let machine = MonitorEpochMachine(initialAuthorization: testAuthorization(testProducerSet(
+        revision: 1,
+        producers: [])))
+    let runLoop = CFRunLoopGetCurrent()
+    let current = desktop.sample
+    CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue) {
+        machine.admitActivation { testEvidence(99, "9900", 991) }
+    }
+    CFRunLoopWakeUp(runLoop)
+    guard runLoopReachesIdle(timeout: 1), let closure = machine.closeForHeartbeat() else { return false }
+    let output = "\(directory)/sample-cutoff-violations.jsonl"
+    var watch = makeSelfTestWatchState(
+        desktop: desktop,
+        projection: projection,
+        outputPath: output,
+        contaminationPath: "\(directory)/sample-cutoff-contamination.jsonl")
+    let heartbeat = try watch.observe(
+        current: current,
+        phase: "running",
+        closure: closure,
+        processIdentity: { $0 == 10 ? 1000 : nil },
+        targetValidator: { _ in true })
+    let kinds = Set(decodeJSONLines(Violation.self, at: output).map(\.kind))
+    return heartbeat.pendingActivationCount == 1 &&
+        kinds == Set([projection[.frontmostPID], projection[.frontmostWindow]])
 }
 
 private func revisionsRequireAcknowledgement() -> Bool {
@@ -4073,6 +4134,12 @@ private func runSelfTest() throws {
     guard idleBarrierDrainsQueuedCallbacksBeforePublication() else {
         throw ProbeError.invalidArguments("run-loop idle barrier relabeled a queued callback")
     }
+    guard try sampleDrainCloseRetainsCallbackEvidence(
+        directory: testDirectory,
+        projection: projection)
+    else {
+        throw ProbeError.invalidArguments("system sample callback evidence crossed the epoch cutoff")
+    }
     guard revisionsRequireAcknowledgement() else {
         throw ProbeError.invalidArguments("authorization revisions bypassed acknowledgement gating")
     }
@@ -4170,7 +4237,7 @@ private func runSelfTest() throws {
         throw ProbeError.invalidArguments("unexpected activation did not retain callback-time focus evidence")
     }
 
-    try writeJSON(SelfTestResult(success: true, tests: 43), to: nil)
+    try writeJSON(SelfTestResult(success: true, tests: 44), to: nil)
 }
 
 private func findApp(arguments: [String]) throws {
