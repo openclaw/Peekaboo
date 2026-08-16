@@ -66,9 +66,12 @@ directories must be new or empty so a rerun cannot reuse old summaries, images, 
 
 The native monitor has one authorization-epoch state machine for producer publication and all input, activation, and
 focused-window callbacks. Each callback is admitted on one atomic cutoff and retains that epoch plus the PID,
-process-start identity, and focused window sampled during the callback. Publishing a higher producer revision closes the
-old epoch before the new epoch can admit evidence; heartbeat closure uses the same cutoff, so there is no separate
-drain-to-heartbeat interval. Every higher revision is a transition barrier, including a producer-only update or an
+process-start identity, and focused window sampled during the callback. Admission reserves a cheap immutable token,
+releases the publication lock while sampling native process/focus evidence, and completes that exact token afterward;
+sealed epochs cannot reach a heartbeat while any reservation remains incomplete. Input and activation callbacks use
+exact Accessibility focus lookup rather than a broad WindowServer inventory. Publishing a higher producer revision
+closes the old epoch before the new epoch can admit evidence; heartbeat closure uses the same cutoff, so there is no
+separate drain-to-heartbeat interval. Every higher revision is a transition barrier, including a producer-only update or an
 unchanged foreground target. Its acknowledgement advertises the new revision and target but cannot advance
 `lastCleanSequence`; the next fully closed stable epoch may do so. Repeating the current revision is idempotent only when
 the exact producer set (ignoring array order) and optional foreground payload are unchanged.
