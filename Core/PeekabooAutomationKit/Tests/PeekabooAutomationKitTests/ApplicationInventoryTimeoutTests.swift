@@ -147,6 +147,31 @@ struct ApplicationInventoryTimeoutTests {
 
     @Test
     @MainActor
+    func `mutation inventory omits a live process without a usable selector name`() async throws {
+        let namedPID: pid_t = 40008
+        let unnamedPID: pid_t = 40009
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            applicationMutationCandidateProvider: { pid in
+                ApplicationIdentifierMatcher.Candidate(
+                    processIdentifier: pid,
+                    bundleIdentifier: "com.example.\(pid)",
+                    name: pid == unnamedPID ? "  \n" : "Named App")
+            },
+            processStartIdentityProvider: { pid in UInt64(pid) + 100 },
+            runningApplicationProcessIdentifiersProvider: { [namedPID, unnamedPID] })
+
+        let inventory = try await service.applicationMutationInventory()
+
+        #expect(inventory.items.map(\.processIdentifier) == [namedPID])
+        #expect(!inventory.isComplete)
+        #expect(inventory.warnings == [
+            "Application PID \(unnamedPID) metadata lacked a usable name and was omitted.",
+        ])
+    }
+
+    @Test
+    @MainActor
     func `one timed out process returns truthful partial inventory without dropping other apps`() async throws {
         let healthyPID: pid_t = 41001
         let poisonedPID: pid_t = 41002

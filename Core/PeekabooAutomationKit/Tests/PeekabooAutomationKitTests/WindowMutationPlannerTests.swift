@@ -251,7 +251,7 @@ struct WindowMutationPlannerTests {
             bundleIdentifier: "com.example.Other",
             name: "Other")
         let wrongOwnerSpy = WindowPlannerInventorySpy(
-            applicationInventories: [[other]],
+            applicationInventories: [[other], [other]],
             windows: [.windowId(201): [window]])
         await #expect(throws: try DesktopTargetPlanningError.windowOwnerMismatch(
             windowID: 201,
@@ -280,6 +280,47 @@ struct WindowMutationPlannerTests {
                 windowIndex: 0))
         }
         #expect(spy.mutationCallCount == 0)
+    }
+
+    @Test
+    func `selection failures revalidate an already selected owner before returning`() async throws {
+        let original = AutomationTestFixtures.application()
+        let changed = AutomationTestFixtures.wrongGenerationApplication()
+        let replacementOwner = AutomationTestFixtures.processIdentity(
+            processIdentifier: 202,
+            processStartIdentity: 2002)
+        let replacement = AutomationTestFixtures.window(processIdentity: replacementOwner)
+
+        for windows in [[], [replacement]] {
+            let spy = WindowPlannerInventorySpy(
+                applicationInventories: [[original], [changed]],
+                windows: [.application("PID:101"): windows])
+
+            await #expect(throws: try DesktopTargetPlanningError.staleApplication(
+                expected: #require(original.processIdentity)))
+            {
+                _ = try await spy.planner().plan(selector: InteractionTargetSelector(
+                    applicationIdentifier: "Test App",
+                    windowTitle: "Test Window"))
+            }
+        }
+    }
+
+    @Test
+    func `selection failure stays not found when the selected owner is still current`() async throws {
+        let application = AutomationTestFixtures.application()
+        let spy = WindowPlannerInventorySpy(
+            applicationInventories: [[application], [application]],
+            windows: [.application("PID:101"): []])
+
+        await #expect(throws: DesktopTargetPlanningError.windowNotFound(
+            selector: "title containing 'Test Window'",
+            candidateWindowIDs: []))
+        {
+            _ = try await spy.planner().plan(selector: InteractionTargetSelector(
+                applicationIdentifier: "Test App",
+                windowTitle: "Test Window"))
+        }
     }
 
     @Test

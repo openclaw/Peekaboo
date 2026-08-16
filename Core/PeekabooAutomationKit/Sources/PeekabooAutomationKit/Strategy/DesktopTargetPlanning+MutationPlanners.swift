@@ -376,11 +376,19 @@ extension DesktopTargetPlanning {
                     selector: selectorDescription,
                     warnings: inventory.warnings)
             }
-            let selected = try WindowCandidateSelector.select(
-                candidates: inventory.items,
-                selector: windowSelector,
-                policy: windowSelector == nil ? automaticSelection : .explicit,
-                expectedOwner: owner?.processIdentity)
+            let selected: ServiceWindowInfo
+            do {
+                selected = try WindowCandidateSelector.select(
+                    candidates: inventory.items,
+                    selector: windowSelector,
+                    policy: windowSelector == nil ? automaticSelection : .explicit,
+                    expectedOwner: owner?.processIdentity)
+            } catch {
+                if let owner {
+                    _ = try await self.applications.revalidate(owner)
+                }
+                throw error
+            }
             guard let selectedIdentity = selected.mutationIdentity else {
                 throw DesktopTargetPlanningError.missingWindowIdentity(windowID: selected.windowID)
             }

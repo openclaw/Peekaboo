@@ -54,6 +54,11 @@ extension ApplicationService {
                     "Application PID \(processIdentifier) changed process generation during inventory and was omitted.")
                 continue
             }
+            guard !candidate.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                warnings.append(
+                    "Application PID \(processIdentifier) metadata lacked a usable name and was omitted.")
+                continue
+            }
             let activationPolicy: ServiceApplicationActivationPolicy = if !candidate.allowsFuzzyMatching {
                 .prohibited
             } else if candidate.isRegularApplication {
