@@ -195,6 +195,24 @@ struct WindowListIndexNormalizationTests {
     }
 
     @Test
+    func `one exact CG ID cannot account for two AX descriptors`() {
+        let bounds = CGRect(x: 40, y: 50, width: 700, height: 500)
+        let cgWindow = ServiceWindowInfo(windowID: 449, title: "Fixture", bounds: bounds)
+        let descriptor = WindowEnumerationContext.AXWindowDescriptor(
+            windowID: cgWindow.windowID,
+            title: cgWindow.title,
+            bounds: bounds,
+            standaloneInfo: nil)
+
+        let merged = WindowEnumerationContext.mergeWindowInventory(
+            cgWindows: [cgWindow],
+            axDescriptors: [descriptor, descriptor])
+
+        #expect(merged.windows == [cgWindow])
+        #expect(merged.unmaterializedAXDescriptorCount == 1)
+    }
+
+    @Test
     func `exact ID and unidentified AX rows cannot both claim one CG window`() {
         let bounds = CGRect(x: 40, y: 50, width: 700, height: 500)
         let cgWindow = ServiceWindowInfo(windowID: 447, title: "Fixture", bounds: bounds)

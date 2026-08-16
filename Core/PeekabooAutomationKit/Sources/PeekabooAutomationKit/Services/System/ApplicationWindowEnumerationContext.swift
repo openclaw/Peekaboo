@@ -431,9 +431,12 @@ struct WindowEnumerationContext {
         var axDescriptorByID: [Int: AXWindowDescriptor] = [:]
         let cgWindowIDs = Set(cgWindows.map(\.windowID))
         var coveredDescriptorIndices = Set<Int>()
+        var claimedDescriptorWindowIDs = Set<Int>()
         for (index, descriptor) in axDescriptors.enumerated() {
             guard let id = descriptor.windowID else { continue }
-            if cgWindowIDs.contains(id) || descriptor.standaloneInfo != nil {
+            if cgWindowIDs.contains(id) || descriptor.standaloneInfo != nil,
+               claimedDescriptorWindowIDs.insert(id).inserted
+            {
                 coveredDescriptorIndices.insert(index)
             }
             if axDescriptorByID[id] == nil {
