@@ -471,7 +471,28 @@ struct WindowEnumerationContext {
             let descriptor = axDescriptors[index]
             return descriptor.windowID == nil && !descriptor.title.isEmpty && descriptor.bounds != nil
         }
-        var consumedFallbacks = Set<Int>()
+        var fallbackDescriptorIndicesByCGWindowID: [Int: [Int]] = [:]
+        for descriptorIndex in boundsFallbackIndices {
+            let descriptor = axDescriptors[descriptorIndex]
+            guard let bounds = descriptor.bounds else { continue }
+            let candidateWindowIDs = Set(cgWindows.compactMap { window -> Int? in
+                guard window.title.isEmpty,
+                      !claimedExactCGWindowIDs.contains(window.windowID),
+                      Self.boundsMatch(bounds, window.bounds),
+                      !Self.boundsOwnedByOtherWindow(
+                          title: descriptor.title,
+                          bounds: bounds,
+                          excluding: window.windowID,
+                          in: cgWindows)
+                else { return nil }
+                return window.windowID
+            })
+            guard candidateWindowIDs.count == 1, let windowID = candidateWindowIDs.first else { continue }
+            fallbackDescriptorIndicesByCGWindowID[windowID, default: []].append(descriptorIndex)
+        }
+        let uniqueFallbackDescriptorByCGWindowID = fallbackDescriptorIndicesByCGWindowID.compactMapValues {
+            $0.count == 1 ? $0[0] : nil
+        }
 
         var merged: [ServiceWindowInfo] = []
         merged.reserveCapacity(cgWindows.count + axDescriptors.count)
@@ -493,21 +514,7 @@ struct WindowEnumerationContext {
                 continue
             }
 
-            if let descriptorIndex = boundsFallbackIndices.first(where: { index in
-                guard !consumedFallbacks.contains(index), let bounds = axDescriptors[index].bounds else {
-                    return false
-                }
-                guard !claimedExactCGWindowIDs.contains(cgWindow.windowID) else { return false }
-                guard Self.boundsMatch(bounds, cgWindow.bounds) else { return false }
-                // Do not hijack: if this AX title+frame already belongs to a different CG window, that
-                // window is the real owner, so leave this untitled entry alone.
-                return !Self.boundsOwnedByOtherWindow(
-                    title: axDescriptors[index].title,
-                    bounds: bounds,
-                    excluding: cgWindow.windowID,
-                    in: cgWindows)
-            }) {
-                consumedFallbacks.insert(descriptorIndex)
+            if let descriptorIndex = uniqueFallbackDescriptorByCGWindowID[cgWindow.windowID] {
                 coveredDescriptorIndices.insert(descriptorIndex)
                 merged.append(enrichedWindow.withTitle(axDescriptors[descriptorIndex].title))
                 continue

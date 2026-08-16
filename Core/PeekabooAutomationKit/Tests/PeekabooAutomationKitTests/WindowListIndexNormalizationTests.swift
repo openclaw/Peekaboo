@@ -177,6 +177,47 @@ struct WindowListIndexNormalizationTests {
     }
 
     @Test
+    func `one untitled CG row can borrow one unique AX title`() {
+        let bounds = CGRect(x: 40, y: 50, width: 700, height: 500)
+        let cgWindow = ServiceWindowInfo(windowID: 450, title: "", bounds: bounds)
+        let descriptor = WindowEnumerationContext.AXWindowDescriptor(
+            windowID: nil,
+            title: "Fixture",
+            bounds: bounds,
+            standaloneInfo: nil)
+
+        let merged = WindowEnumerationContext.mergeWindowInventory(
+            cgWindows: [cgWindow],
+            axDescriptors: [descriptor])
+
+        #expect(merged.windows.map(\.title) == ["Fixture"])
+        #expect(merged.unmaterializedAXDescriptorCount == 0)
+    }
+
+    @Test
+    func `overlapping untitled CG rows do not consume ambiguous AX descriptors`() {
+        let bounds = CGRect(x: 40, y: 50, width: 700, height: 500)
+        let cgWindows = [
+            ServiceWindowInfo(windowID: 451, title: "", bounds: bounds),
+            ServiceWindowInfo(windowID: 452, title: "", bounds: bounds),
+        ]
+        let descriptors = ["First", "Second"].map {
+            WindowEnumerationContext.AXWindowDescriptor(
+                windowID: nil,
+                title: $0,
+                bounds: bounds,
+                standaloneInfo: nil)
+        }
+
+        let merged = WindowEnumerationContext.mergeWindowInventory(
+            cgWindows: cgWindows,
+            axDescriptors: descriptors)
+
+        #expect(merged.windows.map(\.title) == ["", ""])
+        #expect(merged.unmaterializedAXDescriptorCount == 2)
+    }
+
+    @Test
     func `one titled CG row cannot account for two AX descriptors without IDs`() {
         let bounds = CGRect(x: 40, y: 50, width: 700, height: 500)
         let cgWindow = ServiceWindowInfo(windowID: 446, title: "Fixture", bounds: bounds)
