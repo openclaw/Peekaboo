@@ -218,13 +218,15 @@ enum BridgeReceiptVerifier {
             )
         }
     ) async throws -> BridgeReceiptValidationReport {
+        let expandedBundlePath = (bundlePath as NSString).expandingTildeInPath
+        let expandedBridgeSocket = (bridgeSocket as NSString).expandingTildeInPath
         let teams = try self.trustedHostTeamIDs(
-            for: bridgeSocket,
+            for: expandedBridgeSocket,
             explicitValues: trustedHostTeamIDs
         )
-        let data = try self.readPrivateBundle(at: bundlePath)
+        let data = try self.readPrivateBundle(at: expandedBundlePath)
         let bundle = try self.decodeBundle(data)
-        let client = makeClient(bridgeSocket, self.handshakeTimeoutSeconds, teams)
+        let client = makeClient(expandedBridgeSocket, self.handshakeTimeoutSeconds, teams)
         let handshake = try await client.handshake(
             client: BridgeDiagnostics.currentClientIdentity(),
             overallTimeoutSec: self.handshakeTimeoutSeconds

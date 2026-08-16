@@ -264,6 +264,12 @@ struct BridgeReceiptCommandTests {
         )
         #expect(
             try BridgeReceiptVerifier.trustedHostTeamIDs(
+                for: (PeekabooBridgeConstants.peekabooSocketPath as NSString).abbreviatingWithTildeInPath,
+                explicitValues: []
+            ) == PeekabooBridgeConstants.trustedReleaseTeamIDs
+        )
+        #expect(
+            try BridgeReceiptVerifier.trustedHostTeamIDs(
                 for: "/private/tmp/custom.sock",
                 explicitValues: [" TEAMONE ", "TEAMTWO"]
             ) == ["TEAMONE", "TEAMTWO"]
@@ -280,6 +286,39 @@ struct BridgeReceiptCommandTests {
                 explicitValues: []
             )
         }
+    }
+
+    @Test
+    func `validator expands tilde bundle and socket paths before file or client access`() async throws {
+        let relativeRoot = ".peekaboo-receipt-path-tests-\(UUID().uuidString)"
+        let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
+            relativeRoot,
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bundle = root.appendingPathComponent("bundle.json")
+        try Self.fixtureData("valid-read-only-receipt").write(to: bundle)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: bundle.path)
+        let expectedSocket = root.appendingPathComponent("missing.sock").path
+        var receivedSocket: String?
+
+        await #expect(throws: (any Error).self) {
+            _ = try await BridgeReceiptVerifier.validate(
+                bundlePath: "~/\(relativeRoot)/bundle.json",
+                bridgeSocket: "~/\(relativeRoot)/missing.sock",
+                trustedHostTeamIDs: ["TEAMID"],
+                makeClient: { socketPath, timeout, teams in
+                    receivedSocket = socketPath
+                    return PeekabooBridgeClient(
+                        socketPath: socketPath,
+                        requestTimeoutSec: timeout,
+                        trustedHostTeamIDs: teams
+                    )
+                }
+            )
+        }
+        #expect(receivedSocket == expectedSocket)
     }
 
     @Test
