@@ -1326,6 +1326,27 @@ private func applyMonitorAuthorization(
     }
 }
 
+private enum MonitorAcknowledgementPreparationError: Error {
+    case liveness
+    case observerRemoval
+
+    var reason: String {
+        switch self {
+        case .liveness:
+            "blocked_foreground_ack_liveness"
+        case .observerRemoval:
+            "blocked_focus_observer_removal"
+        }
+    }
+}
+
+private func recordMonitorAcknowledgementPreparationFailure(
+    _ error: MonitorAcknowledgementPreparationError,
+    machine: MonitorEpochMachine)
+{
+    machine.admitFailure(reason: error.reason)
+}
+
 private func publishMonitorTransitionAcknowledgement(
     revision: UInt64,
     machine: MonitorEpochMachine,
@@ -1339,20 +1360,30 @@ private func publishMonitorTransitionAcknowledgement(
     guard authorization.revision == revision else {
         return .rejected(reason: "blocked_producer_ack_revision_mismatch")
     }
+    let authorizations = [authorization] + (priorAuthorization.map { [$0] } ?? [])
+    func authorizationsAreLive() -> Bool {
+        authorizations.allSatisfy { candidate in
+            candidate.source.producers.filter {
+                $0.effectiveRole == .foregroundController
+            }.allSatisfy { producer in
+                processIdentity(producer.pid).map(String.init) == producer.startIdentity
+            } && candidate.target.map(targetValidator) != false
+        }
+    }
     return try machine.acknowledge(
         revision: revision,
         preparing: {
-            let authorizations = [authorization] + (priorAuthorization.map { [$0] } ?? [])
-            guard authorizations.allSatisfy({ candidate in
-                candidate.source.producers.filter {
-                    $0.effectiveRole == .foregroundController
-                }.allSatisfy { producer in
-                    processIdentity(producer.pid).map(String.init) == producer.startIdentity
-                } && candidate.target.map(targetValidator) != false
-            }) else {
-                throw ProbeError.invalidArguments("blocked_foreground_ack_liveness")
+            guard authorizationsAreLive() else {
+                throw MonitorAcknowledgementPreparationError.liveness
             }
-            try observers.reconcile(activeTarget: authorization.target)
+            do {
+                try observers.reconcile(activeTarget: authorization.target)
+            } catch {
+                throw MonitorAcknowledgementPreparationError.observerRemoval
+            }
+            guard authorizationsAreLive() else {
+                throw MonitorAcknowledgementPreparationError.liveness
+            }
         },
         publishing: publish)
 }
@@ -2011,20 +2042,26 @@ private func runWatch(arguments: [String]) throws -> Never {
                     heartbeat.withTransitionAcknowledged(true),
                     destinationPath: heartbeatPath)
                 if runLoopReachesIdle(timeout: max(Double(intervalMilliseconds) / 1000, 0.1)) {
-                    let result = try publishMonitorTransitionAcknowledgement(
-                        revision: revision,
-                        machine: machine,
-                        observers: focusObservers,
-                        publish: { try preparedHeartbeat.commit() })
-                    switch result {
-                    case .published:
-                        acknowledgementGate.didPublish(revision: revision)
-                        publishedHeartbeat = true
-                    case .rejected(reason: "blocked_producer_ack_evidence_pending"):
+                    do {
+                        let result = try publishMonitorTransitionAcknowledgement(
+                            revision: revision,
+                            machine: machine,
+                            observers: focusObservers,
+                            publish: { try preparedHeartbeat.commit() })
+                        switch result {
+                        case .published:
+                            acknowledgementGate.didPublish(revision: revision)
+                            publishedHeartbeat = true
+                        case .rejected(reason: "blocked_producer_ack_evidence_pending"):
+                            try writeJSON(heartbeat.withTransitionAcknowledged(false), to: heartbeatPath)
+                            publishedHeartbeat = true
+                        case .idempotent, .rejected:
+                            throw ProbeError.invalidArguments("blocked_producer_ack_publication")
+                        }
+                    } catch let error as MonitorAcknowledgementPreparationError {
+                        recordMonitorAcknowledgementPreparationFailure(error, machine: machine)
                         try writeJSON(heartbeat.withTransitionAcknowledged(false), to: heartbeatPath)
                         publishedHeartbeat = true
-                    case .idempotent, .rejected:
-                        throw ProbeError.invalidArguments("blocked_producer_ack_publication")
                     }
                 } else {
                     try writeJSON(heartbeat.withTransitionAcknowledged(false), to: heartbeatPath)
@@ -2542,6 +2579,32 @@ private func transitionHeartbeatRetainsPendingEvidence(
         unpublished.allowedProducerRevision == heartbeat.allowedProducerRevision
 }
 
+private func acknowledgementPreparationFailureRemainsObservable() -> Bool {
+    for error in [MonitorAcknowledgementPreparationError.liveness, .observerRemoval] {
+        let first = testAuthorization(testProducerSet(revision: 1, producers: []))
+        let second = testAuthorization(testProducerSet(revision: 2, producers: []))
+        let machine = MonitorEpochMachine(initialAuthorization: first)
+        guard machine.publish(second) == .published,
+              machine.closeForHeartbeat()?.transitionAcknowledged == true,
+              machine.markAcknowledgementReady(revision: second.revision) == .published
+        else {
+            return false
+        }
+        recordMonitorAcknowledgementPreparationFailure(error, machine: machine)
+        guard let closure = machine.closeForHeartbeat(), !machine.currentPhase.isStable,
+              closure.epochs.flatMap(\.events).contains(where: {
+                  if case let .attributionFailure(reason, process: nil) = $0.kind {
+                      return reason == error.reason
+                  }
+                  return false
+              })
+        else {
+            return false
+        }
+    }
+    return true
+}
+
 private func notificationEvidenceIsCapturedAtAdmission() -> Bool {
     let authorization = testAuthorization(testProducerSet(revision: 1, producers: []))
     let machine = MonitorEpochMachine(initialAuthorization: authorization)
@@ -2746,6 +2809,7 @@ private final class FakeFocusObserverStore {
     var failStop = Set<ProcessGenerationIdentity>()
     var starts = [ProcessGenerationIdentity]()
     var stops = [ProcessGenerationIdentity]()
+    var onStop: ((ProcessGenerationIdentity) -> Void)?
 }
 
 private final class FakeFocusObserver: FocusObserverTracking {
@@ -2765,6 +2829,7 @@ private final class FakeFocusObserver: FocusObserverTracking {
     }
 
     func stop() throws {
+        self.store.onStop?(self.identity)
         if self.store.failStop.contains(self.identity) {
             throw FakeFocusObserverError.requestedFailure
         }
@@ -3099,6 +3164,52 @@ private func acknowledgementRevalidatesControllerAndTargetLiveness() -> Bool {
         processIdentity: { [20: 2000, 30: 3000, 40: 4000][$0] },
         targetValidator: { _ in false })
     return controllerDriftBlocked && targetDriftBlocked
+}
+
+private func acknowledgementRevalidatesAfterObserverReconciliation() -> Bool {
+    let bridge = testProducer(20, "2000")
+    let controller = testProducer(30, "3000", role: .foregroundController)
+    let target = AllowedForegroundTarget(pid: 40, startIdentity: "4000", windowID: 401)
+    let active = testAuthorization(testProducerSet(
+        revision: 1,
+        producers: [bridge, controller],
+        foreground: AllowedForegroundActivity(active: true, target: target)))
+    let revoked = testAuthorization(testProducerSet(revision: 2, producers: [bridge]))
+    let machine = MonitorEpochMachine(initialAuthorization: active)
+    let store = FakeFocusObserverStore()
+    let observers = FocusObserverCoordinator { FakeFocusObserver(identity: $0, store: store) }
+    do {
+        try observers.prepare(target: target)
+    } catch {
+        return false
+    }
+    let controllerLive = Mutex(true)
+    store.onStop = { _ in controllerLive.withLock { $0 = false } }
+    guard machine.publish(revoked) == .published,
+          machine.closeForHeartbeat()?.transitionAcknowledged == true,
+          machine.markAcknowledgementReady(revision: revoked.revision) == .published
+    else {
+        return false
+    }
+    var published = false
+    do {
+        _ = try publishMonitorTransitionAcknowledgement(
+            revision: revoked.revision,
+            machine: machine,
+            observers: observers,
+            processIdentity: { pid in
+                [20: 2000, 30: controllerLive.withLock { $0 ? 3000 : 3001 }, 40: 4000][pid]
+            },
+            targetValidator: { $0 == target })
+        {
+            published = true
+        }
+        return false
+    } catch MonitorAcknowledgementPreparationError.liveness {
+        return !published && !machine.currentPhase.isStable && !controllerLive.withLock { $0 }
+    } catch {
+        return false
+    }
 }
 
 private func pendingAcknowledgementEvidenceDrainsBeforePublication(
@@ -3948,6 +4059,9 @@ private func runSelfTest() throws {
     else {
         throw ProbeError.invalidArguments("pending transition heartbeat evidence was discarded")
     }
+    guard acknowledgementPreparationFailureRemainsObservable() else {
+        throw ProbeError.invalidArguments("acknowledgement preparation failure terminated observability")
+    }
     guard notificationEvidenceIsCapturedAtAdmission() else {
         throw ProbeError.invalidArguments("notification evidence was resampled after callback admission")
     }
@@ -4011,6 +4125,9 @@ private func runSelfTest() throws {
     guard acknowledgementRevalidatesControllerAndTargetLiveness() else {
         throw ProbeError.invalidArguments("acknowledgement accepted stale controller or target liveness")
     }
+    guard acknowledgementRevalidatesAfterObserverReconciliation() else {
+        throw ProbeError.invalidArguments("post-reconciliation liveness drift was acknowledged")
+    }
     guard try pendingAcknowledgementEvidenceDrainsBeforePublication(
         directory: testDirectory,
         projection: projection)
@@ -4051,7 +4168,7 @@ private func runSelfTest() throws {
         throw ProbeError.invalidArguments("unexpected activation did not retain callback-time focus evidence")
     }
 
-    try writeJSON(SelfTestResult(success: true, tests: 41), to: nil)
+    try writeJSON(SelfTestResult(success: true, tests: 43), to: nil)
 }
 
 private func findApp(arguments: [String]) throws {

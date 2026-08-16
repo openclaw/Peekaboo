@@ -96,7 +96,8 @@ The producer document may label one exact process generation with role `foregrou
 controller and at least one ordinary Bridge producer; inactive policy permits neither a controller nor a target. The
 baseline focus observer remains installed, a new granted-target observer is installed before publication, and observers
 for prior targets remain alive while transition evidence is evaluated. They retire inside the acknowledgement cutoff;
-removal failure prevents the acknowledgement from being published. Every heartbeat revalidates all effective and pending
+removal or final liveness failure prevents the acknowledgement, publishes a non-acknowledging heartbeat, and records a
+sticky attribution failure without terminating the watcher. Every heartbeat revalidates all effective and pending
 foreground-controller generations even when no input arrived; ordinary Bridge generations remain publication-validated
 and event-time validated because short-lived CLI producers may exit before the post-command heartbeat. Foreground-activity
 counters are scoped to the advertised revision so an earlier grant cannot satisfy a later grant. Controller recycling or
