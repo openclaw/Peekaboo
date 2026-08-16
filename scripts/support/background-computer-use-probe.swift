@@ -1886,11 +1886,13 @@ private final class PreparedJSONPublication {
         encoder.outputFormatting = [.sortedKeys]
         var data = try encoder.encode(value)
         data.append(Data("\n".utf8))
-        self.destinationURL = URL(fileURLWithPath: destinationPath)
-        self.temporaryURL = self.destinationURL
+        let destinationURL = URL(fileURLWithPath: destinationPath)
+        let temporaryURL = destinationURL
             .deletingLastPathComponent()
-            .appendingPathComponent(".\(self.destinationURL.lastPathComponent).\(UUID().uuidString).tmp")
-        try data.write(to: self.temporaryURL)
+            .appendingPathComponent(".\(destinationURL.lastPathComponent).\(UUID().uuidString).tmp")
+        self.destinationURL = destinationURL
+        self.temporaryURL = temporaryURL
+        try data.write(to: temporaryURL)
     }
 
     deinit {
