@@ -1899,7 +1899,7 @@ extension PeekabooBridgeOperationResultSemantics {
                 rule(windowBackground, .variable),
             ]
         case .beginExactWindowHeldPointer:
-            return [rule(windowBackground, .exact(2), failureUnits: .oneOf([1, 3]))]
+            return [rule(windowBackground, .exact(2), failureUnits: .oneOf([1, 2, 3]))]
         case .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer,
              .disconnectExactWindowHeldPointerOwner:
             return [rule(windowBackground, .exact(1), failureUnits: .exact(2))]

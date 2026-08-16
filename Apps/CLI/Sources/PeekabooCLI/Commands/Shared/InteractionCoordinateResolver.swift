@@ -256,6 +256,16 @@ enum InteractionWindowSelectionValidator {
                     "belongs to PID \(selectedPID)"
             )
         }
+
+        if let snapshotIdentity = snapshotContext?.windowMutationIdentity,
+           let snapshotBounds = snapshotContext?.windowBounds,
+           resolution.windowInfo.mutationIdentity != snapshotIdentity ||
+           resolution.windowInfo.bounds != snapshotBounds {
+            throw ValidationError(
+                "The explicitly selected window no longer matches snapshot '\(snapshotId)' exact identity and bounds; " +
+                    "capture a fresh snapshot before clicking"
+            )
+        }
     }
 }
 

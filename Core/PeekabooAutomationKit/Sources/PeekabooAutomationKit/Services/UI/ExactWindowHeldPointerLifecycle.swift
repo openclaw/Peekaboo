@@ -211,6 +211,7 @@ final class ExactWindowHeldPointerLifecycle {
     private struct HoldState {
         let owner: ExactWindowHeldPointerOwner
         let receipt: ExactWindowHeldPointerReceipt
+        let expirationDeadline: ContinuousClock.Instant
         let start: HeldPointerOneShot<StartResolution>
         let terminalSignal: HeldPointerOneShot<ExactWindowHeldPointerTerminalReason>
         let terminal: HeldPointerOneShot<TerminalResolution>
@@ -225,6 +226,7 @@ final class ExactWindowHeldPointerLifecycle {
     private let pointerDriver: WindowRoutedPointerDriver
     private let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
     private let now: @MainActor @Sendable () -> Date
+    private let monotonicNow: @MainActor @Sendable () -> ContinuousClock.Instant
     private let watchdogSleeper: @MainActor @Sendable () async throws -> Void
     private let beginResolutionHook: @MainActor @Sendable () async -> Void
     private let ownerCapacity: Int
@@ -238,6 +240,7 @@ final class ExactWindowHeldPointerLifecycle {
         pointerDriver: WindowRoutedPointerDriver = WindowRoutedPointerDriver(),
         processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64?,
         now: @escaping @MainActor @Sendable () -> Date = Date.init,
+        monotonicNow: @escaping @MainActor @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now },
         watchdogSleeper: @escaping @MainActor @Sendable () async throws -> Void = {
             try await Task.sleep(for: .milliseconds(20))
         },
@@ -250,6 +253,7 @@ final class ExactWindowHeldPointerLifecycle {
         self.pointerDriver = pointerDriver
         self.processStartIdentityProvider = processStartIdentityProvider
         self.now = now
+        self.monotonicNow = monotonicNow
         self.watchdogSleeper = watchdogSleeper
         self.beginResolutionHook = beginResolutionHook
         self.ownerCapacity = max(1, ownerCapacity)
@@ -294,6 +298,7 @@ final class ExactWindowHeldPointerLifecycle {
         }
 
         let token = UUID()
+        let expirationDeadline = self.monotonicNow().advanced(by: .seconds(request.expiresAfterSeconds))
         let receipt = ExactWindowHeldPointerReceipt(
             token: token,
             owner: owner,
@@ -305,6 +310,7 @@ final class ExactWindowHeldPointerLifecycle {
         self.holds[token] = HoldState(
             owner: owner,
             receipt: receipt,
+            expirationDeadline: expirationDeadline,
             start: start,
             terminalSignal: terminalSignal,
             terminal: terminal)
@@ -431,7 +437,7 @@ final class ExactWindowHeldPointerLifecycle {
                 guard self.ownerBindingIsCurrent(hold.owner) else {
                     throw ExactWindowHeldPointerLifecycleError.ownerDisconnectedBeforeDispatch
                 }
-                guard self.now() < hold.receipt.expiresAt else {
+                guard self.monotonicNow() < hold.expirationDeadline else {
                     throw ExactWindowHeldPointerLifecycleError.cancelledBeforeDispatch
                 }
                 let dispatch = try self.pointerDriver.prepareHold(
@@ -446,7 +452,7 @@ final class ExactWindowHeldPointerLifecycle {
                 guard self.ownerBindingIsCurrent(hold.owner) else {
                     throw ExactWindowHeldPointerLifecycleError.ownerDisconnectedBeforeDispatch
                 }
-                guard self.now() < hold.receipt.expiresAt else {
+                guard self.monotonicNow() < hold.expirationDeadline else {
                     throw ExactWindowHeldPointerLifecycleError.cancelledBeforeDispatch
                 }
                 let downUnits = try await self.pointerDriver.postHeldDown(dispatch)
@@ -535,7 +541,7 @@ final class ExactWindowHeldPointerLifecycle {
                 self.signalTerminal(token: token, reason: .ownerDisconnected)
                 return
             }
-            if self.now() >= hold.receipt.expiresAt {
+            if self.monotonicNow() >= hold.expirationDeadline {
                 self.signalTerminal(token: token, reason: .expired)
                 return
             }
@@ -662,7 +668,7 @@ final class ExactWindowHeldPointerLifecycle {
         if !self.ownerBindingIsCurrent(hold.owner) {
             return .ownerDisconnected
         }
-        if self.now() >= hold.receipt.expiresAt {
+        if self.monotonicNow() >= hold.expirationDeadline {
             return .expired
         }
         return nil

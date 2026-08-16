@@ -56,6 +56,26 @@ extension PeekabooBridgeRequest {
         }
     }
 
+    var requiresExactWindowHeldPointerBeginSupport: Bool {
+        switch self.unwrappedOperationRequest.operation {
+        case .createExactWindowHeldPointerOwner, .beginExactWindowHeldPointer:
+            true
+        default:
+            false
+        }
+    }
+
+    var requiresExactWindowHeldPointerTerminalSupport: Bool {
+        switch self.unwrappedOperationRequest.operation {
+        case .releaseExactWindowHeldPointer,
+             .revokeExactWindowHeldPointer,
+             .disconnectExactWindowHeldPointerOwner:
+            true
+        default:
+            false
+        }
+    }
+
     var requiresBackgroundStatelessClickVariantSupport: Bool {
         switch self.unwrappedOperationRequest {
         case let .targetedClick(payload):

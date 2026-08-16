@@ -202,6 +202,48 @@ struct ClickCommandTests {
     }
 
     @Test
+    func `Background stateless click rejects same ID generation and bounds drift`() async throws {
+        let application = Self.makeApplication()
+        let snapshotWindow = Self.makeWindow(id: 42, title: "Editor", index: 0)
+        let mismatchedWindows = [
+            Self.makeWindow(id: 42, title: "Editor", index: 0, processStartIdentity: 8),
+            Self.makeWindow(
+                id: 42,
+                title: "Editor",
+                index: 0,
+                bounds: CGRect(x: 30, y: 40, width: 400, height: 300)
+            ),
+        ]
+
+        for selectedWindow in mismatchedWindows {
+            let context = await makeContext(application: application, windows: [selectedWindow])
+            let snapshotId = try await storeSnapshot(
+                element: DetectedElement(
+                    id: "B1",
+                    type: .button,
+                    label: "Target",
+                    bounds: CGRect(x: 20, y: 30, width: 80, height: 30)
+                ),
+                windowID: snapshotWindow.windowID,
+                windowTitle: snapshotWindow.title,
+                in: context.snapshots
+            )
+
+            let result = try await InProcessCommandRunner.run(
+                [
+                    "click", "--on", "B1", "--snapshot", snapshotId,
+                    "--window-id", String(selectedWindow.windowID), "--middle", "--json",
+                ],
+                services: context.services
+            )
+
+            #expect(result.exitStatus == 1)
+            #expect(result.combinedOutput.contains("no longer matches"))
+            #expect(await self.automationState(context) { $0.targetedClickCalls }.isEmpty)
+        }
+    }
+
+    @Test
     func `Click command refuses PID only background coordinates without snapshot`() async throws {
         for snapshotArguments in [[], ["--snapshot", ""]] {
             let context = await makeContext()
@@ -805,9 +847,14 @@ struct ClickCommandTests {
         )
     }
 
-    private static func makeWindow(id: Int, title: String, index: Int) -> ServiceWindowInfo {
-        let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
-        return ServiceWindowInfo(
+    private static func makeWindow(
+        id: Int,
+        title: String,
+        index: Int,
+        bounds: CGRect = CGRect(x: 10, y: 20, width: 400, height: 300),
+        processStartIdentity: UInt64 = 7
+    ) -> ServiceWindowInfo {
+        ServiceWindowInfo(
             windowID: id,
             title: title,
             bounds: bounds,
@@ -816,7 +863,7 @@ struct ClickCommandTests {
             mutationIdentity: WindowMutationIdentity(
                 windowID: id,
                 ownerProcessIdentifier: 12345,
-                ownerProcessStartIdentity: 7,
+                ownerProcessStartIdentity: processStartIdentity,
                 capturedBounds: bounds
             )
         )

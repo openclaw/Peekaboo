@@ -733,9 +733,9 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             }
             let exactWindowInfo = context.explicitWindowResolution?.windowInfo ??
                 context.coordinateResolution?.windowInfo
-            let targetWindowID = context.statelessWindowTarget?.identity.windowID ?? exactWindowInfo?.windowID
-            let expectedWindowIdentity = context.statelessWindowTarget?.identity ?? exactWindowInfo?.mutationIdentity
-            let expectedWindowBounds = context.statelessWindowTarget?.bounds ?? exactWindowInfo?.bounds
+            let targetWindowID = exactWindowInfo?.windowID ?? context.statelessWindowTarget?.identity.windowID
+            let expectedWindowIdentity = exactWindowInfo?.mutationIdentity ?? context.statelessWindowTarget?.identity
+            let expectedWindowBounds = exactWindowInfo?.bounds ?? context.statelessWindowTarget?.bounds
             if targetWindowID != nil, expectedWindowIdentity == nil {
                 throw PeekabooError.snapshotStale(
                     "Exact-window click snapshot has no capture-time process-generation receipt; " +

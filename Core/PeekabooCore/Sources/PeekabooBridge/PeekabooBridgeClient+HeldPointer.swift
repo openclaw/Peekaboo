@@ -3,7 +3,7 @@ import PeekabooFoundation
 
 extension PeekabooBridgeClient {
     public func createExactWindowHeldPointerOwner() async throws -> ExactWindowHeldPointerOwner {
-        try self.requireExactWindowHeldPointerLifecycle()
+        try self.requireExactWindowHeldPointerBegin()
         let response = try await self.send(.createExactWindowHeldPointerOwner)
         guard case let .exactWindowHeldPointerOwner(owner) = response else {
             throw PeekabooBridgeErrorEnvelope(
@@ -18,7 +18,7 @@ extension PeekabooBridgeClient {
         request: ExactWindowHeldPointerRequest) async throws
         -> UIAutomationActionResult<ExactWindowHeldPointerReceipt>
     {
-        try self.requireExactWindowHeldPointerLifecycle()
+        try self.requireExactWindowHeldPointerBegin()
         return try await self.actionResult(
             for: .beginExactWindowHeldPointer(.init(owner: owner, request: request)),
             expectedResponse: "exact-window held pointer begin",
@@ -54,7 +54,7 @@ extension PeekabooBridgeClient {
         _ owner: ExactWindowHeldPointerOwner) async throws
         -> UIAutomationActionResult<ExactWindowHeldPointerTermination?>
     {
-        try self.requireExactWindowHeldPointerLifecycle()
+        try self.requireExactWindowHeldPointerTerminalCleanup()
         return try await self.actionResult(
             for: .disconnectExactWindowHeldPointerOwner(.init(owner: owner)),
             expectedResponse: "held pointer owner disconnect",
@@ -69,7 +69,7 @@ extension PeekabooBridgeClient {
         request: PeekabooBridgeRequest,
         expectedResponse: String) async throws -> UIAutomationActionResult<ExactWindowHeldPointerTermination>
     {
-        try self.requireExactWindowHeldPointerLifecycle()
+        try self.requireExactWindowHeldPointerTerminalCleanup()
         return try await self.actionResult(
             for: request,
             expectedResponse: expectedResponse,
@@ -81,10 +81,17 @@ extension PeekabooBridgeClient {
         }
     }
 
-    private func requireExactWindowHeldPointerLifecycle() throws {
+    private func requireExactWindowHeldPointerBegin() throws {
         guard self.exactWindowHeldPointerLifecycleEnabled else {
             throw PeekabooError.serviceUnavailable(
                 "Exact-window held pointer lifecycle requires a protocol-1.30 Bridge host advertising the capability")
+        }
+    }
+
+    private func requireExactWindowHeldPointerTerminalCleanup() throws {
+        guard self.exactWindowHeldPointerTerminalCleanupEnabled else {
+            throw PeekabooError.serviceUnavailable(
+                "Exact-window held pointer cleanup requires the protocol-1.30 Bridge host that owns the hold")
         }
     }
 }

@@ -129,7 +129,8 @@ struct ExactWindowHeldPointerLifecycleTests {
         let fixture = self.makeFixture(expiresAfter: 0.05)
         let owner = try fixture.lifecycle.createOwner(boundTo: nil)
         let started = try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
-        fixture.state.now = fixture.state.now.addingTimeInterval(1)
+        fixture.state.now = fixture.state.now.addingTimeInterval(-3600)
+        fixture.state.monotonicNow = fixture.state.monotonicNow.advanced(by: .seconds(1))
 
         await self.waitForEventCount(3, state: fixture.state)
         let terminal = try await fixture.lifecycle.release(owner: owner, receipt: started.payload)
@@ -373,6 +374,7 @@ struct ExactWindowHeldPointerLifecycleTests {
             pointerDriver: driver,
             processStartIdentityProvider: { pid in state.generation(for: pid) },
             now: { state.now },
+            monotonicNow: { state.monotonicNow },
             watchdogSleeper: { try await Task.sleep(for: .milliseconds(2)) },
             beginResolutionHook: beginResolutionHook,
             ownerCapacity: ownerCapacity,
@@ -426,6 +428,7 @@ private final class PointerState {
     }
 
     var now = Date(timeIntervalSinceReferenceDate: 10000)
+    var monotonicNow = ContinuousClock.now
 
     nonisolated func generation(for pid: pid_t) -> UInt64? {
         self.generations.withLock { generations in

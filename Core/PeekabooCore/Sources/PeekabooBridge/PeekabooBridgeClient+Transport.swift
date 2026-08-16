@@ -203,7 +203,7 @@ extension PeekabooBridgeClient {
                 message: "Bridge protocol 1.30 background middle/triple-click support is unavailable.",
                 hint: "Use explicit foreground delivery or update and relaunch the Peekaboo Bridge host.")
         }
-        if request.requiresExactWindowHeldPointerLifecycleSupport,
+        if request.requiresExactWindowHeldPointerBeginSupport,
            !self.exactWindowHeldPointerLifecycleEnabled
         {
             throw DesktopActionFailure.preDispatchRefusal(
@@ -211,6 +211,15 @@ extension PeekabooBridgeClient {
                 reason: .runtimeIncompatible,
                 message: "Bridge protocol 1.30 exact-window held-pointer support is unavailable.",
                 hint: "Update or relaunch the Peekaboo Bridge host before retrying.")
+        }
+        if request.requiresExactWindowHeldPointerTerminalSupport,
+           !self.exactWindowHeldPointerTerminalCleanupEnabled
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "Bridge protocol 1.30 exact-window held-pointer cleanup is unavailable.",
+                hint: "Reconnect to the Bridge host that owns the active hold before retrying.")
         }
     }
 

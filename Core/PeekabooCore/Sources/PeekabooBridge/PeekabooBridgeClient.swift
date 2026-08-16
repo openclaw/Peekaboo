@@ -51,6 +51,7 @@ public actor PeekabooBridgeClient {
     var applicationMutationInventoryTransportEnabled = false
     var windowMutationInventoryTransportEnabled = false
     var exactWindowHeldPointerLifecycleEnabled = false
+    var exactWindowHeldPointerTerminalCleanupEnabled = false
     var statelessClickVariantPayloadsEnabled = false
     var statelessClickVariantsEnabled = false
     var operationAttestation: PeekabooBridgeListenerAttestation?
@@ -436,6 +437,7 @@ public actor PeekabooBridgeClient {
 
     func clearNegotiatedInputCapabilities() {
         self.exactWindowHeldPointerLifecycleEnabled = false
+        self.exactWindowHeldPointerTerminalCleanupEnabled = false
         self.statelessClickVariantPayloadsEnabled = false
         self.statelessClickVariantsEnabled = false
     }
@@ -847,7 +849,20 @@ public actor PeekabooBridgeClient {
                 Set([
                     PeekabooBridgeOperation.createExactWindowHeldPointerOwner,
                     .beginExactWindowHeldPointer,
+                ]).isSubset(of: Set(handshake.enabledOperations ?? handshake.supportedOperations)),
+            exactWindowHeldPointerTerminalCleanupEnabled:
+            handshake.negotiatedVersion >= PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion &&
+                handshake.hostCapabilities?.contains(
+                    PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle) == true &&
+                Set([
+                    PeekabooBridgeOperation.createExactWindowHeldPointerOwner,
+                    .beginExactWindowHeldPointer,
                     .releaseExactWindowHeldPointer,
+                    .revokeExactWindowHeldPointer,
+                    .disconnectExactWindowHeldPointerOwner,
+                ]).isSubset(of: Set(handshake.supportedOperations)) &&
+                Set([
+                    PeekabooBridgeOperation.releaseExactWindowHeldPointer,
                     .revokeExactWindowHeldPointer,
                     .disconnectExactWindowHeldPointerOwner,
                 ]).isSubset(of: Set(handshake.enabledOperations ?? handshake.supportedOperations)),
@@ -910,6 +925,7 @@ public actor PeekabooBridgeClient {
             candidate.applicationMutationInventoryTransportEnabled
         self.windowMutationInventoryTransportEnabled = candidate.windowMutationInventoryTransportEnabled
         self.exactWindowHeldPointerLifecycleEnabled = candidate.exactWindowHeldPointerLifecycleEnabled
+        self.exactWindowHeldPointerTerminalCleanupEnabled = candidate.exactWindowHeldPointerTerminalCleanupEnabled
         self.statelessClickVariantPayloadsEnabled = candidate.statelessClickVariantPayloadsEnabled
         self.statelessClickVariantsEnabled = candidate.statelessClickVariantsEnabled
         self.operationAttestation = candidate.listenerAttestation
@@ -1193,6 +1209,7 @@ private struct PeekabooBridgeClientHandshakeCandidate: Sendable {
     let applicationMutationInventoryTransportEnabled: Bool
     let windowMutationInventoryTransportEnabled: Bool
     let exactWindowHeldPointerLifecycleEnabled: Bool
+    let exactWindowHeldPointerTerminalCleanupEnabled: Bool
     let statelessClickVariantPayloadsEnabled: Bool
     let statelessClickVariantsEnabled: Bool
     let listenerAttestation: PeekabooBridgeListenerAttestation?

@@ -64,7 +64,7 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
             #expect(
                 PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
                     failure.outcome,
-                    request: begin) == [1, 3].contains(count))
+                    request: begin) == [1, 2, 3].contains(count))
         }
 
         for count in [1, 2] {
@@ -108,6 +108,7 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
         #expect(handshake.hostCapabilities?.contains(
             PeekabooBridgeHostCapability.statelessClickVariants) != true)
         #expect(await client.exactWindowHeldPointerLifecycleEnabled == false)
+        #expect(await client.exactWindowHeldPointerTerminalCleanupEnabled == false)
         #expect(await client.statelessClickVariantsEnabled == false)
         await #expect(throws: PeekabooError.self) {
             _ = try await client.createExactWindowHeldPointerOwner()
@@ -132,6 +133,7 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
         #expect(handshake.enabledOperations?.contains(.targetedClick) == true)
         #expect(handshake.enabledOperations?.contains(.exactWindowTargetedClick) == true)
         #expect(await client.exactWindowHeldPointerLifecycleEnabled == true)
+        #expect(await client.exactWindowHeldPointerTerminalCleanupEnabled == true)
         #expect(await client.statelessClickVariantsEnabled == true)
 
         let owner = try await client.createExactWindowHeldPointerOwner()
@@ -172,6 +174,11 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
             request: fixture.automation.request)
 
         fixture.permissions.postEvent = false
+        let refreshed = try await client.handshake(client: Self.clientIdentity)
+        #expect(refreshed.enabledOperations?.contains(.beginExactWindowHeldPointer) == false)
+        #expect(refreshed.enabledOperations?.contains(.releaseExactWindowHeldPointer) == true)
+        #expect(await client.exactWindowHeldPointerLifecycleEnabled == false)
+        #expect(await client.exactWindowHeldPointerTerminalCleanupEnabled == true)
         let terminal = try await client.releaseExactWindowPointerHold(owner: owner, receipt: begin.payload)
 
         #expect(terminal.payload.reason == .released)
@@ -186,11 +193,13 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
         let client = TrustedBridgeClientFixture.make(socketPath: fixture.socketPath, requestTimeoutSec: 2)
         _ = try await client.handshake(client: Self.clientIdentity)
         #expect(await client.exactWindowHeldPointerLifecycleEnabled)
+        #expect(await client.exactWindowHeldPointerTerminalCleanupEnabled)
         #expect(await client.statelessClickVariantsEnabled)
 
         await client.clearNegotiatedInputCapabilities()
 
         #expect(await client.exactWindowHeldPointerLifecycleEnabled == false)
+        #expect(await client.exactWindowHeldPointerTerminalCleanupEnabled == false)
         #expect(await client.statelessClickVariantsEnabled == false)
     }
 
@@ -225,6 +234,7 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
         #expect(handshake.hostCapabilities?.contains(
             PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle) != true)
         #expect(await client.exactWindowHeldPointerLifecycleEnabled == false)
+        #expect(await client.exactWindowHeldPointerTerminalCleanupEnabled == false)
     }
 
     @Test
