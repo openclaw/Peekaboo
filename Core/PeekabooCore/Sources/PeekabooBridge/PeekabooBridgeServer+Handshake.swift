@@ -171,6 +171,7 @@ extension PeekabooBridgeServer {
                         exactWindowHeldPointerLifecycle: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle)),
                     replacing: payload.replacingOperationSessionID)
+                self.clearReceiptlessNegotiation(peer: peer)
             } catch let error as PeekabooBridgeOperationReceiptError {
                 let code: PeekabooBridgeErrorCode = switch error {
                 case .operationSessionMismatch:
@@ -191,6 +192,7 @@ extension PeekabooBridgeServer {
             }
         } else {
             operationSessionAttestation = nil
+            self.recordReceiptlessNegotiation(peer: peer, protocolVersion: negotiated)
         }
         let response = PeekabooBridgeHandshakeResponse(
             negotiatedVersion: negotiated,
@@ -410,6 +412,46 @@ extension PeekabooBridgeServer {
             .postEvent
         default:
             nil
+        }
+    }
+
+    func receiptlessProtocolVersion(for peer: PeekabooBridgePeer?) -> PeekabooBridgeProtocolVersion? {
+        self.pruneReceiptlessNegotiations()
+        guard let liveIdentity = peer?.liveIdentity,
+              self.processStartIdentityProvider(liveIdentity.processIdentifier) ==
+              liveIdentity.processStartIdentity
+        else { return nil }
+        return self.receiptlessNegotiations[liveIdentity]?.protocolVersion
+    }
+
+    private func recordReceiptlessNegotiation(
+        peer: PeekabooBridgePeer?,
+        protocolVersion: PeekabooBridgeProtocolVersion)
+    {
+        guard let liveIdentity = peer?.liveIdentity,
+              self.processStartIdentityProvider(liveIdentity.processIdentifier) ==
+              liveIdentity.processStartIdentity
+        else { return }
+        self.pruneReceiptlessNegotiations()
+        if self.receiptlessNegotiations.count >= 1024,
+           self.receiptlessNegotiations[liveIdentity] == nil,
+           let oldest = self.receiptlessNegotiations.min(by: { $0.value.recordedAt < $1.value.recordedAt })?.key
+        {
+            self.receiptlessNegotiations.removeValue(forKey: oldest)
+        }
+        self.receiptlessNegotiations[liveIdentity] = PeekabooBridgeReceiptlessNegotiation(
+            protocolVersion: protocolVersion,
+            recordedAt: ContinuousClock.now)
+    }
+
+    private func clearReceiptlessNegotiation(peer: PeekabooBridgePeer?) {
+        guard let liveIdentity = peer?.liveIdentity else { return }
+        self.receiptlessNegotiations.removeValue(forKey: liveIdentity)
+    }
+
+    private func pruneReceiptlessNegotiations() {
+        self.receiptlessNegotiations = self.receiptlessNegotiations.filter { liveIdentity, _ in
+            self.processStartIdentityProvider(liveIdentity.processIdentifier) == liveIdentity.processStartIdentity
         }
     }
 }

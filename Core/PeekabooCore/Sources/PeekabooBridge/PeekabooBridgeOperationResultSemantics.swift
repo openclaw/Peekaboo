@@ -2425,11 +2425,11 @@ extension PeekabooBridgeOperationResultSemantics {
                 guard try PeekabooBridgeOperationTargetAttribution.resolveRequest(request) != nil else {
                     throw DesktopTargetIdentityError.incompleteExactWindow
                 }
-            case .handlerRequired, .responseResolved, .external:
+            case .handlerRequired, .handlerResolvedOrGlobal, .responseResolved, .external:
                 guard self.actionFailure(in: handled.response)?.targetReceipt != nil else {
                     throw DesktopTargetIdentityError.incompleteExactWindow
                 }
-            case .handlerResolvedOrGlobal, .notApplicable, .requestDependent:
+            case .notApplicable, .requestDependent:
                 throw DesktopTargetIdentityError.incompleteExactWindow
             }
             // A projected error has no successful handler disposition to preserve. For a
@@ -2444,10 +2444,13 @@ extension PeekabooBridgeOperationResultSemantics {
              (.requestPinned, .handlerResolved),
              (.handlerRequired, .handlerResolved),
              (.handlerResolvedOrGlobal, .handlerResolved),
-             (.handlerResolvedOrGlobal, .global),
              (.responseResolved, .responseResolved),
              (.responseResolved, .handlerResolved):
             true
+        case (.handlerResolvedOrGlobal, .global):
+            mutation.outcome.state == .confirmedNoChange &&
+                mutation.outcome.dispatchState == .none &&
+                mutation.outcome.delivery == nil
         case (.external, .handlerResolved), (.external, .responseResolved), (.external, .externalBrowser):
             // A process/window identity is an accepted conservative target for an external
             // object. Bare `.external` only names the need and is not itself target evidence.

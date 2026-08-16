@@ -224,6 +224,97 @@ struct PeekabooBridgeTargetedClickTests {
 
     @Test
     @MainActor
+    func `receiptless foreground middle click binds to authenticated protocol 1 30 peer`() async throws {
+        let services = StubServices()
+        services.automationStub.actionOutcome = .dispatchedUnverified(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted)
+        let server = PeekabooBridgeServer(
+            services: services,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [.click],
+            permissionStatusEvaluator: { _ in
+                PermissionsStatus(screenRecording: false, accessibility: true, postEvent: true)
+            },
+            processStartIdentityProvider: { $0 == 4242 ? 7 : nil })
+        let liveIdentity = PeekabooBridgeLivePeerIdentity(
+            auditToken: Data(repeating: 1, count: 32),
+            processIdentifier: 4242,
+            processIdentifierVersion: 3,
+            effectiveUserIdentifier: getuid(),
+            processStartIdentity: 7,
+            codeSignatureHash: String(repeating: "a", count: 64))
+        let peer = PeekabooBridgePeer(
+            liveIdentity: liveIdentity,
+            bundleIdentifier: nil,
+            teamIdentifier: nil)
+        let handshake = try await server.route(.handshake(.init(
+            protocolVersion: PeekabooBridgeConstants.protocolVersion,
+            client: Self.clientIdentity)), peer: peer)
+        guard case let .handshake(response) = handshake.response else {
+            Issue.record("Expected receiptless current handshake")
+            return
+        }
+        #expect(response.operationSessionAttestation == nil)
+
+        _ = try await server.route(.click(.init(
+            target: .coordinates(CGPoint(x: 10, y: 20)),
+            clickType: .middle,
+            snapshotId: nil)), peer: peer)
+        #expect(services.automationStub.lastClick?.type == .middle)
+
+        let unrelatedPeer = PeekabooBridgePeer(
+            liveIdentity: PeekabooBridgeLivePeerIdentity(
+                auditToken: Data(repeating: 2, count: 32),
+                processIdentifier: 4242,
+                processIdentifierVersion: 3,
+                effectiveUserIdentifier: getuid(),
+                processStartIdentity: 7,
+                codeSignatureHash: nil),
+            bundleIdentifier: nil,
+            teamIdentifier: nil)
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try await server.route(.click(.init(
+                target: .coordinates(CGPoint(x: 10, y: 20)),
+                clickType: .triple,
+                snapshotId: nil)), peer: unrelatedPeer)
+        }
+
+        let authorityRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "peekaboo-receiptless-mode-switch-\(UUID().uuidString)",
+            isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: authorityRoot) }
+        let authority = try PeekabooBridgeOperationReceiptAuthority(
+            socketPath: authorityRoot.appendingPathComponent("bridge.sock").path)
+        let attestedClient = PeekabooBridgeClientIdentity(
+            bundleIdentifier: "dev.peekaboo.receiptless-mode-switch",
+            teamIdentifier: nil,
+            processIdentifier: liveIdentity.processIdentifier)
+        let attestedHandshake = try await PeekabooBridgeRequestContext.$operationReceiptAuthority.withValue(
+            authority)
+        {
+            try await server.route(.handshake(.init(
+                protocolVersion: PeekabooBridgeConstants.protocolVersion,
+                client: attestedClient,
+                operationClientInstanceID: UUID())), peer: peer)
+        }
+        guard case let .handshake(attestedResponse) = attestedHandshake.response else {
+            Issue.record("Expected attested current handshake")
+            return
+        }
+        #expect(attestedResponse.operationSessionAttestation != nil)
+        #expect(server.receiptlessNegotiations[liveIdentity] == nil)
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try await server.route(.click(.init(
+                target: .coordinates(CGPoint(x: 10, y: 20)),
+                clickType: .middle,
+                snapshotId: nil)), peer: peer)
+        }
+    }
+
+    @Test
+    @MainActor
     func `protocol 1 30 signs exact middle and triple click receipts with truthful units`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-current-click-\(UUID().uuidString).sock"
         let services = StubServices()

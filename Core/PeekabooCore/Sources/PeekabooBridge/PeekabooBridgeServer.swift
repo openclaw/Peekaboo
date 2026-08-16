@@ -50,6 +50,17 @@ public struct PeekabooBridgePeer: Sendable {
     }
 }
 
+struct PeekabooBridgeHeldPointerOwnerBinding {
+    let peerIdentity: ApplicationProcessIdentity
+    var activeReceipt: ExactWindowHeldPointerReceipt?
+    var closedAt: ContinuousClock.Instant?
+}
+
+struct PeekabooBridgeReceiptlessNegotiation {
+    let protocolVersion: PeekabooBridgeProtocolVersion
+    let recordedAt: ContinuousClock.Instant
+}
+
 @MainActor
 public final class PeekabooBridgeServer {
     let services: any PeekabooBridgeServiceProviding
@@ -74,7 +85,8 @@ public final class PeekabooBridgeServer {
     let encoder: JSONEncoder
     let decoder: JSONDecoder
     let logger = Logger(subsystem: "boo.peekaboo.bridge", category: "server")
-    var heldPointerBridgeOwners: [ExactWindowHeldPointerOwner: ApplicationProcessIdentity] = [:]
+    var heldPointerBridgeOwners: [ExactWindowHeldPointerOwner: PeekabooBridgeHeldPointerOwnerBinding] = [:]
+    var receiptlessNegotiations: [PeekabooBridgeLivePeerIdentity: PeekabooBridgeReceiptlessNegotiation] = [:]
     #if DEBUG
     var requestDecodeObserverForTesting: (@Sendable () -> Void)?
     var admissionRefusalObserverForTesting: (@Sendable () async -> Void)?
@@ -775,6 +787,7 @@ public final class PeekabooBridgeServer {
 
     func validateOperationAccess(
         for request: PeekabooBridgeRequest,
+        peer: PeekabooBridgePeer? = nil,
         permissions: PermissionsStatus,
         effectiveOps: Set<PeekabooBridgeOperation>) throws
     {
@@ -790,7 +803,8 @@ public final class PeekabooBridgeServer {
         }
         if let minimumVersion = request.minimumNegotiatedProtocolVersion {
             let session = PeekabooBridgeRequestContext.negotiatedSessionCapabilities
-            guard (session?.protocolVersion ?? .init(major: 0, minor: 0)) >= minimumVersion,
+            let negotiatedVersion = session?.protocolVersion ?? self.receiptlessProtocolVersion(for: peer)
+            guard (negotiatedVersion ?? .init(major: 0, minor: 0)) >= minimumVersion,
                   !request.requiresBackgroundStatelessClickVariantSupport || session?.statelessClickVariants == true,
                   !request.requiresExactWindowHeldPointerLifecycleSupport ||
                   session?.exactWindowHeldPointerLifecycle == true

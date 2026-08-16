@@ -2171,8 +2171,10 @@ enum PeekabooBridgeOperationTargetAttribution {
         handledTarget: DesktopTargetIdentity?) -> [DesktopTargetIdentity.Evidence]
     {
         var evidence = request.operationTargetEvidence
+        let targetPolicy = PeekabooBridgeOperationResultSemantics.contract(for: request).targetPolicy
         if let handledTarget,
-           request.requiresResolvedOperationTarget || !request.operationTargetEvidence.isEmpty
+           request.requiresResolvedOperationTarget || targetPolicy == .handlerResolvedOrGlobal ||
+           !request.operationTargetEvidence.isEmpty
         {
             evidence.append(.init(target: handledTarget))
         }

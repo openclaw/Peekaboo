@@ -3,6 +3,9 @@ import PeekabooFoundation
 
 @MainActor
 extension PeekabooBridgeServer {
+    private static let heldPointerClosedOwnerRetention: Duration = .seconds(60)
+    private static let heldPointerClosedOwnerCapacity = 256
+
     func handleHeldPointerRequest(
         _ request: PeekabooBridgeRequest,
         peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeHandledResponse
@@ -23,11 +26,14 @@ extension PeekabooBridgeServer {
             let owner = try await self.translateHeldPointerErrors {
                 try await service.createExactWindowHeldPointerOwner(boundTo: peerIdentity)
             }
-            self.heldPointerBridgeOwners[owner] = peerIdentity
+            self.heldPointerBridgeOwners[owner] = PeekabooBridgeHeldPointerOwnerBinding(
+                peerIdentity: peerIdentity,
+                activeReceipt: nil,
+                closedAt: nil)
             return .init(response: .exactWindowHeldPointerOwner(owner))
 
         case let .beginExactWindowHeldPointer(payload):
-            try await self.requireHeldPointerOwner(
+            _ = try await self.requireHeldPointerOwner(
                 payload.owner,
                 peerIdentity: peerIdentity,
                 service: service)
@@ -37,6 +43,7 @@ extension PeekabooBridgeServer {
                     owner: payload.owner,
                     request: payload.request)
             }
+            self.heldPointerBridgeOwners[payload.owner]?.activeReceipt = result.payload
             return try Self.handledActionResponse(
                 response: .exactWindowHeldPointerReceipt(result.payload),
                 result: result,
@@ -57,13 +64,39 @@ extension PeekabooBridgeServer {
                 operation: service.revokeExactWindowPointerHold)
 
         case let .disconnectExactWindowHeldPointerOwner(payload):
-            try await self.requireHeldPointerOwner(
+            let binding = try await self.requireHeldPointerOwner(
                 payload.owner,
                 peerIdentity: peerIdentity,
-                service: service)
-            defer { self.heldPointerBridgeOwners.removeValue(forKey: payload.owner) }
-            let result = try await self.translateHeldPointerErrors {
-                try await service.disconnectExactWindowHeldPointerOwner(payload.owner)
+                service: service,
+                allowClosed: true)
+            let activeReceipt = binding.activeReceipt
+            let result: UIAutomationActionResult<ExactWindowHeldPointerTermination?>
+            do {
+                result = try await self.translateHeldPointerErrors {
+                    try await service.disconnectExactWindowHeldPointerOwner(payload.owner)
+                }
+            } catch let failure as DesktopActionFailure {
+                guard let activeReceipt else { throw failure }
+                let routed = failure
+                    .attributed(to: Self.actionTargetReceipt(activeReceipt))
+                    .routed(to: .bridge)
+                let target = try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+                    identity: activeReceipt.windowIdentity,
+                    bounds: activeReceipt.windowBounds))
+                return PeekabooBridgeHandledResponse(
+                    response: .error(.init(
+                        code: .internalError,
+                        actionFailure: routed,
+                        details: routed.localizedDescription)),
+                    mutation: .init(
+                        outcome: routed.outcome,
+                        target: .handlerResolved(target)))
+            }
+            if result.payload == nil {
+                self.heldPointerBridgeOwners.removeValue(forKey: payload.owner)
+            } else {
+                self.heldPointerBridgeOwners[payload.owner]?.activeReceipt = result.payload?.receipt
+                self.markHeldPointerOwnerClosed(payload.owner)
             }
             return try Self.handledActionResponse(
                 response: .exactWindowHeldPointerTermination(result.payload),
@@ -83,14 +116,18 @@ extension PeekabooBridgeServer {
             -> UIAutomationActionResult<ExactWindowHeldPointerTermination>) async throws
         -> PeekabooBridgeHandledResponse
     {
-        try await self.requireHeldPointerOwner(
+        _ = try await self.requireHeldPointerOwner(
             payload.owner,
             peerIdentity: peerIdentity,
-            service: service)
+            service: service,
+            allowClosed: true)
         self.automationActivityObserver?(payload.receipt.windowIdentity.ownerProcessIdentifier)
         let result = try await self.translateHeldPointerErrors {
             try await operation(payload.owner, payload.receipt)
         }
+        self.clearHeldPointerActiveReceiptIfMatching(
+            owner: payload.owner,
+            receipt: payload.receipt)
         return try Self.handledActionResponse(
             response: .exactWindowHeldPointerTermination(result.payload),
             result: result,
@@ -116,35 +153,91 @@ extension PeekabooBridgeServer {
     private func requireHeldPointerOwner(
         _ owner: ExactWindowHeldPointerOwner,
         peerIdentity: ApplicationProcessIdentity,
-        service: any ExactWindowHeldPointerLifecycleServiceProtocol) async throws
+        service: any ExactWindowHeldPointerLifecycleServiceProtocol,
+        allowClosed: Bool = false) async throws -> PeekabooBridgeHeldPointerOwnerBinding
     {
         await self.pruneHeldPointerBridgeOwners(service: service)
-        guard self.heldPointerBridgeOwners[owner] == peerIdentity else {
+        guard let binding = self.heldPointerBridgeOwners[owner],
+              binding.peerIdentity == peerIdentity,
+              allowClosed || binding.closedAt == nil
+        else {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .invalidRequest,
                 message: "Held pointer owner does not belong to this Bridge client generation.",
                 hint: "Use the opaque owner returned to the same authenticated Bridge client.")
         }
+        return binding
     }
 
     private func pruneHeldPointerBridgeOwners(
         service: any ExactWindowHeldPointerLifecycleServiceProtocol) async
     {
-        let staleOwners = self.heldPointerBridgeOwners.compactMap { owner, identity in
-            self.processStartIdentityProvider(identity.processIdentifier) == identity.processStartIdentity
-                ? nil
-                : owner
+        let now = ContinuousClock.now
+        let staleOwners = self.heldPointerBridgeOwners.compactMap { owner, binding in
+            let peerIsCurrent = self.processStartIdentityProvider(binding.peerIdentity.processIdentifier) ==
+                binding.peerIdentity.processStartIdentity
+            let closedOwnerIsRetained = binding.closedAt.map {
+                $0.advanced(by: Self.heldPointerClosedOwnerRetention) > now
+            } ?? true
+            return peerIsCurrent && closedOwnerIsRetained ? nil : owner
         }
         for owner in staleOwners {
-            self.heldPointerBridgeOwners.removeValue(forKey: owner)
-            do {
-                _ = try await service.disconnectExactWindowHeldPointerOwner(owner)
-            } catch {
-                self.logger.error(
-                    "Stale held pointer owner cleanup failed: \(error.localizedDescription, privacy: .private)")
+            let binding = self.heldPointerBridgeOwners.removeValue(forKey: owner)
+            if binding?.closedAt == nil {
+                do {
+                    _ = try await service.disconnectExactWindowHeldPointerOwner(owner)
+                } catch {
+                    self.logger.error(
+                        "Stale held pointer owner cleanup failed: \(error.localizedDescription, privacy: .private)")
+                }
             }
         }
+
+        self.enforceHeldPointerClosedOwnerCapacity()
     }
+
+    private func markHeldPointerOwnerClosed(_ owner: ExactWindowHeldPointerOwner) {
+        guard var binding = self.heldPointerBridgeOwners[owner] else { return }
+        binding.closedAt = binding.closedAt ?? ContinuousClock.now
+        self.heldPointerBridgeOwners[owner] = binding
+        self.enforceHeldPointerClosedOwnerCapacity()
+    }
+
+    func clearHeldPointerActiveReceiptIfMatching(
+        owner: ExactWindowHeldPointerOwner,
+        receipt: ExactWindowHeldPointerReceipt)
+    {
+        guard var binding = self.heldPointerBridgeOwners[owner],
+              binding.closedAt == nil,
+              binding.activeReceipt == receipt
+        else { return }
+        binding.activeReceipt = nil
+        self.heldPointerBridgeOwners[owner] = binding
+    }
+
+    private func enforceHeldPointerClosedOwnerCapacity() {
+        let closedOwners = self.heldPointerBridgeOwners.compactMap { owner, binding in
+            binding.closedAt.map { (owner, $0) }
+        }.sorted { $0.1 < $1.1 }
+        for (owner, _) in closedOwners.dropLast(Self.heldPointerClosedOwnerCapacity) {
+            self.heldPointerBridgeOwners.removeValue(forKey: owner)
+        }
+    }
+
+    private static func actionTargetReceipt(
+        _ receipt: ExactWindowHeldPointerReceipt) -> DesktopActionTargetReceipt
+    {
+        DesktopActionTargetReceipt(
+            processIdentifier: receipt.windowIdentity.ownerProcessIdentifier,
+            processStartIdentity: receipt.windowIdentity.ownerProcessStartIdentity,
+            windowID: receipt.windowIdentity.windowID)
+    }
+
+    #if DEBUG
+    var retainedClosedHeldPointerOwnerCountForTesting: Int {
+        self.heldPointerBridgeOwners.values.count { $0.closedAt != nil }
+    }
+    #endif
 
     private func translateHeldPointerErrors<Payload: Sendable>(
         _ operation: () async throws -> Payload) async throws -> Payload

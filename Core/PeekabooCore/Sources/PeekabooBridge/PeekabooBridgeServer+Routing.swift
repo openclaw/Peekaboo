@@ -46,7 +46,11 @@ extension PeekabooBridgeServer {
 
         do {
             try request.validatePlatformIdentifierBounds()
-            try self.validateOperationAccess(for: request, permissions: permissions, effectiveOps: effectiveOps)
+            try self.validateOperationAccess(
+                for: request,
+                peer: peer,
+                permissions: permissions,
+                effectiveOps: effectiveOps)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             failed = true
             let duration = Date().timeIntervalSince(start)
