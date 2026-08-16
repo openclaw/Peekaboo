@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Make application and window inventories report omitted or identity-incomplete rows as partial, while keeping complete AX-only window listings usable without Screen Recording.
+- Update AXorcist and Tachikoma so cancelling Accessibility permission observation cannot deadlock the main queue, Realtime caller cancellation stays distinct from elapsed deadlines, completed tool results survive cancelled timer cleanup, and invalid audio deadlines fail closed instead of crashing. Thanks @SebTardif for AXorcist #46 and Tachikoma #68.
 
 ## [4.2.0] - 2026-08-16
 
