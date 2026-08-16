@@ -2,6 +2,7 @@ import Commander
 import Foundation
 import PeekabooBridge
 import PeekabooBridgeTestSupport
+import PeekabooCore
 import Testing
 @testable import PeekabooCLI
 
@@ -72,6 +73,73 @@ struct BridgeReceiptCommandTests {
         #expect(report.terminalReceiptAttested)
         #expect(report.targetAttested)
         #expect(!report.outcomeAttested)
+    }
+
+    @Test
+    func `validator authenticates a live listener independently from the exported bundle`() async throws {
+        let root = URL(
+            fileURLWithPath: "/tmp/pb-receipt-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let socketPath = root.appendingPathComponent("bridge.sock").path
+        let exportDirectory = root.appendingPathComponent("exports", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let server = PeekabooBridgeServer(
+            services: PeekabooServices(),
+            allowlistedTeams: [],
+            allowlistedBundles: []
+        )
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2
+        )
+        try await host.startChecked()
+
+        do {
+            let exportingClient = BridgeTestFixtures.authenticatedClient(
+                socketPath: socketPath,
+                requestTimeoutSec: 2,
+                operationReceiptExportDirectory: exportDirectory
+            )
+            _ = try await exportingClient.handshake(client: BridgeDiagnostics.currentClientIdentity())
+            _ = try await exportingClient.permissionsStatus()
+            let bundle = try #require(await exportingClient.lastOperationReceiptBundle())
+            let bundlePath = exportDirectory
+                .appendingPathComponent(bundle.receipt.payload.requestID.uuidString.lowercased())
+                .appendingPathExtension("json")
+                .path
+
+            let report = try await BridgeReceiptVerifier.validate(
+                bundlePath: bundlePath,
+                bridgeSocket: socketPath,
+                trustedHostTeamIDs: [BridgeTestFixtures.authenticatedHostTeamIdentifier],
+                makeClient: Self.authenticatedClient
+            )
+
+            #expect(report.valid)
+            #expect(report.trustSource == "authenticated_live_listener")
+            #expect(report.listenerInstanceID == bundle.operationAttestation.listenerInstanceID.uuidString.lowercased())
+            #expect(report.operation == PeekabooBridgeOperation.permissionsStatus.rawValue)
+
+            await host.stop()
+            try await host.startChecked()
+            await #expect(throws: BridgeReceiptValidationError.invalidBundle) {
+                _ = try await BridgeReceiptVerifier.validate(
+                    bundlePath: bundlePath,
+                    bridgeSocket: socketPath,
+                    trustedHostTeamIDs: [BridgeTestFixtures.authenticatedHostTeamIdentifier],
+                    makeClient: Self.authenticatedClient
+                )
+            }
+        } catch {
+            await host.stop()
+            throw error
+        }
+        await host.stop()
     }
 
     @Test
@@ -176,6 +244,18 @@ struct BridgeReceiptCommandTests {
             subdirectory: "Fixtures"
         ))
         return try Data(contentsOf: url)
+    }
+
+    private static func authenticatedClient(
+        socketPath: String,
+        requestTimeoutSec: TimeInterval,
+        trustedHostTeamIDs: Set<String>?
+    ) -> PeekabooBridgeClient {
+        BridgeTestFixtures.authenticatedClient(
+            socketPath: socketPath,
+            requestTimeoutSec: requestTimeoutSec,
+            trustedHostTeamIDs: trustedHostTeamIDs ?? []
+        )
     }
 
     private static func decodeBundle(_ data: Data) throws -> PeekabooBridgeOperationReceiptBundle {

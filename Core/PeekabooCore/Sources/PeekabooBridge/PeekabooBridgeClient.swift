@@ -94,6 +94,35 @@ public actor PeekabooBridgeClient {
         self.operationReceiptExportDirectory = operationReceiptExportDirectory ?? environmentDirectory
     }
 
+    #if DEBUG
+    package static func authenticatedTestClient(
+        socketPath: String,
+        maxResponseBytes: Int = 64 * 1024 * 1024,
+        requestTimeoutSec: TimeInterval = 10,
+        operationReceiptExportDirectory: URL? = nil,
+        operationClientInstanceID: UUID = UUID(),
+        trustedHostTeamIDs: Set<String>,
+        signingTeamIdentifier: String) -> PeekabooBridgeClient
+    {
+        PeekabooBridgeClient(
+            socketPath: socketPath,
+            maxResponseBytes: maxResponseBytes,
+            requestTimeoutSec: requestTimeoutSec,
+            operationReceiptExportDirectory: operationReceiptExportDirectory,
+            operationClientInstanceID: operationClientInstanceID,
+            trustedHostTeamIDs: trustedHostTeamIDs,
+            hostAuthentication: .init(signingIdentity: { auditIdentity in
+                guard let hash = PeekabooBridgeCodeSignatureIdentity.codeSignatureHash(
+                    auditIdentity: auditIdentity)
+                else { return nil }
+                return PeekabooBridgeHost.PeerSigningIdentity(
+                    bundleIdentifier: "dev.peekaboo.test-host",
+                    teamIdentifier: signingTeamIdentifier,
+                    codeSignatureHash: hash)
+            }))
+    }
+    #endif
+
     init(
         socketPath: String,
         maxResponseBytes: Int = 64 * 1024 * 1024,

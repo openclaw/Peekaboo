@@ -182,6 +182,12 @@ enum BridgeReceiptValidationError: LocalizedError, ResultEnvelopeError, Equatabl
 
 @MainActor
 enum BridgeReceiptVerifier {
+    typealias ClientFactory = @MainActor (
+        _ socketPath: String,
+        _ requestTimeoutSec: TimeInterval,
+        _ trustedHostTeamIDs: Set<String>?
+    ) -> PeekabooBridgeClient
+
     /// Request and response payloads can each approach the 64 MiB wire ceiling, and the
     /// exported bundle base64-encodes both. Keep a bounded but non-truncating audit envelope.
     private static let maximumBundleBytes: Int64 = 256 * 1024 * 1024
@@ -190,16 +196,19 @@ enum BridgeReceiptVerifier {
     static func validate(
         bundlePath: String,
         bridgeSocket: String,
-        trustedHostTeamIDs: [String]
+        trustedHostTeamIDs: [String],
+        makeClient: ClientFactory = { socketPath, requestTimeoutSec, teams in
+            PeekabooBridgeClient(
+                socketPath: socketPath,
+                requestTimeoutSec: requestTimeoutSec,
+                trustedHostTeamIDs: teams
+            )
+        }
     ) async throws -> BridgeReceiptValidationReport {
         let data = try self.readPrivateBundle(at: bundlePath)
         let bundle = try self.decodeBundle(data)
         let teams = try self.normalizedTrustedHostTeamIDs(trustedHostTeamIDs)
-        let client = PeekabooBridgeClient(
-            socketPath: bridgeSocket,
-            requestTimeoutSec: self.handshakeTimeoutSeconds,
-            trustedHostTeamIDs: teams
-        )
+        let client = makeClient(bridgeSocket, self.handshakeTimeoutSeconds, teams)
         let handshake = try await client.handshake(
             client: BridgeDiagnostics.currentClientIdentity(),
             overallTimeoutSec: self.handshakeTimeoutSeconds

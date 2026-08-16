@@ -1,9 +1,39 @@
+import Foundation
 import PeekabooAutomationKit
 import PeekabooBridge
 import PeekabooFoundation
 
 /// Canonical builders for Bridge protocol and transport tests.
 public enum BridgeTestFixtures {
+    public static let authenticatedHostTeamIdentifier = "PEEKABOO-TEST-HOST"
+
+    #if DEBUG
+    /// Creates a client that authenticates a real test listener by its audit-token-bound live CDHash.
+    ///
+    /// Production clients additionally require an Apple-anchored signing Team ID. SwiftPM test
+    /// executables are ad-hoc signed, so this factory replaces only that certificate claim while
+    /// retaining the live socket peer, process generation, and executable hash checks.
+    public static func authenticatedClient(
+        socketPath: String,
+        maxResponseBytes: Int = 64 * 1024 * 1024,
+        requestTimeoutSec: TimeInterval = 10,
+        operationReceiptExportDirectory: URL? = nil,
+        operationClientInstanceID: UUID = UUID(),
+        trustedHostTeamIDs: Set<String> = [BridgeTestFixtures.authenticatedHostTeamIdentifier],
+        signingTeamIdentifier: String = BridgeTestFixtures.authenticatedHostTeamIdentifier)
+        -> PeekabooBridgeClient
+    {
+        PeekabooBridgeClient.authenticatedTestClient(
+            socketPath: socketPath,
+            maxResponseBytes: maxResponseBytes,
+            requestTimeoutSec: requestTimeoutSec,
+            operationReceiptExportDirectory: operationReceiptExportDirectory,
+            operationClientInstanceID: operationClientInstanceID,
+            trustedHostTeamIDs: trustedHostTeamIDs,
+            signingTeamIdentifier: signingTeamIdentifier)
+    }
+    #endif
+
     /// Mirrors the canonical type-action accounting used by the real automation service and Bridge receipts.
     public static func typeResult(for actions: [TypeAction]) -> TypeResult {
         var totalCharacters = 0
