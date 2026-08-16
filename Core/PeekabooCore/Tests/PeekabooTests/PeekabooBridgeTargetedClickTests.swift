@@ -22,7 +22,7 @@ struct PeekabooBridgeTargetedClickTests {
 
     @Test
     @MainActor
-    func `stateless click variants require the exact negotiated session capability`() async throws {
+    func `stateless click payload version and background capability are negotiated separately`() async throws {
         let services = StubServices()
         let server = PeekabooBridgeServer(
             services: services,
@@ -31,38 +31,43 @@ struct PeekabooBridgeTargetedClickTests {
             permissionStatusEvaluator: { _ in
                 PermissionsStatus(screenRecording: false, accessibility: true, postEvent: true)
             })
-        let requests: [PeekabooBridgeRequest] = [
-            .click(.init(target: .coordinates(.zero), clickType: .middle, snapshotId: nil)),
-            .targetedClick(.init(
-                target: .elementId("B1"),
-                clickType: .triple,
-                snapshotId: "snapshot",
-                targetProcessIdentifier: self.exactIdentity.ownerProcessIdentifier,
-                targetWindowID: self.exactIdentity.windowID,
-                expectedWindowIdentity: self.exactIdentity,
-                expectedWindowBounds: self.exactBounds)),
-        ]
-        let refusedSessions = [
-            PeekabooBridgeNegotiatedSessionCapabilities(
-                protocolVersion: .init(major: 1, minor: 29),
-                statelessClickVariants: false,
-                exactWindowHeldPointerLifecycle: false),
-            PeekabooBridgeNegotiatedSessionCapabilities(
-                protocolVersion: PeekabooBridgeConstants.protocolVersion,
-                statelessClickVariants: false,
-                exactWindowHeldPointerLifecycle: true),
-        ]
-
-        for session in refusedSessions {
-            for request in requests {
-                await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
-                    _ = try await PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(session) {
-                        try await server.route(request, peer: nil)
-                    }
+        let foregroundRequest = PeekabooBridgeRequest.click(.init(
+            target: .coordinates(.zero),
+            clickType: .middle,
+            snapshotId: nil))
+        let backgroundRequest = PeekabooBridgeRequest.targetedClick(.init(
+            target: .elementId("B1"),
+            clickType: .triple,
+            snapshotId: "snapshot",
+            targetProcessIdentifier: self.exactIdentity.ownerProcessIdentifier,
+            targetWindowID: self.exactIdentity.windowID,
+            expectedWindowIdentity: self.exactIdentity,
+            expectedWindowBounds: self.exactBounds))
+        let legacy = PeekabooBridgeNegotiatedSessionCapabilities(
+            protocolVersion: .init(major: 1, minor: 29),
+            statelessClickVariants: false,
+            exactWindowHeldPointerLifecycle: false)
+        for request in [foregroundRequest, backgroundRequest] {
+            await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+                _ = try await PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(legacy) {
+                    try await server.route(request, peer: nil)
                 }
             }
         }
-        #expect(services.automationStub.lastClick == nil)
+
+        let currentForegroundOnly = PeekabooBridgeNegotiatedSessionCapabilities(
+            protocolVersion: PeekabooBridgeConstants.protocolVersion,
+            statelessClickVariants: false,
+            exactWindowHeldPointerLifecycle: true)
+        _ = try await PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(currentForegroundOnly) {
+            try await server.route(foregroundRequest, peer: nil)
+        }
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try await PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(currentForegroundOnly) {
+                try await server.route(backgroundRequest, peer: nil)
+            }
+        }
+        #expect(services.automationStub.lastClick?.type == .middle)
         #expect(services.automationStub.lastProcessTargetedClick == nil)
     }
 
@@ -158,6 +163,63 @@ struct PeekabooBridgeTargetedClickTests {
         }
         #expect(services.automationStub.lastProcessTargetedClick == nil)
         #expect(await client.lastOperationReceiptBundle() == nil)
+    }
+
+    @Test
+    @MainActor
+    func `foreground middle click requires protocol 1 30 but not background capability`() async throws {
+        let previous = PeekabooBridgeProtocolVersion(major: 1, minor: 29)
+        let legacyServices = StubServices()
+        let legacySocket = "/tmp/peekaboo-bridge-legacy-foreground-click-\(UUID().uuidString).sock"
+        let legacyServer = PeekabooBridgeServer(
+            services: legacyServices,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            supportedVersions: previous...previous,
+            allowedOperations: [.click],
+            permissionStatusEvaluator: { _ in
+                PermissionsStatus(screenRecording: false, accessibility: true, postEvent: true)
+            })
+        let legacyHost = PeekabooBridgeHost(socketPath: legacySocket, server: legacyServer, allowedTeamIDs: [])
+        try await legacyHost.startChecked()
+        let legacyClient = TrustedBridgeClientFixture.make(socketPath: legacySocket, requestTimeoutSec: 2)
+        _ = try await legacyClient.handshake(client: Self.clientIdentity, protocolVersion: previous)
+
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await legacyClient.clickWithOutcome(
+                target: .coordinates(CGPoint(x: 10, y: 20)),
+                clickType: .middle,
+                snapshotId: nil)
+        }
+        #expect(legacyServices.automationStub.lastClick == nil)
+        await legacyHost.stop()
+
+        let currentServices = StubServices()
+        currentServices.automationStub.actionOutcome = .dispatchedUnverified(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted)
+        let currentSocket = "/tmp/peekaboo-bridge-current-foreground-click-\(UUID().uuidString).sock"
+        let currentServer = PeekabooBridgeServer(
+            services: currentServices,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [.click],
+            permissionStatusEvaluator: { _ in
+                PermissionsStatus(screenRecording: false, accessibility: true, postEvent: true)
+            })
+        let currentHost = PeekabooBridgeHost(socketPath: currentSocket, server: currentServer, allowedTeamIDs: [])
+        try await currentHost.startChecked()
+        defer { Task { await currentHost.stop() } }
+        let currentClient = TrustedBridgeClientFixture.make(socketPath: currentSocket, requestTimeoutSec: 2)
+        let handshake = try await currentClient.handshake(client: Self.clientIdentity)
+        #expect(handshake.negotiatedVersion == PeekabooBridgeConstants.statelessClickVariantVersion)
+        #expect(handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.statelessClickVariants) == false)
+
+        _ = try await currentClient.clickWithOutcome(
+            target: .coordinates(CGPoint(x: 10, y: 20)),
+            clickType: .middle,
+            snapshotId: nil)
+        #expect(currentServices.automationStub.lastClick?.type == .middle)
     }
 
     @Test

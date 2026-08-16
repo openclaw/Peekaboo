@@ -53,6 +53,57 @@ struct PeekabooBridgeOperationResultSemanticsTests {
     }
 
     @Test
+    func `process-only right and double clicks preserve truthful routed outcomes`() {
+        for (clickType, units) in [(ClickType.right, 3), (.double, 5)] {
+            let request = PeekabooBridgeRequest.targetedClick(.init(
+                target: .elementId("B1"),
+                clickType: clickType,
+                snapshotId: "snapshot",
+                targetProcessIdentifier: 9001,
+                expectedProcessIdentity: .init(
+                    processIdentifier: 9001,
+                    processStartIdentity: 7)))
+            let accepted = DesktopActionOutcome.dispatchedUnverified(
+                route: .bridge,
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .init(units))
+            let wrongUnits = DesktopActionOutcome.dispatchedUnverified(
+                route: .bridge,
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .init(units + 1))
+            let oneUnitAccessibility = DesktopActionOutcome.confirmedChange(
+                route: .bridge,
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                unitCount: .one)
+            let requestedUnitAccessibility = DesktopActionOutcome.confirmedChange(
+                route: .bridge,
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                unitCount: .init(units))
+
+            #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                accepted,
+                response: .ok,
+                request: request))
+            #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                wrongUnits,
+                response: .ok,
+                request: request))
+            #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                oneUnitAccessibility,
+                response: .ok,
+                request: request) == (clickType == .right))
+            if clickType == .double {
+                #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                    requestedUnitAccessibility,
+                    response: .ok,
+                    request: request))
+            }
+        }
+    }
+
+    @Test
     func `Default generation-pinned menu request admits only background delivery`() {
         let request = PeekabooBridgeRequest.clickMenuItem(.init(
             appIdentifier: "PID:701",

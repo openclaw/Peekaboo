@@ -207,6 +207,10 @@ enum BridgeCapabilityPolicy {
             return false
         }
         if options.requiresStatelessClickVariants,
+           handshake.negotiatedVersion < PeekabooBridgeConstants.statelessClickVariantVersion {
+            return false
+        }
+        if options.requiresBackgroundStatelessClickVariants,
            !self.supportsStatelessClickVariants(for: handshake) {
             return false
         }

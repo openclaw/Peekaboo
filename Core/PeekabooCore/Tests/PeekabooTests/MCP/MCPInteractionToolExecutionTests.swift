@@ -825,7 +825,7 @@ extension MCPToolExecutionTests {
     }
 
     @Test
-    func `Click tool refuses capability-missing middle click before dispatch`() async throws {
+    func `Click tool allows explicit foreground middle click without background capability`() async throws {
         let automation = await MainActor.run {
             let service = MockAutomationService(accessibilityGranted: true)
             service.supportsStatelessClickVariants = false
@@ -838,10 +838,9 @@ extension MCPToolExecutionTests {
             "middle": true,
         ]))
 
-        #expect(response.isError)
-        #expect(response.meta?.objectValue?["refusal_reason"] == .string("runtime_incompatible"))
-        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
-        #expect(await MainActor.run { automation.clickCalls.isEmpty })
+        #expect(response.isError == false)
+        let call = try #require(await MainActor.run { automation.clickCalls.first })
+        #expect(call.clickType == .middle)
     }
 
     @Test

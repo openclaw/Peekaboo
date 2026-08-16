@@ -187,12 +187,21 @@ extension PeekabooBridgeClient {
     }
 
     private func requireNegotiatedInputCapabilities(for request: PeekabooBridgeRequest) throws {
-        if request.requiresStatelessClickVariantSupport, !self.statelessClickVariantsEnabled {
+        if request.requiresStatelessClickVariantSupport, !self.statelessClickVariantPayloadsEnabled {
             throw DesktopActionFailure.preDispatchRefusal(
                 route: .bridge,
                 reason: .runtimeIncompatible,
-                message: "Bridge protocol 1.30 middle/triple-click support is unavailable.",
+                message: "Bridge protocol 1.30 middle/triple-click payload support is unavailable.",
                 hint: "Update or relaunch the Peekaboo Bridge host before retrying.")
+        }
+        if request.requiresBackgroundStatelessClickVariantSupport,
+           !self.statelessClickVariantsEnabled
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "Bridge protocol 1.30 background middle/triple-click support is unavailable.",
+                hint: "Use explicit foreground delivery or update and relaunch the Peekaboo Bridge host.")
         }
         if request.requiresExactWindowHeldPointerLifecycleSupport,
            !self.exactWindowHeldPointerLifecycleEnabled

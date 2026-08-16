@@ -1,8 +1,114 @@
+import Commander
 import Foundation
+import PeekabooAutomationKit
+import PeekabooBridge
+import PeekabooBridgeTestSupport
 import Subprocess
 import Testing
+@testable import PeekabooCLI
 
 struct BridgeStatusCLITests {
+    @Test
+    func `Middle and triple clicks require complete negotiated stateless support`() throws {
+        for flag in ["middle", "triple"] {
+            let options = try CommanderCLIBinder.makeRuntimeOptions(
+                from: ParsedValues(positional: [], options: ["on": ["B1"]], flags: [flag]),
+                commandType: ClickCommand.self
+            )
+            #expect(options.requiresStatelessClickVariants)
+            #expect(options.requiresBackgroundStatelessClickVariants)
+            #expect(options.requiresPostEventPermission)
+
+            let foreground = try CommanderCLIBinder.makeRuntimeOptions(
+                from: ParsedValues(
+                    positional: [],
+                    options: ["on": ["B1"]],
+                    flags: [flag, "foreground"]
+                ),
+                commandType: ClickCommand.self
+            )
+            #expect(foreground.requiresStatelessClickVariants)
+            #expect(!foreground.requiresBackgroundStatelessClickVariants)
+        }
+
+        let operations: [PeekabooBridgeOperation] = [.targetedClick, .exactWindowTargetedClick]
+        let permissions = PermissionsStatus(screenRecording: false, accessibility: true, postEvent: true)
+        let incomplete = [
+            BridgeTestFixtures.handshake(
+                negotiatedVersion: .init(major: 1, minor: 29),
+                supportedOperations: operations,
+                permissions: permissions,
+                hostCapabilities: [PeekabooBridgeHostCapability.statelessClickVariants]
+            ),
+            BridgeTestFixtures.handshake(
+                negotiatedVersion: PeekabooBridgeConstants.statelessClickVariantVersion,
+                supportedOperations: operations,
+                permissions: permissions
+            ),
+            BridgeTestFixtures.handshake(
+                negotiatedVersion: PeekabooBridgeConstants.statelessClickVariantVersion,
+                supportedOperations: [.exactWindowTargetedClick],
+                permissions: permissions,
+                hostCapabilities: [PeekabooBridgeHostCapability.statelessClickVariants]
+            ),
+            BridgeTestFixtures.handshake(
+                negotiatedVersion: PeekabooBridgeConstants.statelessClickVariantVersion,
+                supportedOperations: [.targetedClick],
+                permissions: permissions,
+                hostCapabilities: [PeekabooBridgeHostCapability.statelessClickVariants]
+            ),
+            BridgeTestFixtures.handshake(
+                negotiatedVersion: PeekabooBridgeConstants.statelessClickVariantVersion,
+                supportedOperations: operations,
+                permissions: permissions,
+                enabledOperations: [.exactWindowTargetedClick],
+                hostCapabilities: [PeekabooBridgeHostCapability.statelessClickVariants]
+            ),
+            BridgeTestFixtures.handshake(
+                negotiatedVersion: PeekabooBridgeConstants.statelessClickVariantVersion,
+                supportedOperations: operations,
+                permissions: permissions,
+                enabledOperations: [.targetedClick],
+                hostCapabilities: [PeekabooBridgeHostCapability.statelessClickVariants]
+            ),
+        ]
+        var options = CommandRuntimeOptions()
+        options.requiresStatelessClickVariants = true
+        options.requiresBackgroundStatelessClickVariants = true
+        for handshake in incomplete {
+            #expect(!CommandRuntime.supportsRemoteRequirements(for: handshake, options: options))
+        }
+
+        let capable = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.statelessClickVariantVersion,
+            supportedOperations: operations,
+            permissions: permissions,
+            hostCapabilities: [PeekabooBridgeHostCapability.statelessClickVariants]
+        )
+        #expect(CommandRuntime.supportsRemoteRequirements(for: capable, options: options))
+
+        var foregroundOptions = CommandRuntimeOptions()
+        foregroundOptions.requiresStatelessClickVariants = true
+        let foregroundCapable = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.statelessClickVariantVersion,
+            supportedOperations: [.click],
+            permissions: permissions
+        )
+        #expect(CommandRuntime.supportsRemoteRequirements(
+            for: foregroundCapable,
+            options: foregroundOptions
+        ))
+        let foregroundLegacy = BridgeTestFixtures.handshake(
+            negotiatedVersion: .init(major: 1, minor: 29),
+            supportedOperations: [.click],
+            permissions: permissions
+        )
+        #expect(!CommandRuntime.supportsRemoteRequirements(
+            for: foregroundLegacy,
+            options: foregroundOptions
+        ))
+    }
+
     struct MalformedRequestCase: Sendable {
         let arguments: [String]
         let expectedMessage: String

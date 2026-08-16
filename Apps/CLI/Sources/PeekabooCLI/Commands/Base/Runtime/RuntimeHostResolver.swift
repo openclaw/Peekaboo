@@ -384,6 +384,10 @@ enum RuntimeHostResolver {
 
     static func requiredHostFailure(explicitSocket: String?, options: CommandRuntimeOptions) -> String? {
         if options.requiresStatelessClickVariants {
+            if !options.requiresBackgroundStatelessClickVariants {
+                return "No compatible Bridge host negotiates protocol 1.30 middle/triple-click payloads. " +
+                    "Update and relaunch Peekaboo before retrying."
+            }
             return "No compatible Bridge host advertises protocol 1.30 middle/triple-click support. " +
                 "Update and relaunch Peekaboo on the selected host, or pass --no-remote to run locally."
         }

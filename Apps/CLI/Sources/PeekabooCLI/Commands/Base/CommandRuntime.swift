@@ -71,8 +71,10 @@ struct CommandRuntimeOptions {
     var requiresCallerDesktopMutationBarrier = false
     var usesPerToolSnapshotInvalidation = false
     var requiresExactWindowTargetedClicks = false
-    /// Protocol 1.30 and its raw capability are required before encoding middle/triple click cases.
+    /// Protocol 1.30 is required before encoding middle/triple click cases.
     var requiresStatelessClickVariants = false
+    /// Background middle/triple clicks additionally require exact-window targeted-click support.
+    var requiresBackgroundStatelessClickVariants = false
     var requiresTargetedScroll = false
     var requiresPostEventPermission = false
     var requiresAccessibilityPermission = false

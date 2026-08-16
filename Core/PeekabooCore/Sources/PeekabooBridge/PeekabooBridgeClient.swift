@@ -51,6 +51,7 @@ public actor PeekabooBridgeClient {
     var applicationMutationInventoryTransportEnabled = false
     var windowMutationInventoryTransportEnabled = false
     var exactWindowHeldPointerLifecycleEnabled = false
+    var statelessClickVariantPayloadsEnabled = false
     var statelessClickVariantsEnabled = false
     var operationAttestation: PeekabooBridgeListenerAttestation?
     var latestVerifiedOperationReceipt: PeekabooBridgeOperationReceipt?
@@ -435,6 +436,7 @@ public actor PeekabooBridgeClient {
 
     func clearNegotiatedInputCapabilities() {
         self.exactWindowHeldPointerLifecycleEnabled = false
+        self.statelessClickVariantPayloadsEnabled = false
         self.statelessClickVariantsEnabled = false
     }
 
@@ -849,6 +851,8 @@ public actor PeekabooBridgeClient {
                     .revokeExactWindowHeldPointer,
                     .disconnectExactWindowHeldPointerOwner,
                 ]).isSubset(of: Set(handshake.enabledOperations ?? handshake.supportedOperations)),
+            statelessClickVariantPayloadsEnabled:
+            handshake.negotiatedVersion >= PeekabooBridgeConstants.statelessClickVariantVersion,
             statelessClickVariantsEnabled:
             handshake.negotiatedVersion >= PeekabooBridgeConstants.statelessClickVariantVersion &&
                 handshake.hostCapabilities?.contains(
@@ -906,6 +910,7 @@ public actor PeekabooBridgeClient {
             candidate.applicationMutationInventoryTransportEnabled
         self.windowMutationInventoryTransportEnabled = candidate.windowMutationInventoryTransportEnabled
         self.exactWindowHeldPointerLifecycleEnabled = candidate.exactWindowHeldPointerLifecycleEnabled
+        self.statelessClickVariantPayloadsEnabled = candidate.statelessClickVariantPayloadsEnabled
         self.statelessClickVariantsEnabled = candidate.statelessClickVariantsEnabled
         self.operationAttestation = candidate.listenerAttestation
         self.installReceiptlessAuthenticatedHost(candidate.receiptlessAuthenticatedHost)
@@ -1188,6 +1193,7 @@ private struct PeekabooBridgeClientHandshakeCandidate: Sendable {
     let applicationMutationInventoryTransportEnabled: Bool
     let windowMutationInventoryTransportEnabled: Bool
     let exactWindowHeldPointerLifecycleEnabled: Bool
+    let statelessClickVariantPayloadsEnabled: Bool
     let statelessClickVariantsEnabled: Bool
     let listenerAttestation: PeekabooBridgeListenerAttestation?
     let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity?

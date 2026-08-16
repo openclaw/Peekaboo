@@ -288,16 +288,16 @@ public struct ClickTool: MCPTool {
     {
         let target = resolution.automationTarget
         let snapshotId = resolution.snapshotId
-        if intent.automationType.requiresStatelessVariantSupport {
-            guard let targeted = self.context.automation as? any TargetedClickServiceProtocol,
-                  targeted.supportsStatelessClickVariants
-            else {
-                throw ClickToolError(
-                    "This automation host requires protocol 1.30 middle/triple-click support.",
-                    refusalReason: .runtimeIncompatible)
-            }
-        }
         if deliveryMode == .background {
+            if intent.automationType.requiresStatelessVariantSupport {
+                guard let targeted = self.context.automation as? any TargetedClickServiceProtocol,
+                      targeted.supportsStatelessClickVariants
+                else {
+                    throw ClickToolError(
+                        "This automation host requires protocol 1.30 background middle/triple-click support.",
+                        refusalReason: .runtimeIncompatible)
+                }
+            }
             guard let targetProcessIdentity else {
                 throw ClickToolError(
                     "Background click requires a capture-owned snapshot with an exact target process.",
