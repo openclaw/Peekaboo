@@ -50,6 +50,7 @@ public actor PeekabooBridgeClient {
     var dialogInputFocusPolicyEnabled = false
     var applicationMutationInventoryTransportEnabled = false
     var windowMutationInventoryTransportEnabled = false
+    var exactWindowHeldPointerLifecycleEnabled = false
     var operationAttestation: PeekabooBridgeListenerAttestation?
     var latestVerifiedOperationReceipt: PeekabooBridgeOperationReceipt?
     var latestVerifiedOperationReceiptBundle: PeekabooBridgeOperationReceiptBundle?
@@ -822,6 +823,24 @@ public actor PeekabooBridgeClient {
                     PeekabooBridgeHostCapability.plannerInventoryTransport) == true &&
                 handshake.supportedOperations.contains(.listWindows) &&
                 (handshake.enabledOperations?.contains(.listWindows) ?? true),
+            exactWindowHeldPointerLifecycleEnabled:
+            handshake.negotiatedVersion >= PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion &&
+                handshake.hostCapabilities?.contains(
+                    PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle) == true &&
+                Set([
+                    PeekabooBridgeOperation.createExactWindowHeldPointerOwner,
+                    .beginExactWindowHeldPointer,
+                    .releaseExactWindowHeldPointer,
+                    .revokeExactWindowHeldPointer,
+                    .disconnectExactWindowHeldPointerOwner,
+                ]).isSubset(of: Set(handshake.supportedOperations)) &&
+                Set([
+                    PeekabooBridgeOperation.createExactWindowHeldPointerOwner,
+                    .beginExactWindowHeldPointer,
+                    .releaseExactWindowHeldPointer,
+                    .revokeExactWindowHeldPointer,
+                    .disconnectExactWindowHeldPointerOwner,
+                ]).isSubset(of: Set(handshake.enabledOperations ?? handshake.supportedOperations)),
             listenerAttestation: listenerAttestation,
             listenerLiveIdentity: listenerLiveIdentity,
             sessionAttestation: sessionAttestation,
@@ -866,6 +885,7 @@ public actor PeekabooBridgeClient {
         self.applicationMutationInventoryTransportEnabled =
             candidate.applicationMutationInventoryTransportEnabled
         self.windowMutationInventoryTransportEnabled = candidate.windowMutationInventoryTransportEnabled
+        self.exactWindowHeldPointerLifecycleEnabled = candidate.exactWindowHeldPointerLifecycleEnabled
         self.operationAttestation = candidate.listenerAttestation
         self.installReceiptlessAuthenticatedHost(candidate.receiptlessAuthenticatedHost)
         if let listenerAttestation = candidate.listenerAttestation,
@@ -1146,6 +1166,7 @@ private struct PeekabooBridgeClientHandshakeCandidate: Sendable {
     let dialogInputFocusPolicyEnabled: Bool
     let applicationMutationInventoryTransportEnabled: Bool
     let windowMutationInventoryTransportEnabled: Bool
+    let exactWindowHeldPointerLifecycleEnabled: Bool
     let listenerAttestation: PeekabooBridgeListenerAttestation?
     let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity?
     let sessionAttestation: PeekabooBridgeOperationSessionAttestation?

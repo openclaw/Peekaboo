@@ -74,6 +74,7 @@ public final class PeekabooBridgeServer {
     let encoder: JSONEncoder
     let decoder: JSONDecoder
     let logger = Logger(subsystem: "boo.peekaboo.bridge", category: "server")
+    var heldPointerBridgeOwners: [ExactWindowHeldPointerOwner: ApplicationProcessIdentity] = [:]
     #if DEBUG
     var requestDecodeObserverForTesting: (@Sendable () -> Void)?
     var admissionRefusalObserverForTesting: (@Sendable () async -> Void)?
@@ -908,6 +909,9 @@ private func protocolHostCapabilities(
     }
     if supportedVersions.upperBound >= PeekabooBridgeConstants.plannerInventoryTransportVersion {
         capabilities.insert(PeekabooBridgeHostCapability.plannerInventoryTransport)
+    }
+    if supportedVersions.upperBound >= PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion {
+        capabilities.insert(PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle)
     }
     return capabilities
 }

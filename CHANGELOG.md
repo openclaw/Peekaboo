@@ -5,8 +5,10 @@
 ### Added
 - Add Bridge protocol 1.30 planner inventory transport with explicit complete/partial evidence, while protocol 1.29 hosts keep legacy list bytes and conservative exact-target compatibility.
 - Add authenticated `peekaboo bridge receipt validate` for fail-closed, agent-readable verification of private protocol 1.29 bundles against the exact live listener that produced them.
+- Add an embedding-only protocol 1.30 exact-window held-pointer lifecycle with opaque owner/hold receipts, cross-call lane ownership, and generation-bound release on explicit completion, revocation, disconnect, or watchdog expiry.
 
 ### Fixed
+- Release cancelled exact-window held hotkeys only to their original process generation, include cleanup events in typed unit counts, and never retarget cleanup to a recycled PID.
 - Make application and window inventories report omitted or identity-incomplete rows as partial, while keeping complete AX-only window listings usable without Screen Recording.
 - Update AXorcist and Tachikoma so Accessibility permission observation cancellation cannot deadlock the main queue or install timers after termination, while Realtime tool execution preserves the first completion/cancellation winner, keeps timeout returns bounded while owning delayed cleanup, preserves completed results during timer cancellation, and rejects invalid audio deadlines before dispatch. Thanks @SebTardif for AXorcist #46 and Tachikoma #68; follow-up fixes landed in AXorcist #48 and Tachikoma #69/#70.
 

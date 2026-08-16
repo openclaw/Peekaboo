@@ -186,6 +186,34 @@ public struct PeekabooBridgeHotkeyRequest: Codable, Sendable {
     }
 }
 
+public struct PeekabooBridgeBeginHeldPointerRequest: Codable, Equatable, Sendable {
+    public let owner: ExactWindowHeldPointerOwner
+    public let request: ExactWindowHeldPointerRequest
+
+    public init(owner: ExactWindowHeldPointerOwner, request: ExactWindowHeldPointerRequest) {
+        self.owner = owner
+        self.request = request
+    }
+}
+
+public struct PeekabooBridgeFinishHeldPointerRequest: Codable, Equatable, Sendable {
+    public let owner: ExactWindowHeldPointerOwner
+    public let receipt: ExactWindowHeldPointerReceipt
+
+    public init(owner: ExactWindowHeldPointerOwner, receipt: ExactWindowHeldPointerReceipt) {
+        self.owner = owner
+        self.receipt = receipt
+    }
+}
+
+public struct PeekabooBridgeHeldPointerOwnerRequest: Codable, Equatable, Sendable {
+    public let owner: ExactWindowHeldPointerOwner
+
+    public init(owner: ExactWindowHeldPointerOwner) {
+        self.owner = owner
+    }
+}
+
 public struct PeekabooBridgeTargetedHotkeyRequest: Codable, Sendable {
     public let keys: String
     public let holdDuration: Int

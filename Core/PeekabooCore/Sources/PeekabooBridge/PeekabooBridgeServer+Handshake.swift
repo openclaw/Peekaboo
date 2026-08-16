@@ -262,6 +262,17 @@ extension PeekabooBridgeServer {
             operations.remove(.exactWindowTargetedTypeActions)
             operations.remove(.exactWindowTargetedHotkey)
         }
+        if (self.services.automation as? any ExactWindowHeldPointerLifecycleServiceProtocol)?
+            .supportsExactWindowHeldPointerLifecycle != true
+        {
+            operations.subtract([
+                .createExactWindowHeldPointerOwner,
+                .beginExactWindowHeldPointer,
+                .releaseExactWindowHeldPointer,
+                .revokeExactWindowHeldPointer,
+                .disconnectExactWindowHeldPointerOwner,
+            ])
+        }
         if !self.services.snapshots.supportsImplicitLatestSnapshotInvalidation {
             operations.remove(.invalidateImplicitLatestSnapshot)
         }

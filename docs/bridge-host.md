@@ -100,6 +100,15 @@ and `stopChecked()` waits for non-cooperative in-flight requests to release the 
 and restart intents execute in arrival order, so a later stop cannot be undone by an older suspended restart. A failed
 signing-capability registration or bind leaves the runtime stopped and does not publish a partial host.
 
+Native embedding clients that need a split pointer down/up sequence can use
+`ExactWindowHeldPointerLifecycleServiceProtocol`. This API is intentionally absent from the standalone CLI and MCP
+tool catalog. Create one opaque owner, begin with an exact process-generation/window/bounds target and a bounded
+expiry, then release or revoke with the returned opaque hold receipt. Mouse-down retains that exact window's mutation
+lane across calls. A matching release, explicit owner disconnect, caller cancellation, target drift, or watchdog expiry
+wins terminal cleanup exactly once. Mouse-up is sent only while the original process generation remains live; if its
+PID was recycled, cleanup fails with a typed partial outcome instead of targeting the replacement process. Disconnect
+the owner before releasing the embedding client.
+
 Peekaboo.app and the reusable daemon still use the full `PeekabooServices` registry because they also own agent,
 browser, configuration, audio, and visualizer state. A follow-up can make that registry compose this native bundle once
 those app-only services are injected separately; moving them into the embedded runtime would defeat its lean boundary.
@@ -207,6 +216,13 @@ capability and the corresponding enabled list operation. Otherwise it converts t
 partial inventory: broad name, title, index, or automatic selection then fails closed, while the planner may still use
 a direct exact-PID or exact-window-ID provider. The selected mutation plan remains local; Bridge transports evidence,
 not a second host-owned selector policy.
+
+Protocol `1.30` also adds the embedding-only exact-window held-pointer lifecycle. The host registers a random bearer
+owner bound to the authenticated Bridge client generation and returns a separate opaque receipt after routing primer
+and mouse-down dispatch. Release, revoke, and disconnect accept only the matching owner and receipt, carry exact target
+and cleanup outcomes through signed operation receipts, and refuse zero-dispatch against protocol 1.29 or older hosts.
+The host retains the exact-window write lane until terminal cleanup; a short watchdog handles expiry, window drift,
+client-generation exit, and target-generation exit without ever posting mouse-up to a recycled PID.
 
 The client does not treat the response-carried, self-signed listener as provenance by itself. It captures the connected
 socket peer's audit token and requires exact PID/PID-version, process-start, live kernel CDHash, Apple-anchored signing

@@ -46,6 +46,10 @@ extension PeekabooBridgeServer {
              .exactWindowTargetedHotkey, .targetedClick,
              .exactWindowTargetedClick, .swipe, .drag, .moveMouse, .waitForElement:
             return try await self.handleAutomationRequest(request)
+        case .createExactWindowHeldPointerOwner, .beginExactWindowHeldPointer,
+             .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer,
+             .disconnectExactWindowHeldPointerOwner:
+            return try await self.handleHeldPointerRequest(request, peer: peer)
         case .listWindows, .focusWindow, .moveWindow, .resizeWindow, .setWindowBounds, .closeWindow,
              .backgroundCloseWindow,
              .minimizeWindow, .restoreWindow, .maximizeWindow, .getFocusedWindow:
@@ -1340,7 +1344,7 @@ extension PeekabooBridgeServer {
             fallbackTarget: .requestPinned)
     }
 
-    private static func handledActionResponse(
+    static func handledActionResponse(
         response: PeekabooBridgeResponse,
         result: UIAutomationActionResult<some Sendable>,
         fallbackTarget: PeekabooBridgeHandledResponse.Mutation.TargetDisposition?) throws
@@ -1379,7 +1383,7 @@ extension PeekabooBridgeServer {
         return results
     }
 
-    private static func handledActionResponse(
+    static func handledActionResponse(
         response: PeekabooBridgeResponse,
         outcome: DesktopActionOutcome?,
         targetIdentity: DesktopTargetIdentity? = nil,

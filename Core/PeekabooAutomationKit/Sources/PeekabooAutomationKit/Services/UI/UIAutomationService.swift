@@ -81,6 +81,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
     let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
     let operationLaneCoordinator: DesktopOperationLaneCoordinator
     let desktopOperationExecutor: DesktopOperationExecutor
+    let heldPointerLifecycle: ExactWindowHeldPointerLifecycle
 
     // Search constraints to prevent unbounded AX traversals
     var searchLimits: UIAutomationSearchLimits
@@ -190,6 +191,9 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
         self.operationLaneCoordinator = operationLaneCoordinator
         let executor = desktopOperationExecutor ?? DesktopOperationExecutor(laneCoordinator: operationLaneCoordinator)
         self.desktopOperationExecutor = executor
+        self.heldPointerLifecycle = ExactWindowHeldPointerLifecycle(
+            laneCoordinator: operationLaneCoordinator,
+            processStartIdentityProvider: processStartIdentityProvider)
 
         // Initialize specialized services
         let elementDetectionService = ElementDetectionService(snapshotManager: manager)

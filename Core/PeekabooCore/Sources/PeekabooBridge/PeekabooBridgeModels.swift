@@ -67,6 +67,11 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case hotkey
     case targetedHotkey
     case exactWindowTargetedHotkey
+    case createExactWindowHeldPointerOwner
+    case beginExactWindowHeldPointer
+    case releaseExactWindowHeldPointer
+    case revokeExactWindowHeldPointer
+    case disconnectExactWindowHeldPointerOwner
     case targetedClick
     case exactWindowTargetedClick
     case swipe
@@ -239,6 +244,15 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
         if version < PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion {
             compatible.remove(.exactDialogForceDismiss)
         }
+        if version < PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion {
+            compatible.subtract([
+                .createExactWindowHeldPointerOwner,
+                .beginExactWindowHeldPointer,
+                .releaseExactWindowHeldPointer,
+                .revokeExactWindowHeldPointer,
+                .disconnectExactWindowHeldPointerOwner,
+            ])
+        }
         return compatible
     }
 }
@@ -343,6 +357,7 @@ public enum PeekabooBridgeHostCapability {
     public static let dialogInputFocusPolicy = "dialogInputFocusPolicy"
     public static let attestedOperationReceipts = "attestedOperationReceipts"
     public static let plannerInventoryTransport = "plannerInventoryTransport"
+    public static let exactWindowHeldPointerLifecycle = "exactWindowHeldPointerLifecycle"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {

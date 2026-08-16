@@ -625,3 +625,46 @@ ElementActionAutomationServiceProtocol {
         }
     }
 }
+
+extension RemoteUIAutomationService: ExactWindowHeldPointerLifecycleServiceProtocol {
+    public var supportsExactWindowHeldPointerLifecycle: Bool {
+        true
+    }
+
+    public func createExactWindowHeldPointerOwner(
+        boundTo _: ApplicationProcessIdentity?) async throws -> ExactWindowHeldPointerOwner
+    {
+        try await self.client.createExactWindowHeldPointerOwner()
+    }
+
+    public func beginExactWindowPointerHold(
+        owner: ExactWindowHeldPointerOwner,
+        request: ExactWindowHeldPointerRequest) async throws
+        -> UIAutomationActionResult<ExactWindowHeldPointerReceipt>
+    {
+        try await self.client.beginExactWindowPointerHold(owner: owner, request: request)
+    }
+
+    public func releaseExactWindowPointerHold(
+        owner: ExactWindowHeldPointerOwner,
+        receipt: ExactWindowHeldPointerReceipt) async throws
+        -> UIAutomationActionResult<ExactWindowHeldPointerTermination>
+    {
+        try await self.client.releaseExactWindowPointerHold(owner: owner, receipt: receipt)
+    }
+
+    public func revokeExactWindowPointerHold(
+        owner: ExactWindowHeldPointerOwner,
+        receipt: ExactWindowHeldPointerReceipt) async throws
+        -> UIAutomationActionResult<ExactWindowHeldPointerTermination>
+    {
+        try await self.client.revokeExactWindowPointerHold(owner: owner, receipt: receipt)
+    }
+
+    public func disconnectExactWindowHeldPointerOwner(
+        _ owner: ExactWindowHeldPointerOwner) async throws
+        -> UIAutomationActionResult<ExactWindowHeldPointerTermination>
+    {
+        try await self.client.disconnectExactWindowHeldPointerOwner(owner)
+    }
+}

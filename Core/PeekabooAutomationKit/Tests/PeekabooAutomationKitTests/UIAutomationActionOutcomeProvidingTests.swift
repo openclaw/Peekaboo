@@ -349,8 +349,11 @@ struct UIAutomationActionOutcomeProvidingTests {
             holdDuration: 0,
             target: exactTarget)
 
-        for result in [pidHotkey, processHotkey, windowHotkey, focusedHotkey] {
+        for result in [pidHotkey, processHotkey] {
             #expect(result.outcome == Self.backgroundOutcome)
+        }
+        for result in [windowHotkey, focusedHotkey] {
+            #expect(result.outcome == Self.windowBackgroundOutcome)
         }
     }
 

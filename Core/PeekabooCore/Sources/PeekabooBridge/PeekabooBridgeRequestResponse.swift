@@ -35,6 +35,11 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case hotkey(PeekabooBridgeHotkeyRequest)
     case targetedHotkey(PeekabooBridgeTargetedHotkeyRequest)
     case exactWindowTargetedHotkey(PeekabooBridgeExactWindowHotkeyRequest)
+    case createExactWindowHeldPointerOwner
+    case beginExactWindowHeldPointer(PeekabooBridgeBeginHeldPointerRequest)
+    case releaseExactWindowHeldPointer(PeekabooBridgeFinishHeldPointerRequest)
+    case revokeExactWindowHeldPointer(PeekabooBridgeFinishHeldPointerRequest)
+    case disconnectExactWindowHeldPointerOwner(PeekabooBridgeHeldPointerOwnerRequest)
     case targetedClick(PeekabooBridgeTargetedClickRequest)
     case swipe(PeekabooBridgeSwipeRequest)
     case drag(PeekabooBridgeDragRequest)
@@ -148,6 +153,11 @@ extension PeekabooBridgeRequest {
         case .hotkey: .hotkey
         case .targetedHotkey: .targetedHotkey
         case .exactWindowTargetedHotkey: .exactWindowTargetedHotkey
+        case .createExactWindowHeldPointerOwner: .createExactWindowHeldPointerOwner
+        case .beginExactWindowHeldPointer: .beginExactWindowHeldPointer
+        case .releaseExactWindowHeldPointer: .releaseExactWindowHeldPointer
+        case .revokeExactWindowHeldPointer: .revokeExactWindowHeldPointer
+        case .disconnectExactWindowHeldPointerOwner: .disconnectExactWindowHeldPointerOwner
         case let .targetedClick(payload):
             payload.targetWindowID == nil ? .targetedClick : .exactWindowTargetedClick
         case .swipe: .swipe
@@ -250,6 +260,9 @@ public enum PeekabooBridgeResponse: Codable, Sendable {
     case application(ServiceApplicationInfo)
     case bool(Bool)
     case typeResult(TypeResult)
+    case exactWindowHeldPointerOwner(ExactWindowHeldPointerOwner)
+    case exactWindowHeldPointerReceipt(ExactWindowHeldPointerReceipt)
+    case exactWindowHeldPointerTermination(ExactWindowHeldPointerTermination)
     case elementActionResult(ElementActionResult)
     case clickResult(ClickResult)
     case menuStructure(MenuStructure)

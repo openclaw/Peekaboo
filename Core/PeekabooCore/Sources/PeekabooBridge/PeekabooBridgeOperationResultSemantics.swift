@@ -60,6 +60,9 @@ enum PeekabooBridgeOperationResultSemantics {
         case elementActionResult
         case elementDetection
         case focusedElement
+        case heldPointerOwner
+        case heldPointerReceipt
+        case heldPointerTermination
         case int
         case menuBarItems
         case menuExtras
@@ -98,6 +101,9 @@ enum PeekabooBridgeOperationResultSemantics {
                  (.elementActionResult, .elementActionResult),
                  (.elementDetection, .elementDetection),
                  (.focusedElement, .focusedElement),
+                 (.heldPointerOwner, .exactWindowHeldPointerOwner),
+                 (.heldPointerReceipt, .exactWindowHeldPointerReceipt),
+                 (.heldPointerTermination, .exactWindowHeldPointerTermination),
                  (.int, .int),
                  (.menuBarItems, .menuBarItems),
                  (.menuExtras, .menuExtras),
@@ -498,6 +504,10 @@ extension PeekabooBridgeOperationResultSemantics {
              .hotkey,
              .targetedHotkey,
              .exactWindowTargetedHotkey,
+             .beginExactWindowHeldPointer,
+             .releaseExactWindowHeldPointer,
+             .revokeExactWindowHeldPointer,
+             .disconnectExactWindowHeldPointerOwner,
              .targetedClick,
              .exactWindowTargetedClick,
              .swipe,
@@ -546,6 +556,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .desktopObservation:
             .service
         case .permissionsStatus,
+             .createExactWindowHeldPointerOwner,
              .requestPostEventPermission,
              .daemonStatus,
              .daemonStop,
@@ -643,6 +654,11 @@ extension PeekabooBridgeOperationResultSemantics {
              .hotkey,
              .targetedHotkey,
              .exactWindowTargetedHotkey,
+             .createExactWindowHeldPointerOwner,
+             .beginExactWindowHeldPointer,
+             .releaseExactWindowHeldPointer,
+             .revokeExactWindowHeldPointer,
+             .disconnectExactWindowHeldPointerOwner,
              .targetedClick,
              .exactWindowTargetedClick,
              .swipe,
@@ -744,6 +760,11 @@ extension PeekabooBridgeOperationResultSemantics {
              .hotkey,
              .targetedHotkey,
              .exactWindowTargetedHotkey,
+             .createExactWindowHeldPointerOwner,
+             .beginExactWindowHeldPointer,
+             .releaseExactWindowHeldPointer,
+             .revokeExactWindowHeldPointer,
+             .disconnectExactWindowHeldPointerOwner,
              .targetedClick,
              .exactWindowTargetedClick,
              .swipe,
@@ -888,6 +909,11 @@ extension PeekabooBridgeOperationResultSemantics {
              .hotkey,
              .targetedHotkey,
              .exactWindowTargetedHotkey,
+             .createExactWindowHeldPointerOwner,
+             .beginExactWindowHeldPointer,
+             .releaseExactWindowHeldPointer,
+             .revokeExactWindowHeldPointer,
+             .disconnectExactWindowHeldPointerOwner,
              .targetedClick,
              .exactWindowTargetedClick,
              .swipe,
@@ -993,6 +1019,11 @@ extension PeekabooBridgeOperationResultSemantics {
             .init(completion: .dispatchedUnverified(processBackground), targetPolicy: .requestPinned)
         case .exactWindowTargetedTypeActions, .exactWindowTargetedHotkey:
             .init(completion: .dispatchedUnverified(windowBackground), targetPolicy: .requestPinned)
+        case .beginExactWindowHeldPointer, .releaseExactWindowHeldPointer,
+             .revokeExactWindowHeldPointer:
+            .init(completion: .dispatchedUnverified(windowBackground), targetPolicy: .requestPinned)
+        case .disconnectExactWindowHeldPointerOwner:
+            .init(completion: .dispatchedUnverified(windowBackground), targetPolicy: .handlerRequired)
         case .setValue:
             .init(completion: .dispatchedUnverified(accessibilityValueBackground), targetPolicy: .handlerRequired)
         case .performAction, .targetedScroll:
@@ -1057,6 +1088,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .captureScreen, .captureWindow, .captureFrontmost, .captureArea:
             .init(completion: .requestDependent(mutatesDesktop: false), targetPolicy: .requestDependent)
         case .permissionsStatus,
+             .createExactWindowHeldPointerOwner,
              .daemonStatus,
              .daemonStop,
              .browserStatus,
@@ -1322,6 +1354,11 @@ extension PeekabooBridgeOperationResultSemantics {
             .process(payload.expectedWindowIdentity.processIdentity)
         case let .exactWindowTargetedHotkey(payload):
             .process(payload.expectedWindowIdentity.processIdentity)
+        case let .beginExactWindowHeldPointer(payload):
+            .window(payload.request.windowIdentity)
+        case let .releaseExactWindowHeldPointer(payload),
+             let .revokeExactWindowHeldPointer(payload):
+            .window(payload.receipt.windowIdentity)
         case let .targetedHotkey(payload):
             payload.expectedProcessIdentity.map(DesktopOperationScope.process) ?? .global
         case let .targetedTypeActions(payload):
@@ -1493,6 +1530,11 @@ extension PeekabooBridgeOperationResultSemantics {
              .hotkey,
              .targetedHotkey,
              .exactWindowTargetedHotkey,
+             .createExactWindowHeldPointerOwner,
+             .beginExactWindowHeldPointer,
+             .releaseExactWindowHeldPointer,
+             .revokeExactWindowHeldPointer,
+             .disconnectExactWindowHeldPointerOwner,
              .targetedClick,
              .swipe,
              .drag,
@@ -1607,6 +1649,9 @@ extension PeekabooBridgeOperationResultSemantics {
              .detectElements, .inspectAccessibilityTree,
              .exactDialogForceDismiss:
             return [.dispatchedUnverified]
+        case .beginExactWindowHeldPointer, .releaseExactWindowHeldPointer,
+             .revokeExactWindowHeldPointer, .disconnectExactWindowHeldPointerOwner:
+            return [.dispatchedUnverified]
         case .exactDialogClickButton, .exactDialogDismiss:
             return [.confirmedChange]
         case .exactDialogEnterText:
@@ -1642,7 +1687,8 @@ extension PeekabooBridgeOperationResultSemantics {
             return [.dispatchedUnverified]
         case .browserConnect:
             return [.confirmedNoChange, .dispatchedUnverified]
-        case .permissionsStatus, .daemonStatus, .daemonStop, .browserStatus,
+        case .permissionsStatus, .createExactWindowHeldPointerOwner,
+             .daemonStatus, .daemonStop, .browserStatus,
              .browserDisconnect,
              .getFocusedElement, .waitForElement, .listWindows, .getFocusedWindow,
              .listApplications, .findApplication, .getFrontmostApplication, .isApplicationRunning,
@@ -1696,6 +1742,11 @@ extension PeekabooBridgeOperationResultSemantics {
         case .captureScreen, .captureWindow, .captureFrontmost, .captureArea: [.capture]
         case .detectElements, .inspectAccessibilityTree: [.elementDetection]
         case .getFocusedElement: [.focusedElement]
+        case .createExactWindowHeldPointerOwner: [.heldPointerOwner]
+        case .beginExactWindowHeldPointer: [.heldPointerReceipt]
+        case .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer,
+             .disconnectExactWindowHeldPointerOwner:
+            [.heldPointerTermination]
         case .desktopObservation: [.desktopObservation]
         case .click, .type, .scroll, .targetedScroll, .hotkey, .targetedHotkey,
              .exactWindowTargetedHotkey, .targetedClick, .exactWindowTargetedClick,
@@ -1832,6 +1883,11 @@ extension PeekabooBridgeOperationResultSemantics {
                 rule(axBackground, .variable),
                 rule(windowBackground, .variable),
             ]
+        case .beginExactWindowHeldPointer:
+            return [rule(windowBackground, .exact(2))]
+        case .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer,
+             .disconnectExactWindowHeldPointerOwner:
+            return [rule(windowBackground, .exact(1))]
         case .targetedTypeActions:
             return [rule(processBackground, .variable), rule(axBackground, .variable)]
         case .exactWindowTargetedTypeActions:

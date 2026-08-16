@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import Darwin
+import os
 import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import Testing
@@ -257,6 +258,121 @@ struct HotkeyServiceTargetingTests {
         #expect(postedEvents.allSatisfy { $0.pid == getpid() })
     }
 
+    @Test func `exact window held hotkey reports cleanup units`() async throws {
+        var postedEvents: [CGEventType] = []
+        let identity = ApplicationProcessIdentity(
+            processIdentifier: getpid(),
+            processStartIdentity: 700)
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in postedEvents.append(event.type) },
+            processStartIdentityProvider: { _ in 700 },
+            holdSleeper: { _ in })
+        let target = try UIAutomationTarget.exactWindow(.init(
+            identity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: identity.processIdentifier,
+                ownerProcessStartIdentity: identity.processStartIdentity),
+            bounds: CGRect(x: 0, y: 0, width: 100, height: 100)))
+
+        let result = try await service.hotkey(
+            keys: "cmd,l",
+            holdDuration: 50,
+            automationTarget: target)
+
+        #expect(postedEvents == [.flagsChanged, .keyDown, .keyUp, .flagsChanged])
+        #expect(result.outcome.dispatchState.unitCount?.rawValue == 4)
+        #expect(result.outcome.delivery == .init(mechanism: .windowTargetedEvents, mode: .background))
+    }
+
+    @Test func `cancelling exact window hold releases only to original generation and counts cleanup`() async throws {
+        var postedEvents: [CGEventType] = []
+        let target = try self.heldHotkeyTarget(generation: 701)
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in postedEvents.append(event.type) },
+            processStartIdentityProvider: { _ in 701 },
+            holdSleeper: { _ in try await Task.sleep(for: .seconds(30)) })
+        let task = Task { @MainActor in
+            try await service.hotkey(
+                keys: "cmd,l",
+                holdDuration: 30000,
+                automationTarget: target)
+        }
+        while postedEvents.count < 2 {
+            await Task.yield()
+        }
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            Issue.record("Expected held hotkey cancellation to be retry-unsafe")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.emittedUnitCount == 4)
+            #expect(error.causeDescription?.contains("released to the original process generation") == true)
+        }
+        #expect(postedEvents == [.flagsChanged, .keyDown, .keyUp, .flagsChanged])
+    }
+
+    @Test func `recycled PID receives no held hotkey cleanup`() async throws {
+        var postedEvents: [CGEventType] = []
+        let generation = OSAllocatedUnfairLock<UInt64?>(initialState: 702)
+        let target = try self.heldHotkeyTarget(generation: 702)
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in
+                postedEvents.append(event.type)
+                if event.type == .keyDown {
+                    generation.withLock { $0 = 703 }
+                }
+            },
+            processStartIdentityProvider: { _ in generation.withLock { $0 } },
+            holdSleeper: { _ in throw CancellationError() })
+
+        do {
+            _ = try await service.hotkey(
+                keys: "cmd,l",
+                holdDuration: 50,
+                automationTarget: target)
+            Issue.record("Expected recycled PID cleanup refusal")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.emittedUnitCount == 2)
+            #expect(error.causeDescription?.contains("recycled PID") == true)
+        }
+        #expect(postedEvents == [.flagsChanged, .keyDown])
+    }
+
+    @Test func `generation drift during cleanup counts completed key up and stops modifier cleanup`() async throws {
+        var postedEvents: [CGEventType] = []
+        let generation = OSAllocatedUnfairLock<UInt64?>(initialState: 704)
+        let target = try self.heldHotkeyTarget(generation: 704)
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in
+                postedEvents.append(event.type)
+                if event.type == .keyUp {
+                    generation.withLock { $0 = 705 }
+                }
+            },
+            processStartIdentityProvider: { _ in generation.withLock { $0 } },
+            holdSleeper: { _ in })
+
+        do {
+            _ = try await service.hotkey(
+                keys: "cmd,l",
+                holdDuration: 50,
+                automationTarget: target)
+            Issue.record("Expected cleanup generation drift")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.emittedUnitCount == 3)
+        }
+        #expect(postedEvents == [.flagsChanged, .keyDown, .keyUp])
+    }
+
     @Test func `exact window validator failure before modifiers posts no events`() async throws {
         var validationCount = 0
         var postedEventCount = 0
@@ -433,6 +549,17 @@ struct HotkeyServiceTargetingTests {
         }
 
         return postedEvents
+    }
+}
+
+extension HotkeyServiceTargetingTests {
+    private func heldHotkeyTarget(generation: UInt64) throws -> UIAutomationTarget {
+        try .exactWindow(.init(
+            identity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: getpid(),
+                ownerProcessStartIdentity: generation),
+            bounds: CGRect(x: 0, y: 0, width: 100, height: 100)))
     }
 }
 

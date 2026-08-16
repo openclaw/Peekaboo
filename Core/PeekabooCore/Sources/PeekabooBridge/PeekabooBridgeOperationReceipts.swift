@@ -1959,6 +1959,15 @@ extension PeekabooBridgeRequest {
                 identity: payload.expectedWindowIdentity,
                 bounds: payload.expectedWindowBounds,
                 focusedElement: payload.expectedFocusedElement)]
+        case let .beginExactWindowHeldPointer(payload):
+            [PeekabooBridgeOperationTargetEvidenceAdapter.exactWindow(
+                identity: payload.request.windowIdentity,
+                bounds: payload.request.windowBounds)]
+        case let .releaseExactWindowHeldPointer(payload),
+             let .revokeExactWindowHeldPointer(payload):
+            [PeekabooBridgeOperationTargetEvidenceAdapter.exactWindow(
+                identity: payload.receipt.windowIdentity,
+                bounds: payload.receipt.windowBounds)]
         case let .targetedTypeActions(payload):
             [.init(
                 processIdentifier: payload.targetProcessIdentifier,

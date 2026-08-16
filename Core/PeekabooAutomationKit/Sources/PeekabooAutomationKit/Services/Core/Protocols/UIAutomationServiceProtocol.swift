@@ -147,6 +147,38 @@ extension UIAutomationServiceProtocol {
     }
 }
 
+/// Embedding-only exact-window split pointer lifecycle.
+///
+/// Standalone CLI and MCP tools intentionally do not expose these primitives. Callers must retain
+/// the opaque owner and hold receipt, and the concrete service keeps the exact-window mutation lane
+/// until one terminal cleanup wins.
+@MainActor
+public protocol ExactWindowHeldPointerLifecycleServiceProtocol: UIAutomationServiceProtocol {
+    var supportsExactWindowHeldPointerLifecycle: Bool { get }
+
+    func createExactWindowHeldPointerOwner(
+        boundTo processIdentity: ApplicationProcessIdentity?) async throws -> ExactWindowHeldPointerOwner
+
+    func beginExactWindowPointerHold(
+        owner: ExactWindowHeldPointerOwner,
+        request: ExactWindowHeldPointerRequest) async throws
+        -> UIAutomationActionResult<ExactWindowHeldPointerReceipt>
+
+    func releaseExactWindowPointerHold(
+        owner: ExactWindowHeldPointerOwner,
+        receipt: ExactWindowHeldPointerReceipt) async throws
+        -> UIAutomationActionResult<ExactWindowHeldPointerTermination>
+
+    func revokeExactWindowPointerHold(
+        owner: ExactWindowHeldPointerOwner,
+        receipt: ExactWindowHeldPointerReceipt) async throws
+        -> UIAutomationActionResult<ExactWindowHeldPointerTermination>
+
+    func disconnectExactWindowHeldPointerOwner(
+        _ owner: ExactWindowHeldPointerOwner) async throws
+        -> UIAutomationActionResult<ExactWindowHeldPointerTermination>
+}
+
 /// Additive capability for observations that can conditionally focus embedded web content.
 ///
 /// The original observation methods remain source compatible. Result-aware callers use this
