@@ -172,19 +172,106 @@ function sameJSON(left, right) {
 }
 
 function validOutcomeShape(value) {
-  return exactKeys(value, [
-    'state', 'route', 'deliveryMode', 'effect', 'evidence', 'dispatchState', 'retrySafety',
-    'mutationDispatched', 'retrySafe',
+  if (!exactKeys(value, [
+    'state', 'route', 'deliveryMechanism', 'deliveryMode', 'effect', 'evidence',
+    'dispatchState', 'dispatchedUnitCount', 'retrySafety', 'escalation', 'refusalReason',
+    'mutationDispatched', 'retrySafe', 'requiresFreshObservation',
   ])
-    && typeof value.state === 'string' && value.state.length > 0
-    && value.route === 'bridge'
-    && (value.deliveryMode === null || ['background', 'foreground'].includes(value.deliveryMode))
-    && typeof value.effect === 'string' && value.effect.length > 0
-    && typeof value.evidence === 'string' && value.evidence.length > 0
-    && typeof value.dispatchState === 'string' && value.dispatchState.length > 0
-    && typeof value.retrySafety === 'string' && value.retrySafety.length > 0
-    && typeof value.mutationDispatched === 'boolean'
-    && typeof value.retrySafe === 'boolean';
+      || typeof value.state !== 'string' || value.state.length === 0
+      || value.route !== 'bridge'
+      || !((value.deliveryMechanism === null && value.deliveryMode === null)
+        || (['composite', 'accessibility_action', 'accessibility_value',
+          'process_targeted_events', 'window_targeted_events', 'global_events',
+          'clipboard_transaction', 'native_framework', 'browser_protocol',
+          'capture_pipeline'].includes(value.deliveryMechanism)
+          && ['background', 'foreground'].includes(value.deliveryMode)))
+      || typeof value.effect !== 'string' || value.effect.length === 0
+      || typeof value.evidence !== 'string' || value.evidence.length === 0
+      || !['none', 'dispatched', 'may_have_dispatched'].includes(value.dispatchState)
+      || (value.dispatchedUnitCount !== null && !positiveInteger(value.dispatchedUnitCount))
+      || (value.dispatchState === 'none' && value.dispatchedUnitCount !== null)
+      || !['safe', 'unsafe', 'not_applicable'].includes(value.retrySafety)
+      || typeof value.escalation !== 'string' || value.escalation.length === 0
+      || (value.refusalReason !== null
+        && (typeof value.refusalReason !== 'string' || value.refusalReason.length === 0))
+      || typeof value.mutationDispatched !== 'boolean'
+      || value.mutationDispatched !== (value.dispatchState !== 'none')
+      || typeof value.retrySafe !== 'boolean'
+      || value.retrySafe !== (value.retrySafety === 'safe')
+      || typeof value.requiresFreshObservation !== 'boolean'
+      || value.requiresFreshObservation !== (
+        value.dispatchState !== 'none' && value.escalation === 'observe_before_retry'
+      )) {
+    return false;
+  }
+  switch (value.state) {
+    case 'confirmed_change':
+      return value.effect === 'confirmed'
+        && value.deliveryMechanism !== null
+        && value.evidence === 'verified_change'
+        && value.dispatchState === 'dispatched'
+        && value.retrySafety === 'not_applicable'
+        && value.escalation === 'none'
+        && value.refusalReason === null;
+    case 'confirmed_no_change':
+      return value.effect === 'confirmed'
+        && value.deliveryMechanism === null
+        && value.evidence === 'verified_no_change'
+        && value.dispatchState === 'none'
+        && value.retrySafety === 'not_applicable'
+        && value.escalation === 'none'
+        && value.refusalReason === null;
+    case 'partial':
+      return value.effect === 'partial'
+        && value.deliveryMechanism !== null
+        && value.evidence === 'primary_change_verified_cleanup_failed'
+        && value.dispatchState === 'dispatched'
+        && value.retrySafety === 'unsafe'
+        && value.escalation === 'recover_side_effect'
+        && value.refusalReason === null;
+    case 'dispatched_unverified':
+      return value.effect === 'unverifiable'
+        && value.deliveryMechanism !== null
+        && ['delivery_accepted', 'operation_still_running'].includes(value.evidence)
+        && value.dispatchState === 'dispatched'
+        && value.retrySafety === 'unsafe'
+        && value.escalation === 'observe_before_retry'
+        && value.refusalReason === null;
+    case 'suspected_noop':
+      return value.effect === 'suspected_noop'
+        && value.deliveryMechanism !== null
+        && value.evidence === 'observed_no_change'
+        && value.dispatchState === 'dispatched'
+        && value.retrySafety === 'safe'
+        && value.escalation === 'refresh_target'
+        && value.refusalReason === null;
+    case 'refused':
+      return value.effect === 'refused'
+        && value.deliveryMechanism === null
+        && value.evidence === 'request_refused'
+        && value.dispatchState === 'none'
+        && value.retrySafety === 'safe'
+        && value.refusalReason !== null
+        && value.escalation === ({
+          invalid_request: 'correct_request',
+          permission_denied: 'grant_permission',
+          target_unavailable: 'refresh_target',
+          transport_session_unavailable: 'reconnect_session',
+          request_cancelled: 'none',
+          runtime_incompatible: 'update_runtime',
+          foreground_consent_required: 'correct_request',
+          operation_unsupported: 'correct_request',
+        })[value.refusalReason];
+    case 'indeterminate':
+      return value.effect === 'unverifiable'
+        && ['response_lost', 'completion_unknown'].includes(value.evidence)
+        && value.dispatchState === 'may_have_dispatched'
+        && value.retrySafety === 'unsafe'
+        && value.escalation === 'observe_before_retry'
+        && value.refusalReason === null;
+    default:
+      return false;
+  }
 }
 
 function validSuccessfulOutcome(value) {
@@ -195,15 +282,9 @@ function validSuccessfulOutcome(value) {
     return false;
   }
   return (value.state === 'confirmed_change'
-      && value.effect === 'confirmed'
-      && value.evidence === 'verified_change'
-      && value.dispatchState === 'dispatched'
-      && value.retrySafety === 'not_applicable')
+      && value.requiresFreshObservation === false)
     || (value.state === 'dispatched_unverified'
-      && value.effect === 'unverifiable'
-      && ['delivery_accepted', 'operation_still_running'].includes(value.evidence)
-      && value.dispatchState === 'dispatched'
-      && value.retrySafety === 'unsafe');
+      && value.requiresFreshObservation === true);
 }
 
 function validAttributionFailure(value) {
@@ -219,18 +300,11 @@ function validAttributionFailureOutcome(failure, outcome) {
   if (!validAttributionFailure(failure) || !validOutcomeShape(outcome)) return false;
   if (failure.stage === 'pre_dispatch') {
     return outcome.state === 'refused'
-      && outcome.evidence === 'request_refused'
-      && outcome.dispatchState === 'none'
-      && outcome.retrySafety === 'safe'
-      && outcome.mutationDispatched === false
-      && outcome.retrySafe === true;
+      && outcome.requiresFreshObservation === false;
   }
   return outcome.state === 'indeterminate'
     && outcome.evidence === 'completion_unknown'
-    && ['dispatched', 'may_have_dispatched'].includes(outcome.dispatchState)
-    && outcome.retrySafety === 'unsafe'
-    && outcome.mutationDispatched === true
-    && outcome.retrySafe === false;
+    && outcome.requiresFreshObservation === true;
 }
 
 function publicKeyFromRaw(rawKey) {

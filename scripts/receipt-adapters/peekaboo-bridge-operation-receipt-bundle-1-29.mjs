@@ -170,13 +170,18 @@ function normalizeOutcome(value) {
   return {
     state: outcome.state,
     route: outcome.route,
+    deliveryMechanism: outcome.delivery_mechanism ?? null,
     deliveryMode: outcome.delivery_mode ?? null,
     effect: outcome.effect,
     evidence: outcome.evidence,
     dispatchState: outcome.dispatch_state,
+    dispatchedUnitCount: outcome.dispatched_unit_count ?? null,
     retrySafety: outcome.retry_safety,
+    escalation: outcome.escalation,
+    refusalReason: outcome.refusal_reason ?? null,
     mutationDispatched: outcome.mutation_dispatched,
     retrySafe: outcome.retry_safe,
+    requiresFreshObservation: outcome.requires_fresh_observation,
   };
 }
 

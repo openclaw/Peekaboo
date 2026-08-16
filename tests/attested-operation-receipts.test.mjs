@@ -74,13 +74,18 @@ function successfulOutcome() {
   return {
     state: 'confirmed_change',
     route: 'bridge',
+    deliveryMechanism: 'process_targeted_events',
     deliveryMode: 'background',
     effect: 'confirmed',
     evidence: 'verified_change',
     dispatchState: 'dispatched',
+    dispatchedUnitCount: 1,
     retrySafety: 'not_applicable',
+    escalation: 'none',
+    refusalReason: null,
     mutationDispatched: true,
     retrySafe: false,
+    requiresFreshObservation: false,
   };
 }
 
@@ -91,11 +96,12 @@ function unverifiedSuccessfulOutcome(evidence = 'delivery_accepted') {
     effect: 'unverifiable',
     evidence,
     retrySafety: 'unsafe',
+    escalation: 'observe_before_retry',
+    requiresFreshObservation: true,
   };
 }
 
 function wireOutcome(outcome) {
-  const requiresFreshObservation = outcome.state === 'dispatched_unverified';
   const result = {
     state: outcome.state,
     route: outcome.route,
@@ -103,16 +109,19 @@ function wireOutcome(outcome) {
     evidence: outcome.evidence,
     dispatch_state: outcome.dispatchState,
     retry_safety: outcome.retrySafety,
-    escalation: requiresFreshObservation ? 'observe_before_retry' : 'none',
+    escalation: outcome.escalation,
     mutation_dispatched: outcome.mutationDispatched,
     retry_safe: outcome.retrySafe,
-    requires_fresh_observation: requiresFreshObservation,
+    requires_fresh_observation: outcome.requiresFreshObservation,
   };
-  if (outcome.deliveryMode !== null) {
-    result.delivery_mechanism = 'process_targeted_events';
+  if (outcome.deliveryMechanism !== null) {
+    result.delivery_mechanism = outcome.deliveryMechanism;
     result.delivery_mode = outcome.deliveryMode;
   }
-  if (outcome.dispatchState !== 'none') result.dispatched_unit_count = 1;
+  if (outcome.dispatchedUnitCount !== null) {
+    result.dispatched_unit_count = outcome.dispatchedUnitCount;
+  }
+  if (outcome.refusalReason !== null) result.refusal_reason = outcome.refusalReason;
   return result;
 }
 
@@ -121,25 +130,35 @@ function attributionFailureOutcome(stage) {
     return {
       state: 'refused',
       route: 'bridge',
+      deliveryMechanism: null,
       deliveryMode: null,
       effect: 'refused',
       evidence: 'request_refused',
       dispatchState: 'none',
+      dispatchedUnitCount: null,
       retrySafety: 'safe',
+      escalation: 'refresh_target',
+      refusalReason: 'target_unavailable',
       mutationDispatched: false,
       retrySafe: true,
+      requiresFreshObservation: false,
     };
   }
   return {
     state: 'indeterminate',
     route: 'bridge',
+    deliveryMechanism: 'process_targeted_events',
     deliveryMode: 'background',
     effect: 'unverifiable',
     evidence: 'completion_unknown',
     dispatchState: 'may_have_dispatched',
+    dispatchedUnitCount: 1,
     retrySafety: 'unsafe',
+    escalation: 'observe_before_retry',
+    refusalReason: null,
     mutationDispatched: true,
     retrySafe: false,
+    requiresFreshObservation: true,
   };
 }
 
@@ -426,21 +445,7 @@ function convertToBridgeBundles(fixture) {
       ],
       isMinimized: false,
     };
-    const outcome = normalized.outcome === null ? null : {
-      state: normalized.outcome.state,
-      effect: normalized.outcome.effect,
-      route: normalized.outcome.route,
-      delivery_mechanism: 'process_targeted_events',
-      delivery_mode: normalized.outcome.deliveryMode,
-      evidence: normalized.outcome.evidence,
-      dispatch_state: normalized.outcome.dispatchState,
-      dispatched_unit_count: 1,
-      retry_safety: normalized.outcome.retrySafety,
-      escalation: 'none',
-      mutation_dispatched: normalized.outcome.mutationDispatched,
-      retry_safe: normalized.outcome.retrySafe,
-      requires_fresh_observation: true,
-    };
+    const outcome = normalized.outcome === null ? null : wireOutcome(normalized.outcome);
     const rawFocusedElement = normalized.focusedElement === null ? undefined : {
       processIdentifier: normalized.focusedElement.pid,
       windowID: normalized.focusedElement.windowID,
@@ -728,6 +733,10 @@ test('protocol 1.29 adapter verifies the real same-connection bundle shape', asy
   const result = await validate(fixture, bridgeBundleAdapter, bridgeBundleAdapterPath);
   assert.equal(result.success, true);
   assert.deepEqual(result.failures, []);
+  assert.deepEqual(
+    bridgeBundleAdapter.decodeReceipt(fixture.receiptDocuments[1]).normalized.outcome,
+    successfulOutcome(),
+  );
 
   const tampered = convertToBridgeBundles(makeFixture());
   t.after(tampered.cleanup);
@@ -1141,8 +1150,17 @@ test('target ownership and background outcome cannot be weakened', async (t) => 
 test('successful mutations require one complete canonical outcome tuple', async (t) => {
   const acceptedOutcomes = [
     successfulOutcome(),
+    {
+      ...successfulOutcome(),
+      deliveryMechanism: 'window_targeted_events',
+      dispatchedUnitCount: null,
+    },
     unverifiedSuccessfulOutcome(),
-    unverifiedSuccessfulOutcome('operation_still_running'),
+    {
+      ...unverifiedSuccessfulOutcome('operation_still_running'),
+      deliveryMechanism: 'accessibility_action',
+      dispatchedUnitCount: null,
+    },
   ];
   for (const outcome of acceptedOutcomes) {
     const fixture = convertToBridgeBundles(makeFixture());
@@ -1170,8 +1188,27 @@ test('successful mutations require one complete canonical outcome tuple', async 
     });
     const result = await validate(fixture, bridgeBundleAdapter, bridgeBundleAdapterPath);
     assert.equal(result.success, false, field);
-    assert.ok(rules(result).has('background_outcome'), field);
+    assert.ok(rules(result).has('receipt_schema'), field);
     assert.ok(rules(result).has('contract_operation'), field);
+  }
+});
+
+test('protocol adapter compares every signed canonical outcome field', async (t) => {
+  const contradictions = [
+    ['delivery_mechanism', 'accessibility_action'],
+    ['dispatched_unit_count', 2],
+    ['escalation', 'observe_before_retry'],
+    ['requires_fresh_observation', true],
+    ['refusal_reason', 'target_unavailable'],
+  ];
+  for (const [field, contradictoryValue] of contradictions) {
+    const fixture = convertToBridgeBundles(makeFixture());
+    t.after(fixture.cleanup);
+    fixture.receiptDocuments[1].receipt.payload.outcome[field] = contradictoryValue;
+    resignBridgeReceipt(fixture, 1);
+    const result = await validate(fixture, bridgeBundleAdapter, bridgeBundleAdapterPath);
+    assert.equal(result.success, false, field);
+    assert.ok(rules(result).has('receipt_schema'), field);
   }
 });
 
