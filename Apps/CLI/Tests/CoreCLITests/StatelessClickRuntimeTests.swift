@@ -47,4 +47,48 @@ struct StatelessClickRuntimeTests {
         #expect(!CommandRuntime.supportsRemoteRequirements(for: missingCapability, options: options))
         #expect(CommandRuntime.supportsRemoteRequirements(for: capable, options: options))
     }
+
+    @Test
+    func `Held pointer support requires complete enabled protocol 1 30 capability`() {
+        let operations: [PeekabooBridgeOperation] = [
+            .createExactWindowHeldPointerOwner,
+            .beginExactWindowHeldPointer,
+            .releaseExactWindowHeldPointer,
+            .revokeExactWindowHeldPointer,
+            .disconnectExactWindowHeldPointerOwner,
+        ]
+        let capability = [PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle]
+        let previous = BridgeTestFixtures.handshake(
+            negotiatedVersion: .init(major: 1, minor: 29),
+            supportedOperations: operations,
+            hostCapabilities: capability
+        )
+        let missingCapability = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion,
+            supportedOperations: operations
+        )
+        let missingOperation = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion,
+            supportedOperations: Array(operations.dropLast()),
+            hostCapabilities: capability
+        )
+        let disabledOperation = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion,
+            supportedOperations: operations,
+            enabledOperations: Array(operations.dropLast()),
+            hostCapabilities: capability
+        )
+        let capable = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion,
+            supportedOperations: operations,
+            enabledOperations: operations,
+            hostCapabilities: capability
+        )
+
+        #expect(!BridgeCapabilityPolicy.supportsExactWindowHeldPointerLifecycle(for: previous))
+        #expect(!BridgeCapabilityPolicy.supportsExactWindowHeldPointerLifecycle(for: missingCapability))
+        #expect(!BridgeCapabilityPolicy.supportsExactWindowHeldPointerLifecycle(for: missingOperation))
+        #expect(!BridgeCapabilityPolicy.supportsExactWindowHeldPointerLifecycle(for: disabledOperation))
+        #expect(BridgeCapabilityPolicy.supportsExactWindowHeldPointerLifecycle(for: capable))
+    }
 }

@@ -519,8 +519,9 @@ enum CommanderCLIBinder {
             if !self.usesBackgroundClickDelivery(values) {
                 return true
             }
+            let isCoordinateClick = values.singleOption("at") != nil
             return values.flag("middle") || values.flag("triple") || values.flag("double") ||
-                values.singleOption("at") != nil
+                (values.flag("right") && isCoordinateClick)
         }
         return false
     }

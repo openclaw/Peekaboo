@@ -244,6 +244,7 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
     var targetedTypeRequiresEventSynthesizingPermission = false
     var supportsTargetedClicks = true
     var supportsProcessGenerationPinnedClicks = true
+    var supportsStatelessClickVariants = true
     var targetedClickUnavailableReason: String?
     var targetedClickRequiresEventSynthesizingPermission = false
     var clickError: (any Error)?

@@ -33,6 +33,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public let inspectAccessibilityTreeUnavailableReason: String?
     public let supportsExactWindowTargetedKeyboard: Bool
     public let exactWindowTargetedKeyboardUnavailableReason: String?
+    public let supportsExactWindowHeldPointerLifecycle: Bool
 
     public init(
         client: PeekabooBridgeClient,
@@ -54,7 +55,8 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         supportsInspectAccessibilityTree: Bool = false,
         inspectAccessibilityTreeUnavailableReason: String? = nil,
         supportsExactWindowTargetedKeyboard: Bool = false,
-        exactWindowTargetedKeyboardUnavailableReason: String? = nil)
+        exactWindowTargetedKeyboardUnavailableReason: String? = nil,
+        supportsExactWindowHeldPointerLifecycle: Bool = false)
     {
         self.client = client
         self.supportsTargetedHotkeys = supportsTargetedHotkeys
@@ -76,6 +78,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         self.inspectAccessibilityTreeUnavailableReason = inspectAccessibilityTreeUnavailableReason
         self.supportsExactWindowTargetedKeyboard = supportsExactWindowTargetedKeyboard
         self.exactWindowTargetedKeyboardUnavailableReason = exactWindowTargetedKeyboardUnavailableReason
+        self.supportsExactWindowHeldPointerLifecycle = supportsExactWindowHeldPointerLifecycle
     }
 
     public func detectElements(
@@ -628,10 +631,6 @@ ElementActionAutomationServiceProtocol {
 }
 
 extension RemoteUIAutomationService: ExactWindowHeldPointerLifecycleServiceProtocol {
-    public var supportsExactWindowHeldPointerLifecycle: Bool {
-        true
-    }
-
     public func createExactWindowHeldPointerOwner(
         boundTo _: ApplicationProcessIdentity?) async throws -> ExactWindowHeldPointerOwner
     {

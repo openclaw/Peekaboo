@@ -56,6 +56,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         inspectAccessibilityTreeUnavailableReason: String? = nil,
         supportsExactWindowTargetedKeyboard: Bool = false,
         exactWindowTargetedKeyboardUnavailableReason: String? = nil,
+        supportsExactWindowHeldPointerLifecycle: Bool = false,
         supportsPostEventPermissionRequest: Bool = false,
         supportsElementActions: Bool = false,
         supportsDesktopObservation: Bool = false,
@@ -118,7 +119,8 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 supportsInspectAccessibilityTree: supportsInspectAccessibilityTree,
                 inspectAccessibilityTreeUnavailableReason: inspectAccessibilityTreeUnavailableReason,
                 supportsExactWindowTargetedKeyboard: supportsExactWindowTargetedKeyboard,
-                exactWindowTargetedKeyboardUnavailableReason: exactWindowTargetedKeyboardUnavailableReason)
+                exactWindowTargetedKeyboardUnavailableReason: exactWindowTargetedKeyboardUnavailableReason,
+                supportsExactWindowHeldPointerLifecycle: supportsExactWindowHeldPointerLifecycle)
         } else {
             RemoteUIAutomationService(
                 client: client,
@@ -142,7 +144,8 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 supportsInspectAccessibilityTree: supportsInspectAccessibilityTree,
                 inspectAccessibilityTreeUnavailableReason: inspectAccessibilityTreeUnavailableReason,
                 supportsExactWindowTargetedKeyboard: supportsExactWindowTargetedKeyboard,
-                exactWindowTargetedKeyboardUnavailableReason: exactWindowTargetedKeyboardUnavailableReason)
+                exactWindowTargetedKeyboardUnavailableReason: exactWindowTargetedKeyboardUnavailableReason,
+                supportsExactWindowHeldPointerLifecycle: supportsExactWindowHeldPointerLifecycle)
         }
         self.windows = RemoteWindowManagementService(
             client: client,

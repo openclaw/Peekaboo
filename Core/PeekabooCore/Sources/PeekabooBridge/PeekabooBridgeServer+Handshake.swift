@@ -119,8 +119,26 @@ extension PeekabooBridgeServer {
             """)
 
         var advertisedCapabilities = self.hostCapabilities
-        if negotiated < PeekabooBridgeConstants.statelessClickVariantVersion {
+        if negotiated < PeekabooBridgeConstants.statelessClickVariantVersion ||
+            (self.services.automation as? any TargetedClickServiceProtocol)?.supportsStatelessClickVariants != true ||
+            !advertisedOps.contains(.targetedClick) ||
+            !advertisedOps.contains(.exactWindowTargetedClick)
+        {
             advertisedCapabilities.remove(PeekabooBridgeHostCapability.statelessClickVariants)
+        }
+        let heldPointerOperations: Set<PeekabooBridgeOperation> = [
+            .createExactWindowHeldPointerOwner,
+            .beginExactWindowHeldPointer,
+            .releaseExactWindowHeldPointer,
+            .revokeExactWindowHeldPointer,
+            .disconnectExactWindowHeldPointerOwner,
+        ]
+        if negotiated < PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion ||
+            (self.services.automation as? any ExactWindowHeldPointerLifecycleServiceProtocol)?
+            .supportsExactWindowHeldPointerLifecycle != true ||
+            !heldPointerOperations.isSubset(of: advertisedOps)
+        {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle)
         }
         if supportsAttestedOperationReceipts {
             advertisedCapabilities.insert(PeekabooBridgeHostCapability.attestedOperationReceipts)

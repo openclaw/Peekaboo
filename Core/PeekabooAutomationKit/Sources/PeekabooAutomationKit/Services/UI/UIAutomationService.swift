@@ -53,6 +53,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
     public let supportsProcessGenerationPinnedHotkeys = true
     public let supportsProcessGenerationPinnedTypeActions = true
     public let supportsProcessGenerationPinnedClicks = true
+    public let supportsStatelessClickVariants = true
     public let supportsExactWindowTargetedKeyboard = true
     public let supportsExactWindowFocusedElementFocus = true
     public let exactWindowTargetedKeyboardUnavailableReason: String? = nil

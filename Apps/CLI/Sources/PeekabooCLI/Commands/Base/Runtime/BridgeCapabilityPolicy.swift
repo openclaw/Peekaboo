@@ -665,6 +665,22 @@ enum BridgeCapabilityPolicy {
             self.supportsOperation(.exactWindowTargetedClick, for: handshake)
     }
 
+    static func supportsExactWindowHeldPointerLifecycle(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        let requiredOperations: Set<PeekabooBridgeOperation> = [
+            .createExactWindowHeldPointerOwner,
+            .beginExactWindowHeldPointer,
+            .releaseExactWindowHeldPointer,
+            .revokeExactWindowHeldPointer,
+            .disconnectExactWindowHeldPointerOwner,
+        ]
+        return handshake.negotiatedVersion >= PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle
+            ) == true &&
+            requiredOperations.isSubset(of: Set(handshake.supportedOperations)) &&
+            requiredOperations.isSubset(of: Set(handshake.enabledOperations ?? handshake.supportedOperations))
+    }
+
     static func supportsTargetedScroll(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         guard handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 11),
               handshake.supportedOperations.contains(.targetedScroll)

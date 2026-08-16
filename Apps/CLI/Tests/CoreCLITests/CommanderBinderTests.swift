@@ -708,7 +708,7 @@ struct CommanderBinderTests {
         let coordinate = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
-                options: ["coords": ["10,20"]],
+                options: ["at": ["10,20"]],
                 flags: []
             ),
             commandType: ClickCommand.self
@@ -716,7 +716,7 @@ struct CommanderBinderTests {
         let coordinateDouble = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
-                options: ["coords": ["10,20"]],
+                options: ["at": ["10,20"]],
                 flags: ["double"]
             ),
             commandType: ClickCommand.self
@@ -724,7 +724,7 @@ struct CommanderBinderTests {
         let coordinateRight = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
-                options: ["coords": ["10,20"]],
+                options: ["at": ["10,20"]],
                 flags: ["right"]
             ),
             commandType: ClickCommand.self
@@ -780,7 +780,7 @@ struct CommanderBinderTests {
         let foregroundCoordinate = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
-                options: ["coords": ["10,20"]],
+                options: ["at": ["10,20"]],
                 flags: ["foreground"]
             ),
             commandType: ClickCommand.self
@@ -796,7 +796,7 @@ struct CommanderBinderTests {
 
         #expect(!coordinate.requiresPostEventPermission)
         #expect(coordinateDouble.requiresPostEventPermission)
-        #expect(!coordinateRight.requiresPostEventPermission)
+        #expect(coordinateRight.requiresPostEventPermission)
         #expect(!unconsentedLongPress.requiresPostEventPermission)
         #expect(!unconsentedLongPress.requiresLongPressClick)
         #expect(unconsentedLongPress.requiresAccessibilityPermission)

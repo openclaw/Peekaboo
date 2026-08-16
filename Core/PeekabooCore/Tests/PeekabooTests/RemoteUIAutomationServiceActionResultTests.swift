@@ -11,6 +11,20 @@ import Testing
 @MainActor
 struct RemoteUIAutomationServiceActionResultTests {
     @Test
+    func `remote held pointer capability defaults closed and accepts negotiated support`() {
+        let client = PeekabooBridgeClient(
+            socketPath: "/tmp/peekaboo-unused-held-capability-\(UUID().uuidString).sock",
+            requestTimeoutSec: 1)
+        let unsupported = RemoteUIAutomationService(client: client)
+        let supported = RemoteUIAutomationService(
+            client: client,
+            supportsExactWindowHeldPointerLifecycle: true)
+
+        #expect(!unsupported.supportsExactWindowHeldPointerLifecycle)
+        #expect(supported.supportsExactWindowHeldPointerLifecycle)
+    }
+
+    @Test
     func `remote global pointer automation preserves canonical results and signed global receipts`() async throws {
         let fixture = try await Self.makeFixture()
         defer { Task { await fixture.host.stop() } }

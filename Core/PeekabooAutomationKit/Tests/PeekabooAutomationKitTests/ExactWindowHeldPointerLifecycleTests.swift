@@ -47,6 +47,7 @@ struct ExactWindowHeldPointerLifecycleTests {
             let started = try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
             receipts.append(started.payload)
             _ = try await fixture.lifecycle.release(owner: owner, receipt: started.payload)
+            fixture.state.now = fixture.state.now.addingTimeInterval(1)
         }
 
         #expect(fixture.lifecycle.retainedHoldCountForTesting == 2)
@@ -227,6 +228,48 @@ struct ExactWindowHeldPointerLifecycleTests {
     }
 
     @Test
+    func `owner disconnect queued behind lane resolves zero dispatch terminal`() async throws {
+        let fixture = self.makeFixture()
+        let blockerEntered = MainActorFlag()
+        let unblock = MainActorGate()
+        let blocker = Task { @MainActor in
+            try await fixture.coordinator.run(scope: .window(fixture.identity), access: .write) {
+                blockerEntered.set()
+                await unblock.wait()
+            }
+        }
+        while !blockerEntered.value {
+            await Task.yield()
+        }
+
+        let owner = try fixture.lifecycle.createOwner(boundTo: nil)
+        let begin = Task { @MainActor in
+            try await fixture.lifecycle.begin(owner: owner, request: fixture.request)
+        }
+        while fixture.lifecycle.retainedHoldCountForTesting == 0 {
+            await Task.yield()
+        }
+        let disconnect = Task { @MainActor in
+            try await fixture.lifecycle.disconnect(owner: owner)
+        }
+        await Task.yield()
+        unblock.open()
+        try await blocker.value
+
+        await #expect(throws: ExactWindowHeldPointerLifecycleError.self) {
+            _ = try await begin.value
+        }
+        let terminal = try #require(try await disconnect.value)
+        #expect(terminal.reason == .ownerDisconnected)
+        #expect(terminal.cleanupOutcome == .confirmedNoChange())
+        #expect(terminal.lifecycleDispatchedUnitCount == 0)
+        #expect(fixture.state.postedTypes.isEmpty)
+        #expect(fixture.lifecycle.registeredOwnerCountForTesting == 0)
+        #expect(fixture.lifecycle.retainedHoldCountForTesting == 1)
+        #expect(try await fixture.lifecycle.release(owner: owner, receipt: terminal.receipt) == terminal)
+    }
+
+    @Test
     func `cancelled begin queued behind lane emits nothing`() async throws {
         let fixture = self.makeFixture()
         let blockerEntered = MainActorFlag()
@@ -253,6 +296,10 @@ struct ExactWindowHeldPointerLifecycleTests {
             _ = try await begin.value
         }
         #expect(fixture.state.postedTypes.isEmpty)
+        #expect(fixture.lifecycle.retainedHoldCountForTesting == 1)
+        fixture.state.now = fixture.state.now.addingTimeInterval(61)
+        _ = try fixture.lifecycle.createOwner(boundTo: nil)
+        #expect(fixture.lifecycle.retainedHoldCountForTesting == 0)
     }
 
     @Test

@@ -2224,6 +2224,7 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
     let supportsProcessGenerationPinnedHotkeys = true
     let supportsProcessGenerationPinnedTypeActions = true
     let supportsProcessGenerationPinnedClicks = true
+    let supportsStatelessClickVariants = true
     let supportsExactWindowTargetedKeyboard = true
     let exactWindowTargetedKeyboardUnavailableReason: String? = nil
     struct Click { let target: ClickTarget; let type: ClickType }

@@ -848,7 +848,14 @@ public actor PeekabooBridgeClient {
             handshake.negotiatedVersion >= PeekabooBridgeConstants.statelessClickVariantVersion &&
                 handshake.hostCapabilities?.contains(
                     PeekabooBridgeHostCapability.statelessClickVariants) == true &&
-                handshake.supportedOperations.contains(.targetedClick),
+                Set([
+                    PeekabooBridgeOperation.targetedClick,
+                    .exactWindowTargetedClick,
+                ]).isSubset(of: Set(handshake.supportedOperations)) &&
+                Set([
+                    PeekabooBridgeOperation.targetedClick,
+                    .exactWindowTargetedClick,
+                ]).isSubset(of: Set(handshake.enabledOperations ?? handshake.supportedOperations)),
             listenerAttestation: listenerAttestation,
             listenerLiveIdentity: listenerLiveIdentity,
             sessionAttestation: sessionAttestation,

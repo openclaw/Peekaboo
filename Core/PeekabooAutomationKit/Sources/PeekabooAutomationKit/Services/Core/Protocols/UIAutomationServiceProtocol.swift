@@ -653,7 +653,7 @@ extension TargetedClickServiceProtocol {
     }
 
     public var supportsStatelessClickVariants: Bool {
-        true
+        false
     }
 
     public var targetedClickUnavailableReason: String? {

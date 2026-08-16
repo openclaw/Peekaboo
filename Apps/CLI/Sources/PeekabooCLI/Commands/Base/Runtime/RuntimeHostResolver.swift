@@ -830,6 +830,8 @@ enum RuntimeHostResolver {
             exactWindowTargetedKeyboardUnavailableReason: supportsExactKeyboard
                 ? nil
                 : "Bridge host lacks atomic exact-window keyboard delivery",
+            supportsExactWindowHeldPointerLifecycle:
+            BridgeCapabilityPolicy.supportsExactWindowHeldPointerLifecycle(for: handshake),
             supportsPostEventPermissionRequest: BridgeCapabilityPolicy.supportsPostEventPermissionRequest(
                 for: handshake
             ),

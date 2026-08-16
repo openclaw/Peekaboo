@@ -466,7 +466,18 @@ final class ExactWindowHeldPointerLifecycle {
             }
         } catch {
             let failure = self.startFailure(error)
-            if !hold.start.resolve(.failed(failure)) {
+            if hold.start.resolve(.failed(failure)) {
+                completedReason = hold.terminalSignal.resolvedValue ?? self.preDispatchTerminalReason(hold: hold)
+                if let completedReason {
+                    completedTerminal = .terminated(ExactWindowHeldPointerTermination(
+                        receipt: hold.receipt,
+                        reason: completedReason,
+                        cleanupOutcome: .confirmedNoChange(),
+                        lifecycleDispatchedUnitCount: 0))
+                } else {
+                    completedTerminal = .failed(self.preDispatchTerminalFailure(failure))
+                }
+            } else {
                 completedTerminal = .failed(self.terminalFailure(
                     error,
                     downUnitCount: self.holds[token]?.downUnitCount ?? 0))
@@ -645,6 +656,38 @@ final class ExactWindowHeldPointerLifecycle {
         return self.missingCleanupFailure(
             downUnitCount: downUnitCount,
             reason: error.localizedDescription)
+    }
+
+    private func preDispatchTerminalReason(hold: HoldState) -> ExactWindowHeldPointerTerminalReason? {
+        if !self.ownerBindingIsCurrent(hold.owner) {
+            return .ownerDisconnected
+        }
+        if self.now() >= hold.receipt.expiresAt {
+            return .expired
+        }
+        return nil
+    }
+
+    private func preDispatchTerminalFailure(_ failure: HeldPointerFailure) -> DesktopActionFailure {
+        switch failure {
+        case let .action(failure):
+            return failure
+        case let .lifecycle(error):
+            let reason: DesktopActionOutcome.RefusalReason = switch error {
+            case .cancelledBeforeDispatch:
+                .requestCancelled
+            case .invalidExpiry, .ownerMismatch, .receiptMismatch:
+                .invalidRequest
+            case .ownerUnknown, .ownerAlreadyHolding, .receiptUnknown, .ownerCapacityExceeded,
+                 .ownerDisconnectedBeforeDispatch, .operationFailed:
+                .targetUnavailable
+            }
+            return .preDispatchRefusal(
+                reason: reason,
+                message: "Held pointer did not start.",
+                hint: "Refresh the exact target and owner state before retrying.",
+                causeDescription: error.localizedDescription)
+        }
     }
 
     private func missingCleanupFailure(downUnitCount: Int, reason: String) -> DesktopActionFailure {
