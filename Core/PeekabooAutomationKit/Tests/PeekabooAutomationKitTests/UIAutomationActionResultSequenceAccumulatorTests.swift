@@ -177,6 +177,7 @@ struct UIAutomationActionResultSequenceAccumulatorTests {
         let target = AutomationTestFixtures.linkedDesktopTarget(
             windowID: 71,
             bounds: Self.windowBounds).windowTargetIdentity
+        let evidence = try self.leaf(index: 0, target: target.actionTargetReceipt)
         let pointerDelivery = DesktopActionOutcome.Delivery(
             mechanism: .globalEvents,
             mode: .foreground)
@@ -185,7 +186,8 @@ struct UIAutomationActionResultSequenceAccumulatorTests {
             UIAutomationActionResult(
                 payload: (),
                 outcome: .confirmedChange(delivery: self.backgroundDelivery, unitCount: .one),
-                targetIdentity: target),
+                targetIdentity: target,
+                selectedLeafEvidence: [evidence]),
             attribution: .mutationTarget)
         sequence.record(
             UIAutomationActionResult(
@@ -199,6 +201,7 @@ struct UIAutomationActionResultSequenceAccumulatorTests {
             requiresOutcome: true,
             requiresCompatibleTarget: true)
         #expect(result.targetIdentity == nil)
+        #expect(result.selectedLeafEvidence == nil)
         #expect(result.outcome?.delivery?.mechanism == .composite)
 
         var invalid = UIAutomationActionResultSequenceAccumulator()
@@ -279,6 +282,65 @@ struct UIAutomationActionResultSequenceAccumulatorTests {
 
         #expect(failure.targetReceipt == target.windowTargetReceipt)
         #expect(failure.selectedLeafEvidence == nil)
+    }
+
+    @Test
+    func `zero-prefix failure normalizes selected leaves against its terminal target`() throws {
+        let target = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001),
+            windowID: 71,
+            bounds: Self.windowBounds)
+        let sibling = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: target.processIdentity,
+            windowID: 72,
+            bounds: Self.windowBounds)
+        let invalidEvidence = try self.leaf(index: 0, target: sibling.windowTargetReceipt)
+        let terminalFailure = DesktopActionFailure.indeterminate(
+            delivery: self.backgroundDelivery,
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: "Standalone terminal failure")
+            .attributed(to: target.windowTargetReceipt)
+            .selectingLeaves([invalidEvidence])
+        let sequence = UIAutomationActionResultSequenceAccumulator()
+
+        let failure = sequence.failure(
+            combining: terminalFailure,
+            operation: "Invalid standalone terminal evidence")
+
+        #expect(failure.outcome == terminalFailure.outcome)
+        #expect(failure.message == terminalFailure.message)
+        #expect(failure.targetReceipt == target.windowTargetReceipt)
+        #expect(failure.selectedLeafEvidence == nil)
+    }
+
+    @Test
+    func `target-conflicted aggregate drops selected leaves when compatibility is optional`() throws {
+        let first = AutomationTestFixtures.linkedDesktopTarget(
+            windowID: 71,
+            bounds: Self.windowBounds)
+        let second = AutomationTestFixtures.linkedDesktopTarget(
+            windowID: 72,
+            bounds: Self.windowBounds)
+        let evidence = try self.leaf(index: 0, target: first.windowTargetReceipt)
+        var sequence = UIAutomationActionResultSequenceAccumulator()
+        sequence.record(
+            outcome: .confirmedChange(delivery: self.backgroundDelivery, unitCount: .one),
+            targetReceipt: first.windowTargetReceipt,
+            selectedLeafEvidence: [evidence],
+            attribution: .operationTarget)
+        sequence.record(
+            outcome: .confirmedNoChange(),
+            targetReceipt: second.windowTargetReceipt,
+            attribution: .operationTarget)
+
+        let result = try sequence.result(
+            payload: (),
+            operation: "Optional target compatibility",
+            requiresOutcome: true)
+
+        #expect(result.targetIdentity == nil)
+        #expect(result.selectedLeafEvidence == nil)
     }
 
     @Test

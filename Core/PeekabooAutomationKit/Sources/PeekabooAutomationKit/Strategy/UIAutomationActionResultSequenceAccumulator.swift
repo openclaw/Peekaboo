@@ -149,7 +149,6 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
     private var operationTargets = TargetAccumulator()
     private var mutationTargets = TargetAccumulator()
     private var selectedLeaves: [DesktopSelectedLeafEvidence] = []
-    private var recordedPhaseCount = 0
     private var forcesTargetlessResult = false
     private var targetlessPhaseReturnedTarget = false
     private var missingRequiredTarget = false
@@ -180,7 +179,6 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
         attribution: PhaseAttributionRule,
         defaultDispatchedUnitCount: DesktopActionOutcome.DispatchUnitCount? = nil)
     {
-        self.recordedPhaseCount += 1
         if let outcome {
             if let defaultDispatchedUnitCount {
                 self.sequence.record(.reportedOutcome(
@@ -255,13 +253,26 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
         let sequenceResolution = self.sequence.successResolution()
         let targetConflict = self.targetlessPhaseReturnedTarget ||
             self.operationTargets.hasIncompatibleContributions
+        let targetReceipt = self.forcesTargetlessResult ? nil : self.operationTargets.receipt
+        let selectedLeafEvidence: [DesktopSelectedLeafEvidence]? = if let targetReceipt,
+                                                                      !self.selectedLeaves.isEmpty,
+                                                                      self.selectedLeaves.allSatisfy({ leaf in
+                                                                          TargetAccumulator.contains(
+                                                                              leaf.selectedTargetReceipt,
+                                                                              within: targetReceipt)
+                                                                      })
+        {
+            self.selectedLeaves
+        } else {
+            nil
+        }
         return Resolution(
             outcome: sequenceResolution.outcome,
             mutationDisposition: sequenceResolution.mutationDisposition,
             targetIdentity: self.forcesTargetlessResult ? nil : self.operationTargets.identity,
-            targetReceipt: self.forcesTargetlessResult ? nil : self.operationTargets.receipt,
+            targetReceipt: targetReceipt,
             mutationTargetReceipt: self.forcesTargetlessResult ? nil : self.mutationTargets.receipt,
-            selectedLeafEvidence: self.selectedLeaves.isEmpty ? nil : self.selectedLeaves,
+            selectedLeafEvidence: selectedLeafEvidence,
             hasTargetConflict: targetConflict,
             hasProhibitedTarget: self.targetlessPhaseReturnedTarget,
             hasMissingRequiredTarget: self.missingRequiredTarget,
@@ -352,7 +363,6 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
         hint: String? = nil,
         causeDescription: String? = nil) -> DesktopActionFailure
     {
-        guard self.recordedPhaseCount > 0 else { return leafFailure }
         let composed = self.sequence.failure(
             combining: leafFailure,
             message: message ?? leafFailure.message,
@@ -442,24 +452,6 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
             else { return nil }
         }
         return evidence
-    }
-
-    private func assigning(
-        _ targetReceipt: DesktopActionTargetReceipt?,
-        to failure: DesktopActionFailure) -> DesktopActionFailure
-    {
-        if let targetReceipt {
-            return failure.attributed(to: targetReceipt)
-        }
-        guard failure.targetReceipt != nil,
-              let unattributed = DesktopActionFailure(
-                  outcome: failure.outcome,
-                  message: failure.message,
-                  hint: failure.hint,
-                  causeDescription: failure.causeDescription,
-                  selectedLeafEvidence: failure.selectedLeafEvidence)
-        else { return failure }
-        return unattributed
     }
 
     private func compositionFailure(
