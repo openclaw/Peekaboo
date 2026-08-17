@@ -261,7 +261,15 @@ public final class WindowIdentityService {
     }
 
     public func isWindowOnScreen(windowID: CGWindowID) -> Bool {
-        self.windowExists(windowID: windowID)
+        // Existence and visibility are different questions: `windowExists` also resolves minimized and
+        // off-Space windows through the full catalog, so on-screen state needs the on-screen list.
+        guard let windowList = CGWindowListCopyWindowInfo(
+            [.optionIncludingWindow],
+            windowID) as? [[String: Any]]
+        else {
+            return false
+        }
+        return Self.exactWindowDictionary(windowID: windowID, in: windowList) != nil
     }
 
     public func isTopmostRenderableWindow(windowID: CGWindowID) -> Bool {
@@ -303,10 +311,26 @@ public final class WindowIdentityService {
     }
 
     private func exactWindowServerInfo(windowID: CGWindowID) -> WindowIdentityInfo? {
-        guard let windowList = CGWindowListCopyWindowInfo(
-            [.optionIncludingWindow, .excludeDesktopElements],
-            windowID) as? [[String: Any]],
-            let window = Self.exactWindowDictionary(windowID: windowID, in: windowList),
+        Self.exactWindowServerInfo(
+            windowID: windowID,
+            windowListProvider: { options, relativeToWindow in
+                CGWindowListCopyWindowInfo(options, relativeToWindow) as? [[String: Any]]
+            })
+    }
+
+    /// Resolve one exact window through the shared catalog lookup.
+    ///
+    /// `optionIncludingWindow` alone omits minimized and off-Space windows, so resolving only through
+    /// it reported live windows as gone while window listing — which scans `optionAll` — still returned
+    /// them. `exactWindowCatalog` owns that fallback; a window absent from both lists stays unresolved.
+    static func exactWindowServerInfo(
+        windowID: CGWindowID,
+        windowListProvider: (CGWindowListOption, CGWindowID) -> [[String: Any]]?) -> WindowIdentityInfo?
+    {
+        guard let windowList = SystemIdentityResolver.exactWindowCatalog(
+            windowID,
+            windowListProvider: windowListProvider),
+            let window = exactWindowDictionary(windowID: windowID, in: windowList),
             let ownerPID = Self.ownerPID(from: window)
         else {
             return nil
