@@ -31,7 +31,7 @@ struct WindowCGInfoLookup {
         // Exact ID refreshes happen after mutations and snapshot focus; keep them on the CG fast path
         // instead of walking every app's AX window list.
         guard let cgWindowID = CGWindowID(exactly: windowID),
-              let windowList = SystemIdentityResolver.exactWindowCatalog(
+              case let .found(window) = SystemIdentityResolver.exactWindowCatalogObservation(
                   cgWindowID,
                   windowListProvider: self.windowListProvider)
         else {
@@ -40,7 +40,7 @@ struct WindowCGInfoLookup {
 
         return Self.serviceWindowInfo(
             windowID: windowID,
-            windowList: windowList,
+            windowList: [window],
             isMainWindowProvider: self.isMainWindowProvider,
             processStartIdentityProvider: self.processStartIdentityProvider,
             currentWindowIdentityProvider: self.currentWindowIdentityProvider)

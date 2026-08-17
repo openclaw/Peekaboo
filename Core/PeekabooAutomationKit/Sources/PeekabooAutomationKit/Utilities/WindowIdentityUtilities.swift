@@ -322,15 +322,15 @@ public final class WindowIdentityService {
     ///
     /// `optionIncludingWindow` alone omits minimized and off-Space windows, so resolving only through
     /// it reported live windows as gone while window listing — which scans `optionAll` — still returned
-    /// them. `exactWindowCatalog` owns that fallback; a window absent from both lists stays unresolved.
+    /// them. The shared exact-window observation owns that fallback; a window absent from both lists
+    /// stays unresolved.
     static func exactWindowServerInfo(
         windowID: CGWindowID,
         windowListProvider: (CGWindowListOption, CGWindowID) -> [[String: Any]]?) -> WindowIdentityInfo?
     {
-        guard let windowList = SystemIdentityResolver.exactWindowCatalog(
+        guard case let .found(window) = SystemIdentityResolver.exactWindowCatalogObservation(
             windowID,
             windowListProvider: windowListProvider),
-            let window = exactWindowDictionary(windowID: windowID, in: windowList),
             let ownerPID = Self.ownerPID(from: window)
         else {
             return nil

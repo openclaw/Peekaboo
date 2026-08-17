@@ -199,17 +199,76 @@ struct DialogPreparedActionStoreTests {
     }
 
     @Test
-    func `window server absence is distinct from unreadable evidence`() throws {
+    func `window server presence falls back to the full catalog`() throws {
         let identity = try self.receipt().target.identity
-        #expect(DialogService.windowServerPresence(identity, windows: nil) == .unreadable)
-        #expect(DialogService.windowServerPresence(identity, windows: []) == .absent)
-        #expect(DialogService.windowServerPresence(identity, windows: [[
-            kCGWindowNumber as String: NSNumber(value: identity.windowID),
-        ]]) == .unreadable)
-        #expect(DialogService.windowServerPresence(identity, windows: [[
-            kCGWindowNumber as String: NSNumber(value: identity.windowID),
-            kCGWindowOwnerPID as String: NSNumber(value: identity.ownerProcessIdentifier),
-        ]]) == .present)
+        var queries: [(CGWindowListOption, CGWindowID)] = []
+        let presence = DialogService.windowServerPresence(identity, windowListProvider: {
+            options,
+            relativeToWindow in
+            queries.append((options, relativeToWindow))
+            if options.contains(.optionIncludingWindow) {
+                return []
+            }
+            return [Self.windowDictionary(identity: identity)]
+        })
+
+        #expect(presence == .present)
+        #expect(queries.count == 2)
+        #expect(queries[0].0 == [.optionIncludingWindow])
+        #expect(queries[0].1 == CGWindowID(identity.windowID))
+        #expect(queries[1].0 == [.optionAll, .excludeDesktopElements])
+        #expect(queries[1].1 == kCGNullWindowID)
+    }
+
+    @Test
+    func `window server absence requires successful misses from both catalogs`() throws {
+        let identity = try self.receipt().target.identity
+        var queryCount = 0
+        let presence = DialogService.windowServerPresence(identity, windowListProvider: { _, _ in
+            queryCount += 1
+            return []
+        })
+
+        #expect(presence == .absent)
+        #expect(queryCount == 2)
+    }
+
+    @Test
+    func `window server failed full catalog fallback remains unreadable`() throws {
+        let identity = try self.receipt().target.identity
+        var queryCount = 0
+        let presence = DialogService.windowServerPresence(identity, windowListProvider: { options, _ in
+            queryCount += 1
+            return options.contains(.optionIncludingWindow) ? [] : nil
+        })
+
+        #expect(presence == .unreadable)
+        #expect(queryCount == 2)
+    }
+
+    @Test
+    func `window server exact ID with the wrong owner is absent`() throws {
+        let identity = try self.receipt().target.identity
+        let presence = DialogService.windowServerPresence(identity, windowListProvider: { options, _ in
+            if options.contains(.optionIncludingWindow) {
+                return []
+            }
+            return [Self.windowDictionary(
+                identity: identity,
+                ownerProcessIdentifier: identity.ownerProcessIdentifier + 1)]
+        })
+
+        #expect(presence == .absent)
+    }
+
+    @Test
+    func `window server exact row without owner evidence is unreadable`() throws {
+        let identity = try self.receipt().target.identity
+        let presence = DialogService.windowServerPresence(identity, windowListProvider: { _, _ in
+            [[kCGWindowNumber as String: NSNumber(value: identity.windowID)]]
+        })
+
+        #expect(presence == .unreadable)
     }
 
     @Test
@@ -271,6 +330,17 @@ struct DialogPreparedActionStoreTests {
             token: UUID(),
             kind: .clickButton,
             target: UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds))
+    }
+
+    private static func windowDictionary(
+        identity: WindowMutationIdentity,
+        ownerProcessIdentifier: pid_t? = nil) -> [String: Any]
+    {
+        [
+            kCGWindowNumber as String: NSNumber(value: identity.windowID),
+            kCGWindowOwnerPID as String: NSNumber(
+                value: ownerProcessIdentifier ?? identity.ownerProcessIdentifier),
+        ]
     }
 
     private func entry(

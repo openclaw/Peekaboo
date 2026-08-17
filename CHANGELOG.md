@@ -11,6 +11,7 @@
 - Add a live-physical multi-target finalizer that binds exact protocol-1.30 background controllers, a source-owned epoch monitor, attributed foreground activity, restoration, crash evidence, and protocol-1.29 signed receipt validation into one fail-closed run.
 
 ### Fixed
+- Keep exact background pointer routing and dialog postcondition checks correct for minimized and off-Space windows, while treating failed WindowServer catalog reads as unreadable instead of confirmed absence.
 - Bound held-pointer owner and terminal-replay retention in long-lived hosts, make idle-owner disconnect a signed no-change close, and prevent cancelled begins from returning an already-terminated hold receipt.
 - Release cancelled exact-window held hotkeys only to their original process generation, include cleanup events in typed unit counts, and never retarget cleanup to a recycled PID.
 - Make application and window inventories report omitted or identity-incomplete rows as partial, while keeping complete AX-only window listings usable without Screen Recording.

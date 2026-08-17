@@ -799,21 +799,29 @@ extension DialogService {
     }
 
     static func windowServerPresence(_ identity: WindowMutationIdentity) -> DialogPresence {
-        let windows = CGWindowListCopyWindowInfo(
-            [.optionIncludingWindow, .excludeDesktopElements],
-            CGWindowID(identity.windowID)) as? [[String: Any]]
-        return self.windowServerPresence(identity, windows: windows)
+        self.windowServerPresence(
+            identity,
+            windowListProvider: { options, relativeToWindow in
+                CGWindowListCopyWindowInfo(options, relativeToWindow) as? [[String: Any]]
+            })
     }
 
     static func windowServerPresence(
         _ identity: WindowMutationIdentity,
-        windows: [[String: Any]]?) -> DialogPresence
+        windowListProvider: (CGWindowListOption, CGWindowID) -> [[String: Any]]?) -> DialogPresence
     {
-        guard let windows else { return .unreadable }
-        guard let window = windows.first(where: {
-            ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == identity.windowID
-        }) else { return .absent }
-        guard let ownerPID = window[kCGWindowOwnerPID as String] as? NSNumber else { return .unreadable }
-        return ownerPID.int32Value == identity.ownerProcessIdentifier ? .present : .absent
+        guard let windowID = CGWindowID(exactly: identity.windowID) else { return .unreadable }
+        switch SystemIdentityResolver.exactWindowCatalogObservation(
+            windowID,
+            windowListProvider: windowListProvider)
+        {
+        case let .found(window):
+            guard let ownerPID = window[kCGWindowOwnerPID as String] as? NSNumber else { return .unreadable }
+            return ownerPID.int32Value == identity.ownerProcessIdentifier ? .present : .absent
+        case .absent:
+            return .absent
+        case .unreadable:
+            return .unreadable
+        }
     }
 }

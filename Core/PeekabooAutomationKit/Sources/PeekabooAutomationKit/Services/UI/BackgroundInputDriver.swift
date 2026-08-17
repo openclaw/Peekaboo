@@ -793,20 +793,19 @@ enum BackgroundInputDriver {
             CGWindowListCopyWindowInfo(options, relativeToWindow) as? [[String: Any]]
         }) -> [MouseWindowRouteCandidate]
     {
-        let options: CGWindowListOption
-        let relativeToWindow: CGWindowID
+        let windows: [[String: Any]]
         if let exactWindowID {
-            // On-screen enumeration omits live windows on other Spaces; exact routes must query by ID.
-            options = [.optionIncludingWindow, .excludeDesktopElements]
-            relativeToWindow = exactWindowID
+            guard case let .found(window) = SystemIdentityResolver.exactWindowCatalogObservation(
+                exactWindowID,
+                windowListProvider: copyWindowInfo)
+            else { return [] }
+            windows = [window]
         } else {
-            options = [.optionOnScreenOnly, .excludeDesktopElements]
-            relativeToWindow = kCGNullWindowID
-        }
-
-        guard let windows = copyWindowInfo(options, relativeToWindow)
-        else {
-            return []
+            guard let onScreenWindows = copyWindowInfo(
+                [.optionOnScreenOnly, .excludeDesktopElements],
+                kCGNullWindowID)
+            else { return [] }
+            windows = onScreenWindows
         }
 
         return windows.compactMap { window in
