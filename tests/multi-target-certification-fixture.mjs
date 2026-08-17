@@ -33,16 +33,152 @@ function wireProcess(value) {
   };
 }
 
+function wireBounds(value) {
+  return [
+    [value.bounds.x, value.bounds.y],
+    [value.bounds.width, value.bounds.height],
+  ];
+}
+
+const rawUInt64Prefix = '__peekaboo_raw_uint64_';
+const rawUInt64Suffix = '__';
+
+function wireUInt64(value, { quoted = false } = {}) {
+  if (typeof value === 'number' && !Number.isSafeInteger(value)) {
+    throw new TypeError('UInt64 fixture values above 2^53 must be provided as decimal strings');
+  }
+  const decimal = String(value);
+  const parsed = BigInt(decimal);
+  if (parsed < 0n || parsed > 18_446_744_073_709_551_615n || parsed.toString() !== decimal) {
+    throw new TypeError('UInt64 fixture value is not one normalized decimal');
+  }
+  if (quoted) return decimal;
+  return parsed <= BigInt(Number.MAX_SAFE_INTEGER)
+    ? Number(parsed)
+    : `${rawUInt64Prefix}${decimal}${rawUInt64Suffix}`;
+}
+
+function canonicalWireBytes(value) {
+  const json = canonicalBytes(value).toString('utf8').replaceAll(
+    new RegExp(`"${rawUInt64Prefix}(\\d+)${rawUInt64Suffix}"`, 'g'),
+    '$1',
+  );
+  return Buffer.from(json, 'utf8');
+}
+
+function wireWindowIdentity(value, overrides = {}) {
+  const minimized = Object.hasOwn(overrides, 'isMinimized')
+    ? overrides.isMinimized
+    : value.is_minimized;
+  return {
+    windowID: overrides.windowID ?? value.window_id,
+    ownerProcessIdentifier: overrides.ownerProcessIdentifier ?? value.pid,
+    ownerProcessStartIdentity: wireUInt64(
+      overrides.ownerProcessStartIdentity ?? value.start_identity,
+      { quoted: overrides.quoteOwnerProcessStartIdentity === true },
+    ),
+    capturedBounds: overrides.capturedBounds ?? wireBounds(value),
+    ...(minimized === null ? {} : { isMinimized: minimized }),
+  };
+}
+
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+function graphemeCount(value) {
+  return Array.from(graphemeSegmenter.segment(value)).length;
+}
+
+function observationPath(template) {
+  return `/private/tmp/peekaboo-certification-fixture/observations/${template.slot_id}.png`;
+}
+
+function wireObservationResponse(template, target, options) {
+  const filePath = observationPath(template);
+  const windowID = options.desktopObservationResponseWindowIDOverride ?? target.window_id;
+  const bounds = wireBounds(target);
+  const captureDigest = sha256(Buffer.from(`fixture-observation:${template.slot_id}`, 'utf8'));
+  const rawDigest = options.desktopObservationDigestDrift === true
+    ? 'f'.repeat(64)
+    : captureDigest;
+  const responseStartIdentity = options.desktopObservationResponseStartIdentityOverride
+    ?? target.start_identity;
+  const mutationIdentity = wireWindowIdentity(target, {
+    windowID,
+    ownerProcessStartIdentity: responseStartIdentity,
+    quoteOwnerProcessStartIdentity:
+      options.desktopObservationResponseStartIdentityAsString === true,
+  });
+  const metadataBounds = options.desktopObservationMetadataBoundsOverride ?? bounds;
+  const metadataSize = options.desktopObservationMetadataSizeOverride
+    ?? [
+      Math.max(Math.trunc(target.bounds.width), 1),
+      Math.max(Math.trunc(target.bounds.height), 1),
+    ];
+  const metadataMinimized = options.desktopObservationMetadataMinimizedOverride
+    ?? target.is_minimized
+    ?? false;
+  return {
+    desktopObservation: {
+      _0: {
+        target: {
+          kind: { windowID: { _0: windowID } },
+          app: {
+            processIdentifier: target.pid,
+            processStartIdentity: wireUInt64(responseStartIdentity, {
+              quoted: options.desktopObservationResponseStartIdentityAsString === true,
+            }),
+            name: `Fixture Target ${target.pid}`,
+          },
+          window: {
+            windowID,
+            title: `Fixture Window ${windowID}`,
+            bounds,
+            index: 0,
+          },
+          bounds,
+        },
+        capture: {
+          imageData: '',
+          metadata: {
+            size: metadataSize,
+            mode: 'window',
+            windowInfo: {
+              window_id: windowID,
+              title: `Fixture Window ${windowID}`,
+              bounds: metadataBounds,
+              isMinimized: metadataMinimized,
+              isMainWindow: true,
+              windowLevel: 0,
+              alpha: 1,
+              index: 0,
+              isOffScreen: false,
+              layer: 0,
+              isOnScreen: true,
+              isExcludedFromWindowsMenu: false,
+              mutationIdentity,
+            },
+            timestamp: '2030-03-17T00:00:00Z',
+          },
+        },
+        files: { rawScreenshotPath: filePath },
+        timings: { spans: [] },
+        diagnostics: { warnings: [] },
+        captureContentDigest: {
+          captureImageSHA256: captureDigest,
+          rawScreenshotSHA256: rawDigest,
+        },
+      },
+    },
+  };
+}
+
 function wireTarget(value) {
   return {
     kind: 'window',
     processIdentifier: value.pid,
     processStartIdentity: value.start_identity,
     windowID: value.window_id,
-    capturedBounds: [
-      [value.bounds.x, value.bounds.y],
-      [value.bounds.width, value.bounds.height],
-    ],
+    capturedBounds: wireBounds(value),
     ...(value.is_minimized === null ? {} : { isMinimized: value.is_minimized }),
   };
 }
@@ -87,10 +223,32 @@ function makeRequestAndResponse(
   outcome,
   requestBindingValue,
   target,
-  protocolClickType = 'triple',
-  protocolClickPoint = null,
+  options,
 ) {
   if (template.operation === 'exactWindowTargetedTypeActions') {
+    const text = options.typeTextOverride ?? `fixture-${index}`;
+    const resultCount = graphemeCount(text) + (options.typeResultCountDelta ?? 0);
+    const expectedBounds = options.exactWindowTypeBoundsOverride ?? wireBounds(target);
+    const identityOverrides = {
+      ...(options.exactWindowTypeWindowIDOverride === undefined ? {} : {
+        windowID: options.exactWindowTypeWindowIDOverride,
+      }),
+      ...(options.exactWindowTypePIDOverride === undefined ? {} : {
+        ownerProcessIdentifier: options.exactWindowTypePIDOverride,
+      }),
+      ...(options.exactWindowTypeStartIdentityOverride === undefined ? {} : {
+        ownerProcessStartIdentity: options.exactWindowTypeStartIdentityOverride,
+      }),
+      ...(options.exactWindowTypeStartIdentityAsString !== true ? {} : {
+        quoteOwnerProcessStartIdentity: true,
+      }),
+      ...(options.exactWindowTypeBoundsOverride === undefined ? {} : {
+        capturedBounds: options.exactWindowTypeBoundsOverride,
+      }),
+      ...(options.exactWindowTypeMinimizedOverride === undefined ? {} : {
+        isMinimized: options.exactWindowTypeMinimizedOverride,
+      }),
+    };
     return {
       request: {
         projectedAction: {
@@ -98,9 +256,11 @@ function makeRequestAndResponse(
             request: {
               exactWindowTargetedTypeActions: {
                 _0: {
-                  actions: [{ kind: 'text', text: `fixture-${index}` }],
+                  actions: [{ kind: 'text', text }],
                   cadence: { kind: 'fixed', milliseconds: 0 },
                   snapshotId: requestBindingValue,
+                  expectedWindowIdentity: wireWindowIdentity(target, identityOverrides),
+                  expectedWindowBounds: expectedBounds,
                 },
               },
             },
@@ -113,7 +273,7 @@ function makeRequestAndResponse(
             outcome: wireOutcome(outcome),
             response: {
               typeResult: {
-                _0: { totalCharacters: 9 + index, keyPresses: 9 + index },
+                _0: { totalCharacters: resultCount, keyPresses: resultCount },
               },
             },
           },
@@ -133,32 +293,36 @@ function makeRequestAndResponse(
             request: {
               targetedClick: {
                 _0: {
-                  target: { coordinates: { _0: [protocolClickPoint ?? [
+                  target: { coordinates: { _0: [options.protocolClickPoint ?? [
                     target.bounds.x + target.bounds.width / 2,
                     target.bounds.y + target.bounds.height / 2,
                   ]] } },
-                  clickType: protocolClickType,
+                  clickType: options.protocolClickType ?? 'triple',
                   snapshotId: requestBindingValue,
                   targetProcessIdentifier: target.pid,
                   expectedProcessIdentity: {
                     processIdentifier: target.pid,
-                    processStartIdentity: Number(target.start_identity),
+                    processStartIdentity: wireUInt64(
+                      options.protocolClickStartIdentityOverride ?? target.start_identity,
+                      { quoted: options.protocolClickStartIdentityAsString === true },
+                    ),
                   },
                   targetWindowID: target.window_id,
-                  expectedWindowIdentity: {
-                    windowID: target.window_id,
-                    ownerProcessIdentifier: target.pid,
-                    ownerProcessStartIdentity: Number(target.start_identity),
-                    capturedBounds: [
-                      [target.bounds.x, target.bounds.y],
-                      [target.bounds.width, target.bounds.height],
-                    ],
-                    ...(target.is_minimized === null ? {} : { isMinimized: target.is_minimized }),
-                  },
-                  expectedWindowBounds: [
-                    [target.bounds.x, target.bounds.y],
-                    [target.bounds.width, target.bounds.height],
-                  ],
+                  expectedWindowIdentity: wireWindowIdentity(
+                    target,
+                    {
+                      ...(options.protocolClickStartIdentityOverride === undefined ? {} : {
+                        ownerProcessStartIdentity: options.protocolClickStartIdentityOverride,
+                      }),
+                      ...(options.protocolClickStartIdentityAsString !== true ? {} : {
+                        quoteOwnerProcessStartIdentity: true,
+                      }),
+                      ...(options.protocolClickMinimizedOverride === undefined ? {} : {
+                        isMinimized: options.protocolClickMinimizedOverride,
+                      }),
+                    },
+                  ),
+                  expectedWindowBounds: wireBounds(target),
                 },
               },
             },
@@ -179,21 +343,47 @@ function makeRequestAndResponse(
       responseCase: 'ok',
     };
   }
+  const filePath = observationPath(template);
   return {
     request: {
       desktopObservation: {
         _0: {
-          target: { windowID: { _0: 1 } },
-          output: { snapshotID: requestBindingValue },
-          checkpoint: template.checkpoint,
+          target: {
+            windowID: {
+              _0: options.desktopObservationWindowIDOverride ?? target.window_id,
+            },
+          },
+          capture: {
+            engine: 'auto',
+            scale: { logical1x: {} },
+            focus: options.desktopObservationFocusOverride ?? 'background',
+            visualizerMode: { none: {} },
+            includeMenuBar: false,
+          },
+          detection: {
+            mode: { none: {} },
+            allowWebFocusFallback: false,
+            includeMenuBarElements: false,
+            preferOCR: false,
+            traversalBudget: {
+              maxDepth: 12,
+              maxElementCount: 1000,
+              maxChildrenPerNode: 250,
+            },
+          },
+          output: {
+            path: filePath,
+            format: 'png',
+            saveRawScreenshot: true,
+            saveAnnotatedScreenshot: false,
+            saveSnapshot: false,
+            snapshotID: requestBindingValue,
+          },
+          timeout: { overall: 30 },
         },
       },
     },
-    response: {
-      desktopObservation: {
-        _0: { checkpoint: template.checkpoint, success: true },
-      },
-    },
+    response: wireObservationResponse(template, target, options),
     requestEnvelopeCase: 'desktopObservation',
     requestCase: 'desktopObservation',
     responseEnvelopeCase: 'desktopObservation',
@@ -218,7 +408,7 @@ export function makeMultiTargetFixture(catalog, catalogFileSHA256, options = {})
   const targetA = {
     scope: 'window',
     pid: 5101,
-    start_identity: '510100',
+    start_identity: options.targetStartIdentityOverride ?? '510100',
     window_id: 6101,
     bounds: targetABounds,
     is_minimized: null,
@@ -226,7 +416,7 @@ export function makeMultiTargetFixture(catalog, catalogFileSHA256, options = {})
   const targetB = {
     scope: 'window',
     pid: 5201,
-    start_identity: '520100',
+    start_identity: options.targetStartIdentityOverride ?? '520100',
     window_id: 6201,
     bounds: { x: 700, y: 20, width: 640, height: 480 },
     is_minimized: false,
@@ -330,11 +520,27 @@ export function makeMultiTargetFixture(catalog, catalogFileSHA256, options = {})
       outcome,
       requestBindingValue,
       owner.target,
-      options.protocolClickType,
-      options.protocolClickPoint,
+      options,
     );
-    const requestBytes = canonicalBytes(wire.request);
-    const responseBytes = canonicalBytes(wire.response);
+    const attestedRequestID = options.mismatchAttestedRequestID === true
+      ? deterministicRequestID(sessionSeed.id, String(sequence + 100))
+      : requestID;
+    wire.request = {
+      attestedOperation: {
+        _0: {
+          requestID: attestedRequestID.toUpperCase(),
+          sessionID: sessionSeed.id.toUpperCase(),
+          sessionSequence: sequenceText,
+          expectedListenerInstanceID: listenerInstanceID.toUpperCase(),
+          clientInstanceID: sessionSeed.client_instance_id.toUpperCase(),
+          client: wireProcess(sessionSeed.client),
+          request: wire.request,
+        },
+      },
+    };
+    wire.requestEnvelopeCase = 'attestedOperation';
+    const requestBytes = canonicalWireBytes(wire.request);
+    const responseBytes = canonicalWireBytes(wire.response);
     const interval = index < 2 ? {
       started_at_milliseconds: globalInterval.started_at_milliseconds + 1000,
       completed_at_milliseconds: globalInterval.started_at_milliseconds + 5000,
@@ -791,6 +997,29 @@ export function rehashFixture(fixture, catalogFileSHA256) {
   return fixture;
 }
 
+function controllerResultForSlot(slot, bundle) {
+  const response = JSON.parse(Buffer.from(bundle.document.canonicalResponse, 'base64'));
+  const result = {
+    status: 'passed',
+    total_characters: null,
+    key_presses: null,
+    observation_file: null,
+    observation_sha256: null,
+    observed_bounds: null,
+  };
+  if (slot.operation === 'exactWindowTargetedTypeActions') {
+    const counts = response.projectedAction._0.response.typeResult._0;
+    result.total_characters = counts.totalCharacters;
+    result.key_presses = counts.keyPresses;
+  } else if (slot.operation === 'desktopObservation') {
+    const observation = response.desktopObservation._0;
+    result.observation_file = `observations/${slot.slot_id}.png`;
+    result.observation_sha256 = observation.captureContentDigest.rawScreenshotSHA256;
+    result.observed_bounds = structuredClone(slot.target.bounds);
+  }
+  return result;
+}
+
 export function makeControllerReceipts(fixture) {
   return fixture.contract.controlled_targets.map((controlledTarget) => {
     const slots = fixture.contract.operation_slots.filter((slot) => (
@@ -847,7 +1076,7 @@ export function makeControllerReceipts(fixture) {
           interval: structuredClone(slot.interval),
           controller_interval: structuredClone(slot.interval),
           outcome: structuredClone(slot.expected_outcome),
-          result: { status: 'passed' },
+          result: controllerResultForSlot(slot, bundle),
           bundle: {
             file: `bundles/${bundle.file}`,
             sha256: bundle.sha256,

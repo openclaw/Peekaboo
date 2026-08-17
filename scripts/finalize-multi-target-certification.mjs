@@ -22,12 +22,19 @@ const UUID_V8 = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 const UINT64_MAX = 0xffff_ffff_ffff_ffffn;
 const REQUEST_ID_DOMAIN = Buffer.from('peekaboo.bridge.operation-request.v1\0', 'utf8');
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
-const BUILTIN_CATALOG_SHA256 = 'c5637407e5c417d76a4e47e69f64556181554ea816cc95c83d5330b47bb39a66';
+const BUILTIN_CATALOG_SHA256 = '808290fb251cc5b2d57d67b6dd6265eee938c8c7fcf16caf6a1be2c9078c354d';
 const BUILTIN_DIGEST_SPEC_SHA256 = '6d80d6264a4d3b80c69cee0c68ce3b5c2fd801e8483bb4bbddd4402d87066a33';
 const CLI_VERSION = '2';
 const LIVE_CERTIFICATION_AUTHORITY = Symbol('peekaboo-live-certification-authority');
 const LIVE_CERTIFICATION_RESULT = Symbol('peekaboo-live-certification-result');
 const FINALIZER_CATALOG_DIGEST_PROJECTION = 'normalize-builtin-catalog-sha256-to-zero-v1';
+
+class LosslessJSONInteger {
+  constructor(source) {
+    this.source = source;
+    Object.freeze(this);
+  }
+}
 const CONTROLLER_SOURCE_DIRECTORY = 'Apps/CLI/Sources/PeekabooCertificationController/';
 const CONTROLLER_SOURCE_PATHS = [
   'Apps/CLI/Sources/PeekabooCertificationController/CodeIdentityRunner.swift',
@@ -1148,7 +1155,16 @@ function decodeBase64(value, context) {
 function parseCanonicalJSON(bytes, context) {
   let value;
   try {
-    value = JSON.parse(bytes.toString('utf8'));
+    value = JSON.parse(bytes.toString('utf8'), (_key, parsed, sourceContext) => {
+      if (typeof parsed !== 'number' || !Number.isInteger(parsed) || Number.isSafeInteger(parsed)) {
+        return parsed;
+      }
+      const source = sourceContext?.source;
+      if (typeof source !== 'string' || !/^-?(?:0|[1-9][0-9]*)$/.test(source)) {
+        throw new TypeError('unsafe numeric literal is not one canonical decimal integer');
+      }
+      return new LosslessJSONInteger(source);
+    });
   } catch (error) {
     throw new TypeError(`${context} is not JSON: ${error.message}`);
   }
@@ -1265,10 +1281,24 @@ function associatedValue(value, caseName, context) {
 function wireFacts(requestBytes, responseBytes) {
   const request = parseCanonicalJSON(requestBytes, 'canonical request');
   const response = parseCanonicalJSON(responseBytes, 'canonical response');
-  const requestEnvelopeCase = enumCase(request, 'canonical request');
-  const projectedRequest = requestEnvelopeCase === 'projectedAction'
-    ? associatedValue(request, requestEnvelopeCase, 'canonical request').request
-    : request;
+  const outerRequestCase = enumCase(request, 'canonical request');
+  const requestAttestation = outerRequestCase === 'attestedOperation'
+    ? associatedValue(request, outerRequestCase, 'canonical request')
+    : null;
+  if (requestAttestation !== null && !exactKeys(requestAttestation, [
+    'requestID', 'sessionID', 'sessionSequence', 'expectedListenerInstanceID',
+    'clientInstanceID', 'client', 'request',
+  ])) {
+    throw new TypeError('attested canonical request carriage is malformed');
+  }
+  const attestedRequest = requestAttestation?.request ?? request;
+  if (!isPlainObject(attestedRequest)) {
+    throw new TypeError('attested canonical request is incomplete');
+  }
+  const requestProjectionCase = enumCase(attestedRequest, 'attested canonical request');
+  const projectedRequest = requestProjectionCase === 'projectedAction'
+    ? associatedValue(attestedRequest, requestProjectionCase, 'attested canonical request').request
+    : attestedRequest;
   const requestCase = enumCase(projectedRequest, 'operation request');
   const responseEnvelopeCase = enumCase(response, 'canonical response');
   let projectedResponse = response;
@@ -1282,13 +1312,262 @@ function wireFacts(requestBytes, responseBytes) {
     responseOutcome = normalizeWireOutcome(projected.outcome);
   }
   return {
-    request_document: request,
-    request_envelope_case: requestEnvelopeCase,
+    request_document: attestedRequest,
+    request_attestation: requestAttestation,
+    request_operation_document: projectedRequest,
+    request_envelope_case: outerRequestCase,
+    request_projection_case: requestProjectionCase,
     request_case: requestCase,
+    response_document: projectedResponse,
     response_envelope_case: responseEnvelopeCase,
     response_case: enumCase(projectedResponse, 'operation response'),
     response_outcome: responseOutcome,
   };
+}
+
+function validateAttestedRequestCarriage(facts, payload, contract) {
+  const attested = facts.request_attestation;
+  if (facts.request_envelope_case !== 'attestedOperation' || !isPlainObject(attested)) {
+    throw new TypeError('canonical request lost its attested session carriage');
+  }
+  const normalized = {
+    request_id: normalizedUUID(attested.requestID, UUID_V8),
+    session_id: normalizedUUID(attested.sessionID, UUID_V4),
+    session_sequence: normalizedDecimal(attested.sessionSequence),
+    listener_instance_id: normalizedUUID(attested.expectedListenerInstanceID, UUID_V4),
+    client_instance_id: normalizedUUID(attested.clientInstanceID, UUID_V4),
+    client: normalizeWireProcess(attested.client, 'attested request client'),
+  };
+  if (normalized.request_id !== normalizedUUID(payload.requestID, UUID_V8)
+      || normalized.session_id !== normalizedUUID(payload.sessionID, UUID_V4)
+      || normalized.session_sequence !== normalizedDecimal(payload.sessionSequence)
+      || normalized.listener_instance_id !== contract.listener.instance_id
+      || normalized.client_instance_id !== normalizedUUID(payload.clientInstanceID, UUID_V4)
+      || !sameJSON(normalized.client, normalizeWireProcess(payload.client, 'receipt client'))) {
+    throw new TypeError('attested canonical request differs from its signed receipt and listener');
+  }
+}
+
+function wireBoundsMatchTarget(value, target) {
+  return sameJSON(value, [
+    [target.bounds.x, target.bounds.y],
+    [target.bounds.width, target.bounds.height],
+  ]);
+}
+
+function wireUInt64MatchesDecimal(value, expected) {
+  const normalizedExpected = normalizedDecimal(expected, true);
+  if (normalizedExpected === null) return false;
+  if (value instanceof LosslessJSONInteger) {
+    return normalizedDecimal(value.source, true) === normalizedExpected;
+  }
+  return Number.isSafeInteger(value) && value > 0
+    && BigInt(value) === BigInt(normalizedExpected);
+}
+
+function wireWindowIdentityMatchesTarget(value, target) {
+  return isPlainObject(value)
+    && onlyKeys(value, [
+      'windowID', 'ownerProcessIdentifier', 'ownerProcessStartIdentity',
+      'capturedBounds', 'isMinimized',
+    ])
+    && value.windowID === target.window_id
+    && value.ownerProcessIdentifier === target.pid
+    && wireUInt64MatchesDecimal(value.ownerProcessStartIdentity, target.start_identity)
+    && wireBoundsMatchTarget(value.capturedBounds, target)
+    && (value.isMinimized ?? null) === target.is_minimized;
+}
+
+function textCharacterCount(text) {
+  return Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)).length;
+}
+
+function wireEmptyEnumCase(value, caseName) {
+  return exactKeys(value, [caseName]) && exactKeys(value[caseName], []);
+}
+
+function wireWindowIDCase(value, expectedWindowID) {
+  return exactKeys(value, ['windowID'])
+    && exactKeys(value.windowID, ['_0'])
+    && value.windowID._0 === expectedWindowID;
+}
+
+function wireLogical1xSizeMatchesTarget(value, target) {
+  return sameJSON(value, [
+    Math.max(Math.trunc(target.bounds.width), 1),
+    Math.max(Math.trunc(target.bounds.height), 1),
+  ]);
+}
+
+function validateObservationSemantics(facts, slot, controllerResult) {
+  if (facts.request_projection_case !== 'desktopObservation'
+      || facts.request_case !== 'desktopObservation'
+      || facts.response_envelope_case !== 'desktopObservation'
+      || facts.response_case !== 'desktopObservation') {
+    throw new TypeError('observation slot does not use desktop-observation carriage');
+  }
+  const payload = associatedValue(
+    facts.request_operation_document,
+    'desktopObservation',
+    'desktop observation request',
+  );
+  if (!exactKeys(payload, ['target', 'capture', 'detection', 'output', 'timeout'])
+      || !wireWindowIDCase(payload.target, slot.target.window_id)
+      || !onlyKeys(payload.capture, [
+        'engine', 'scale', 'focus', 'visualizerMode', 'includeMenuBar', 'roi',
+      ])
+      || payload.capture.engine !== 'auto'
+      || !wireEmptyEnumCase(payload.capture.scale, 'logical1x')
+      || payload.capture.focus !== 'background'
+      || !wireEmptyEnumCase(payload.capture.visualizerMode, 'none')
+      || payload.capture.includeMenuBar !== false
+      || (payload.capture.roi ?? null) !== null
+      || !onlyKeys(payload.detection, [
+        'mode', 'allowWebFocusFallback', 'includeMenuBarElements',
+        'preferOCR', 'traversalBudget',
+      ])
+      || !wireEmptyEnumCase(payload.detection.mode, 'none')
+      || payload.detection.allowWebFocusFallback !== false
+      || payload.detection.includeMenuBarElements !== false
+      || payload.detection.preferOCR !== false
+      || !exactKeys(payload.output, [
+        'path', 'format', 'saveRawScreenshot', 'saveAnnotatedScreenshot',
+        'saveSnapshot', 'snapshotID',
+      ])
+      || typeof payload.output.path !== 'string' || !path.isAbsolute(payload.output.path)
+      || path.basename(payload.output.path) !== `${slot.slot_id}.png`
+      || payload.output.format !== 'png'
+      || payload.output.saveRawScreenshot !== true
+      || payload.output.saveAnnotatedScreenshot !== false
+      || payload.output.saveSnapshot !== false
+      || payload.output.snapshotID !== slot.request_binding.value
+      || !exactKeys(payload.timeout, ['overall'])
+      || payload.timeout.overall !== 30) {
+    throw new TypeError('desktop observation request is not one background raw exact-window capture');
+  }
+
+  const result = associatedValue(
+    facts.response_document,
+    'desktopObservation',
+    'desktop observation response',
+  );
+  const target = result.target;
+  const capture = result.capture;
+  const metadata = capture?.metadata;
+  const windowInfo = metadata?.windowInfo;
+  const files = result.files;
+  const digest = result.captureContentDigest;
+  if (!isPlainObject(result) || !isPlainObject(target)
+      || !wireWindowIDCase(target.kind, slot.target.window_id)
+      || target.app?.processIdentifier !== slot.target.pid
+      || !wireUInt64MatchesDecimal(target.app?.processStartIdentity, slot.target.start_identity)
+      || target.window?.windowID !== slot.target.window_id
+      || !wireBoundsMatchTarget(target.window?.bounds, slot.target)
+      || !wireBoundsMatchTarget(target.bounds, slot.target)
+      || !isPlainObject(capture) || !isPlainObject(metadata)
+      || metadata.mode !== 'window'
+      || !wireLogical1xSizeMatchesTarget(metadata.size, slot.target)
+      || windowInfo?.window_id !== slot.target.window_id
+      || !wireBoundsMatchTarget(windowInfo?.bounds, slot.target)
+      || (windowInfo?.isMinimized ?? null) !== (slot.target.is_minimized ?? false)
+      || !wireWindowIdentityMatchesTarget(windowInfo?.mutationIdentity, slot.target)
+      || !isPlainObject(files)
+      || files.rawScreenshotPath !== payload.output.path
+      || (files.annotatedScreenshotPath ?? null) !== null
+      || (files.publishedSnapshotID ?? null) !== null
+      || !isPlainObject(digest)
+      || !onlyKeys(digest, [
+        'captureImageSHA256', 'rawScreenshotSHA256', 'annotatedScreenshotSHA256',
+      ])
+      || !HEX64.test(digest.captureImageSHA256 ?? '')
+      || !HEX64.test(digest.rawScreenshotSHA256 ?? '')
+      || digest.rawScreenshotSHA256 !== digest.captureImageSHA256
+      || (digest.annotatedScreenshotSHA256 ?? null) !== null) {
+    throw new TypeError('desktop observation response does not bind its exact target and raw pixels');
+  }
+  if (controllerResult !== null && (!exactKeys(controllerResult, [
+    'status', 'total_characters', 'key_presses', 'observation_file',
+    'observation_sha256', 'observed_bounds',
+  ])
+      || controllerResult.status !== 'passed'
+      || controllerResult.total_characters !== null
+      || controllerResult.key_presses !== null
+      || controllerResult.observation_file !== `observations/${slot.slot_id}.png`
+      || !payload.output.path.endsWith(`/${controllerResult.observation_file}`)
+      || controllerResult.observation_sha256 !== digest.rawScreenshotSHA256
+      || !sameJSON(controllerResult.observed_bounds, slot.target.bounds))) {
+    throw new TypeError('controller observation result differs from its signed response');
+  }
+}
+
+function validateOperationSemantics(facts, slot, controllerResult = null) {
+  if (slot.operation === 'exactWindowTargetedTypeActions') {
+    if (facts.request_projection_case !== 'projectedAction'
+        || facts.request_case !== 'exactWindowTargetedTypeActions'
+        || facts.response_envelope_case !== 'projectedAction'
+        || facts.response_case !== 'typeResult') {
+      throw new TypeError('type slot does not use exact-window action result carriage');
+    }
+    const payload = associatedValue(
+      facts.request_operation_document,
+      'exactWindowTargetedTypeActions',
+      'exact-window type request',
+    );
+    const result = associatedValue(
+      facts.response_document,
+      'typeResult',
+      'exact-window type response',
+    );
+    if (!onlyKeys(payload, [
+      'actions', 'cadence', 'snapshotId', 'expectedWindowIdentity',
+      'expectedWindowBounds', 'expectedFocusedElement',
+    ])
+        || !Array.isArray(payload.actions) || payload.actions.length !== 1
+        || !exactKeys(payload.actions[0], ['kind', 'text'])
+        || payload.actions[0].kind !== 'text'
+        || typeof payload.actions[0].text !== 'string'
+        || payload.actions[0].text.length === 0
+        || payload.snapshotId !== slot.request_binding.value
+        || !wireWindowIdentityMatchesTarget(payload.expectedWindowIdentity, slot.target)
+        || !wireBoundsMatchTarget(payload.expectedWindowBounds, slot.target)
+        || !exactKeys(result, ['totalCharacters', 'keyPresses'])) {
+      throw new TypeError('type request or response does not bind its exact target and text');
+    }
+    const count = textCharacterCount(payload.actions[0].text);
+    if (result.totalCharacters !== count || result.keyPresses !== count) {
+      throw new TypeError('type response counts differ from the signed request text');
+    }
+    if (controllerResult !== null && (!exactKeys(controllerResult, [
+      'status', 'total_characters', 'key_presses', 'observation_file',
+      'observation_sha256', 'observed_bounds',
+    ])
+        || controllerResult.status !== 'passed'
+        || controllerResult.total_characters !== count
+        || controllerResult.key_presses !== count
+        || controllerResult.observation_file !== null
+        || controllerResult.observation_sha256 !== null
+        || controllerResult.observed_bounds !== null)) {
+      throw new TypeError('controller type result differs from its signed response');
+    }
+    return;
+  }
+  if (slot.operation === 'desktopObservation') {
+    validateObservationSemantics(facts, slot, controllerResult);
+    return;
+  }
+  validateProtocol130Request(facts, slot);
+  if (controllerResult !== null && (!exactKeys(controllerResult, [
+    'status', 'total_characters', 'key_presses', 'observation_file',
+    'observation_sha256', 'observed_bounds',
+  ])
+      || controllerResult.status !== 'passed'
+      || controllerResult.total_characters !== null
+      || controllerResult.key_presses !== null
+      || controllerResult.observation_file !== null
+      || controllerResult.observation_sha256 !== null
+      || controllerResult.observed_bounds !== null)) {
+    throw new TypeError('controller click result differs from its signed response');
+  }
 }
 
 function valueAtPath(value, components) {
@@ -1302,7 +1581,8 @@ function valueAtPath(value, components) {
 
 function validateProtocol130Request(facts, slot) {
   if (slot.operation !== 'exactWindowTargetedClick') return;
-  if (facts.request_envelope_case !== 'projectedAction'
+  if (facts.request_envelope_case !== 'attestedOperation'
+      || facts.request_projection_case !== 'projectedAction'
       || facts.request_case !== 'targetedClick'
       || facts.response_envelope_case !== 'projectedAction'
       || facts.response_case !== 'ok') {
@@ -1318,10 +1598,6 @@ function validateProtocol130Request(facts, slot) {
     'targetedClick',
     'protocol-1.30 targeted click',
   );
-  const expectedBounds = [
-    [slot.target.bounds.x, slot.target.bounds.y],
-    [slot.target.bounds.width, slot.target.bounds.height],
-  ];
   const coordinateWrapper = payload.target?.coordinates;
   const coordinate = exactKeys(coordinateWrapper, ['_0'])
     && Array.isArray(coordinateWrapper._0) && coordinateWrapper._0.length === 1
@@ -1339,17 +1615,16 @@ function validateProtocol130Request(facts, slot) {
       || payload.snapshotId !== slot.request_binding.value
       || payload.targetProcessIdentifier !== slot.target.pid
       || payload.targetWindowID !== slot.target.window_id
-      || !sameJSON(payload.expectedProcessIdentity, {
-        processIdentifier: slot.target.pid,
-        processStartIdentity: Number(slot.target.start_identity),
-      })
-      || !sameJSON(payload.expectedWindowBounds, expectedBounds)
-      || !isPlainObject(payload.expectedWindowIdentity)
-      || payload.expectedWindowIdentity.windowID !== slot.target.window_id
-      || payload.expectedWindowIdentity.ownerProcessIdentifier !== slot.target.pid
-      || payload.expectedWindowIdentity.ownerProcessStartIdentity
-        !== Number(slot.target.start_identity)
-      || !sameJSON(payload.expectedWindowIdentity.capturedBounds, expectedBounds)) {
+      || !exactKeys(payload.expectedProcessIdentity, [
+        'processIdentifier', 'processStartIdentity',
+      ])
+      || payload.expectedProcessIdentity.processIdentifier !== slot.target.pid
+      || !wireUInt64MatchesDecimal(
+        payload.expectedProcessIdentity.processStartIdentity,
+        slot.target.start_identity,
+      )
+      || !wireBoundsMatchTarget(payload.expectedWindowBounds, slot.target)
+      || !wireWindowIdentityMatchesTarget(payload.expectedWindowIdentity, slot.target)) {
     throw new TypeError('protocol-1.30 click does not bind triple delivery to the exact target receipt');
   }
 }
@@ -1496,7 +1771,8 @@ function decodeBundle(bundle, slot, contract) {
   const requestBytes = decodeBase64(bundle.canonicalRequest, 'canonical request');
   const responseBytes = decodeBase64(bundle.canonicalResponse, 'canonical response');
   const facts = wireFacts(requestBytes, responseBytes);
-  validateProtocol130Request(facts, slot);
+  validateAttestedRequestCarriage(facts, payload, contract);
+  validateOperationSemantics(facts, slot);
   const requestBinding = {
     path: structuredClone(slot.request_binding.path),
     value: valueAtPath(facts.request_document, slot.request_binding.path),
@@ -3247,6 +3523,7 @@ export function makeLiveCertificationContract({
       },
       expected_outcome: payload.outcome === undefined ? null : normalizeWireOutcome(payload.outcome),
     };
+    validateOperationSemantics(facts, slot, controllerSlot.result);
     if (requestID !== controllerSlot.request_id || sessionID !== controllerSlot.session_id
         || sessionSequence !== controllerSlot.session_sequence
         || slot.operation !== template.operation
@@ -3343,8 +3620,9 @@ export function makeOperationManifest(catalog, catalogSHA256, contract, bundles)
     const bundle = bundlesByRequestID.get(slot.request_id);
     if (!bundle) throw new TypeError(`contract slot ${slot.slot_id} has no raw bundle`);
     const requestBytes = decodeBase64(bundle.document.canonicalRequest, 'canonical request');
-    const request = parseCanonicalJSON(requestBytes, 'canonical request');
-    if (valueAtPath(request, slot.request_binding.path) !== slot.request_binding.value) {
+    const responseBytes = decodeBase64(bundle.document.canonicalResponse, 'canonical response');
+    const facts = wireFacts(requestBytes, responseBytes);
+    if (valueAtPath(facts.request_document, slot.request_binding.path) !== slot.request_binding.value) {
       throw new TypeError(`contract slot ${slot.slot_id} is not marked in its signed request`);
     }
     return {

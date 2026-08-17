@@ -963,7 +963,11 @@ function collectControllerCorpus(controllerStates, receiptDirectory, bundleDirec
         || !Array.isArray(receipt.slots) || receipt.slots.length !== 4) {
       throw new CoordinatorError(`${state.id} receipt is not one closed four-slot passed run`);
     }
-    copyExclusive(state.receiptPath, path.join(receiptDirectory, `${state.id}.json`), `${state.id} receipt`);
+    copyExclusive(
+      state.receiptPath,
+      path.join(receiptDirectory, `${state.id}-receipt.json`),
+      `${state.id} receipt`,
+    );
     const files = fs.readdirSync(state.bundleDirectory).sort();
     if (files.length !== 4 || files.some((name) => !UUID_V8.test(name.slice(0, -5)))) {
       throw new CoordinatorError(`${state.id} bundle inventory is not exactly four UUID files`);

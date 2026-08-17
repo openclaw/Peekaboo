@@ -247,6 +247,45 @@ struct MonitorAttestationTests {
         await writer.value
     }
 
+    @Test
+    func `closed attestation peer becomes a write error instead of SIGPIPE`() throws {
+        var descriptors = [Int32](repeating: -1, count: 2)
+        #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0)
+        defer {
+            if descriptors[0] >= 0 {
+                close(descriptors[0])
+            }
+            if descriptors[1] >= 0 {
+                close(descriptors[1])
+            }
+        }
+        try CertificationUnixSocket.disableSIGPIPE(descriptors[0])
+        var noSignal: Int32 = 0
+        var noSignalSize = socklen_t(MemoryLayout<Int32>.size)
+        #expect(getsockopt(
+            descriptors[0],
+            SOL_SOCKET,
+            SO_NOSIGPIPE,
+            &noSignal,
+            &noSignalSize
+        ) == 0)
+        #expect(noSignal == 1)
+        shutdown(descriptors[1], SHUT_RDWR)
+        close(descriptors[1])
+        descriptors[1] = -1
+        #expect(throws: CertificationControllerError.self) {
+            try CertificationUnixSocket.writeJSON(
+                CertificationAttestationRequest(
+                    version: 1,
+                    executionNonce: Self.nonce,
+                    monitorInstanceID: Self.monitorID,
+                    challenge: String(repeating: "a", count: 64)
+                ),
+                descriptor: descriptors[0]
+            )
+        }
+    }
+
     private static let nonce = String(repeating: "9", count: 64)
     private static let monitorID = "019c0000-0000-4000-8000-000000000031"
     private static let validPlanData = Data("""

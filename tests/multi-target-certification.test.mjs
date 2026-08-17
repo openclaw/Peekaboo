@@ -110,6 +110,188 @@ test('complete synthetic fixture is structurally valid but cannot mint a live ce
   assert.notEqual(repeated[0].request_id, repeated[1].request_id);
 });
 
+test('canonical requests retain and unwrap their outer attested-operation carriage', async () => {
+  const fixture = makeFixture();
+  for (const bundle of fixture.bundles) {
+    const request = JSON.parse(Buffer.from(bundle.document.canonicalRequest, 'base64'));
+    assert.deepEqual(Object.keys(request), ['attestedOperation']);
+    assert.equal(
+      request.attestedOperation._0.requestID,
+      bundle.document.receipt.payload.requestID,
+    );
+  }
+
+  const result = await finalize(fixture);
+  assert.equal(result.structural_validation_passed, true);
+  assert.ok(fixture.contract.operation_slots.every((slot) => (
+    slot.request_envelope_case === 'attestedOperation'
+  )));
+});
+
+test('attested-operation carriage must match its signed receipt identity', async () => {
+  const fixture = makeMultiTargetFixture(catalog, catalogFileSHA256, {
+    mismatchAttestedRequestID: true,
+  });
+  const result = await assertRejected(fixture, 'attested request ID mismatch');
+  assert.ok(result.failures.some((entry) => entry.rule === 'offline_bundle_validation'));
+});
+
+test('signed observation and typing semantics must match their target and request', async (t) => {
+  await t.test('desktop observation window', async () => {
+    const fixture = makeMultiTargetFixture(catalog, catalogFileSHA256, {
+      desktopObservationWindowIDOverride: 1,
+    });
+    const result = await assertRejected(fixture, 'desktop observation target mismatch');
+    assert.ok(result.failures.some((entry) => entry.rule === 'offline_bundle_validation'));
+  });
+
+  await t.test('desktop observation foreground focus', async () => {
+    const fixture = makeMultiTargetFixture(catalog, catalogFileSHA256, {
+      desktopObservationFocusOverride: 'foreground',
+    });
+    const result = await assertRejected(fixture, 'desktop observation foreground focus');
+    assert.ok(result.failures.some((entry) => entry.rule === 'offline_bundle_validation'));
+  });
+
+  await t.test('desktop observation response target', async () => {
+    const fixture = makeMultiTargetFixture(catalog, catalogFileSHA256, {
+      desktopObservationResponseWindowIDOverride: 1,
+    });
+    const result = await assertRejected(fixture, 'desktop observation response target drift');
+    assert.ok(result.failures.some((entry) => entry.rule === 'offline_bundle_validation'));
+  });
+
+  await t.test('desktop observation content digest', async () => {
+    const fixture = makeMultiTargetFixture(catalog, catalogFileSHA256, {
+      desktopObservationDigestDrift: true,
+    });
+    const result = await assertRejected(fixture, 'desktop observation content digest drift');
+    assert.ok(result.failures.some((entry) => entry.rule === 'offline_bundle_validation'));
+  });
+
+  const observationMetadataDrifts = [
+    ['capture size', { desktopObservationMetadataSizeOverride: [641, 480] }],
+    ['window bounds', {
+      desktopObservationMetadataBoundsOverride: [[11, 20], [640, 480]],
+    }],
+    ['minimized state', { desktopObservationMetadataMinimizedOverride: true }],
+  ];
+  for (const [name, options] of observationMetadataDrifts) {
+    await t.test(`desktop observation metadata ${name}`, async () => {
+      const fixture = makeMultiTargetFixture(catalog, catalogFileSHA256, options);
+      const result = await assertRejected(fixture, `desktop observation metadata ${name} drift`);
+      assert.ok(result.failures.some((entry) => entry.rule === 'offline_bundle_validation'));
+    });
+  }
+
+  await t.test('type result counts', async () => {
+    const fixture = makeMultiTargetFixture(catalog, catalogFileSHA256, {
+      typeResultCountDelta: 1,
+    });
+    const result = await assertRejected(fixture, 'type result count mismatch');
+    assert.ok(result.failures.some((entry) => entry.rule === 'offline_bundle_validation'));
+  });
+
+  const typeTargetDrifts = [
+    ['window', { exactWindowTypeWindowIDOverride: 1 }],
+    ['pid', { exactWindowTypePIDOverride: 9991 }],
+    ['generation', { exactWindowTypeStartIdentityOverride: 999100 }],
+    ['bounds', { exactWindowTypeBoundsOverride: [[11, 20], [640, 480]] }],
+    ['minimized', { exactWindowTypeMinimizedOverride: true }],
+  ];
+  for (const [name, options] of typeTargetDrifts) {
+    await t.test(`exact-window type target ${name}`, async () => {
+      const fixture = makeMultiTargetFixture(catalog, catalogFileSHA256, options);
+      const result = await assertRejected(fixture, `exact-window type target ${name} mismatch`);
+      assert.ok(result.failures.some((entry) => entry.rule === 'offline_bundle_validation'));
+    });
+  }
+});
+
+test('synthetic type results count Unicode extended grapheme clusters like Swift String', async () => {
+  const text = 'e\u0301👨‍👩‍👧‍👦';
+  const fixture = makeMultiTargetFixture(catalog, catalogFileSHA256, {
+    typeTextOverride: text,
+  });
+  const result = await finalize(fixture);
+  assert.equal(result.structural_validation_passed, true);
+
+  const typeBundles = fixture.bundles.filter((bundle) => (
+    bundle.document.receipt.payload.operation === 'exactWindowTargetedTypeActions'
+  ));
+  assert.equal(typeBundles.length, 2);
+  for (const bundle of typeBundles) {
+    const request = JSON.parse(Buffer.from(bundle.document.canonicalRequest, 'base64'));
+    const payload = request.attestedOperation._0.request
+      .projectedAction._0.request.exactWindowTargetedTypeActions._0;
+    const response = JSON.parse(Buffer.from(bundle.document.canonicalResponse, 'base64'));
+    const counts = response.projectedAction._0.response.typeResult._0;
+    assert.equal(payload.actions[0].text, text);
+    assert.deepEqual(counts, { totalCharacters: 2, keyPresses: 2 });
+  }
+});
+
+test('window generations above 2^53 retain exact UInt64 JSON identity', async () => {
+  const generation = '9007199254740993';
+  const fixture = makeMultiTargetFixture(catalog, catalogFileSHA256, {
+    targetStartIdentityOverride: generation,
+  });
+  const result = await finalize(fixture);
+  assert.equal(result.structural_validation_passed, true);
+
+  const numericToken = `"ownerProcessStartIdentity":${generation}`;
+  const appToken = `"processStartIdentity":${generation}`;
+  const requestDocuments = fixture.bundles.map((bundle) => (
+    Buffer.from(bundle.document.canonicalRequest, 'base64').toString('utf8')
+  ));
+  const responseDocuments = fixture.bundles.map((bundle) => (
+    Buffer.from(bundle.document.canonicalResponse, 'base64').toString('utf8')
+  ));
+  assert.ok(requestDocuments.filter((document) => document.includes(numericToken)).length >= 4);
+  assert.ok(responseDocuments.filter((document) => (
+    document.includes(numericToken) && document.includes(appToken)
+  )).length >= 4);
+});
+
+test('adjacent lossy UInt64 generations cannot collide across operation wires', async (t) => {
+  const targetGeneration = '9007199254740993';
+  const adjacentGeneration = '9007199254740992';
+  const cases = [
+    ['type', { exactWindowTypeStartIdentityOverride: adjacentGeneration }],
+    ['observation', { desktopObservationResponseStartIdentityOverride: adjacentGeneration }],
+    ['click', { protocolClickStartIdentityOverride: adjacentGeneration }],
+  ];
+  for (const [name, options] of cases) {
+    await t.test(name, async () => {
+      const fixture = makeMultiTargetFixture(catalog, catalogFileSHA256, {
+        targetStartIdentityOverride: targetGeneration,
+        ...options,
+      });
+      const result = await assertRejected(fixture, `${name} UInt64 generation collision`);
+      assert.ok(result.failures.some((entry) => entry.rule === 'offline_bundle_validation'));
+    });
+  }
+});
+
+test('quoted UInt64 strings cannot masquerade as numeric operation identities', async (t) => {
+  const generation = '9007199254740993';
+  const cases = [
+    ['type', { exactWindowTypeStartIdentityAsString: true }],
+    ['observation', { desktopObservationResponseStartIdentityAsString: true }],
+    ['click', { protocolClickStartIdentityAsString: true }],
+  ];
+  for (const [name, options] of cases) {
+    await t.test(name, async () => {
+      const fixture = makeMultiTargetFixture(catalog, catalogFileSHA256, {
+        targetStartIdentityOverride: generation,
+        ...options,
+      });
+      const result = await assertRejected(fixture, `${name} quoted UInt64 identity`);
+      assert.ok(result.failures.some((entry) => entry.rule === 'offline_bundle_validation'));
+    });
+  }
+});
+
 test('retained verdict JSON cannot substitute for an active first-party verifier', async () => {
   const fixture = makeFixture();
   const result = await validateMultiTargetCertificationStructure({
@@ -447,8 +629,24 @@ test('paired deletion and extra valid evidence cannot redefine the source-contro
   pairedDeletion.manifest.slots.pop();
   pairedDeletion.firstPartyVerdicts.pop();
   pairedDeletion.bundles.pop();
+  const runID = deriveCertificationRunID({
+    catalogSHA256: catalogFileSHA256,
+    listenerInstanceID: pairedDeletion.contract.listener.instance_id,
+    executionNonce: pairedDeletion.contract.execution_nonce,
+    currentBuildSource: pairedDeletion.contract.current_build_source,
+    monitorBinding: pairedDeletion.contract.monitor_binding,
+    controllerBuild: pairedDeletion.contract.controller_build,
+    operationSlots: pairedDeletion.contract.operation_slots,
+  });
+  pairedDeletion.contract.certification_run_id = runID;
+  pairedDeletion.contract.operation_slots.forEach((slot, index) => {
+    slot.operation_id = `${runID}:${slot.slot_id}`;
+    pairedDeletion.manifest.slots[index].operation_id = slot.operation_id;
+  });
   rehashFixture(pairedDeletion, catalogFileSHA256);
-  await assertRejected(pairedDeletion, 'paired deletion');
+  const pairedDeletionResult = await assertRejected(pairedDeletion, 'paired deletion');
+  assert.ok(pairedDeletionResult.failures.some((entry) => entry.rule === 'contract_slots'));
+  assert.ok(pairedDeletionResult.failures.every((entry) => entry.rule !== 'contract_run'));
 
   const extra = makeFixture();
   const original = extra.bundles[2];
@@ -542,7 +740,8 @@ test('same-target checkpoint and final-bounds receipts cannot swap slots', async
   rehashFixture(fixture, catalogFileSHA256);
   const result = await assertRejected(fixture, 'same-target checkpoint swap');
   assert.ok(result.failures.some((entry) => (
-    entry.rule === 'offline_bundle_validation' && entry.message.includes('request_binding')
+    entry.rule === 'offline_bundle_validation'
+      && entry.message.includes('desktop observation request')
   )));
 });
 
@@ -861,6 +1060,15 @@ test('signed protocol-1.30 slot requires a triple click and authenticated 1.30 h
   });
   const targetResult = await assertRejected(wrongTarget, 'protocol-1.30 click target');
   assert.ok(targetResult.failures.some((entry) => (
+    entry.rule === 'offline_bundle_validation'
+      && entry.message.includes('protocol-1.30 click')
+  )));
+
+  const wrongMinimized = makeMultiTargetFixture(catalog, catalogFileSHA256, {
+    protocolClickMinimizedOverride: true,
+  });
+  const minimizedResult = await assertRejected(wrongMinimized, 'protocol-1.30 minimized state');
+  assert.ok(minimizedResult.failures.some((entry) => (
     entry.rule === 'offline_bundle_validation'
       && entry.message.includes('protocol-1.30 click')
   )));

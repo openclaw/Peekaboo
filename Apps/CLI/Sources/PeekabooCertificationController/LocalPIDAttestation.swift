@@ -202,6 +202,7 @@ enum CertificationUnixSocket {
         let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw self.transportError("create Unix socket") }
         do {
+            try self.disableSIGPIPE(descriptor)
             try self.setTimeout(descriptor, milliseconds: timeoutMilliseconds)
             var address = try self.address(path: path)
             let addressLength = socklen_t(address.sun_len)
@@ -296,6 +297,7 @@ enum CertificationUnixSocket {
         let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw self.transportError("create Unix listener") }
         do {
+            try self.disableSIGPIPE(descriptor)
             var address = try self.address(path: path)
             let addressLength = socklen_t(address.sun_len)
             let result = withUnsafePointer(to: &address) { pointer in
@@ -354,6 +356,17 @@ enum CertificationUnixSocket {
         guard setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, size) == 0,
               setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, size) == 0
         else { throw self.transportError("configure Unix socket timeout") }
+    }
+
+    static func disableSIGPIPE(_ descriptor: Int32) throws {
+        var noSignal: Int32 = 1
+        guard setsockopt(
+            descriptor,
+            SOL_SOCKET,
+            SO_NOSIGPIPE,
+            &noSignal,
+            socklen_t(MemoryLayout<Int32>.size)
+        ) == 0 else { throw self.transportError("disable SIGPIPE on Unix socket") }
     }
 
     private static func writeAll(_ data: Data, descriptor: Int32) throws {
@@ -430,6 +443,7 @@ final class CertificationObserverAttestationServer: @unchecked Sendable {
             if client >= 0 {
                 self.lock.withLock { self.activeClient = client }
                 do {
+                    try CertificationUnixSocket.disableSIGPIPE(client)
                     try CertificationUnixSocket.setTimeout(client, milliseconds: 2000)
                     try self.handle(client)
                 } catch {
