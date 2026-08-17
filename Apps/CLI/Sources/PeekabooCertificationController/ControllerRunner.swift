@@ -149,6 +149,7 @@ enum CertificationControllerLifecycleGate {
     ) async throws {
         try await self.wait(
             at: url,
+            markerName: "start",
             keys: ["version", "execution_nonce", "controller_id", "phase"],
             timeout: timeout,
             pollInterval: pollInterval
@@ -166,6 +167,7 @@ enum CertificationControllerLifecycleGate {
     ) async throws {
         try await self.wait(
             at: url,
+            markerName: "release",
             keys: ["version", "execution_nonce", "phase"],
             timeout: timeout,
             pollInterval: pollInterval
@@ -185,6 +187,7 @@ enum CertificationControllerLifecycleGate {
     ) async throws {
         try await self.wait(
             at: url,
+            markerName: "final-bounds start",
             keys: ["version", "execution_nonce", "monitor_instance_id", "controller_id", "phase"],
             timeout: timeout,
             pollInterval: pollInterval
@@ -200,6 +203,7 @@ enum CertificationControllerLifecycleGate {
 
     private static func wait(
         at url: URL,
+        markerName: String,
         keys: Set<String>,
         timeout: Duration,
         pollInterval: Duration,
@@ -223,13 +227,13 @@ enum CertificationControllerLifecycleGate {
             }
             guard errno == ENOENT else {
                 throw CertificationControllerError.unsafePrivatePath(
-                    "Cannot inspect controller release marker."
+                    "Cannot inspect controller \(markerName) marker at \(url.path)."
                 )
             }
             try await deadline.sleep(upTo: pollInterval)
         }
         throw CertificationControllerError.runtimeRefusal(
-            "Timed out waiting for the owner-private controller lifecycle marker."
+            "Timed out waiting for the owner-private controller \(markerName) marker at \(url.path)."
         )
     }
 }
