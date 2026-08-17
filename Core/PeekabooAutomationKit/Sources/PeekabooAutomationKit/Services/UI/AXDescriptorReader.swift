@@ -27,6 +27,40 @@ import CoreGraphics
             true
         }
     }
+
+    /// Attributes that identify and place a node. Without them the element cannot be emitted or
+    /// targeted at all, so a hard error on one of them really does make the node unreadable.
+    @_spi(Testing) public static let nodeIdentityAttributeNames: Set<String> = [
+        kAXRoleAttribute,
+        kAXPositionAttribute,
+        kAXSizeAttribute,
+    ]
+
+    /// Decides whether one attribute's embedded AX error invalidates the whole node.
+    ///
+    /// Applications answer inapplicable optional attributes with a generic `.failure` instead of
+    /// `.attributeUnsupported`: NSTextView does it for `AXDescription`, Finder's window root does it
+    /// for `AXValue`. Reading that as an unreadable node drops the element *and* abandons its subtree,
+    /// which is how a document's editable text area disappears from an otherwise healthy observation.
+    /// Only a node-identity attribute, or an error proving the read itself did not complete
+    /// (dead element, unanswered request), may invalidate the node.
+    @_spi(Testing) public static func attributeErrorInvalidatesNode(
+        _ error: AXError,
+        attribute: String) -> Bool
+    {
+        guard self.isIncomplete(error: error) else { return false }
+        return error != .failure || self.nodeIdentityAttributeNames.contains(attribute)
+    }
+
+    @_spi(Testing) public static func hasNodeInvalidatingErrorValue(
+        names: [String],
+        values: [Any]) -> Bool
+    {
+        zip(names, values).contains { name, value in
+            guard let error = self.embeddedError(in: value) else { return false }
+            return self.attributeErrorInvalidatesNode(error, attribute: name)
+        }
+    }
 }
 
 /// Reads the small descriptor surface element detection needs from AX elements.
@@ -153,7 +187,11 @@ import CoreGraphics
         var valueByName: [String: Any] = [:]
         for name in self.descriptorAttributeNames {
             let read = copyAttribute(name)
-            switch self.singleAttributeReadDisposition(error: read.error, value: read.value) {
+            switch self.singleAttributeReadDisposition(
+                error: read.error,
+                value: read.value,
+                attribute: name)
+            {
             case .value:
                 guard let value = read.value else { return .incomplete }
                 valueByName[name] = value
@@ -274,21 +312,28 @@ import CoreGraphics
             return .fallbackRequired
         }
         guard error == .success, let values else { return .incomplete }
-        return AXAttributeReadCompletenessPolicy.hasIncompleteErrorValue(in: values) ? .incomplete : .values
+        return AXAttributeReadCompletenessPolicy.hasNodeInvalidatingErrorValue(
+            names: self.descriptorAttributeNames,
+            values: values) ? .incomplete : .values
     }
 
     static func singleAttributeReadDisposition(
         error: AXError,
-        value: Any?) -> SingleAttributeReadDisposition
+        value: Any?,
+        attribute: String) -> SingleAttributeReadDisposition
     {
         if error == .success {
             guard let value else { return .incomplete }
             guard let embeddedError = AXAttributeReadCompletenessPolicy.embeddedError(in: value) else {
                 return .value
             }
-            return AXAttributeReadCompletenessPolicy.isIncomplete(error: embeddedError) ? .incomplete : .sparse
+            return AXAttributeReadCompletenessPolicy.attributeErrorInvalidatesNode(
+                embeddedError,
+                attribute: attribute) ? .incomplete : .sparse
         }
-        return AXAttributeReadCompletenessPolicy.isIncomplete(error: error) ? .incomplete : .sparse
+        return AXAttributeReadCompletenessPolicy.attributeErrorInvalidatesNode(
+            error,
+            attribute: attribute) ? .incomplete : .sparse
     }
 
     @_spi(Testing) public static func stringValue(_ value: Any?) -> String? {

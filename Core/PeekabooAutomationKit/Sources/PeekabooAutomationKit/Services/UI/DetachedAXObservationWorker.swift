@@ -147,32 +147,13 @@ enum DetachedAXObservationWorker {
     static func descriptorReadDisposition(error: AXError, values: [Any]?)
         -> DetachedAXMultiAttributeReadDisposition
     {
-        let disposition = self.multiAttributeReadDisposition(
-            error: error,
-            values: values,
-            expectedValueCount: self.descriptorAttributeNames.count)
-        guard disposition == .incomplete,
-              error == .success,
-              let values,
-              values.count == self.descriptorAttributeNames.count
-        else {
-            return disposition
+        if error == .success {
+            guard let values, values.count == self.descriptorAttributeNames.count else { return .incomplete }
+            return AXAttributeReadCompletenessPolicy.hasNodeInvalidatingErrorValue(
+                names: self.descriptorAttributeNames,
+                values: values) ? .incomplete : .values
         }
-
-        let byName = Dictionary(uniqueKeysWithValues: zip(self.descriptorAttributeNames, values))
-        let role = self.stringValue(byName[kAXRoleAttribute])
-        let hasHardFailure = byName.contains { name, value in
-            guard let embeddedError = AXAttributeReadCompletenessPolicy.embeddedError(in: value),
-                  AXAttributeReadCompletenessPolicy.isIncomplete(error: embeddedError)
-            else {
-                return false
-            }
-            // Finder exposes no semantic AXValue on its AXWindow root and reports the absence as
-            // a generic failure rather than attributeUnsupported. The exact window and its tree
-            // remain readable, so this one role-inapplicable value is sparse evidence.
-            return !(name == kAXValueAttribute && role == kAXWindowRole && embeddedError == .failure)
-        }
-        return hasHardFailure ? .incomplete : .values
+        return self.isUnsupported(error) ? .fallback : .incomplete
     }
 
     static func childrenReadDisposition(error: AXError, values: [Any]?)
@@ -631,7 +612,7 @@ enum DetachedAXObservationWorker {
         var valuesByName: [String: Any] = [:]
         for name in self.descriptorAttributeNames {
             let read = self.rawAttributeRead(name, of: element)
-            if read.isIncomplete {
+            if read.invalidatesNode(attribute: name) {
                 return .incomplete
             }
             if let value = read.value {
@@ -926,6 +907,10 @@ private struct AXAttributeReadResult {
 
     var isIncomplete: Bool {
         AXAttributeReadCompletenessPolicy.isIncomplete(error: self.error)
+    }
+
+    func invalidatesNode(attribute: String) -> Bool {
+        AXAttributeReadCompletenessPolicy.attributeErrorInvalidatesNode(self.error, attribute: attribute)
     }
 }
 

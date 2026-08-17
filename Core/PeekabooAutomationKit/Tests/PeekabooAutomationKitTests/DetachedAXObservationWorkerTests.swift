@@ -121,44 +121,53 @@ struct DetachedAXObservationWorkerTests {
             values: values) == .incomplete)
     }
 
+    /// TextEdit's `AXTextArea` answers `AXDescription` with a generic `.failure`, and Finder's
+    /// `AXWindow` root answers `AXValue` the same way. Treating that as an unreadable node dropped
+    /// the element and abandoned its subtree, which is how a document's editable text area vanished
+    /// from an otherwise healthy observation.
     @Test
-    func `only a window value failure is sparse in an otherwise usable descriptor`() throws {
-        let valueIndex = try #require(DetachedAXObservationWorker.descriptorAttributeIndex(kAXValueAttribute))
-        var values = try Self.usableDescriptorValues(role: kAXWindowRole)
-        values[valueIndex] = try Self.errorValue(.failure)
-
-        #expect(DetachedAXObservationWorker.descriptorReadDisposition(
-            error: .success,
-            values: values) == .values)
-
-        for role in [kAXButtonRole, kAXTextFieldRole, kAXGroupRole] {
-            var controlValues = try Self.usableDescriptorValues(role: role)
-            controlValues[valueIndex] = try Self.errorValue(.failure)
-            #expect(DetachedAXObservationWorker.descriptorReadDisposition(
-                error: .success,
-                values: controlValues) == .incomplete)
-        }
-
-        for attribute in DetachedAXObservationWorker.descriptorAttributes where attribute != kAXValueAttribute {
-            var failedValues = try Self.usableDescriptorValues(role: kAXWindowRole)
+    func `a declined descriptive attribute stays sparse for every role`() throws {
+        for attribute in DetachedAXObservationWorker.descriptorAttributes
+            where !AXAttributeReadCompletenessPolicy.nodeIdentityAttributeNames.contains(attribute)
+        {
             let index = try #require(DetachedAXObservationWorker.descriptorAttributeIndex(attribute))
-            failedValues[index] = try Self.errorValue(.failure)
+            for role in [kAXTextAreaRole, kAXWindowRole, kAXButtonRole, kAXGroupRole] {
+                var values = try Self.usableDescriptorValues(role: role)
+                values[index] = try Self.errorValue(.failure)
+                #expect(DetachedAXObservationWorker.descriptorReadDisposition(
+                    error: .success,
+                    values: values) == .values)
+            }
+        }
+    }
+
+    @Test
+    func `a declined node identity attribute still invalidates the node`() throws {
+        for attribute in AXAttributeReadCompletenessPolicy.nodeIdentityAttributeNames {
+            let index = try #require(DetachedAXObservationWorker.descriptorAttributeIndex(attribute))
+            var values = try Self.usableDescriptorValues(role: kAXTextAreaRole)
+            values[index] = try Self.errorValue(.failure)
             #expect(DetachedAXObservationWorker.descriptorReadDisposition(
                 error: .success,
-                values: failedValues) == .incomplete)
+                values: values) == .incomplete)
         }
+    }
 
+    @Test
+    func `an unanswered attribute read invalidates the node whatever it describes`() throws {
+        let descriptionIndex = try #require(
+            DetachedAXObservationWorker.descriptorAttributeIndex(kAXDescriptionAttribute))
         for error in [AXError.cannotComplete, .invalidUIElement, .apiDisabled] {
-            var failedValues = try Self.usableDescriptorValues(role: kAXWindowRole)
-            failedValues[valueIndex] = try Self.errorValue(error)
+            var values = try Self.usableDescriptorValues(role: kAXTextAreaRole)
+            values[descriptionIndex] = try Self.errorValue(error)
             #expect(DetachedAXObservationWorker.descriptorReadDisposition(
                 error: .success,
-                values: failedValues) == .incomplete)
+                values: values) == .incomplete)
         }
 
-        #expect(DetachedAXObservationWorker.descriptorReadDisposition(
+        #expect(try DetachedAXObservationWorker.descriptorReadDisposition(
             error: .failure,
-            values: values) == .incomplete)
+            values: Self.usableDescriptorValues(role: kAXTextAreaRole)) == .incomplete)
     }
 
     @Test

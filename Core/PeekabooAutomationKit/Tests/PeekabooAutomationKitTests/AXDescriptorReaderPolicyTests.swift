@@ -53,10 +53,12 @@ struct AXDescriptorReaderPolicyTests {
         #expect(!AXAttributeReadCompletenessPolicy.hasIncompleteErrorValue(in: [sparseValue]))
         #expect(AXDescriptorReader.singleAttributeReadDisposition(
             error: .success,
-            value: failedValue) == .incomplete)
+            value: failedValue,
+            attribute: kAXDescriptionAttribute) == .incomplete)
         #expect(AXDescriptorReader.singleAttributeReadDisposition(
             error: .success,
-            value: sparseValue) == .sparse)
+            value: sparseValue,
+            attribute: kAXDescriptionAttribute) == .sparse)
 
         var failedValues = [Any](
             repeating: NSNull(),
@@ -136,16 +138,49 @@ struct AXDescriptorReaderPolicyTests {
 
     @Test
     func `Single-read fallback classifies hard and sparse AX errors separately`() {
-        for error in [AXError.cannotComplete, .invalidUIElement, .apiDisabled, .failure] {
+        for error in [AXError.cannotComplete, .invalidUIElement, .apiDisabled] {
             #expect(AXDescriptorReader.singleAttributeReadDisposition(
                 error: error,
-                value: nil) == .incomplete)
+                value: nil,
+                attribute: kAXDescriptionAttribute) == .incomplete)
         }
         for error in [AXError.noValue, .attributeUnsupported, .parameterizedAttributeUnsupported, .notImplemented] {
             #expect(AXDescriptorReader.singleAttributeReadDisposition(
                 error: error,
-                value: nil) == .sparse)
+                value: nil,
+                attribute: kAXDescriptionAttribute) == .sparse)
         }
+    }
+
+    /// A declined optional attribute must not cost the caller the whole element; a declined
+    /// identity attribute must, because the element can no longer be placed or targeted.
+    @Test
+    func `A declined attribute is sparse unless the node depends on it`() {
+        #expect(AXDescriptorReader.singleAttributeReadDisposition(
+            error: .failure,
+            value: nil,
+            attribute: kAXDescriptionAttribute) == .sparse)
+        for attribute in AXAttributeReadCompletenessPolicy.nodeIdentityAttributeNames {
+            #expect(AXDescriptorReader.singleAttributeReadDisposition(
+                error: .failure,
+                value: nil,
+                attribute: attribute) == .incomplete)
+        }
+    }
+
+    @Test
+    func `A declined descriptive attribute keeps the batch usable`() throws {
+        var declined = AXError.failure
+        let declinedValue = try #require(AXValueCreate(.axError, &declined))
+        var values = [Any](
+            repeating: NSNull(),
+            count: AXDescriptorReader.descriptorAttributeCount)
+        // The identity attributes lead the descriptor batch, so the last slot is descriptive.
+        values[values.count - 1] = declinedValue
+
+        #expect(AXDescriptorReader.batchReadDisposition(
+            error: .success,
+            values: values) == .values)
     }
 
     private static func requiredDescriptorReads() -> [String: AXDescriptorReader.SingleAttributeRead] {
