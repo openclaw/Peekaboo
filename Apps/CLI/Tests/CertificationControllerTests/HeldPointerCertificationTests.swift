@@ -221,6 +221,40 @@ struct HeldPointerCertificationTests {
         }
     }
 
+    @Test
+    func `cancelled lifecycle performs explicit cleanup before returning`() async {
+        let probe = HeldPointerCleanupProbe()
+        let identity = WindowMutationIdentity(
+            windowID: 6101,
+            ownerProcessIdentifier: 5101,
+            ownerProcessStartIdentity: 510_100,
+            capturedBounds: CGRect(x: 10, y: 20, width: 640, height: 480),
+            isMinimized: false
+        )
+        let original = CertificationControllerError.runtimeRefusal("primary failure")
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            do {
+                try await HeldPointerCertificationSemantics.performFailureCleanup(
+                    originalError: original,
+                    expected: .init(
+                        identity: identity,
+                        bounds: CGRect(x: 10, y: 20, width: 640, height: 480),
+                        point: CGPoint(x: 30, y: 40)
+                    )
+                ) {
+                    await probe.cleanup()
+                }
+            } catch {
+                return error.localizedDescription
+            }
+        }
+
+        #expect(await task.value == original.localizedDescription)
+        #expect(await probe.callCount == 1)
+        #expect(await probe.observedCancellation == false)
+    }
+
     static let validPlanData = Data("""
     {
       "version": 1,
@@ -252,4 +286,21 @@ struct HeldPointerCertificationTests {
       "artifacts_directory": "/private/tmp/peekaboo-held-pointer-artifacts"
     }
     """.utf8)
+}
+
+private actor HeldPointerCleanupProbe {
+    private(set) var callCount = 0
+    private(set) var observedCancellation = false
+
+    func cleanup() -> HeldPointerCertificationSemantics.FailureDisconnectEvidence {
+        self.callCount += 1
+        self.observedCancellation = Task.isCancelled
+        return .init(
+            outcome: .confirmedNoChange(route: .bridge),
+            targetIdentity: nil,
+            terminalReason: nil,
+            lifecycleDispatchedUnits: nil,
+            hasPayload: false
+        )
+    }
 }

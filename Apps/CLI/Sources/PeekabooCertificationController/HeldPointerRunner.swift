@@ -82,7 +82,7 @@ enum HeldPointerReceiptTargetExpectation {
 }
 
 enum HeldPointerCertificationSemantics {
-    struct ExpectedTarget {
+    struct ExpectedTarget: Sendable {
         let identity: WindowMutationIdentity
         let bounds: CGRect
         let point: CGPoint
@@ -99,7 +99,7 @@ enum HeldPointerCertificationSemantics {
         let lifecycleDispatchedUnits: Int
     }
 
-    struct FailureDisconnectEvidence {
+    struct FailureDisconnectEvidence: Sendable {
         let outcome: DesktopActionOutcome?
         let targetIdentity: DesktopTargetIdentity?
         let terminalReason: ExactWindowHeldPointerTerminalReason?
@@ -189,6 +189,26 @@ enum HeldPointerCertificationSemantics {
                 "Failure-path held-pointer disconnect did not prove exact owner cleanup."
             )
         }
+    }
+
+    static func performFailureCleanup(
+        originalError: any Error,
+        expected: ExpectedTarget,
+        disconnect: @escaping @Sendable () async throws -> FailureDisconnectEvidence
+    ) async throws -> Never {
+        // The detached task does not inherit caller cancellation. Production cleanup remains
+        // bounded by the exact Bridge client's configured transport timeout.
+        let cleanupTask = Task.detached { try await disconnect() }
+        do {
+            let evidence = try await cleanupTask.value
+            try self.requireFailureDisconnect(evidence, expected: expected)
+        } catch let cleanupError {
+            throw CertificationControllerError.runtimeRefusal(
+                "Held-pointer lifecycle failed: \(originalError.localizedDescription); " +
+                    "explicit owner cleanup failed: \(cleanupError.localizedDescription)"
+            )
+        }
+        throw originalError
     }
 
     static func requireReceiptTarget(
@@ -520,22 +540,17 @@ enum HeldPointerCertificationRunner {
             )
         } catch {
             if let owner, let ownedTarget {
-                do {
+                try await HeldPointerCertificationSemantics.performFailureCleanup(
+                    originalError: error,
+                    expected: ownedTarget
+                ) {
                     let disconnect = try await client.disconnectExactWindowHeldPointerOwner(owner)
-                    try HeldPointerCertificationSemantics.requireFailureDisconnect(
-                        .init(
-                            outcome: disconnect.outcome,
-                            targetIdentity: disconnect.targetIdentity,
-                            terminalReason: disconnect.payload?.reason,
-                            lifecycleDispatchedUnits: disconnect.payload?.lifecycleDispatchedUnitCount,
-                            hasPayload: disconnect.payload != nil
-                        ),
-                        expected: ownedTarget
-                    )
-                } catch let cleanupError {
-                    throw CertificationControllerError.runtimeRefusal(
-                        "Held-pointer lifecycle failed: \(error.localizedDescription); " +
-                            "explicit owner cleanup failed: \(cleanupError.localizedDescription)"
+                    return .init(
+                        outcome: disconnect.outcome,
+                        targetIdentity: disconnect.targetIdentity,
+                        terminalReason: disconnect.payload?.reason,
+                        lifecycleDispatchedUnits: disconnect.payload?.lifecycleDispatchedUnitCount,
+                        hasPayload: disconnect.payload != nil
                     )
                 }
             }
