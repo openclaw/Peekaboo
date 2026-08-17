@@ -151,7 +151,7 @@ test('version parity reports missing and stale release surfaces', () => {
 
 test('repository release source surfaces remain internally consistent', () => {
   const versionResult = validateVersionConsistency(projectRoot);
-  assert.equal(versionResult.version, '4.2.0');
+  assert.equal(versionResult.version, '4.2.1');
   assert.deepEqual(versionResult.failures, []);
   assert.deepEqual(validateSourceDocumentationContracts(projectRoot), []);
 });
