@@ -109,7 +109,7 @@ struct DialogInputTargetJSONOutputTests {
             ),
             textFields: [DialogTextField(index: 0)]
         ))
-        dialogService.enterTextResult = try DialogActionResult(
+        dialogService.enterTextResult = DialogActionResult(
             success: true,
             action: .enterText,
             details: ["field": "Name", "text_length": "5"],
