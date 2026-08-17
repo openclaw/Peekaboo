@@ -99,10 +99,18 @@ struct MCPInteractionTargetTests {
         ]
 
         for window in malformedWindows {
-            await #expect(throws: MCPInteractionTargetError.backgroundWindowTargetMismatch) {
-                _ = try await target.requireBackgroundKeyboardTarget(
-                    applications: applications,
-                    windows: ReceiptWindowService(window: window))
+            if window.windowID == 42 {
+                await #expect(throws: MCPInteractionTargetError.backgroundWindowTargetMismatch) {
+                    _ = try await target.requireBackgroundKeyboardTarget(
+                        applications: applications,
+                        windows: ReceiptWindowService(window: window))
+                }
+            } else {
+                await #expect(throws: MCPInteractionTargetError.backgroundWindowTargetAmbiguous) {
+                    _ = try await target.requireBackgroundKeyboardTarget(
+                        applications: applications,
+                        windows: ReceiptWindowService(window: window))
+                }
             }
         }
 
@@ -116,6 +124,48 @@ struct MCPInteractionTargetTests {
             windows: ReceiptWindowService(window: valid))
         #expect(resolved.exactWindow?.identity == valid.mutationIdentity)
         #expect(resolved.exactWindow?.bounds == bounds)
+    }
+
+    @MainActor
+    @Test
+    func `background keyboard window adapter preserves missing and ambiguous selector errors`() async throws {
+        let processIdentity = AutomationTestFixtures.processIdentity(
+            processIdentifier: 4242,
+            processStartIdentity: 71)
+        let applications = MockApplicationService(applications: [AutomationTestFixtures.application(
+            processIdentifier: processIdentity.processIdentifier,
+            processStartIdentity: processIdentity.processStartIdentity,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")])
+        let target = try Self.makeTarget(Selectors(
+            app: "Editor",
+            pid: nil,
+            windowTitle: "Document",
+            windowIndex: nil,
+            windowID: nil))
+
+        await #expect(throws: MCPInteractionTargetError.backgroundWindowTargetAmbiguous) {
+            _ = try await target.requireBackgroundKeyboardTarget(
+                applications: applications,
+                windows: EmptyRecordingWindowService())
+        }
+
+        let bounds = CGRect(x: 10, y: 20, width: 640, height: 480)
+        let first = Self.window(
+            windowID: 42,
+            processIdentity: processIdentity,
+            bounds: bounds,
+            capturedBounds: bounds)
+        let second = Self.window(
+            windowID: 43,
+            processIdentity: processIdentity,
+            bounds: bounds.offsetBy(dx: 700, dy: 0),
+            capturedBounds: bounds.offsetBy(dx: 700, dy: 0))
+        await #expect(throws: MCPInteractionTargetError.backgroundWindowTargetAmbiguous) {
+            _ = try await target.requireBackgroundKeyboardTarget(
+                applications: applications,
+                windows: ReceiptWindowService(window: first, additionalWindow: second))
+        }
     }
 
     @MainActor
@@ -693,10 +743,16 @@ final class MCPFocusResultWindowService: WindowManagementPinnedFocusActionResult
 
 private actor ReceiptWindowService: WindowManagementServiceProtocol, WindowMutationInventoryProviding {
     let window: ServiceWindowInfo
+    let additionalWindow: ServiceWindowInfo?
     let inventoryWarnings: [String]
 
-    init(window: ServiceWindowInfo, inventoryWarnings: [String] = []) {
+    init(
+        window: ServiceWindowInfo,
+        additionalWindow: ServiceWindowInfo? = nil,
+        inventoryWarnings: [String] = [])
+    {
         self.window = window
+        self.additionalWindow = additionalWindow
         self.inventoryWarnings = inventoryWarnings
     }
 
@@ -708,16 +764,17 @@ private actor ReceiptWindowService: WindowManagementServiceProtocol, WindowMutat
     func setWindowBounds(target _: WindowTarget, bounds _: CGRect) async throws {}
     func focusWindow(target _: WindowTarget) async throws {}
     func listWindows(target _: WindowTarget) async throws -> [ServiceWindowInfo] {
-        [self.window]
+        [self.window, self.additionalWindow].compactMap(\.self)
     }
 
     func windowMutationInventory(
         target _: WindowTarget) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo>
     {
+        let windows = [self.window, self.additionalWindow].compactMap(\.self)
         if self.inventoryWarnings.isEmpty {
-            return .complete([self.window])
+            return .complete(windows)
         }
-        return .partial([self.window], warnings: self.inventoryWarnings)
+        return .partial(windows, warnings: self.inventoryWarnings)
     }
 
     func getFocusedWindow() async throws -> ServiceWindowInfo? {

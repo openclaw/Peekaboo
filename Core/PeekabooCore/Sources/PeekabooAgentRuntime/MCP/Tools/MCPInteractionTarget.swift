@@ -546,7 +546,9 @@ struct MCPInteractionTarget {
                 throw MCPInteractionTargetError.targetProcessNotFound
             case .missingProcessIdentity, .invalidProcessIdentity, .staleApplication:
                 throw MCPInteractionTargetError.targetProcessIdentityUnavailable
-            case .windowNotFound, .missingWindowIdentity, .incompleteWindowIdentity, .windowOwnerMismatch, .staleWindow:
+            case .windowNotFound, .ambiguousWindow:
+                throw MCPInteractionTargetError.backgroundWindowTargetAmbiguous
+            case .missingWindowIdentity, .incompleteWindowIdentity, .windowOwnerMismatch, .staleWindow:
                 throw MCPInteractionTargetError.backgroundWindowTargetMismatch
             default:
                 throw MCPInteractionTargetError.backgroundTargetPlanningFailed(error.localizedDescription)
