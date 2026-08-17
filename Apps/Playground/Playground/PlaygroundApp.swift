@@ -1,7 +1,6 @@
 import AppKit
 import Combine
 import OSLog
-import PeekabooFoundation
 import SwiftUI
 
 private let logger = Logger(subsystem: "boo.peekaboo.playground", category: "App")
@@ -14,45 +13,34 @@ struct PlaygroundApp: App {
     @StateObject private var tabRouter = PlaygroundTabRouter()
     @StateObject private var windowObserver: WindowEventObserver
     @State private var eventMonitor: Any?
+    private let pointerEventLogSequencer = PointerEventLogSequencer()
 
     init() {
         let actionLogger = ActionLogger.shared
         self._windowObserver = StateObject(wrappedValue: WindowEventObserver(actionLogger: actionLogger))
-        self.setupGlobalMouseClickMonitor()
+        self.setupPointerEventMonitor()
         self.setupGlobalKeyMonitor()
     }
 
-    private func setupGlobalMouseClickMonitor() {
-        // Monitor mouse clicks globally within the app
-        NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
-            self.handleGlobalMouseClick(event)
+    private func setupPointerEventMonitor() {
+        NSEvent.addLocalMonitorForEvents(matching: PointerEventLogContract.eventMask) { event in
+            self.handlePointerEvent(event)
         }
     }
 
-    private func handleGlobalMouseClick(_ event: NSEvent) -> NSEvent {
-        guard let window = event.window else {
+    private func handlePointerEvent(_ event: NSEvent) -> NSEvent {
+        guard let contract = PointerEventLogContract.resolve(
+            eventType: event.type,
+            buttonNumber: event.buttonNumber),
+            let window = event.window,
+            let record = self.pointerEventLogSequencer.next(
+                contract: contract,
+                windowID: window.windowNumber)
+        else {
             return event
         }
 
-        let locationInWindow = event.locationInWindow
-        let windowFrame = window.frame
-
-        // Convert to screen coordinates (top-left origin like Peekaboo uses)
-        // macOS uses bottom-left origin, so we need to flip Y coordinate
-        let screenHeight = NSScreen.main?.frame.height ?? 0
-        let screenX = windowFrame.origin.x + locationInWindow.x
-        let screenY = screenHeight - (windowFrame.origin.y + locationInWindow.y)
-        let screenLocation = NSPoint(x: screenX, y: screenY)
-
-        let clickType: ClickType = event.type == .leftMouseDown ? .single : .right
-        let descriptor = self.elementDescriptor(for: window, at: locationInWindow)
-
-        let logMessage = self.formatClickLogMessage(
-            type: clickType,
-            descriptor: descriptor,
-            windowLocation: locationInWindow,
-            screenLocation: screenLocation)
-        clickLogger.info("\(logMessage, privacy: .public)")
+        clickLogger.info("\(record.message, privacy: .public)")
 
         // Don't duplicate log in ActionLogger - let the button handlers do their specific logging
         // This is just for system-level logging
@@ -167,53 +155,6 @@ struct PlaygroundApp: App {
             modifiers.append("fn Function")
         }
         return modifiers.isEmpty ? "Released" : modifiers.joined(separator: " + ")
-    }
-
-    private func elementDescriptor(for window: NSWindow, at location: CGPoint) -> String? {
-        guard let contentView = window.contentView,
-              let hitView = contentView.hitTest(location)
-        else {
-            return nil
-        }
-
-        return self.describeHitView(hitView)
-    }
-
-    private func describeHitView(_ hitView: NSView) -> String {
-        if let button = hitView as? NSButton {
-            return button.title.isEmpty ? "button" : "'\(button.title)' button"
-        }
-
-        if let accessibilityLabel = hitView.accessibilityLabel(), !accessibilityLabel.isEmpty {
-            return accessibilityLabel
-        }
-
-        let accessibilityId = hitView.accessibilityIdentifier()
-        if !accessibilityId.isEmpty {
-            let cleaned = accessibilityId
-                .replacingOccurrences(of: "-button", with: "")
-                .replacingOccurrences(of: "-", with: " ")
-            return "\(cleaned) element"
-        }
-
-        return String(describing: type(of: hitView))
-            .replacingOccurrences(of: "SwiftUI.", with: "")
-            .replacingOccurrences(of: "AppKit.", with: "")
-    }
-
-    private func formatClickLogMessage(
-        type: ClickType,
-        descriptor: String?,
-        windowLocation: CGPoint,
-        screenLocation: CGPoint) -> String
-    {
-        let windowCoords = "window: (\(Int(windowLocation.x)), \(Int(windowLocation.y)))"
-        let screenCoords = "screen: (\(Int(screenLocation.x)), \(Int(screenLocation.y)))"
-        let coordinateDetails = "at \(windowCoords), \(screenCoords)"
-        if let descriptor, !descriptor.isEmpty {
-            return "\(type) click on \(descriptor) \(coordinateDetails)"
-        }
-        return "\(type) click \(coordinateDetails)"
     }
 
     var body: some Scene {

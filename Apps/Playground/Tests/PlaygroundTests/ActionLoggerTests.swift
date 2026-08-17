@@ -1,8 +1,72 @@
+import AppKit
 import Testing
 @testable import Playground
 
 @MainActor
 struct ActionLoggerTests {
+    @Test
+    func `pointer event log contract has an exact six-event mask and closed mapping`() {
+        let expectedMask: NSEvent.EventTypeMask = [
+            .leftMouseDown,
+            .leftMouseUp,
+            .rightMouseDown,
+            .rightMouseUp,
+            .otherMouseDown,
+            .otherMouseUp,
+        ]
+        #expect(PointerEventLogContract.eventMask.rawValue == expectedMask.rawValue)
+
+        let cases: [(NSEvent.EventType, Int, PointerEventLogContract.Button, PointerEventLogContract.Phase)] = [
+            (.leftMouseDown, 0, .left, .down),
+            (.leftMouseUp, 0, .left, .up),
+            (.rightMouseDown, 1, .right, .down),
+            (.rightMouseUp, 1, .right, .up),
+            (.otherMouseDown, 2, .middle, .down),
+            (.otherMouseUp, 2, .middle, .up),
+        ]
+        for (eventType, buttonNumber, button, phase) in cases {
+            let contract = PointerEventLogContract.resolve(
+                eventType: eventType,
+                buttonNumber: buttonNumber)
+            #expect(contract == .init(button: button, phase: phase))
+        }
+
+        #expect(PointerEventLogContract.resolve(eventType: .mouseMoved, buttonNumber: 0) == nil)
+        #expect(PointerEventLogContract.resolve(eventType: .otherMouseDown, buttonNumber: 3) == nil)
+        #expect(PointerEventLogContract.resolve(eventType: .leftMouseDown, buttonNumber: 1) == nil)
+    }
+
+    @Test
+    func `pointer records form consecutive closed down-up pairs for one exact window`() throws {
+        let cases: [(NSEvent.EventType, NSEvent.EventType, Int, PointerEventLogContract.Button)] = [
+            (.leftMouseDown, .leftMouseUp, 0, .left),
+            (.rightMouseDown, .rightMouseUp, 1, .right),
+            (.otherMouseDown, .otherMouseUp, 2, .middle),
+        ]
+        for (downType, upType, buttonNumber, button) in cases {
+            let sequencer = PointerEventLogSequencer(firstSequence: 41)
+            let down = try #require(PointerEventLogContract.resolve(
+                eventType: downType,
+                buttonNumber: buttonNumber))
+            let up = try #require(PointerEventLogContract.resolve(
+                eventType: upType,
+                buttonNumber: buttonNumber))
+
+            let downRecord = try #require(sequencer.next(contract: down, windowID: 1234))
+            let upRecord = try #require(sequencer.next(contract: up, windowID: 1234))
+
+            #expect(downRecord == .init(sequence: 41, button: button, phase: .down, windowID: 1234))
+            #expect(upRecord == .init(sequence: 42, button: button, phase: .up, windowID: 1234))
+            #expect(
+                downRecord.message ==
+                    "{\"sequence\":41,\"button\":\"\(button.rawValue)\",\"phase\":\"down\",\"window_id\":1234}")
+            #expect(
+                upRecord.message ==
+                    "{\"sequence\":42,\"button\":\"\(button.rawValue)\",\"phase\":\"up\",\"window_id\":1234}")
+            #expect(sequencer.next(contract: down, windowID: 0) == nil)
+        }
+    }
+
     @Test
     func `log records entries and updates derived state`() {
         let logger = ActionLogger.shared
