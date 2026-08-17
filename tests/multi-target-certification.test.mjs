@@ -147,6 +147,37 @@ test('source-owned assembler derives the exact v4 contract from controller and m
   assert.deepEqual(assemble(fixture), fixture.contract);
 });
 
+test('controller receipts require explicit canonical nulls for optional target and handshake metadata', () => {
+  const fixture = makeFixture();
+  const receipts = makeControllerReceipts(fixture);
+  for (const receipt of receipts) {
+    receipt.handshake.build = null;
+    receipt.handshake.host.bundle_identifier = null;
+    receipt.handshake.host.bundle_short_version = null;
+    receipt.handshake.host.bundle_version = null;
+  }
+  assert.deepEqual(assemble(fixture, receipts), fixture.contract);
+
+  const missingPaths = [
+    ['target', 'is_minimized'],
+    ['handshake', 'build'],
+    ['handshake', 'host', 'bundle_identifier'],
+    ['handshake', 'host', 'bundle_short_version'],
+    ['handshake', 'host', 'bundle_version'],
+  ];
+  for (const keys of missingPaths) {
+    const incomplete = structuredClone(receipts);
+    let parent = incomplete[0];
+    for (const key of keys.slice(0, -1)) parent = parent[key];
+    delete parent[keys.at(-1)];
+    assert.throws(
+      () => assemble(fixture, incomplete),
+      /controller receipt is not one closed four-slot passed run/,
+      `missing canonical null at ${keys.join('.')}`,
+    );
+  }
+});
+
 test('source-owned assembler rejects controller, socket, and bundle aggregation drift', () => {
   const duplicate = makeFixture();
   const duplicateReceipts = makeControllerReceipts(duplicate);

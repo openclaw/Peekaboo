@@ -39,9 +39,35 @@ enum CertificationControllerRunner {
             sessionID: sessionID,
             listenerInstanceID: listenerInstanceID
         )
-        for slot in plan.slots {
+        for slot in plan.slots.dropLast() {
             try await ledger.append(bridge.execute(slot))
         }
+        let completedSlotIDs = try ledger.finalBoundsReadySlotIDs()
+        try self.writeJSON(
+            CertificationFinalBoundsReadyReceipt(
+                version: 1,
+                executionNonce: plan.executionNonce,
+                monitorInstanceID: plan.monitorInstanceID,
+                controllerID: plan.controllerID,
+                targetID: plan.targetID,
+                controller: controllerProcess,
+                completedSlotIDs: completedSlotIDs,
+                readyAtMilliseconds: Self.nowMilliseconds()
+            ),
+            to: plan.finalBoundsReadyURL
+        )
+        try await CertificationControllerLifecycleGate.waitForFinalBoundsStart(
+            at: plan.finalBoundsStartURL,
+            executionNonce: plan.executionNonce,
+            monitorInstanceID: plan.monitorInstanceID,
+            controllerID: plan.controllerID
+        )
+        guard let finalBoundsSlot = plan.slots.last,
+              finalBoundsSlot.checkpoint == "final-bounds"
+        else {
+            throw CertificationControllerError.runtimeRefusal("Controller final-bounds slot is missing.")
+        }
+        try await ledger.append(bridge.execute(finalBoundsSlot))
         let exportedIDs = await bridge.exportedIDs()
         guard exportedIDs.count == plan.slots.count else {
             throw CertificationControllerError.runtimeRefusal("Controller did not export exactly four bundles.")
@@ -111,6 +137,25 @@ enum CertificationControllerLifecycleGate {
         try await self.wait(at: url, keys: ["version", "execution_nonce", "phase"]) { data in
             let marker = try JSONDecoder().decode(CertificationControllerReleaseMarker.self, from: data)
             try marker.validate(executionNonce: executionNonce)
+        }
+    }
+
+    static func waitForFinalBoundsStart(
+        at url: URL,
+        executionNonce: String,
+        monitorInstanceID: String,
+        controllerID: String
+    ) async throws {
+        try await self.wait(
+            at: url,
+            keys: ["version", "execution_nonce", "monitor_instance_id", "controller_id", "phase"]
+        ) { data in
+            let marker = try JSONDecoder().decode(CertificationFinalBoundsStartMarker.self, from: data)
+            try marker.validate(
+                executionNonce: executionNonce,
+                monitorInstanceID: monitorInstanceID,
+                controllerID: controllerID
+            )
         }
     }
 

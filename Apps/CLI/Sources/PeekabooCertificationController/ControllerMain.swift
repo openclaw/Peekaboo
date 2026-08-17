@@ -30,7 +30,7 @@ struct PeekabooCertificationControllerMain {
                 return
             }
             guard arguments.count == 2,
-                  ["--plan", "--observe-only-plan", "--attest-monitor"].contains(arguments[0])
+                  ["--plan", "--observe-only-plan", "--attest-monitor", "--inspect-code"].contains(arguments[0])
             else {
                 throw CertificationControllerError.invalidArguments(self.help)
             }
@@ -39,8 +39,10 @@ struct PeekabooCertificationControllerMain {
                 try await CertificationControllerRunner.run(planURL: planURL)
             } else if arguments[0] == "--observe-only-plan" {
                 try await CertificationObserveOnlyRunner.run(planURL: planURL)
-            } else {
+            } else if arguments[0] == "--attest-monitor" {
                 try CertificationMonitorAttestationRunner.run(planURL: planURL)
+            } else {
+                try await CertificationCodeIdentityRunner.run(planURL: planURL)
             }
             let output = ["result": "passed", "receipt": receipt.path]
             let data = try JSONSerialization.data(withJSONObject: output, options: [.sortedKeys])

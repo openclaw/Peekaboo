@@ -56,6 +56,38 @@ struct ControllerLedgerTests {
         }
     }
 
+    @Test
+    func `ledger opens final bounds only after every non-final slot`() throws {
+        let plan = try CertificationControllerPlan.decode(ControllerPlanTests.validPlanData)
+        let sessionID = try #require(UUID(uuidString: "019c0000-0000-4000-8000-000000000010"))
+        let listenerID = try #require(UUID(uuidString: "019c0000-0000-4000-8000-000000000011"))
+        var ledger = CertificationRunLedger(
+            plan: plan,
+            sessionID: sessionID,
+            listenerInstanceID: listenerID
+        )
+
+        for (ordinal, slot) in plan.slots.dropLast().enumerated() {
+            if ordinal < 2 {
+                #expect(throws: CertificationControllerError.self) {
+                    try ledger.finalBoundsReadySlotIDs()
+                }
+            }
+            try ledger.append(Self.evidence(
+                plan: plan,
+                slot: slot,
+                ordinal: ordinal,
+                sessionID: sessionID,
+                listenerID: listenerID
+            ))
+        }
+
+        #expect(try ledger.finalBoundsReadySlotIDs() == plan.slots.dropLast().map(\.id))
+        #expect(throws: CertificationControllerError.self) {
+            try ledger.validatedReceipts()
+        }
+    }
+
     private static func evidence(
         plan: CertificationControllerPlan,
         slot: CertificationSlot,

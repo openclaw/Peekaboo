@@ -151,6 +151,62 @@ struct PrivateArtifactsTests {
         )
     }
 
+    @Test
+    func `final bounds barrier is closed and bound to the controller generation`() async throws {
+        let plan = try CertificationControllerPlan.decode(ControllerPlanTests.validPlanData)
+        let process = CertificationProcessReceipt(
+            pid: 4101,
+            startIdentity: "410100",
+            codeSignatureHash: String(repeating: "a", count: 40)
+        )
+        let ready = CertificationFinalBoundsReadyReceipt(
+            version: 1,
+            executionNonce: plan.executionNonce,
+            monitorInstanceID: plan.monitorInstanceID,
+            controllerID: plan.controllerID,
+            targetID: plan.targetID,
+            controller: process,
+            completedSlotIDs: Array(plan.slots.dropLast().map(\.id)),
+            readyAtMilliseconds: 1_900_000_000_000
+        )
+        #expect(try Self.keys(ready) == [
+            "version", "execution_nonce", "monitor_instance_id", "controller_id", "target_id",
+            "controller", "completed_slot_ids", "ready_at_milliseconds",
+        ])
+
+        let marker = CertificationFinalBoundsStartMarker(
+            version: 1,
+            executionNonce: plan.executionNonce,
+            monitorInstanceID: plan.monitorInstanceID,
+            controllerID: plan.controllerID,
+            phase: .finalBounds
+        )
+        #expect(throws: CertificationControllerError.self) {
+            try marker.validate(
+                executionNonce: plan.executionNonce,
+                monitorInstanceID: plan.monitorInstanceID,
+                controllerID: "controller-b"
+            )
+        }
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        #expect(chmod(directory.path, S_IRWXU) == 0)
+        let encoder = JSONEncoder()
+        var data = try encoder.encode(marker)
+        data.append(0x0A)
+        let url = directory.appendingPathComponent("final-bounds-start.json")
+        try CertificationPrivateArtifacts.writeReceipt(data, to: url)
+
+        try await CertificationControllerLifecycleGate.waitForFinalBoundsStart(
+            at: url,
+            executionNonce: plan.executionNonce,
+            monitorInstanceID: plan.monitorInstanceID,
+            controllerID: plan.controllerID
+        )
+    }
+
     private static func keys(_ value: some Encodable) throws -> Set<String> {
         let object = try #require(
             JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any]

@@ -6,7 +6,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { verifyCurrentBuildSourceBinding } from './finalize-multi-target-certification.mjs';
+import {
+  inspectCodeIdentity as inspectCodeIdentityWithNativeController,
+  stageCodeIdentityInspector as stageNativeCodeIdentityInspector,
+  verifyCurrentBuildSourceBinding,
+} from './finalize-multi-target-certification.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIRECTORY = path.dirname(SCRIPT_PATH);
@@ -21,6 +25,11 @@ const UINT64_MAX = 0xffff_ffff_ffff_ffffn;
 const MAXIMUM_FILE_BYTES = 16 * 1024 * 1024;
 const POLL_MILLISECONDS = 25;
 const REPOSITORY_ROOT = path.resolve(SCRIPT_DIRECTORY, '..');
+const CONTROLLER_TYPING_DELAY_MILLISECONDS = 50;
+const CONTROLLER_MUTATION_OVERLAP_MARGIN_SECONDS = 20;
+const EXTERNAL_FOREGROUND_WINDOW_COUNT = 2;
+const OPERATION_LIFECYCLE_MARGIN_SECONDS = 30;
+const MAXIMUM_CONTROLLER_TEXT_BYTES = 4096;
 
 const HELP = `\
 Run one source-owned live multi-target Peekaboo certification.
@@ -73,8 +82,32 @@ function canonicalBytes(value) {
   return Buffer.from(JSON.stringify(canonicalValue(value)), 'utf8');
 }
 
+function sameJSON(left, right) {
+  try {
+    return canonicalBytes(left).equals(canonicalBytes(right));
+  } catch {
+    return false;
+  }
+}
+
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+export async function inspectCodeIdentity(options) {
+  try {
+    return await inspectCodeIdentityWithNativeController(options);
+  } catch (error) {
+    throw new CoordinatorError(error.message);
+  }
+}
+
+async function stageCodeIdentityInspector(...args) {
+  try {
+    return await stageNativeCodeIdentityInspector(...args);
+  } catch (error) {
+    throw new CoordinatorError(error.message);
+  }
 }
 
 function deriveCurrentBuildSource(catalog, testRuntime) {
@@ -107,26 +140,42 @@ function requirePeekabooSourceCommit(executable, expectedCommit) {
   }
 }
 
-function embeddedSourceCommit(executable, label) {
-  const section = runSync(
-    '/usr/bin/otool', ['-X', '-s', '__TEXT', '__info_plist', executable], `${label} source-stamp preflight`,
-  );
-  const bytes = Buffer.from((section.stdout.match(/\b[0-9a-f]{2}\b/gi) ?? []).join(''), 'hex');
-  let end = bytes.length;
-  while (end > 0 && bytes[end - 1] === 0) end -= 1;
-  const plist = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '-'], {
-    input: bytes.subarray(0, end),
+function nativeMachOArchitecture(nodeArchitecture = process.arch) {
+  if (nodeArchitecture === 'arm64') return 'arm64';
+  if (nodeArchitecture === 'x64') return 'x86_64';
+  throw new CoordinatorError(`unsupported native Mach-O architecture: ${nodeArchitecture}`);
+}
+
+export function embeddedSourceCommit(executable, label, {
+  runner = spawnSync,
+  nodeArchitecture = process.arch,
+} = {}) {
+  const architecture = nativeMachOArchitecture(nodeArchitecture);
+  // `-P` is otool's dedicated decoded `__info_plist` output; `-arch` prevents concatenated universal slices.
+  const section = runner('/usr/bin/otool', ['-arch', architecture, '-X', '-P', executable], {
     encoding: 'utf8',
     timeout: 10_000,
     maxBuffer: 4 * 1024 * 1024,
   });
+  if (section.error || section.status !== 0) {
+    throw new CoordinatorError(`${label} has no embedded info plist for ${architecture}`);
+  }
+  const plist = runner('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '-'], {
+    input: section.stdout,
+    encoding: 'utf8',
+    timeout: 10_000,
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  if (plist.error || plist.status !== 0) {
+    throw new CoordinatorError(`${label} source-stamp preflight is unreadable`);
+  }
   let value;
   try {
     value = JSON.parse(plist.stdout);
   } catch {
     throw new CoordinatorError(`${label} source-stamp preflight is unreadable`);
   }
-  if (plist.status !== 0 || !HEX40.test(value?.PeekabooSourceCommit ?? '')) {
+  if (!HEX40.test(value?.PeekabooSourceCommit ?? '')) {
     throw new CoordinatorError(`${label} has no exact embedded source stamp`);
   }
   return value.PeekabooSourceCommit;
@@ -487,8 +536,10 @@ function validatePlan(plan, catalog, testRuntimeAllowed, currentBuildCommit) {
       || !canonicalPositiveDecimal(plan.bridge.expected_host.process_start_identity_decimal)
       || !HEX40.test(plan.bridge.expected_host.code_signature_hash ?? '')
       || !HEX40.test(plan.bridge.expected_host.source_commit ?? '')
-      || JSON.stringify([...plan.bridge.trusted_host_team_ids].sort())
-        !== JSON.stringify([...catalog.trusted_bridge_host_team_ids].sort())
+      || !sameJSON(
+        [...plan.bridge.trusted_host_team_ids].sort(),
+        [...catalog.trusted_bridge_host_team_ids].sort(),
+      )
       || plan.bridge.expected_host.source_commit !== currentBuildCommit) {
     throw new CoordinatorError('bridge plan is malformed');
   }
@@ -526,7 +577,7 @@ function validatePlan(plan, catalog, testRuntimeAllowed, currentBuildCommit) {
   ]) || !targetIsValid(plan.monitor.sentinel)
       || !processIsValid(plan.monitor.foreground_controller)
       || !targetIsValid(plan.monitor.foreground_target)
-      || JSON.stringify(plan.monitor.foreground_target) !== JSON.stringify(plan.observer.target)
+      || !sameJSON(plan.monitor.foreground_target, plan.observer.target)
       || !Array.isArray(plan.monitor.invariant_names)
       || plan.monitor.invariant_names.length !== 6
       || new Set(plan.monitor.invariant_names).size !== 6
@@ -553,9 +604,21 @@ function validatePlan(plan, catalog, testRuntimeAllowed, currentBuildCommit) {
       || plan.external_foreground_timeout_seconds < 5
       || plan.external_foreground_timeout_seconds > 150
       || !safeInteger(plan.operation_timeout_seconds)
-      || plan.operation_timeout_seconds < (2 * plan.external_foreground_timeout_seconds) + 30
       || plan.operation_timeout_seconds > 3600) {
     throw new CoordinatorError('external and operation timeouts are invalid');
+  }
+  const maximumTypingDurationMilliseconds = Math.max(...plan.controllers.map((controller) => (
+    [...makeControllerText(
+      '0'.repeat(64), controller.controller_id, plan.external_foreground_timeout_seconds,
+    )].length * CONTROLLER_TYPING_DELAY_MILLISECONDS
+  )));
+  const minimumOperationDurationMilliseconds = maximumTypingDurationMilliseconds
+    + (EXTERNAL_FOREGROUND_WINDOW_COUNT * plan.external_foreground_timeout_seconds * 1000)
+    + (OPERATION_LIFECYCLE_MARGIN_SECONDS * 1000);
+  if (plan.operation_timeout_seconds * 1000 < minimumOperationDurationMilliseconds) {
+    throw new CoordinatorError(
+      'operation timeout does not cover controller typing, both external windows, and lifecycle overhead',
+    );
   }
   if (testRuntimeAllowed) {
     if (!exactKeys(plan.test_runtime, ['catalog_path', 'finalizer_path'])
@@ -588,6 +651,22 @@ function requireSentinelSample(sample, sentinel, label) {
   if (sample.frontmost_pid !== sentinel.pid || sample.frontmost_window_id !== sentinel.window_id) {
     throw new CoordinatorError(`${label} does not match the exact sentinel process/window`);
   }
+}
+
+function verifiedSentinelSample({ monitorExecutable, outputPath, directory, sentinel, label }) {
+  const before = invokeProcessIdentity(
+    monitorExecutable, sentinel.pid, directory, `${label}-sentinel-before`,
+  );
+  const sample = monitorSample(monitorExecutable, outputPath);
+  const after = invokeProcessIdentity(
+    monitorExecutable, sentinel.pid, directory, `${label}-sentinel-after`,
+  );
+  if (before.start_identity !== sentinel.start_identity
+      || after.start_identity !== sentinel.start_identity) {
+    throw new CoordinatorError(`${label} sentinel process generation differs from the exact plan`);
+  }
+  requireSentinelSample(sample, sentinel, `${label} sample`);
+  return sample;
 }
 
 function crashInventory(directory, prefixes) {
@@ -759,9 +838,7 @@ async function waitForHeartbeat({
     }
     if (requireActivity) {
       if (!(heartbeat.attributedForegroundEventCount > 0)
-          || JSON.stringify(heartbeat.attributedForegroundSourcePIDs) !== JSON.stringify([
-            children.foregroundControllerPID,
-          ])
+          || !sameJSON(heartbeat.attributedForegroundSourcePIDs, [children.foregroundControllerPID])
           || heartbeat.foregroundActivityObserved !== true) return undefined;
     } else if (heartbeat.attributedForegroundEventCount !== 0
         || heartbeat.attributedForegroundSourcePIDs.length !== 0
@@ -821,7 +898,7 @@ function collectControllerCorpus(controllerStates, receiptDirectory, bundleDirec
     const receipt = readPrivateJSON(state.receiptPath, `${state.id} receipt`);
     if (receipt.execution_nonce !== state.nonce || receipt.monitor_instance_id !== state.monitorID
         || receipt.controller_id !== state.id || receipt.result !== 'passed'
-        || JSON.stringify(receipt.controller) !== JSON.stringify(state.controllerProcess)
+        || !sameJSON(receipt.controller, state.controllerProcess)
         || !Array.isArray(receipt.slots) || receipt.slots.length !== 4) {
       throw new CoordinatorError(`${state.id} receipt is not one closed four-slot passed run`);
     }
@@ -886,7 +963,7 @@ function runPIDAttestation({
       || response.execution_nonce !== plan.execution_nonce
       || response.monitor_instance_id !== plan.monitor_instance_id
       || !HEX64.test(response.challenge ?? '')
-      || JSON.stringify(response[processKey]) !== JSON.stringify(expectedProcess)
+      || !sameJSON(response[processKey], expectedProcess)
       || response[digestKey] !== expectedDigest) {
     throw new CoordinatorError(`${responseKind} PID attestation does not bind the live process and corpus`);
   }
@@ -899,11 +976,15 @@ function finalizerCommand(finalizerPath, args, label, timeout) {
 
 function makeControllerText(nonce, controllerID, externalTimeoutSeconds) {
   const prefix = `peekaboo-certification-background:${nonce}:${controllerID}:`;
-  const minimumCharacters = Math.ceil(((externalTimeoutSeconds + 20) * 1000) / 50);
-  if (minimumCharacters > 4096) {
+  const prefixBytes = Buffer.byteLength(prefix, 'utf8');
+  const minimumCharacters = Math.ceil((
+    (externalTimeoutSeconds + CONTROLLER_MUTATION_OVERLAP_MARGIN_SECONDS) * 1000
+  ) / CONTROLLER_TYPING_DELAY_MILLISECONDS);
+  const totalCharacters = Math.max(prefixBytes + 1, minimumCharacters);
+  if (totalCharacters > MAXIMUM_CONTROLLER_TEXT_BYTES) {
     throw new CoordinatorError('external foreground timeout cannot fit inside one bounded controller mutation');
   }
-  return `${prefix}${'x'.repeat(4096 - Buffer.byteLength(prefix, 'utf8'))}`;
+  return `${prefix}${'x'.repeat(totalCharacters - prefixBytes)}`;
 }
 
 function childEntries(controllerStates, observerChild, monitorChild) {
@@ -922,20 +1003,62 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
   const monitorID = randomUUID().toLowerCase();
   const deadline = Date.now() + plan.operation_timeout_seconds * 1000;
   const externalDeadlineDuration = plan.external_foreground_timeout_seconds * 1000;
-  const controllerExecutable = fs.realpathSync(plan.controller_executable);
+  const sourceControllerExecutable = fs.realpathSync(plan.controller_executable);
+  let controllerExecutable = sourceControllerExecutable;
   const monitorExecutable = fs.realpathSync(plan.monitor_executable);
   const peekabooExecutable = fs.realpathSync(plan.peekaboo_executable);
+  let inspectorStage;
+  let controllerCodeIdentity;
+  let monitorCodeIdentity;
   if (!testRuntime) {
-    if (embeddedSourceCommit(controllerExecutable, 'certification controller') !== currentBuildCommit) {
-      throw new CoordinatorError('certification controller source stamp differs from the clean Git HEAD');
+    inspectorStage = await stageCodeIdentityInspector(
+      sourceControllerExecutable,
+      catalog.trusted_controller_team_ids,
+      currentBuildCommit,
+      { parentDirectory: runRoot },
+    );
+    controllerExecutable = inspectorStage.executable;
+    controllerCodeIdentity = {
+      team_id: inspectorStage.teamID,
+      code_signature_hash: inspectorStage.codeSignatureHash,
+    };
+    const monitorSHA256 = sha256(fs.readFileSync(monitorExecutable));
+    const monitorMatches = [];
+    for (const teamID of catalog.trusted_monitor_team_ids) {
+      try {
+        monitorMatches.push(await inspectCodeIdentity({
+          inspectorStage,
+          subject: {
+            kind: 'executable', executable_path: monitorExecutable, expected_team_id: teamID,
+          },
+          expected: {
+            kind: 'executable',
+            executablePath: monitorExecutable,
+            executableSHA256: monitorSHA256,
+            codeSignatureHash: plan.monitor.code_signature_hash,
+            teamID,
+            sourceCommit: catalog.monitor_source.commit,
+          },
+          label: 'certification monitor file',
+        }));
+      } catch {}
+    }
+    if (monitorMatches.length !== 1) {
+      throw new CoordinatorError(
+        'certification monitor must match exactly one catalog-approved Apple anchor',
+      );
+    }
+    [monitorCodeIdentity] = monitorMatches;
+    if (monitorCodeIdentity.code_signature_hash !== plan.monitor.code_signature_hash) {
+      throw new CoordinatorError('certification monitor code-signature hash differs from the plan');
     }
     requirePeekabooSourceCommit(peekabooExecutable, currentBuildCommit);
   }
   const controllerBuild = {
     source_commit: currentBuildCommit,
     executable_path: controllerExecutable,
-    executable_sha256: sha256(fs.readFileSync(controllerExecutable)),
-    team_id: catalog.trusted_controller_team_ids[0],
+    executable_sha256: inspectorStage?.executableSHA256 ?? sha256(fs.readFileSync(controllerExecutable)),
+    team_id: controllerCodeIdentity?.team_id ?? catalog.trusted_controller_team_ids[0],
   };
   const directories = {};
   for (const name of [
@@ -984,6 +1107,8 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
       const planPath = path.join(artifactDirectory, 'plan.json');
       const readyPath = path.join(artifactDirectory, 'controller-ready.json');
       const startPath = path.join(artifactDirectory, 'controller-start.json');
+      const finalBoundsReadyPath = path.join(artifactDirectory, 'final-bounds-ready.json');
+      const finalBoundsStartPath = path.join(artifactDirectory, 'final-bounds-start.json');
       const releasePath = path.join(artifactDirectory, 'controller-release.json');
       const controllerPlan = {
         version: 1,
@@ -998,10 +1123,12 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
         expected_host: plan.bridge.expected_host,
         target: controller.target,
         type_text: makeControllerText(nonce, controller.controller_id, plan.external_foreground_timeout_seconds),
-        typing_delay_milliseconds: 50,
+        typing_delay_milliseconds: CONTROLLER_TYPING_DELAY_MILLISECONDS,
         artifacts_directory: artifactDirectory,
         ready_path: readyPath,
         start_path: startPath,
+        final_bounds_ready_path: finalBoundsReadyPath,
+        final_bounds_start_path: finalBoundsStartPath,
         release_path: releasePath,
       };
       writePrivateJSON(planPath, controllerPlan);
@@ -1021,6 +1148,8 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
         mutationCompletedPath: path.join(artifactDirectory, 'mutation-completed.json'),
         readyPath,
         startPath,
+        finalBoundsReadyPath,
+        finalBoundsStartPath,
         releasePath,
       });
     }
@@ -1036,7 +1165,7 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
       ]) || ready.version !== 1 || ready.execution_nonce !== nonce
           || ready.controller_id !== state.id || ready.target_id !== state.targetID
           || !processIsValid(ready.controller) || ready.controller.pid !== state.child.pid
-          || JSON.stringify(ready.build) !== JSON.stringify(controllerBuild)
+          || !sameJSON(ready.build, controllerBuild)
           || !positiveSafeInteger(ready.ready_at_milliseconds)) {
         throw new CoordinatorError(`${state.id} readiness is not closed and process/run bound`);
       }
@@ -1045,6 +1174,32 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
       );
       if (observed.start_identity !== ready.controller.start_identity) {
         throw new CoordinatorError(`${state.id} process generation changed after readiness`);
+      }
+      if (!testRuntime) {
+        const liveIdentity = await inspectCodeIdentity({
+          inspectorStage,
+          subject: {
+            kind: 'process',
+            process_identifier: state.child.pid,
+            process_start_identity: ready.controller.start_identity,
+            expected_team_id: controllerCodeIdentity.team_id,
+          },
+          expected: {
+            kind: 'process',
+            process: ready.controller,
+            executablePath: controllerExecutable,
+            executableSHA256: null,
+            codeSignatureHash: controllerCodeIdentity.code_signature_hash,
+            teamID: controllerCodeIdentity.team_id,
+            sourceCommit: currentBuildCommit,
+          },
+          label: `${state.id} process`,
+        });
+        if (ready.controller.code_signature_hash !== controllerCodeIdentity.code_signature_hash
+            || liveIdentity.code_signature_hash !== controllerCodeIdentity.code_signature_hash
+            || liveIdentity.executable_path !== controllerExecutable) {
+          throw new CoordinatorError(`${state.id} Apple-anchored process identity differs from its executable`);
+        }
       }
       controllerProcesses.push(ready.controller);
       state.controllerProcess = ready.controller;
@@ -1111,17 +1266,50 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
         || observerReady.baseline_value_sha256 !== sha256(Buffer.from(plan.observer.baseline_value, 'utf8'))
         || observerReady.expected_value_sha256 !== sha256(Buffer.from(marker, 'utf8'))
         || observerReady.request_marker !== marker
-        || JSON.stringify(observerReady.target) !== JSON.stringify(plan.observer.target)
+        || !sameJSON(observerReady.target, plan.observer.target)
         || observerReady.observation_path !== observerPaths.observation
         || observerReady.restoration_path !== observerPaths.restoration
-        || JSON.stringify(observerReady.observer_build) !== JSON.stringify(controllerBuild)
+        || !sameJSON(observerReady.observer_build, controllerBuild)
         || !positiveSafeInteger(observerReady.ready_at_milliseconds)) {
       throw new CoordinatorError('foreground observer readiness is not bound to the committed semantic plan');
     }
+    if (!testRuntime) {
+      const observerIdentity = await inspectCodeIdentity({
+        inspectorStage,
+        subject: {
+          kind: 'process',
+          process_identifier: observerChild.pid,
+          process_start_identity: observerReady.observer.start_identity,
+          expected_team_id: controllerCodeIdentity.team_id,
+        },
+        expected: {
+          kind: 'process',
+          process: observerReady.observer,
+          executablePath: controllerExecutable,
+          executableSHA256: null,
+          codeSignatureHash: controllerCodeIdentity.code_signature_hash,
+          teamID: controllerCodeIdentity.team_id,
+          sourceCommit: currentBuildCommit,
+        },
+        label: 'foreground observer process',
+      });
+      if (observerReady.observer.code_signature_hash !== controllerCodeIdentity.code_signature_hash
+          || observerIdentity.code_signature_hash !== controllerCodeIdentity.code_signature_hash
+          || observerIdentity.executable_path !== controllerExecutable) {
+        throw new CoordinatorError(
+          'foreground observer Apple-anchored process identity differs from its executable',
+        );
+      }
+    }
 
     const samplePath = path.join(directories.monitor, 'baseline-sample.json');
-    const baselineSample = monitorSample(monitorExecutable, samplePath);
-    requireSentinelSample(baselineSample, plan.monitor.sentinel, 'baseline sample');
+    const baselineSample = verifiedSentinelSample({
+      monitorExecutable,
+      outputPath: samplePath,
+      directory: directories.monitor,
+      sentinel: plan.monitor.sentinel,
+      label: 'baseline',
+    });
     const crashPrefixes = structuredClone(catalog.monitor_contract.crash_report_prefixes);
     const crashBaseline = crashInventory(plan.monitor.crash_directory, crashPrefixes);
     const hostProcess = {
@@ -1220,13 +1408,45 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
         ).start_identity) {
       throw new CoordinatorError('monitor executable/process generation changed during launch');
     }
+    if (!testRuntime) {
+      const monitorProcessReceipt = {
+        pid: monitorChild.pid,
+        start_identity: monitorExecutableReceipt.startIdentity,
+        code_signature_hash: monitorCodeIdentity.code_signature_hash,
+      };
+      const liveMonitorIdentity = await inspectCodeIdentity({
+        inspectorStage,
+        subject: {
+          kind: 'process',
+          process_identifier: monitorChild.pid,
+          process_start_identity: monitorExecutableReceipt.startIdentity,
+          expected_team_id: monitorCodeIdentity.team_id,
+        },
+        expected: {
+          kind: 'process',
+          process: monitorProcessReceipt,
+          executablePath: monitorExecutable,
+          executableSHA256: null,
+          codeSignatureHash: monitorCodeIdentity.code_signature_hash,
+          teamID: monitorCodeIdentity.team_id,
+          sourceCommit: catalog.monitor_source.commit,
+        },
+        label: 'certification monitor process',
+      });
+      if (liveMonitorIdentity.code_signature_hash !== monitorCodeIdentity.code_signature_hash
+          || liveMonitorIdentity.executable_path !== monitorExecutable) {
+        throw new CoordinatorError(
+          'certification monitor Apple-anchored process identity differs from its executable',
+        );
+      }
+    }
     const monitorProcess = {
       pid: monitorChild.pid,
       start_identity: monitorExecutableReceipt.startIdentity,
       executable_path: monitorExecutable,
       executable_sha256: monitorExecutableReceipt.sha256,
-      code_signature_hash: plan.monitor.code_signature_hash,
-      team_id: catalog.trusted_monitor_team_ids[0],
+      code_signature_hash: monitorCodeIdentity?.code_signature_hash ?? plan.monitor.code_signature_hash,
+      team_id: monitorCodeIdentity?.team_id ?? catalog.trusted_monitor_team_ids[0],
       source_commit: catalog.monitor_source.commit,
       heartbeat_path: shared.heartbeat,
     };
@@ -1287,7 +1507,7 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
         ]) || started.version !== 1 || started.phase !== 'mutation-started'
             || started.execution_nonce !== nonce || started.controller_id !== state.id
             || started.target_id !== state.targetID
-            || JSON.stringify(started.target) !== JSON.stringify(receiptTarget(controller.target))
+            || !sameJSON(started.target, receiptTarget(controller.target))
             || !positiveSafeInteger(started.timestamp_milliseconds)) {
           throw new CoordinatorError(`${state.id} mutation-started marker is not closed and run-bound`);
         }
@@ -1369,6 +1589,44 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
     await waitFor('foreground restoration witness and attestation endpoint', deadline, () => (
       fs.existsSync(observerPaths.witness) && fs.existsSync(observerPaths.attestationSocket) ? true : undefined
     ), childEntries(controllerStates, observerChild, monitorChild));
+    await waitFor('both controllers at the final-bounds barrier', deadline, () => {
+      if (!controllerStates.every((state) => fs.existsSync(state.finalBoundsReadyPath))) return undefined;
+      for (const state of controllerStates) {
+        const ready = readPrivateJSON(
+          state.finalBoundsReadyPath,
+          `${state.id} final-bounds readiness`,
+        );
+        const expectedSlotIDs = catalog.slots
+          .filter((slot) => slot.controller_id === state.id && slot.checkpoint !== 'final-bounds')
+          .map((slot) => slot.slot_id);
+        if (!exactKeys(ready, [
+          'version', 'execution_nonce', 'monitor_instance_id', 'controller_id', 'target_id',
+          'controller', 'completed_slot_ids', 'ready_at_milliseconds',
+        ]) || ready.version !== 1 || ready.execution_nonce !== nonce
+            || ready.monitor_instance_id !== monitorID || ready.controller_id !== state.id
+            || ready.target_id !== state.targetID
+            || !sameJSON(ready.controller, state.controllerProcess)
+            || !sameJSON(ready.completed_slot_ids, expectedSlotIDs)
+            || !positiveSafeInteger(ready.ready_at_milliseconds)) {
+          throw new CoordinatorError(
+            `${state.id} final-bounds readiness is not closed and process/run bound`,
+          );
+        }
+      }
+      return true;
+    }, childEntries(controllerStates, observerChild, monitorChild));
+    if (controllerStates.some((state) => fs.existsSync(state.receiptPath))) {
+      throw new CoordinatorError('a controller crossed the final-bounds barrier before owner release');
+    }
+    for (const state of controllerStates) {
+      writePrivateJSON(state.finalBoundsStartPath, {
+        version: 1,
+        execution_nonce: nonce,
+        monitor_instance_id: monitorID,
+        controller_id: state.id,
+        phase: 'final-bounds',
+      });
+    }
     await waitFor('both persistent controller receipts', deadline, () => (
       controllerStates.every((state) => fs.existsSync(state.receiptPath)) ? true : undefined
     ), childEntries(controllerStates, observerChild, monitorChild));
@@ -1377,14 +1635,19 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
     await capture('revoke-stable', 3, false);
     fs.writeFileSync(shared.phase, 'complete\n', { mode: 0o600 });
     const finalSamplePath = path.join(directories.monitor, 'final-sample.json');
-    const finalSample = monitorSample(monitorExecutable, finalSamplePath);
-    requireSentinelSample(finalSample, plan.monitor.sentinel, 'final sample');
+    const finalSample = verifiedSentinelSample({
+      monitorExecutable,
+      outputPath: finalSamplePath,
+      directory: directories.monitor,
+      sentinel: plan.monitor.sentinel,
+      label: 'final',
+    });
     if (finalSample.clipboard_change_count !== baselineSample.clipboard_change_count
         || finalSample.clipboard_digest !== baselineSample.clipboard_digest) {
       throw new CoordinatorError('clipboard state was not restored to the monitor baseline');
     }
     const crashFinal = crashInventory(plan.monitor.crash_directory, crashPrefixes);
-    if (JSON.stringify(crashFinal) !== JSON.stringify(crashBaseline)) {
+    if (!sameJSON(crashFinal, crashBaseline)) {
       throw new CoordinatorError('new certification-related crash reports appeared during the run');
     }
     await capture('final-stable', 3, false);
@@ -1466,11 +1729,11 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
     ]) || sealedReceipt.version !== 1 || sealedReceipt.execution_nonce !== nonce
         || sealedReceipt.monitor_instance_id !== monitorID || sealedReceipt.phase !== 'sealed'
         || sealedReceipt.monitor_evidence_sha256 !== aggregateSHA256('monitor-evidence', sealedEvidence)
-        || JSON.stringify(sealedEvidence) !== JSON.stringify(monitorEvidence)) {
+        || !sameJSON(sealedEvidence, monitorEvidence)) {
       throw new CoordinatorError('monitor-owned corpus seal differs from the coordinator draft');
     }
     const finalHeartbeat = readPrivateJSON(shared.heartbeat, 'sealed final monitor heartbeat');
-    if (JSON.stringify(finalHeartbeat) !== JSON.stringify(sealedEvidence.fences.at(-1).heartbeat)) {
+    if (!sameJSON(finalHeartbeat, sealedEvidence.fences.at(-1).heartbeat)) {
       throw new CoordinatorError('live monitor heartbeat differs from the sealed final fence');
     }
     const monitorSocketBefore = requireOwnerSocket(shared.attestationSocket, 'monitor attestation endpoint');
@@ -1515,10 +1778,13 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
       expectedDigest: sha256(requirePrivateFile(observerPaths.witness, 'foreground witness bytes')),
       responseKind: 'observer',
     });
-    if (JSON.stringify(requireOwnerSocket(shared.attestationSocket, 'monitor attestation endpoint'))
-          !== JSON.stringify(monitorSocketBefore)
-        || JSON.stringify(requireOwnerSocket(observerPaths.attestationSocket, 'observer attestation endpoint'))
-          !== JSON.stringify(observerSocketBefore)) {
+    if (!sameJSON(
+      requireOwnerSocket(shared.attestationSocket, 'monitor attestation endpoint'),
+      monitorSocketBefore,
+    ) || !sameJSON(
+      requireOwnerSocket(observerPaths.attestationSocket, 'observer attestation endpoint'),
+      observerSocketBefore,
+    )) {
       throw new CoordinatorError('an attestation endpoint changed during its PID-bound challenge');
     }
     const prepareArgs = [
@@ -1618,7 +1884,17 @@ async function main() {
   );
 }
 
-main().catch((error) => {
-  process.stderr.write(`live multi-target coordinator: ${error.message}\n`);
-  process.exitCode = error instanceof CoordinatorError ? 1 : 2;
-});
+const invokedAsScript = (() => {
+  if (!process.argv[1]) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === SCRIPT_PATH;
+  } catch {
+    return false;
+  }
+})();
+if (invokedAsScript) {
+  main().catch((error) => {
+    process.stderr.write(`live multi-target coordinator: ${error.message}\n`);
+    process.exitCode = error instanceof CoordinatorError ? 1 : 2;
+  });
+}

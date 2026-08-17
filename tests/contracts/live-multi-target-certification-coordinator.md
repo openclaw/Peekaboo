@@ -35,6 +35,8 @@ persisted summary is never itself certification authority; only the final live f
   adjacent clock deltas remain within two seconds. Foreground activity is absent except at operations-complete, where
   it belongs to the exact integrated Computer Use producer PID.
 - Both controller mutation intervals remain open across operations-start and operations-complete.
+- Each controller publishes a process-bound non-final readiness marker, and neither may begin its final-bounds capture
+  until the coordinator has validated both markers and released both owner-private barriers.
 - Monitor sealing and monitor/observer challenges bind the live PIDs and exact evidence bytes. Caller-written success
   or certification fields are never accepted.
 - Failure performs bounded release/TERM/KILL cleanup while preserving the private run root for diagnosis.

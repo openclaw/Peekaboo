@@ -3,9 +3,10 @@
 import {
   createHash,
   createPublicKey,
+  randomBytes,
   verify as verifySignature,
 } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,7 +22,7 @@ const UUID_V8 = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 const UINT64_MAX = 0xffff_ffff_ffff_ffffn;
 const REQUEST_ID_DOMAIN = Buffer.from('peekaboo.bridge.operation-request.v1\0', 'utf8');
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
-const BUILTIN_CATALOG_SHA256 = 'bd55291425f50595dafd62cedee557790db56acc39dcb4b8bd1e356e4b66d714';
+const BUILTIN_CATALOG_SHA256 = '6a47aaf1160938015727d48349d2c9366233550babb50ad3a05c196493781b1e';
 const BUILTIN_DIGEST_SPEC_SHA256 = '6d80d6264a4d3b80c69cee0c68ce3b5c2fd801e8483bb4bbddd4402d87066a33';
 const CLI_VERSION = '2';
 const LIVE_CERTIFICATION_AUTHORITY = Symbol('peekaboo-live-certification-authority');
@@ -29,6 +30,7 @@ const LIVE_CERTIFICATION_RESULT = Symbol('peekaboo-live-certification-result');
 const FINALIZER_CATALOG_DIGEST_PROJECTION = 'normalize-builtin-catalog-sha256-to-zero-v1';
 const CONTROLLER_SOURCE_DIRECTORY = 'Apps/CLI/Sources/PeekabooCertificationController/';
 const CONTROLLER_SOURCE_PATHS = [
+  'Apps/CLI/Sources/PeekabooCertificationController/CodeIdentityRunner.swift',
   'Apps/CLI/Sources/PeekabooCertificationController/ControllerBuildIdentity.swift',
   'Apps/CLI/Sources/PeekabooCertificationController/ControllerEvidence.swift',
   'Apps/CLI/Sources/PeekabooCertificationController/ControllerMain.swift',
@@ -3480,219 +3482,667 @@ function readStableRegularFile(filePath, label) {
   }
 }
 
-function verifyAppleSigningRequirement(executable, teamID) {
-  const requirement = `anchor apple generic and certificate leaf[subject.OU] = "${teamID}"`;
-  const signatureCheck = spawnSync('/usr/bin/codesign', [
-    '--verify', '--strict', `-R=${requirement}`, executable,
+function appleAnchoredTeamRequirement(teamID) {
+  if (typeof teamID !== 'string' || !/^[A-Z0-9]{5,20}$/.test(teamID)) {
+    throw new TypeError('Apple-anchored signing requirement has an invalid Team ID');
+  }
+  return `anchor apple generic and certificate leaf[subject.OU] = "${teamID}"`;
+}
+
+function codeSignatureMetadata(signatureInfo, label) {
+  if (signatureInfo.error || signatureInfo.status !== 0) {
+    throw new TypeError(`${label} code-signature identity is unavailable`);
+  }
+  const signatureText = `${signatureInfo.stdout ?? ''}\n${signatureInfo.stderr ?? ''}`;
+  const executable = signatureText.match(/^Executable=(.+)$/m)?.[1] ?? null;
+  const teamID = signatureText.match(/^TeamIdentifier=([A-Z0-9]+)$/m)?.[1] ?? null;
+  const codeSignatureHash = signatureText.match(/^CDHash=([0-9a-f]+)$/m)?.[1] ?? null;
+  if (!teamID || !HEX40.test(codeSignatureHash ?? '')) {
+    throw new TypeError(`${label} code-signature identity is incomplete`);
+  }
+  return { executable, team_id: teamID, code_signature_hash: codeSignatureHash };
+}
+
+export function verifyAppleSigningRequirement(subject, teamID, label, runner = spawnSync) {
+  const verification = appleAnchorVerificationResult(subject, teamID, runner);
+  if (verification.error || verification.status !== 0) {
+    throw new TypeError(`${label} does not satisfy the Apple-anchored signing requirement`);
+  }
+}
+
+function displayCodeSignatureMetadata(subject, label, runner = spawnSync) {
+  return codeSignatureMetadata(runner('/usr/bin/codesign', [
+    '--display', '--verbose=4', subject,
   ], {
     encoding: 'utf8',
     timeout: 10_000,
-  });
-  if (signatureCheck.status !== 0) {
-    throw new TypeError('first-party validator does not satisfy the Apple-anchored signing requirement');
-  }
+    maxBuffer: 1024 * 1024,
+  }), label);
 }
 
-function codeSignatureIdentity(executable) {
-  const signatureInfo = spawnSync('/usr/bin/codesign', ['--display', '--verbose=4', executable], {
-    encoding: 'utf8',
-    timeout: 10_000,
-  });
-  if (signatureInfo.status !== 0) throw new TypeError('validator code-signature identity is unavailable');
-  const signatureText = `${signatureInfo.stdout ?? ''}\n${signatureInfo.stderr ?? ''}`;
-  return {
-    team_id: signatureText.match(/^TeamIdentifier=([A-Z0-9]+)$/m)?.[1] ?? null,
-    code_signature_hash: signatureText.match(/^CDHash=([0-9a-f]+)$/m)?.[1] ?? null,
-  };
+function nativeMachOArchitecture(nodeArchitecture = process.arch) {
+  if (nodeArchitecture === 'arm64') return 'arm64';
+  if (nodeArchitecture === 'x64') return 'x86_64';
+  throw new TypeError(`unsupported native Mach-O architecture: ${nodeArchitecture}`);
 }
 
-function codeSignatureIdentityForPID(pid) {
-  const subject = `+${pid}`;
-  const verification = spawnSync('/usr/bin/codesign', ['--verify', '--strict', subject], {
-    encoding: 'utf8',
-    timeout: 10_000,
-  });
-  if (verification.status !== 0) throw new TypeError('live process code signature is invalid');
-  const display = spawnSync('/usr/bin/codesign', ['--display', '--verbose=4', subject], {
-    encoding: 'utf8',
-    timeout: 10_000,
-  });
-  if (display.status !== 0) throw new TypeError('live process code identity is unavailable');
-  const output = `${display.stdout ?? ''}\n${display.stderr ?? ''}`;
-  const executable = output.match(/^Executable=(.+)$/m)?.[1] ?? null;
-  const codeSignatureHash = output.match(/^CDHash=([0-9a-f]+)$/m)?.[1] ?? null;
-  const teamID = output.match(/^TeamIdentifier=([A-Z0-9]+)$/m)?.[1] ?? null;
-  if (!executable || !HEX40.test(codeSignatureHash ?? '') || !teamID) {
-    throw new TypeError('live process code identity is incomplete');
-  }
-  return {
-    executable: fs.realpathSync(executable),
-    code_signature_hash: codeSignatureHash,
-    team_id: teamID,
-  };
-}
-
-function embeddedSourceCommit(executable) {
-  const section = spawnSync('/usr/bin/otool', ['-X', '-s', '__TEXT', '__info_plist', executable], {
+export function embeddedSourceCommit(executable, label = 'signed executable', {
+  runner = spawnSync,
+  nodeArchitecture = process.arch,
+} = {}) {
+  const architecture = nativeMachOArchitecture(nodeArchitecture);
+  // `-P` is otool's dedicated decoded `__info_plist` output; `-arch` prevents concatenated universal slices.
+  const section = runner('/usr/bin/otool', ['-arch', architecture, '-X', '-P', executable], {
     encoding: 'utf8',
     timeout: 10_000,
     maxBuffer: 4 * 1024 * 1024,
   });
-  if (section.status !== 0) throw new TypeError('signed executable has no embedded info plist');
-  const bytes = Buffer.from((section.stdout.match(/\b[0-9a-f]{2}\b/gi) ?? []).join(''), 'hex');
-  let end = bytes.length;
-  while (end > 0 && bytes[end - 1] === 0) end -= 1;
-  const plist = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '-'], {
-    input: bytes.subarray(0, end),
+  if (section.error || section.status !== 0) {
+    throw new TypeError(`${label} has no embedded info plist for ${architecture}`);
+  }
+  const plist = runner('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '-'], {
+    input: section.stdout,
     encoding: 'utf8',
     timeout: 10_000,
     maxBuffer: 4 * 1024 * 1024,
   });
+  if (plist.error || plist.status !== 0) {
+    throw new TypeError(`${label} info plist is unreadable`);
+  }
   let value;
   try {
     value = JSON.parse(plist.stdout);
   } catch {
-    throw new TypeError('signed executable info plist is unreadable');
+    throw new TypeError(`${label} info plist is unreadable`);
   }
-  if (plist.status !== 0 || !HEX40.test(value?.PeekabooSourceCommit ?? '')) {
-    throw new TypeError('signed executable has no exact source stamp');
+  if (!HEX40.test(value?.PeekabooSourceCommit ?? '')) {
+    throw new TypeError(`${label} has no exact source stamp`);
   }
   return value.PeekabooSourceCommit;
 }
 
-function assertStagedExecutable(stage, expectedSHA256) {
-  const current = readStableRegularFile(stage.executable, 'staged first-party validator');
-  if (current.info.dev !== stage.device || current.info.ino !== stage.inode
-      || sha256(current.bytes) !== expectedSHA256) {
-    throw new TypeError('staged first-party validator changed during certification');
-  }
-  for (const library of stage.libraries) {
-    const currentLibrary = readStableRegularFile(library.path, `staged validator runtime ${library.name}`);
-    if (currentLibrary.info.dev !== library.device || currentLibrary.info.ino !== library.inode
-        || sha256(currentLibrary.bytes) !== library.sha256) {
-      throw new TypeError(`staged validator runtime ${library.name} changed during certification`);
-    }
-  }
-}
-
-function inspectFirstPartyExecutable(sourceExecutable, catalog) {
-  const absolute = fs.realpathSync(path.resolve(sourceExecutable));
-  const executable = readStableRegularFile(absolute, 'first-party validator');
-  const identity = codeSignatureIdentity(absolute);
-  if (!catalog.trusted_first_party_validator_team_ids.includes(identity.team_id)) {
-    throw new TypeError('first-party validator is not signed by a catalog-approved team');
-  }
-  verifyAppleSigningRequirement(absolute, identity.team_id);
-  const versionRun = spawnSync(absolute, ['--version', '--json'], {
+function appleAnchorVerificationResult(subject, teamID, runner = spawnSync) {
+  const requirement = appleAnchoredTeamRequirement(teamID);
+  const args = ['--verify', '--strict'];
+  if (!String(subject).startsWith('+')) args.push('--all-architectures');
+  args.push(`-R=${requirement}`, subject);
+  return runner('/usr/bin/codesign', args, {
     encoding: 'utf8',
     timeout: 10_000,
     maxBuffer: 1024 * 1024,
   });
-  let version;
-  try {
-    version = JSON.parse(versionRun.stdout);
-  } catch {
-    throw new TypeError('first-party validator version receipt is not JSON');
-  }
-  const sourceCommit = version?.data?.sourceCommit;
-  if (versionRun.status !== 0 || version?.success !== true || !HEX40.test(sourceCommit ?? '')) {
-    throw new TypeError('first-party validator has no exact stamped source commit');
-  }
-  const sourceDirectory = path.dirname(absolute);
-  const runtimeLibraries = fs.readdirSync(sourceDirectory)
-    .filter((name) => /^libswiftCompatibility[A-Za-z0-9._-]*\.dylib$/.test(name))
-    .sort()
-    .map((name) => {
-      const libraryPath = path.join(sourceDirectory, name);
-      const library = readStableRegularFile(libraryPath, `validator runtime ${name}`);
-      verifyAppleSigningRequirement(libraryPath, identity.team_id);
-      const libraryIdentity = codeSignatureIdentity(libraryPath);
-      if (libraryIdentity.team_id !== identity.team_id) {
-        throw new TypeError(`validator runtime ${name} has a different signing team`);
-      }
-      return {
-        name,
-        sha256: sha256(library.bytes),
-        code_signature_hash: libraryIdentity.code_signature_hash,
-      };
-    });
+}
+
+function stagedCodeFile(pathname, label) {
+  const file = readStableRegularFile(pathname, label);
   return {
-    id: 'peekaboo-bridge-receipt-validate-v1',
-    source_commit: sourceCommit,
-    executable_sha256: sha256(executable.bytes),
-    code_signature_hash: identity.code_signature_hash,
-    team_id: identity.team_id,
-    runtime_libraries: runtimeLibraries,
-    trusted_host_team_ids: structuredClone(catalog.trusted_bridge_host_team_ids),
+    path: pathname,
+    device: file.info.dev,
+    inode: file.info.ino,
+    linkCount: file.info.nlink,
+    mode: file.info.mode,
+    owner: file.info.uid,
+    size: file.info.size,
+    modifiedAtMilliseconds: file.info.mtimeMs,
+    changedAtMilliseconds: file.info.ctimeMs,
+    sha256: sha256(file.bytes),
   };
 }
 
-function stageFirstPartyExecutable(executablePath, catalog, contract) {
+export function assertCodeIdentityInspectorStage(stage) {
+  const directory = fs.lstatSync(stage.directory);
+  if (!directory.isDirectory() || directory.isSymbolicLink()
+      || directory.dev !== stage.directoryDevice || directory.ino !== stage.directoryInode
+      || directory.mtimeMs !== stage.directoryModifiedAtMilliseconds
+      || directory.ctimeMs !== stage.directoryChangedAtMilliseconds
+      || (directory.mode & 0o077) !== 0
+      || (typeof process.geteuid === 'function' && directory.uid !== process.geteuid())
+      || !sameJSON(fs.readdirSync(stage.directory).sort(), stage.files.map((entry) => entry.name).sort())) {
+    throw new TypeError('staged code-identity inspector directory changed');
+  }
+  for (const expected of stage.files) {
+    const observed = stagedCodeFile(expected.path, `staged code-identity inspector ${expected.name}`);
+    if (observed.device !== expected.device || observed.inode !== expected.inode
+        || observed.linkCount !== 1 || observed.linkCount !== expected.linkCount
+        || observed.mode !== expected.mode || observed.owner !== expected.owner
+        || observed.size !== expected.size
+        || observed.modifiedAtMilliseconds !== expected.modifiedAtMilliseconds
+        || observed.changedAtMilliseconds !== expected.changedAtMilliseconds
+        || observed.sha256 !== expected.sha256) {
+      throw new TypeError(`staged code-identity inspector ${expected.name} changed`);
+    }
+  }
+}
+
+export function removeCodeIdentityInspectorStage(stage) {
+  fs.chmodSync(stage.directory, 0o700);
+  fs.rmSync(stage.directory, { recursive: true, force: true });
+}
+
+function validCodeIdentityProcess(value) {
+  return exactKeys(value, ['pid', 'start_identity', 'code_signature_hash'])
+    && positiveInteger(value.pid)
+    && normalizedDecimal(value.start_identity, true) !== null
+    && HEX40.test(value.code_signature_hash ?? '');
+}
+
+function validCodeIdentityBuild(value) {
+  return exactKeys(value, ['source_commit', 'executable_path', 'executable_sha256', 'team_id'])
+    && HEX40.test(value.source_commit ?? '')
+    && typeof value.executable_path === 'string' && path.isAbsolute(value.executable_path)
+    && HEX64.test(value.executable_sha256 ?? '')
+    && /^[A-Z0-9]{10}$/.test(value.team_id ?? '');
+}
+
+function codeIdentityInspectorBuild(stage) {
+  return {
+    source_commit: stage.sourceCommit,
+    executable_path: stage.executable,
+    executable_sha256: stage.executableSHA256,
+    team_id: stage.teamID,
+  };
+}
+
+function validateCodeIdentitySubject(subject, expected, label) {
+  if (!exactKeys(subject, [
+    'kind', 'process', 'executable_path', 'executable_sha256',
+    'code_signature_hash', 'team_id', 'source_commit',
+  ]) || subject.kind !== expected.kind
+      || typeof subject.executable_path !== 'string'
+      || subject.executable_path !== expected.executablePath
+      || !HEX40.test(subject.code_signature_hash ?? '')
+      || subject.team_id !== expected.teamID
+      || subject.source_commit !== expected.sourceCommit) {
+    throw new TypeError(`${label} code-identity subject differs from the exact expectation`);
+  }
+  if (expected.codeSignatureHash !== null
+      && subject.code_signature_hash !== expected.codeSignatureHash) {
+    throw new TypeError(`${label} code-signature hash differs from the exact expectation`);
+  }
+  if (expected.kind === 'executable') {
+    if (subject.process !== null || subject.executable_sha256 !== expected.executableSHA256) {
+      throw new TypeError(`${label} executable identity differs from the exact file`);
+    }
+  } else if (expected.kind === 'process') {
+    if (subject.executable_sha256 !== null || !validCodeIdentityProcess(subject.process)
+        || !sameJSON(subject.process, expected.process)
+        || subject.process.code_signature_hash !== subject.code_signature_hash) {
+      throw new TypeError(`${label} process identity differs from the exact generation and executable`);
+    }
+  } else {
+    throw new TypeError(`${label} code-identity kind is invalid`);
+  }
+  return subject;
+}
+
+async function waitForInspectorReceipt(outputPath, childState, timeoutMilliseconds) {
+  const deadline = Date.now() + timeoutMilliseconds;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(outputPath)) return;
+    if (childState.exited) throw new TypeError('native code-identity inspector exited before readiness');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new TypeError('native code-identity inspector timed out before readiness');
+}
+
+async function waitForStoppedProcess(pid, runner, timeoutMilliseconds = 2000) {
+  const deadline = Date.now() + timeoutMilliseconds;
+  while (Date.now() < deadline) {
+    const status = runner('/bin/ps', ['-o', 'state=', '-p', String(pid)], {
+      encoding: 'utf8', timeout: 1000, maxBuffer: 1024,
+    });
+    if (!status.error && status.status === 0 && /^T/m.test(status.stdout ?? '')) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new TypeError('native code-identity inspector did not enter the stopped state');
+}
+
+async function waitForReleasedInspectorExit(exitPromise, label) {
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new TypeError(`${label} native code-identity inspector did not exit after release`));
+    }, 5000);
+    exitPromise.then(() => {
+      clearTimeout(timeout);
+      resolve();
+    }, (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+}
+
+export async function inspectCodeIdentity({
+  inspectorStage,
+  subject,
+  expected,
+  label,
+  runner = spawnSync,
+  spawnChild = spawn,
+  signalProcess = process.kill.bind(process),
+  waitForStopped = waitForStoppedProcess,
+}) {
+  assertCodeIdentityInspectorStage(inspectorStage);
+  const temporaryDirectory = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'peekaboo-code-identity-')),
+  );
+  fs.chmodSync(temporaryDirectory, 0o700);
+  const planPath = path.join(temporaryDirectory, 'plan.json');
+  const outputPath = path.join(temporaryDirectory, 'receipt.json');
+  const inspectorBuild = codeIdentityInspectorBuild(inspectorStage);
+  const plan = {
+    version: 1,
+    execution_nonce: randomBytes(32).toString('hex'),
+    expected_inspector_build: inspectorBuild,
+    subject,
+    output_path: outputPath,
+    release_path: path.join(temporaryDirectory, 'release.json'),
+  };
+  let child;
+  let childState;
+  let completionPromise;
+  let stopped = false;
+  try {
+    writeOwnerPrivateOutput(planPath, `${JSON.stringify(plan, null, 2)}\n`);
+    child = spawnChild(inspectorStage.executable, ['--inspect-code', planPath], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (!positiveInteger(child?.pid) || !child.stdout || !child.stderr) {
+      throw new TypeError(`${label} native code-identity inspector did not start`);
+    }
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    childState = { exited: false, code: null, signal: null, error: null };
+    completionPromise = new Promise((resolve) => {
+      child.once('error', (error) => {
+        childState.error = error;
+        childState.exited = true;
+        resolve();
+      });
+      child.once('exit', (code, signal) => {
+        childState.code = code;
+        childState.signal = signal;
+        childState.exited = true;
+      });
+      child.once('close', (code, signal) => {
+        childState.code ??= code;
+        childState.signal ??= signal;
+        childState.exited = true;
+        resolve();
+      });
+    });
+    await waitForInspectorReceipt(outputPath, childState, 30_000);
+    const receipt = parseJSON(
+      readStablePrivateFile(outputPath, `${label} code-identity receipt`),
+      `${label} code-identity receipt`,
+    );
+    signalProcess(child.pid, 'SIGSTOP');
+    stopped = true;
+    await waitForStopped(child.pid, runner);
+    assertCodeIdentityInspectorStage(inspectorStage);
+    verifyAppleSigningRequirement(`+${child.pid}`, inspectorStage.teamID, `${label} live inspector`, runner);
+    assertCodeIdentityInspectorStage(inspectorStage);
+    const liveIdentity = displayCodeSignatureMetadata(
+      `+${child.pid}`, `${label} live inspector`, runner,
+    );
+    assertCodeIdentityInspectorStage(inspectorStage);
+    let liveExecutable;
+    try {
+      liveExecutable = fs.realpathSync(liveIdentity.executable);
+    } catch {
+      throw new TypeError(`${label} live inspector executable path is unavailable`);
+    }
+    if (!exactKeys(receipt, ['version', 'inspector_process', 'inspector_build', 'subject'])
+        || receipt.version !== 1 || !validCodeIdentityProcess(receipt.inspector_process)
+        || receipt.inspector_process.pid !== child.pid
+        || !validCodeIdentityBuild(receipt.inspector_build)
+        || !sameJSON(receipt.inspector_build, inspectorBuild)
+        || liveExecutable !== inspectorStage.executable
+        || liveIdentity.team_id !== inspectorStage.teamID
+        || liveIdentity.code_signature_hash !== receipt.inspector_process.code_signature_hash
+        || (inspectorStage.codeSignatureHash !== null
+          && (receipt.inspector_process.code_signature_hash !== inspectorStage.codeSignatureHash
+            || liveIdentity.code_signature_hash !== inspectorStage.codeSignatureHash))) {
+      throw new TypeError(`${label} code-identity receipt does not bind the exact inspector build and process`);
+    }
+    const inspected = validateCodeIdentitySubject(receipt.subject, expected, label);
+    if (expected.executablePath === inspectorStage.executable
+        && receipt.inspector_process.code_signature_hash !== inspected.code_signature_hash) {
+      throw new TypeError(`${label} staged inspector self-identity is inconsistent`);
+    }
+    if (!sameJSON(fs.readdirSync(temporaryDirectory).sort(), ['plan.json', 'receipt.json'])) {
+      throw new TypeError(`${label} code-identity exchange created unexpected artifacts`);
+    }
+    writeOwnerPrivateOutput(plan.release_path, `${JSON.stringify({
+      version: 1,
+      execution_nonce: plan.execution_nonce,
+      phase: 'release',
+    }, null, 2)}\n`);
+    signalProcess(child.pid, 'SIGCONT');
+    stopped = false;
+    await waitForReleasedInspectorExit(completionPromise, label);
+    assertCodeIdentityInspectorStage(inspectorStage);
+    if (childState.error || childState.code !== 0 || childState.signal !== null) {
+      throw new TypeError(`${label} native code-identity inspector exited nonzero: ${stderr.trim()}`);
+    }
+    let envelope;
+    try {
+      envelope = JSON.parse(stdout);
+    } catch {
+      throw new TypeError(`${label} native code-identity inspector result is not JSON`);
+    }
+    if (!exactKeys(envelope, ['receipt', 'result']) || envelope.result !== 'passed'
+        || envelope.receipt !== outputPath) {
+      throw new TypeError(`${label} native code-identity inspector result is not closed`);
+    }
+    return inspected;
+  } finally {
+    if (child && childState?.exited !== true) {
+      try { if (stopped) signalProcess(child.pid, 'SIGCONT'); } catch {}
+      try { signalProcess(child.pid, 'SIGTERM'); } catch {}
+      try { await waitForReleasedInspectorExit(completionPromise, label); } catch {}
+    }
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+export async function stageCodeIdentityInspector(sourceExecutable, allowedTeamIDs, sourceCommit, {
+  runner = spawnSync,
+  parentDirectory = os.tmpdir(),
+  spawnChild = spawn,
+  signalProcess = process.kill.bind(process),
+  waitForStopped = waitForStoppedProcess,
+} = {}) {
+  const sourcePath = fs.realpathSync(path.resolve(sourceExecutable));
+  const source = readStableRegularFile(sourcePath, 'source code-identity inspector');
+  const directory = fs.realpathSync(
+    fs.mkdtempSync(path.join(parentDirectory, 'peekaboo-code-inspector-')),
+  );
+  fs.chmodSync(directory, 0o700);
+  const executable = path.join(directory, 'peekaboo-certification-controller');
+  try {
+    fs.writeFileSync(executable, source.bytes, { mode: 0o500, flag: 'wx' });
+    const sourceDirectory = path.dirname(sourcePath);
+    const runtimeNames = fs.readdirSync(sourceDirectory).sort().filter((name) => (
+      /^libswiftCompatibility[A-Za-z0-9._-]*\.dylib$/.test(name)
+    ));
+    for (const name of runtimeNames) {
+      const library = readStableRegularFile(path.join(sourceDirectory, name), `code inspector runtime ${name}`);
+      fs.writeFileSync(path.join(directory, name), library.bytes, { mode: 0o500, flag: 'wx' });
+    }
+    const filePaths = [
+      ['peekaboo-certification-controller', executable],
+      ...runtimeNames.map((name) => [name, path.join(directory, name)]),
+    ];
+    const files = filePaths.map(([name, pathname]) => ({ name, ...stagedCodeFile(pathname, name) }));
+    fs.chmodSync(directory, 0o500);
+    const directoryInfo = fs.lstatSync(directory);
+    const stage = {
+      directory,
+      directoryDevice: directoryInfo.dev,
+      directoryInode: directoryInfo.ino,
+      directoryModifiedAtMilliseconds: directoryInfo.mtimeMs,
+      directoryChangedAtMilliseconds: directoryInfo.ctimeMs,
+      executable,
+      executableSHA256: files[0].sha256,
+      teamID: null,
+      sourceCommit,
+      codeSignatureHash: null,
+      files,
+    };
+    assertCodeIdentityInspectorStage(stage);
+    const matchingTeamIDs = allowedTeamIDs.filter((teamID) => {
+      assertCodeIdentityInspectorStage(stage);
+      const verification = appleAnchorVerificationResult(executable, teamID, runner);
+      assertCodeIdentityInspectorStage(stage);
+      return !verification.error && verification.status === 0;
+    });
+    if (matchingTeamIDs.length !== 1) {
+      throw new TypeError('staged code-identity inspector must match exactly one catalog-approved Apple anchor');
+    }
+    const teamID = matchingTeamIDs[0];
+    stage.teamID = teamID;
+    for (const name of runtimeNames) {
+      assertCodeIdentityInspectorStage(stage);
+      const verification = appleAnchorVerificationResult(path.join(directory, name), teamID, runner);
+      assertCodeIdentityInspectorStage(stage);
+      if (verification.error || verification.status !== 0) {
+        throw new TypeError(`staged code inspector runtime ${name} has the wrong Apple anchor`);
+      }
+    }
+    assertCodeIdentityInspectorStage(stage);
+    const stagedIdentity = displayCodeSignatureMetadata(executable, 'staged code-identity inspector', runner);
+    assertCodeIdentityInspectorStage(stage);
+    if (stagedIdentity.team_id !== teamID) {
+      throw new TypeError('staged code-identity inspector display metadata differs from its Apple anchor');
+    }
+    assertCodeIdentityInspectorStage(stage);
+    const stagedSourceCommit = embeddedSourceCommit(executable, 'staged code-identity inspector', { runner });
+    assertCodeIdentityInspectorStage(stage);
+    if (stagedSourceCommit !== sourceCommit) {
+      throw new TypeError('staged code-identity inspector source differs from the clean Git HEAD');
+    }
+    stage.codeSignatureHash = stagedIdentity.code_signature_hash;
+    const selfIdentity = await inspectCodeIdentity({
+      inspectorStage: stage,
+      subject: { kind: 'executable', executable_path: executable, expected_team_id: teamID },
+      expected: {
+        kind: 'executable',
+        executablePath: executable,
+        executableSHA256: stage.executableSHA256,
+        codeSignatureHash: stage.codeSignatureHash,
+        teamID,
+        sourceCommit,
+      },
+      label: 'staged code-identity inspector',
+      runner,
+      spawnChild,
+      signalProcess,
+      waitForStopped,
+    });
+    if (selfIdentity.code_signature_hash !== stage.codeSignatureHash) {
+      throw new TypeError('staged code-identity inspector live CDHash differs from its immutable stage');
+    }
+    assertCodeIdentityInspectorStage(stage);
+    return stage;
+  } catch (error) {
+    try {
+      fs.chmodSync(directory, 0o700);
+      fs.rmSync(directory, { recursive: true, force: true });
+    } catch {}
+    throw error;
+  }
+}
+
+function assertStagedExecutable(stage, expectedSHA256) {
+  assertCodeIdentityInspectorStage(stage);
+  if (stage.executableFile.sha256 !== expectedSHA256) {
+    throw new TypeError('staged first-party validator changed during certification');
+  }
+}
+
+function withStableFirstPartyStage(stage, expectedSHA256, operation) {
+  assertStagedExecutable(stage, expectedSHA256);
+  try {
+    return operation();
+  } finally {
+    assertStagedExecutable(stage, expectedSHA256);
+  }
+}
+
+function stagedFirstPartyIdentity(stage, file, expectedTeamID, label, runner = spawnSync) {
+  withStableFirstPartyStage(stage, stage.executableFile.sha256, () => {
+    verifyAppleSigningRequirement(file.path, expectedTeamID, label, runner);
+  });
+  const identity = withStableFirstPartyStage(stage, stage.executableFile.sha256, () => (
+    displayCodeSignatureMetadata(file.path, label, runner)
+  ));
+  if (identity.team_id !== expectedTeamID) {
+    throw new TypeError(`${label} signing team differs from the Apple-anchored requirement`);
+  }
+  return identity;
+}
+
+function stagedFirstPartyIdentityForAllowedTeams(stage, file, allowedTeamIDs, label, runner = spawnSync) {
+  const matchingTeamIDs = allowedTeamIDs.filter((teamID) => {
+    const verification = withStableFirstPartyStage(stage, stage.executableFile.sha256, () => (
+      appleAnchorVerificationResult(file.path, teamID, runner)
+    ));
+    return !verification.error && verification.status === 0;
+  });
+  if (matchingTeamIDs.length !== 1) {
+    throw new TypeError(`${label} must match exactly one catalog-approved Apple anchor`);
+  }
+  const identity = withStableFirstPartyStage(stage, stage.executableFile.sha256, () => (
+    displayCodeSignatureMetadata(file.path, label, runner)
+  ));
+  if (identity.team_id !== matchingTeamIDs[0]) {
+    throw new TypeError(`${label} signing team differs from the Apple-anchored requirement`);
+  }
+  return identity;
+}
+
+function createFirstPartyExecutableStage(executablePath, contract = null) {
   const sourceExecutable = fs.realpathSync(path.resolve(executablePath));
   const source = readStableRegularFile(sourceExecutable, 'first-party validator');
-  if (sha256(source.bytes) !== contract.first_party_validator.executable_sha256) {
+  const sourceSHA256 = sha256(source.bytes);
+  if (contract && sourceSHA256 !== contract.first_party_validator.executable_sha256) {
     throw new TypeError('first-party validator bytes differ from the contracted executable');
   }
-  const stageDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'peekaboo-validator.'));
+  const stageDirectory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'peekaboo-validator.')));
   fs.chmodSync(stageDirectory, 0o700);
   const executable = path.join(stageDirectory, 'peekaboo');
   try {
     fs.writeFileSync(executable, source.bytes, { mode: 0o500, flag: 'wx' });
     const sourceDirectory = path.dirname(sourceExecutable);
     const runtimeNames = fs.readdirSync(sourceDirectory).sort().filter((name) => (
-      /^libswiftCompatibility.*\.dylib$/.test(name)
+      /^libswiftCompatibility[A-Za-z0-9._-]*\.dylib$/.test(name)
     ));
-    const expectedRuntimeNames = contract.first_party_validator.runtime_libraries.map((entry) => entry.name);
-    if (!sameJSON(runtimeNames, expectedRuntimeNames)) {
+    const expectedRuntimeNames = contract?.first_party_validator.runtime_libraries.map((entry) => entry.name);
+    if (expectedRuntimeNames && !sameJSON(runtimeNames, expectedRuntimeNames)) {
       throw new TypeError('validator runtime library set differs from the closed contract');
     }
-    const stagedLibraries = [];
-    for (const expected of contract.first_party_validator.runtime_libraries) {
-      const name = expected.name;
+    for (const name of runtimeNames) {
       const librarySource = path.join(sourceDirectory, name);
       const library = readStableRegularFile(librarySource, `validator runtime ${name}`);
-      if (sha256(library.bytes) !== expected.sha256) {
+      const expected = contract?.first_party_validator.runtime_libraries.find((entry) => entry.name === name);
+      if (expected && sha256(library.bytes) !== expected.sha256) {
         throw new TypeError(`validator runtime ${name} differs from the contracted bytes`);
       }
       const stagedLibrary = path.join(stageDirectory, name);
       fs.writeFileSync(stagedLibrary, library.bytes, { mode: 0o500, flag: 'wx' });
-      verifyAppleSigningRequirement(stagedLibrary, contract.first_party_validator.team_id);
-      const identity = codeSignatureIdentity(stagedLibrary);
-      if (identity.team_id !== contract.first_party_validator.team_id
-          || identity.code_signature_hash !== expected.code_signature_hash) {
-        throw new TypeError(`validator runtime ${name} differs from the contracted signing identity`);
-      }
-      const info = fs.lstatSync(stagedLibrary);
-      stagedLibraries.push({
-        name,
-        path: stagedLibrary,
-        sha256: expected.sha256,
-        device: info.dev,
-        inode: info.ino,
-      });
     }
-    verifyAppleSigningRequirement(executable, contract.first_party_validator.team_id);
-    const stagedInfo = fs.lstatSync(executable);
+    const filePaths = [
+      ['peekaboo', executable],
+      ...runtimeNames.map((name) => [name, path.join(stageDirectory, name)]),
+    ];
+    const files = filePaths.map(([name, pathname]) => ({ name, ...stagedCodeFile(pathname, name) }));
+    fs.chmodSync(stageDirectory, 0o500);
+    const directoryInfo = fs.lstatSync(stageDirectory);
     const stage = {
       directory: stageDirectory,
+      directoryDevice: directoryInfo.dev,
+      directoryInode: directoryInfo.ino,
+      directoryModifiedAtMilliseconds: directoryInfo.mtimeMs,
+      directoryChangedAtMilliseconds: directoryInfo.ctimeMs,
       executable,
-      device: stagedInfo.dev,
-      inode: stagedInfo.ino,
-      libraries: stagedLibraries,
+      executableFile: files[0],
+      libraries: files.slice(1),
+      files,
     };
-    assertStagedExecutable(stage, contract.first_party_validator.executable_sha256);
+    assertStagedExecutable(stage, contract?.first_party_validator.executable_sha256 ?? sourceSHA256);
+    return stage;
+  } catch (error) {
+    try {
+      fs.chmodSync(stageDirectory, 0o700);
+      fs.rmSync(stageDirectory, { recursive: true, force: true });
+    } catch {}
+    throw error;
+  }
+}
 
-    const identity = codeSignatureIdentity(executable);
+export function inspectFirstPartyExecutable(sourceExecutable, catalog, { runner = spawnSync } = {}) {
+  const stage = createFirstPartyExecutableStage(sourceExecutable);
+  try {
+    const identity = stagedFirstPartyIdentityForAllowedTeams(
+      stage,
+      stage.executableFile,
+      catalog.trusted_first_party_validator_team_ids,
+      'staged first-party validator',
+      runner,
+    );
+    const versionRun = withStableFirstPartyStage(stage, stage.executableFile.sha256, () => (
+      runner(stage.executable, ['--version', '--json'], {
+        encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024,
+      })
+    ));
+    let version;
+    try {
+      version = JSON.parse(versionRun.stdout);
+    } catch {
+      throw new TypeError('first-party validator version receipt is not JSON');
+    }
+    const sourceCommit = version?.data?.sourceCommit;
+    if (versionRun.status !== 0 || version?.success !== true || !HEX40.test(sourceCommit ?? '')) {
+      throw new TypeError('first-party validator has no exact stamped source commit');
+    }
+    const runtimeLibraries = stage.libraries.map((library) => {
+      const libraryIdentity = stagedFirstPartyIdentity(
+        stage, library, identity.team_id, `staged validator runtime ${library.name}`, runner,
+      );
+      return {
+        name: library.name,
+        sha256: library.sha256,
+        code_signature_hash: libraryIdentity.code_signature_hash,
+      };
+    });
+    return {
+      id: 'peekaboo-bridge-receipt-validate-v1',
+      source_commit: sourceCommit,
+      executable_sha256: stage.executableFile.sha256,
+      code_signature_hash: identity.code_signature_hash,
+      team_id: identity.team_id,
+      runtime_libraries: runtimeLibraries,
+      trusted_host_team_ids: structuredClone(catalog.trusted_bridge_host_team_ids),
+    };
+  } finally {
+    removeStagedExecutable(stage);
+  }
+}
+
+function stageFirstPartyExecutable(executablePath, catalog, contract) {
+  const stage = createFirstPartyExecutableStage(executablePath, contract);
+  try {
+    const identity = stagedFirstPartyIdentity(
+      stage,
+      stage.executableFile,
+      contract.first_party_validator.team_id,
+      'staged first-party validator',
+    );
+
     if (!catalog.trusted_first_party_validator_team_ids.includes(identity.team_id)
         || identity.team_id !== contract.first_party_validator.team_id
         || identity.code_signature_hash !== contract.first_party_validator.code_signature_hash) {
       throw new TypeError('first-party validator signing identity differs from the source-controlled contract');
     }
-    const versionRun = spawnSync(executable, ['--version', '--json'], {
-      encoding: 'utf8',
-      timeout: 10_000,
-      maxBuffer: 1024 * 1024,
-    });
+    for (const expected of contract.first_party_validator.runtime_libraries) {
+      const library = stage.libraries.find((entry) => entry.name === expected.name);
+      const libraryIdentity = stagedFirstPartyIdentity(
+        stage, library, identity.team_id, `staged validator runtime ${expected.name}`,
+      );
+      if (libraryIdentity.code_signature_hash !== expected.code_signature_hash) {
+        throw new TypeError(`validator runtime ${expected.name} differs from the contracted signing identity`);
+      }
+    }
+    const versionRun = withStableFirstPartyStage(stage, stage.executableFile.sha256, () => (
+      spawnSync(stage.executable, ['--version', '--json'], {
+        encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024,
+      })
+    ));
     let version;
     try {
       version = JSON.parse(versionRun.stdout);
@@ -3704,12 +4154,10 @@ function stageFirstPartyExecutable(executablePath, catalog, contract) {
       throw new TypeError('first-party validator source commit differs from the contract');
     }
     assertStagedExecutable(stage, contract.first_party_validator.executable_sha256);
-    fs.chmodSync(stageDirectory, 0o500);
     return stage;
   } catch (error) {
     try {
-      fs.chmodSync(stageDirectory, 0o700);
-      fs.rmSync(stageDirectory, { recursive: true, force: true });
+      removeStagedExecutable(stage);
     } catch {}
     throw error;
   }
@@ -3736,7 +4184,7 @@ function verifyLiveSocket(contract, evidence) {
   }
 }
 
-function verifyLiveMonitorRuntime(contract, evidence) {
+async function verifyLiveMonitorRuntime(contract, evidence, inspectorStage) {
   const binding = contract.monitor_binding;
   const monitorEvidence = evidence.monitor_evidence;
   const executable = readStableRegularFile(
@@ -3746,40 +4194,52 @@ function verifyLiveMonitorRuntime(contract, evidence) {
   if (sha256(executable.bytes) !== binding.monitor_process.executable_sha256) {
     throw new TypeError('live certification monitor bytes differ from the contract');
   }
-  const identity = codeSignatureIdentity(binding.monitor_process.executable_path);
-  const liveIdentity = codeSignatureIdentityForPID(binding.monitor_process.pid);
+  const monitorPath = fs.realpathSync(binding.monitor_process.executable_path);
+  const identity = await inspectCodeIdentity({
+    inspectorStage,
+    subject: {
+      kind: 'executable', executable_path: monitorPath,
+      expected_team_id: binding.monitor_process.team_id,
+    },
+    expected: {
+      kind: 'executable',
+      executablePath: monitorPath,
+      executableSHA256: binding.monitor_process.executable_sha256,
+      codeSignatureHash: binding.monitor_process.code_signature_hash,
+      teamID: binding.monitor_process.team_id,
+      sourceCommit: binding.monitor_process.source_commit,
+    },
+    label: 'live certification monitor file',
+  });
+  const liveIdentity = await inspectCodeIdentity({
+    inspectorStage,
+    subject: {
+      kind: 'process',
+      process_identifier: binding.monitor_process.pid,
+      process_start_identity: binding.monitor_process.start_identity,
+      expected_team_id: binding.monitor_process.team_id,
+    },
+    expected: {
+      kind: 'process',
+      process: {
+        pid: binding.monitor_process.pid,
+        start_identity: binding.monitor_process.start_identity,
+        code_signature_hash: binding.monitor_process.code_signature_hash,
+      },
+      executablePath: monitorPath,
+      executableSHA256: null,
+      codeSignatureHash: binding.monitor_process.code_signature_hash,
+      teamID: binding.monitor_process.team_id,
+      sourceCommit: binding.monitor_process.source_commit,
+    },
+    label: 'live certification monitor process',
+  });
   if (identity.code_signature_hash !== binding.monitor_process.code_signature_hash
       || identity.team_id !== binding.monitor_process.team_id
       || liveIdentity.code_signature_hash !== binding.monitor_process.code_signature_hash
       || liveIdentity.team_id !== binding.monitor_process.team_id
-      || liveIdentity.executable !== fs.realpathSync(binding.monitor_process.executable_path)
-      || embeddedSourceCommit(binding.monitor_process.executable_path)
-        !== binding.monitor_process.source_commit) {
+      || liveIdentity.executable_path !== monitorPath) {
     throw new TypeError('live certification monitor code identity differs from the contract');
-  }
-  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'peekaboo-monitor-identity-'));
-  fs.chmodSync(temporaryDirectory, 0o700);
-  const processIdentityPath = path.join(temporaryDirectory, 'process.json');
-  try {
-    const run = spawnSync(binding.monitor_process.executable_path, [
-      'process-identity', '--pid', String(binding.monitor_process.pid), '--output', processIdentityPath,
-    ], {
-      encoding: 'utf8',
-      timeout: 10_000,
-      maxBuffer: 1024 * 1024,
-    });
-    if (run.status !== 0) throw new TypeError('live certification monitor process is not running');
-    const observed = parseJSON(
-      readStableRegularFile(processIdentityPath, 'monitor process identity').bytes,
-      'monitor process identity',
-    );
-    if (!exactKeys(observed, ['pid', 'startIdentity'])
-        || observed.pid !== binding.monitor_process.pid
-        || observed.startIdentity !== binding.monitor_process.start_identity) {
-      throw new TypeError('live certification monitor process generation differs from the contract');
-    }
-  } finally {
-    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }
   const heartbeatInfo = fs.lstatSync(binding.monitor_process.heartbeat_path);
   if (!heartbeatInfo.isFile() || heartbeatInfo.isSymbolicLink() || heartbeatInfo.nlink !== 1
@@ -3816,53 +4276,52 @@ function verifyLiveMonitorRuntime(contract, evidence) {
   }
 }
 
-function liveProcessIdentityFromMonitor(contract, pid, label) {
-  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'peekaboo-process-identity-'));
-  fs.chmodSync(temporaryDirectory, 0o700);
-  const outputPath = path.join(temporaryDirectory, 'process.json');
-  try {
-    const run = spawnSync(contract.monitor_binding.monitor_process.executable_path, [
-      'process-identity', '--pid', String(pid), '--output', outputPath,
-    ], {
-      encoding: 'utf8',
-      timeout: 10_000,
-      maxBuffer: 1024 * 1024,
-    });
-    if (run.status !== 0) throw new TypeError(`${label} is not running`);
-    const observed = parseJSON(
-      readStableRegularFile(outputPath, `${label} process identity`).bytes,
-      `${label} process identity`,
-    );
-    if (!exactKeys(observed, ['pid', 'startIdentity']) || observed.pid !== pid
-        || normalizedDecimal(observed.startIdentity, true) === null) {
-      throw new TypeError(`${label} process identity is malformed`);
-    }
-    return observed;
-  } finally {
-    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
-  }
-}
-
-function verifyLiveControllerRuntime(contract) {
+async function verifyLiveControllerRuntime(contract, inspectorStage) {
   const build = contract.controller_build;
   const executable = readStableRegularFile(build.executable_path, 'certification controller');
   if (sha256(executable.bytes) !== build.executable_sha256) {
     throw new TypeError('certification controller bytes differ from the contract');
   }
-  const diskIdentity = codeSignatureIdentity(build.executable_path);
-  if (diskIdentity.team_id !== build.team_id
-      || embeddedSourceCommit(build.executable_path) !== build.source_commit) {
+  const controllerPath = fs.realpathSync(build.executable_path);
+  const diskIdentity = await inspectCodeIdentity({
+    inspectorStage,
+    subject: {
+      kind: 'executable', executable_path: controllerPath, expected_team_id: build.team_id,
+    },
+    expected: {
+      kind: 'executable',
+      executablePath: controllerPath,
+      executableSHA256: build.executable_sha256,
+      codeSignatureHash: inspectorStage.codeSignatureHash,
+      teamID: build.team_id,
+      sourceCommit: build.source_commit,
+    },
+    label: 'certification controller file',
+  });
+  if (diskIdentity.team_id !== build.team_id) {
     throw new TypeError('certification controller file has the wrong signing team');
   }
   for (const entry of contract.controlled_targets) {
-    const processIdentity = liveProcessIdentityFromMonitor(
-      contract,
-      entry.controller.pid,
-      `controller ${entry.controller_id}`,
-    );
-    const liveIdentity = codeSignatureIdentityForPID(entry.controller.pid);
-    if (processIdentity.startIdentity !== entry.controller.start_identity
-        || liveIdentity.executable !== fs.realpathSync(build.executable_path)
+    const liveIdentity = await inspectCodeIdentity({
+      inspectorStage,
+      subject: {
+        kind: 'process',
+        process_identifier: entry.controller.pid,
+        process_start_identity: entry.controller.start_identity,
+        expected_team_id: build.team_id,
+      },
+      expected: {
+        kind: 'process',
+        process: entry.controller,
+        executablePath: controllerPath,
+        executableSHA256: null,
+        codeSignatureHash: entry.controller.code_signature_hash,
+        teamID: build.team_id,
+        sourceCommit: build.source_commit,
+      },
+      label: `controller ${entry.controller_id} process`,
+    });
+    if (liveIdentity.executable_path !== controllerPath
         || liveIdentity.code_signature_hash !== entry.controller.code_signature_hash
         || diskIdentity.code_signature_hash !== liveIdentity.code_signature_hash
         || liveIdentity.team_id !== build.team_id) {
@@ -3871,21 +4330,48 @@ function verifyLiveControllerRuntime(contract) {
   }
 }
 
-function verifyLiveForegroundObserverRuntime(contract, evidence) {
+async function verifyLiveForegroundObserverRuntime(contract, evidence, inspectorStage) {
   const plan = evidence.monitor_evidence.foreground_plan;
   const build = plan.observer_build;
   if (!sameJSON(build, contract.controller_build)) {
     throw new TypeError('foreground observer build differs from the source-owned controller build');
   }
-  const processIdentity = liveProcessIdentityFromMonitor(
-    contract,
-    plan.observer.pid,
-    'foreground semantic observer',
-  );
-  const liveIdentity = codeSignatureIdentityForPID(plan.observer.pid);
-  const diskIdentity = codeSignatureIdentity(build.executable_path);
-  if (processIdentity.startIdentity !== plan.observer.start_identity
-      || liveIdentity.executable !== fs.realpathSync(build.executable_path)
+  const controllerPath = fs.realpathSync(build.executable_path);
+  const liveIdentity = await inspectCodeIdentity({
+    inspectorStage,
+    subject: {
+      kind: 'process',
+      process_identifier: plan.observer.pid,
+      process_start_identity: plan.observer.start_identity,
+      expected_team_id: build.team_id,
+    },
+    expected: {
+      kind: 'process',
+      process: plan.observer,
+      executablePath: controllerPath,
+      executableSHA256: null,
+      codeSignatureHash: plan.observer.code_signature_hash,
+      teamID: build.team_id,
+      sourceCommit: build.source_commit,
+    },
+    label: 'foreground semantic observer process',
+  });
+  const diskIdentity = await inspectCodeIdentity({
+    inspectorStage,
+    subject: {
+      kind: 'executable', executable_path: controllerPath, expected_team_id: build.team_id,
+    },
+    expected: {
+      kind: 'executable',
+      executablePath: controllerPath,
+      executableSHA256: build.executable_sha256,
+      codeSignatureHash: inspectorStage.codeSignatureHash,
+      teamID: build.team_id,
+      sourceCommit: build.source_commit,
+    },
+    label: 'foreground semantic observer file',
+  });
+  if (liveIdentity.executable_path !== controllerPath
       || liveIdentity.code_signature_hash !== plan.observer.code_signature_hash
       || diskIdentity.code_signature_hash !== liveIdentity.code_signature_hash
       || diskIdentity.team_id !== liveIdentity.team_id
@@ -4088,42 +4574,55 @@ function liveFirstPartyValidator(stage, contract) {
 }
 
 async function executeFinalization(args, catalog, catalogBytes, artifacts) {
-  verifyLiveSocket(artifacts.contract, artifacts.evidence);
-  verifyLiveMonitorRuntime(artifacts.contract, artifacts.evidence);
-  verifyLiveControllerRuntime(artifacts.contract);
-  verifyLiveForegroundObserverRuntime(artifacts.contract, artifacts.evidence);
-  verifyLiveForegroundPostconditionRuntime(artifacts.contract, artifacts.evidence);
-  verifyLivePIDAttestations(artifacts.contract, artifacts.evidence);
-  const stage = stageFirstPartyExecutable(args.peekaboo, catalog, artifacts.contract);
+  const inspectorStage = await stageCodeIdentityInspector(
+    artifacts.contract.controller_build.executable_path,
+    catalog.trusted_controller_team_ids,
+    artifacts.contract.controller_build.source_commit,
+  );
   try {
-    const summary = await finalizeLiveMultiTargetCertification({
-      catalog,
-      catalogFileSHA256: sha256(catalogBytes),
-      ...artifacts,
-      firstPartyValidator: liveFirstPartyValidator(stage, artifacts.contract),
-    });
+    if (inspectorStage.executableSHA256 !== artifacts.contract.controller_build.executable_sha256
+        || inspectorStage.teamID !== artifacts.contract.controller_build.team_id) {
+      throw new TypeError('staged code-identity inspector differs from the contracted controller build');
+    }
     verifyLiveSocket(artifacts.contract, artifacts.evidence);
-    verifyLiveMonitorRuntime(artifacts.contract, artifacts.evidence);
-    verifyLiveControllerRuntime(artifacts.contract);
-    verifyLiveForegroundObserverRuntime(artifacts.contract, artifacts.evidence);
+    await verifyLiveMonitorRuntime(artifacts.contract, artifacts.evidence, inspectorStage);
+    await verifyLiveControllerRuntime(artifacts.contract, inspectorStage);
+    await verifyLiveForegroundObserverRuntime(artifacts.contract, artifacts.evidence, inspectorStage);
     verifyLiveForegroundPostconditionRuntime(artifacts.contract, artifacts.evidence);
     verifyLivePIDAttestations(artifacts.contract, artifacts.evidence);
-    const after = readCertificationArtifacts(args.artifacts);
-    if (!sameJSON(after.contract, artifacts.contract)
-        || !sameJSON(after.manifest, artifacts.manifest)
-        || !sameJSON(after.evidence, artifacts.evidence)
-        || !sameJSON(
-          after.bundles.map((entry) => ({ file: entry.file, sha256: entry.sha256 })),
-          artifacts.bundles.map((entry) => ({ file: entry.file, sha256: entry.sha256 })),
-        )) {
-      throw new TypeError('certification artifact corpus changed during finalization');
+    const stage = stageFirstPartyExecutable(args.peekaboo, catalog, artifacts.contract);
+    try {
+      const summary = await finalizeLiveMultiTargetCertification({
+        catalog,
+        catalogFileSHA256: sha256(catalogBytes),
+        ...artifacts,
+        firstPartyValidator: liveFirstPartyValidator(stage, artifacts.contract),
+      });
+      verifyLiveSocket(artifacts.contract, artifacts.evidence);
+      await verifyLiveMonitorRuntime(artifacts.contract, artifacts.evidence, inspectorStage);
+      await verifyLiveControllerRuntime(artifacts.contract, inspectorStage);
+      await verifyLiveForegroundObserverRuntime(artifacts.contract, artifacts.evidence, inspectorStage);
+      verifyLiveForegroundPostconditionRuntime(artifacts.contract, artifacts.evidence);
+      verifyLivePIDAttestations(artifacts.contract, artifacts.evidence);
+      const after = readCertificationArtifacts(args.artifacts);
+      if (!sameJSON(after.contract, artifacts.contract)
+          || !sameJSON(after.manifest, artifacts.manifest)
+          || !sameJSON(after.evidence, artifacts.evidence)
+          || !sameJSON(
+            after.bundles.map((entry) => ({ file: entry.file, sha256: entry.sha256 })),
+            artifacts.bundles.map((entry) => ({ file: entry.file, sha256: entry.sha256 })),
+          )) {
+        throw new TypeError('certification artifact corpus changed during finalization');
+      }
+      const output = `${JSON.stringify(summary, null, 2)}\n`;
+      if (args.output) writeOwnerPrivateOutput(args.output, output);
+      else process.stdout.write(output);
+      if (!summary[LIVE_CERTIFICATION_RESULT]) process.exitCode = 1;
+    } finally {
+      removeStagedExecutable(stage);
     }
-    const output = `${JSON.stringify(summary, null, 2)}\n`;
-    if (args.output) writeOwnerPrivateOutput(args.output, output);
-    else process.stdout.write(output);
-    if (!summary[LIVE_CERTIFICATION_RESULT]) process.exitCode = 1;
   } finally {
-    removeStagedExecutable(stage);
+    removeCodeIdentityInspectorStage(inspectorStage);
   }
 }
 

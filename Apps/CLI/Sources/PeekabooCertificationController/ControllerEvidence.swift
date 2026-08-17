@@ -77,6 +77,16 @@ struct CertificationWindowReceipt: Codable, Equatable, Sendable {
     var processStartIdentity: UInt64? {
         UInt64(self.startIdentity)
     }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.scope, forKey: .scope)
+        try container.encode(self.pid, forKey: .pid)
+        try container.encode(self.startIdentity, forKey: .startIdentity)
+        try container.encode(self.windowID, forKey: .windowID)
+        try container.encode(self.bounds, forKey: .bounds)
+        try container.encode(self.isMinimized, forKey: .isMinimized)
+    }
 }
 
 struct CertificationProtocolVersionReceipt: Codable, Equatable, Sendable {
@@ -97,6 +107,15 @@ struct CertificationHostReceipt: Codable, Equatable, Sendable {
         case bundleShortVersion = "bundle_short_version"
         case bundleVersion = "bundle_version"
         case sourceCommit = "source_commit"
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.process, forKey: .process)
+        try container.encode(self.bundleIdentifier, forKey: .bundleIdentifier)
+        try container.encode(self.bundleShortVersion, forKey: .bundleShortVersion)
+        try container.encode(self.bundleVersion, forKey: .bundleVersion)
+        try container.encode(self.sourceCommit, forKey: .sourceCommit)
     }
 }
 
@@ -131,6 +150,17 @@ struct CertificationHandshakeReceipt: Codable, Equatable, Sendable {
         case listenerInstanceID = "listener_instance_id"
         case host
         case session
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.socketPath, forKey: .socketPath)
+        try container.encode(self.negotiatedVersion, forKey: .negotiatedVersion)
+        try container.encode(self.hostKind, forKey: .hostKind)
+        try container.encode(self.build, forKey: .build)
+        try container.encode(self.listenerInstanceID, forKey: .listenerInstanceID)
+        try container.encode(self.host, forKey: .host)
+        try container.encode(self.session, forKey: .session)
     }
 }
 
@@ -484,6 +514,61 @@ struct CertificationControllerReadyReceipt: Codable, Equatable, Sendable {
     }
 }
 
+struct CertificationFinalBoundsReadyReceipt: Codable, Equatable, Sendable {
+    let version: Int
+    let executionNonce: String
+    let monitorInstanceID: String
+    let controllerID: String
+    let targetID: String
+    let controller: CertificationProcessReceipt
+    let completedSlotIDs: [String]
+    let readyAtMilliseconds: Int64
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case executionNonce = "execution_nonce"
+        case monitorInstanceID = "monitor_instance_id"
+        case controllerID = "controller_id"
+        case targetID = "target_id"
+        case controller
+        case completedSlotIDs = "completed_slot_ids"
+        case readyAtMilliseconds = "ready_at_milliseconds"
+    }
+}
+
+struct CertificationFinalBoundsStartMarker: Codable, Equatable, Sendable {
+    enum Phase: String, Codable, Sendable {
+        case finalBounds = "final-bounds"
+    }
+
+    let version: Int
+    let executionNonce: String
+    let monitorInstanceID: String
+    let controllerID: String
+    let phase: Phase
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case executionNonce = "execution_nonce"
+        case monitorInstanceID = "monitor_instance_id"
+        case controllerID = "controller_id"
+        case phase
+    }
+
+    func validate(executionNonce: String, monitorInstanceID: String, controllerID: String) throws {
+        guard self.version == 1,
+              self.executionNonce == executionNonce,
+              self.monitorInstanceID == monitorInstanceID,
+              self.controllerID == controllerID,
+              self.phase == .finalBounds
+        else {
+            throw CertificationControllerError.runtimeRefusal(
+                "Final-bounds start marker is not bound to the exact run and controller."
+            )
+        }
+    }
+}
+
 struct CertificationControllerStartMarker: Codable, Equatable, Sendable {
     enum Phase: String, Codable, Sendable {
         case start
@@ -601,5 +686,18 @@ struct CertificationRunLedger: Sendable {
             )
         }
         return self.slots.map(\.receipt)
+    }
+
+    func finalBoundsReadySlotIDs() throws -> [String] {
+        let expected = self.plan.slots.dropLast().map(\.id)
+        let completed = self.slots.map(\.template.id)
+        guard completed == expected,
+              self.plan.slots.last?.checkpoint == "final-bounds"
+        else {
+            throw CertificationControllerError.runtimeRefusal(
+                "Controller is not ready for its final-bounds barrier."
+            )
+        }
+        return completed
     }
 }

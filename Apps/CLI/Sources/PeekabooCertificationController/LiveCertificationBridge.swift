@@ -5,6 +5,37 @@ import PeekabooAutomationKit
 import PeekabooBridge
 import PeekabooFoundation
 
+enum CertificationTargetReceiptPolicy {
+    static func matches(
+        _ identity: WindowMutationIdentity,
+        planned: WindowMutationIdentity
+    ) -> Bool {
+        identity.hasSameStableReceipt(as: planned) &&
+            identity.isMinimized == planned.isMinimized
+    }
+}
+
+enum CertificationCanonicalResponsePolicy {
+    static func requireMatchingBridgeEncoding<T: Encodable>(
+        signed: T,
+        local: T
+    ) throws {
+        let signedData = try self.canonicalBridgeEncoding(signed)
+        let localData = try self.canonicalBridgeEncoding(local)
+        guard signedData == localData else {
+            throw CertificationControllerError.runtimeRefusal(
+                "Signed observation response differs from the locally returned payload."
+            )
+        }
+    }
+
+    private static func canonicalBridgeEncoding(_ value: some Encodable) throws -> Data {
+        let encoder = JSONEncoder.peekabooBridgeEncoder()
+        encoder.outputFormatting.insert(.sortedKeys)
+        return try encoder.encode(value)
+    }
+}
+
 actor LiveCertificationBridge {
     private static let requiredProtocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 30)
     private static let requiredCapabilities: Set<String> = [
@@ -32,7 +63,9 @@ actor LiveCertificationBridge {
         guard let clientInstanceID = plan.clientUUID else {
             throw CertificationControllerError.invalidPlan("client_instance_id is invalid.")
         }
-        let authenticatedBuild = try CertificationControllerBuildIdentityResolver.current()
+        let authenticatedBuild = try CertificationControllerBuildIdentityResolver.current(
+            expectedTeamID: plan.expectedControllerBuild.teamID
+        )
         try plan.expectedControllerBuild.requireMatches(authenticatedBuild.build)
         self.plan = plan
         self.controllerIdentity = authenticatedBuild.process
@@ -375,8 +408,7 @@ actor LiveCertificationBridge {
     }
 
     private func preflightExactTarget() throws {
-        // WindowMutationIdentity deliberately treats minimized state as mutable, not identity evidence.
-        // The signed request/receipt comparison below still requires the plan's exact optional state value.
+        // Stable identity deliberately excludes minimized state, so the certification policy checks it separately.
         guard let live = SystemIdentityResolver.windowMutationIdentity(
             windowID: CGWindowID(self.plan.target.windowID)
         ),
@@ -503,13 +535,10 @@ actor LiveCertificationBridge {
                     "Local observation response is missing from its execution result."
                 )
             }
-            let localData = try JSONEncoder.peekabooBridgeEncoder().encode(localResult)
-            let signedData = try JSONEncoder.peekabooBridgeEncoder().encode(signedResult)
-            guard localData == signedData else {
-                throw CertificationControllerError.runtimeRefusal(
-                    "Signed observation response differs from the locally returned payload."
-                )
-            }
+            try CertificationCanonicalResponsePolicy.requireMatchingBridgeEncoding(
+                signed: signedResult,
+                local: localResult
+            )
             let observationSHA256 = try CertificationPrivateArtifacts.sha256(file: expectedFile)
             guard performed.result.observationFile == "observations/\(slot.id).png",
                   performed.result.observationSHA256 == observationSHA256,
@@ -527,8 +556,10 @@ actor LiveCertificationBridge {
     }
 
     private func matchesPlannedReceipt(_ identity: WindowMutationIdentity) throws -> Bool {
-        try identity.hasSameStableReceipt(as: self.plannedWindowIdentity()) &&
-            identity.isMinimized == self.plan.target.isMinimized
+        try CertificationTargetReceiptPolicy.matches(
+            identity,
+            planned: self.plannedWindowIdentity()
+        )
     }
 
     private func validateObservation(

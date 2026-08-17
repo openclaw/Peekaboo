@@ -135,7 +135,16 @@ if (mode === 'sample') {
 }
 if (mode === 'process-identity') {
   const pid = Number(arg('--pid'));
-  write(arg('--output'), { pid, startIdentity: String(pid) + '00' });
+  const outputPath = arg('--output');
+  const useFinalSentinelDrift = pid === Number(process.env.FAKE_SENTINEL_PID)
+    && outputPath.includes('final-sentinel')
+    && typeof process.env.FAKE_FINAL_SENTINEL_START_IDENTITY === 'string';
+  write(outputPath, {
+    pid,
+    startIdentity: useFinalSentinelDrift
+      ? process.env.FAKE_FINAL_SENTINEL_START_IDENTITY
+      : String(pid) + '00',
+  });
   process.exit(0);
 }
 if (mode === 'process-executable') {
@@ -252,8 +261,13 @@ import process from 'node:process';
 process.umask(0o077);
 const args = process.argv.slice(2);
 const read = (file) => JSON.parse(fs.readFileSync(file));
+const canonical = (value) => {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(canonical);
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+};
 const write = (file, value) => {
-  fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+  fs.writeFileSync(file, JSON.stringify(canonical(value), null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   fs.chmodSync(file, 0o600);
 };
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -316,7 +330,10 @@ if (args[0] === '--attest-monitor') {
     },
     timestamp_milliseconds: Date.now(),
   });
-  await new Promise((resolve) => setTimeout(resolve, process.env.FAKE_CONTROLLER_EXIT_EARLY === plan.controller_id ? 10 : 900));
+  const mutationDelayMilliseconds = process.env.FAKE_CONTROLLER_EXIT_EARLY === plan.controller_id
+    ? 10
+    : Number(process.env.FAKE_CONTROLLER_MUTATION_DELAY_MILLISECONDS ?? 900);
+  await new Promise((resolve) => setTimeout(resolve, mutationDelayMilliseconds));
   if (process.env.FAKE_CONTROLLER_EXIT_EARLY === plan.controller_id) process.exit(9);
   write(root + '/mutation-completed.json', {
     version: 1, phase: 'mutation-completed', execution_nonce: plan.execution_nonce,
@@ -333,7 +350,37 @@ if (args[0] === '--attest-monitor') {
     timestamp_milliseconds: Date.now(),
   });
   const slots = ['mutation-001', 'protocol-130-001', 'checkpoint-001', 'final-bounds'];
-  for (const slot of slots) {
+  for (const slot of slots.slice(0, -1)) {
+    const requestID = randomUUID().toLowerCase();
+    const versionEightID = requestID.slice(0, 14) + '8' + requestID.slice(15);
+    write(root + '/bundles/' + versionEightID + '.json', { slot });
+  }
+  if (process.env.FAKE_DELAY_FINAL_BOUNDS_READY === plan.controller_id) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  const finalBoundsController = processReceipt();
+  if (process.env.FAKE_BAD_FINAL_BOUNDS_READY === plan.controller_id) {
+    finalBoundsController.start_identity = '1';
+  }
+  write(plan.final_bounds_ready_path, {
+    version: 1,
+    execution_nonce: plan.execution_nonce,
+    monitor_instance_id: plan.monitor_instance_id,
+    controller_id: plan.controller_id,
+    target_id: plan.target_id,
+    controller: finalBoundsController,
+    completed_slot_ids: slots.slice(0, -1).map((slot) => plan.controller_id + '-' + slot),
+    ready_at_milliseconds: Date.now(),
+  });
+  await wait(plan.final_bounds_start_path);
+  write(root + '/final-bounds-started.json', {
+    version: 1,
+    execution_nonce: plan.execution_nonce,
+    controller_id: plan.controller_id,
+    timestamp_milliseconds: Date.now(),
+  });
+  {
+    const slot = slots.at(-1);
     const requestID = randomUUID().toLowerCase();
     const versionEightID = requestID.slice(0, 14) + '8' + requestID.slice(15);
     write(root + '/bundles/' + versionEightID + '.json', { slot });
@@ -527,7 +574,7 @@ function fixture() {
       code_signature_hash: 'a'.repeat(40),
     },
     external_foreground_timeout_seconds: 5,
-    operation_timeout_seconds: 45,
+    operation_timeout_seconds: 65,
     test_runtime: { catalog_path: catalogPath, finalizer_path: finalizer },
   };
   const planPath = path.join(root, 'plan.json');
@@ -547,7 +594,9 @@ function coordinatorEnvironment(fix, extra = {}) {
   };
 }
 
-async function runInteractive(fix, { markerMode = 'valid', env = {} } = {}) {
+async function runInteractive(fix, {
+  markerMode = 'valid', env = {}, markerDelayMilliseconds = {},
+} = {}) {
   const child = spawn(process.execPath, [coordinator, '--plan', fix.planPath], {
     env: coordinatorEnvironment(fix, env),
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -572,12 +621,15 @@ async function runInteractive(fix, { markerMode = 'valid', env = {} } = {}) {
         const window = JSON.parse(fs.readFileSync(event.window_path));
         const phase = window.phase === 'perform' ? 'task-complete' : 'restore-complete';
         const filePath = window.phase === 'perform' ? window.task_complete_path : window.restore_complete_path;
-        writePrivate(filePath, {
+        const publish = () => writePrivate(filePath, {
           version: 1,
           execution_nonce: markerMode === 'stale' ? '0'.repeat(64) : event.execution_nonce,
           monitor_instance_id: event.monitor_instance_id,
           phase,
         });
+        const delay = markerDelayMilliseconds[window.phase] ?? 0;
+        if (delay > 0) setTimeout(publish, delay);
+        else publish();
       }
     }
   });
@@ -641,16 +693,99 @@ test('Bridge host commit must equal the coordinator Git HEAD even in test runtim
   }
 });
 
-test('operation timeout covers both external windows and lifecycle overhead', () => {
+test('operation timeout covers typing, both external windows, and lifecycle overhead', () => {
   const fix = fixture();
   try {
-    fix.plan.operation_timeout_seconds = 39;
+    fix.plan.operation_timeout_seconds = 64;
     writePrivate(fix.planPath, fix.plan);
     const run = spawnSync(process.execPath, [coordinator, '--plan', fix.planPath], {
       encoding: 'utf8', env: coordinatorEnvironment(fix),
     });
     assert.notEqual(run.status, 0);
-    assert.match(run.stderr, /external and operation timeouts are invalid/);
+    assert.match(run.stderr, /does not cover controller typing, both external windows/);
+    assert.deepEqual(fs.readdirSync(fix.runs), []);
+  } finally {
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
+test('21-second asymmetric window budget rejects the former two-window-only formula', () => {
+  const fix = fixture();
+  try {
+    fix.plan.external_foreground_timeout_seconds = 21;
+    fix.plan.operation_timeout_seconds = (2 * fix.plan.external_foreground_timeout_seconds) + 30;
+    writePrivate(fix.planPath, fix.plan);
+    const run = spawnSync(process.execPath, [coordinator, '--plan', fix.planPath], {
+      encoding: 'utf8', env: coordinatorEnvironment(fix),
+    });
+    assert.notEqual(run.status, 0);
+    assert.match(run.stderr, /does not cover controller typing, both external windows/);
+    assert.deepEqual(fs.readdirSync(fix.runs), []);
+  } finally {
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
+test('greater-than-20-second asymmetric external window retains the bounded controller mutation', async () => {
+  const fix = fixture();
+  try {
+    fix.plan.external_foreground_timeout_seconds = 21;
+    fix.plan.operation_timeout_seconds = 113;
+    writePrivate(fix.planPath, fix.plan);
+    const startedAt = Date.now();
+    const run = await runInteractive(fix, {
+      env: { FAKE_CONTROLLER_MUTATION_DELAY_MILLISECONDS: '22000' },
+      markerDelayMilliseconds: { perform: 20050, restore: 25 },
+    });
+    assert.equal(run.code, 0, run.stderr);
+    assert.ok(Date.now() - startedAt > 20_000);
+    assert.deepEqual(run.events.filter((event) => event.event === 'external-foreground-window')
+      .map((event) => event.phase), ['perform', 'restore']);
+    const completion = run.events.at(-1);
+    for (const controllerID of ['controller-a', 'controller-b']) {
+      const controllerPlan = JSON.parse(fs.readFileSync(path.join(
+        completion.run_root, 'controllers', controllerID, 'plan.json',
+      )));
+      const characterCount = [...controllerPlan.type_text].length;
+      const typingDurationMilliseconds = characterCount * controllerPlan.typing_delay_milliseconds;
+      assert.equal(characterCount, 820);
+      assert.equal(typingDurationMilliseconds, 41_000);
+      assert.equal(
+        fix.plan.operation_timeout_seconds * 1000,
+        typingDurationMilliseconds
+          + (2 * fix.plan.external_foreground_timeout_seconds * 1000)
+          + 30_000,
+      );
+    }
+  } finally {
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
+test('equivalent plan targets ignore JSON object insertion order', () => {
+  const fix = fixture();
+  try {
+    const target = fix.plan.observer.target;
+    fix.plan.monitor.foreground_target = {
+      is_minimized: target.is_minimized,
+      bounds: {
+        height: target.bounds.height,
+        width: target.bounds.width,
+        y: target.bounds.y,
+        x: target.bounds.x,
+      },
+      window_id: target.window_id,
+      start_identity: target.start_identity,
+      pid: target.pid,
+      scope: target.scope,
+    };
+    fix.plan.operation_timeout_seconds = 64;
+    writePrivate(fix.planPath, fix.plan);
+    const run = spawnSync(process.execPath, [coordinator, '--plan', fix.planPath], {
+      encoding: 'utf8', env: coordinatorEnvironment(fix),
+    });
+    assert.notEqual(run.status, 0);
+    assert.match(run.stderr, /does not cover controller typing, both external windows/);
     assert.deepEqual(fs.readdirSync(fix.runs), []);
   } finally {
     fs.rmSync(fix.root, { recursive: true, force: true });
@@ -680,7 +815,7 @@ test('semantic discriminator rejects empty, oversized, and NUL values before lau
   }
 });
 
-test('source-blind fake lifecycle reaches ineligible test completion after prepare and finalize', async () => {
+test('sorted-key fake lifecycle reaches ineligible test completion with bounded typing', async () => {
   const fix = fixture();
   try {
     const run = await runInteractive(fix);
@@ -692,6 +827,145 @@ test('source-blind fake lifecycle reaches ineligible test completion after prepa
     assert.equal(completion.certification_eligible, false);
     assert.deepEqual(fs.readFileSync(fix.finalizerLog, 'utf8').trim().split('\n'), ['prepare', 'finalize']);
     assert.ok(fs.existsSync(completion.summary_path));
+    for (const controllerID of ['controller-a', 'controller-b']) {
+      const controllerPlan = JSON.parse(fs.readFileSync(path.join(
+        completion.run_root, 'controllers', controllerID, 'plan.json',
+      )));
+      const characterCount = [...controllerPlan.type_text].length;
+      const typingDurationMilliseconds = characterCount * controllerPlan.typing_delay_milliseconds;
+      assert.equal(characterCount, 500);
+      assert.equal(Buffer.byteLength(controllerPlan.type_text, 'utf8'), 500);
+      assert.equal(controllerPlan.typing_delay_milliseconds, 50);
+      assert.ok(controllerPlan.type_text.startsWith(
+        `peekaboo-certification-background:${completion.execution_nonce}:${controllerID}:`,
+      ));
+      assert.equal(typingDurationMilliseconds, 25_000);
+      assert.equal(
+        fix.plan.operation_timeout_seconds * 1000,
+        typingDurationMilliseconds
+          + (2 * fix.plan.external_foreground_timeout_seconds * 1000)
+          + 30_000,
+      );
+    }
+  } finally {
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
+test('maximum 150-second external windows fit bounded typing and the global budget', async () => {
+  const fix = fixture();
+  try {
+    fix.plan.external_foreground_timeout_seconds = 150;
+    fix.plan.operation_timeout_seconds = 500;
+    writePrivate(fix.planPath, fix.plan);
+    const run = await runInteractive(fix);
+    assert.equal(run.code, 0, run.stderr);
+    const completion = run.events.at(-1);
+    assert.equal(completion.event, 'test-runtime-complete');
+    for (const controllerID of ['controller-a', 'controller-b']) {
+      const controllerPlan = JSON.parse(fs.readFileSync(path.join(
+        completion.run_root, 'controllers', controllerID, 'plan.json',
+      )));
+      const characterCount = [...controllerPlan.type_text].length;
+      const typingDurationMilliseconds = characterCount * controllerPlan.typing_delay_milliseconds;
+      assert.equal(characterCount, 3400);
+      assert.equal(Buffer.byteLength(controllerPlan.type_text, 'utf8'), 3400);
+      assert.equal(typingDurationMilliseconds, 170_000);
+      assert.equal(
+        fix.plan.operation_timeout_seconds * 1000,
+        typingDurationMilliseconds
+          + (2 * fix.plan.external_foreground_timeout_seconds * 1000)
+          + 30_000,
+      );
+    }
+  } finally {
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
+test('final-bounds capture starts only after both process-bound controller readiness markers', async () => {
+  const fix = fixture();
+  try {
+    const run = await runInteractive(fix, {
+      env: { FAKE_DELAY_FINAL_BOUNDS_READY: 'controller-b' },
+    });
+    assert.equal(run.code, 0, run.stderr);
+    const completion = run.events.at(-1);
+    const readinessTimes = [];
+    const startTimes = [];
+    for (const controllerID of ['controller-a', 'controller-b']) {
+      const directory = path.join(completion.run_root, 'controllers', controllerID);
+      const ready = JSON.parse(fs.readFileSync(path.join(directory, 'final-bounds-ready.json')));
+      const start = JSON.parse(fs.readFileSync(path.join(directory, 'final-bounds-started.json')));
+      const release = JSON.parse(fs.readFileSync(path.join(directory, 'final-bounds-start.json')));
+      assert.deepEqual(ready.completed_slot_ids, [
+        `${controllerID}-mutation-001`,
+        `${controllerID}-protocol-130-001`,
+        `${controllerID}-checkpoint-001`,
+      ]);
+      assert.equal(release.execution_nonce, completion.execution_nonce);
+      assert.equal(release.monitor_instance_id, completion.monitor_instance_id);
+      assert.equal(release.controller_id, controllerID);
+      assert.equal(release.phase, 'final-bounds');
+      readinessTimes.push(ready.ready_at_milliseconds);
+      startTimes.push(start.timestamp_milliseconds);
+    }
+    assert.ok(Math.min(...startTimes) >= Math.max(...readinessTimes));
+  } finally {
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
+test('malformed final-bounds readiness fails before barrier release or finalization', async () => {
+  const fix = fixture();
+  try {
+    const run = await runInteractive(fix, {
+      env: { FAKE_BAD_FINAL_BOUNDS_READY: 'controller-a' },
+    });
+    assert.notEqual(run.code, 0);
+    assert.match(run.stderr, /controller-a final-bounds readiness is not closed and process\/run bound/);
+    const failed = run.events.find((event) => event.event === 'failed');
+    assert.ok(failed);
+    for (const controllerID of ['controller-a', 'controller-b']) {
+      assert.equal(fs.existsSync(path.join(
+        failed.run_root,
+        'controllers',
+        controllerID,
+        'final-bounds-start.json',
+      )), false);
+    }
+    assert.equal(fs.readFileSync(fix.finalizerLog, 'utf8'), '');
+  } finally {
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
+test('stale planned sentinel generation fails before the external window', async () => {
+  const fix = fixture();
+  try {
+    fix.plan.monitor.sentinel.start_identity = `${SENTINEL_PID}99`;
+    writePrivate(fix.planPath, fix.plan);
+    const run = await runInteractive(fix);
+    assert.notEqual(run.code, 0);
+    assert.match(run.stderr, /baseline sentinel process generation differs from the exact plan/);
+    assert.equal(run.events.some((event) => event.event === 'external-foreground-window'), false);
+    assert.equal(fs.readFileSync(fix.finalizerLog, 'utf8'), '');
+  } finally {
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
+test('final sentinel generation drift fails before sealing or finalization', async () => {
+  const fix = fixture();
+  try {
+    const run = await runInteractive(fix, {
+      env: { FAKE_FINAL_SENTINEL_START_IDENTITY: `${SENTINEL_PID}01` },
+    });
+    assert.notEqual(run.code, 0);
+    assert.match(run.stderr, /final sentinel process generation differs from the exact plan/);
+    assert.deepEqual(run.events.filter((event) => event.event === 'external-foreground-window')
+      .map((event) => event.phase), ['perform', 'restore']);
+    assert.equal(fs.readFileSync(fix.finalizerLog, 'utf8'), '');
   } finally {
     fs.rmSync(fix.root, { recursive: true, force: true });
   }

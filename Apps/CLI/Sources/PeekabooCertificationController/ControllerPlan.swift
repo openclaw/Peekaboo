@@ -137,6 +137,8 @@ struct CertificationControllerPlan: Codable, Equatable, Sendable {
     let artifactsDirectory: String
     let readyPath: String
     let startPath: String
+    let finalBoundsReadyPath: String
+    let finalBoundsStartPath: String
     let releasePath: String
 
     private enum CodingKeys: String, CodingKey {
@@ -156,6 +158,8 @@ struct CertificationControllerPlan: Codable, Equatable, Sendable {
         case artifactsDirectory = "artifacts_directory"
         case readyPath = "ready_path"
         case startPath = "start_path"
+        case finalBoundsReadyPath = "final_bounds_ready_path"
+        case finalBoundsStartPath = "final_bounds_start_path"
         case releasePath = "release_path"
     }
 
@@ -201,6 +205,14 @@ struct CertificationControllerPlan: Codable, Equatable, Sendable {
 
     var startURL: URL {
         URL(fileURLWithPath: self.startPath)
+    }
+
+    var finalBoundsReadyURL: URL {
+        URL(fileURLWithPath: self.finalBoundsReadyPath)
+    }
+
+    var finalBoundsStartURL: URL {
+        URL(fileURLWithPath: self.finalBoundsStartPath)
     }
 
     var slots: [CertificationSlot] {
@@ -271,7 +283,13 @@ struct CertificationControllerPlan: Codable, Equatable, Sendable {
             throw CertificationControllerError.invalidPlan("artifacts_directory is too broad.")
         }
         let artifactPath = self.artifactsURL.standardizedFileURL.path
-        let lifecycleURLs = [self.readyURL, self.startURL, self.releaseURL]
+        let lifecycleURLs = [
+            self.readyURL,
+            self.startURL,
+            self.finalBoundsReadyURL,
+            self.finalBoundsStartURL,
+            self.releaseURL,
+        ]
         let reservedURLs = [self.receiptURL, self.mutationStartedURL, self.mutationCompletedURL]
         guard Set(lifecycleURLs.map(\.standardizedFileURL)).count == lifecycleURLs.count,
               lifecycleURLs.allSatisfy({ Self.isAbsolutePath($0.path) }),
@@ -281,7 +299,7 @@ struct CertificationControllerPlan: Codable, Equatable, Sendable {
               lifecycleURLs.allSatisfy({ !reservedURLs.contains($0) })
         else {
             throw CertificationControllerError.invalidPlan(
-                "ready_path, start_path, and release_path must be distinct files inside artifacts_directory."
+                "Controller lifecycle paths must be distinct files inside artifacts_directory."
             )
         }
         guard !self.trustedBridgeHostTeamIDs.isEmpty,
@@ -407,7 +425,7 @@ private enum CertificationPlanShape {
         "version", "execution_nonce", "monitor_instance_id", "controller_id", "target_id",
         "client_instance_id", "socket_path", "trusted_bridge_host_team_ids", "expected_controller_build",
         "expected_host", "target", "type_text", "typing_delay_milliseconds", "artifacts_directory",
-        "ready_path", "start_path", "release_path",
+        "ready_path", "start_path", "final_bounds_ready_path", "final_bounds_start_path", "release_path",
     ]
     private static let controllerBuildKeys: Set<String> = [
         "source_commit", "executable_path", "executable_sha256", "team_id",

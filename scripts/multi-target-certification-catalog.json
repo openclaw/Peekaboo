@@ -48,22 +48,23 @@
     "version": 1,
     "commit_derivation": "clean-git-head",
     "controller_source_manifest": [
-      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ControllerBuildIdentity.swift", "sha256": "ed54e89c0fa8502b662e13e05ed3b27bfc22c2f4d367c9e2c42b33f3c4c07a92"},
-      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ControllerEvidence.swift", "sha256": "b8a26438755337a0a63e58ef3dedb0af2af677674a8977755e809582789f5796"},
-      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ControllerMain.swift", "sha256": "a9fbb59bc0e42dd96d04ece796a26cb9fd6669d9976550b48fdf3e515a0b089c"},
-      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ControllerPlan.swift", "sha256": "945b8967de0c81857dc89334df527e0e4a4b1fca97468e740fa8521902c21b95"},
-      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ControllerRunner.swift", "sha256": "a347f71fa00eca5d03738705915b877ac617656d3dccbb97210d8113b253c293"},
-      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ForegroundSemanticObserver.swift", "sha256": "b73d60be985406979129f25c17ec21960da8f4a7a1fedbf4af8500174f41bf85"},
-      {"path": "Apps/CLI/Sources/PeekabooCertificationController/LiveCertificationBridge.swift", "sha256": "ced3aa52f72bddd9f6b9fd70b063f09f583217642898444ecdc4eb3a4e0455b8"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/CodeIdentityRunner.swift", "sha256": "dc5dfb5e024198f97afccc30b7d664173bf4e51dad293aee0d1fde504f4f86e2"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ControllerBuildIdentity.swift", "sha256": "c0bb05b3875a634ba686a474958a7ff5443ffadf1ddce1c911298f922a1c305c"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ControllerEvidence.swift", "sha256": "4b12869e5807899c96b418aa04b272554016d1821cca3dbf0a57fcffbb12166f"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ControllerMain.swift", "sha256": "e820ea12b4e7577297b5a2960796f986a68ee4ea21bfe3ae81da58a915ff3e40"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ControllerPlan.swift", "sha256": "11527241d0653c9cc8962d4de277d8a58f01fad497c2e95078f80aed1c2740ca"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ControllerRunner.swift", "sha256": "f5fbd2659cf85ab31e78893942c111b75a1e1f3761ad52f8485d72dae6c0a88e"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/ForegroundSemanticObserver.swift", "sha256": "0605e651f44d05bb79e4f3ae08fad02ea54ded2f640e3beac6a329cbe793cd37"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/LiveCertificationBridge.swift", "sha256": "e917930691b696a2228e263971fef31a189d39eae920315e6f34423748c3807b"},
       {"path": "Apps/CLI/Sources/PeekabooCertificationController/LocalPIDAttestation.swift", "sha256": "1835e0203d4cd6acaff5a028da58ed3c8f85b9ed1f3506ea86c41393cd56524a"},
       {"path": "Apps/CLI/Sources/PeekabooCertificationController/MonitorAttestationRunner.swift", "sha256": "5c457b58f283dcd3550e60c2afbe4833f4f676108196567b9fc49a1ee7967347"},
       {"path": "Apps/CLI/Sources/PeekabooCertificationController/ObserveOnlyRunner.swift", "sha256": "1ca53dfae265d9d498164624190ef3093cf98e44fb71409a626acca462fda6ab"},
       {"path": "Apps/CLI/Sources/PeekabooCertificationController/ObserverPlan.swift", "sha256": "47ef7214b0b6e9892ad4cd3aa1bad9f76f922799395cc9cc569b169e4103b224"},
-      {"path": "Apps/CLI/Sources/PeekabooCertificationController/PrivateArtifacts.swift", "sha256": "b890010c63fc5775671e3547a35ac2726151de6bd6e66eb38076da13a9b572a0"}
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/PrivateArtifacts.swift", "sha256": "184a44d5bd50247adbaf6cd1e4e384ad5ff7a99c73f287435aeab39e6f4e3824"}
     ],
     "coordinator": {
       "path": "scripts/run-live-multi-target-certification.mjs",
-      "sha256": "dad1410cf2d24a50d74ac93c72dc4cb23f03d444e7ce836a7f67e92effb3ec09"
+      "sha256": "ffcc16b14f627a898aced528aa70c7fce7872299eb177b0d68e2afbdfe53e5ae"
     },
     "receipt_validator": {
       "path": "Apps/CLI/Sources/PeekabooCLI/Commands/Core/BridgeCommand+Receipt.swift",
@@ -72,7 +73,7 @@
     "finalizer": {
       "path": "scripts/finalize-multi-target-certification.mjs",
       "projection": "normalize-builtin-catalog-sha256-to-zero-v1",
-      "projected_sha256": "b2e902ef40d81aa54240490c5c3d497bed869df19d2951f0f268eb8ffb9a916a"
+      "projected_sha256": "2dd04a6f4e1d3abc9a6d273dd9eb93dd680f7533a917f7df85f80c481856dc0e"
     }
   },
   "monitor_contract": {

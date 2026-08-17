@@ -54,6 +54,8 @@ enum CertificationPrivateArtifacts {
             plan.mutationCompletedURL,
             plan.readyURL,
             plan.startURL,
+            plan.finalBoundsReadyURL,
+            plan.finalBoundsStartURL,
             plan.releaseURL,
         ] {
             var existing = stat()

@@ -19,7 +19,9 @@ actor LiveForegroundSemanticObserver {
         guard let clientInstanceID = plan.clientUUID else {
             throw CertificationControllerError.invalidPlan("Observe-only client_instance_id is invalid.")
         }
-        let authenticated = try CertificationControllerBuildIdentityResolver.current()
+        let authenticated = try CertificationControllerBuildIdentityResolver.current(
+            expectedTeamID: plan.expectedControllerBuild.teamID
+        )
         try plan.expectedControllerBuild.requireMatches(authenticated.build)
         self.plan = plan
         self.process = authenticated.process

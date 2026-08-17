@@ -28,6 +28,8 @@ struct ControllerPlanTests {
         #expect(plan.mutationCompletedURL.lastPathComponent == "mutation-completed.json")
         #expect(plan.readyURL.lastPathComponent == "ready.json")
         #expect(plan.startURL.lastPathComponent == "start.json")
+        #expect(plan.finalBoundsReadyURL.lastPathComponent == "final-bounds-ready.json")
+        #expect(plan.finalBoundsStartURL.lastPathComponent == "final-bounds-start.json")
         #expect(plan.releaseURL.lastPathComponent == "release.json")
         #expect(plan.typingDelayMilliseconds == 20)
     }
@@ -72,6 +74,12 @@ struct ControllerPlanTests {
         }
 
         object["start_path"] = "/private/tmp/peekaboo-controller-artifacts/start.json"
+        object["final_bounds_start_path"] = object["final_bounds_ready_path"]
+        #expect(throws: CertificationControllerError.self) {
+            try CertificationControllerPlan.decode(JSONSerialization.data(withJSONObject: object))
+        }
+
+        object["final_bounds_start_path"] = "/private/tmp/peekaboo-controller-artifacts/final-bounds-start.json"
         var host = try #require(object["expected_host"] as? [String: Any])
         host["source_commit"] = String(repeating: "e", count: 40)
         object["expected_host"] = host
@@ -116,6 +124,8 @@ struct ControllerPlanTests {
       "artifacts_directory": "/private/tmp/peekaboo-controller-artifacts",
       "ready_path": "/private/tmp/peekaboo-controller-artifacts/ready.json",
       "start_path": "/private/tmp/peekaboo-controller-artifacts/start.json",
+      "final_bounds_ready_path": "/private/tmp/peekaboo-controller-artifacts/final-bounds-ready.json",
+      "final_bounds_start_path": "/private/tmp/peekaboo-controller-artifacts/final-bounds-start.json",
       "release_path": "/private/tmp/peekaboo-controller-artifacts/release.json"
     }
     """.utf8)
