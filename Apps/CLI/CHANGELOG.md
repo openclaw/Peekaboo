@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Include the authenticated Bridge host's stamped source commit and negotiated protocol version in live receipt-validation results for exact-build protocol certification.
 
 ### Fixed
+- Route CLI and MCP background keyboard delivery through one completeness-aware target planner, refusing fuzzy application selectors and partial window catalogs before type, paste, or press dispatch.
 - Make application and window inventories report omitted or identity-incomplete rows as partial, while keeping complete AX-only window listings usable without Screen Recording.
 - Update AXorcist and Tachikoma so Accessibility permission observation cancellation cannot deadlock the main queue or install timers after termination, while Realtime tool execution preserves the first completion/cancellation winner, keeps timeout returns bounded while owning delayed cleanup, preserves completed results during timer cancellation, and rejects invalid audio deadlines before dispatch. Thanks @SebTardif for AXorcist #46 and Tachikoma #68; follow-up fixes landed in AXorcist #48 and Tachikoma #69/#70.
 

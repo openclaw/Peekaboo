@@ -1,5 +1,6 @@
 import CoreGraphics
 import PeekabooAutomationKitTestSupport
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -275,5 +276,80 @@ struct DesktopTargetPlanningTests {
                 viewport: viewport))
 
         #expect(try receipt.requireCoordinateAuthority().sourceBounds == window.bounds)
+    }
+
+    @MainActor
+    @Test
+    func `background keyboard planner preserves a snapshot-only exact target`() async throws {
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            applicationName: "Editor",
+            windowID: 42)
+        let planner = self.backgroundKeyboardPlanner(
+            application: fixture.application,
+            windowInventory: .complete([]))
+
+        let plan = try await planner.plan(
+            selector: InteractionTargetSelector(),
+            snapshotExactWindow: fixture.windowTargetIdentity.exactWindow)
+
+        #expect(plan.target == fixture.windowTargetIdentity.target)
+        #expect(plan.application.processIdentity == fixture.processIdentity)
+        #expect(plan.window == nil)
+    }
+
+    @MainActor
+    @Test
+    func `background keyboard planner selects one exact window only from a complete catalog`() async throws {
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            applicationName: "Editor",
+            windowID: 42)
+        let planner = self.backgroundKeyboardPlanner(
+            application: fixture.application,
+            windowInventory: .complete([fixture.window]))
+
+        let plan = try await planner.plan(
+            selector: InteractionTargetSelector(applicationIdentifier: "Editor"))
+
+        #expect(plan.target == fixture.windowTargetIdentity.target)
+        #expect(plan.window == nil)
+    }
+
+    @MainActor
+    @Test
+    func `background keyboard planner refuses one implicit match from a partial catalog`() async throws {
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            applicationName: "Editor",
+            windowID: 42)
+        let planner = self.backgroundKeyboardPlanner(
+            application: fixture.application,
+            windowInventory: .partial([fixture.window], warnings: ["AX enumeration timed out"]))
+
+        await #expect(throws: DesktopTargetPlanningError.incompleteWindowInventory(
+            selector: "the application's eligible keyboard windows",
+            warnings: ["AX enumeration timed out"]))
+        {
+            _ = try await planner.plan(
+                selector: InteractionTargetSelector(applicationIdentifier: "Editor"))
+        }
+    }
+
+    @MainActor
+    private func backgroundKeyboardPlanner(
+        application: ServiceApplicationInfo,
+        windowInventory: DesktopTargetPlanning.Inventory<ServiceWindowInfo>)
+        -> DesktopTargetPlanning.BackgroundKeyboardTargetPlanner
+    {
+        let applicationPlanner = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: { .complete([application]) },
+            exactIdentifierProvider: { _ in application })
+        let windowProvider: DesktopTargetPlanning.WindowMutationPlanner.WindowInventoryProvider = { _ in
+            windowInventory
+        }
+        return DesktopTargetPlanning.BackgroundKeyboardTargetPlanner(
+            applicationPlanner: applicationPlanner,
+            windowPlanner: DesktopTargetPlanning.WindowMutationPlanner(
+                applicationPlanner: applicationPlanner,
+                windowInventoryProvider: windowProvider),
+            windowInventoryProvider: windowProvider)
     }
 }

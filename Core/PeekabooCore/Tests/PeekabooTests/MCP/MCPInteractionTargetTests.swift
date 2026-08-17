@@ -120,6 +120,73 @@ struct MCPInteractionTargetTests {
 
     @MainActor
     @Test
+    func `MCP background keyboard refuses fuzzy application selectors`() async throws {
+        let applications = MockApplicationService(applications: [AutomationTestFixtures.application(
+            processIdentifier: 4242,
+            processStartIdentity: 71,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor",
+            isHiddenKnown: true,
+            activationPolicy: .regular)])
+        let target = try Self.makeTarget(Selectors(
+            app: "Edit",
+            pid: nil,
+            windowTitle: nil,
+            windowIndex: nil,
+            windowID: nil))
+
+        do {
+            _ = try await target.requireBackgroundKeyboardTarget(
+                applications: applications,
+                windows: EmptyRecordingWindowService())
+            Issue.record("Expected fuzzy background target planning to fail")
+        } catch let error as MCPInteractionTargetError {
+            #expect(error.refusalReason == .targetUnavailable)
+            #expect(error.localizedDescription.contains("not allowed for mutation"))
+        }
+    }
+
+    @MainActor
+    @Test
+    func `MCP background keyboard refuses one title match from a partial catalog`() async throws {
+        let processIdentity = AutomationTestFixtures.processIdentity(
+            processIdentifier: 4242,
+            processStartIdentity: 71)
+        let applications = MockApplicationService(applications: [AutomationTestFixtures.application(
+            processIdentifier: processIdentity.processIdentifier,
+            processStartIdentity: processIdentity.processStartIdentity,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor",
+            isHiddenKnown: true,
+            activationPolicy: .regular)])
+        let window = Self.window(
+            windowID: 42,
+            processIdentity: processIdentity,
+            bounds: CGRect(x: 10, y: 20, width: 640, height: 480),
+            capturedBounds: CGRect(x: 10, y: 20, width: 640, height: 480))
+        let target = try Self.makeTarget(Selectors(
+            app: "Editor",
+            pid: nil,
+            windowTitle: "Document",
+            windowIndex: nil,
+            windowID: nil))
+
+        do {
+            _ = try await target.requireBackgroundKeyboardTarget(
+                applications: applications,
+                windows: ReceiptWindowService(
+                    window: window,
+                    inventoryWarnings: ["AX enumeration timed out"]))
+            Issue.record("Expected partial window inventory to fail")
+        } catch let error as MCPInteractionTargetError {
+            #expect(error.refusalReason == .targetUnavailable)
+            #expect(error.localizedDescription.contains("incomplete"))
+            #expect(error.localizedDescription.contains("AX enumeration timed out"))
+        }
+    }
+
+    @MainActor
+    @Test
     func `legacy nil focus outcome refuses before foreground typing`() async throws {
         try await self.expectForegroundTypingRefusal(
             outcome: nil,
@@ -624,11 +691,13 @@ final class MCPFocusResultWindowService: WindowManagementPinnedFocusActionResult
     }
 }
 
-private actor ReceiptWindowService: WindowManagementServiceProtocol {
+private actor ReceiptWindowService: WindowManagementServiceProtocol, WindowMutationInventoryProviding {
     let window: ServiceWindowInfo
+    let inventoryWarnings: [String]
 
-    init(window: ServiceWindowInfo) {
+    init(window: ServiceWindowInfo, inventoryWarnings: [String] = []) {
         self.window = window
+        self.inventoryWarnings = inventoryWarnings
     }
 
     func closeWindow(target _: WindowTarget) async throws {}
@@ -640,6 +709,15 @@ private actor ReceiptWindowService: WindowManagementServiceProtocol {
     func focusWindow(target _: WindowTarget) async throws {}
     func listWindows(target _: WindowTarget) async throws -> [ServiceWindowInfo] {
         [self.window]
+    }
+
+    func windowMutationInventory(
+        target _: WindowTarget) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo>
+    {
+        if self.inventoryWarnings.isEmpty {
+            return .complete([self.window])
+        }
+        return .partial([self.window], warnings: self.inventoryWarnings)
     }
 
     func getFocusedWindow() async throws -> ServiceWindowInfo? {

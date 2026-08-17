@@ -853,7 +853,7 @@ final class PointerPolicyWindowService: WindowManagementServiceProtocol, @unchec
     }
 }
 
-actor EmptyRecordingWindowService: WindowManagementServiceProtocol {
+actor EmptyRecordingWindowService: WindowManagementServiceProtocol, WindowMutationInventoryProviding {
     private(set) var requestedWindowIDs: [Int] = []
     private(set) var focusRequests: [WindowTarget] = []
 
@@ -872,6 +872,12 @@ actor EmptyRecordingWindowService: WindowManagementServiceProtocol {
             self.requestedWindowIDs.append(windowID)
         }
         return []
+    }
+
+    func windowMutationInventory(
+        target _: WindowTarget) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo>
+    {
+        .complete([])
     }
 
     func getFocusedWindow() async throws -> ServiceWindowInfo? {
@@ -1296,7 +1302,7 @@ final class MockScreenService: ScreenServiceProtocol {
 }
 
 @MainActor
-class MockApplicationService: ApplicationServiceProtocol {
+class MockApplicationService: ApplicationServiceProtocol, ApplicationMutationInventoryProviding {
     let supportsProcessGenerationPinnedApplicationActivation = true
     private(set) var applications: [ServiceApplicationInfo]
     private(set) var launchRequests: [ApplicationLaunchRequest] = []
@@ -1324,6 +1330,16 @@ class MockApplicationService: ApplicationServiceProtocol {
                 status: warnings.isEmpty ? .success : .partial,
                 counts: ["applications": self.applications.count]),
             metadata: .init(duration: 0, warnings: warnings))
+    }
+
+    func applicationMutationInventory() async throws
+        -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo>
+    {
+        let warnings = self.applications.flatMap { $0.metadataWarnings ?? [] }
+        return DesktopTargetPlanning.Inventory(
+            items: self.applications,
+            completeness: warnings.isEmpty ? .complete : .partial,
+            warnings: warnings)
     }
 
     func findApplication(identifier: String) async throws -> ServiceApplicationInfo {

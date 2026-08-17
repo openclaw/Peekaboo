@@ -1,6 +1,7 @@
 import Commander
 import CoreGraphics
 import Foundation
+import PeekabooAutomationKitTestSupport
 import PeekabooCore
 import Testing
 @testable import PeekabooCLI
@@ -101,6 +102,78 @@ struct TargetedInteractionDefaultDeliveryTests {
     }
 
     @Test
+    func `CLI background keyboard refuses fuzzy application selectors before dispatch`() async throws {
+        let application = AutomationTestFixtures.application(
+            processIdentifier: 2468,
+            processStartIdentity: 7,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit",
+            isHiddenKnown: true,
+            activationPolicy: .regular
+        )
+        let automation = StubAutomationService()
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: [application]),
+            windows: StubWindowService(windowsByApp: [:]),
+            clipboard: StubClipboardService(),
+            automation: automation
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            ["type", "must not dispatch", "--app", "Text", "--no-remote"],
+            services: services
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(result.combinedOutput.contains("not allowed for mutation"))
+        #expect(automation.targetedTypeActionsCalls.isEmpty)
+        #expect(automation.typeActionsCalls.isEmpty)
+    }
+
+    @Test
+    func `CLI background keyboard refuses one title match from a partial catalog`() async throws {
+        let processIdentity = AutomationTestFixtures.processIdentity(
+            processIdentifier: 2468,
+            processStartIdentity: 7
+        )
+        let application = AutomationTestFixtures.application(
+            processIdentifier: processIdentity.processIdentifier,
+            processStartIdentity: processIdentity.processStartIdentity,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit",
+            isHiddenKnown: true,
+            activationPolicy: .regular
+        )
+        let window = AutomationTestFixtures.window(
+            windowID: 42,
+            title: "Document",
+            processIdentity: processIdentity
+        )
+        let automation = StubAutomationService()
+        let windows = PartialKeyboardWindowInventoryService(windowsByApp: ["TextEdit": [window]])
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: [application]),
+            windows: windows,
+            clipboard: StubClipboardService(),
+            automation: automation
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "type", "must not dispatch", "--app", "TextEdit", "--window-title", "Document",
+                "--no-remote",
+            ],
+            services: services
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(result.combinedOutput.contains("incomplete"))
+        #expect(result.combinedOutput.contains("AX enumeration timed out"))
+        #expect(automation.targetedTypeActionsCalls.isEmpty)
+        #expect(automation.typeActionsCalls.isEmpty)
+    }
+
+    @Test
     func `foreground explicitly preserves intentional global keyboard delivery`() async throws {
         let automation = StubAutomationService()
         let services = TestServicesFactory.makePeekabooServices(
@@ -126,6 +199,7 @@ struct TargetedInteractionDefaultDeliveryTests {
     func `unresolved background window selectors refuse instead of collapsing to pid`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
+            processStartIdentity: 7,
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )
@@ -612,6 +686,18 @@ struct TargetedInteractionDefaultDeliveryTests {
             )
         )
         return snapshotID
+    }
+}
+
+@MainActor
+private final class PartialKeyboardWindowInventoryService: StubWindowService {
+    override func windowMutationInventory(
+        target: WindowTarget
+    ) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo> {
+        try await .partial(
+            self.listWindows(target: target),
+            warnings: ["AX enumeration timed out"]
+        )
     }
 }
 

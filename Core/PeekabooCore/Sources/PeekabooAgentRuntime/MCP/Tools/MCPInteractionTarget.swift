@@ -17,13 +17,15 @@ enum MCPInteractionTargetError: LocalizedError, Equatable {
     case backgroundWindowTargetAmbiguous
     case backgroundWindowTargetMismatch
     case backgroundTargetIneligible
+    case backgroundTargetPlanningFailed(String)
 
     var refusalReason: DesktopActionOutcome.RefusalReason {
         switch self {
         case .targetProcessNotFound,
              .backgroundWindowTargetAmbiguous,
              .backgroundWindowTargetMismatch,
-             .backgroundTargetIneligible:
+             .backgroundTargetIneligible,
+             .backgroundTargetPlanningFailed:
             .targetUnavailable
         case .targetProcessIdentityUnavailable:
             .runtimeIncompatible
@@ -73,6 +75,8 @@ enum MCPInteractionTargetError: LocalizedError, Equatable {
         case .backgroundTargetIneligible:
             "The target cannot receive background input because it is a prohibited helper or its metadata is " +
                 "incomplete."
+        case let .backgroundTargetPlanningFailed(message):
+            message
         }
     }
 }
@@ -512,6 +516,7 @@ struct MCPInteractionTarget {
         return identity
     }
 
+    @MainActor
     func requireBackgroundKeyboardTarget(
         applications: any ApplicationServiceProtocol,
         windows: any WindowManagementServiceProtocol,
@@ -520,125 +525,34 @@ struct MCPInteractionTarget {
         requiresExplicitExactWindow: Bool = false) async throws -> UIAutomationTarget
     {
         try self.validate()
-        let selectedWindow: UIAutomationTarget.ExactWindow? = if self.hasWindowSelector {
-            try await self.requireSelectedExactWindow(windows: windows)
-        } else {
-            nil
-        }
-        let exactWindow: UIAutomationTarget.ExactWindow?
-        if let snapshotExactWindow, let selectedWindow {
-            let merged: DesktopTargetIdentity?
-            do {
-                merged = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.coalesce([
-                    DesktopTargetIdentity(exactWindow: snapshotExactWindow),
-                    DesktopTargetIdentity(exactWindow: selectedWindow),
-                ])
-            } catch {
-                throw MCPInteractionTargetError.backgroundWindowTargetMismatch
-            }
-            guard let mergedWindow = merged?.exactWindow else {
-                throw MCPInteractionTargetError.backgroundWindowTargetMismatch
-            }
-            exactWindow = mergedWindow
-        } else {
-            exactWindow = snapshotExactWindow ?? selectedWindow
-        }
-
-        let selectedProcessIdentity = try await self.selectedProcessIdentity(applications: applications)
-        let stableIdentities: [DesktopTargetIdentity?]
+        let planner = DesktopTargetPlanning.BackgroundKeyboardTargetPlanner(
+            applications: applications,
+            windows: windows)
         do {
-            stableIdentities = try [selectedProcessIdentity, snapshotProcessIdentity].map { identity in
-                guard let identity else { return nil }
-                return try DesktopTargetIdentity(processIdentity: identity)
-            } + [
-                snapshotExactWindow.map(DesktopTargetIdentity.init(exactWindow:)),
-                selectedWindow.map(DesktopTargetIdentity.init(exactWindow:)),
-            ]
-        } catch {
-            throw MCPInteractionTargetError.backgroundWindowTargetMismatch
-        }
-        let stableIdentity: DesktopTargetIdentity?
-        do {
-            stableIdentity = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.coalesce(stableIdentities)
-        } catch {
-            throw MCPInteractionTargetError.backgroundWindowTargetMismatch
-        }
-        guard let processIdentity = stableIdentity?.processIdentity else {
+            return try await planner.plan(
+                selector: self.selector,
+                snapshotProcessIdentity: snapshotProcessIdentity,
+                snapshotExactWindow: snapshotExactWindow,
+                requiresExplicitExactWindow: requiresExplicitExactWindow).target
+        } catch DesktopTargetPlanning.BackgroundKeyboardTargetPlanningError.targetRequired {
             throw MCPInteractionTargetError.backgroundTargetRequired
-        }
-
-        let listedApplications = try await applications.listApplications().data.applications
-        guard let application = listedApplications.first(where: {
-            $0.processIdentifier == processIdentity.processIdentifier
-        }) else {
-            throw MCPInteractionTargetError.targetProcessNotFound
-        }
-        guard application.processIdentity == processIdentity else {
-            throw MCPInteractionTargetError.targetProcessIdentityUnavailable
-        }
-        guard application.isEligibleForBackgroundInput else {
+        } catch DesktopTargetPlanning.BackgroundKeyboardTargetPlanningError.applicationIneligible {
             throw MCPInteractionTargetError.backgroundTargetIneligible
-        }
-
-        let process = try UIAutomationTarget.Process(
-            processIdentifier: processIdentity.processIdentifier,
-            identity: processIdentity)
-        if let exactWindow {
-            return try UIAutomationTarget.backgroundKeyboard(
-                process: process,
-                exactWindow: exactWindow)
-        }
-
-        let eligibleWindows: [UIAutomationTarget.ExactWindow]
-        if requiresExplicitExactWindow {
-            eligibleWindows = []
-        } else {
-            let listed = try await windows.listWindows(
-                target: .application("PID:\(processIdentity.processIdentifier)"))
-            eligibleWindows = try ObservationTargetResolver.captureCandidates(from: listed).map {
-                try UIAutomationTarget.ExactWindow(window: $0)
-            }
-        }
-        return try UIAutomationTarget.backgroundKeyboard(
-            process: process,
-            eligibleWindows: eligibleWindows,
-            requiresExplicitExactWindow: requiresExplicitExactWindow)
-    }
-
-    private func selectedProcessIdentity(
-        applications: any ApplicationServiceProtocol) async throws -> ApplicationProcessIdentity?
-    {
-        let application: ServiceApplicationInfo
-        if let pid {
-            application = try await applications.findApplication(identifier: "PID:\(pid)")
-            guard application.processIdentifier == pid else {
-                throw MCPInteractionTargetError.targetProcessNotFound
-            }
-        } else if let app = self.app?.trimmingCharacters(in: .whitespacesAndNewlines), !app.isEmpty {
-            application = try await applications.findApplication(identifier: app)
-        } else {
-            return nil
-        }
-        guard let identity = application.processIdentity else {
-            throw MCPInteractionTargetError.targetProcessIdentityUnavailable
-        }
-        return identity
-    }
-
-    private func requireSelectedExactWindow(
-        windows: any WindowManagementServiceProtocol) async throws -> UIAutomationTarget.ExactWindow
-    {
-        guard let windowTarget = try self.toWindowTarget() else {
-            throw MCPInteractionTargetError.backgroundWindowTargetUnsupported
-        }
-        let matches = try await windows.listWindows(target: windowTarget)
-        guard matches.count == 1, let window = matches.first else {
-            throw MCPInteractionTargetError.backgroundWindowTargetAmbiguous
-        }
-        do {
-            return try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.exactWindow(from: window)
-        } catch {
+        } catch is DesktopTargetIdentityError {
             throw MCPInteractionTargetError.backgroundWindowTargetMismatch
+        } catch let error as DesktopTargetPlanningError {
+            switch error {
+            case .applicationNotFound:
+                throw MCPInteractionTargetError.targetProcessNotFound
+            case .missingProcessIdentity, .invalidProcessIdentity, .staleApplication:
+                throw MCPInteractionTargetError.targetProcessIdentityUnavailable
+            case .windowNotFound, .missingWindowIdentity, .incompleteWindowIdentity, .windowOwnerMismatch, .staleWindow:
+                throw MCPInteractionTargetError.backgroundWindowTargetMismatch
+            default:
+                throw MCPInteractionTargetError.backgroundTargetPlanningFailed(error.localizedDescription)
+            }
+        } catch let error as DesktopTargetPlanning.BackgroundKeyboardTargetPlanningError {
+            throw MCPInteractionTargetError.backgroundTargetPlanningFailed(error.localizedDescription)
         }
     }
 

@@ -577,7 +577,7 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
 }
 
 @MainActor
-class StubApplicationService: ApplicationServiceProtocol {
+class StubApplicationService: ApplicationServiceProtocol, ApplicationMutationInventoryProviding {
     let supportsApplicationLaunchOptions = true
     let supportsApplicationRelaunch = true
     var applications: [ServiceApplicationInfo]
@@ -613,6 +613,11 @@ class StubApplicationService: ApplicationServiceProtocol {
             summary: summary,
             metadata: .init(duration: 0)
         )
+    }
+
+    func applicationMutationInventory() async throws
+    -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo> {
+        .complete(self.applications)
     }
 
     func findApplication(identifier: String) async throws -> ServiceApplicationInfo {
@@ -1500,7 +1505,7 @@ final class StubDialogService: DialogServiceProtocol {
 }
 
 @MainActor
-class StubWindowService: WindowManagementServiceProtocol {
+class StubWindowService: WindowManagementServiceProtocol, WindowMutationInventoryProviding {
     var windowsByApp: [String: [ServiceWindowInfo]]
     var focusCalls: [WindowTarget] = []
     var closeFallbackRequests: [Bool] = []
@@ -1620,6 +1625,12 @@ class StubWindowService: WindowManagementServiceProtocol {
             guard let windows = windowsByApp[app], index < windows.count else { return [] }
             return [windows[index]]
         }
+    }
+
+    func windowMutationInventory(
+        target: WindowTarget
+    ) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo> {
+        try await .complete(self.listWindows(target: target))
     }
 
     func getFocusedWindow() async throws -> ServiceWindowInfo? {
