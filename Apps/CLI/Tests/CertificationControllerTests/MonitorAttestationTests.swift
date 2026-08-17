@@ -17,8 +17,7 @@ struct MonitorAttestationTests {
         object["unexpected"] = true
         #expect(throws: CertificationControllerError.self) {
             try CertificationMonitorAttestationClientPlan.decode(
-                JSONSerialization.data(withJSONObject: object)
-            )
+                JSONSerialization.data(withJSONObject: object))
         }
     }
 
@@ -43,22 +42,19 @@ struct MonitorAttestationTests {
         let process = CertificationProcessReceipt(
             pid: 8001,
             startIdentity: "800100",
-            codeSignatureHash: String(repeating: "a", count: 40)
-        )
+            codeSignatureHash: String(repeating: "a", count: 40))
         let request = CertificationAttestationRequest(
             version: 1,
             executionNonce: Self.nonce,
             monitorInstanceID: Self.monitorID,
-            challenge: challenge
-        )
+            challenge: challenge)
         let monitor = CertificationMonitorAttestationResponse(
             version: 1,
             executionNonce: Self.nonce,
             monitorInstanceID: Self.monitorID,
             challenge: challenge,
             monitor: process,
-            monitorEvidenceSHA256: String(repeating: "b", count: 64)
-        )
+            monitorEvidenceSHA256: String(repeating: "b", count: 64))
         let observer = CertificationObserverAttestationResponse(
             version: 1,
             executionNonce: Self.nonce,
@@ -71,8 +67,7 @@ struct MonitorAttestationTests {
             beforeValueSHA256: String(repeating: "1", count: 64),
             expectedValueSHA256: String(repeating: "2", count: 64),
             observedValueSHA256: String(repeating: "2", count: 64),
-            restoredValueSHA256: String(repeating: "1", count: 64)
-        )
+            restoredValueSHA256: String(repeating: "1", count: 64))
 
         #expect(try Self.keys(request) == [
             "version", "execution_nonce", "monitor_instance_id", "challenge",
@@ -91,11 +86,9 @@ struct MonitorAttestationTests {
         _ = try CertificationMonitorAttestationRunner.validateMonitorResponse(
             requestData,
             request: request,
-            peerPID: process.pid
-        )
+            peerPID: process.pid)
         var openObject = try #require(
-            JSONSerialization.jsonObject(with: requestData) as? [String: Any]
-        )
+            JSONSerialization.jsonObject(with: requestData) as? [String: Any])
         var openProcess = try #require(openObject["monitor"] as? [String: Any])
         openProcess["unexpected"] = true
         openObject["monitor"] = openProcess
@@ -103,8 +96,7 @@ struct MonitorAttestationTests {
             try CertificationMonitorAttestationRunner.validateMonitorResponse(
                 JSONSerialization.data(withJSONObject: openObject),
                 request: request,
-                peerPID: process.pid
-            )
+                peerPID: process.pid)
         }
         openProcess.removeValue(forKey: "unexpected")
         openProcess["start_identity"] = "00"
@@ -113,8 +105,7 @@ struct MonitorAttestationTests {
             try CertificationMonitorAttestationRunner.validateMonitorResponse(
                 JSONSerialization.data(withJSONObject: openObject),
                 request: request,
-                peerPID: process.pid
-            )
+                peerPID: process.pid)
         }
     }
 
@@ -128,8 +119,7 @@ struct MonitorAttestationTests {
         let process = CertificationProcessReceipt(
             pid: getpid(),
             startIdentity: "800100",
-            codeSignatureHash: String(repeating: "a", count: 40)
-        )
+            codeSignatureHash: String(repeating: "a", count: 40))
         let server = try CertificationObserverAttestationServer(
             socketPath: socketPath,
             executionNonce: Self.nonce,
@@ -141,8 +131,7 @@ struct MonitorAttestationTests {
             beforeValueSHA256: String(repeating: "1", count: 64),
             expectedValueSHA256: String(repeating: "2", count: 64),
             observedValueSHA256: String(repeating: "2", count: 64),
-            restoredValueSHA256: String(repeating: "1", count: 64)
-        )
+            restoredValueSHA256: String(repeating: "1", count: 64))
         let serverTask = Task.detached { await server.serve() }
         defer {
             server.stop()
@@ -152,26 +141,21 @@ struct MonitorAttestationTests {
         defer { close(client) }
         try CertificationLocalPeerPolicy.requirePeerPID(
             CertificationUnixSocket.peerPID(client),
-            expected: getpid()
-        )
+            expected: getpid())
         let challenge = String(repeating: "f", count: 64)
         try CertificationUnixSocket.writeJSON(
             CertificationAttestationRequest(
                 version: 1,
                 executionNonce: Self.nonce,
                 monitorInstanceID: Self.monitorID,
-                challenge: challenge
-            ),
-            descriptor: client
-        )
+                challenge: challenge),
+            descriptor: client)
         let response = try JSONDecoder().decode(
             CertificationObserverAttestationResponse.self,
             from: CertificationUnixSocket.readJSONLine(
                 descriptor: client,
                 maximumBytes: 64 * 1024,
-                timeoutMilliseconds: 2000
-            )
-        )
+                timeoutMilliseconds: 2000))
         #expect(response.challenge == challenge)
         #expect(response.executionNonce == Self.nonce)
         #expect(response.monitorInstanceID == Self.monitorID)
@@ -204,8 +188,7 @@ struct MonitorAttestationTests {
             try CertificationUnixSocket.readJSONLine(
                 descriptor: descriptors[1],
                 maximumBytes: 1024,
-                timeoutMilliseconds: 100
-            )
+                timeoutMilliseconds: 100)
         }
 
         var stalled = [Int32](repeating: -1, count: 2)
@@ -218,8 +201,7 @@ struct MonitorAttestationTests {
             try CertificationUnixSocket.readJSONLine(
                 descriptor: stalled[1],
                 maximumBytes: 1024,
-                timeoutMilliseconds: 50
-            )
+                timeoutMilliseconds: 50)
         }
 
         var dripping = [Int32](repeating: -1, count: 2)
@@ -241,8 +223,7 @@ struct MonitorAttestationTests {
             try CertificationUnixSocket.readJSONLine(
                 descriptor: dripping[1],
                 maximumBytes: 1024,
-                timeoutMilliseconds: 100
-            )
+                timeoutMilliseconds: 100)
         }
         await writer.value
     }
@@ -259,6 +240,7 @@ struct MonitorAttestationTests {
       "response_kind": "monitor",
       "artifacts_directory": "/private/tmp/peekaboo-monitor-attestation",
       "output_path": "/private/tmp/peekaboo-monitor-attestation/response.json",
+      "release_path": "/private/tmp/peekaboo-monitor-attestation/release.json",
       "timeout_milliseconds": 2000,
       "maximum_response_bytes": 65536
     }
@@ -266,8 +248,7 @@ struct MonitorAttestationTests {
 
     private static func keys(_ value: some Encodable) throws -> Set<String> {
         let object = try #require(
-            JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any]
-        )
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])
         return Set(object.keys)
     }
 }

@@ -74,9 +74,13 @@ function inspectionHarness({
   liveCodeSignatureHash = CDHASH,
   liveVerificationStatus = 0,
   delayPipeClose = false,
+  envelopeReceipt = null,
+  reportedSourceCommit = SOURCE_COMMIT,
 } = {}) {
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<plist version="1.0"><dict><key>PeekabooSourceCommit</key><string>${SOURCE_COMMIT}</string></dict></plist>`;
+  const xml = reportedSourceCommit === null
+    ? '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict></dict></plist>'
+    : `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>PeekabooSourceCommit</key><string>${reportedSourceCommit}</string></dict></plist>`;
   let active = null;
   const runner = (executable, args, options = {}) => {
     calls.push([executable, args]);
@@ -102,7 +106,8 @@ function inspectionHarness({
     }
     if (executable === '/usr/bin/otool') return { status: 0, stdout: xml, stderr: '' };
     if (executable === '/usr/bin/plutil') {
-      return { status: 0, stdout: JSON.stringify({ PeekabooSourceCommit: SOURCE_COMMIT }), stderr: '' };
+      const value = reportedSourceCommit === null ? {} : { PeekabooSourceCommit: reportedSourceCommit };
+      return { status: 0, stdout: JSON.stringify(value), stderr: '' };
     }
     if (args[0] === '--version') {
       return {
@@ -119,7 +124,9 @@ function inspectionHarness({
     child.stdout = new PassThrough();
     child.stderr = new PassThrough();
     const plan = JSON.parse(fs.readFileSync(args[1]));
-    const receipt = inspectorReceipt(plan, mutateReceipt);
+    const receipt = args[0] === '--inspect-code'
+      ? inspectorReceipt(plan, mutateReceipt)
+      : mutateReceipt({ version: 1, staged_attestation_fixture: true });
     fs.writeFileSync(plan.output_path, `${JSON.stringify(receipt, null, 2)}\n`, {
       flag: 'wx', mode: 0o600,
     });
@@ -137,7 +144,7 @@ function inspectionHarness({
       active.exited = true;
       const closeStreams = () => {
         active.child.stdout.end(`${JSON.stringify({
-          result: 'passed', receipt: active.plan.output_path,
+          result: 'passed', receipt: envelopeReceipt ?? active.plan.output_path,
         })}\n`);
         active.child.stderr.end();
         queueMicrotask(() => active.child.emit('close', 0, null));
@@ -172,6 +179,20 @@ async function stagedInspector(t, harness = inspectionHarness()) {
     fs.rmSync(root, { recursive: true, force: true });
   });
   return stage;
+}
+
+function pidAttestationPlan(t, prefix, executionNonce) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const planPath = path.join(directory, 'plan.json');
+  const outputPath = path.join(directory, 'response.json');
+  const releasePath = path.join(directory, 'release.json');
+  fs.writeFileSync(planPath, JSON.stringify({
+    execution_nonce: executionNonce,
+    output_path: outputPath,
+    release_path: releasePath,
+  }), { mode: 0o600 });
+  return { planPath, outputPath, releasePath, executionNonce };
 }
 
 test('staged inspector bootstrap tests Apple anchors without deriving display metadata', async (t) => {
@@ -210,6 +231,17 @@ test('native inspector drains stdout after exit before parsing its envelope', as
 
 test('PID attestation runs only the retained stage across source swap and restore', async (t) => {
   const stage = await stagedInspector(t);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'peekaboo-pid-attestation-test-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const planPath = path.join(directory, 'plan.json');
+  const outputPath = path.join(directory, 'response.json');
+  const releasePath = path.join(directory, 'release.json');
+  const executionNonce = 'e'.repeat(64);
+  fs.writeFileSync(planPath, JSON.stringify({
+    execution_nonce: executionNonce,
+    output_path: outputPath,
+    release_path: releasePath,
+  }), { mode: 0o600 });
   const source = path.join(path.dirname(stage.directory), 'mutable-contract-controller');
   const backup = `${source}.backup`;
   fs.writeFileSync(source, 'original\n', { mode: 0o700 });
@@ -218,46 +250,128 @@ test('PID attestation runs only the retained stage across source swap and restor
     fs.rmSync(backup, { force: true });
   });
   let launched;
-  const runner = (executable, args) => {
+  const harness = inspectionHarness();
+  const spawnChild = (executable, args, options) => {
     launched = executable;
     fs.renameSync(source, backup);
     fs.writeFileSync(source, 'replacement\n', { mode: 0o700 });
     fs.rmSync(source);
     fs.renameSync(backup, source);
-    return {
-      status: 0,
-      pid: 7654,
-      stdout: JSON.stringify({ result: 'passed', receipt: '/private/tmp/attestation-output.json' }),
-      stderr: '',
-      args,
-    };
+    return harness.spawnChild(executable, args, options);
   };
 
-  runStagedPIDAttestationCommand(
-    stage,
-    '/private/tmp/attestation-plan.json',
-    '/private/tmp/attestation-output.json',
-    'fixture',
-    runner,
-  );
+  await runStagedPIDAttestationCommand({
+    inspectorStage: stage,
+    planPath,
+    expectedOutputPath: outputPath,
+    releasePath,
+    executionNonce,
+    label: 'fixture',
+    ...harness,
+    spawnChild,
+  });
   assert.equal(launched, stage.executable);
   assert.equal(fs.readFileSync(source, 'utf8'), 'original\n');
 });
 
 test('PID attestation rejects a staged child envelope for another receipt', async (t) => {
   const stage = await stagedInspector(t);
-  assert.throws(() => runStagedPIDAttestationCommand(
-    stage,
-    '/private/tmp/attestation-plan.json',
-    '/private/tmp/expected-response.json',
-    'fixture',
-    () => ({
-      status: 0,
-      pid: 7654,
-      stdout: JSON.stringify({ result: 'passed', receipt: '/private/tmp/other-response.json' }),
-      stderr: '',
-    }),
-  ), /not bound to its staged child receipt/);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'peekaboo-pid-envelope-test-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const planPath = path.join(directory, 'plan.json');
+  const outputPath = path.join(directory, 'response.json');
+  const releasePath = path.join(directory, 'release.json');
+  const executionNonce = 'f'.repeat(64);
+  fs.writeFileSync(planPath, JSON.stringify({
+    execution_nonce: executionNonce,
+    output_path: outputPath,
+    release_path: releasePath,
+  }), { mode: 0o600 });
+  const harness = inspectionHarness({ envelopeReceipt: '/private/tmp/other-response.json' });
+  await assert.rejects(runStagedPIDAttestationCommand({
+    inspectorStage: stage,
+    planPath,
+    expectedOutputPath: outputPath,
+    releasePath,
+    executionNonce,
+    label: 'fixture',
+    ...harness,
+  }), /not bound to its staged child receipt/);
+});
+
+test('PID attestation rejects a forged live attester at the staged pathname', async (t) => {
+  const stage = await stagedInspector(t);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'peekaboo-pid-forged-test-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const planPath = path.join(directory, 'plan.json');
+  const outputPath = path.join(directory, 'response.json');
+  const releasePath = path.join(directory, 'release.json');
+  const forgedExecutable = path.join(directory, 'forged-attester');
+  fs.writeFileSync(forgedExecutable, 'forged\n', { mode: 0o700 });
+  const executionNonce = 'd'.repeat(64);
+  fs.writeFileSync(planPath, JSON.stringify({
+    execution_nonce: executionNonce,
+    output_path: outputPath,
+    release_path: releasePath,
+  }), { mode: 0o600 });
+  const harness = inspectionHarness({ liveExecutable: forgedExecutable });
+  await assert.rejects(runStagedPIDAttestationCommand({
+    inspectorStage: stage,
+    planPath,
+    expectedOutputPath: outputPath,
+    releasePath,
+    executionNonce,
+    label: 'fixture',
+    ...harness,
+  }), /live child differs from the retained inspector stage/);
+});
+
+test('PID attestation installs its error handler before rejecting an invalid spawn', async (t) => {
+  const stage = await stagedInspector(t);
+  const plan = pidAttestationPlan(t, 'peekaboo-pid-spawn-error-', 'c'.repeat(64));
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  let errorHandlerInstalled = false;
+  const once = child.once.bind(child);
+  child.once = (event, handler) => {
+    if (event === 'error') errorHandlerInstalled = true;
+    return once(event, handler);
+  };
+  const rejected = assert.rejects(runStagedPIDAttestationCommand({
+    inspectorStage: stage,
+    expectedOutputPath: plan.outputPath,
+    releasePath: plan.releasePath,
+    label: 'fixture',
+    spawnChild: () => {
+      queueMicrotask(() => child.emit('error', new Error('spawn failed')));
+      return child;
+    },
+    ...plan,
+  }), /challenge failed/);
+  await rejected;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(errorHandlerInstalled, true);
+});
+
+test('PID attestation rejects missing and mismatched live source provenance', async (t) => {
+  const stage = await stagedInspector(t);
+  for (const [index, reportedSourceCommit] of [null, 'c'.repeat(40)].entries()) {
+    const plan = pidAttestationPlan(
+      t,
+      `peekaboo-pid-source-${index}-`,
+      String(index + 1).repeat(64),
+    );
+    const harness = inspectionHarness({ reportedSourceCommit });
+    await assert.rejects(runStagedPIDAttestationCommand({
+      inspectorStage: stage,
+      expectedOutputPath: plan.outputPath,
+      releasePath: plan.releasePath,
+      label: `fixture ${index}`,
+      ...harness,
+      ...plan,
+    }), /no exact source stamp|differs from the retained inspector stage/);
+  }
 });
 
 test('first-party contract is derived from separate verify and display calls on one staged copy', (t) => {

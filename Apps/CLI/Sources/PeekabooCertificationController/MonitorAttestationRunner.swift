@@ -2,21 +2,18 @@ import Darwin
 import Foundation
 
 enum CertificationMonitorAttestationRunner {
-    static func run(planURL: URL) throws -> URL {
+    static func run(planURL: URL) async throws -> URL {
         let plan = try CertificationMonitorAttestationClientPlan.decode(
-            CertificationPrivateArtifacts.readPlan(at: planURL)
-        )
+            CertificationPrivateArtifacts.readPlan(at: planURL))
         try CertificationPrivateArtifacts.preparePrivateDirectory(plan.artifactsURL)
         var existing = stat()
         guard lstat(plan.outputURL.path, &existing) != 0, errno == ENOENT else {
             throw CertificationControllerError.unsafePrivatePath(
-                "Monitor attestation output already exists."
-            )
+                "Monitor attestation output already exists.")
         }
         let descriptor = try CertificationUnixSocket.connect(
             path: plan.socketPath,
-            timeoutMilliseconds: plan.timeoutMilliseconds
-        )
+            timeoutMilliseconds: plan.timeoutMilliseconds)
         defer { close(descriptor) }
         let peerPID = try CertificationUnixSocket.peerPID(descriptor)
         try CertificationLocalPeerPolicy.requirePeerPID(peerPID, expected: plan.expectedPeerPID)
@@ -25,14 +22,12 @@ enum CertificationMonitorAttestationRunner {
             version: 1,
             executionNonce: plan.executionNonce,
             monitorInstanceID: plan.monitorInstanceID,
-            challenge: challenge
-        )
+            challenge: challenge)
         try CertificationUnixSocket.writeJSON(request, descriptor: descriptor)
         let data = try CertificationUnixSocket.readJSONLine(
             descriptor: descriptor,
             maximumBytes: plan.maximumResponseBytes,
-            timeoutMilliseconds: plan.timeoutMilliseconds
-        )
+            timeoutMilliseconds: plan.timeoutMilliseconds)
         let output: Data = switch plan.responseKind {
         case .monitor:
             try self.validateMonitorResponse(data, request: request, peerPID: peerPID)
@@ -40,14 +35,17 @@ enum CertificationMonitorAttestationRunner {
             try self.validateObserverResponse(data, request: request, peerPID: peerPID)
         }
         try CertificationPrivateArtifacts.writeReceipt(output, to: plan.outputURL)
+        try await CertificationControllerLifecycleGate.waitForRelease(
+            at: plan.releaseURL,
+            executionNonce: plan.executionNonce)
         return plan.outputURL
     }
 
     static func validateMonitorResponse(
         _ data: Data,
         request: CertificationAttestationRequest,
-        peerPID: pid_t
-    ) throws -> Data {
+        peerPID: pid_t) throws -> Data
+    {
         try self.requireKeys(data, [
             "version", "execution_nonce", "monitor_instance_id", "challenge", "monitor",
             "monitor_evidence_sha256",
@@ -68,8 +66,8 @@ enum CertificationMonitorAttestationRunner {
     static func validateObserverResponse(
         _ data: Data,
         request: CertificationAttestationRequest,
-        peerPID: pid_t
-    ) throws -> Data {
+        peerPID: pid_t) throws -> Data
+    {
         try self.requireKeys(data, [
             "version", "execution_nonce", "monitor_instance_id", "challenge", "observer", "witness_sha256",
             "observation_file_sha256", "restoration_file_sha256", "before_value_sha256",

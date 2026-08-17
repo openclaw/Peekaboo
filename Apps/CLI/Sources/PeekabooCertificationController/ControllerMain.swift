@@ -40,7 +40,7 @@ struct PeekabooCertificationControllerMain {
             } else if arguments[0] == "--observe-only-plan" {
                 try await CertificationObserveOnlyRunner.run(planURL: planURL)
             } else if arguments[0] == "--attest-monitor" {
-                try CertificationMonitorAttestationRunner.run(planURL: planURL)
+                try await CertificationMonitorAttestationRunner.run(planURL: planURL)
             } else {
                 try await CertificationCodeIdentityRunner.run(planURL: planURL)
             }

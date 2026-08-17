@@ -22,7 +22,7 @@ const UUID_V8 = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 const UINT64_MAX = 0xffff_ffff_ffff_ffffn;
 const REQUEST_ID_DOMAIN = Buffer.from('peekaboo.bridge.operation-request.v1\0', 'utf8');
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
-const BUILTIN_CATALOG_SHA256 = 'ef3ec15f9f27ac8881f0c3dcf9e67864495eb94a8e7924379db6425a5cff1f60';
+const BUILTIN_CATALOG_SHA256 = '789e9838fafb072275abe1abf1bc83f75d74d4673a45ac7c526b14662dd64c8e';
 const BUILTIN_DIGEST_SPEC_SHA256 = '6d80d6264a4d3b80c69cee0c68ce3b5c2fd801e8483bb4bbddd4402d87066a33';
 const CLI_VERSION = '2';
 const LIVE_CERTIFICATION_AUTHORITY = Symbol('peekaboo-live-certification-authority');
@@ -4445,37 +4445,117 @@ function requirePIDAttestationInspectorBinding(contract, evidence, inspectorStag
   }
 }
 
-export function runStagedPIDAttestationCommand(
+export async function runStagedPIDAttestationCommand({
   inspectorStage,
   planPath,
   expectedOutputPath,
+  releasePath,
+  executionNonce,
   label,
   runner = spawnSync,
-) {
+  spawnChild = spawn,
+  signalProcess = process.kill.bind(process),
+  waitForStopped = waitForStoppedProcess,
+}) {
   assertCodeIdentityInspectorStage(inspectorStage);
-  const run = runner(inspectorStage.executable, ['--attest-monitor', planPath], {
-    encoding: 'utf8',
-    timeout: 15_000,
-    maxBuffer: 1024 * 1024,
+  const child = spawnChild(inspectorStage.executable, ['--attest-monitor', planPath], {
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
-  assertCodeIdentityInspectorStage(inspectorStage);
-  if (run.error || run.status !== 0 || !positiveInteger(run.pid)) {
-    throw new TypeError(`${label} challenge failed`);
+  const childState = { exited: false, code: null, signal: null, error: null };
+  let resolveCompletion;
+  const completionPromise = new Promise((resolve) => {
+    resolveCompletion = resolve;
+  });
+  if (child && typeof child.once === 'function') {
+    child.once('error', (error) => {
+      childState.error = error;
+      childState.exited = true;
+      resolveCompletion();
+    });
+    child.once('exit', (code, signal) => {
+      childState.code = code;
+      childState.signal = signal;
+      childState.exited = true;
+    });
+    child.once('close', (code, signal) => {
+      childState.code ??= code;
+      childState.signal ??= signal;
+      childState.exited = true;
+      resolveCompletion();
+    });
+  } else {
+    childState.error = new TypeError(`${label} challenge process is unavailable`);
+    childState.exited = true;
+    resolveCompletion();
   }
-  let envelope;
+  let stdout = '';
+  let stderr = '';
+  let stopped = false;
   try {
-    envelope = JSON.parse(run.stdout);
-  } catch {
-    throw new TypeError(`${label} challenge result is not JSON`);
+    if (!positiveInteger(child?.pid) || !child.stdout || !child.stderr) {
+      throw new TypeError(`${label} challenge failed`);
+    }
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    await waitForInspectorReceipt(expectedOutputPath, childState, 15_000);
+    signalProcess(child.pid, 'SIGSTOP');
+    stopped = true;
+    await waitForStopped(child.pid, runner);
+    assertCodeIdentityInspectorStage(inspectorStage);
+    verifyAppleSigningRequirement(`+${child.pid}`, inspectorStage.teamID, `${label} live child`, runner);
+    assertCodeIdentityInspectorStage(inspectorStage);
+    const liveIdentity = displayCodeSignatureMetadata(`+${child.pid}`, `${label} live child`, runner);
+    assertCodeIdentityInspectorStage(inspectorStage);
+    let liveExecutable;
+    try {
+      liveExecutable = fs.realpathSync(liveIdentity.executable);
+    } catch {
+      throw new TypeError(`${label} live child executable path is unavailable`);
+    }
+    assertCodeIdentityInspectorStage(inspectorStage);
+    const liveSourceCommit = embeddedSourceCommit(liveExecutable, `${label} live child`, { runner });
+    assertCodeIdentityInspectorStage(inspectorStage);
+    if (liveExecutable !== inspectorStage.executable
+        || liveIdentity.team_id !== inspectorStage.teamID
+        || liveIdentity.code_signature_hash !== inspectorStage.codeSignatureHash
+        || liveSourceCommit !== inspectorStage.sourceCommit) {
+      throw new TypeError(`${label} live child differs from the retained inspector stage`);
+    }
+    writeOwnerPrivateOutput(releasePath, `${JSON.stringify({
+      version: 1,
+      execution_nonce: executionNonce,
+      phase: 'release',
+    }, null, 2)}\n`);
+    signalProcess(child.pid, 'SIGCONT');
+    stopped = false;
+    await waitForReleasedInspectorExit(completionPromise, label);
+    assertCodeIdentityInspectorStage(inspectorStage);
+    if (childState.error || childState.code !== 0 || childState.signal !== null) {
+      throw new TypeError(`${label} challenge failed: ${stderr.trim()}`);
+    }
+    let envelope;
+    try {
+      envelope = JSON.parse(stdout);
+    } catch {
+      throw new TypeError(`${label} challenge result is not JSON`);
+    }
+    if (!exactKeys(envelope, ['receipt', 'result']) || envelope.result !== 'passed'
+        || envelope.receipt !== expectedOutputPath) {
+      throw new TypeError(`${label} challenge result is not bound to its staged child receipt`);
+    }
+    return { pid: child.pid, envelope };
+  } finally {
+    if (positiveInteger(child?.pid) && childState.exited !== true) {
+      try { if (stopped) signalProcess(child.pid, 'SIGCONT'); } catch {}
+      try { signalProcess(child.pid, 'SIGTERM'); } catch {}
+      try { await waitForReleasedInspectorExit(completionPromise, label); } catch {}
+    }
   }
-  if (!exactKeys(envelope, ['receipt', 'result']) || envelope.result !== 'passed'
-      || envelope.receipt !== expectedOutputPath) {
-    throw new TypeError(`${label} challenge result is not bound to its staged child receipt`);
-  }
-  return run;
 }
 
-function runLivePIDAttestation(contract, evidence, responseKind, inspectorStage) {
+async function runLivePIDAttestation(contract, evidence, responseKind, inspectorStage) {
   requirePIDAttestationInspectorBinding(contract, evidence, inspectorStage);
   const monitor = responseKind === 'monitor';
   const foregroundPlan = evidence.monitor_evidence.foreground_plan;
@@ -4491,6 +4571,7 @@ function runLivePIDAttestation(contract, evidence, responseKind, inspectorStage)
   fs.chmodSync(temporaryDirectory, 0o700);
   const planPath = path.join(temporaryDirectory, 'plan.json');
   const outputPath = path.join(temporaryDirectory, 'response.json');
+  const releasePath = path.join(temporaryDirectory, 'release.json');
   const plan = {
     version: 1,
     execution_nonce: contract.execution_nonce,
@@ -4500,12 +4581,20 @@ function runLivePIDAttestation(contract, evidence, responseKind, inspectorStage)
     response_kind: responseKind,
     artifacts_directory: temporaryDirectory,
     output_path: outputPath,
+    release_path: releasePath,
     timeout_milliseconds: 10_000,
     maximum_response_bytes: 1024 * 1024,
   };
   try {
     writeOwnerPrivateOutput(planPath, `${JSON.stringify(plan, null, 2)}\n`);
-    runStagedPIDAttestationCommand(inspectorStage, planPath, outputPath, label);
+    await runStagedPIDAttestationCommand({
+      inspectorStage,
+      planPath,
+      expectedOutputPath: outputPath,
+      releasePath,
+      executionNonce: contract.execution_nonce,
+      label,
+    });
     const response = parseJSON(readStablePrivateFile(outputPath, `${label} response`), label);
     const commonKeys = [
       'version', 'execution_nonce', 'monitor_instance_id', 'challenge',
@@ -4555,9 +4644,9 @@ function runLivePIDAttestation(contract, evidence, responseKind, inspectorStage)
   }
 }
 
-function verifyLivePIDAttestations(contract, evidence, inspectorStage) {
-  runLivePIDAttestation(contract, evidence, 'monitor', inspectorStage);
-  runLivePIDAttestation(contract, evidence, 'observer', inspectorStage);
+async function verifyLivePIDAttestations(contract, evidence, inspectorStage) {
+  await runLivePIDAttestation(contract, evidence, 'monitor', inspectorStage);
+  await runLivePIDAttestation(contract, evidence, 'observer', inspectorStage);
 }
 
 function readForegroundWitnessFile(filePath, expectedSHA256, label) {
@@ -4660,7 +4749,7 @@ async function executeFinalization(args, catalog, catalogBytes, artifacts) {
     await verifyLiveControllerRuntime(artifacts.contract, inspectorStage);
     await verifyLiveForegroundObserverRuntime(artifacts.contract, artifacts.evidence, inspectorStage);
     verifyLiveForegroundPostconditionRuntime(artifacts.contract, artifacts.evidence);
-    verifyLivePIDAttestations(artifacts.contract, artifacts.evidence, inspectorStage);
+    await verifyLivePIDAttestations(artifacts.contract, artifacts.evidence, inspectorStage);
     const stage = stageFirstPartyExecutable(args.peekaboo, catalog, artifacts.contract);
     try {
       const summary = await finalizeLiveMultiTargetCertification({
@@ -4674,7 +4763,7 @@ async function executeFinalization(args, catalog, catalogBytes, artifacts) {
       await verifyLiveControllerRuntime(artifacts.contract, inspectorStage);
       await verifyLiveForegroundObserverRuntime(artifacts.contract, artifacts.evidence, inspectorStage);
       verifyLiveForegroundPostconditionRuntime(artifacts.contract, artifacts.evidence);
-      verifyLivePIDAttestations(artifacts.contract, artifacts.evidence, inspectorStage);
+      await verifyLivePIDAttestations(artifacts.contract, artifacts.evidence, inspectorStage);
       const after = readCertificationArtifacts(args.artifacts);
       if (!sameJSON(after.contract, artifacts.contract)
           || !sameJSON(after.manifest, artifacts.manifest)

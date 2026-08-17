@@ -17,6 +17,7 @@ struct CertificationMonitorAttestationClientPlan: Codable, Equatable, Sendable {
     let responseKind: CertificationAttestationResponseKind
     let artifactsDirectory: String
     let outputPath: String
+    let releasePath: String
     let timeoutMilliseconds: Int
     let maximumResponseBytes: Int
 
@@ -29,6 +30,7 @@ struct CertificationMonitorAttestationClientPlan: Codable, Equatable, Sendable {
         case responseKind = "response_kind"
         case artifactsDirectory = "artifacts_directory"
         case outputPath = "output_path"
+        case releasePath = "release_path"
         case timeoutMilliseconds = "timeout_milliseconds"
         case maximumResponseBytes = "maximum_response_bytes"
     }
@@ -39,6 +41,10 @@ struct CertificationMonitorAttestationClientPlan: Codable, Equatable, Sendable {
 
     var outputURL: URL {
         URL(fileURLWithPath: self.outputPath)
+    }
+
+    var releaseURL: URL {
+        URL(fileURLWithPath: self.releasePath)
     }
 
     static func decode(_ data: Data) throws -> Self {
@@ -56,7 +62,7 @@ struct CertificationMonitorAttestationClientPlan: Codable, Equatable, Sendable {
         let keys: Set = [
             "version", "execution_nonce", "monitor_instance_id", "socket_path", "expected_peer_pid",
             "response_kind", "artifacts_directory", "output_path", "timeout_milliseconds",
-            "maximum_response_bytes",
+            "maximum_response_bytes", "release_path",
         ]
         guard Set(root.keys) == keys else {
             throw CertificationControllerError.invalidPlan("Monitor attestation plan keys are not closed.")
@@ -76,12 +82,13 @@ struct CertificationMonitorAttestationClientPlan: Codable, Equatable, Sendable {
               self.expectedPeerPID > 0,
               Self.isAbsolutePath(self.artifactsDirectory),
               self.outputURL.standardizedFileURL.deletingLastPathComponent().path == root,
+              self.releaseURL.standardizedFileURL.deletingLastPathComponent().path == root,
+              self.releaseURL.standardizedFileURL != self.outputURL.standardizedFileURL,
               (100...30000).contains(self.timeoutMilliseconds),
               (1024...1024 * 1024).contains(self.maximumResponseBytes)
         else {
             throw CertificationControllerError.invalidPlan(
-                "Monitor attestation run, peer, paths, or transport bounds are invalid."
-            )
+                "Monitor attestation run, peer, paths, or transport bounds are invalid.")
         }
     }
 
@@ -172,8 +179,7 @@ enum CertificationLocalPeerPolicy {
     static func requirePeerPID(_ observed: pid_t, expected: pid_t) throws {
         guard observed == expected, observed > 0 else {
             throw CertificationControllerError.runtimeRefusal(
-                "Unix attestation peer PID does not match the owner plan."
-            )
+                "Unix attestation peer PID does not match the owner plan.")
         }
     }
 }
@@ -231,8 +237,8 @@ enum CertificationUnixSocket {
     static func readJSONLine(
         descriptor: Int32,
         maximumBytes: Int,
-        timeoutMilliseconds: Int
-    ) throws -> Data {
+        timeoutMilliseconds: Int) throws -> Data
+    {
         var data = Data()
         var byte = UInt8.zero
         let deadline = DispatchTime.now().uptimeNanoseconds + UInt64(timeoutMilliseconds) * 1_000_000
@@ -240,16 +246,14 @@ enum CertificationUnixSocket {
             let now = DispatchTime.now().uptimeNanoseconds
             guard now < deadline else {
                 throw CertificationControllerError.runtimeRefusal(
-                    "Unix attestation message exceeded its whole-message deadline."
-                )
+                    "Unix attestation message exceeded its whole-message deadline.")
             }
             let remainingMilliseconds = max(1, Int((deadline - now) / 1_000_000))
             var descriptorEvent = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
             let ready = poll(&descriptorEvent, 1, Int32(clamping: remainingMilliseconds))
             if ready == 0 {
                 throw CertificationControllerError.runtimeRefusal(
-                    "Unix attestation message exceeded its whole-message deadline."
-                )
+                    "Unix attestation message exceeded its whole-message deadline.")
             }
             if ready < 0 {
                 if errno == EINTR {
@@ -265,8 +269,7 @@ enum CertificationUnixSocket {
                 data.append(byte)
             } else if count == 0 {
                 throw CertificationControllerError.runtimeRefusal(
-                    "Unix attestation message ended before its newline delimiter."
-                )
+                    "Unix attestation message ended before its newline delimiter.")
             } else if errno == EINTR {
                 continue
             } else {
@@ -274,16 +277,14 @@ enum CertificationUnixSocket {
             }
         }
         throw CertificationControllerError.runtimeRefusal(
-            "Unix attestation message is empty, unterminated, or too large."
-        )
+            "Unix attestation message is empty, unterminated, or too large.")
     }
 
     static func makeServer(path: String) throws -> Int32 {
         var existing = stat()
         guard lstat(path, &existing) != 0, errno == ENOENT else {
             throw CertificationControllerError.unsafePrivatePath(
-                "Unix attestation socket path already exists."
-            )
+                "Unix attestation socket path already exists.")
         }
         let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw self.transportError("create Unix listener") }
@@ -332,16 +333,14 @@ enum CertificationUnixSocket {
               info.st_uid == geteuid()
         else {
             throw CertificationControllerError.unsafePrivatePath(
-                "Attestation endpoint is not an owner-controlled Unix socket."
-            )
+                "Attestation endpoint is not an owner-controlled Unix socket.")
         }
     }
 
     static func setTimeout(_ descriptor: Int32, milliseconds: Int) throws {
         var timeout = timeval(
             tv_sec: milliseconds / 1000,
-            tv_usec: Int32((milliseconds % 1000) * 1000)
-        )
+            tv_usec: Int32((milliseconds % 1000) * 1000))
         let size = socklen_t(MemoryLayout<timeval>.size)
         guard setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, size) == 0,
               setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, size) == 0
@@ -397,8 +396,8 @@ final class CertificationObserverAttestationServer: @unchecked Sendable {
         beforeValueSHA256: String,
         expectedValueSHA256: String,
         observedValueSHA256: String,
-        restoredValueSHA256: String
-    ) throws {
+        restoredValueSHA256: String) throws
+    {
         self.socketPath = socketPath
         self.executionNonce = executionNonce
         self.monitorInstanceID = monitorInstanceID
@@ -459,8 +458,7 @@ final class CertificationObserverAttestationServer: @unchecked Sendable {
         let data = try CertificationUnixSocket.readJSONLine(
             descriptor: client,
             maximumBytes: 64 * 1024,
-            timeoutMilliseconds: 2000
-        )
+            timeoutMilliseconds: 2000)
         let object = try JSONSerialization.jsonObject(with: data)
         guard let dictionary = object as? [String: Any],
               Set(dictionary.keys) == ["version", "execution_nonce", "monitor_instance_id", "challenge"]
@@ -491,9 +489,7 @@ final class CertificationObserverAttestationServer: @unchecked Sendable {
                 beforeValueSHA256: self.beforeValueSHA256,
                 expectedValueSHA256: self.expectedValueSHA256,
                 observedValueSHA256: self.observedValueSHA256,
-                restoredValueSHA256: self.restoredValueSHA256
-            ),
-            descriptor: client
-        )
+                restoredValueSHA256: self.restoredValueSHA256),
+            descriptor: client)
     }
 }
