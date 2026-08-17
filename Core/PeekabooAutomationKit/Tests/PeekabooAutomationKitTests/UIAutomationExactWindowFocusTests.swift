@@ -252,6 +252,39 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
         }
     }
 
+    /// A window that does not hold its application's keyboard focus can never receive background
+    /// keystrokes, and it also refuses accessibility focus requests, so "retry" and "focus it first"
+    /// are both dead ends. The refusal must hand back the route that does reach such a window.
+    func testUnfocusedExactWindowRefusalNamesTheAccessibilityWriteRoute() async throws {
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 930_006,
+            ownerProcessStartIdentity: 91,
+            capturedBounds: bounds)
+        let service = UIAutomationService(
+            actionInputDriver: ActionInputDriver(),
+            automationElementResolver: AutomationElementResolver(),
+            exactWindowFocusReader: { processIdentifier in
+                ExactWindowFocusSnapshot(
+                    processIdentifier: processIdentifier,
+                    windowID: identity.windowID + 1,
+                    frame: CGRect(x: 50, y: 100, width: 200, height: 30))
+            },
+            exactWindowIdentityValidator: { _, _ in true })
+
+        do {
+            try await service.requireExactWindowKeyboardFocus(
+                expectedWindowIdentity: identity,
+                expectedWindowBounds: bounds)
+            XCTFail("Expected an unfocused exact window to refuse background keystrokes")
+        } catch let PeekabooError.invalidInput(message) {
+            XCTAssertTrue(message.contains("set-value"), message)
+            XCTAssertTrue(message.contains("set_value"), message)
+            XCTAssertTrue(message.contains("accessibility value"), message)
+        }
+    }
+
     private static func seconds(_ duration: Duration) -> TimeInterval {
         let components = duration.components
         return Double(components.seconds) + Double(components.attoseconds) / 1_000_000_000_000_000_000

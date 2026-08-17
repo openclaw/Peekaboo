@@ -250,13 +250,14 @@ public enum UIAutomationTarget: Sendable, Equatable {
         else {
             throw PeekabooError.invalidInput(
                 field: "target",
-                reason: FocusedElementReceiptError.noFocusedElement.localizedDescription +
-                    " Focus an explicit field and capture fresh exact-window UI state.")
+                reason: FocusedElementReceiptError.noFocusedElement.localizedDescription + " " +
+                    BackgroundKeyboardFocusRemediation.message)
         }
         guard focus.processId == Int(exactWindow.identity.ownerProcessIdentifier) else {
             throw PeekabooError.invalidInput(
                 field: "target",
-                reason: FocusedElementReceiptError.processMismatch.localizedDescription)
+                reason: FocusedElementReceiptError.processMismatch.localizedDescription + " " +
+                    BackgroundKeyboardFocusRemediation.message)
         }
         guard focus.windowID != nil else {
             throw PeekabooError.invalidInput(
@@ -273,7 +274,8 @@ public enum UIAutomationTarget: Sendable, Equatable {
         else {
             throw PeekabooError.invalidInput(
                 field: "target",
-                reason: FocusedElementReceiptError.windowMismatch.localizedDescription)
+                reason: FocusedElementReceiptError.windowMismatch.localizedDescription + " " +
+                    BackgroundKeyboardFocusRemediation.message)
         }
         guard exactWindow.bounds.contains(CGPoint(x: focusedElement.frame.midX, y: focusedElement.frame.midY)) else {
             throw PeekabooError.invalidInput(

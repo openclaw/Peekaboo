@@ -145,8 +145,8 @@ extension UIAutomationService {
     private func exactWindowKeyboardFocusChangedError() -> PeekabooError {
         PeekabooError.invalidInput(
             field: "target",
-            reason: "Exact-window keyboard focus changed before dispatch; capture a fresh snapshot or use " +
-                "foreground delivery")
+            reason: "Exact-window keyboard focus is not on the target window at dispatch. " +
+                BackgroundKeyboardFocusRemediation.message)
     }
 
     private func focusInfo(for element: Element, processIdentifier: pid_t?) -> UIFocusInfo {
