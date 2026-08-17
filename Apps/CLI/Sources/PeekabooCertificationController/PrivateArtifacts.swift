@@ -89,6 +89,27 @@ enum CertificationPrivateArtifacts {
         }
     }
 
+    static func prepareHeldPointer(for plan: HeldPointerCertificationPlan) throws {
+        try self.preparePrivateDirectory(plan.artifactsURL)
+        guard try self.inventory(plan.artifactsURL).isEmpty else {
+            throw CertificationControllerError.unsafePrivatePath(
+                "Held-pointer artifact directory must be empty before execution."
+            )
+        }
+        try self.preparePrivateDirectory(plan.bundleDirectoryURL)
+        guard try self.inventory(plan.bundleDirectoryURL).isEmpty else {
+            throw CertificationControllerError.unsafePrivatePath(
+                "Held-pointer bundle directory must be empty before execution."
+            )
+        }
+        var existing = stat()
+        guard lstat(plan.receiptURL.path, &existing) != 0, errno == ENOENT else {
+            throw CertificationControllerError.unsafePrivatePath(
+                "Held-pointer evidence destination already exists."
+            )
+        }
+    }
+
     static func preparePrivateDirectory(_ url: URL) throws {
         var info = stat()
         if lstat(url.path, &info) != 0 {

@@ -52,9 +52,61 @@ local monitor covers only left, right, and center-button mouse-down and mouse-up
 record with exactly `sequence`, `button`, `phase`, and `window_id`; the surrounding unified-log record supplies the
 exact Playground process ID. The 42-case matrix and live-v4 coordinator do not collect or validate these records. The
 separate final physical-qualification procedure must query them by the exact Playground PID: middle-click evidence is
-one consecutive middle down/up pair with the same window ID, while held-pointer evidence is the corresponding pair
-plus the signed helper's released projection. Neither the app log nor helper projection alone proves both application
-handling and release.
+one consecutive middle down/up pair with the same window ID. Held-pointer evidence uses the same already-signed,
+source-bound `peekaboo-certification-controller` built for live-v4 with its `--held-pointer-plan` mode. That mode performs
+two complete exact-window inventories, creates one owner, begins and releases the hold, and disconnects the owner while
+exporting the ordered six listener-signed receipts. Qualification additionally requires the corresponding consecutive
+left down/up Playground records, exact process-generation readback before and after, semantic restoration, and a clean
+DiagnosticReports comparison. No standalone held-pointer helper, separate signing ceremony, or helper custody chain is
+part of the contract. Neither the app log nor controller result alone proves both application handling and release.
+
+The owner-private held-pointer plan binds the same exact signed controller build and protocol-1.30 Bridge host as live-v4,
+one visible exact PID/generation/window/bounds target, one in-bounds global point, a fixed 500 ms hold, and a fresh artifact
+directory. The controller derives an RFC 9562 UUIDv8 client identity from the execution nonce, so every listener-signed
+operation receipt is cryptographically run-bound. Run the physical lifecycle only after the final Bridge listener and
+controlled Playground target are ready:
+
+```json
+{
+  "version": 1,
+  "execution_nonce": "64-lowercase-hex",
+  "socket_path": "/absolute/path/to/bridge.sock",
+  "trusted_bridge_host_team_ids": ["TENCHARID1"],
+  "expected_controller_build": {
+    "source_commit": "40-lowercase-hex",
+    "executable_path": "/absolute/path/to/peekaboo-certification-controller",
+    "executable_sha256": "64-lowercase-hex",
+    "team_id": "TENCHARID1"
+  },
+  "expected_host": {
+    "host_kind": "gui",
+    "process_identifier": 100,
+    "process_start_identity_decimal": "100001",
+    "code_signature_hash": "40-lowercase-hex",
+    "source_commit": "40-lowercase-hex"
+  },
+  "target": {
+    "process_identifier": 200,
+    "process_start_identity_decimal": "200001",
+    "window_id": 300,
+    "bounds": {"x": 10, "y": 20, "width": 640, "height": 480},
+    "is_minimized": false,
+    "click_point": {"x": 330, "y": 260}
+  },
+  "hold_milliseconds": 500,
+  "artifacts_directory": "/private/path/to/new-empty-held-pointer-artifacts"
+}
+```
+
+```bash
+peekaboo-certification-controller \
+  --held-pointer-plan /private/path/to/held-pointer-plan.json
+```
+
+Success writes `held-pointer-receipt.json` plus exactly six bundles in `bundles/`, ordered as two window inventories,
+owner creation, begin, release, and owner disconnect. The begin receipt must attest two background window-targeted units;
+release must attest one additional unit and the three-unit `released` lifecycle; disconnect must attest zero dispatch.
+Validate every retained bundle against the still-live exact Bridge listener before sealing final evidence.
 
 Certification requires a stamped CLI whose `--version --json` output contains one canonical 40-hex `sourceCommit`.
 Remote certification pins every command to one exact Bridge socket and requires its additive host-identity receipt to

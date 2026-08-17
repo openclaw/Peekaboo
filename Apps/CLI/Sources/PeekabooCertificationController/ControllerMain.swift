@@ -9,6 +9,7 @@ struct PeekabooCertificationControllerMain {
     Usage:
       peekaboo-certification-controller --plan OWNER_PRIVATE_PLAN.json
       peekaboo-certification-controller --observe-only-plan OWNER_PRIVATE_PLAN.json
+      peekaboo-certification-controller --held-pointer-plan OWNER_PRIVATE_PLAN.json
       peekaboo-certification-controller --attest-monitor OWNER_PRIVATE_PLAN.json
 
     The controller performs one exact protocol-1.30 handshake, keeps one Bridge client/session,
@@ -17,6 +18,9 @@ struct PeekabooCertificationControllerMain {
 
     Observe-only mode performs three fresh, exact-window Accessibility value reads, emits the closed
     foreground observation/restoration witness, and remains alive until its owner releases it.
+
+    Held-pointer mode runs the embedding-only protocol-1.30 split down/up lifecycle against one
+    exact process-generation/window target and publishes six listener-signed operation bundles.
 
     Monitor attestation verifies an exact Unix peer PID, exchanges one random challenge, and writes
     the closed owner-private response without creating another signing authority.
@@ -30,7 +34,13 @@ struct PeekabooCertificationControllerMain {
                 return
             }
             guard arguments.count == 2,
-                  ["--plan", "--observe-only-plan", "--attest-monitor", "--inspect-code"].contains(arguments[0])
+                  [
+                      "--plan",
+                      "--observe-only-plan",
+                      "--held-pointer-plan",
+                      "--attest-monitor",
+                      "--inspect-code",
+                  ].contains(arguments[0])
             else {
                 throw CertificationControllerError.invalidArguments(self.help)
             }
@@ -39,6 +49,8 @@ struct PeekabooCertificationControllerMain {
                 try await CertificationControllerRunner.run(planURL: planURL)
             } else if arguments[0] == "--observe-only-plan" {
                 try await CertificationObserveOnlyRunner.run(planURL: planURL)
+            } else if arguments[0] == "--held-pointer-plan" {
+                try await HeldPointerCertificationRunner.run(planURL: planURL)
             } else if arguments[0] == "--attest-monitor" {
                 try await CertificationMonitorAttestationRunner.run(planURL: planURL)
             } else {

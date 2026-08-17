@@ -102,7 +102,9 @@ signing-capability registration or bind leaves the runtime stopped and does not 
 
 Native embedding clients that need a split pointer down/up sequence can use
 `ExactWindowHeldPointerLifecycleServiceProtocol`. This API is intentionally absent from the standalone CLI and MCP
-tool catalog. Create one opaque owner, begin with an exact process-generation/window/bounds target and a bounded
+tool catalog. The source-bound `peekaboo-certification-controller --held-pointer-plan` mode exercises this same
+embedding API for physical release qualification; it is not an end-user input command. Create one opaque owner,
+begin with an exact process-generation/window/bounds target and a bounded
 expiry, then release or revoke with the returned opaque hold receipt. Mouse-down retains that exact window's mutation
 lane across calls. A matching release, explicit owner disconnect, caller cancellation, target drift, or watchdog expiry
 wins terminal cleanup exactly once. Mouse-up is sent only while the original process generation remains live; if its

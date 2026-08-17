@@ -353,13 +353,13 @@ struct CertificationControllerPlan: Codable, Equatable, Sendable {
         "peekaboo-certification-run:\(self.executionNonce):slot:\(slot.id)"
     }
 
-    private static func isLowerHex(_ value: String, count: Int) -> Bool {
+    static func isLowerHex(_ value: String, count: Int) -> Bool {
         value.utf8.count == count && value.utf8.allSatisfy {
             (0x30...0x39).contains($0) || (0x61...0x66).contains($0)
         }
     }
 
-    private static func isCanonicalPositiveDecimal(_ value: String) -> Bool {
+    static func isCanonicalPositiveDecimal(_ value: String) -> Bool {
         guard !value.isEmpty,
               value.first != "0",
               value.utf8.allSatisfy({ (0x30...0x39).contains($0) }),
@@ -369,7 +369,7 @@ struct CertificationControllerPlan: Codable, Equatable, Sendable {
         return String(parsed) == value
     }
 
-    private static func isCanonicalV4UUID(_ value: String) -> Bool {
+    static func isCanonicalV4UUID(_ value: String) -> Bool {
         guard value == value.lowercased(),
               value.count == 36,
               value[value.index(value.startIndex, offsetBy: 14)] == "4",
@@ -379,7 +379,7 @@ struct CertificationControllerPlan: Codable, Equatable, Sendable {
         return uuid.uuidString.lowercased() == value
     }
 
-    private static func isSafeID(_ value: String) -> Bool {
+    static func isSafeID(_ value: String) -> Bool {
         let bytes = Array(value.utf8)
         guard (1...64).contains(bytes.count),
               bytes.first.map(Self.isLowercaseASCIIOrDigit) == true,
@@ -392,16 +392,16 @@ struct CertificationControllerPlan: Codable, Equatable, Sendable {
         (0x61...0x7A).contains(value) || (0x30...0x39).contains(value)
     }
 
-    private static func isTeamID(_ value: String) -> Bool {
+    static func isTeamID(_ value: String) -> Bool {
         value.count == 10 && value.allSatisfy { $0.isASCII && ($0.isUppercase || $0.isNumber) }
     }
 
-    private static func isAbsolutePath(_ value: String) -> Bool {
+    static func isAbsolutePath(_ value: String) -> Bool {
         guard value.hasPrefix("/"), !value.contains("\0") else { return false }
         return !value.split(separator: "/", omittingEmptySubsequences: false).contains("..")
     }
 
-    private static func isFinitePositiveRect(_ rect: CGRect) -> Bool {
+    static func isFinitePositiveRect(_ rect: CGRect) -> Bool {
         rect.origin.x.isFinite && rect.origin.y.isFinite && rect.width.isFinite && rect.height.isFinite &&
             rect.width > 0 && rect.height > 0
     }
