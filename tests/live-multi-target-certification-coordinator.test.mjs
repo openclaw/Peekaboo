@@ -15,6 +15,7 @@ import {
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const coordinator = path.join(repository, 'scripts/run-live-multi-target-certification.mjs');
+const legacyCoordinator = path.join(repository, 'scripts/test-dual-controller-overlap.sh');
 const contract = path.join(repository, 'tests/contracts/live-multi-target-certification-coordinator.md');
 const operatorDocumentation = path.join(repository, 'docs/testing/background-computer-use.md');
 const TEAM_ID = 'FWJYW4S8P8';
@@ -695,6 +696,27 @@ test('operator documentation exposes both bounded external marker handshakes', (
   assert.match(documentation, /task-complete/);
   assert.match(documentation, /restore-complete/);
   assert.match(documentation, /certification_eligible:false/);
+});
+
+test('documented legacy overlap entry point provides an explicit v4 migration', () => {
+  const help = spawnSync(legacyCoordinator, ['--help'], { encoding: 'utf8' });
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /compatibility entry point/);
+  assert.match(help.stdout, /run-live-multi-target-certification\.mjs/);
+  assert.match(help.stdout, /--plan \/private\/path\/to\/live-coordinator-plan\.json/);
+
+  const live = spawnSync(legacyCoordinator, ['--bridge-socket', '/private/tmp/legacy.sock'], {
+    encoding: 'utf8',
+  });
+  assert.equal(live.status, 2);
+  assert.match(live.stderr, /old live flags cannot be translated safely/i);
+  const mixed = spawnSync(legacyCoordinator, [
+    '--bridge-socket', '/private/tmp/legacy.sock', '--self-test',
+  ], { encoding: 'utf8' });
+  assert.equal(mixed.status, 2);
+  assert.match(mixed.stderr, /old live flags cannot be translated safely/i);
+  const source = fs.readFileSync(legacyCoordinator, 'utf8');
+  assert.match(source, /test-background-certification\.sh/);
 });
 
 test('closed plan rejects unknown caller fields before creating a run', () => {

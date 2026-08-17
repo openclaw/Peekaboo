@@ -196,6 +196,14 @@ node scripts/run-live-multi-target-certification.mjs \
   --plan /private/path/to/live-coordinator-plan.json
 ```
 
+The former documented entry point remains as a migration wrapper. Its `--self-test` mode runs the replacement
+deterministic certification gate; old live flags fail with the owner-private plan command above instead of silently
+attempting the weaker pre-v4 workflow:
+
+```bash
+scripts/test-dual-controller-overlap.sh --self-test
+```
+
 JSONL stdout begins with `run-created`, then emits bounded `external-foreground-window` events for the exact foreground
 task and restoration. The external controller must exclusively write the named task-complete and restore-complete
 markers with the supplied nonce and monitor UUID. A production `completed` event is certification-eligible only after
