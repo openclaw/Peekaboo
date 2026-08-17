@@ -16,6 +16,7 @@ import {
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const coordinator = path.join(repository, 'scripts/run-live-multi-target-certification.mjs');
 const legacyCoordinator = path.join(repository, 'scripts/test-dual-controller-overlap.sh');
+const backgroundCertification = path.join(repository, 'scripts/test-background-certification.sh');
 const contract = path.join(repository, 'tests/contracts/live-multi-target-certification-coordinator.md');
 const operatorDocumentation = path.join(repository, 'docs/testing/background-computer-use.md');
 const TEAM_ID = 'FWJYW4S8P8';
@@ -704,6 +705,29 @@ test('documented legacy overlap entry point provides an explicit v4 migration', 
   assert.match(help.stdout, /compatibility entry point/);
   assert.match(help.stdout, /run-live-multi-target-certification\.mjs/);
   assert.match(help.stdout, /--plan \/private\/path\/to\/live-coordinator-plan\.json/);
+  assert.match(help.stdout, /--artifacts PATH/);
+
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'peekaboo-overlap-wrapper-'));
+  try {
+    const scripts = path.join(sandbox, 'scripts');
+    fs.mkdirSync(scripts);
+    const wrapper = path.join(scripts, 'test-dual-controller-overlap.sh');
+    fs.copyFileSync(legacyCoordinator, wrapper);
+    fs.chmodSync(wrapper, 0o700);
+    const replacement = path.join(scripts, 'test-background-certification.sh');
+    fs.writeFileSync(replacement, '#!/usr/bin/env bash\nprintf "<%s>\\n" "$@"\n', { mode: 0o700 });
+    const artifacts = path.join(sandbox, 'selected-artifacts');
+    for (const args of [
+      ['--self-test', '--artifacts', artifacts],
+      ['--artifacts', artifacts, '--self-test'],
+    ]) {
+      const forwarded = spawnSync(wrapper, args, { encoding: 'utf8' });
+      assert.equal(forwarded.status, 0, forwarded.stderr);
+      assert.equal(forwarded.stdout, `<--artifacts>\n<${artifacts}>\n`);
+    }
+  } finally {
+    fs.rmSync(sandbox, { recursive: true, force: true });
+  }
 
   const live = spawnSync(legacyCoordinator, ['--bridge-socket', '/private/tmp/legacy.sock'], {
     encoding: 'utf8',
@@ -715,8 +739,42 @@ test('documented legacy overlap entry point provides an explicit v4 migration', 
   ], { encoding: 'utf8' });
   assert.equal(mixed.status, 2);
   assert.match(mixed.stderr, /old live flags cannot be translated safely/i);
-  const source = fs.readFileSync(legacyCoordinator, 'utf8');
-  assert.match(source, /test-background-certification\.sh/);
+
+  for (const args of [
+    ['--artifacts', '/private/tmp/no-self-test'],
+    ['--self-test', '--self-test'],
+    ['--self-test', '--artifacts'],
+    ['--self-test', '--artifacts', '/private/tmp/one', '--artifacts', '/private/tmp/two'],
+  ]) {
+    const invalid = spawnSync(legacyCoordinator, args, { encoding: 'utf8' });
+    assert.equal(invalid.status, 2);
+  }
+
+  const invalidRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'peekaboo-background-root-'));
+  try {
+    fs.writeFileSync(path.join(invalidRoot, 'occupied'), 'occupied\n');
+    const occupied = spawnSync(backgroundCertification, ['--artifacts', invalidRoot], { encoding: 'utf8' });
+    assert.equal(occupied.status, 2);
+    assert.match(occupied.stderr, /must be new or empty/);
+    const file = path.join(invalidRoot, 'occupied');
+    const notDirectory = spawnSync(backgroundCertification, ['--artifacts', file], { encoding: 'utf8' });
+    assert.equal(notDirectory.status, 2);
+    assert.match(notDirectory.stderr, /not a directory/);
+    const unreadable = path.join(invalidRoot, 'unreadable');
+    fs.mkdirSync(unreadable, { mode: 0o300 });
+    try {
+      const cannotInspect = spawnSync(backgroundCertification, ['--artifacts', unreadable], { encoding: 'utf8' });
+      assert.equal(cannotInspect.status, 2);
+      assert.match(cannotInspect.stderr, /Cannot inspect artifact directory/);
+    } finally {
+      fs.chmodSync(unreadable, 0o700);
+    }
+  } finally {
+    fs.rmSync(invalidRoot, { recursive: true, force: true });
+  }
+
+  const documentation = fs.readFileSync(operatorDocumentation, 'utf8');
+  assert.match(documentation, /--self-test --artifacts \/private\/path\/to\/empty-artifacts/);
 });
 
 test('closed plan rejects unknown caller fields before creating a run', () => {

@@ -202,6 +202,7 @@ attempting the weaker pre-v4 workflow:
 
 ```bash
 scripts/test-dual-controller-overlap.sh --self-test
+scripts/test-dual-controller-overlap.sh --self-test --artifacts /private/path/to/empty-artifacts
 ```
 
 JSONL stdout begins with `run-created`, then emits bounded `external-foreground-window` events for the exact foreground
