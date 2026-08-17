@@ -12,6 +12,7 @@ import {
   computeDigestClaim,
   deriveCertificationRunID,
   makeLiveCertificationContract,
+  makeLivePIDAttestationPlan,
   monitorHistoryCommitmentSHA256,
   projectFinalizerSourceBytes,
   requireCanonicalDiagnosticReportsDirectory,
@@ -399,6 +400,27 @@ test('live crash scans require the current user canonical DiagnosticReports dire
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }
+});
+
+test('live PID attestation plan carries the exact peer receipt and no legacy PID field', () => {
+  const fixture = makeFixture();
+  const expectedPeer = fixture.contract.controlled_targets[0].controller;
+  const plan = makeLivePIDAttestationPlan({
+    contract: fixture.contract,
+    responseKind: 'monitor',
+    socketPath: fixture.contract.monitor_binding.monitor_attestation_socket_path,
+    expectedProcess: expectedPeer,
+    temporaryDirectory: '/private/tmp/peekaboo-live-pid-plan',
+    outputPath: '/private/tmp/peekaboo-live-pid-plan/response.json',
+    releasePath: '/private/tmp/peekaboo-live-pid-plan/release.json',
+  });
+  assert.deepEqual(Object.keys(plan).sort(), [
+    'artifacts_directory', 'execution_nonce', 'expected_peer', 'maximum_response_bytes',
+    'monitor_instance_id', 'output_path', 'release_path', 'response_kind',
+    'socket_path', 'timeout_milliseconds', 'version',
+  ]);
+  assert.deepEqual(plan.expected_peer, expectedPeer);
+  assert.equal('expected_peer_pid' in plan, false);
 });
 
 test('controller receipts require explicit canonical nulls for optional target and handshake metadata', () => {

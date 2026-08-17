@@ -64,7 +64,7 @@
     ],
     "coordinator": {
       "path": "scripts/run-live-multi-target-certification.mjs",
-      "sha256": "f5ccc341a0f95578a2a4af605474b17a5beb3e2a9dbd8aa5d7def163621e3896"
+      "sha256": "2f1bfedb82af91d4f1f40f90ba6b386205558ad15f0c58e1acffde942822bd0c"
     },
     "receipt_validator": {
       "path": "Apps/CLI/Sources/PeekabooCLI/Commands/Core/BridgeCommand+Receipt.swift",
@@ -73,7 +73,7 @@
     "finalizer": {
       "path": "scripts/finalize-multi-target-certification.mjs",
       "projection": "normalize-builtin-catalog-sha256-to-zero-v1",
-      "projected_sha256": "707d5d5447369db97ef7077656333ed54932c18e1736b9ca6f8cf2a982307c2c"
+      "projected_sha256": "7b25f7f0db07835cfe57671cee876839efab4f06df34945cd295216d899bd115"
     }
   },
   "monitor_contract": {

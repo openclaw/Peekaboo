@@ -33,7 +33,15 @@ const EXTERNAL_FOREGROUND_WINDOW_COUNT = 2;
 const OPERATION_LIFECYCLE_MARGIN_SECONDS = 30;
 const MAXIMUM_CONTROLLER_TEXT_BYTES = 4096;
 const FINALIZER_INNER_BUNDLE_TIMEOUT_MILLISECONDS = 30_000;
-const FINALIZER_IDENTITY_RUNTIME_OVERHEAD_MILLISECONDS = 120_000;
+const FINALIZER_IDENTITY_INSPECTION_COUNT = 15;
+const FINALIZER_IDENTITY_INSPECTION_TIMEOUT_MILLISECONDS = 30_000;
+const FINALIZER_PID_ATTESTATION_COUNT = 4;
+const FINALIZER_PID_ATTESTATION_TIMEOUT_MILLISECONDS = 15_000;
+const FINALIZER_STAGING_AND_SHUTDOWN_MARGIN_MILLISECONDS = 300_000;
+const FINALIZER_IDENTITY_RUNTIME_OVERHEAD_MILLISECONDS =
+  (FINALIZER_IDENTITY_INSPECTION_COUNT * FINALIZER_IDENTITY_INSPECTION_TIMEOUT_MILLISECONDS)
+  + (FINALIZER_PID_ATTESTATION_COUNT * FINALIZER_PID_ATTESTATION_TIMEOUT_MILLISECONDS)
+  + FINALIZER_STAGING_AND_SHUTDOWN_MARGIN_MILLISECONDS;
 const FINALIZER_INVOCATION_COUNT = 2;
 
 const HELP = `\
@@ -545,7 +553,7 @@ function focusedElementMatches(value, semanticElement, target) {
     && value.identifier === semanticElement.identifier
     && value.title === semanticElement.title
     && exactKeys(value.frame, ['x', 'y', 'width', 'height'])
-    && Object.values(value.frame).every(safeInteger)
+    && Object.values(value.frame).every(finiteLosslessNumber)
     && value.frame.width > 0 && value.frame.height > 0
     && boundsContain(target.bounds, value.frame);
 }

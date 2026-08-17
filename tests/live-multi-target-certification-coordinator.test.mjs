@@ -417,6 +417,9 @@ if (args[0] === '--attest-monitor') {
 } else if (args[0] === '--observe-only-plan') {
   const plan = read(args[1]);
   const observer = processReceipt();
+  const focusFrame = process.env.FAKE_FRACTIONAL_FOCUS_FRAME === '1'
+    ? { x: 30.5, y: 40.25, width: 200.5, height: 40.25 }
+    : { x: 30, y: 40, width: 200, height: 40 };
   write(plan.ready_path, {
     version: 1,
     mode: 'observe-only',
@@ -429,7 +432,7 @@ if (args[0] === '--attest-monitor') {
       role: plan.semantic_element.role,
       identifier: plan.semantic_element.identifier,
       title: plan.semantic_element.title,
-      frame: { x: 30, y: 40, width: 200, height: 40 },
+      frame: focusFrame,
     },
     request_marker: plan.request_marker,
     baseline_value_sha256: plan.baseline_value_sha256,
@@ -465,7 +468,7 @@ if (args[0] === '--attest-monitor') {
       role: plan.semantic_element.role,
       identifier: plan.semantic_element.identifier,
       title: plan.semantic_element.title,
-      frame: { x: 30, y: 40, width: 200, height: 40 },
+      frame: focusFrame,
     },
     interval: { started_at_milliseconds: Date.now() - 5, completed_at_milliseconds: Date.now() },
     request_marker: plan.request_marker,
@@ -745,8 +748,10 @@ test('crash evidence accepts only the canonical DiagnosticReports directory', ()
 
 test('outer finalizer timeout covers eight bounded validators and runtime identity overhead', () => {
   const timeout = finalizerCommandTimeoutMilliseconds(8);
-  assert.equal(timeout, (8 * 30_000) + 120_000);
-  assert.ok(timeout > 180_000);
+  const identityBudget = (15 * 30_000) + (4 * 15_000);
+  const stagingAndShutdownMargin = 300_000;
+  assert.equal(timeout, (8 * 30_000) + identityBudget + stagingAndShutdownMargin);
+  assert.ok(timeout > (8 * 30_000) + identityBudget);
   assert.equal(finalizerGlobalBudgetMilliseconds(8), 2 * timeout);
 });
 
@@ -1182,7 +1187,7 @@ test('finite fractional target geometry completes the coordinator lifecycle', as
     fractional.plan.controllers[0].target.bounds.width = 500.25;
     fractional.plan.controllers[0].target.click_point = { x: 100.125, y: 100.75 };
     writePrivate(fractional.planPath, fractional.plan);
-    const run = await runInteractive(fractional);
+    const run = await runInteractive(fractional, { env: { FAKE_FRACTIONAL_FOCUS_FRAME: '1' } });
     assert.equal(run.code, 0, run.stderr);
     assert.equal(run.events.at(-1).event, 'test-runtime-complete');
   } finally {

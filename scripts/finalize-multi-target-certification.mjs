@@ -22,7 +22,7 @@ const UUID_V8 = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 const UINT64_MAX = 0xffff_ffff_ffff_ffffn;
 const REQUEST_ID_DOMAIN = Buffer.from('peekaboo.bridge.operation-request.v1\0', 'utf8');
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
-const BUILTIN_CATALOG_SHA256 = '7a5e6acddddd856c2f140470be03eec6520b32be29f6c1ef2790a3914a76226f';
+const BUILTIN_CATALOG_SHA256 = '457a6a504474e8e33cee17c66ed362ab120a05d4e8bd94ec3d46aef54023ca68';
 const BUILTIN_DIGEST_SPEC_SHA256 = '6d80d6264a4d3b80c69cee0c68ce3b5c2fd801e8483bb4bbddd4402d87066a33';
 const CLI_VERSION = '2';
 const LIVE_CERTIFICATION_AUTHORITY = Symbol('peekaboo-live-certification-authority');
@@ -4843,6 +4843,30 @@ export async function runStagedPIDAttestationCommand({
   }
 }
 
+export function makeLivePIDAttestationPlan({
+  contract,
+  responseKind,
+  socketPath,
+  expectedProcess,
+  temporaryDirectory,
+  outputPath,
+  releasePath,
+}) {
+  return {
+    version: 1,
+    execution_nonce: contract.execution_nonce,
+    monitor_instance_id: contract.monitor_binding.monitor_instance_id,
+    socket_path: socketPath,
+    expected_peer: structuredClone(expectedProcess),
+    response_kind: responseKind,
+    artifacts_directory: temporaryDirectory,
+    output_path: outputPath,
+    release_path: releasePath,
+    timeout_milliseconds: 10_000,
+    maximum_response_bytes: 1024 * 1024,
+  };
+}
+
 async function runLivePIDAttestation(contract, evidence, responseKind, inspectorStage) {
   requirePIDAttestationInspectorBinding(contract, evidence, inspectorStage);
   const monitor = responseKind === 'monitor';
@@ -4860,19 +4884,15 @@ async function runLivePIDAttestation(contract, evidence, responseKind, inspector
   const planPath = path.join(temporaryDirectory, 'plan.json');
   const outputPath = path.join(temporaryDirectory, 'response.json');
   const releasePath = path.join(temporaryDirectory, 'release.json');
-  const plan = {
-    version: 1,
-    execution_nonce: contract.execution_nonce,
-    monitor_instance_id: contract.monitor_binding.monitor_instance_id,
-    socket_path: socketPath,
-    expected_peer_pid: expectedProcess.pid,
-    response_kind: responseKind,
-    artifacts_directory: temporaryDirectory,
-    output_path: outputPath,
-    release_path: releasePath,
-    timeout_milliseconds: 10_000,
-    maximum_response_bytes: 1024 * 1024,
-  };
+  const plan = makeLivePIDAttestationPlan({
+    contract,
+    responseKind,
+    socketPath,
+    expectedProcess,
+    temporaryDirectory,
+    outputPath,
+    releasePath,
+  });
   try {
     writeOwnerPrivateOutput(planPath, `${JSON.stringify(plan, null, 2)}\n`);
     await runStagedPIDAttestationCommand({
