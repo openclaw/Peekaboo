@@ -93,6 +93,7 @@
     "crash_report_prefixes": [
       "Peekaboo",
       "PeekabooPlayground",
+      "Playground",
       "OpenClaw",
       "peekaboo-certification-controller"
     ],

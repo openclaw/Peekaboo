@@ -186,6 +186,8 @@ The foreground observer is a third signed controller process. Before execution, 
 semantic role plus title and/or identifier, expected value derived from the run nonce, baseline value, and owner-private
 artifact paths. It performs a fresh signed readback during the overlap bracket and proves restoration afterward. The
 monitor also commits crash inventory, sentinel and clipboard state, producer revisions, all six fences, and restoration.
+The closed crash-report prefix set covers `Playground`, the fixture's resolved executable name, and retains the legacy
+`PeekabooPlayground` watch entry.
 Separate owner-private Unix sockets challenge the live monitor and observer by kernel peer PID before and after final
 validation; caller-written files alone never mint authority.
 

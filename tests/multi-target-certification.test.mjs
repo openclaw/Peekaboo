@@ -926,6 +926,16 @@ test('current-build catalog binding is closed, sorted, commit-free, and acyclic'
   );
 });
 
+test('live crash oracle covers the signed Playground fixture executable', () => {
+  const project = fs.readFileSync(path.join(
+    root,
+    'Apps/Playground/Playground.xcodeproj/project.pbxproj',
+  ), 'utf8');
+  assert.match(project, /productName = Playground;/);
+  assert.match(project, /PRODUCT_NAME = "\$\(TARGET_NAME\)";/);
+  assert.ok(catalog.monitor_contract.crash_report_prefixes.includes('Playground'));
+});
+
 test('source binding verifies exact files and rejects dirty or expanded source trees', () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'peekaboo-current-build-source-'));
   try {

@@ -26,8 +26,10 @@ persisted summary is never itself certification authority; only the final live f
 
 - The plan schema is closed. Unknown fields, non-private inputs, wrong target/controller cardinality, and unbounded
   timeouts fail before child launch.
-- Crash evidence comes only from the canonical current user's `~/Library/Logs/DiagnosticReports`; an empty substitute,
-  alias, or symlink is not accepted as a quieter evidence source.
+- Crash evidence comes only from the canonical current user's `~/Library/Logs/DiagnosticReports`; its closed prefix
+  set includes `Playground`, the signed fixture's resolved executable and diagnostic-report basename, while preserving
+  the legacy `PeekabooPlayground` watch entry. An empty substitute, alias, or symlink is not accepted as a quieter
+  evidence source.
 - An eligible run derives its current-build commit from a clean Git HEAD. The controller executable, Peekaboo
   validator, expected Bridge host, signed controller receipts, and observe-only witness build must all carry that same
   commit; no catalog literal can stand in for it.
