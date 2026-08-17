@@ -101,9 +101,7 @@ extension SeeCommandRuntimeTests {
             )
             defer { try? FileManager.default.removeItem(at: outputURL) }
 
-            let result = try await SeeCommandPreparationContext.$didCapture.withValue({
-                withUnsafeCurrentTask { $0?.cancel() }
-            }) {
+            nonisolated(nonsending) func runCommand() async throws -> CommandRunResult {
                 try await InProcessCommandRunner.run(
                     [
                         "see",
@@ -115,6 +113,10 @@ extension SeeCommandRuntimeTests {
                     services: context.services
                 )
             }
+            let result = try await SeeCommandPreparationContext.$didCapture.withValue(
+                { withUnsafeCurrentTask { $0?.cancel() } },
+                operation: runCommand
+            )
             let envelope = try #require(
                 JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
             )
