@@ -141,13 +141,29 @@ enum CertificationObserveOnlyRunner {
         return plan.witnessURL
     }
 
-    private static func waitForMarker(
+    static func waitForMarker(
         _ phase: CertificationObserverRequestMarker.Phase,
         at url: URL,
         plan: CertificationObserveOnlyPlan
     ) async throws {
-        let deadline = Date().addingTimeInterval(TimeInterval(plan.waitTimeoutSeconds))
-        while Date() < deadline {
+        try await self.waitForMarker(
+            phase,
+            at: url,
+            plan: plan,
+            timeout: .seconds(plan.waitTimeoutSeconds),
+            pollInterval: .milliseconds(plan.pollIntervalMilliseconds)
+        )
+    }
+
+    static func waitForMarker(
+        _ phase: CertificationObserverRequestMarker.Phase,
+        at url: URL,
+        plan: CertificationObserveOnlyPlan,
+        timeout: Duration,
+        pollInterval: Duration
+    ) async throws {
+        let deadline = CertificationContinuousDeadline(timeout: timeout)
+        while deadline.hasTimeRemaining {
             var info = stat()
             if lstat(url.path, &info) == 0 {
                 let data = try CertificationPrivateArtifacts.readPlan(at: url)
@@ -176,7 +192,7 @@ enum CertificationObserveOnlyRunner {
                     "Cannot inspect observe-only owner request marker."
                 )
             }
-            try await Task.sleep(for: .milliseconds(plan.pollIntervalMilliseconds))
+            try await deadline.sleep(upTo: pollInterval)
         }
         throw CertificationControllerError.runtimeRefusal(
             "Timed out waiting for observe-only owner request marker \(phase.rawValue)."

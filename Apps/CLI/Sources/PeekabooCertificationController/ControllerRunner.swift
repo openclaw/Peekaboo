@@ -1,6 +1,27 @@
 import Darwin
 import Foundation
 
+struct CertificationContinuousDeadline {
+    private let clock: ContinuousClock
+    private let instant: ContinuousClock.Instant
+
+    init(timeout: Duration) {
+        let clock = ContinuousClock()
+        self.clock = clock
+        self.instant = clock.now.advanced(by: timeout)
+    }
+
+    var hasTimeRemaining: Bool {
+        self.clock.now < self.instant
+    }
+
+    func sleep(upTo pollInterval: Duration) async throws {
+        let now = self.clock.now
+        guard now < self.instant else { return }
+        try await self.clock.sleep(for: min(pollInterval, now.duration(to: self.instant)))
+    }
+}
+
 enum CertificationControllerRunner {
     static func run(planURL: URL) async throws -> URL {
         let planData = try CertificationPrivateArtifacts.readPlan(at: planURL)
@@ -119,22 +140,36 @@ enum CertificationControllerRunner {
 }
 
 enum CertificationControllerLifecycleGate {
-    static let timeoutSeconds = 3600
-    static let pollIntervalMilliseconds = 50
-
     static func waitForStart(
         at url: URL,
         executionNonce: String,
-        controllerID: String
+        controllerID: String,
+        timeout: Duration = .seconds(3600),
+        pollInterval: Duration = .milliseconds(50)
     ) async throws {
-        try await self.wait(at: url, keys: ["version", "execution_nonce", "controller_id", "phase"]) { data in
+        try await self.wait(
+            at: url,
+            keys: ["version", "execution_nonce", "controller_id", "phase"],
+            timeout: timeout,
+            pollInterval: pollInterval
+        ) { data in
             let marker = try JSONDecoder().decode(CertificationControllerStartMarker.self, from: data)
             try marker.validate(executionNonce: executionNonce, controllerID: controllerID)
         }
     }
 
-    static func waitForRelease(at url: URL, executionNonce: String) async throws {
-        try await self.wait(at: url, keys: ["version", "execution_nonce", "phase"]) { data in
+    static func waitForRelease(
+        at url: URL,
+        executionNonce: String,
+        timeout: Duration = .seconds(3600),
+        pollInterval: Duration = .milliseconds(50)
+    ) async throws {
+        try await self.wait(
+            at: url,
+            keys: ["version", "execution_nonce", "phase"],
+            timeout: timeout,
+            pollInterval: pollInterval
+        ) { data in
             let marker = try JSONDecoder().decode(CertificationControllerReleaseMarker.self, from: data)
             try marker.validate(executionNonce: executionNonce)
         }
@@ -144,11 +179,15 @@ enum CertificationControllerLifecycleGate {
         at url: URL,
         executionNonce: String,
         monitorInstanceID: String,
-        controllerID: String
+        controllerID: String,
+        timeout: Duration = .seconds(3600),
+        pollInterval: Duration = .milliseconds(50)
     ) async throws {
         try await self.wait(
             at: url,
-            keys: ["version", "execution_nonce", "monitor_instance_id", "controller_id", "phase"]
+            keys: ["version", "execution_nonce", "monitor_instance_id", "controller_id", "phase"],
+            timeout: timeout,
+            pollInterval: pollInterval
         ) { data in
             let marker = try JSONDecoder().decode(CertificationFinalBoundsStartMarker.self, from: data)
             try marker.validate(
@@ -162,10 +201,12 @@ enum CertificationControllerLifecycleGate {
     private static func wait(
         at url: URL,
         keys: Set<String>,
+        timeout: Duration,
+        pollInterval: Duration,
         validate: (Data) throws -> Void
     ) async throws {
-        let deadline = Date().addingTimeInterval(TimeInterval(self.timeoutSeconds))
-        while Date() < deadline {
+        let deadline = CertificationContinuousDeadline(timeout: timeout)
+        while deadline.hasTimeRemaining {
             var info = stat()
             if lstat(url.path, &info) == 0 {
                 let data = try CertificationPrivateArtifacts.readPlan(at: url)
@@ -185,7 +226,7 @@ enum CertificationControllerLifecycleGate {
                     "Cannot inspect controller release marker."
                 )
             }
-            try await Task.sleep(for: .milliseconds(self.pollIntervalMilliseconds))
+            try await deadline.sleep(upTo: pollInterval)
         }
         throw CertificationControllerError.runtimeRefusal(
             "Timed out waiting for the owner-private controller lifecycle marker."

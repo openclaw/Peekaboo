@@ -7,6 +7,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import {
+  finalizerCommandTimeoutMilliseconds,
+  finalizerGlobalBudgetMilliseconds,
+} from '../scripts/run-live-multi-target-certification.mjs';
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const coordinator = path.join(repository, 'scripts/run-live-multi-target-certification.mjs');
@@ -509,7 +513,18 @@ const arg = (name) => args[args.indexOf(name) + 1];
 fs.appendFileSync(process.env.FAKE_FINALIZER_LOG, args[0] + '\n', { mode: 0o600 });
 if (args[0] === 'prepare') {
   const artifacts = arg('--artifacts');
+  fs.mkdirSync(artifacts, { mode: 0o700 });
   fs.writeFileSync(artifacts + '/contract.json', '{}\n', { mode: 0o600 });
+}
+if (['prepare', 'finalize'].includes(args[0])) {
+  const delay = Number(process.env.FAKE_FINALIZER_BUNDLE_DELAY_MILLISECONDS ?? 0);
+  for (let index = 0; index < 8; index += 1) {
+    if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+    if (delay > 0) fs.appendFileSync(
+      process.env.FAKE_FINALIZER_LOG,
+      args[0] + '-bundle-' + index + '\n',
+    );
+  }
 }
 fs.writeFileSync(arg('--output'), JSON.stringify({ version: 1, structural_validation_passed: true }) + '\n', {
   flag: 'wx', mode: 0o600,
@@ -575,11 +590,15 @@ function fixture() {
     },
     external_foreground_timeout_seconds: 5,
     operation_timeout_seconds: 65,
-    test_runtime: { catalog_path: catalogPath, finalizer_path: finalizer },
+    test_runtime: {
+      catalog_path: catalogPath,
+      finalizer_path: finalizer,
+      diagnostic_reports_path: crashes,
+    },
   };
   const planPath = path.join(root, 'plan.json');
   writePrivate(planPath, plan);
-  return { root, runs, plan, planPath, finalizerLog };
+  return { root, runs, plan, planPath, finalizer, finalizerLog };
 }
 
 function coordinatorEnvironment(fix, extra = {}) {
@@ -595,7 +614,7 @@ function coordinatorEnvironment(fix, extra = {}) {
 }
 
 async function runInteractive(fix, {
-  markerMode = 'valid', env = {}, markerDelayMilliseconds = {},
+  markerMode = 'valid', env = {}, markerDelayMilliseconds = {}, onEvent = null,
 } = {}) {
   const child = spawn(process.execPath, [coordinator, '--plan', fix.planPath], {
     env: coordinatorEnvironment(fix, env),
@@ -617,6 +636,7 @@ async function runInteractive(fix, {
       if (!line) continue;
       const event = JSON.parse(line);
       events.push(event);
+      onEvent?.(event);
       if (event.event === 'external-foreground-window') {
         const window = JSON.parse(fs.readFileSync(event.window_path));
         const phase = window.phase === 'perform' ? 'task-complete' : 'restore-complete';
@@ -675,6 +695,48 @@ test('closed plan rejects unknown caller fields before creating a run', () => {
   } finally {
     fs.rmSync(fix.root, { recursive: true, force: true });
   }
+});
+
+test('crash evidence accepts only the canonical DiagnosticReports directory', () => {
+  const alternate = fixture();
+  try {
+    const emptyDirectory = path.join(alternate.root, 'caller-selected-empty-crashes');
+    fs.mkdirSync(emptyDirectory, { mode: 0o700 });
+    alternate.plan.monitor.crash_directory = emptyDirectory;
+    writePrivate(alternate.planPath, alternate.plan);
+    const run = spawnSync(process.execPath, [coordinator, '--plan', alternate.planPath], {
+      encoding: 'utf8', env: coordinatorEnvironment(alternate),
+    });
+    assert.notEqual(run.status, 0);
+    assert.match(run.stderr, /must equal the canonical user DiagnosticReports directory/);
+    assert.deepEqual(fs.readdirSync(alternate.runs), []);
+  } finally {
+    fs.rmSync(alternate.root, { recursive: true, force: true });
+  }
+
+  const linked = fixture();
+  try {
+    const link = path.join(linked.root, 'diagnostic-reports-link');
+    fs.symlinkSync(linked.plan.test_runtime.diagnostic_reports_path, link);
+    linked.plan.test_runtime.diagnostic_reports_path = link;
+    linked.plan.monitor.crash_directory = link;
+    writePrivate(linked.planPath, linked.plan);
+    const run = spawnSync(process.execPath, [coordinator, '--plan', linked.planPath], {
+      encoding: 'utf8', env: coordinatorEnvironment(linked),
+    });
+    assert.notEqual(run.status, 0);
+    assert.match(run.stderr, /must be one canonical non-symlink path/);
+    assert.deepEqual(fs.readdirSync(linked.runs), []);
+  } finally {
+    fs.rmSync(linked.root, { recursive: true, force: true });
+  }
+});
+
+test('outer finalizer timeout covers eight bounded validators and runtime identity overhead', () => {
+  const timeout = finalizerCommandTimeoutMilliseconds(8);
+  assert.equal(timeout, (8 * 30_000) + 120_000);
+  assert.ok(timeout > 180_000);
+  assert.equal(finalizerGlobalBudgetMilliseconds(8), 2 * timeout);
 });
 
 test('Bridge host commit must equal the coordinator Git HEAD even in test runtime', () => {
@@ -827,6 +889,9 @@ test('sorted-key fake lifecycle reaches ineligible test completion with bounded 
     assert.equal(completion.certification_eligible, false);
     assert.deepEqual(fs.readFileSync(fix.finalizerLog, 'utf8').trim().split('\n'), ['prepare', 'finalize']);
     assert.ok(fs.existsSync(completion.summary_path));
+    const preparedArtifacts = path.join(completion.run_root, 'prepared-artifacts');
+    assert.ok(fs.statSync(preparedArtifacts).isDirectory());
+    assert.ok(fs.existsSync(path.join(preparedArtifacts, 'contract.json')));
     for (const controllerID of ['controller-a', 'controller-b']) {
       const controllerPlan = JSON.parse(fs.readFileSync(path.join(
         completion.run_root, 'controllers', controllerID, 'plan.json',
@@ -847,6 +912,51 @@ test('sorted-key fake lifecycle reaches ineligible test completion with bounded 
           + 30_000,
       );
     }
+  } finally {
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
+test('retained finalizer bytes survive mutable source replacement before prepare', async () => {
+  const fix = fixture();
+  const originalFinalizer = fs.readFileSync(fix.finalizer);
+  let replaced = false;
+  try {
+    const run = await runInteractive(fix, {
+      onEvent: (event) => {
+        if (event.event !== 'external-foreground-window' || event.phase !== 'restore' || replaced) return;
+        replaced = true;
+        writeExecutable(fix.finalizer, String.raw`#!/usr/bin/env node
+import fs from 'node:fs';
+fs.appendFileSync(process.env.FAKE_FINALIZER_LOG, 'mutable-finalizer\n');
+process.exit(91);
+`);
+      },
+    });
+    assert.equal(run.code, 0, run.stderr);
+    assert.equal(replaced, true);
+    assert.deepEqual(fs.readFileSync(fix.finalizerLog, 'utf8').trim().split('\n'), ['prepare', 'finalize']);
+  } finally {
+    writeExecutable(fix.finalizer, originalFinalizer);
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
+test('delayed valid bundle workload completes under the derived outer finalizer deadline', async () => {
+  const fix = fixture();
+  try {
+    const run = await runInteractive(fix, {
+      env: { FAKE_FINALIZER_BUNDLE_DELAY_MILLISECONDS: '125' },
+    });
+    assert.equal(run.code, 0, run.stderr);
+    assert.deepEqual(fs.readFileSync(fix.finalizerLog, 'utf8').trim().split('\n'), [
+      'prepare',
+      'prepare-bundle-0', 'prepare-bundle-1', 'prepare-bundle-2', 'prepare-bundle-3',
+      'prepare-bundle-4', 'prepare-bundle-5', 'prepare-bundle-6', 'prepare-bundle-7',
+      'finalize',
+      'finalize-bundle-0', 'finalize-bundle-1', 'finalize-bundle-2', 'finalize-bundle-3',
+      'finalize-bundle-4', 'finalize-bundle-5', 'finalize-bundle-6', 'finalize-bundle-7',
+    ]);
   } finally {
     fs.rmSync(fix.root, { recursive: true, force: true });
   }
@@ -1024,21 +1134,22 @@ test('cross-clock drift beyond two seconds rejects a stable fence', async () => 
   }
 });
 
-test('fractional and negative-zero committed target coordinates fail before launch', () => {
+test('finite fractional target geometry completes the coordinator lifecycle', async () => {
   const fractional = fixture();
   try {
     fractional.plan.controllers[0].target.bounds.x = 20.5;
+    fractional.plan.controllers[0].target.bounds.width = 500.25;
+    fractional.plan.controllers[0].target.click_point = { x: 100.125, y: 100.75 };
     writePrivate(fractional.planPath, fractional.plan);
-    const run = spawnSync(process.execPath, [coordinator, '--plan', fractional.planPath], {
-      encoding: 'utf8', env: coordinatorEnvironment(fractional),
-    });
-    assert.notEqual(run.status, 0);
-    assert.match(run.stderr, /exact-window schema/);
-    assert.deepEqual(fs.readdirSync(fractional.runs), []);
+    const run = await runInteractive(fractional);
+    assert.equal(run.code, 0, run.stderr);
+    assert.equal(run.events.at(-1).event, 'test-runtime-complete');
   } finally {
     fs.rmSync(fractional.root, { recursive: true, force: true });
   }
+});
 
+test('nonfinite, nonpositive, and negative-zero target geometry fail before launch', () => {
   const negativeZero = fixture();
   try {
     const raw = JSON.stringify(negativeZero.plan, null, 2)
@@ -1052,6 +1163,37 @@ test('fractional and negative-zero committed target coordinates fail before laun
     assert.deepEqual(fs.readdirSync(negativeZero.runs), []);
   } finally {
     fs.rmSync(negativeZero.root, { recursive: true, force: true });
+  }
+
+  for (const invalidWidth of [0, -1, Number.MAX_SAFE_INTEGER + 1]) {
+    const invalid = fixture();
+    try {
+      invalid.plan.controllers[0].target.bounds.width = invalidWidth;
+      writePrivate(invalid.planPath, invalid.plan);
+      const run = spawnSync(process.execPath, [coordinator, '--plan', invalid.planPath], {
+        encoding: 'utf8', env: coordinatorEnvironment(invalid),
+      });
+      assert.notEqual(run.status, 0);
+      assert.match(run.stderr, /exact-window schema/);
+      assert.deepEqual(fs.readdirSync(invalid.runs), []);
+    } finally {
+      fs.rmSync(invalid.root, { recursive: true, force: true });
+    }
+  }
+
+  const nonfinite = fixture();
+  try {
+    const raw = JSON.stringify(nonfinite.plan, null, 2)
+      .replace('"width": 500,', '"width": 1e309,');
+    writePrivate(nonfinite.planPath, `${raw}\n`);
+    const run = spawnSync(process.execPath, [coordinator, '--plan', nonfinite.planPath], {
+      encoding: 'utf8', env: coordinatorEnvironment(nonfinite),
+    });
+    assert.notEqual(run.status, 0);
+    assert.match(run.stderr, /exact-window schema/);
+    assert.deepEqual(fs.readdirSync(nonfinite.runs), []);
+  } finally {
+    fs.rmSync(nonfinite.root, { recursive: true, force: true });
   }
 });
 

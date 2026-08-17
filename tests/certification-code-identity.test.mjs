@@ -13,6 +13,7 @@ import {
   inspectFirstPartyExecutable,
   inspectCodeIdentity as inspectWithFinalizer,
   removeCodeIdentityInspectorStage,
+  runStagedPIDAttestationCommand,
   stageCodeIdentityInspector,
   verifyAppleSigningRequirement,
 } from '../scripts/finalize-multi-target-certification.mjs';
@@ -205,6 +206,58 @@ test('false-Team Apple requirement fails in a verify-only invocation', () => {
 test('native inspector drains stdout after exit before parsing its envelope', async (t) => {
   const stage = await stagedInspector(t, inspectionHarness({ delayPipeClose: true }));
   assert.equal(stage.codeSignatureHash, CDHASH);
+});
+
+test('PID attestation runs only the retained stage across source swap and restore', async (t) => {
+  const stage = await stagedInspector(t);
+  const source = path.join(path.dirname(stage.directory), 'mutable-contract-controller');
+  const backup = `${source}.backup`;
+  fs.writeFileSync(source, 'original\n', { mode: 0o700 });
+  t.after(() => {
+    fs.rmSync(source, { force: true });
+    fs.rmSync(backup, { force: true });
+  });
+  let launched;
+  const runner = (executable, args) => {
+    launched = executable;
+    fs.renameSync(source, backup);
+    fs.writeFileSync(source, 'replacement\n', { mode: 0o700 });
+    fs.rmSync(source);
+    fs.renameSync(backup, source);
+    return {
+      status: 0,
+      pid: 7654,
+      stdout: JSON.stringify({ result: 'passed', receipt: '/private/tmp/attestation-output.json' }),
+      stderr: '',
+      args,
+    };
+  };
+
+  runStagedPIDAttestationCommand(
+    stage,
+    '/private/tmp/attestation-plan.json',
+    '/private/tmp/attestation-output.json',
+    'fixture',
+    runner,
+  );
+  assert.equal(launched, stage.executable);
+  assert.equal(fs.readFileSync(source, 'utf8'), 'original\n');
+});
+
+test('PID attestation rejects a staged child envelope for another receipt', async (t) => {
+  const stage = await stagedInspector(t);
+  assert.throws(() => runStagedPIDAttestationCommand(
+    stage,
+    '/private/tmp/attestation-plan.json',
+    '/private/tmp/expected-response.json',
+    'fixture',
+    () => ({
+      status: 0,
+      pid: 7654,
+      stdout: JSON.stringify({ result: 'passed', receipt: '/private/tmp/other-response.json' }),
+      stderr: '',
+    }),
+  ), /not bound to its staged child receipt/);
 });
 
 test('first-party contract is derived from separate verify and display calls on one staged copy', (t) => {

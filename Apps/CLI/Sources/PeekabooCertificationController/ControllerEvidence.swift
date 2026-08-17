@@ -204,6 +204,16 @@ struct CertificationSlotResult: Codable, Equatable, Sendable {
         case observationSHA256 = "observation_sha256"
         case observedBounds = "observed_bounds"
     }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.status, forKey: .status)
+        try container.encode(self.totalCharacters, forKey: .totalCharacters)
+        try container.encode(self.keyPresses, forKey: .keyPresses)
+        try container.encode(self.observationFile, forKey: .observationFile)
+        try container.encode(self.observationSHA256, forKey: .observationSHA256)
+        try container.encode(self.observedBounds, forKey: .observedBounds)
+    }
 }
 
 struct CertificationSlotReceipt: Codable, Equatable, Sendable {
@@ -239,6 +249,25 @@ struct CertificationSlotReceipt: Codable, Equatable, Sendable {
         case outcome
         case result
         case bundle
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.slotID, forKey: .slotID)
+        try container.encode(self.kind, forKey: .kind)
+        try container.encode(self.operation, forKey: .operation)
+        try container.encode(self.checkpoint, forKey: .checkpoint)
+        try container.encode(self.marker, forKey: .marker)
+        try container.encode(self.requestID, forKey: .requestID)
+        try container.encode(self.sessionID, forKey: .sessionID)
+        try container.encode(self.sessionSequence, forKey: .sessionSequence)
+        try container.encode(self.listenerInstanceID, forKey: .listenerInstanceID)
+        try container.encode(self.target, forKey: .target)
+        try container.encode(self.interval, forKey: .interval)
+        try container.encode(self.controllerInterval, forKey: .controllerInterval)
+        try container.encode(self.outcome, forKey: .outcome)
+        try container.encode(self.result, forKey: .result)
+        try container.encode(self.bundle, forKey: .bundle)
     }
 }
 

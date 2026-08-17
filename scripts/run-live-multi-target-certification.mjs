@@ -3,11 +3,13 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   inspectCodeIdentity as inspectCodeIdentityWithNativeController,
+  projectFinalizerSourceBytes,
   stageCodeIdentityInspector as stageNativeCodeIdentityInspector,
   verifyCurrentBuildSourceBinding,
 } from './finalize-multi-target-certification.mjs';
@@ -30,6 +32,9 @@ const CONTROLLER_MUTATION_OVERLAP_MARGIN_SECONDS = 20;
 const EXTERNAL_FOREGROUND_WINDOW_COUNT = 2;
 const OPERATION_LIFECYCLE_MARGIN_SECONDS = 30;
 const MAXIMUM_CONTROLLER_TEXT_BYTES = 4096;
+const FINALIZER_INNER_BUNDLE_TIMEOUT_MILLISECONDS = 30_000;
+const FINALIZER_IDENTITY_RUNTIME_OVERHEAD_MILLISECONDS = 120_000;
+const FINALIZER_INVOCATION_COUNT = 2;
 
 const HELP = `\
 Run one source-owned live multi-target Peekaboo certification.
@@ -260,6 +265,13 @@ function safeInteger(value) {
   return Number.isSafeInteger(value) && !Object.is(value, -0);
 }
 
+function finiteLosslessNumber(value) {
+  return typeof value === 'number'
+    && Number.isFinite(value)
+    && !Object.is(value, -0)
+    && (!Number.isInteger(value) || Number.isSafeInteger(value));
+}
+
 function positiveSafeInteger(value) {
   return safeInteger(value) && value > 0;
 }
@@ -305,6 +317,46 @@ function requireExecutable(filePath, label) {
     throw new CoordinatorError(`${label} must be executable`);
   }
   return fs.realpathSync(absolute);
+}
+
+function retainRegularFile(filePath, label) {
+  const absolute = fs.realpathSync(requireAbsolute(filePath, label));
+  const descriptor = fs.openSync(absolute, 'r');
+  try {
+    const before = fs.fstatSync(descriptor);
+    if (!before.isFile() || before.nlink !== 1 || before.size > MAXIMUM_FILE_BYTES
+        || (typeof process.geteuid === 'function' && before.uid !== process.geteuid())) {
+      throw new CoordinatorError(`${label} must be one bounded owner-owned regular file`);
+    }
+    const bytes = fs.readFileSync(descriptor);
+    const after = fs.fstatSync(descriptor);
+    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
+        || before.mtimeMs !== after.mtimeMs || bytes.length !== before.size) {
+      throw new CoordinatorError(`${label} changed while its exact bytes were retained`);
+    }
+    return { path: absolute, bytes, sha256: sha256(bytes) };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function retainFinalizerSource(finalizerPath, catalog, testRuntime) {
+  const retained = retainRegularFile(finalizerPath, 'certification finalizer source');
+  if (!testRuntime && sha256(projectFinalizerSourceBytes(retained.bytes))
+      !== catalog.current_build_source.finalizer.projected_sha256) {
+    throw new CoordinatorError('retained finalizer source differs from the source-controlled binding');
+  }
+  return retained;
+}
+
+function canonicalDiagnosticReportsDirectory(configuredPath) {
+  const absolute = requireAbsolute(configuredPath, 'diagnostic reports directory');
+  const canonical = fs.realpathSync(absolute);
+  if (absolute !== configuredPath || canonical !== absolute) {
+    throw new CoordinatorError('diagnostic reports directory must be one canonical non-symlink path');
+  }
+  requirePrivateDirectory(canonical, 'diagnostic reports directory');
+  return canonical;
 }
 
 function parseJSON(bytes, label) {
@@ -443,11 +495,11 @@ function targetIsValid(value, controllerShape = false) {
     && canonicalPositiveDecimal(start)
     && positiveSafeInteger(value.window_id) && value.window_id <= 0xffff_ffff
     && exactKeys(value.bounds, ['x', 'y', 'width', 'height'])
-    && boundsValues.every(safeInteger)
+    && boundsValues.every(finiteLosslessNumber)
     && value.bounds.width > 0 && value.bounds.height > 0
     && (value.is_minimized === null || typeof value.is_minimized === 'boolean')
     && (!controllerShape || (exactKeys(value.click_point, ['x', 'y'])
-      && safeInteger(value.click_point.x) && safeInteger(value.click_point.y)
+      && finiteLosslessNumber(value.click_point.x) && finiteLosslessNumber(value.click_point.y)
       && value.click_point.x >= value.bounds.x
       && value.click_point.y >= value.bounds.y
       && value.click_point.x <= value.bounds.x + value.bounds.width
@@ -508,7 +560,9 @@ function receiptTarget(controllerTarget) {
   };
 }
 
-function validatePlan(plan, catalog, testRuntimeAllowed, currentBuildCommit) {
+function validatePlan(
+  plan, catalog, testRuntimeAllowed, currentBuildCommit, diagnosticReportsDirectory,
+) {
   const rootKeys = [
     'version', 'runs_directory', 'peekaboo_executable', 'controller_executable',
     'monitor_executable', 'bridge', 'controllers', 'observer', 'monitor',
@@ -587,7 +641,11 @@ function validatePlan(plan, catalog, testRuntimeAllowed, currentBuildCommit) {
       || !HEX40.test(plan.monitor.code_signature_hash ?? '')) {
     throw new CoordinatorError('monitor plan is malformed');
   }
-  requirePrivateDirectory(requireAbsolute(plan.monitor.crash_directory, 'crash_directory'), 'crash_directory');
+  if (plan.monitor.crash_directory !== diagnosticReportsDirectory) {
+    throw new CoordinatorError(
+      'crash_directory must equal the canonical user DiagnosticReports directory',
+    );
+  }
   const controlledTargets = plan.controllers.map((entry) => receiptTarget(entry.target));
   if (controlledTargets.some((target) => target.pid === plan.monitor.foreground_target.pid
       && target.start_identity === plan.monitor.foreground_target.start_identity)) {
@@ -621,9 +679,12 @@ function validatePlan(plan, catalog, testRuntimeAllowed, currentBuildCommit) {
     );
   }
   if (testRuntimeAllowed) {
-    if (!exactKeys(plan.test_runtime, ['catalog_path', 'finalizer_path'])
+    if (!exactKeys(plan.test_runtime, [
+      'catalog_path', 'finalizer_path', 'diagnostic_reports_path',
+    ])
         || !path.isAbsolute(plan.test_runtime.catalog_path)
-        || !path.isAbsolute(plan.test_runtime.finalizer_path)) {
+        || !path.isAbsolute(plan.test_runtime.finalizer_path)
+        || plan.test_runtime.diagnostic_reports_path !== diagnosticReportsDirectory) {
       throw new CoordinatorError('test runtime paths are malformed');
     }
   }
@@ -970,8 +1031,74 @@ function runPIDAttestation({
   return response;
 }
 
-function finalizerCommand(finalizerPath, args, label, timeout) {
-  return runSync(process.execPath, [finalizerPath, ...args], label, timeout);
+export function finalizerCommandTimeoutMilliseconds(bundleCount, {
+  innerBundleTimeoutMilliseconds = FINALIZER_INNER_BUNDLE_TIMEOUT_MILLISECONDS,
+  identityRuntimeOverheadMilliseconds = FINALIZER_IDENTITY_RUNTIME_OVERHEAD_MILLISECONDS,
+} = {}) {
+  if (!positiveSafeInteger(bundleCount) || !positiveSafeInteger(innerBundleTimeoutMilliseconds)
+      || !positiveSafeInteger(identityRuntimeOverheadMilliseconds)) {
+    throw new CoordinatorError('finalizer timeout inputs must be positive safe integers');
+  }
+  return (bundleCount * innerBundleTimeoutMilliseconds) + identityRuntimeOverheadMilliseconds;
+}
+
+export function finalizerGlobalBudgetMilliseconds(bundleCount, options = {}) {
+  return FINALIZER_INVOCATION_COUNT * finalizerCommandTimeoutMilliseconds(bundleCount, options);
+}
+
+function remainingFinalizerTimeoutMilliseconds(globalDeadline, maximumTimeout) {
+  const remaining = globalDeadline - Date.now();
+  if (remaining <= 0) throw new CoordinatorError('global finalizer deadline expired before invocation');
+  return Math.min(remaining, maximumTimeout);
+}
+
+function finalizerCommand(retainedFinalizer, stagingDirectory, args, label, timeout) {
+  const sourcePath = path.join(stagingDirectory, `.retained-finalizer-${randomUUID()}.source`);
+  const writeDescriptor = fs.openSync(sourcePath, 'wx', 0o600);
+  let readDescriptor;
+  try {
+    fs.writeFileSync(writeDescriptor, retainedFinalizer.bytes);
+    fs.fsyncSync(writeDescriptor);
+    fs.closeSync(writeDescriptor);
+    readDescriptor = fs.openSync(sourcePath, 'r');
+    fs.unlinkSync(sourcePath);
+    const targetURL = pathToFileURL(retainedFinalizer.path).href;
+    const loaderSource = [
+      "import fs from 'node:fs';",
+      `const targetURL = ${JSON.stringify(targetURL)};`,
+      'const retainedSource = fs.readFileSync(3);',
+      'export async function load(url, context, nextLoad) {',
+      '  if (url === targetURL) {',
+      "    return { format: 'module', shortCircuit: true, source: retainedSource };",
+      '  }',
+      '  return nextLoad(url, context);',
+      '}',
+    ].join('\n');
+    const loaderURL = `data:text/javascript;base64,${Buffer.from(loaderSource).toString('base64')}`;
+    const result = spawnSync(process.execPath, [
+      '--preserve-symlinks-main',
+      `--experimental-loader=${loaderURL}`,
+      retainedFinalizer.path,
+      ...args,
+    ], {
+      encoding: 'utf8',
+      timeout,
+      maxBuffer: 16 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe', readDescriptor],
+    });
+    if (result.error || result.status !== 0) {
+      throw new CoordinatorError(
+        `${label} failed: ${result.error?.message ?? result.stderr?.trim() ?? `status ${result.status}`}`,
+      );
+    }
+    return result;
+  } finally {
+    try { fs.closeSync(writeDescriptor); } catch {}
+    if (readDescriptor !== undefined) {
+      try { fs.closeSync(readDescriptor); } catch {}
+    }
+    try { fs.unlinkSync(sourcePath); } catch {}
+  }
 }
 
 function makeControllerText(nonce, controllerID, externalTimeoutSeconds) {
@@ -995,13 +1122,18 @@ function childEntries(controllerStates, observerChild, monitorChild) {
   ];
 }
 
-async function runCoordinator(plan, catalog, finalizerPath, testRuntime, currentBuildCommit) {
+async function runCoordinator(
+  plan, catalog, retainedFinalizer, diagnosticReportsDirectory, testRuntime, currentBuildCommit,
+) {
   const runsDirectory = path.resolve(plan.runs_directory);
   const runRoot = fs.mkdtempSync(path.join(runsDirectory, 'peekaboo-live-certification-'));
   fs.chmodSync(runRoot, 0o700);
   const nonce = randomBytes(32).toString('hex');
   const monitorID = randomUUID().toLowerCase();
-  const deadline = Date.now() + plan.operation_timeout_seconds * 1000;
+  const finalizerTimeout = finalizerCommandTimeoutMilliseconds(catalog.slots.length);
+  const operationDeadline = Date.now() + plan.operation_timeout_seconds * 1000;
+  const globalFinalizerDeadline = operationDeadline
+    + finalizerGlobalBudgetMilliseconds(catalog.slots.length);
   const externalDeadlineDuration = plan.external_foreground_timeout_seconds * 1000;
   const sourceControllerExecutable = fs.realpathSync(plan.controller_executable);
   let controllerExecutable = sourceControllerExecutable;
@@ -1063,11 +1195,12 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
   const directories = {};
   for (const name of [
     'controllers', 'observer', 'monitor', 'attestations', 'controller-receipts',
-    'raw-bundles', 'prepared-artifacts',
+    'raw-bundles',
   ]) {
     directories[name] = path.join(runRoot, name);
     fs.mkdirSync(directories[name], { mode: 0o700 });
   }
+  directories['prepared-artifacts'] = path.join(runRoot, 'prepared-artifacts');
   const shared = {
     heartbeat: path.join(directories.monitor, 'heartbeat.json'),
     violations: path.join(directories.monitor, 'violations.jsonl'),
@@ -1155,7 +1288,7 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
     }
     const controllerProcesses = [];
     for (const state of controllerStates) {
-      const ready = await waitFor(`${state.id} pre-execution readiness`, deadline, () => (
+      const ready = await waitFor(`${state.id} pre-execution readiness`, operationDeadline, () => (
         fs.existsSync(state.readyPath)
           ? readPrivateJSON(state.readyPath, `${state.id} readiness`) : undefined
       ), childEntries(controllerStates));
@@ -1249,7 +1382,7 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
     observerChild = spawnOwned(
       controllerExecutable, ['--observe-only-plan', observerPlanPath], 'foreground observer',
     );
-    const observerReady = await waitFor('foreground observer readiness', deadline, () => (
+    const observerReady = await waitFor('foreground observer readiness', operationDeadline, () => (
       fs.existsSync(observerPaths.ready)
         ? readPrivateJSON(observerPaths.ready, 'foreground observer readiness') : undefined
     ), childEntries(controllerStates, observerChild));
@@ -1311,7 +1444,7 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
       label: 'baseline',
     });
     const crashPrefixes = structuredClone(catalog.monitor_contract.crash_report_prefixes);
-    const crashBaseline = crashInventory(plan.monitor.crash_directory, crashPrefixes);
+    const crashBaseline = crashInventory(diagnosticReportsDirectory, crashPrefixes);
     const hostProcess = {
       pid: plan.bridge.expected_host.process_identifier,
       start_identity: plan.bridge.expected_host.process_start_identity_decimal,
@@ -1364,7 +1497,7 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
       baseline_sample: baselineSample,
       foreground_plan: foregroundPlan,
       crash_evidence: {
-        directory: plan.monitor.crash_directory,
+        directory: diagnosticReportsDirectory,
         prefixes: crashPrefixes,
         baseline: crashBaseline,
       },
@@ -1395,7 +1528,7 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
       '--sealed-evidence', shared.evidence,
       '--seal-receipt', shared.sealReceipt,
     ], 'live monitor');
-    await waitFor('monitor readiness', deadline, () => fs.existsSync(shared.ready), childEntries(
+    await waitFor('monitor readiness', operationDeadline, () => fs.existsSync(shared.ready), childEntries(
       controllerStates, observerChild, monitorChild,
     ));
     const monitorExecutableReceipt = invokeProcessExecutable(
@@ -1463,7 +1596,7 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
       const heartbeat = await waitForHeartbeat({
         name,
         filePath: shared.heartbeat,
-        deadline,
+        deadline: operationDeadline,
         nonce,
         monitorID,
         afterSequence: lastSequence,
@@ -1496,7 +1629,7 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
         phase: 'start',
       });
     }
-    await waitFor('both controller mutations to start', deadline, () => {
+    await waitFor('both controller mutations to start', operationDeadline, () => {
       if (!controllerStates.every((state) => fs.existsSync(state.mutationStartedPath))) return undefined;
       for (const state of controllerStates) {
         const started = readPrivateJSON(state.mutationStartedPath, `${state.id} mutation-started marker`);
@@ -1520,7 +1653,7 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
     const operationsStart = await capture('operations-start', 2, true);
     const taskDeadline = Math.min(
       operationsStart.wallClockMilliseconds + externalDeadlineDuration,
-      deadline,
+      operationDeadline,
     );
     const taskWindow = {
       version: 1,
@@ -1548,7 +1681,7 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
       childEntries(controllerStates, observerChild, monitorChild),
     );
     writePrivateJSON(observerPaths.observe, requestMarker('observe', nonce, marker));
-    await waitFor('independent foreground observation', deadline, () => (
+    await waitFor('independent foreground observation', operationDeadline, () => (
       fs.existsSync(observerPaths.observation) ? true : undefined
     ), childEntries(controllerStates, observerChild, monitorChild));
     if (controllerStates.some((state) => fs.existsSync(state.mutationCompletedPath))) {
@@ -1557,7 +1690,7 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
     const operationsComplete = await capture('operations-complete', 2, true, true);
     const restoreDeadline = Math.min(
       operationsComplete.wallClockMilliseconds + externalDeadlineDuration,
-      deadline,
+      operationDeadline,
     );
     const restoreWindow = {
       version: 1,
@@ -1586,10 +1719,10 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
       childEntries(controllerStates, observerChild, monitorChild),
     );
     writePrivateJSON(observerPaths.restore, requestMarker('restore', nonce, marker));
-    await waitFor('foreground restoration witness and attestation endpoint', deadline, () => (
+    await waitFor('foreground restoration witness and attestation endpoint', operationDeadline, () => (
       fs.existsSync(observerPaths.witness) && fs.existsSync(observerPaths.attestationSocket) ? true : undefined
     ), childEntries(controllerStates, observerChild, monitorChild));
-    await waitFor('both controllers at the final-bounds barrier', deadline, () => {
+    await waitFor('both controllers at the final-bounds barrier', operationDeadline, () => {
       if (!controllerStates.every((state) => fs.existsSync(state.finalBoundsReadyPath))) return undefined;
       for (const state of controllerStates) {
         const ready = readPrivateJSON(
@@ -1627,7 +1760,7 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
         phase: 'final-bounds',
       });
     }
-    await waitFor('both persistent controller receipts', deadline, () => (
+    await waitFor('both persistent controller receipts', operationDeadline, () => (
       controllerStates.every((state) => fs.existsSync(state.receiptPath)) ? true : undefined
     ), childEntries(controllerStates, observerChild, monitorChild));
     collectControllerCorpus(controllerStates, directories['controller-receipts'], directories['raw-bundles']);
@@ -1646,7 +1779,7 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
         || finalSample.clipboard_digest !== baselineSample.clipboard_digest) {
       throw new CoordinatorError('clipboard state was not restored to the monitor baseline');
     }
-    const crashFinal = crashInventory(plan.monitor.crash_directory, crashPrefixes);
+    const crashFinal = crashInventory(diagnosticReportsDirectory, crashPrefixes);
     if (!sameJSON(crashFinal, crashBaseline)) {
       throw new CoordinatorError('new certification-related crash reports appeared during the run');
     }
@@ -1689,7 +1822,7 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
       history_commitment_sha256: '0'.repeat(64),
       crash_evidence: {
         version: 1,
-        directory: plan.monitor.crash_directory,
+        directory: diagnosticReportsDirectory,
         prefixes: crashPrefixes,
         baseline: crashBaseline,
         final: crashFinal,
@@ -1719,7 +1852,7 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
       sealed_path: shared.evidence,
       history_commitment_sha256: historyCommitment,
     });
-    const sealedReceipt = await waitFor('monitor-owned corpus seal', deadline, () => (
+    const sealedReceipt = await waitFor('monitor-owned corpus seal', operationDeadline, () => (
       fs.existsSync(shared.sealReceipt)
         ? readPrivateJSON(shared.sealReceipt, 'monitor corpus seal') : undefined
     ), childEntries(controllerStates, observerChild, monitorChild));
@@ -1797,11 +1930,19 @@ async function runCoordinator(plan, catalog, finalizerPath, testRuntime, current
       '--peekaboo', peekabooExecutable,
       '--output', shared.prepareSummary,
     ];
-    finalizerCommand(finalizerPath, prepareArgs, 'certification prepare', 180_000);
-    finalizerCommand(finalizerPath, [
+    finalizerCommand(
+      retainedFinalizer,
+      runRoot,
+      prepareArgs,
+      'certification prepare',
+      remainingFinalizerTimeoutMilliseconds(globalFinalizerDeadline, finalizerTimeout),
+    );
+    finalizerCommand(retainedFinalizer, runRoot, [
       'finalize', '--artifacts', directories['prepared-artifacts'],
       '--peekaboo', peekabooExecutable, '--output', shared.summary,
-    ], 'final certification', 180_000);
+    ], 'final certification', remainingFinalizerTimeoutMilliseconds(
+      globalFinalizerDeadline, finalizerTimeout,
+    ));
     requirePrivateFile(shared.prepareSummary, 'prepare summary');
     requirePrivateFile(shared.summary, 'final certification summary');
     for (const state of controllerStates) writePrivateJSON(state.releasePath, releaseMarker(nonce));
@@ -1874,11 +2015,24 @@ async function main() {
   if (!catalogPath || !finalizerPath) throw new CoordinatorError('test runtime requires explicit catalog/finalizer paths');
   const catalog = parseJSON(fs.readFileSync(catalogPath), 'certification catalog');
   const currentBuildSource = deriveCurrentBuildSource(catalog, testRuntimeAllowed);
-  validatePlan(plan, catalog, testRuntimeAllowed, currentBuildSource.commit);
+  const diagnosticReportsDirectory = canonicalDiagnosticReportsDirectory(
+    testRuntimeAllowed
+      ? plan.test_runtime?.diagnostic_reports_path
+      : path.join(os.userInfo().homedir, 'Library', 'Logs', 'DiagnosticReports'),
+  );
+  validatePlan(
+    plan,
+    catalog,
+    testRuntimeAllowed,
+    currentBuildSource.commit,
+    diagnosticReportsDirectory,
+  );
+  const retainedFinalizer = retainFinalizerSource(finalizerPath, catalog, testRuntimeAllowed);
   await runCoordinator(
     plan,
     catalog,
-    fs.realpathSync(finalizerPath),
+    retainedFinalizer,
+    diagnosticReportsDirectory,
     testRuntimeAllowed,
     currentBuildSource.commit,
   );

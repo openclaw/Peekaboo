@@ -22,7 +22,7 @@ const UUID_V8 = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 const UINT64_MAX = 0xffff_ffff_ffff_ffffn;
 const REQUEST_ID_DOMAIN = Buffer.from('peekaboo.bridge.operation-request.v1\0', 'utf8');
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
-const BUILTIN_CATALOG_SHA256 = '6a47aaf1160938015727d48349d2c9366233550babb50ad3a05c196493781b1e';
+const BUILTIN_CATALOG_SHA256 = 'ef3ec15f9f27ac8881f0c3dcf9e67864495eb94a8e7924379db6425a5cff1f60';
 const BUILTIN_DIGEST_SPEC_SHA256 = '6d80d6264a4d3b80c69cee0c68ce3b5c2fd801e8483bb4bbddd4402d87066a33';
 const CLI_VERSION = '2';
 const LIVE_CERTIFICATION_AUTHORITY = Symbol('peekaboo-live-certification-authority');
@@ -329,6 +329,13 @@ function positiveInteger(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
 
+function finiteLosslessNumber(value) {
+  return typeof value === 'number'
+    && Number.isFinite(value)
+    && !Object.is(value, -0)
+    && (!Number.isInteger(value) || Number.isSafeInteger(value));
+}
+
 function milliseconds(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
@@ -435,9 +442,7 @@ function validProcess(value) {
 
 function validBounds(value) {
   return exactKeys(value, ['x', 'y', 'width', 'height'])
-    && [value.x, value.y, value.width, value.height].every((entry) => (
-      Number.isSafeInteger(entry) && !Object.is(entry, -0)
-    ))
+    && [value.x, value.y, value.width, value.height].every(finiteLosslessNumber)
     && value.width > 0 && value.height > 0;
 }
 
@@ -1930,6 +1935,32 @@ function validCrashEvidence(catalog, value) {
     return false;
   }
   return true;
+}
+
+export function requireCanonicalDiagnosticReportsDirectory(
+  directory,
+  {
+    homeDirectory = os.userInfo().homedir,
+    realpathSync = fs.realpathSync,
+    lstatSync = fs.lstatSync,
+  } = {},
+) {
+  const expected = path.join(homeDirectory, 'Library', 'Logs', 'DiagnosticReports');
+  if (directory !== expected) {
+    throw new TypeError('live crash evidence must use the current user DiagnosticReports directory');
+  }
+  let canonical;
+  let info;
+  try {
+    canonical = realpathSync(directory);
+    info = lstatSync(directory);
+  } catch {
+    throw new TypeError('live crash evidence DiagnosticReports directory is unavailable');
+  }
+  if (canonical !== expected || !info.isDirectory() || info.isSymbolicLink()) {
+    throw new TypeError('live crash evidence DiagnosticReports directory is not canonical');
+  }
+  return canonical;
 }
 
 function monitorHistoryProjection(monitorEvidence) {
@@ -4256,12 +4287,13 @@ async function verifyLiveMonitorRuntime(contract, evidence, inspectorStage) {
     throw new TypeError('live monitor final heartbeat differs from the certification corpus');
   }
   const crashEvidence = monitorEvidence.crash_evidence;
-  const currentCrashInventory = fs.readdirSync(crashEvidence.directory, { withFileTypes: true })
+  const crashDirectory = requireCanonicalDiagnosticReportsDirectory(crashEvidence.directory);
+  const currentCrashInventory = fs.readdirSync(crashDirectory, { withFileTypes: true })
     .filter((entry) => entry.isFile() && crashEvidence.prefixes.some((prefix) => (
       entry.name.startsWith(prefix)
     )))
     .map((entry) => {
-      const filePath = path.join(crashEvidence.directory, entry.name);
+      const filePath = path.join(crashDirectory, entry.name);
       const file = readStableRegularFile(filePath, `crash report ${entry.name}`);
       return {
         name: entry.name,
@@ -4398,7 +4430,53 @@ function liveAttestationProcess(processReceipt) {
   };
 }
 
-function runLivePIDAttestation(contract, evidence, responseKind) {
+function requirePIDAttestationInspectorBinding(contract, evidence, inspectorStage) {
+  const controllerCDHashes = new Set(contract.controlled_targets.map((entry) => (
+    entry.controller.code_signature_hash
+  )));
+  const observerCDHash = evidence.monitor_evidence.foreground_plan.observer.code_signature_hash;
+  if (inspectorStage.executableSHA256 !== contract.controller_build.executable_sha256
+      || inspectorStage.teamID !== contract.controller_build.team_id
+      || inspectorStage.sourceCommit !== contract.controller_build.source_commit
+      || controllerCDHashes.size !== 1
+      || !controllerCDHashes.has(inspectorStage.codeSignatureHash)
+      || observerCDHash !== inspectorStage.codeSignatureHash) {
+    throw new TypeError('PID-attestation inspector differs from the exact controller build and live processes');
+  }
+}
+
+export function runStagedPIDAttestationCommand(
+  inspectorStage,
+  planPath,
+  expectedOutputPath,
+  label,
+  runner = spawnSync,
+) {
+  assertCodeIdentityInspectorStage(inspectorStage);
+  const run = runner(inspectorStage.executable, ['--attest-monitor', planPath], {
+    encoding: 'utf8',
+    timeout: 15_000,
+    maxBuffer: 1024 * 1024,
+  });
+  assertCodeIdentityInspectorStage(inspectorStage);
+  if (run.error || run.status !== 0 || !positiveInteger(run.pid)) {
+    throw new TypeError(`${label} challenge failed`);
+  }
+  let envelope;
+  try {
+    envelope = JSON.parse(run.stdout);
+  } catch {
+    throw new TypeError(`${label} challenge result is not JSON`);
+  }
+  if (!exactKeys(envelope, ['receipt', 'result']) || envelope.result !== 'passed'
+      || envelope.receipt !== expectedOutputPath) {
+    throw new TypeError(`${label} challenge result is not bound to its staged child receipt`);
+  }
+  return run;
+}
+
+function runLivePIDAttestation(contract, evidence, responseKind, inspectorStage) {
+  requirePIDAttestationInspectorBinding(contract, evidence, inspectorStage);
   const monitor = responseKind === 'monitor';
   const foregroundPlan = evidence.monitor_evidence.foreground_plan;
   const socketPath = monitor
@@ -4427,14 +4505,7 @@ function runLivePIDAttestation(contract, evidence, responseKind) {
   };
   try {
     writeOwnerPrivateOutput(planPath, `${JSON.stringify(plan, null, 2)}\n`);
-    const run = spawnSync(contract.controller_build.executable_path, [
-      '--attest-monitor', planPath,
-    ], {
-      encoding: 'utf8',
-      timeout: 15_000,
-      maxBuffer: 1024 * 1024,
-    });
-    if (run.status !== 0) throw new TypeError(`${label} challenge failed`);
+    runStagedPIDAttestationCommand(inspectorStage, planPath, outputPath, label);
     const response = parseJSON(readStablePrivateFile(outputPath, `${label} response`), label);
     const commonKeys = [
       'version', 'execution_nonce', 'monitor_instance_id', 'challenge',
@@ -4484,9 +4555,9 @@ function runLivePIDAttestation(contract, evidence, responseKind) {
   }
 }
 
-function verifyLivePIDAttestations(contract, evidence) {
-  runLivePIDAttestation(contract, evidence, 'monitor');
-  runLivePIDAttestation(contract, evidence, 'observer');
+function verifyLivePIDAttestations(contract, evidence, inspectorStage) {
+  runLivePIDAttestation(contract, evidence, 'monitor', inspectorStage);
+  runLivePIDAttestation(contract, evidence, 'observer', inspectorStage);
 }
 
 function readForegroundWitnessFile(filePath, expectedSHA256, label) {
@@ -4589,7 +4660,7 @@ async function executeFinalization(args, catalog, catalogBytes, artifacts) {
     await verifyLiveControllerRuntime(artifacts.contract, inspectorStage);
     await verifyLiveForegroundObserverRuntime(artifacts.contract, artifacts.evidence, inspectorStage);
     verifyLiveForegroundPostconditionRuntime(artifacts.contract, artifacts.evidence);
-    verifyLivePIDAttestations(artifacts.contract, artifacts.evidence);
+    verifyLivePIDAttestations(artifacts.contract, artifacts.evidence, inspectorStage);
     const stage = stageFirstPartyExecutable(args.peekaboo, catalog, artifacts.contract);
     try {
       const summary = await finalizeLiveMultiTargetCertification({
@@ -4603,7 +4674,7 @@ async function executeFinalization(args, catalog, catalogBytes, artifacts) {
       await verifyLiveControllerRuntime(artifacts.contract, inspectorStage);
       await verifyLiveForegroundObserverRuntime(artifacts.contract, artifacts.evidence, inspectorStage);
       verifyLiveForegroundPostconditionRuntime(artifacts.contract, artifacts.evidence);
-      verifyLivePIDAttestations(artifacts.contract, artifacts.evidence);
+      verifyLivePIDAttestations(artifacts.contract, artifacts.evidence, inspectorStage);
       const after = readCertificationArtifacts(args.artifacts);
       if (!sameJSON(after.contract, artifacts.contract)
           || !sameJSON(after.manifest, artifacts.manifest)

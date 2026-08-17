@@ -212,12 +212,15 @@ export function makeMultiTargetFixture(catalog, catalogFileSHA256, options = {})
   const clientB = processIdentity(4201, '420100', 'e'.repeat(40));
   const foregroundController = processIdentity(4301, '430100', 'f'.repeat(40));
   const semanticObserver = processIdentity(4401, '440100', 'b'.repeat(40));
+  const targetABounds = options.fractionalBounds
+    ? { x: 10.25, y: 20.5, width: 640.75, height: 480.125 }
+    : { x: 10, y: 20, width: 640, height: 480 };
   const targetA = {
     scope: 'window',
     pid: 5101,
     start_identity: '510100',
     window_id: 6101,
-    bounds: { x: 10, y: 20, width: 640, height: 480 },
+    bounds: targetABounds,
     is_minimized: null,
   };
   const targetB = {

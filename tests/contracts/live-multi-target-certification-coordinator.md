@@ -26,6 +26,8 @@ persisted summary is never itself certification authority; only the final live f
 
 - The plan schema is closed. Unknown fields, non-private inputs, wrong target/controller cardinality, and unbounded
   timeouts fail before child launch.
+- Crash evidence comes only from the canonical current user's `~/Library/Logs/DiagnosticReports`; an empty substitute,
+  alias, or symlink is not accepted as a quieter evidence source.
 - An eligible run derives its current-build commit from a clean Git HEAD. The controller executable, Peekaboo
   validator, expected Bridge host, signed controller receipts, and observe-only witness build must all carry that same
   commit; no catalog literal can stand in for it.
@@ -39,6 +41,9 @@ persisted summary is never itself certification authority; only the final live f
   until the coordinator has validated both markers and released both owner-private barriers.
 - Monitor sealing and monitor/observer challenges bind the live PIDs and exact evidence bytes. Caller-written success
   or certification fields are never accepted.
+- The coordinator retains the verified finalizer bytes before the live run, executes those exact bytes for both phases,
+  grants `prepare` exclusive ownership of a previously absent artifact root, and derives its outer deadline from all
+  eight bounded bundle validations plus identity/runtime overhead for each of the two serialized invocations.
 - Failure performs bounded release/TERM/KILL cleanup while preserving the private run root for diagnosis.
 - Test-runtime completion is reported as `test-runtime-complete` with `certification_eligible: false`.
 

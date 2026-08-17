@@ -14,6 +14,7 @@ import {
   makeLiveCertificationContract,
   monitorHistoryCommitmentSHA256,
   projectFinalizerSourceBytes,
+  requireCanonicalDiagnosticReportsDirectory,
   validateCatalog,
   validateMultiTargetCertificationStructure,
   makeOperationManifest,
@@ -145,6 +146,77 @@ test('production preparer derives the closed manifest from canonical raw exports
 test('source-owned assembler derives the exact v4 contract from controller and monitor evidence', () => {
   const fixture = makeFixture();
   assert.deepEqual(assemble(fixture), fixture.contract);
+});
+
+test('source-owned assembler preserves finite fractional macOS point geometry', () => {
+  const fixture = makeMultiTargetFixture(catalog, catalogFileSHA256, {
+    fractionalBounds: true,
+  });
+  assert.deepEqual(assemble(fixture), fixture.contract);
+  assert.deepEqual(fixture.contract.controlled_targets[0].target.bounds, {
+    x: 10.25,
+    y: 20.5,
+    width: 640.75,
+    height: 480.125,
+  });
+});
+
+test('source-owned assembler rejects nonfinite and nonpositive target geometry', () => {
+  const invalidGeometry = [
+    ['x', Number.NaN],
+    ['x', Number.POSITIVE_INFINITY],
+    ['height', Number.NEGATIVE_INFINITY],
+    ['width', Number.MAX_SAFE_INTEGER + 1],
+    ['width', 0],
+    ['height', -1],
+    ['width', -0],
+  ];
+  for (const [key, value] of invalidGeometry) {
+    const fixture = makeFixture();
+    const receipts = makeControllerReceipts(fixture);
+    receipts[0].target.bounds[key] = value;
+    assert.throws(
+      () => assemble(fixture, receipts),
+      /controller receipt is not one closed four-slot passed run/,
+      `invalid target bounds ${key}=${String(value)}`,
+    );
+  }
+});
+
+test('live crash scans require the current user canonical DiagnosticReports directory', () => {
+  const temporary = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'peekaboo-crash-binding-')));
+  try {
+    const home = path.join(temporary, 'home');
+    const expected = path.join(home, 'Library', 'Logs', 'DiagnosticReports');
+    const decoy = path.join(temporary, 'decoy');
+    fs.mkdirSync(expected, { recursive: true });
+    fs.mkdirSync(decoy);
+
+    assert.equal(
+      requireCanonicalDiagnosticReportsDirectory(expected, { homeDirectory: home }),
+      expected,
+    );
+    assert.throws(
+      () => requireCanonicalDiagnosticReportsDirectory(decoy, { homeDirectory: home }),
+      /current user DiagnosticReports/,
+    );
+    assert.throws(
+      () => requireCanonicalDiagnosticReportsDirectory(
+        '/Users/fixture/Library/Logs/DiagnosticReports',
+        { homeDirectory: home },
+      ),
+      /current user DiagnosticReports/,
+    );
+
+    fs.rmSync(expected, { recursive: true });
+    fs.symlinkSync(decoy, expected);
+    assert.throws(
+      () => requireCanonicalDiagnosticReportsDirectory(expected, { homeDirectory: home }),
+      /not canonical/,
+    );
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
 });
 
 test('controller receipts require explicit canonical nulls for optional target and handshake metadata', () => {
