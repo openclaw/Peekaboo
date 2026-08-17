@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import {
   finalizerCommandTimeoutMilliseconds,
   finalizerGlobalBudgetMilliseconds,
+  requireForegroundControllerCodeIdentity,
 } from '../scripts/run-live-multi-target-certification.mjs';
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -593,6 +594,7 @@ function fixture() {
         start_identity: `${FOREGROUND_PID}00`,
         code_signature_hash: 'f'.repeat(40),
       },
+      foreground_controller_team_id: TEAM_ID,
       foreground_target: target(FOREGROUND_PID + 10, `${FOREGROUND_PID + 10}00`, FOREGROUND_WINDOW),
       invariant_names: ['focus', 'window', 'cursor', 'input', 'clipboard', 'overlay'],
       crash_directory: crashes,
@@ -748,11 +750,41 @@ test('crash evidence accepts only the canonical DiagnosticReports directory', ()
 
 test('outer finalizer timeout covers eight bounded validators and runtime identity overhead', () => {
   const timeout = finalizerCommandTimeoutMilliseconds(8);
-  const identityBudget = (15 * 30_000) + (4 * 15_000);
+  const identityInspection = 30_000 + 2_000 + 10_000 + 10_000 + 20_000 + 5_000;
+  const pidAttestation = 15_000 + 2_000 + 10_000 + 10_000 + 20_000 + 5_000;
+  const identityBudget = (15 * identityInspection) + (4 * pidAttestation);
   const stagingAndShutdownMargin = 300_000;
   assert.equal(timeout, (8 * 30_000) + identityBudget + stagingAndShutdownMargin);
   assert.ok(timeout > (8 * 30_000) + identityBudget);
   assert.equal(finalizerGlobalBudgetMilliseconds(8), 2 * timeout);
+});
+
+test('foreground controller code identity binds generation team and CDHash', () => {
+  const expectedProcess = {
+    pid: FOREGROUND_PID,
+    start_identity: `${FOREGROUND_PID}00`,
+    code_signature_hash: 'f'.repeat(40),
+  };
+  const input = {
+    expectedProcess,
+    expectedTeamID: TEAM_ID,
+    before: { pid: FOREGROUND_PID, start_identity: `${FOREGROUND_PID}00` },
+    after: { pid: FOREGROUND_PID, start_identity: `${FOREGROUND_PID}00` },
+    observedTeamID: TEAM_ID,
+    observedCodeSignatureHash: 'f'.repeat(40),
+  };
+  requireForegroundControllerCodeIdentity(input);
+  for (const [name, change] of [
+    ['generation', { after: { pid: FOREGROUND_PID, start_identity: `${FOREGROUND_PID}01` } }],
+    ['team', { observedTeamID: 'AAAAAAAAAA' }],
+    ['CDHash', { observedCodeSignatureHash: 'e'.repeat(40) }],
+  ]) {
+    assert.throws(
+      () => requireForegroundControllerCodeIdentity({ ...input, ...change }),
+      /foreground controller live process generation or code-signature identity/,
+      name,
+    );
+  }
 });
 
 test('Bridge host commit must equal the coordinator Git HEAD even in test runtime', () => {

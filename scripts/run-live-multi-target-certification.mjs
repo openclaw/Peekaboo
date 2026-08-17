@@ -34,10 +34,29 @@ const OPERATION_LIFECYCLE_MARGIN_SECONDS = 30;
 const MAXIMUM_CONTROLLER_TEXT_BYTES = 4096;
 const FINALIZER_INNER_BUNDLE_TIMEOUT_MILLISECONDS = 30_000;
 const FINALIZER_IDENTITY_INSPECTION_COUNT = 15;
-const FINALIZER_IDENTITY_INSPECTION_TIMEOUT_MILLISECONDS = 30_000;
+const FINALIZER_IDENTITY_RECEIPT_TIMEOUT_MILLISECONDS = 30_000;
 const FINALIZER_PID_ATTESTATION_COUNT = 4;
-const FINALIZER_PID_ATTESTATION_TIMEOUT_MILLISECONDS = 15_000;
+const FINALIZER_PID_ATTESTATION_RECEIPT_TIMEOUT_MILLISECONDS = 15_000;
+const FINALIZER_PROCESS_STOP_TIMEOUT_MILLISECONDS = 2_000;
+const FINALIZER_CODESIGN_VERIFY_TIMEOUT_MILLISECONDS = 10_000;
+const FINALIZER_CODESIGN_DISPLAY_TIMEOUT_MILLISECONDS = 10_000;
+const FINALIZER_SOURCE_STAMP_TIMEOUT_MILLISECONDS = 20_000;
+const FINALIZER_RELEASE_TIMEOUT_MILLISECONDS = 5_000;
 const FINALIZER_STAGING_AND_SHUTDOWN_MARGIN_MILLISECONDS = 300_000;
+const FINALIZER_IDENTITY_INSPECTION_TIMEOUT_MILLISECONDS =
+  FINALIZER_IDENTITY_RECEIPT_TIMEOUT_MILLISECONDS
+  + FINALIZER_PROCESS_STOP_TIMEOUT_MILLISECONDS
+  + FINALIZER_CODESIGN_VERIFY_TIMEOUT_MILLISECONDS
+  + FINALIZER_CODESIGN_DISPLAY_TIMEOUT_MILLISECONDS
+  + FINALIZER_SOURCE_STAMP_TIMEOUT_MILLISECONDS
+  + FINALIZER_RELEASE_TIMEOUT_MILLISECONDS;
+const FINALIZER_PID_ATTESTATION_TIMEOUT_MILLISECONDS =
+  FINALIZER_PID_ATTESTATION_RECEIPT_TIMEOUT_MILLISECONDS
+  + FINALIZER_PROCESS_STOP_TIMEOUT_MILLISECONDS
+  + FINALIZER_CODESIGN_VERIFY_TIMEOUT_MILLISECONDS
+  + FINALIZER_CODESIGN_DISPLAY_TIMEOUT_MILLISECONDS
+  + FINALIZER_SOURCE_STAMP_TIMEOUT_MILLISECONDS
+  + FINALIZER_RELEASE_TIMEOUT_MILLISECONDS;
 const FINALIZER_IDENTITY_RUNTIME_OVERHEAD_MILLISECONDS =
   (FINALIZER_IDENTITY_INSPECTION_COUNT * FINALIZER_IDENTITY_INSPECTION_TIMEOUT_MILLISECONDS)
   + (FINALIZER_PID_ATTESTATION_COUNT * FINALIZER_PID_ATTESTATION_TIMEOUT_MILLISECONDS)
@@ -529,6 +548,59 @@ function processIsValid(value) {
     && HEX40.test(value.code_signature_hash ?? '');
 }
 
+export function requireForegroundControllerCodeIdentity({
+  expectedProcess, expectedTeamID, before, after, observedTeamID, observedCodeSignatureHash,
+}) {
+  if (!processIsValid(expectedProcess)
+      || !/^[A-Z0-9]{10}$/.test(expectedTeamID ?? '')
+      || !sameJSON(before, {
+        pid: expectedProcess.pid,
+        start_identity: expectedProcess.start_identity,
+      })
+      || !sameJSON(after, before)
+      || observedTeamID !== expectedTeamID
+      || observedCodeSignatureHash !== expectedProcess.code_signature_hash) {
+    throw new CoordinatorError(
+      'foreground controller live process generation or code-signature identity differs from the plan',
+    );
+  }
+}
+
+function verifyForegroundControllerCodeIdentity({
+  monitorExecutable, expectedProcess, expectedTeamID, directory,
+}) {
+  const before = invokeProcessIdentity(
+    monitorExecutable,
+    expectedProcess.pid,
+    directory,
+    'foreground-controller-before',
+  );
+  const requirement = `anchor apple generic and certificate leaf[subject.OU] = "${expectedTeamID}"`;
+  runSync('/usr/bin/codesign', [
+    '--verify', '--strict', `-R=${requirement}`, `+${expectedProcess.pid}`,
+  ], 'foreground controller Apple-anchored signature', 10_000);
+  const display = runSync('/usr/bin/codesign', [
+    '--display', '--verbose=4', `+${expectedProcess.pid}`,
+  ], 'foreground controller code-signature identity', 10_000);
+  const text = `${display.stdout ?? ''}\n${display.stderr ?? ''}`;
+  const observedTeamID = text.match(/^TeamIdentifier=([A-Z0-9]{10})$/m)?.[1] ?? null;
+  const observedCodeSignatureHash = text.match(/^CDHash=([0-9a-f]{40})$/m)?.[1] ?? null;
+  const after = invokeProcessIdentity(
+    monitorExecutable,
+    expectedProcess.pid,
+    directory,
+    'foreground-controller-after',
+  );
+  requireForegroundControllerCodeIdentity({
+    expectedProcess,
+    expectedTeamID,
+    before,
+    after,
+    observedTeamID,
+    observedCodeSignatureHash,
+  });
+}
+
 function semanticElementIsValid(value) {
   const validNullable = (entry) => entry === null || (
     typeof entry === 'string' && entry.length > 0 && !entry.includes('\0')
@@ -650,10 +722,12 @@ function validatePlan(
     throw new CoordinatorError('observe-only semantic plan is malformed');
   }
   if (!exactKeys(plan.monitor, [
-    'sentinel', 'foreground_controller', 'foreground_target', 'invariant_names',
+    'sentinel', 'foreground_controller', 'foreground_controller_team_id',
+    'foreground_target', 'invariant_names',
     'crash_directory', 'interval_milliseconds', 'code_signature_hash',
   ]) || !targetIsValid(plan.monitor.sentinel)
       || !processIsValid(plan.monitor.foreground_controller)
+      || !/^[A-Z0-9]{10}$/.test(plan.monitor.foreground_controller_team_id ?? '')
       || !targetIsValid(plan.monitor.foreground_target)
       || !sameJSON(plan.monitor.foreground_target, plan.observer.target)
       || !Array.isArray(plan.monitor.invariant_names)
@@ -1252,6 +1326,14 @@ async function runCoordinator(
     fs.mkdirSync(directories[name], { mode: 0o700 });
   }
   directories['prepared-artifacts'] = path.join(runRoot, 'prepared-artifacts');
+  if (!testRuntime) {
+    verifyForegroundControllerCodeIdentity({
+      monitorExecutable,
+      expectedProcess: plan.monitor.foreground_controller,
+      expectedTeamID: plan.monitor.foreground_controller_team_id,
+      directory: directories.monitor,
+    });
+  }
   const shared = {
     heartbeat: path.join(directories.monitor, 'heartbeat.json'),
     violations: path.join(directories.monitor, 'violations.jsonl'),
