@@ -18,8 +18,11 @@ enum CertificationMonitorAttestationRunner {
             timeoutMilliseconds: plan.timeoutMilliseconds
         )
         defer { close(descriptor) }
-        let peerPID = try CertificationUnixSocket.peerPID(descriptor)
-        try CertificationLocalPeerPolicy.requirePeerPID(peerPID, expected: plan.expectedPeerPID)
+        let peerBefore = try CertificationAttestationPeerIdentityResolver.resolve(descriptor: descriptor)
+        try CertificationAttestationPeerIdentityResolver.requireExpected(
+            peerBefore,
+            expected: plan.expectedPeer
+        )
         let challenge = try CertificationAttestationChallenge.random()
         let request = CertificationAttestationRequest(
             version: 1,
@@ -33,11 +36,17 @@ enum CertificationMonitorAttestationRunner {
             maximumBytes: plan.maximumResponseBytes,
             timeoutMilliseconds: plan.timeoutMilliseconds
         )
+        let peerAfter = try CertificationAttestationPeerIdentityResolver.resolve(descriptor: descriptor)
+        try CertificationAttestationPeerIdentityResolver.requireExpected(
+            peerAfter,
+            expected: plan.expectedPeer
+        )
+        try CertificationAttestationPeerIdentityResolver.requireStable(before: peerBefore, after: peerAfter)
         let output: Data = switch plan.responseKind {
         case .monitor:
-            try self.validateMonitorResponse(data, request: request, peerPID: peerPID)
+            try self.validateMonitorResponse(data, request: request, expectedPeer: plan.expectedPeer)
         case .observer:
-            try self.validateObserverResponse(data, request: request, peerPID: peerPID)
+            try self.validateObserverResponse(data, request: request, expectedPeer: plan.expectedPeer)
         }
         try CertificationPrivateArtifacts.writeReceipt(output, to: plan.outputURL)
         try await CertificationControllerLifecycleGate.waitForRelease(
@@ -50,7 +59,7 @@ enum CertificationMonitorAttestationRunner {
     static func validateMonitorResponse(
         _ data: Data,
         request: CertificationAttestationRequest,
-        peerPID: pid_t
+        expectedPeer: CertificationProcessReceipt
     ) throws -> Data {
         try self.requireKeys(data, [
             "version", "execution_nonce", "monitor_instance_id", "challenge", "monitor",
@@ -62,7 +71,7 @@ enum CertificationMonitorAttestationRunner {
               response.executionNonce == request.executionNonce,
               response.monitorInstanceID == request.monitorInstanceID,
               response.challenge == request.challenge,
-              response.monitor.pid == peerPID,
+              response.monitor == expectedPeer,
               Self.isProcess(response.monitor),
               Self.isHex(response.monitorEvidenceSHA256, count: 64)
         else { throw self.refusal() }
@@ -72,7 +81,7 @@ enum CertificationMonitorAttestationRunner {
     static func validateObserverResponse(
         _ data: Data,
         request: CertificationAttestationRequest,
-        peerPID: pid_t
+        expectedPeer: CertificationProcessReceipt
     ) throws -> Data {
         try self.requireKeys(data, [
             "version", "execution_nonce", "monitor_instance_id", "challenge", "observer", "witness_sha256",
@@ -94,7 +103,7 @@ enum CertificationMonitorAttestationRunner {
               response.executionNonce == request.executionNonce,
               response.monitorInstanceID == request.monitorInstanceID,
               response.challenge == request.challenge,
-              response.observer.pid == peerPID,
+              response.observer == expectedPeer,
               Self.isProcess(response.observer),
               digests.allSatisfy({ Self.isHex($0, count: 64) })
         else { throw self.refusal() }

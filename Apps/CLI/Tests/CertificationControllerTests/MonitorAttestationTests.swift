@@ -9,7 +9,7 @@ struct MonitorAttestationTests {
     func `client plan is closed and transport bounded`() throws {
         let plan = try CertificationMonitorAttestationClientPlan.decode(Self.validPlanData)
 
-        #expect(plan.expectedPeerPID == 8001)
+        #expect(plan.expectedPeer.pid == 8001)
         #expect(plan.responseKind == .monitor)
         #expect(plan.timeoutMilliseconds == 2000)
 
@@ -30,6 +30,106 @@ struct MonitorAttestationTests {
         }
         #expect(throws: CertificationControllerError.self) {
             try CertificationLocalPeerPolicy.requirePeerPID(0, expected: 0)
+        }
+    }
+
+    @Test
+    func `peer identity policy rejects generation CDHash and token drift`() throws {
+        let expected = CertificationProcessReceipt(
+            pid: 8001,
+            startIdentity: "800100",
+            codeSignatureHash: String(repeating: "a", count: 40)
+        )
+        let identity = CertificationAttestationPeerIdentity(
+            auditToken: Data(repeating: 1, count: MemoryLayout<audit_token_t>.size),
+            processIdentifierVersion: 7,
+            effectiveUserIdentifier: geteuid(),
+            process: expected
+        )
+        try CertificationAttestationPeerIdentityResolver.requireExpected(identity, expected: expected)
+        try CertificationAttestationPeerIdentityResolver.requireStable(before: identity, after: identity)
+
+        let wrongGeneration = CertificationProcessReceipt(
+            pid: expected.pid,
+            startIdentity: "800101",
+            codeSignatureHash: expected.codeSignatureHash
+        )
+        #expect(throws: CertificationControllerError.self) {
+            try CertificationAttestationPeerIdentityResolver.requireExpected(identity, expected: wrongGeneration)
+        }
+        let wrongCDHash = CertificationProcessReceipt(
+            pid: expected.pid,
+            startIdentity: expected.startIdentity,
+            codeSignatureHash: String(repeating: "b", count: 40)
+        )
+        #expect(throws: CertificationControllerError.self) {
+            try CertificationAttestationPeerIdentityResolver.requireExpected(identity, expected: wrongCDHash)
+        }
+        let driftedToken = CertificationAttestationPeerIdentity(
+            auditToken: Data(repeating: 2, count: MemoryLayout<audit_token_t>.size),
+            processIdentifierVersion: identity.processIdentifierVersion,
+            effectiveUserIdentifier: identity.effectiveUserIdentifier,
+            process: expected
+        )
+        #expect(throws: CertificationControllerError.self) {
+            try CertificationAttestationPeerIdentityResolver.requireStable(before: identity, after: driftedToken)
+        }
+    }
+
+    @Test
+    func `peer resolver uses audit token start generation and CDHash providers`() throws {
+        var descriptors = [Int32](repeating: -1, count: 2)
+        try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0)
+        defer { descriptors.forEach { close($0) } }
+        let token = try CertificationUnixSocket.peerAuditToken(descriptors[0])
+        let hash = Data(repeating: 0xAB, count: 20)
+        let identity = try CertificationAttestationPeerIdentityResolver.resolve(
+            descriptor: descriptors[0],
+            auditTokenProvider: { _ in token },
+            processStartIdentityProvider: { _ in 42 },
+            codeSignatureHashProvider: { _ in hash }
+        )
+        #expect(identity.process.pid == getpid())
+        #expect(identity.process.startIdentity == "42")
+        #expect(identity.process.codeSignatureHash == String(repeating: "ab", count: 20))
+
+        var starts: [UInt64] = [42, 43]
+        #expect(throws: CertificationControllerError.self) {
+            try CertificationAttestationPeerIdentityResolver.resolve(
+                descriptor: descriptors[0],
+                auditTokenProvider: { _ in token },
+                processStartIdentityProvider: { _ in starts.removeFirst() },
+                codeSignatureHashProvider: { _ in hash }
+            )
+        }
+        #expect(throws: CertificationControllerError.self) {
+            try CertificationAttestationPeerIdentityResolver.resolve(
+                descriptor: descriptors[0],
+                auditTokenProvider: { _ in token },
+                processStartIdentityProvider: { _ in 42 },
+                codeSignatureHashProvider: { _ in nil }
+            )
+        }
+    }
+
+    @Test
+    func `client listener and accepted sockets are close on exec`() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        #expect(chmod(directory.path, S_IRWXU) == 0)
+        let socketPath = directory.appendingPathComponent("cloexec.sock").path
+        let listener = try CertificationUnixSocket.makeServer(path: socketPath)
+        defer { close(listener); unlink(socketPath) }
+        let client = try CertificationUnixSocket.connect(path: socketPath, timeoutMilliseconds: 2000)
+        defer { close(client) }
+        let accepted = try CertificationUnixSocket.acceptClient(listener)
+        try #require(accepted >= 0)
+        defer { close(accepted) }
+        for descriptor in [listener, client, accepted] {
+            let flags = fcntl(descriptor, F_GETFD)
+            #expect(flags >= 0)
+            #expect(flags & FD_CLOEXEC != 0)
         }
     }
 
@@ -91,7 +191,7 @@ struct MonitorAttestationTests {
         _ = try CertificationMonitorAttestationRunner.validateMonitorResponse(
             requestData,
             request: request,
-            peerPID: process.pid
+            expectedPeer: process
         )
         var openObject = try #require(
             JSONSerialization.jsonObject(with: requestData) as? [String: Any]
@@ -103,7 +203,7 @@ struct MonitorAttestationTests {
             try CertificationMonitorAttestationRunner.validateMonitorResponse(
                 JSONSerialization.data(withJSONObject: openObject),
                 request: request,
-                peerPID: process.pid
+                expectedPeer: process
             )
         }
         openProcess.removeValue(forKey: "unexpected")
@@ -113,7 +213,7 @@ struct MonitorAttestationTests {
             try CertificationMonitorAttestationRunner.validateMonitorResponse(
                 JSONSerialization.data(withJSONObject: openObject),
                 request: request,
-                peerPID: process.pid
+                expectedPeer: process
             )
         }
     }
@@ -294,7 +394,11 @@ struct MonitorAttestationTests {
       "execution_nonce": "\(Self.nonce)",
       "monitor_instance_id": "\(Self.monitorID)",
       "socket_path": "/private/tmp/peekaboo-monitor-attestation.sock",
-      "expected_peer_pid": 8001,
+      "expected_peer": {
+        "pid": 8001,
+        "start_identity": "800100",
+        "code_signature_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
       "response_kind": "monitor",
       "artifacts_directory": "/private/tmp/peekaboo-monitor-attestation",
       "output_path": "/private/tmp/peekaboo-monitor-attestation/response.json",

@@ -398,6 +398,9 @@ function sleep(milliseconds) {
 }
 
 function childFailure(child, label) {
+  if (child.spawnError) {
+    throw new CoordinatorError(`${label} failed to spawn: ${child.spawnError.message}`);
+  }
   if (child.exitCode !== null) {
     const diagnostic = child.capturedStderr?.trim();
     throw new CoordinatorError(
@@ -431,20 +434,25 @@ function spawnOwned(executable, args, label) {
   child.stdout.on('data', (chunk) => { child.capturedStdout += chunk; });
   child.stderr.on('data', (chunk) => { child.capturedStderr += chunk; });
   child.once('error', (error) => { child.spawnError = error; });
+  child.ownerClosed = false;
+  child.once('close', () => { child.ownerClosed = true; });
   child.ownerLabel = label;
   return child;
 }
 
 async function waitForExit(child, label, timeoutMilliseconds) {
-  if (child.exitCode !== null || child.signalCode !== null) {
+  if (child.spawnError) throw new CoordinatorError(`${label} failed to spawn: ${child.spawnError.message}`);
+  if (child.ownerClosed) {
     if (child.exitCode !== 0) throw new CoordinatorError(`${label} exited with status ${child.exitCode}`);
     return;
   }
   const result = await Promise.race([
-    new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal }))),
+    new Promise((resolve) => child.once('close', (code, signal) => resolve({ code, signal }))),
+    new Promise((resolve) => child.once('error', (error) => resolve({ error }))),
     sleep(timeoutMilliseconds).then(() => ({ timeout: true })),
   ]);
   if (result.timeout) throw new CoordinatorError(`${label} did not exit after release`);
+  if (result.error) throw new CoordinatorError(`${label} failed: ${result.error.message}`);
   if (result.code !== 0) {
     throw new CoordinatorError(
       `${label} exited with status ${result.code ?? result.signal}: ${child.capturedStderr.trim()}`,
@@ -616,6 +624,14 @@ function validatePlan(
   if (new Set(plan.controllers.map((entry) => entry.controller_id)).size !== 2
       || new Set(plan.controllers.map((entry) => entry.target_id)).size !== 2) {
     throw new CoordinatorError('controller and target IDs must be distinct');
+  }
+  const physicalTargets = new Set(plan.controllers.map((entry) => [
+    entry.target.process_identifier,
+    entry.target.process_start_identity_decimal,
+    entry.target.window_id,
+  ].join(':')));
+  if (physicalTargets.size !== plan.controllers.length) {
+    throw new CoordinatorError('background controller physical targets must be distinct');
   }
   if (!exactKeys(plan.observer, ['target', 'semantic_element', 'baseline_value'])
       || !targetIsValid(plan.observer.target)
@@ -981,16 +997,19 @@ function collectControllerCorpus(controllerStates, receiptDirectory, bundleDirec
   if (requestIDs.size !== 8) throw new CoordinatorError('combined bundle inventory is not exactly eight');
 }
 
-function makeAttestationPlan({ nonce, monitorID, socketPath, pid, kind, directory, outputPath }) {
+function makeAttestationPlan({
+  nonce, monitorID, socketPath, expectedPeer, kind, directory, outputPath,
+}) {
   return {
     version: 1,
     execution_nonce: nonce,
     monitor_instance_id: monitorID,
     socket_path: socketPath,
-    expected_peer_pid: pid,
+    expected_peer: structuredClone(expectedPeer),
     response_kind: kind,
     artifacts_directory: directory,
     output_path: outputPath,
+    release_path: path.join(directory, 'release.json'),
     timeout_milliseconds: 10_000,
     maximum_response_bytes: 1024 * 1024,
   };
@@ -1005,34 +1024,54 @@ function requireOwnerSocket(socketPath, label) {
   return { device: info.dev, inode: info.ino };
 }
 
-function runPIDAttestation({
+async function runPIDAttestation({
   controllerExecutable, planPath, plan, expectedProcess, expectedDigest, responseKind,
 }) {
-  writePrivateJSON(planPath, plan);
-  runSync(controllerExecutable, ['--attest-monitor', planPath], `${responseKind} PID attestation`);
-  const response = readPrivateJSON(plan.output_path, `${responseKind} PID attestation response`);
-  const processKey = responseKind === 'monitor' ? 'monitor' : 'observer';
-  const digestKey = responseKind === 'monitor' ? 'monitor_evidence_sha256' : 'witness_sha256';
-  const expectedKeys = responseKind === 'monitor'
-    ? [
-      'version', 'execution_nonce', 'monitor_instance_id', 'challenge', 'monitor',
-      'monitor_evidence_sha256',
-    ]
-    : [
-      'version', 'execution_nonce', 'monitor_instance_id', 'challenge', 'observer',
-      'witness_sha256', 'observation_file_sha256', 'restoration_file_sha256',
-      'before_value_sha256', 'expected_value_sha256', 'observed_value_sha256',
-      'restored_value_sha256',
-    ];
-  if (!exactKeys(response, expectedKeys) || response.version !== 1
-      || response.execution_nonce !== plan.execution_nonce
-      || response.monitor_instance_id !== plan.monitor_instance_id
-      || !HEX64.test(response.challenge ?? '')
-      || !sameJSON(response[processKey], expectedProcess)
-      || response[digestKey] !== expectedDigest) {
-    throw new CoordinatorError(`${responseKind} PID attestation does not bind the live process and corpus`);
+  if (!sameJSON(plan.expected_peer, expectedProcess)) {
+    throw new CoordinatorError(`${responseKind} PID attestation plan differs from its expected process`);
   }
-  return response;
+  writePrivateJSON(planPath, plan);
+  const label = `${responseKind} PID attestation`;
+  const child = spawnOwned(controllerExecutable, ['--attest-monitor', planPath], label);
+  try {
+    const response = await waitFor(
+      `${responseKind} PID attestation response`,
+      Date.now() + plan.timeout_milliseconds,
+      () => fs.existsSync(plan.output_path)
+        ? readPrivateJSON(plan.output_path, `${responseKind} PID attestation response`)
+        : undefined,
+      [{ child, label }],
+    );
+    const processKey = responseKind === 'monitor' ? 'monitor' : 'observer';
+    const digestKey = responseKind === 'monitor' ? 'monitor_evidence_sha256' : 'witness_sha256';
+    const expectedKeys = responseKind === 'monitor'
+      ? [
+        'version', 'execution_nonce', 'monitor_instance_id', 'challenge', 'monitor',
+        'monitor_evidence_sha256',
+      ]
+      : [
+        'version', 'execution_nonce', 'monitor_instance_id', 'challenge', 'observer',
+        'witness_sha256', 'observation_file_sha256', 'restoration_file_sha256',
+        'before_value_sha256', 'expected_value_sha256', 'observed_value_sha256',
+        'restored_value_sha256',
+      ];
+    if (!exactKeys(response, expectedKeys) || response.version !== 1
+        || response.execution_nonce !== plan.execution_nonce
+        || response.monitor_instance_id !== plan.monitor_instance_id
+        || !HEX64.test(response.challenge ?? '')
+        || !sameJSON(response[processKey], expectedProcess)
+        || response[digestKey] !== expectedDigest) {
+      throw new CoordinatorError(`${responseKind} PID attestation does not bind the live process and corpus`);
+    }
+    writePrivateJSON(plan.release_path, releaseMarker(plan.execution_nonce));
+    await waitForExit(child, label, 5000);
+    return response;
+  } finally {
+    if (!fs.existsSync(plan.release_path)) {
+      try { writePrivateJSON(plan.release_path, releaseMarker(plan.execution_nonce)); } catch {}
+    }
+    await terminateChild(child, label);
+  }
 }
 
 export function finalizerCommandTimeoutMilliseconds(bundleCount, {
@@ -1879,34 +1918,35 @@ async function runCoordinator(
     const observerAttestationDirectory = path.join(directories.attestations, 'observer');
     fs.mkdirSync(monitorAttestationDirectory, { mode: 0o700 });
     fs.mkdirSync(observerAttestationDirectory, { mode: 0o700 });
-    runPIDAttestation({
+    const expectedMonitorPeer = {
+      pid: monitorProcess.pid,
+      start_identity: monitorProcess.start_identity,
+      code_signature_hash: monitorProcess.code_signature_hash,
+    };
+    await runPIDAttestation({
       controllerExecutable,
       planPath: path.join(monitorAttestationDirectory, 'plan.json'),
       plan: makeAttestationPlan({
         nonce,
         monitorID,
         socketPath: shared.attestationSocket,
-        pid: monitorChild.pid,
+        expectedPeer: expectedMonitorPeer,
         kind: 'monitor',
         directory: monitorAttestationDirectory,
         outputPath: path.join(monitorAttestationDirectory, 'response.json'),
       }),
-      expectedProcess: {
-        pid: monitorProcess.pid,
-        start_identity: monitorProcess.start_identity,
-        code_signature_hash: monitorProcess.code_signature_hash,
-      },
+      expectedProcess: expectedMonitorPeer,
       expectedDigest: aggregateSHA256('monitor-evidence', sealedEvidence),
       responseKind: 'monitor',
     });
-    runPIDAttestation({
+    await runPIDAttestation({
       controllerExecutable,
       planPath: path.join(observerAttestationDirectory, 'plan.json'),
       plan: makeAttestationPlan({
         nonce,
         monitorID,
         socketPath: observerPaths.attestationSocket,
-        pid: observerReady.observer.pid,
+        expectedPeer: observerReady.observer,
         kind: 'observer',
         directory: observerAttestationDirectory,
         outputPath: path.join(observerAttestationDirectory, 'response.json'),

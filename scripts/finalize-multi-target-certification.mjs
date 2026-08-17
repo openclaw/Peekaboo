@@ -22,7 +22,7 @@ const UUID_V8 = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 const UINT64_MAX = 0xffff_ffff_ffff_ffffn;
 const REQUEST_ID_DOMAIN = Buffer.from('peekaboo.bridge.operation-request.v1\0', 'utf8');
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
-const BUILTIN_CATALOG_SHA256 = '808290fb251cc5b2d57d67b6dd6265eee938c8c7fcf16caf6a1be2c9078c354d';
+const BUILTIN_CATALOG_SHA256 = '7a5e6acddddd856c2f140470be03eec6520b32be29f6c1ef2790a3914a76226f';
 const BUILTIN_DIGEST_SPEC_SHA256 = '6d80d6264a4d3b80c69cee0c68ce3b5c2fd801e8483bb4bbddd4402d87066a33';
 const CLI_VERSION = '2';
 const LIVE_CERTIFICATION_AUTHORITY = Symbol('peekaboo-live-certification-authority');
@@ -3033,6 +3033,16 @@ export function verifyDigestClaims({ catalogBytes, artifacts, summary }) {
     );
     if (manifestSlot.bundle_sha256 !== row.bundle_sha256) {
       failures.push({ kind: 'bundle-file', subject: row.slot_id, message: 'Manifest and summary bundle claims differ' });
+    }
+    if (row.operation_id !== manifestSlot.operation_id
+        || row.request_id !== manifestSlot.request_id
+        || row.session_id !== manifestSlot.session_id
+        || row.session_sequence !== manifestSlot.session_sequence) {
+      failures.push({
+        kind: 'manifest-slot',
+        subject: row.slot_id,
+        message: 'Manifest and summary slot metadata differ',
+      });
     }
     addCheck(
       'manifest-slot',

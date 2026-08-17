@@ -40,7 +40,8 @@ persisted summary is never itself certification authority; only the final live f
 - Each controller publishes a process-bound non-final readiness marker, and neither may begin its final-bounds capture
   until the coordinator has validated both markers and released both owner-private barriers.
 - Monitor sealing and monitor/observer challenges bind the live PIDs and exact evidence bytes. Caller-written success
-  or certification fields are never accepted.
+  or certification fields are never accepted. Each attester remains alive after publishing its response and exits only
+  after the coordinator writes its owner-private release marker.
 - The coordinator retains the verified finalizer bytes before the live run, executes those exact bytes for both phases,
   grants `prepare` exclusive ownership of a previously absent artifact root, and derives its outer deadline from all
   eight bounded bundle validations plus identity/runtime overhead for each of the two serialized invocations.
@@ -54,7 +55,8 @@ persisted summary is never itself certification authority; only the final live f
 - Exit one controller before release.
 - Emit a monitor fence with a replayed sequence/epoch, wrong producer revision, contamination, or caller activity at
   the wrong fence.
-- Emit fractional or negative-zero committed coordinates, or a wall/monotonic fence drift greater than two seconds.
+- Preserve finite fractional logical coordinates; emit nonfinite or negative-zero geometry, or a wall/monotonic fence
+  drift greater than two seconds.
 - Return a sealed corpus or PID-attestation digest that differs from the exact evidence bytes.
 - Attempt to reuse a nonempty or non-private run input.
 - Dirty the checkout, drift a source-manifest file, substitute a differently stamped executable, or inject a current

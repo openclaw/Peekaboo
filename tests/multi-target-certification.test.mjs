@@ -623,6 +623,32 @@ test('digest verifier requires bijective target and slot coverage', async (t) =>
   }
 });
 
+test('digest verifier binds every duplicated summary slot identity to the manifest', async (t) => {
+  const fixture = makeFixture();
+  const baseline = await finalize(fixture);
+  for (const field of ['operation_id', 'request_id', 'session_id', 'session_sequence']) {
+    await t.test(field, () => {
+      const summary = structuredClone(baseline);
+      const replacement = baseline.slot_verdicts.find((row) => (
+        row[field] !== baseline.slot_verdicts[0][field]
+      ));
+      assert.ok(replacement, `fixture needs a distinct ${field}`);
+      summary.slot_verdicts[0][field] = replacement[field];
+      summary.summary_core_sha256 = computeDigestClaim({
+        kindID: 'summary-core',
+        inputBytes: Buffer.from(JSON.stringify(summary)),
+      }).digest;
+      const result = verifyDigestClaims({ catalogBytes, artifacts: fixture, summary });
+      assert.equal(result.success, false);
+      assert.ok(result.failures.some((entry) => (
+        entry.kind === 'manifest-slot'
+          && entry.subject === summary.slot_verdicts[0].slot_id
+          && entry.message === 'Manifest and summary slot metadata differ'
+      )));
+    });
+  }
+});
+
 test('paired deletion and extra valid evidence cannot redefine the source-controlled slot set', async () => {
   const pairedDeletion = makeFixture();
   pairedDeletion.contract.operation_slots.pop();

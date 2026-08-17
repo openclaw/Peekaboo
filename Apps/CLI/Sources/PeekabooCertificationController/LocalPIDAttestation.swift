@@ -1,7 +1,17 @@
 import CryptoKit
 import Darwin
 import Foundation
+import PeekabooAutomationKit
 import Security
+
+@_silgen_name("csops_audittoken")
+private func certification_csops_audittoken(
+    _ processIdentifier: pid_t,
+    _ operation: UInt32,
+    _ userAddress: UnsafeMutableRawPointer?,
+    _ userSize: Int,
+    _ auditToken: UnsafeMutablePointer<audit_token_t>?
+) -> Int32
 
 enum CertificationAttestationResponseKind: String, Codable, Sendable {
     case monitor
@@ -13,7 +23,7 @@ struct CertificationMonitorAttestationClientPlan: Codable, Equatable, Sendable {
     let executionNonce: String
     let monitorInstanceID: String
     let socketPath: String
-    let expectedPeerPID: Int32
+    let expectedPeer: CertificationProcessReceipt
     let responseKind: CertificationAttestationResponseKind
     let artifactsDirectory: String
     let outputPath: String
@@ -26,7 +36,7 @@ struct CertificationMonitorAttestationClientPlan: Codable, Equatable, Sendable {
         case executionNonce = "execution_nonce"
         case monitorInstanceID = "monitor_instance_id"
         case socketPath = "socket_path"
-        case expectedPeerPID = "expected_peer_pid"
+        case expectedPeer = "expected_peer"
         case responseKind = "response_kind"
         case artifactsDirectory = "artifacts_directory"
         case outputPath = "output_path"
@@ -60,11 +70,14 @@ struct CertificationMonitorAttestationClientPlan: Codable, Equatable, Sendable {
             throw CertificationControllerError.invalidPlan("Monitor attestation plan is invalid JSON: \(error)")
         }
         let keys: Set = [
-            "version", "execution_nonce", "monitor_instance_id", "socket_path", "expected_peer_pid",
+            "version", "execution_nonce", "monitor_instance_id", "socket_path", "expected_peer",
             "response_kind", "artifacts_directory", "output_path", "timeout_milliseconds",
             "maximum_response_bytes", "release_path",
         ]
-        guard Set(root.keys) == keys else {
+        guard Set(root.keys) == keys,
+              let expectedPeer = root["expected_peer"] as? [String: Any],
+              Set(expectedPeer.keys) == ["pid", "start_identity", "code_signature_hash"]
+        else {
             throw CertificationControllerError.invalidPlan("Monitor attestation plan keys are not closed.")
         }
         let plan = try JSONDecoder().decode(Self.self, from: data)
@@ -79,7 +92,7 @@ struct CertificationMonitorAttestationClientPlan: Codable, Equatable, Sendable {
               Self.isCanonicalV4UUID(self.monitorInstanceID),
               Self.isAbsolutePath(self.socketPath),
               self.socketPath.utf8.count < 104,
-              self.expectedPeerPID > 0,
+              Self.isProcess(self.expectedPeer),
               Self.isAbsolutePath(self.artifactsDirectory),
               self.outputURL.standardizedFileURL.deletingLastPathComponent().path == root,
               self.releaseURL.standardizedFileURL.deletingLastPathComponent().path == root,
@@ -97,6 +110,16 @@ struct CertificationMonitorAttestationClientPlan: Codable, Equatable, Sendable {
         value.utf8.count == count && value.utf8.allSatisfy {
             (0x30...0x39).contains($0) || (0x61...0x66).contains($0)
         }
+    }
+
+    private static func isProcess(_ process: CertificationProcessReceipt) -> Bool {
+        guard process.pid > 0,
+              process.startIdentity.first != "0",
+              let startIdentity = UInt64(process.startIdentity),
+              startIdentity > 0,
+              String(startIdentity) == process.startIdentity
+        else { return false }
+        return self.isLowerHex(process.codeSignatureHash, count: 40)
     }
 
     private static func isCanonicalV4UUID(_ value: String) -> Bool {
@@ -186,6 +209,101 @@ enum CertificationLocalPeerPolicy {
     }
 }
 
+struct CertificationAttestationPeerIdentity: Equatable {
+    let auditToken: Data
+    let processIdentifierVersion: Int32
+    let effectiveUserIdentifier: uid_t
+    let process: CertificationProcessReceipt
+}
+
+enum CertificationAttestationPeerIdentityResolver {
+    typealias AuditTokenProvider = (Int32) throws -> audit_token_t
+    typealias ProcessStartIdentityProvider = (pid_t) -> UInt64?
+    typealias CodeSignatureHashProvider = (audit_token_t) -> Data?
+
+    static func resolve(
+        descriptor: Int32,
+        auditTokenProvider: AuditTokenProvider = { try CertificationUnixSocket.peerAuditToken($0) },
+        processStartIdentityProvider: ProcessStartIdentityProvider = {
+            SystemIdentityResolver.processStartIdentity($0)
+        },
+        codeSignatureHashProvider: CodeSignatureHashProvider = { token in
+            CertificationAttestationPeerIdentityResolver.codeSignatureHash(auditToken: token)
+        }
+    ) throws -> CertificationAttestationPeerIdentity {
+        var token = try auditTokenProvider(descriptor)
+        let processIdentifier = audit_token_to_pid(token)
+        let processIdentifierVersion = audit_token_to_pidversion(token)
+        let effectiveUserIdentifier = audit_token_to_euid(token)
+        guard processIdentifier > 0,
+              processIdentifierVersion > 0,
+              effectiveUserIdentifier == geteuid(),
+              let startIdentityBefore = processStartIdentityProvider(processIdentifier),
+              startIdentityBefore > 0,
+              let codeSignatureHash = codeSignatureHashProvider(token),
+              codeSignatureHash.count == 20,
+              processStartIdentityProvider(processIdentifier) == startIdentityBefore
+        else {
+            throw CertificationControllerError.runtimeRefusal(
+                "Unix attestation peer audit identity is unavailable or drifted."
+            )
+        }
+        let tokenData = withUnsafeBytes(of: &token) { Data($0) }
+        return CertificationAttestationPeerIdentity(
+            auditToken: tokenData,
+            processIdentifierVersion: processIdentifierVersion,
+            effectiveUserIdentifier: effectiveUserIdentifier,
+            process: CertificationProcessReceipt(
+                pid: processIdentifier,
+                startIdentity: String(startIdentityBefore),
+                codeSignatureHash: codeSignatureHash.map { String(format: "%02x", $0) }.joined()
+            )
+        )
+    }
+
+    static func requireExpected(
+        _ identity: CertificationAttestationPeerIdentity,
+        expected: CertificationProcessReceipt
+    ) throws {
+        guard identity.process == expected else {
+            throw CertificationControllerError.runtimeRefusal(
+                "Unix attestation peer process generation or CDHash does not match the plan."
+            )
+        }
+    }
+
+    static func requireStable(
+        before: CertificationAttestationPeerIdentity,
+        after: CertificationAttestationPeerIdentity
+    ) throws {
+        guard before == after else {
+            throw CertificationControllerError.runtimeRefusal(
+                "Unix attestation peer audit token or live identity changed during the challenge."
+            )
+        }
+    }
+
+    static func codeSignatureHash(auditToken: audit_token_t) -> Data? {
+        let processIdentifier = audit_token_to_pid(auditToken)
+        guard processIdentifier > 0, audit_token_to_pidversion(auditToken) > 0 else { return nil }
+        var token = auditToken
+        var hash = [UInt8](repeating: 0, count: 20)
+        let result = hash.withUnsafeMutableBytes { bytes in
+            withUnsafeMutablePointer(to: &token) { tokenPointer in
+                certification_csops_audittoken(
+                    processIdentifier,
+                    5,
+                    bytes.baseAddress,
+                    bytes.count,
+                    tokenPointer
+                )
+            }
+        }
+        guard result == 0, hash.contains(where: { $0 != 0 }) else { return nil }
+        return Data(hash)
+    }
+}
+
 enum CertificationAttestationChallenge {
     static func random() throws -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
@@ -202,6 +320,7 @@ enum CertificationUnixSocket {
         let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw self.transportError("create Unix socket") }
         do {
+            try self.setCloseOnExec(descriptor)
             try self.disableSIGPIPE(descriptor)
             try self.setTimeout(descriptor, milliseconds: timeoutMilliseconds)
             var address = try self.address(path: path)
@@ -227,6 +346,17 @@ enum CertificationUnixSocket {
               peer > 0
         else { throw self.transportError("read Unix peer PID") }
         return peer
+    }
+
+    static func peerAuditToken(_ descriptor: Int32) throws -> audit_token_t {
+        var token = audit_token_t()
+        var length = socklen_t(MemoryLayout<audit_token_t>.size)
+        guard getsockopt(descriptor, SOL_LOCAL, LOCAL_PEERTOKEN, &token, &length) == 0,
+              length == MemoryLayout<audit_token_t>.size,
+              audit_token_to_pid(token) > 0,
+              audit_token_to_pidversion(token) > 0
+        else { throw self.transportError("read Unix peer audit token") }
+        return token
     }
 
     static func writeJSON(_ value: some Encodable, descriptor: Int32) throws {
@@ -297,6 +427,7 @@ enum CertificationUnixSocket {
         let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw self.transportError("create Unix listener") }
         do {
+            try self.setCloseOnExec(descriptor)
             try self.disableSIGPIPE(descriptor)
             var address = try self.address(path: path)
             let addressLength = socklen_t(address.sun_len)
@@ -314,6 +445,18 @@ enum CertificationUnixSocket {
         } catch {
             close(descriptor)
             unlink(path)
+            throw error
+        }
+    }
+
+    static func acceptClient(_ listener: Int32) throws -> Int32 {
+        let client = accept(listener, nil, nil)
+        guard client >= 0 else { return client }
+        do {
+            try self.setCloseOnExec(client)
+            return client
+        } catch {
+            close(client)
             throw error
         }
     }
@@ -367,6 +510,13 @@ enum CertificationUnixSocket {
             &noSignal,
             socklen_t(MemoryLayout<Int32>.size)
         ) == 0 else { throw self.transportError("disable SIGPIPE on Unix socket") }
+    }
+
+    static func setCloseOnExec(_ descriptor: Int32) throws {
+        let flags = fcntl(descriptor, F_GETFD)
+        guard flags >= 0, fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) == 0 else {
+            throw self.transportError("set close-on-exec")
+        }
     }
 
     private static func writeAll(_ data: Data, descriptor: Int32) throws {
@@ -439,7 +589,12 @@ final class CertificationObserverAttestationServer: @unchecked Sendable {
         while !Task.isCancelled {
             let listener = self.lock.withLock { self.descriptor }
             guard listener >= 0 else { return }
-            let client = accept(listener, nil, nil)
+            let client: Int32
+            do {
+                client = try CertificationUnixSocket.acceptClient(listener)
+            } catch {
+                return
+            }
             if client >= 0 {
                 self.lock.withLock { self.activeClient = client }
                 do {

@@ -283,6 +283,7 @@ const wait = (file) => new Promise((resolve) => {
 });
 if (args[0] === '--attest-monitor') {
   const plan = read(args[1]);
+  if (!plan.release_path || !plan.expected_peer || 'expected_peer_pid' in plan) process.exit(12);
   const socket = net.createConnection(plan.socket_path);
   const challenge = 'c'.repeat(64);
   let input = '';
@@ -301,10 +302,17 @@ if (args[0] === '--attest-monitor') {
       const key = plan.response_kind === 'monitor' ? 'monitor_evidence_sha256' : 'witness_sha256';
       response[key] = 'f'.repeat(64);
     }
+    const processKey = plan.response_kind === 'monitor' ? 'monitor' : 'observer';
+    if (JSON.stringify(canonical(response[processKey])) !== JSON.stringify(canonical(plan.expected_peer))) {
+      process.exit(13);
+    }
     write(plan.output_path, response);
     socket.end();
   });
-  socket.on('close', () => process.exit(0));
+  socket.on('close', async () => {
+    await wait(plan.release_path);
+    process.exit(0);
+  });
 } else if (args[0] === '--plan') {
   const plan = read(args[1]);
   const root = plan.artifacts_directory;
@@ -654,7 +662,10 @@ async function runInteractive(fix, {
     }
   });
   child.stderr.on('data', (chunk) => { stderr += chunk; });
-  const result = await new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })));
+  const result = await new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, signal) => resolve({ code, signal }));
+  });
   return { ...result, stdout, stderr, events };
 }
 
@@ -755,6 +766,23 @@ test('Bridge host commit must equal the coordinator Git HEAD even in test runtim
   }
 });
 
+test('duplicate exact physical targets fail before child launch', () => {
+  const fix = fixture();
+  try {
+    fix.plan.controllers[1].target = structuredClone(fix.plan.controllers[0].target);
+    fix.plan.test_runtime.finalizer_path = 'deliberately-relative-after-target-validation';
+    writePrivate(fix.planPath, fix.plan);
+    const run = spawnSync(process.execPath, [coordinator, '--plan', fix.planPath], {
+      encoding: 'utf8', env: coordinatorEnvironment(fix),
+    });
+    assert.notEqual(run.status, 0);
+    assert.match(run.stderr, /duplicate exact physical target|physical targets must be distinct/);
+    assert.deepEqual(fs.readdirSync(fix.runs), []);
+  } finally {
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
 test('operation timeout covers typing, both external windows, and lifecycle overhead', () => {
   const fix = fixture();
   try {
@@ -791,13 +819,17 @@ test('21-second asymmetric window budget rejects the former two-window-only form
 test('greater-than-20-second asymmetric external window retains the bounded controller mutation', async () => {
   const fix = fixture();
   try {
-    fix.plan.external_foreground_timeout_seconds = 21;
-    fix.plan.operation_timeout_seconds = 113;
+    fix.plan.external_foreground_timeout_seconds = 30;
+    fix.plan.operation_timeout_seconds = 140;
     writePrivate(fix.planPath, fix.plan);
+    const performDelayMilliseconds = 21_000;
+    assert.ok(
+      (fix.plan.external_foreground_timeout_seconds * 1000) - performDelayMilliseconds >= 3000,
+    );
     const startedAt = Date.now();
     const run = await runInteractive(fix, {
-      env: { FAKE_CONTROLLER_MUTATION_DELAY_MILLISECONDS: '22000' },
-      markerDelayMilliseconds: { perform: 20050, restore: 25 },
+      env: { FAKE_CONTROLLER_MUTATION_DELAY_MILLISECONDS: '24000' },
+      markerDelayMilliseconds: { perform: performDelayMilliseconds, restore: 25 },
     });
     assert.equal(run.code, 0, run.stderr);
     assert.ok(Date.now() - startedAt > 20_000);
@@ -810,8 +842,8 @@ test('greater-than-20-second asymmetric external window retains the bounded cont
       )));
       const characterCount = [...controllerPlan.type_text].length;
       const typingDurationMilliseconds = characterCount * controllerPlan.typing_delay_milliseconds;
-      assert.equal(characterCount, 820);
-      assert.equal(typingDurationMilliseconds, 41_000);
+      assert.equal(characterCount, 1000);
+      assert.equal(typingDurationMilliseconds, 50_000);
       assert.equal(
         fix.plan.operation_timeout_seconds * 1000,
         typingDurationMilliseconds
@@ -892,6 +924,15 @@ test('sorted-key fake lifecycle reaches ineligible test completion with bounded 
     const preparedArtifacts = path.join(completion.run_root, 'prepared-artifacts');
     assert.ok(fs.statSync(preparedArtifacts).isDirectory());
     assert.ok(fs.existsSync(path.join(preparedArtifacts, 'contract.json')));
+    for (const [kind, processKey] of [['monitor', 'monitor'], ['observer', 'observer']]) {
+      const attestationDirectory = path.join(completion.run_root, 'attestations', kind);
+      const attestationPlan = JSON.parse(fs.readFileSync(path.join(attestationDirectory, 'plan.json')));
+      const attestationResponse = JSON.parse(fs.readFileSync(attestationPlan.output_path));
+      assert.equal('expected_peer_pid' in attestationPlan, false);
+      assert.deepEqual(attestationPlan.expected_peer, attestationResponse[processKey]);
+      assert.equal(path.dirname(attestationPlan.release_path), attestationDirectory);
+      assert.ok(fs.existsSync(attestationPlan.release_path));
+    }
     for (const controllerID of ['controller-a', 'controller-b']) {
       const controllerPlan = JSON.parse(fs.readFileSync(path.join(
         completion.run_root, 'controllers', controllerID, 'plan.json',
