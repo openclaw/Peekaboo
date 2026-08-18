@@ -67,6 +67,7 @@ trap cleanup EXIT
 node --test "$ROOT_DIR/tests/background-computer-use-report.test.mjs"
 node --test "$ROOT_DIR/tests/multi-target-certification.test.mjs"
 node --test "$ROOT_DIR/tests/live-multi-target-certification-coordinator.test.mjs"
+node --test "$ROOT_DIR/scripts/final-qualification/test/qualification-tools.test.mjs"
 
 if ! $REMOVE_ARTIFACT_ROOT; then
     printf 'Background certification self-test passed: %s\n' "$ARTIFACT_ROOT"

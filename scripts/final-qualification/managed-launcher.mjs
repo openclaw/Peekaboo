@@ -1,0 +1,373 @@
+#!/usr/bin/env node
+
+import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  HEX40,
+  HEX64,
+  exactKeys,
+  parseOptions,
+  positiveDecimal,
+  positiveInteger,
+  publishPrivateAtomicNoReplace,
+  readStableFile,
+  readStableJSON,
+  requireCondition,
+  requirePrivateDirectory,
+  requireStableExecutable,
+  sha256,
+} from './lib.mjs';
+
+const TOOL_ROOT = path.dirname(fileURLToPath(import.meta.url));
+
+function requireAbsentPrivateOutput(filePath, label) {
+  requireCondition(path.isAbsolute(filePath), `${label} must be absolute`);
+  requirePrivateDirectory(path.dirname(filePath), `${label} parent`);
+  requireCondition(!fs.existsSync(filePath), `${label} must be absent`);
+}
+
+function validateAgent(spec, plan) {
+  exactKeys(spec.context, ['task_path', 'receipt_directory', 'bridge_socket'], 'launch context');
+  requireCondition(spec.executable === plan.peekaboo_executable, 'Agent executable differs from the live plan');
+  requireCondition(spec.context.bridge_socket === plan.bridge?.socket_path, 'Agent Bridge socket differs from the live plan');
+  requirePrivateDirectory(spec.context.receipt_directory, 'Agent receipt directory', { empty: true });
+  const task = readStableFile(spec.context.task_path, 'Agent task');
+  const taskText = task.bytes.toString('utf8').replace(/\n$/, '');
+  const expectedArguments = [
+    'agent', 'run', taskText, '--no-cache', '--max-steps', '40',
+    '--bridge-socket', spec.context.bridge_socket, '--json',
+  ];
+  requireCondition(taskText.length > 0 && JSON.stringify(spec.arguments) === JSON.stringify(expectedArguments),
+    'Agent argv must exactly equal the closed background-only launch order');
+  return { task, taskText };
+}
+
+function validateCoordinator(spec) {
+  exactKeys(spec.context, ['coordinator_source_path'], 'launch context');
+  const source = readStableFile(spec.context.coordinator_source_path, 'coordinator source', {
+    privateFile: false,
+  });
+  requireCondition(fs.realpathSync(spec.executable) === fs.realpathSync(process.execPath),
+    'coordinator executable is not this exact Node runtime');
+  requireCondition(spec.arguments.length === 3
+    && spec.arguments[0] === spec.context.coordinator_source_path
+    && spec.arguments[1] === '--plan'
+    && spec.arguments[2] === spec.plan_path,
+  'coordinator argv is not the exact source plus one plan');
+  return { source };
+}
+
+function validateSpec(specPath) {
+  const retainedSpec = readStableJSON(specPath, 'managed launch input');
+  const spec = retainedSpec.value;
+  exactKeys(spec, [
+    'version', 'kind', 'plan_path', 'executable', 'arguments', 'identity_handshake_path',
+    'pid_path', 'start_ack_path', 'invocation_receipt_path', 'exit_receipt_path',
+    'stdout_path', 'stderr_path', 'start_timeout_seconds', 'run_timeout_seconds', 'context',
+  ], 'managed launch input');
+  requireCondition(spec.version === 1 && ['agent', 'coordinator'].includes(spec.kind),
+    'managed launch kind/version is invalid');
+  requireCondition(Array.isArray(spec.arguments) && spec.arguments.length > 0
+    && spec.arguments.every((entry) => typeof entry === 'string' && !entry.includes('\0')),
+  'managed launch arguments are invalid');
+  requireCondition(Number.isSafeInteger(spec.start_timeout_seconds)
+    && spec.start_timeout_seconds >= 5 && spec.start_timeout_seconds <= 120,
+  'managed launch start timeout is invalid');
+  requireCondition(Number.isSafeInteger(spec.run_timeout_seconds)
+    && spec.run_timeout_seconds >= 5 && spec.run_timeout_seconds <= 7200,
+  'managed launch run timeout is invalid');
+  const planReceipt = readStableJSON(spec.plan_path, 'live-v4 plan');
+  const plan = planReceipt.value;
+  requireCondition(plan.version === 1 && path.isAbsolute(plan.monitor_executable)
+    && HEX40.test(plan.monitor?.code_signature_hash ?? ''),
+  'live-v4 plan lacks the exact monitor identity');
+  const executable = requireStableExecutable(spec.executable, `${spec.kind} executable`, {
+    allowRootOwner: true,
+  });
+  const monitor = requireStableExecutable(plan.monitor_executable, 'signed monitor executable', {
+    allowRootOwner: true,
+  });
+  const details = spec.kind === 'agent' ? validateAgent(spec, plan) : validateCoordinator(spec, plan);
+  const outputs = [
+    ['identity_handshake_path', spec.identity_handshake_path],
+    ['pid_path', spec.pid_path],
+    ['start_ack_path', spec.start_ack_path],
+    ['invocation_receipt_path', spec.invocation_receipt_path],
+    ['exit_receipt_path', spec.exit_receipt_path],
+    ['stdout_path', spec.stdout_path],
+    ['stderr_path', spec.stderr_path],
+  ];
+  requireCondition(new Set(outputs.map(([, value]) => value)).size === outputs.length,
+    'managed launch output paths must be distinct');
+  for (const [label, value] of outputs) requireAbsentPrivateOutput(value, label);
+  return { spec, retainedSpec, plan, planReceipt, executable, monitor, details };
+}
+
+function validateMonitor(monitor, expectedCDHash) {
+  const verify = spawnSync('/usr/bin/codesign', ['--verify', '--strict', monitor.path], {
+    encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024,
+  });
+  requireCondition(!verify.error && verify.status === 0,
+    `monitor signature verification failed: ${verify.stderr?.trim() || verify.error?.message}`);
+  const display = spawnSync('/usr/bin/codesign', ['-dvvv', monitor.path], {
+    encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024,
+  });
+  const text = `${display.stdout ?? ''}\n${display.stderr ?? ''}`;
+  const matches = [...text.matchAll(/^CDHash=([0-9a-f]{40})$/gm)].map((match) => match[1]);
+  requireCondition(!display.error && display.status === 0 && matches.length === 1
+    && matches[0] === expectedCDHash, 'monitor live CDHash differs from the plan');
+}
+
+function compileGuardian() {
+  const source = path.join(TOOL_ROOT, 'managed-launch-suspended.c');
+  readStableFile(source, 'suspended launch guardian source', { privateFile: false });
+  const directory = fs.mkdtempSync('/private/tmp/pbq-managed-launch-');
+  fs.chmodSync(directory, 0o700);
+  const binary = path.join(directory, 'managed-launch-suspended');
+  const build = spawnSync('/usr/bin/xcrun', [
+    'clang', '-std=c11', '-Wall', '-Wextra', '-Werror', source, '-o', binary,
+  ], { encoding: 'utf8', timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
+  requireCondition(!build.error && build.status === 0,
+    `cannot build suspended launch guardian: ${build.stderr?.trim() || build.error?.message}`);
+  return { directory, binary };
+}
+
+function cleanupGuardian(value) {
+  try { fs.unlinkSync(value.binary); } catch {}
+  try { fs.rmdirSync(value.directory); } catch {}
+}
+
+function startTail(filePath, stream) {
+  let offset = 0;
+  const drain = () => {
+    if (!fs.existsSync(filePath)) return;
+    const size = fs.statSync(filePath).size;
+    if (size <= offset) return;
+    const descriptor = fs.openSync(filePath, 'r');
+    try {
+      const bytes = Buffer.alloc(size - offset);
+      fs.readSync(descriptor, bytes, 0, bytes.length, offset);
+      offset = size;
+      stream.write(bytes);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+  };
+  const timer = setInterval(drain, 25);
+  return () => { clearInterval(timer); drain(); };
+}
+
+function monitorHandshake(fix, pid, spawnedAt) {
+  const run = spawnSync(fix.plan.monitor_executable, [
+    'process-identity', '--pid', String(pid), '--output', fix.spec.identity_handshake_path,
+  ], { encoding: 'utf8', timeout: 15_000, maxBuffer: 1024 * 1024 });
+  requireCondition(!run.error && run.status === 0,
+    `signed monitor identity handshake failed: ${run.stderr?.trim() || run.error?.message}`);
+  const retained = readStableJSON(fix.spec.identity_handshake_path, 'monitor identity handshake');
+  exactKeys(retained.value, ['pid', 'startIdentity'], 'monitor identity handshake');
+  requireCondition(retained.value.pid === pid && positiveDecimal(retained.value.startIdentity),
+    'monitor identity handshake differs from the suspended child');
+  requireCondition(Number(retained.info.mtimeNs / 1_000_000n) + 1000 >= spawnedAt,
+    'monitor identity handshake predates the suspended child');
+  return {
+    retained,
+    pid,
+    start_identity: retained.value.startIdentity,
+  };
+}
+
+function invocationReceipt(fix, identity, spawnedAt) {
+  const common = {
+    version: 1,
+    kind: fix.spec.kind,
+    pid: identity.pid,
+    start_identity: identity.start_identity,
+    executable_path: fix.executable.path,
+    executable_sha256: fix.executable.sha256,
+    arguments: structuredClone(fix.spec.arguments),
+    plan_path: fix.planReceipt.path,
+    plan_sha256: fix.planReceipt.sha256,
+    monitor_executable_path: fix.monitor.path,
+    monitor_executable_sha256: fix.monitor.sha256,
+    monitor_code_signature_hash: fix.plan.monitor.code_signature_hash,
+    identity_handshake_path: identity.retained.path,
+    identity_handshake_sha256: identity.retained.sha256,
+    stdout_path: fix.spec.stdout_path,
+    stderr_path: fix.spec.stderr_path,
+    captured_at_milliseconds: Date.now(),
+  };
+  if (fix.spec.kind === 'agent') {
+    return {
+      ...common,
+      task_path: fix.details.task.path,
+      task_sha256: fix.details.task.sha256,
+      receipt_directory: fix.spec.context.receipt_directory,
+      bridge_socket: fix.spec.context.bridge_socket,
+      background_only: true,
+      allow_foreground: false,
+      shell_available: false,
+    };
+  }
+  return {
+    ...common,
+    coordinator_source_path: fix.details.source.path,
+    coordinator_source_sha256: fix.details.source.sha256,
+  };
+}
+
+function helperArguments(fix, guardian) {
+  return [
+    '--stdout', fix.spec.stdout_path,
+    '--stderr', fix.spec.stderr_path,
+    '--pid-file', fix.spec.pid_path,
+    '--ack-file', fix.spec.start_ack_path,
+    '--start-timeout', String(fix.spec.start_timeout_seconds),
+    '--run-timeout', String(fix.spec.run_timeout_seconds),
+    '--', fix.spec.executable, ...fix.spec.arguments,
+  ];
+}
+
+export async function runManagedLaunch(specPath) {
+  const fix = validateSpec(specPath);
+  validateMonitor(fix.monitor, fix.plan.monitor.code_signature_hash);
+  const guardian = compileGuardian();
+  const helper = spawn(guardian.binary, helperArguments(fix, guardian), {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: fix.spec.kind === 'agent'
+      ? { ...process.env, PEEKABOO_OPERATION_RECEIPT_DIRECTORY: fix.spec.context.receipt_directory }
+      : { ...process.env },
+  });
+  helper.stdout.setEncoding('utf8');
+  helper.stderr.setEncoding('utf8');
+  let buffered = '';
+  let helperStderr = '';
+  let childPID = null;
+  let startedAt = null;
+  let exitEvent = null;
+  let resolveSpawned;
+  let rejectSpawned;
+  const spawned = new Promise((resolve, reject) => { resolveSpawned = resolve; rejectSpawned = reject; });
+  const helperClosed = new Promise((resolve, reject) => {
+    helper.once('error', reject);
+    helper.once('close', (code, signal) => resolve({ code, signal }));
+  });
+  helper.stdout.on('data', (chunk) => {
+    buffered += chunk;
+    while (buffered.includes('\n')) {
+      const index = buffered.indexOf('\n');
+      const line = buffered.slice(0, index);
+      buffered = buffered.slice(index + 1);
+      const fields = line.split(' ');
+      if (fields[0] === 'SPAWNED' && fields.length === 3) {
+        childPID = Number(fields[1]);
+        startedAt = Number(fields[2]);
+        resolveSpawned({ childPID, startedAt });
+      } else if (fields[0] === 'RELEASED' && fields.length === 2) {
+        process.stderr.write(`managed-launcher: released authenticated ${fix.spec.kind} pid ${fields[1]}\n`);
+      } else if (fields[0] === 'EXIT' && fields.length === 5) {
+        exitEvent = {
+          pid: Number(fields[1]),
+          exitCode: Number(fields[2]),
+          signal: Number(fields[3]),
+          completedAt: Number(fields[4]),
+        };
+      } else if (line.length > 0) {
+        rejectSpawned(new Error(`guardian emitted unknown protocol line: ${line}`));
+      }
+    }
+  });
+  helper.stderr.on('data', (chunk) => { helperStderr += chunk; });
+  helper.once('error', rejectSpawned);
+  helper.once('close', (code) => {
+    if (childPID === null) rejectSpawned(new Error(`guardian exited before spawn (${code}): ${helperStderr.trim()}`));
+  });
+  let stopStdout = () => {};
+  let stopStderr = () => {};
+  try {
+    const launch = await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('timed out waiting for suspended child')),
+        fix.spec.start_timeout_seconds * 1000,
+      );
+      spawned.then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        (error) => { clearTimeout(timer); reject(error); },
+      );
+    });
+    const pidReceipt = readStableJSON(fix.spec.pid_path, 'suspended child PID receipt');
+    exactKeys(pidReceipt.value, ['version', 'pid'], 'suspended child PID receipt');
+    requireCondition(pidReceipt.value.version === 1 && pidReceipt.value.pid === launch.childPID,
+      'suspended child PID file differs from guardian protocol');
+    stopStdout = startTail(fix.spec.stdout_path, process.stdout);
+    stopStderr = startTail(fix.spec.stderr_path, process.stderr);
+    const identity = monitorHandshake(fix, launch.childPID, launch.startedAt);
+    const invocation = invocationReceipt(fix, identity, launch.startedAt);
+    const invocationPublished = publishPrivateAtomicNoReplace(
+      fix.spec.invocation_receipt_path,
+      invocation,
+    );
+    publishPrivateAtomicNoReplace(fix.spec.start_ack_path, {
+      version: 1,
+      pid: identity.pid,
+      start_identity: identity.start_identity,
+      phase: 'start',
+      invocation_sha256: invocationPublished.sha256,
+    });
+    const helperResult = await helperClosed;
+    stopStdout();
+    stopStderr();
+    requireCondition(helperResult.code === 0 && helperResult.signal === null,
+      `guardian failed (${helperResult.code ?? helperResult.signal}): ${helperStderr.trim()}`);
+    requireCondition(exitEvent && exitEvent.pid === identity.pid && positiveInteger(exitEvent.completedAt),
+      'guardian omitted the exact child exit event');
+    const exitReceipt = {
+      version: 1,
+      process: fix.spec.kind,
+      pid: identity.pid,
+      start_identity: identity.start_identity,
+      started_at_milliseconds: launch.startedAt,
+      completed_at_milliseconds: exitEvent.completedAt,
+      exit_code: exitEvent.exitCode >= 0 ? exitEvent.exitCode : null,
+      signal: exitEvent.signal > 0 ? exitEvent.signal : null,
+    };
+    const exitPublished = publishPrivateAtomicNoReplace(fix.spec.exit_receipt_path, exitReceipt);
+    return {
+      kind: fix.spec.kind,
+      pid: identity.pid,
+      start_identity: identity.start_identity,
+      invocation_sha256: invocationPublished.sha256,
+      exit_sha256: exitPublished.sha256,
+      exit_code: exitReceipt.exit_code,
+      signal: exitReceipt.signal,
+    };
+  } catch (error) {
+    if (childPID !== null) {
+      try { process.kill(childPID, 'SIGKILL'); } catch {}
+    }
+    try { helper.kill('SIGKILL'); } catch {}
+    throw error;
+  } finally {
+    stopStdout();
+    stopStderr();
+    cleanupGuardian(guardian);
+  }
+}
+
+function invokedAsScript() {
+  return process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+}
+
+if (invokedAsScript()) {
+  try {
+    const options = parseOptions(process.argv.slice(2), ['spec']);
+    const result = await runManagedLaunch(options.spec);
+    process.stderr.write(`managed-launcher: ${JSON.stringify(result)}\n`);
+    if (result.signal !== null) process.exitCode = 128 + result.signal;
+    else process.exitCode = result.exit_code ?? 1;
+  } catch (error) {
+    process.stderr.write(`managed-launcher: ${error.message}\n`);
+    process.exitCode = 1;
+  }
+}

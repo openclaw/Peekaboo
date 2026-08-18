@@ -298,6 +298,15 @@ The final live finalizer exit is authoritative. The persisted summary is display
 `certified` field. Its freshly recomputed `offline_protocol_validation.success` is only a receipt-protocol sub-gate;
 `verify-digests.success` means only that documented digest projections match.
 
+The source-owned release-qualification layer in `scripts/final-qualification/` composes that authoritative local run
+with the real Agent/integrated-Computer-Use overlap, five 42-case cycles, adjunct evidence, and two-host deployment
+proof. Its version-2 manifest requires byte-identical normalized local/Studio installed inventories, both elevation
+receipts, and complete local+Studio before/during/after process trees collected from explicitly named task roots. It
+rejects any task-owned root or descendant using CUA, AppleScript/JXA/OSA interpreters, virtualization, VNC, Screen
+Sharing, or remote-desktop helpers, while unrelated ambient services remain outside its closed tree and are never
+stopped. A separate bound executable/script policy report covers in-process native paths that ancestry alone cannot
+prove. See `scripts/final-qualification/README.md` for the exact schemas and commands.
+
 For the interaction commands exercised here, background is the omission contract: `--foreground` is the only consent
 for focus/activation, global keyboard input, physical cursor movement, or synthetic pointer/wheel events. Explicit app
 switching and other inherently foreground commands are outside that statement. The optional physical phase is separate:
