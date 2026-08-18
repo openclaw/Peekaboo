@@ -19,7 +19,7 @@ extension MCPToolContext {
     @MainActor
     func backgroundTargetRevalidation(
         _ authorization: BackgroundTargetAuthorization,
-        toolName: String) async -> ToolResponse?
+        toolName: String) async throws -> ToolResponse?
     {
         guard let plan = authorization.targetPlan else { return nil }
         if let authority = plan.mutationAuthority {
@@ -34,7 +34,10 @@ extension MCPToolContext {
                     toolName: toolName,
                     applicationBundleIdentifier: application.bundleIdentifier,
                     applicationName: application.name)
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
+                try Task.checkCancellation()
                 let detail = plan.targetIdentity.exactWindow == nil
                     ? "the selected application changed process generation before dispatch"
                     : "the selected window changed identity or bounds before dispatch"
@@ -62,7 +65,10 @@ extension MCPToolContext {
             {
                 return rejection
             }
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            try Task.checkCancellation()
             return self.executionPolicy.unresolvedTargetRejection(
                 toolName: toolName,
                 detail: "the selected application disappeared before dispatch")
@@ -82,7 +88,10 @@ extension MCPToolContext {
                     toolName: toolName,
                     detail: "the selected window changed identity or bounds before dispatch")
             }
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            try Task.checkCancellation()
             return self.executionPolicy.unresolvedTargetRejection(
                 toolName: toolName,
                 detail: "the selected window disappeared before dispatch")

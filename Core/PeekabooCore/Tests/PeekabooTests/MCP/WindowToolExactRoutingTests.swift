@@ -164,6 +164,29 @@ struct WindowToolExactRoutingTests {
         #expect(service.receivedIdentities.map(\.ownerProcessStartIdentity) == [7])
     }
 
+    @Test
+    @MainActor
+    func `background target revalidation preserves cancellation before dispatch`() async throws {
+        let service = ExactRoutingWindowService()
+        service.mutationInventoryErrorStartingAtCall = (2, CancellationError())
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: Self.fixtureApplications(),
+            windows: service,
+            executionPolicy: .backgroundOnly)
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await context.execute(
+                tool: WindowTool(context: context),
+                arguments: ToolArguments(raw: [
+                    "action": "close",
+                    "app": "Fixture",
+                ]))
+        }
+
+        #expect(service.mutationDispatchCount == 0)
+        #expect(service.closeTargets.isEmpty)
+    }
+
     @Test(arguments: ["close", "minimize", "restore", "maximize", "move", "resize", "set-bounds"])
     @MainActor
     func `background window selectors stay pinned across post-authorization inventory reorder`(
@@ -818,6 +841,8 @@ private final class ExactRoutingWindowService: WindowManagementActionResultProvi
     nonisolated(unsafe) var replacementWindowStartingAtListCall: (Int, ServiceWindowInfo)?
     nonisolated(unsafe) var listHandler: ((WindowTarget, Int) -> [ServiceWindowInfo])?
     nonisolated(unsafe) var mutationInventoryWarnings: [String] = []
+    nonisolated(unsafe) var mutationInventoryErrorStartingAtCall: (Int, any Error)?
+    private(set) nonisolated(unsafe) var mutationInventoryRequestCount = 0
     private(set) nonisolated(unsafe) var mutationDispatchCount = 0
 
     func listWindows(target: WindowTarget) async throws -> [ServiceWindowInfo] {
@@ -844,6 +869,12 @@ private final class ExactRoutingWindowService: WindowManagementActionResultProvi
     func windowMutationInventory(
         target: WindowTarget) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo>
     {
+        self.mutationInventoryRequestCount += 1
+        if let (startingCall, error) = self.mutationInventoryErrorStartingAtCall,
+           self.mutationInventoryRequestCount >= startingCall
+        {
+            throw error
+        }
         let windows = try await self.listWindows(target: target)
         guard !self.mutationInventoryWarnings.isEmpty else { return .complete(windows) }
         return .partial(windows, warnings: self.mutationInventoryWarnings)
