@@ -12,6 +12,11 @@ func commandActionRoute(for services: any PeekabooServiceProviding) -> DesktopAc
 /// retains the command-facing validation and result surface used by the CLI.
 @MainActor
 final class CommandActionSequenceAccumulator {
+    private struct MissingReceiptPolicy {
+        let receiptlessStep: DesktopActionSequenceAccumulator.Step?
+        let defaultDispatchedUnitCount: DesktopActionOutcome.DispatchUnitCount?
+    }
+
     private var sequence = UIAutomationActionResultSequenceAccumulator(
         targetProjectionPolicy: .coalescedIdentity
     )
@@ -28,13 +33,15 @@ final class CommandActionSequenceAccumulator {
     func record(
         _ result: UIAutomationActionResult<some Sendable>,
         operation: String = "Desktop action",
-        receiptlessStep: DesktopActionSequenceAccumulator.Step? = nil
+        receiptlessStep: DesktopActionSequenceAccumulator.Step? = nil,
+        defaultDispatchedUnitCount: DesktopActionOutcome.DispatchUnitCount? = .one
     ) throws {
         try self.record(
             outcome: result.outcome,
             targetIdentity: result.targetIdentity,
             operation: operation,
-            receiptlessStep: receiptlessStep
+            receiptlessStep: receiptlessStep,
+            defaultDispatchedUnitCount: defaultDispatchedUnitCount
         )
     }
 
@@ -42,14 +49,18 @@ final class CommandActionSequenceAccumulator {
         outcome: DesktopActionOutcome?,
         targetIdentity: DesktopTargetIdentity? = nil,
         operation: String = "Desktop action",
-        receiptlessStep: DesktopActionSequenceAccumulator.Step? = nil
+        receiptlessStep: DesktopActionSequenceAccumulator.Step? = nil,
+        defaultDispatchedUnitCount: DesktopActionOutcome.DispatchUnitCount? = .one
     ) throws {
         try self.record(
             outcome: outcome,
             targetIdentity: targetIdentity,
             attribution: .sequenceTarget,
             operation: operation,
-            receiptlessStep: receiptlessStep
+            missingReceiptPolicy: MissingReceiptPolicy(
+                receiptlessStep: receiptlessStep,
+                defaultDispatchedUnitCount: defaultDispatchedUnitCount
+            )
         )
     }
 
@@ -58,7 +69,7 @@ final class CommandActionSequenceAccumulator {
         targetIdentity: DesktopTargetIdentity?,
         attribution: UIAutomationActionResultSequenceAccumulator.PhaseAttributionRule,
         operation: String,
-        receiptlessStep: DesktopActionSequenceAccumulator.Step?
+        missingReceiptPolicy: MissingReceiptPolicy
     ) throws {
         if let outcome {
             try Self.requireSuccessfulOutcome(
@@ -68,12 +79,14 @@ final class CommandActionSequenceAccumulator {
             )
         }
 
-        let step = outcome.map {
-            DesktopActionSequenceAccumulator.Step.reportedOutcome(
-                $0,
-                defaultDispatchedUnitCount: .one
-            )
-        } ?? receiptlessStep
+        let step = outcome.map { outcome in
+            missingReceiptPolicy.defaultDispatchedUnitCount.map {
+                DesktopActionSequenceAccumulator.Step.reportedOutcome(
+                    outcome,
+                    defaultDispatchedUnitCount: $0
+                )
+            } ?? .outcome(outcome)
+        } ?? missingReceiptPolicy.receiptlessStep
         let effectiveAttribution: UIAutomationActionResultSequenceAccumulator.PhaseAttributionRule =
             attribution == .requiredTarget && targetIdentity != nil ? .sequenceTarget : attribution
         let priorConflict = self.sequence.resolution.targetConflictError
@@ -110,14 +123,18 @@ final class CommandActionSequenceAccumulator {
         outcome: DesktopActionOutcome?,
         targetIdentity: DesktopTargetIdentity?,
         operation: String,
-        receiptlessStep: DesktopActionSequenceAccumulator.Step? = nil
+        receiptlessStep: DesktopActionSequenceAccumulator.Step? = nil,
+        defaultDispatchedUnitCount: DesktopActionOutcome.DispatchUnitCount? = .one
     ) throws {
         try self.record(
             outcome: outcome,
             targetIdentity: targetIdentity,
             attribution: .requiredTarget,
             operation: operation,
-            receiptlessStep: receiptlessStep
+            missingReceiptPolicy: MissingReceiptPolicy(
+                receiptlessStep: receiptlessStep,
+                defaultDispatchedUnitCount: defaultDispatchedUnitCount
+            )
         )
     }
 

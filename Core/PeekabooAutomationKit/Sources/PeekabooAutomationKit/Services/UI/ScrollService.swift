@@ -218,12 +218,8 @@ public final class ScrollService {
                     }
                 },
                 synthesis: DesktopOperationPlan.SynthesisRoute {
-                    try await self.performSyntheticScroll(request)
-                    return .dispatchedUnverified(
-                        delivery: DesktopActionOutcome.Delivery(
-                            mechanism: .globalEvents,
-                            mode: .foreground),
-                        evidence: .deliveryAccepted)
+                    let unitCount = try await self.performSyntheticScroll(request)
+                    return Self.syntheticScrollOutcome(unitCount: unitCount)
                 },
                 postvalidate: { result in
                     guard !request.foreground, let snapshotID = captureReceipt.snapshotID else { return }
@@ -323,6 +319,16 @@ public final class ScrollService {
         }
     }
 
+    private nonisolated static func syntheticScrollOutcome(unitCount: Int) -> DesktopActionOutcome {
+        guard let unitCount = DesktopActionOutcome.DispatchUnitCount(unitCount) else {
+            return .confirmedNoChange()
+        }
+        return .dispatchedUnverified(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: unitCount)
+    }
+
     private static func findDetectedElement(matching query: String, in detectionResult: ElementDetectionResult)
         -> DetectedElement?
     {
@@ -343,7 +349,7 @@ public final class ScrollService {
         }
     }
 
-    private func performSyntheticScroll(_ request: ScrollRequest) async throws {
+    private func performSyntheticScroll(_ request: ScrollRequest) async throws -> Int {
         let scrollPoint = try await self.resolveScrollPoint(request)
         let (deltaX, deltaY) = self.getScrollDeltas(for: request.direction)
         let context = ScrollExecutionContext(
@@ -353,7 +359,7 @@ public final class ScrollService {
             smooth: request.smooth,
             delay: request.delay)
 
-        try await self.performScroll(context)
+        return try await self.performScroll(context)
     }
 
     private func bundleIdentifier(snapshotId: String?) async -> String? {
@@ -408,7 +414,7 @@ public final class ScrollService {
             snapshots: self.snapshotManager)
     }
 
-    private func performScroll(_ context: ScrollExecutionContext) async throws {
+    private func performScroll(_ context: ScrollExecutionContext) async throws -> Int {
         let absoluteAmount = abs(context.amount)
         let (tickCount, tickSize) = self.tickConfiguration(amount: absoluteAmount, smooth: context.smooth)
         self.logger.debug("Scrolling \(tickCount, privacy: .public) ticks of size \(tickSize, privacy: .public)")
@@ -420,6 +426,7 @@ public final class ScrollService {
                 self.logger.debug("Scroll progress: \(tick)/\(tickCount)")
             }
         }
+        return tickCount
     }
 
     private func postScrollTick(context: ScrollExecutionContext, tickSize: Int) throws {

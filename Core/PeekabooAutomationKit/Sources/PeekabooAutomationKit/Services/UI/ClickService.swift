@@ -64,6 +64,8 @@ private struct ClickExecutionRequest: Sendable {
     let laneCompletion: @MainActor @Sendable (UIInputExecutionResult) async -> Void
 }
 
+typealias TabSelectionVerifier = @MainActor (AutomationElement, Int?) async throws -> Bool
+
 private func validatedClickWindowID(_ windowID: Int?) throws -> CGWindowID? {
     guard let windowID else { return nil }
     guard windowID > 0, let cgWindowID = CGWindowID(exactly: windowID) else {
@@ -106,6 +108,7 @@ public final class ClickService {
     private let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
     private let desktopOperationExecutor: DesktopOperationExecutor
     private let operationFinalizer: @MainActor () -> Void
+    private let tabSelectionVerifier: TabSelectionVerifier
 
     public convenience init(
         snapshotManager: (any SnapshotManagerProtocol)? = nil,
@@ -130,7 +133,8 @@ public final class ClickService {
         processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? =
             SystemIdentityResolver.processStartIdentity,
         desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
-        operationFinalizer: @escaping @MainActor () -> Void = {})
+        operationFinalizer: @escaping @MainActor () -> Void = {},
+        tabSelectionVerifier: @escaping TabSelectionVerifier = ClickService.verifyTabSelection)
     {
         self.snapshotManager = snapshotManager ?? SnapshotManager()
         self.inputPolicy = inputPolicy
@@ -141,6 +145,16 @@ public final class ClickService {
         self.processStartIdentityProvider = processStartIdentityProvider
         self.desktopOperationExecutor = desktopOperationExecutor
         self.operationFinalizer = operationFinalizer
+        self.tabSelectionVerifier = tabSelectionVerifier
+    }
+
+    private static func verifyTabSelection(_ element: AutomationElement, valueBefore: Int?) async throws -> Bool {
+        guard element.subrole == "AXTabButton", valueBefore == 0 else { return false }
+        try await Task.sleep(for: .milliseconds(50))
+        return ActionInputDriver.tabPressDidNotSelect(
+            subrole: element.subrole,
+            valueBefore: valueBefore,
+            valueAfter: element.intAttribute(AXAttributeNames.kAXValueAttribute))
     }
 
     // MARK: - Private Methods
@@ -182,18 +196,18 @@ public final class ClickService {
                         cause: error)
                 }
             }
-            if element.subrole == "AXTabButton", valueBefore == 0 {
-                // SwiftUI tabs can report a successful AXPress without selecting. Give working
-                // native tab controls a brief settle window, then fall back only for a real no-op.
-                try await Task.sleep(for: .milliseconds(50))
-                let valueAfter = element.intAttribute(AXAttributeNames.kAXValueAttribute)
-                if ActionInputDriver.tabPressDidNotSelect(
-                    subrole: element.subrole,
-                    valueBefore: valueBefore,
-                    valueAfter: valueAfter)
-                {
+            let tabPressDidNotSelect: Bool
+            do {
+                tabPressDidNotSelect = try await self.tabSelectionVerifier(element, valueBefore)
+            } catch {
+                guard result.outcome.dispatchState.mutationDispatched else { throw error }
+                throw Self.unconfirmedTabPressFailure(result, cause: error)
+            }
+            if tabPressDidNotSelect {
+                guard result.outcome.dispatchState.mutationDispatched else {
                     throw ActionInputError.unsupported(.actionUnsupported)
                 }
+                throw Self.unconfirmedTabPressFailure(result)
             }
             return result
         case .right:
@@ -223,6 +237,19 @@ public final class ClickService {
         else {
             throw FocusedElementReceiptError.elementOutsideWindow
         }
+    }
+
+    private static func unconfirmedTabPressFailure(
+        _ result: UIInputExecutionResult.Action,
+        cause: (any Error)? = nil) -> DesktopActionFailure
+    {
+        .indeterminate(
+            delivery: result.outcome.delivery,
+            evidence: .completionUnknown,
+            unitCount: result.outcome.dispatchState.unitCount ?? .one,
+            message: "Accessibility tab press was accepted but selection could not be confirmed",
+            hint: "Observe the target tab before taking another click action.",
+            causeDescription: cause?.localizedDescription)
     }
 
     private func performSyntheticClick(

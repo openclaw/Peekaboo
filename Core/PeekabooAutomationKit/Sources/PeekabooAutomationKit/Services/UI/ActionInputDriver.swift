@@ -237,7 +237,7 @@ struct ActionInputDriver: ActionInputDriving {
     }
 
     nonisolated static func shouldContinueTryingScrollAction(after error: ActionInputError) -> Bool {
-        error.isUnsupported || error == .targetUnavailable
+        error.isUnsupported
     }
 
     nonisolated static func canFocusForClick(
@@ -264,10 +264,43 @@ struct ActionInputDriver: ActionInputDriving {
     }
 
     nonisolated static func scrollFallbackError(from error: ActionInputError?) -> ActionInputError {
-        if error == .targetUnavailable {
-            return .unsupported(.actionUnsupported)
+        error ?? .unsupported(.actionUnsupported)
+    }
+
+    private nonisolated static func scrollFailureMayHaveDispatched(_ error: ActionInputError) -> Bool {
+        switch error {
+        case .targetUnavailable, .failed:
+            true
+        case .unsupported, .staleElement, .permissionDenied:
+            false
         }
-        return error ?? .unsupported(.actionUnsupported)
+    }
+
+    private nonisolated static func scrollProgressFailure(
+        completedUnitCount: Int,
+        currentUnitMayHaveDispatched: Bool,
+        requestedUnitCount: Int,
+        delivery: DesktopActionOutcome.Delivery,
+        cause: ActionInputError) -> DesktopActionFailure
+    {
+        let possibleUnitCount = completedUnitCount + (currentUnitMayHaveDispatched ? 1 : 0)
+        let message = "Scroll stopped after \(completedUnitCount) of \(requestedUnitCount) requested units"
+        let hint = "Observe the target before taking another scroll action."
+        if currentUnitMayHaveDispatched {
+            return .indeterminate(
+                delivery: delivery,
+                evidence: .completionUnknown,
+                unitCount: DesktopActionOutcome.DispatchUnitCount(possibleUnitCount),
+                message: message,
+                hint: hint,
+                causeDescription: cause.localizedDescription)
+        }
+        return .partial(
+            delivery: delivery,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(completedUnitCount),
+            message: message,
+            hint: hint,
+            causeDescription: cause.localizedDescription)
     }
 
     private func performAction(_ actionName: String, on element: any AutomationElementRepresenting)
@@ -282,7 +315,8 @@ struct ActionInputDriver: ActionInputDriving {
             return UIInputExecutionResult.Action(
                 outcome: .dispatchedUnverified(
                     delivery: Self.accessibilityActionDelivery,
-                    evidence: .deliveryAccepted),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one),
                 actionName: actionName,
                 anchorPoint: element.anchorPoint,
                 elementRole: element.role)
@@ -626,34 +660,63 @@ struct ActionInputDriver: ActionInputDriving {
         pages: Int) throws -> UIInputExecutionResult.Action
     {
         let actions = self.scrollActionNames(for: direction)
+        let requestedPages = max(1, pages)
         var lastError: ActionInputError?
         var performedActionName: String?
+        var completedPages = 0
 
-        for _ in 0..<max(1, pages) {
+        for _ in 0..<requestedPages {
             var performed = false
             for action in actions {
                 do {
                     _ = try self.performAction(action, on: element)
                     performedActionName = action
                     performed = true
+                    completedPages += 1
                     break
                 } catch let error as ActionInputError {
                     lastError = error
+                    if Self.scrollFailureMayHaveDispatched(error) {
+                        throw Self.scrollProgressFailure(
+                            completedUnitCount: completedPages,
+                            currentUnitMayHaveDispatched: true,
+                            requestedUnitCount: requestedPages,
+                            delivery: Self.accessibilityActionDelivery,
+                            cause: error)
+                    }
                     if !Self.shouldContinueTryingScrollAction(after: error) {
+                        if completedPages > 0 {
+                            throw Self.scrollProgressFailure(
+                                completedUnitCount: completedPages,
+                                currentUnitMayHaveDispatched: false,
+                                requestedUnitCount: requestedPages,
+                                delivery: Self.accessibilityActionDelivery,
+                                cause: error)
+                        }
                         throw error
                     }
                 }
             }
 
             if !performed {
-                throw Self.scrollFallbackError(from: lastError)
+                let error = Self.scrollFallbackError(from: lastError)
+                if completedPages > 0 {
+                    throw Self.scrollProgressFailure(
+                        completedUnitCount: completedPages,
+                        currentUnitMayHaveDispatched: false,
+                        requestedUnitCount: requestedPages,
+                        delivery: Self.accessibilityActionDelivery,
+                        cause: error)
+                }
+                throw error
             }
         }
 
         return UIInputExecutionResult.Action(
             outcome: .dispatchedUnverified(
                 delivery: Self.accessibilityActionDelivery,
-                evidence: .deliveryAccepted),
+                evidence: .deliveryAccepted,
+                unitCount: DesktopActionOutcome.DispatchUnitCount(completedPages)),
             actionName: performedActionName,
             anchorPoint: element.anchorPoint,
             elementRole: element.role)
@@ -679,20 +742,42 @@ struct ActionInputDriver: ActionInputDriving {
             AXActionNames.kAXDecrementAction
         }
         if scrollBar.supportsAction(actionName) {
-            do {
-                for _ in 0..<max(1, pages) {
+            let requestedPages = max(1, pages)
+            var completedPages = 0
+            for _ in 0..<requestedPages {
+                do {
                     _ = try self.performAction(actionName, on: scrollBar)
+                    completedPages += 1
+                } catch let error as ActionInputError {
+                    if Self.scrollFailureMayHaveDispatched(error) {
+                        throw Self.scrollProgressFailure(
+                            completedUnitCount: completedPages,
+                            currentUnitMayHaveDispatched: true,
+                            requestedUnitCount: requestedPages,
+                            delivery: Self.accessibilityActionDelivery,
+                            cause: error)
+                    }
+                    if completedPages > 0 {
+                        throw Self.scrollProgressFailure(
+                            completedUnitCount: completedPages,
+                            currentUnitMayHaveDispatched: false,
+                            requestedUnitCount: requestedPages,
+                            delivery: Self.accessibilityActionDelivery,
+                            cause: error)
+                    }
+                    guard Self.shouldContinueTryingScrollAction(after: error) else { throw error }
+                    break
                 }
+            }
+            if completedPages == requestedPages {
                 return UIInputExecutionResult.Action(
                     outcome: .dispatchedUnverified(
                         delivery: Self.accessibilityActionDelivery,
-                        evidence: .deliveryAccepted),
+                        evidence: .deliveryAccepted,
+                        unitCount: DesktopActionOutcome.DispatchUnitCount(completedPages)),
                     actionName: actionName,
                     anchorPoint: scrollBar.anchorPoint,
                     elementRole: scrollBar.role)
-            } catch let error as ActionInputError where Self.shouldContinueTryingScrollAction(after: error) {
-                // Some controls advertise increment/decrement but reject invocation. A settable AXValue
-                // remains a native background path and is verified below.
             }
         }
 
@@ -726,20 +811,39 @@ struct ActionInputDriver: ActionInputDriving {
             do {
                 try scrollBar.setAutomationValue(.double(requestedValue))
             } catch {
-                throw Self.classify(error)
+                let classified = Self.classify(error)
+                if Self.scrollFailureMayHaveDispatched(classified) {
+                    throw Self.scrollProgressFailure(
+                        completedUnitCount: 0,
+                        currentUnitMayHaveDispatched: true,
+                        requestedUnitCount: 1,
+                        delivery: Self.accessibilityValueDelivery,
+                        cause: classified)
+                }
+                throw classified
             }
         }
 
-        if requestedValue != currentValue,
-           let observedValue = Self.numericValue(scrollBar.value),
-           abs(observedValue - currentValue) < 1e-9
-        {
-            throw ActionInputError.failed("Accessibility scroll bar value did not change")
+        let observedValue = Self.numericValue(scrollBar.value)
+        if requestedValue != currentValue, let observedValue, abs(observedValue - currentValue) < 1e-9 {
+            throw DesktopActionFailure.indeterminate(
+                delivery: Self.accessibilityValueDelivery,
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "Accessibility scroll bar value did not change after dispatch",
+                hint: "Observe the target before taking another scroll action.")
         }
 
-        let outcome: DesktopActionOutcome = alreadyMatched
-            ? .confirmedNoChange()
-            : .confirmedChange(delivery: Self.accessibilityValueDelivery)
+        let outcome: DesktopActionOutcome = if alreadyMatched {
+            .confirmedNoChange()
+        } else if observedValue != nil {
+            .confirmedChange(delivery: Self.accessibilityValueDelivery, unitCount: .one)
+        } else {
+            .dispatchedUnverified(
+                delivery: Self.accessibilityValueDelivery,
+                evidence: .deliveryAccepted,
+                unitCount: .one)
+        }
         return UIInputExecutionResult.Action(
             outcome: outcome,
             actionName: "AXSetValue",

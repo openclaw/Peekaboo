@@ -95,27 +95,28 @@ RuntimeBackedCommand {
                 },
                 outcome: { $0.outcome }
             )
-            let scrollDelivery = DesktopActionOutcome.Delivery(
-                mechanism: self.focusOptions.foreground ? .globalEvents : .accessibilityAction,
-                mode: self.focusOptions.foreground ? .foreground : .background
-            )
+            let scrollDelivery: DesktopActionOutcome.Delivery? = self.focusOptions.foreground
+                ? .init(mechanism: .globalEvents, mode: .foreground)
+                : nil
             let receiptlessStep = DesktopActionSequenceAccumulator.Step.dispatched(
                 route: actionRoute,
                 delivery: scrollDelivery,
-                unitCount: .one
+                unitCount: nil
             )
             if self.focusOptions.foreground {
                 try actionSequence.recordExactTargetLeaf(
                     outcome: actionResult.outcome,
                     targetIdentity: actionResult.targetIdentity,
                     operation: "Scroll",
-                    receiptlessStep: receiptlessStep
+                    receiptlessStep: receiptlessStep,
+                    defaultDispatchedUnitCount: nil
                 )
             } else {
                 try actionSequence.record(
                     actionResult,
                     operation: "Scroll",
-                    receiptlessStep: receiptlessStep
+                    receiptlessStep: receiptlessStep,
+                    defaultDispatchedUnitCount: nil
                 )
             }
             let compositeResult = actionSequence.result(payload: ())

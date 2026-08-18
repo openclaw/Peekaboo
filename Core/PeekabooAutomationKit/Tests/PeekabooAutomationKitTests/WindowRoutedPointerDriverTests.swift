@@ -117,6 +117,7 @@ struct WindowRoutedPointerDriverTests {
                 expectedWindowBounds: receipt.bounds)
             Issue.record("Expected post-dispatch route drift")
         } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .partial)
             #expect(failure.outcome.dispatchState.unitCount?.rawValue == 1)
             #expect(failure.outcome.retrySafety == .unsafe)
             #expect(failure.outcome.dispatchState.mutationDispatched)
@@ -207,9 +208,10 @@ struct WindowRoutedPointerDriverTests {
                 expectedWindowBounds: receipt.bounds)
             Issue.record("Expected post-dispatch visibility loss")
         } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .partial)
             #expect(failure.outcome.dispatchState.unitCount?.rawValue == 1)
             #expect(failure.outcome.retrySafety == .unsafe)
-            #expect(failure.outcome.projection.requiresFreshObservation)
+            #expect(failure.outcome.escalation == .recoverSideEffect)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }

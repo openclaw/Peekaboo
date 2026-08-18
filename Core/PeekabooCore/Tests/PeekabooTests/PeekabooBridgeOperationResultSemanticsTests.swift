@@ -340,6 +340,64 @@ struct PeekabooBridgeOperationResultSemanticsTests {
     }
 
     @Test
+    func `scroll result contract preserves native prefix unit counts`() throws {
+        let request = PeekabooBridgeRequest.targetedScroll(PeekabooBridgeScrollRequest(request: ScrollRequest(
+            direction: .down,
+            amount: 3,
+            target: "S1",
+            snapshotId: "snapshot")))
+        let accessibility = DesktopActionOutcome.Delivery(
+            mechanism: .accessibilityAction,
+            mode: .background)
+        let accessibilityValue = DesktopActionOutcome.Delivery(
+            mechanism: .accessibilityValue,
+            mode: .background)
+        let window = DesktopActionOutcome.Delivery(
+            mechanism: .windowTargetedEvents,
+            mode: .background)
+        let three = try #require(DesktopActionOutcome.DispatchUnitCount(3))
+        let two = try #require(DesktopActionOutcome.DispatchUnitCount(2))
+
+        #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            .dispatchedUnverified(
+                route: .bridge,
+                delivery: accessibility,
+                evidence: .deliveryAccepted,
+                unitCount: three),
+            response: .ok,
+            request: request))
+        #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            .confirmedChange(route: .bridge, delivery: accessibilityValue, unitCount: .one),
+            response: .ok,
+            request: request))
+        #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            .dispatchedUnverified(
+                route: .bridge,
+                delivery: accessibility,
+                evidence: .deliveryAccepted,
+                unitCount: two),
+            response: .ok,
+            request: request))
+
+        #expect(PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
+            .partial(route: .bridge, delivery: accessibility, unitCount: .one),
+            request: request))
+        #expect(PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
+            .indeterminate(
+                route: .bridge,
+                delivery: accessibility,
+                evidence: .completionUnknown,
+                unitCount: two),
+            request: request))
+        #expect(PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
+            .partial(route: .bridge, delivery: window, unitCount: .one),
+            request: request))
+        #expect(PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
+            .refused(route: .bridge, reason: .targetUnavailable),
+            request: request))
+    }
+
+    @Test
     func `Only request-shaped operations are conditionally mutating`() throws {
         let conditional: Set<PeekabooBridgeOperation> = [
             .desktopObservation,

@@ -184,12 +184,12 @@ public struct ScrollTool: MCPTool {
         var sequence = DesktopActionSequenceAccumulator()
         setupFocusResult?.record(into: &sequence)
         if let outcome = actionResult.outcome {
-            sequence.record(.reportedOutcome(outcome, defaultDispatchedUnitCount: .one))
+            sequence.record(.outcome(outcome))
         } else {
             sequence.record(.dispatched(
                 route: nil,
-                delivery: .init(mechanism: .globalEvents, mode: .foreground),
-                unitCount: .one))
+                delivery: nil,
+                unitCount: nil))
         }
         let resolution = sequence.successResolution()
         let responseOutcome = resolution.outcome

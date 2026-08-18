@@ -24,6 +24,39 @@ struct ScrollServiceTargetResolutionTests {
 
     @Test
     @MainActor
+    func `foreground synthetic scroll reports exact emitted tick count`() async throws {
+        let synthetic = ScrollRecordingSyntheticInputDriver()
+        let service = ScrollService(syntheticInputDriver: synthetic)
+
+        let regular = try await service.scroll(ScrollRequest(
+            direction: .down,
+            amount: 3,
+            foreground: true))
+        let smooth = try await service.scroll(ScrollRequest(
+            direction: .down,
+            amount: 3,
+            smooth: true,
+            foreground: true))
+        let zero = try await service.scroll(ScrollRequest(
+            direction: .down,
+            amount: 0,
+            foreground: true))
+
+        #expect(regular.outcome.dispatchState.unitCount?.rawValue == 3)
+        #expect(smooth.outcome.dispatchState.unitCount?.rawValue == 30)
+        #expect(zero.outcome.state == .confirmedNoChange)
+        #expect(zero.outcome.dispatchState == .none)
+        #expect(synthetic.events.filter {
+            if case .scroll = $0 {
+                true
+            } else {
+                false
+            }
+        }.count == 33)
+    }
+
+    @Test
+    @MainActor
     func `background targeted scroll uses only Accessibility action`() async throws {
         let element = DetectedElement(
             id: "S1",
@@ -91,7 +124,8 @@ struct ScrollServiceTargetResolutionTests {
             applicationIsVisible: { _ in true },
             windowIsVisible: { _ in true },
             sleep: { _ in })
-        let action = ScrollRecordingActionInputDriver(scrollError: .unsupported(.actionUnsupported))
+        let action = ScrollRecordingActionInputDriver(
+            scrollError: ActionInputError.unsupported(.actionUnsupported))
         let synthetic = ScrollRecordingSyntheticInputDriver()
         let service = ScrollService(
             snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
@@ -123,6 +157,68 @@ struct ScrollServiceTargetResolutionTests {
 
     @Test
     @MainActor
+    func `typed AX prefix failure never falls through to exact window wheel`() async throws {
+        let element = DetectedElement(
+            id: "S1",
+            type: .group,
+            label: "Web content",
+            bounds: CGRect(x: 20, y: 30, width: 300, height: 400),
+            attributes: ["role": "AXGroup"])
+        let detectionResult = Self.exactDetectionResult(element: element)
+        let identity = try #require(detectionResult.metadata.windowContext?.windowMutationIdentity)
+        let bounds = try #require(detectionResult.metadata.windowContext?.windowBounds)
+        let point = CGPoint(x: element.bounds.midX, y: element.bounds.midY)
+        var posted = 0
+        let routedDriver = WindowRoutedPointerDriver(
+            hasPostEventAccess: { true },
+            resolveRoute: { _, _, _ in .init(identity: identity, bounds: bounds, screenPoint: point) },
+            routeIsCurrent: { _ in true },
+            makeScrollEvent: { _, _ in
+                CGEvent(
+                    scrollWheelEvent2Source: nil,
+                    units: .line,
+                    wheelCount: 1,
+                    wheel1: -1,
+                    wheel2: 0,
+                    wheel3: 0)
+            },
+            stampWindowLocation: { _, _ in true },
+            postSkyLight: { _, _ in true },
+            postPublic: { _, _ in posted += 1 },
+            resolveTransport: { _ in .publicCGEvent },
+            applicationIsVisible: { _ in true },
+            windowIsVisible: { _ in true },
+            sleep: { _ in })
+        let prefixFailure = DesktopActionFailure.partial(
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            unitCount: .one,
+            message: "One of three AX page units was accepted")
+        let service = ScrollService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            actionInputDriver: ScrollRecordingActionInputDriver(scrollError: prefixFailure),
+            automationElementResolver: ScrollFixedAutomationElementResolver(),
+            windowRoutedPointerDriver: routedDriver,
+            backgroundWheelCapability: { _ in true },
+            exactWindowIdentityValidator: { _, _ in true },
+            processStartIdentityProvider: { _ in 11 })
+
+        do {
+            _ = try await service.scroll(ScrollRequest(
+                direction: .down,
+                amount: 3,
+                target: "S1",
+                snapshotId: "snapshot"))
+            Issue.record("Expected the AX prefix failure to remain authoritative")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .partial)
+            #expect(failure.outcome.dispatchState.unitCount == .one)
+            #expect(failure.outcome.retrySafety == .unsafe)
+        }
+        #expect(posted == 0)
+    }
+
+    @Test
+    @MainActor
     func `unsupported AX group refuses when application lacks WebKit capability`() async {
         let laneRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("web-scroll-refusal-lane-\(UUID().uuidString)", isDirectory: true)
@@ -133,7 +229,8 @@ struct ScrollServiceTargetResolutionTests {
             label: "Opaque panel",
             bounds: CGRect(x: 20, y: 30, width: 300, height: 400),
             attributes: ["role": "AXGroup"])
-        let action = ScrollRecordingActionInputDriver(scrollError: .unsupported(.actionUnsupported))
+        let action = ScrollRecordingActionInputDriver(
+            scrollError: ActionInputError.unsupported(.actionUnsupported))
         let service = ScrollService(
             snapshotManager: InMemorySnapshotManager(detectionResult: Self.exactDetectionResult(element: element)),
             actionInputDriver: action,
@@ -574,11 +671,11 @@ private final class ScrollRecordingActionInputDriver: ActionInputDriving {
 
     private(set) var scrollCalls: [ScrollCall] = []
     private let afterScroll: @MainActor () -> Void
-    private let scrollError: ActionInputError?
+    private let scrollError: (any Error)?
 
     init(
         afterScroll: @escaping @MainActor () -> Void = {},
-        scrollError: ActionInputError? = nil)
+        scrollError: (any Error)? = nil)
     {
         self.afterScroll = afterScroll
         self.scrollError = scrollError

@@ -1883,12 +1883,14 @@ extension PeekabooBridgeOperationResultSemantics {
             return self.scrollDeliveryRules(
                 payload.request,
                 axBackground: axBackground,
+                valueBackground: valueBackground,
                 globalForeground: globalForeground,
                 windowBackground: windowBackground)
         case let .targetedScroll(payload):
             return self.scrollDeliveryRules(
                 payload.request,
                 axBackground: axBackground,
+                valueBackground: valueBackground,
                 globalForeground: globalForeground,
                 windowBackground: windowBackground)
         case let .targetedClick(payload):
@@ -2101,6 +2103,7 @@ extension PeekabooBridgeOperationResultSemantics {
     private static func scrollDeliveryRules(
         _ request: ScrollRequest,
         axBackground: DesktopActionOutcome.Delivery,
+        valueBackground: DesktopActionOutcome.Delivery,
         globalForeground: DesktopActionOutcome.Delivery,
         windowBackground: DesktopActionOutcome.Delivery) -> [DeliveryRule]
     {
@@ -2108,8 +2111,10 @@ extension PeekabooBridgeOperationResultSemantics {
             return [.init(delivery: globalForeground, units: .variable)]
         }
         let amount = request.amount == Int.min ? Int.max : max(1, abs(request.amount))
+        let accessibilityUnits: UnitPolicy = amount == 1 ? .exact(1) : .oneOf([1, amount])
         return [
-            .init(delivery: axBackground, units: .exact(1)),
+            .init(delivery: axBackground, units: accessibilityUnits),
+            .init(delivery: valueBackground, units: .exact(1)),
             .init(delivery: windowBackground, units: .exact(amount)),
         ]
     }

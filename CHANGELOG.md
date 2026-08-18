@@ -5,6 +5,7 @@
 ### Fixed
 - Refuse fuzzy application selectors before CLI or MCP mutations are pinned to a process, while preserving fuzzy read-only discovery.
 - Preserve exact target and dispatch receipts when a submitted Accessibility `set-value` write cannot be verified, so CLI, MCP, and Bridge callers receive retry-unsafe guidance instead of a raw error.
+- Preserve exact scroll dispatch counts and stop retrying through another route after any accepted or possibly accepted scroll prefix; SwiftUI tab presses likewise require fresh observation instead of replaying a synthetic click after an accepted `AXPress`.
 - Preserve local Option/Meta chords while buffering fragmented terminal escape sequences longer over SSH, and ignore stale cancelled escape timers that arrive after a newer sequence.
 - Update AXorcist so synchronous and legacy element observers share the bounded registration and cleanup state machine, preventing a wedged endpoint from blocking Peekaboo's main actor indefinitely or escaping late-result rollback.
 - Keep JSON-output flags after the `--` option terminator as child arguments instead of changing Peekaboo's own error envelope.

@@ -464,7 +464,8 @@ struct WindowRoutedPointerDriver {
         guard self.scrollRouteIsCurrent(receipt) else {
             throw Self.scrollDispatchFailure(
                 eventCount: postedEventCount,
-                cause: "Window-routed wheel events were posted, but final target validation failed")
+                cause: "Window-routed wheel events were posted, but final target validation failed",
+                completedRequest: true)
         }
         guard let unitCount = DesktopActionOutcome.DispatchUnitCount(postedEventCount) else {
             throw PeekabooError.operationError(
@@ -507,13 +508,26 @@ struct WindowRoutedPointerDriver {
         postedEventCount += 1
     }
 
-    private static func scrollDispatchFailure(eventCount: Int, cause: String) -> DesktopActionFailure {
+    private static func scrollDispatchFailure(
+        eventCount: Int,
+        cause: String,
+        completedRequest: Bool = false) -> DesktopActionFailure
+    {
         let unitCount = DesktopActionOutcome.DispatchUnitCount(eventCount)
-        return .dispatchedUnverified(
-            delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
-            evidence: .deliveryAccepted,
+        let delivery = DesktopActionOutcome.Delivery(mechanism: .windowTargetedEvents, mode: .background)
+        if completedRequest {
+            return .dispatchedUnverified(
+                delivery: delivery,
+                evidence: .deliveryAccepted,
+                unitCount: unitCount,
+                message: "Window-routed wheel delivery completed but final validation failed",
+                hint: "Observe the target before taking another scroll action.",
+                causeDescription: cause)
+        }
+        return .partial(
+            delivery: delivery,
             unitCount: unitCount,
-            message: "Window-routed wheel outcome is indeterminate; do not retry blindly",
+            message: "Window-routed wheel delivery stopped after an accepted prefix",
             hint: "Observe the target before taking another scroll action.",
             causeDescription: cause)
     }

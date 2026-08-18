@@ -273,6 +273,38 @@ struct MCPDesktopActionOutcomeProjectionTests {
 
     @Test
     @MainActor
+    func `scroll partial failure projects exact accepted prefix without retry permission`() async throws {
+        let automation = StubAutomationService()
+        automation.uiAutomationOutcomeScript.appendFailure(
+            DesktopActionFailure.partial(
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                unitCount: .one,
+                message: "One of three page units was accepted"),
+            for: .scroll)
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
+
+        let response = try await ScrollTool(context: context).execute(arguments: ToolArguments(raw: [
+            "direction": "down",
+            "amount": 3,
+            "on": "T1",
+            "snapshot": snapshotID,
+        ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("partial"))
+        #expect(meta["effect"] == .string("partial"))
+        #expect(meta["dispatched_unit_count"] == .int(1))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["requires_fresh_observation"] == .bool(false))
+        #expect(meta["escalation"] == .string("recover_side_effect"))
+        #expect(meta["invalidated_snapshot"] == .string(snapshotID))
+    }
+
+    @Test
+    @MainActor
     func `legacy mutation service does not receive fabricated outcome metadata`() async throws {
         let automation = MockAutomationService(accessibilityGranted: true)
         let context = await MCPToolTestHelpers.makeContext(automation: automation)

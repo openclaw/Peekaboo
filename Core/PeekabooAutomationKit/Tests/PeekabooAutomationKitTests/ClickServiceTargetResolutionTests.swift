@@ -1284,6 +1284,58 @@ struct ClickServiceTargetResolutionTests {
     private static let testWindowBounds = CGRect(x: 0, y: 0, width: 800, height: 600)
 }
 
+extension ClickServiceTargetResolutionTests {
+    @Test
+    @MainActor
+    func `accepted tab press with unchanged selection never falls back to synthetic click`() async throws {
+        let pid = getpid()
+        let tracker = ClickWindowTracker(bounds: Self.testWindowBounds)
+        try await WindowMovementTrackingProviderScope.withProvider(tracker) {
+            let element = DetectedElement(
+                id: "TAB1",
+                type: .button,
+                label: "Settings",
+                bounds: .init(x: 20, y: 30, width: 100, height: 40))
+            let detectionResult = ElementDetectionResult(
+                snapshotId: "snapshot",
+                screenshotPath: "/tmp/shot.png",
+                elements: DetectedElements(buttons: [element]),
+                metadata: DetectionMetadata(
+                    detectionTime: 0.01,
+                    elementCount: 1,
+                    method: "test",
+                    windowContext: Self.exactWindowContext(processIdentifier: pid)))
+            let action = ClickSuccessfulActionInputDriver()
+            let synthetic = ClickRecordingSyntheticInputDriver()
+            let service = ClickService(
+                snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+                inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
+                actionInputDriver: action,
+                syntheticInputDriver: synthetic,
+                automationElementResolver: ClickFixedAutomationElementResolver(),
+                exactWindowIdentityValidator: { _, _ in true },
+                tabSelectionVerifier: { _, _ in true })
+
+            do {
+                _ = try await service.click(
+                    target: .elementId("TAB1"),
+                    clickType: .single,
+                    snapshotId: "snapshot",
+                    targetProcessIdentifier: pid)
+                Issue.record("Expected an indeterminate accepted tab press")
+            } catch let failure as DesktopActionFailure {
+                #expect(failure.outcome.state == .indeterminate)
+                #expect(failure.outcome.delivery == .init(mechanism: .accessibilityAction, mode: .background))
+                #expect(failure.outcome.dispatchState.unitCount == .one)
+                #expect(failure.outcome.retrySafety == .unsafe)
+            }
+
+            #expect(action.clickCount == 1)
+            #expect(synthetic.events.isEmpty)
+        }
+    }
+}
+
 @MainActor
 final class ClickRecordingSyntheticInputDriver: SyntheticInputDriving {
     enum Event: Equatable {

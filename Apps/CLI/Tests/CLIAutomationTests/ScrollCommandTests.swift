@@ -256,6 +256,48 @@ struct ScrollCommandTests {
     }
 
     @Test
+    func `partial scroll failure preserves exact accepted units in JSON`() async throws {
+        let snapshotID = "partial-scroll-snapshot"
+        let automation = await MainActor.run { OutcomeStubAutomationService() }
+        await MainActor.run {
+            automation.uiAutomationOutcomeScript.appendFailure(
+                DesktopActionFailure.partial(
+                    delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                    unitCount: .one,
+                    message: "One of three page units was accepted"
+                ),
+                for: .scroll
+            )
+        }
+        let snapshots = StubSnapshotManager()
+        try await snapshots.storeDetectionResult(
+            snapshotId: snapshotID,
+            result: Self.detectionResult(snapshotId: snapshotID, element: Self.buttonElement(id: "B1"))
+        )
+        let context = await MainActor.run {
+            TestServicesFactory.makeAutomationTestContext(automation: automation, snapshots: snapshots)
+        }
+
+        let result = try await self.runScroll(
+            arguments: [
+                "--direction", "down",
+                "--amount", "3",
+                "--on", "B1",
+                "--snapshot", snapshotID,
+                "--json",
+            ],
+            context: context
+        )
+
+        #expect(result.exitStatus != 0)
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: Data(self.output(from: result).utf8))
+        #expect(payload.outcome?.state == .partial)
+        #expect(payload.outcome?.dispatchState.unitCount == .one)
+        #expect(payload.outcome?.retrySafety == .unsafe)
+        #expect(payload.outcome?.escalation == .recoverSideEffect)
+    }
+
+    @Test
     func `stale background scroll reports canonical retry-safe refusal`() async throws {
         let snapshotId = "stale-scroll-snapshot"
         let context = await self.makeContext { automation, _ in
