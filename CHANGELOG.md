@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Bound asynchronous Accessibility notification add and remove waits, removal joins, and subscription setup retries so one wedged endpoint cannot hang global observer startup or teardown. Thanks @SebTardif for AXorcist #47.
+
 ## [4.2.1] - 2026-08-17
 
 ### Highlights

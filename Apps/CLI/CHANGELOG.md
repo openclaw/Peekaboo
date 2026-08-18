@@ -5,6 +5,11 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Bound asynchronous Accessibility notification add and remove waits, removal joins, and subscription setup retries so one wedged endpoint cannot hang global observer startup or teardown. Thanks @SebTardif for AXorcist #47.
+
 ## [4.2.1] - 2026-08-17
 
 ### Highlights
