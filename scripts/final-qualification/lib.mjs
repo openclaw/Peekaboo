@@ -458,6 +458,87 @@ export function validateTarget(value, label) {
   return value;
 }
 
+export function controlledFixtureBindings(plan, label) {
+  requireCondition(Array.isArray(plan?.controllers) && plan.controllers.length === 2,
+    `${label} needs exactly two controlled fixture targets`);
+  const authorities = plan.controllers.map((controller, index) => {
+    const suffix = index === 0 ? 'a' : 'b';
+    const targetID = `target-${suffix}`;
+    exactKeys(controller, ['controller_id', 'target_id', 'target'],
+      `${label}.controllers[${index}]`);
+    requireCondition(controller.controller_id === `controller-${suffix}`
+      && controller.target_id === targetID,
+    `${label}.controllers[${index}] is not the canonical ${targetID} owner`);
+    const target = {
+      pid: controller.target?.process_identifier,
+      start_identity: controller.target?.process_start_identity_decimal,
+      window_id: controller.target?.window_id,
+    };
+    requireCondition(positiveInteger(target.pid) && positiveDecimal(target.start_identity)
+      && positiveInteger(target.window_id) && target.window_id <= 0xffff_ffff,
+    `${label}.controllers[${index}] controlled fixture identity is invalid`);
+    return {
+      label: targetID,
+      controller_id: controller.controller_id,
+      target,
+      receipt_target: validateTarget({
+        scope: 'window',
+        ...target,
+        bounds: structuredClone(controller.target?.bounds),
+        is_minimized: controller.target?.is_minimized,
+      }, `${label}.controllers[${index}].receipt_target`),
+    };
+  });
+  requireCondition(new Set(authorities.map((binding) => (
+    `${binding.target.pid}:${binding.target.start_identity}:${binding.target.window_id}`
+  ))).size === authorities.length,
+  `${label} controlled fixture targets are not distinct`);
+  return {
+    authorities,
+    targets: authorities.map(({ receipt_target: _receiptTarget, ...binding }) => binding),
+  };
+}
+
+export function multiTargetAggregateSHA256(name, value) {
+  return sha256(Buffer.concat([
+    Buffer.from(`peekaboo.multi-target-certification.${name}.v2\0`, 'utf8'),
+    canonicalBytes(value),
+  ]));
+}
+
+export function validateControlledFixtureSummary(retained, binding, label) {
+  const summary = retained.value;
+  requireCondition(summary.version === 2
+    && summary.certification_kind === 'live-physical'
+    && summary.claim_scope === 'multi-target-background-with-attributed-foreground-overlap'
+    && summary.structural_validation_passed === true
+    && summary.target_count === 2
+    && Array.isArray(summary.failures) && summary.failures.length === 0
+    && Array.isArray(summary.controlled_targets) && summary.controlled_targets.length === 2,
+  `${label} does not authenticate both controlled fixture targets`);
+  const seenIDs = new Set();
+  const rows = new Map(summary.controlled_targets.map((row, index) => {
+    exactKeys(row, ['id', 'controller_id', 'controller_sha256', 'target_sha256'],
+      `${label}.controlled_targets[${index}]`);
+    requireCondition(typeof row.id === 'string' && !seenIDs.has(row.id),
+      `${label}.controlled_targets[${index}] is duplicated`);
+    seenIDs.add(row.id);
+    return [row.id, row];
+  }));
+  requireCondition(rows.size === binding.authorities.length,
+    `${label} controlled target set is not canonical`);
+  for (const authority of binding.authorities) {
+    const row = rows.get(authority.label);
+    requireCondition(row?.controller_id === authority.controller_id
+      && HEX64.test(row.controller_sha256 ?? '')
+      && row.target_sha256 === multiTargetAggregateSHA256(
+        'controlled-target',
+        authority.receipt_target,
+      ),
+    `${label} ${authority.label} target differs from the live-v4 plan`);
+  }
+}
+
 export function validateEmitter(value, label) {
   exactKeys(value, ['pid', 'start_identity', 'team_id', 'code_signature_hash'], label);
   requireCondition(positiveInteger(value.pid) && positiveDecimal(value.start_identity), `${label} process identity is invalid`);

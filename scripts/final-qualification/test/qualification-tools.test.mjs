@@ -589,6 +589,35 @@ function deploymentFixture(
       })
     )),
   ];
+  const localDuringTree = JSON.parse(fs.readFileSync(processTrees[1]));
+  const firstFixtureRoot = localDuringTree.roots.find((entry) => entry.root_class === 'fixture');
+  const firstFixtureProcess = localDuringTree.processes.find((entry) => (
+    entry.pid === firstFixtureRoot.pid
+    && entry.start_identity === firstFixtureRoot.start_identity
+  ));
+  const [firstControlled, secondControlled] = plan.controllers.map((controller) => ({
+    pid: controller.target.process_identifier,
+    start_identity: controller.target.process_start_identity_decimal,
+  }));
+  firstFixtureRoot.pid = firstControlled.pid;
+  firstFixtureRoot.start_identity = firstControlled.start_identity;
+  firstFixtureProcess.pid = firstControlled.pid;
+  firstFixtureProcess.start_identity = firstControlled.start_identity;
+  localDuringTree.roots.push({
+    ...firstFixtureRoot,
+    root_id: 'fixture-root-b',
+    pid: secondControlled.pid,
+    start_identity: secondControlled.start_identity,
+  });
+  localDuringTree.processes.push({
+    ...firstFixtureProcess,
+    pid: secondControlled.pid,
+    start_identity: secondControlled.start_identity,
+  });
+  localDuringTree.roots.sort((left, right) => left.root_id.localeCompare(right.root_id));
+  localDuringTree.processes.sort((left, right) => left.pid - right.pid);
+  localDuringTree.lifecycle_watched_pids = localDuringTree.processes.map((entry) => entry.pid);
+  writeJSON(processTrees[1], localDuringTree);
   const policyScanner = path.join(toolRoot, 'executable-policy-scanner.mjs');
   const policyReports = [
     ['local', localUUID], ['studio', studioUUID],
@@ -1736,7 +1765,6 @@ function semanticReadbackFixture(root, name, targetValue, phase, value, observed
 }
 
 function concurrentFixture(root, {
-  aliasAgentTarget = false,
   agentFinishesBeforeIntegratedCU = false,
   agentTouchesIntegratedCUBoundary = false,
 } = {}) {
@@ -1750,7 +1778,7 @@ function concurrentFixture(root, {
   const operationsComplete = now - 2000;
   const foregroundTarget = target(203, '203001', 303);
   const sentinel = target(204, '204001', 304, 500);
-  const plan = writeJSON(path.join(root, 'plan.json'), {
+  const planValue = {
     version: 1,
     peekaboo_executable: agentExecutable,
     monitor_executable: '/usr/bin/true',
@@ -1769,14 +1797,26 @@ function concurrentFixture(root, {
       {
         controller_id: 'controller-a',
         target_id: 'target-a',
-        target: aliasAgentTarget
-          ? { process_identifier: 301, process_start_identity_decimal: '301001', window_id: 301 }
-          : { process_identifier: 201, process_start_identity_decimal: '201001', window_id: 301 },
+        target: {
+          process_identifier: 301,
+          process_start_identity_decimal: '301001',
+          window_id: 401,
+          bounds: { x: 0, y: 0, width: 400, height: 300 },
+          is_minimized: false,
+          click_point: { x: 200, y: 150 },
+        },
       },
       {
         controller_id: 'controller-b',
         target_id: 'target-b',
-        target: { process_identifier: 202, process_start_identity_decimal: '202001', window_id: 302 },
+        target: {
+          process_identifier: 302,
+          process_start_identity_decimal: '302001',
+          window_id: 402,
+          bounds: { x: 500, y: 0, width: 400, height: 300 },
+          is_minimized: false,
+          click_point: { x: 700, y: 150 },
+        },
       },
     ],
     observer: { target: foregroundTarget },
@@ -1787,7 +1827,8 @@ function concurrentFixture(root, {
       foreground_controller: { pid: 205, start_identity: '205001', code_signature_hash: 'e'.repeat(40) },
       foreground_controller_team_id: TEAM,
     },
-  });
+  };
+  const plan = writeJSON(path.join(root, 'plan.json'), planValue);
   const marker = `peekaboo-foreground-postcondition:${NONCE}`;
   const baselineDigest = '1'.repeat(64);
   const monitorEvidence = writeJSON(path.join(monitorDirectory, 'monitor-evidence.json'), {
@@ -1802,7 +1843,30 @@ function concurrentFixture(root, {
       baseline_value_sha256: baselineDigest,
     },
   });
-  const summary = writeJSON(path.join(runRoot, 'certification-summary.json'), { passed: true });
+  const summary = writeJSON(path.join(runRoot, 'certification-summary.json'), {
+    version: 2,
+    certification_kind: 'live-physical',
+    claim_scope: 'multi-target-background-with-attributed-foreground-overlap',
+    structural_validation_passed: true,
+    target_count: 2,
+    controlled_targets: planValue.controllers.map((controller) => ({
+      id: controller.target_id,
+      controller_id: controller.controller_id,
+      controller_sha256: 'f'.repeat(64),
+      target_sha256: sha256(Buffer.concat([
+        Buffer.from('peekaboo.multi-target-certification.controlled-target.v2\0', 'utf8'),
+        canonicalBytes({
+          scope: 'window',
+          pid: controller.target.process_identifier,
+          start_identity: controller.target.process_start_identity_decimal,
+          window_id: controller.target.window_id,
+          bounds: controller.target.bounds,
+          is_minimized: controller.target.is_minimized,
+        }),
+      ])),
+    })),
+    failures: [],
+  });
   const windowPath = path.join(runRoot, 'external-foreground-window.json');
   const events = [
     { event: 'run-created', version: 1, execution_nonce: NONCE, monitor_instance_id: UUID, run_root: runRoot },
@@ -2048,6 +2112,53 @@ function mutateFixtureBundle(spec, entry, mutate) {
   mutate(bundle.receipt.payload);
   writeJSON(entry.bundle_path, bundle);
   refreshFixtureBundleValidator(spec, entry);
+}
+
+function resealAgentTarget(fixture, targetIndex, replacement) {
+  const readbackMap = JSON.parse(fs.readFileSync(fixture.spec.agent_readbacks));
+  const targetEntry = readbackMap.targets[targetIndex];
+  targetEntry.target = structuredClone(replacement);
+
+  const semanticPaths = [
+    targetEntry.baseline_readback_path,
+    targetEntry.mutation.readback_path,
+    targetEntry.restoration.readback_path,
+  ];
+  for (const filePath of semanticPaths) {
+    const readback = JSON.parse(fs.readFileSync(filePath));
+    readback.target = structuredClone(replacement);
+    writeJSON(filePath, readback);
+    fs.utimesSync(
+      filePath,
+      new Date(readback.observed_at_milliseconds),
+      new Date(readback.observed_at_milliseconds),
+    );
+  }
+
+  for (const action of [targetEntry.mutation, targetEntry.restoration]) {
+    const bundle = JSON.parse(fs.readFileSync(action.bundle_path));
+    bundle.receipt.payload.target.processIdentifier = replacement.pid;
+    bundle.receipt.payload.target.processStartIdentity = replacement.start_identity;
+    bundle.receipt.payload.target.windowID = replacement.window_id;
+    writeJSON(action.bundle_path, bundle);
+    const validator = JSON.parse(fs.readFileSync(action.validator_report_path));
+    validator.data.bundle_sha256 = sha256(fs.readFileSync(action.bundle_path));
+    writeJSON(action.validator_report_path, validator);
+  }
+
+  const agentResult = JSON.parse(fs.readFileSync(fixture.spec.agent_result));
+  const traceCallIDs = new Set([
+    targetEntry.mutation.trace_call_id,
+    targetEntry.restoration.trace_call_id,
+  ]);
+  for (const entry of agentResult.result.executionTrace.entries) {
+    if (traceCallIDs.has(entry.id)) {
+      entry.arguments.pid = replacement.pid;
+      entry.arguments.window_id = replacement.window_id;
+    }
+  }
+  writeJSON(fixture.spec.agent_result, agentResult);
+  writeJSON(fixture.spec.agent_readbacks, readbackMap);
 }
 
 test('post-run validator requires zero exits, exact Agent generation, background trace, restoration, and overlap', () => {
@@ -2369,20 +2480,62 @@ test('post-run validator does not accept caller-authored validator JSON without 
   }
 });
 
-test('post-run validator rejects Agent target reuse with live-v4 controlled processes', () => {
-  const root = fs.mkdtempSync('/private/tmp/pbq-tools-alias-');
+test('post-run validator rejects an unrelated Agent window after all caller evidence is resealed', () => {
+  const root = fs.mkdtempSync('/private/tmp/pbq-tools-unrelated-target-');
   fs.chmodSync(root, 0o700);
   try {
-    const fix = concurrentFixture(root, { aliasAgentTarget: true });
+    const fix = concurrentFixture(root);
+    resealAgentTarget(fix, 0, { pid: 999, start_identity: '999001', window_id: 1999 });
     const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
     assert.throws(
-      () => validateConcurrentRun(specPath, path.join(root, 'alias-report.json')),
-      /aliases a controller\/observer\/foreground\/sentinel process/,
+      () => validateConcurrentRun(specPath, path.join(root, 'unrelated-target-report.json')),
+      /not its exact live-v4 controlled fixture target/,
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('post-run validator rejects swapped Agent fixture identities after every claim is resealed', () => {
+  const root = fs.mkdtempSync('/private/tmp/pbq-tools-swapped-targets-');
+  fs.chmodSync(root, 0o700);
+  try {
+    const fix = concurrentFixture(root);
+    const readbacks = JSON.parse(fs.readFileSync(fix.spec.agent_readbacks));
+    const first = structuredClone(readbacks.targets[0].target);
+    const second = structuredClone(readbacks.targets[1].target);
+    resealAgentTarget(fix, 0, second);
+    resealAgentTarget(fix, 1, first);
+    const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'swapped-targets-report.json')),
+      /not its exact live-v4 controlled fixture target/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const [name, replacement] of [
+  ['generation', { pid: 301, start_identity: '301999', window_id: 401 }],
+  ['window', { pid: 301, start_identity: '301001', window_id: 1401 }],
+]) {
+  test(`post-run validator rejects resealed Agent ${name} drift`, () => {
+    const root = fs.mkdtempSync(`/private/tmp/pbq-tools-${name}-drift-`);
+    fs.chmodSync(root, 0o700);
+    try {
+      const fix = concurrentFixture(root);
+      resealAgentTarget(fix, 0, replacement);
+      const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
+      assert.throws(
+        () => validateConcurrentRun(specPath, path.join(root, `${name}-drift-report.json`)),
+        /not its exact live-v4 controlled fixture target/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
 
 test('post-run validator requires Agent progress on both sides of integrated Computer Use', () => {
   const root = fs.mkdtempSync('/private/tmp/pbq-tools-interleaving-');
@@ -2555,7 +2708,7 @@ test('qualification manifest closes every required evidence class and detects by
         }),
       };
     });
-    const adjunctTarget = { pid: 201, start_identity: '201001', window_id: 301 };
+    const adjunctTarget = { pid: 301, start_identity: '301001', window_id: 401 };
     const adjunctTime = Date.now();
     const middleBundle = signedBundleFixture(
       root, 'middle', 'exactWindowTargetedClick', adjunctTarget, adjunctTime, adjunctTime + 10,
@@ -2910,6 +3063,28 @@ test('qualification manifest closes every required evidence class and detects by
       ),
       /input version is not 2/,
     );
+    const forgedSummaryInput = structuredClone(inputValue);
+    const forgedSummaryValue = JSON.parse(fs.readFileSync(completion.summary_path));
+    forgedSummaryValue.controlled_targets[0].target_sha256 = '0'.repeat(64);
+    const forgedSummary = writeJSON(
+      path.join(root, 'forged-controlled-target-summary.json'),
+      forgedSummaryValue,
+    );
+    const forgedSummaryReportValue = JSON.parse(fs.readFileSync(concurrentReport));
+    forgedSummaryReportValue.coordinator.summary_sha256 = sha256(fs.readFileSync(forgedSummary));
+    const forgedSummaryReport = writeJSON(
+      path.join(root, 'forged-controlled-target-report.json'),
+      forgedSummaryReportValue,
+    );
+    forgedSummaryInput.live_v4.certification_summary = forgedSummary;
+    forgedSummaryInput.agent_cu.validation_report = forgedSummaryReport;
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'forged-controlled-target-input.json'), forgedSummaryInput),
+        path.join(root, 'forged-controlled-target-manifest.json'),
+      ),
+      /bound final certification summary target-a target differs from the live-v4 plan/,
+    );
     for (const [artifactDrift, mutateArtifact, expectedError] of [
       [
         'cli',
@@ -3085,12 +3260,14 @@ test('qualification manifest closes every required evidence class and detects by
     );
     const missingRootInput = structuredClone(inputValue);
     const missingRootTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
-    const fixtureRoot = missingRootTree.roots.find((entry) => entry.root_class === 'fixture');
+    const fixturePIDs = new Set(missingRootTree.roots
+      .filter((entry) => entry.root_class === 'fixture')
+      .map((entry) => entry.pid));
     missingRootTree.roots = missingRootTree.roots.filter((entry) => entry.root_class !== 'fixture');
-    missingRootTree.processes = missingRootTree.processes.filter((entry) => entry.pid !== fixtureRoot.pid);
-    missingRootTree.lifecycle_watched_pids = missingRootTree.lifecycle_watched_pids.filter((pid) => (
-      pid !== fixtureRoot.pid
-    ));
+    missingRootTree.processes = missingRootTree.processes.filter((entry) => !fixturePIDs.has(entry.pid));
+    missingRootTree.lifecycle_watched_pids = missingRootTree.lifecycle_watched_pids.filter(
+      (pid) => !fixturePIDs.has(pid),
+    );
     missingRootInput.deployment.process_trees[1] = writeJSON(
       path.join(root, 'missing-root-process-tree.json'),
       missingRootTree,
@@ -3101,6 +3278,31 @@ test('qualification manifest closes every required evidence class and detects by
         path.join(root, 'missing-root-manifest.json'),
       ),
       /root coverage is incomplete/,
+    );
+    const wrongFixtureGenerationInput = structuredClone(inputValue);
+    const wrongFixtureGenerationTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
+    const wrongFixtureRoot = wrongFixtureGenerationTree.roots.find((entry) => (
+      entry.root_class === 'fixture' && entry.pid === planValue.controllers[0].target.process_identifier
+    ));
+    const wrongFixtureProcess = wrongFixtureGenerationTree.processes.find((entry) => (
+      entry.pid === wrongFixtureRoot.pid
+      && entry.start_identity === wrongFixtureRoot.start_identity
+    ));
+    wrongFixtureRoot.start_identity = '301999';
+    wrongFixtureProcess.start_identity = '301999';
+    wrongFixtureGenerationInput.deployment.process_trees[1] = writeJSON(
+      path.join(root, 'wrong-fixture-generation-process-tree.json'),
+      wrongFixtureGenerationTree,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(
+          path.join(root, 'wrong-fixture-generation-input.json'),
+          wrongFixtureGenerationInput,
+        ),
+        path.join(root, 'wrong-fixture-generation-manifest.json'),
+      ),
+      /local\/during fixture roots omit a controlled Agent target generation/,
     );
     const wrongAgentBytesInput = structuredClone(inputValue);
     const wrongAgentBytesTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
@@ -4004,6 +4206,34 @@ test('qualification manifest closes every required evidence class and detects by
     assert.equal(generatedManifest.version, 2);
     assert.equal(generatedManifest.evidence.deployment.installed_inventories.length, 2);
     assert.equal(generatedManifest.evidence.deployment.process_trees.length, 6);
+    assert.deepEqual(
+      generatedManifest.evidence.agent_cu.controlled_fixture_targets,
+      [
+        {
+          label: 'target-a', controller_id: 'controller-a',
+          target: { pid: 301, start_identity: '301001', window_id: 401 },
+        },
+        {
+          label: 'target-b', controller_id: 'controller-b',
+          target: { pid: 302, start_identity: '302001', window_id: 402 },
+        },
+      ],
+    );
+
+    const resealedTargetManifest = structuredClone(generatedManifest);
+    resealedTargetManifest.evidence.agent_cu.controlled_fixture_targets.reverse();
+    resealedTargetManifest.evidence_aggregate_sha256 = aggregateSHA256(
+      'evidence-manifest',
+      resealedTargetManifest.evidence,
+    );
+    const resealedTargetManifestPath = writeJSON(
+      path.join(root, 'resealed-controlled-target-manifest.json'),
+      resealedTargetManifest,
+    );
+    assert.throws(
+      () => verifyManifest(resealedTargetManifestPath),
+      /controlled_fixture_targets\[0\] is not canonical/,
+    );
 
     const resealedInterleavingManifest = structuredClone(generatedManifest);
     const resealedInterleavingReportValue = JSON.parse(fs.readFileSync(concurrentReport));

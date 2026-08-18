@@ -302,6 +302,11 @@ The source-owned release-qualification layer in `scripts/final-qualification/` c
 with the real Agent/integrated-Computer-Use overlap, five 42-case cycles, adjunct evidence, and two-host deployment
 proof. Its version-2 manifest requires byte-identical normalized local/Studio installed inventories, both elevation
 receipts, and complete local+Studio before/during/after process trees collected from explicitly named task roots. It
+requires the Agent's ordered `target-a`/`target-b` actions to use the same exact PID-generation-window targets owned by
+the live-v4 controllers, corroborates their full target digests in the source-owned final summary, and retains the two
+derived bindings directly in the manifest. The local/during tree must also identify both target generations as signed
+candidate Playground fixture roots. Consistently resealing caller-authored traces, bundles, or readbacks around an
+unrelated, swapped, recycled-generation, or different window cannot satisfy those independent owners. It
 rejects any task-owned root or descendant using CUA, AppleScript/JXA/OSA interpreters, virtualization, VNC, Screen
 Sharing, or remote-desktop helpers, while unrelated ambient services remain outside its closed tree and are never
 stopped. A separate bound executable/script policy report covers in-process native paths that ancestry alone cannot

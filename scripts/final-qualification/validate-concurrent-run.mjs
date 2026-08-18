@@ -9,6 +9,7 @@ import {
   HEX64,
   authenticateLiveBridgeBundle,
   authenticatedBridgeReceiptIdentity,
+  controlledFixtureBindings,
   corroboratedObservationTime,
   exactKeys,
   parseOptions,
@@ -25,6 +26,7 @@ import {
   sameJSON,
   sha256,
   validateEmitter,
+  validateControlledFixtureSummary,
   validateTarget,
   writePrivateExclusive,
 } from './lib.mjs';
@@ -367,10 +369,8 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
     'Agent readback evidence belongs to another process generation');
   requireCondition(Array.isArray(value.targets) && value.targets.length === 2,
     'Agent readback evidence needs exactly two targets');
+  const fixtureBindings = controlledFixtureBindings(plan, 'live-v4 plan').targets;
   const forbiddenProcesses = new Set([
-    ...plan.controllers.map((entry) => (
-      `${entry.target.process_identifier}:${entry.target.process_start_identity_decimal}`
-    )),
     `${plan.bridge.expected_host.process_identifier}:${plan.bridge.expected_host.process_start_identity_decimal}`,
     `${plan.observer.target.pid}:${plan.observer.target.start_identity}`,
     `${plan.monitor.foreground_target.pid}:${plan.monitor.foreground_target.start_identity}`,
@@ -393,11 +393,13 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
     exactKeys(target.target, ['pid', 'start_identity', 'window_id'], `Agent readback ${target.label}.target`);
     requireCondition(positiveInteger(target.target.pid) && positiveDecimal(target.target.start_identity)
       && positiveInteger(target.target.window_id), `Agent readback ${target.label} identity is invalid`);
+    requireCondition(sameJSON(target.target, fixtureBindings[index].target),
+      `Agent ${target.label} is not its exact live-v4 controlled fixture target`);
     const processKey = `${target.target.pid}:${target.target.start_identity}`;
     targetProcesses.add(processKey);
     targetWindows.add(`${processKey}:${target.target.window_id}`);
     requireCondition(!forbiddenProcesses.has(processKey),
-      `Agent ${target.label} aliases a controller/observer/foreground/sentinel process`);
+      `Agent ${target.label} aliases Bridge/observer/foreground/sentinel infrastructure`);
     const baseline = semanticReadback(
       target.baseline_readback_path,
       target.target,
@@ -509,6 +511,7 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
   return {
     retained,
     value,
+    controlled_fixture_targets: fixtureBindings,
     mutation_families: [...mutationFamilies].sort(),
     mapped_call_ids: [...usedCallIDs].sort(),
     bundle_count: corpus.size,
@@ -754,7 +757,12 @@ export function validateConcurrentRun(specPath, outputPath, {
     spec.coordinator_events,
     coordinatorExit,
   );
-  const summary = readStableFile(events.completed.summary_path, 'final certification summary');
+  const summary = readStableJSON(events.completed.summary_path, 'final certification summary');
+  validateControlledFixtureSummary(
+    summary,
+    controlledFixtureBindings(plan, 'live-v4 plan'),
+    'final certification summary',
+  );
   const operation = operationInterval(
     events.created.run_root,
     events.created.execution_nonce,
@@ -903,6 +911,7 @@ export function validateConcurrentRun(specPath, outputPath, {
       invocation_sha256: invocation.retained.sha256,
       result_sha256: trace.retained.sha256,
       readbacks_sha256: readbacks.retained.sha256,
+      controlled_fixture_targets: readbacks.controlled_fixture_targets,
       mutation_families: readbacks.mutation_families,
       mapped_call_ids: readbacks.mapped_call_ids,
       signed_bundle_count: readbacks.bundle_count,

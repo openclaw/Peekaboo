@@ -8,6 +8,7 @@ import {
   aggregateSHA256,
   authenticateLiveBridgeBundle,
   authenticatedBridgeReceiptIdentity,
+  controlledFixtureBindings,
   corroboratedObservationTime,
   exactKeys,
   fileReceipt,
@@ -19,6 +20,7 @@ import {
   requireUniqueAuthenticatedBridgeReceipts,
   sameJSON,
   sha256,
+  validateControlledFixtureSummary,
   writePrivateExclusive,
 } from './lib.mjs';
 
@@ -1062,11 +1064,9 @@ function qualificationAdjunctBinding(deployment, plan, label) {
   `${label} Bridge host is not bound to the exact candidate source`);
   requireCondition(Array.isArray(plan.controllers) && plan.controllers.length === 2,
     `${label} does not contain both controlled fixture targets`);
-  const fixtureTargets = plan.controllers.map((controller, index) => exactTarget({
-    pid: controller?.target?.process_identifier,
-    start_identity: controller?.target?.process_start_identity_decimal,
-    window_id: controller?.target?.window_id,
-  }, `${label}.controllers[${index}].target`));
+  const fixtureBinding = controlledFixtureBindings(plan, label);
+  const controlledFixtureTargets = fixtureBinding.targets;
+  const fixtureTargets = controlledFixtureTargets.map((binding) => binding.target);
   requireCondition(new Set(fixtureTargets.map((target) => (
     `${target.pid}:${target.start_identity}:${target.window_id}`
   ))).size === fixtureTargets.length, `${label} controlled fixture targets are not distinct`);
@@ -1079,6 +1079,8 @@ function qualificationAdjunctBinding(deployment, plan, label) {
       code_signature_hash: expectedHost.code_signature_hash,
     },
     fixtureTargets,
+    fixtureBinding,
+    controlledFixtureTargets,
   };
 }
 
@@ -1182,6 +1184,26 @@ function semanticConcurrentValidation(filePath) {
       && entry.completed_at_milliseconds > entry.started_at_milliseconds,
     `Agent/CU concurrent validation report action_intervals[${index}] is malformed`);
   });
+  const controlledFixtureTargets = value.agent?.controlled_fixture_targets;
+  requireCondition(Array.isArray(controlledFixtureTargets)
+    && controlledFixtureTargets.length === 2,
+  'Agent/CU concurrent validation report controlled fixture targets are absent');
+  controlledFixtureTargets.forEach((binding, index) => {
+    const suffix = index === 0 ? 'a' : 'b';
+    exactKeys(binding, ['label', 'controller_id', 'target'],
+      `Agent/CU concurrent validation report controlled_fixture_targets[${index}]`);
+    requireCondition(binding.label === `target-${suffix}`
+      && binding.controller_id === `controller-${suffix}`,
+    `Agent/CU concurrent validation report controlled_fixture_targets[${index}] is not canonical`);
+    exactTarget(
+      binding.target,
+      `Agent/CU concurrent validation report controlled_fixture_targets[${index}].target`,
+    );
+  });
+  requireCondition(new Set(controlledFixtureTargets.map((binding) => (
+    `${binding.target.pid}:${binding.target.start_identity}:${binding.target.window_id}`
+  ))).size === controlledFixtureTargets.length,
+  'Agent/CU concurrent validation report controlled fixture targets are not distinct');
   const overlap = value.overlap;
   requireCondition(value.version === 1 && value.passed === true
     && value.coordinator?.exit_code === 0
@@ -1278,6 +1300,15 @@ function validateLocalDuringConcurrentBinding(deployment, concurrent, plan, labe
       && roots[0].codeSignatureHash === identity.codeSignatureHash,
     `${label} local/during ${rootClass} root differs from the concurrent run`);
   }
+  const fixtureRoots = during.roots.filter((root) => root.rootClass === 'fixture');
+  const controlledTargets = plan.controllers?.map((controller) => ({
+    pid: controller?.target?.process_identifier,
+    startIdentity: controller?.target?.process_start_identity_decimal,
+  })) ?? [];
+  requireCondition(controlledTargets.length === 2 && controlledTargets.every((target) => (
+    fixtureRoots.some((root) => root.pid === target.pid
+      && root.startIdentity === target.startIdentity)
+  )), `${label} local/during fixture roots omit a controlled Agent target generation`);
 }
 
 function validateExercisedCandidateBindings(
@@ -1417,12 +1448,17 @@ function validateConcurrentInterleavingBinding(
   agentReadbacksPath,
   bundlePairs,
   performReadbackPath,
+  controlledFixtureTargets,
   label,
 ) {
   const readbacks = readStableJSON(agentReadbacksPath, `${label} Agent readback map`).value;
   exactKeys(readbacks, ['version', 'agent', 'targets'], `${label} Agent readback map`);
   requireCondition(readbacks.version === 1 && Array.isArray(readbacks.targets)
     && readbacks.targets.length === 2, `${label} Agent readback map is malformed`);
+  requireCondition(sameJSON(
+    concurrent.agent.controlled_fixture_targets,
+    controlledFixtureTargets,
+  ), `${label} controlled fixture targets differ from the live-v4 plan`);
   const pairsByBundlePath = new Map(bundlePairs.map((pair) => [pair.bundle.path, pair]));
   requireCondition(pairsByBundlePath.size === bundlePairs.length,
     `${label} Agent bundle paths are not unique`);
@@ -1435,6 +1471,9 @@ function validateConcurrentInterleavingBinding(
       target.target,
       `${label} Agent target ${targetIndex}.target`,
     );
+    requireCondition(target.label === controlledFixtureTargets[targetIndex].label
+      && sameJSON(expectedTarget, controlledFixtureTargets[targetIndex].target),
+    `${label} Agent target ${targetIndex} is not its exact live-v4 controlled fixture target`);
     const baseline = semanticAgentReadback(
       target.baseline_readback_path,
       `${label} Agent target ${targetIndex}.baseline`,
@@ -2025,6 +2064,13 @@ function projectInput(input, authenticateBundle) {
       < cycle.binding.started_at_milliseconds), 'matrix cycle intervals overlap or are not ordered');
   const concurrentValidation = semanticConcurrentValidation(input.agent_cu.validation_report);
   const concurrentValue = concurrentValidation.value;
+  const boundCertificationSummary = readStableJSON(
+    input.live_v4.certification_summary,
+    'bound certification summary',
+  );
+  requireCondition(boundCertificationSummary.sha256
+    === concurrentValue.coordinator.summary_sha256,
+  'bound certification summary differs from concurrent validation');
   const boundLive = {
     plan: boundReceipt(input.live_v4.plan, concurrentValue.coordinator.plan_sha256, 'bound live-v4 plan'),
     coordinator_invocation: boundReceipt(
@@ -2042,11 +2088,11 @@ function projectInput(input, authenticateBundle) {
       concurrentValue.coordinator.exit_receipt_sha256,
       'bound coordinator exit',
     ),
-    certification_summary: boundReceipt(
-      input.live_v4.certification_summary,
-      concurrentValue.coordinator.summary_sha256,
-      'bound certification summary',
-    ),
+    certification_summary: {
+      path: boundCertificationSummary.path,
+      size: boundCertificationSummary.bytes.length,
+      sha256: boundCertificationSummary.sha256,
+    },
     monitor_evidence: boundReceipt(
       input.live_v4.monitor_evidence,
       concurrentValue.coordinator.monitor_evidence_sha256,
@@ -2067,6 +2113,11 @@ function projectInput(input, authenticateBundle) {
     deployment,
     boundPlanValue,
     'bound live-v4 plan',
+  );
+  validateControlledFixtureSummary(
+    boundCertificationSummary,
+    adjunctBinding.fixtureBinding,
+    'bound final certification summary',
   );
   const coordinatorInvocation = readStableJSON(
     input.live_v4.coordinator_invocation,
@@ -2185,6 +2236,7 @@ function projectInput(input, authenticateBundle) {
     input.agent_cu.agent_readbacks,
     semanticBundlePairs,
     input.agent_cu.perform_readback,
+    adjunctBinding.controlledFixtureTargets,
     'Agent manifest',
   );
   requireCondition(Array.isArray(input.agent_cu.semantic_readbacks)
@@ -2259,6 +2311,7 @@ function projectInput(input, authenticateBundle) {
       agent_invocation: boundAgent.invocation,
       agent_process_receipts: boundAgentProcessReceipts,
       agent_readbacks: boundAgent.readbacks,
+      controlled_fixture_targets: structuredClone(adjunctBinding.controlledFixtureTargets),
       signed_bundles: bundleReceipts,
       live_validator_reports: validatorReceipts,
       semantic_readbacks: semanticReadbacks.map((entry) => entry.receipt),
@@ -2348,9 +2401,21 @@ function validateEvidenceShape(evidence, visitReceipt) {
   });
   exactKeys(evidence.agent_cu, [
     'task', 'agent_result', 'agent_exit', 'agent_invocation', 'agent_process_receipts', 'agent_readbacks',
-    'signed_bundles', 'live_validator_reports', 'semantic_readbacks',
+    'controlled_fixture_targets', 'signed_bundles', 'live_validator_reports', 'semantic_readbacks',
     'integrated_cu_emitter_receipt', 'perform_readback', 'restore_readback', 'validation_report',
   ], 'evidence.agent_cu');
+  requireCondition(Array.isArray(evidence.agent_cu.controlled_fixture_targets)
+    && evidence.agent_cu.controlled_fixture_targets.length === 2,
+  'qualification evidence must contain both controlled Agent fixture targets');
+  evidence.agent_cu.controlled_fixture_targets.forEach((binding, index) => {
+    const suffix = index === 0 ? 'a' : 'b';
+    exactKeys(binding, ['label', 'controller_id', 'target'],
+      `evidence.agent_cu.controlled_fixture_targets[${index}]`);
+    requireCondition(binding.label === `target-${suffix}`
+      && binding.controller_id === `controller-${suffix}`,
+    `evidence.agent_cu.controlled_fixture_targets[${index}] is not canonical`);
+    exactTarget(binding.target, `evidence.agent_cu.controlled_fixture_targets[${index}].target`);
+  });
   for (const key of [
     'task', 'agent_result', 'agent_exit', 'agent_invocation', 'agent_readbacks', 'integrated_cu_emitter_receipt',
     'perform_readback', 'restore_readback', 'validation_report',
@@ -2518,6 +2583,15 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
     evidence.live_v4.plan.path,
     'verified live-v4 plan semantics',
   ).value;
+  const verifiedCertificationSummary = readStableJSON(
+    evidence.live_v4.certification_summary.path,
+    'verified final certification summary',
+  );
+  requireCondition(sameJSON(evidence.live_v4.certification_summary, {
+    path: verifiedCertificationSummary.path,
+    size: verifiedCertificationSummary.bytes.length,
+    sha256: verifiedCertificationSummary.sha256,
+  }), 'verified final certification summary changed after manifest generation');
   validateLocalDuringConcurrentBinding(
     deployment,
     concurrentValue,
@@ -2528,6 +2602,11 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
     deployment,
     verifiedPlanValue,
     'verified live-v4 plan',
+  );
+  validateControlledFixtureSummary(
+    verifiedCertificationSummary,
+    adjunctBinding.fixtureBinding,
+    'verified final certification summary',
   );
   const phases = ['launch', 'perform', 'restore'];
   evidence.agent_cu.agent_process_receipts.forEach((receipt, index) => {
@@ -2590,11 +2669,16 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
     [...concurrent.value.agent.signed_bundles]
       .sort((left, right) => left.bundle_path.localeCompare(right.bundle_path)),
   ), 'verified Agent corpus differs from concurrent validation');
+  requireCondition(sameJSON(
+    evidence.agent_cu.controlled_fixture_targets,
+    adjunctBinding.controlledFixtureTargets,
+  ), 'verified Agent controlled fixture targets differ from the live-v4 plan');
   validateConcurrentInterleavingBinding(
     concurrentValue,
     evidence.agent_cu.agent_readbacks.path,
     verifiedBundlePairs,
     evidence.agent_cu.perform_readback.path,
+    adjunctBinding.controlledFixtureTargets,
     'verified Agent manifest',
   );
   const semanticReadbacks = evidence.agent_cu.semantic_readbacks.map((receipt, index) => (
