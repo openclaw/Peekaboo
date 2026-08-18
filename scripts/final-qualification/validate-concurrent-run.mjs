@@ -358,6 +358,7 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
   const targetProcesses = new Set();
   const targetWindows = new Set();
   const readbackReceipts = [];
+  const actionIntervals = [];
   for (const [index, target] of value.targets.entries()) {
     exactKeys(target, [
       'label', 'target', 'baseline_readback_path', 'mutation', 'restoration',
@@ -428,6 +429,11 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
         `Agent ${target.label}.${kind} readback predates its signed dispatch`);
       readbackReceipts.push(readback);
       actionReceipts[kind] = { action, signed, readback };
+      actionIntervals.push({
+        trace_call_id: action.trace_call_id,
+        started_at_milliseconds: signed.payload.startedAtUnixMilliseconds,
+        completed_at_milliseconds: signed.payload.completedAtUnixMilliseconds,
+      });
     }
     requireCondition(actionReceipts.mutation.readback.value.value !== baseline.value.value,
       `Agent ${target.label} mutation did not change the baseline`);
@@ -482,7 +488,40 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
       observed_at_milliseconds: entry.value.observed_at_milliseconds,
       value_sha256: entry.value_sha256,
     })),
+    action_intervals: actionIntervals,
   };
+}
+
+const COMMON_LAUNCH_ENVIRONMENT_KEYS = [
+  'HOME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'LOGNAME', 'PATH', 'SSL_CERT_DIR',
+  'SSL_CERT_FILE', 'TMPDIR', 'TZ', 'USER',
+];
+const AGENT_LAUNCH_ENVIRONMENT_KEYS = [
+  ...COMMON_LAUNCH_ENVIRONMENT_KEYS,
+  'ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GROK_API_KEY',
+  'MINIMAX_API_KEY', 'MOONSHOT_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY',
+  'PEEKABOO_OPERATION_RECEIPT_DIRECTORY', 'XAI_API_KEY',
+];
+
+function validateLaunchEnvironment(value, kind) {
+  requireCondition(value.environment_policy_version === 1
+    && Array.isArray(value.environment_keys) && value.environment_keys.length > 0
+    && value.environment_keys.every((key) => typeof key === 'string' && key.length > 0)
+    && new Set(value.environment_keys).size === value.environment_keys.length
+    && value.environment_keys.every((key, index) => index === 0
+      || value.environment_keys[index - 1] < key)
+    && HEX64.test(value.environment_sha256 ?? ''),
+  `${kind} invocation environment receipt is malformed`);
+  const allowlist = kind === 'Agent'
+    ? AGENT_LAUNCH_ENVIRONMENT_KEYS : COMMON_LAUNCH_ENVIRONMENT_KEYS;
+  requireCondition(value.environment_keys.every((key) => allowlist.includes(key))
+    && value.environment_keys.includes('PATH')
+    && !value.environment_keys.some((key) => key === 'NODE_OPTIONS' || key.startsWith('DYLD_')),
+  `${kind} invocation environment exceeds the closed allowlist`);
+  if (kind === 'Agent') {
+    requireCondition(value.environment_keys.includes('PEEKABOO_OPERATION_RECEIPT_DIRECTORY'),
+      'Agent invocation environment omits its receipt directory');
+  }
 }
 
 function agentInvocation(filePath, agent, plan, planReceipt, lifetime) {
@@ -493,7 +532,8 @@ function agentInvocation(filePath, agent, plan, planReceipt, lifetime) {
     'arguments', 'plan_path', 'plan_sha256', 'monitor_executable_path',
     'monitor_executable_sha256', 'monitor_code_signature_hash',
     'identity_handshake_path', 'identity_handshake_sha256',
-    'stdout_path', 'stderr_path', 'captured_at_milliseconds', 'task_path', 'task_sha256',
+    'stdout_path', 'stderr_path', 'environment_policy_version', 'environment_keys',
+    'environment_sha256', 'captured_at_milliseconds', 'task_path', 'task_sha256',
     'receipt_directory', 'bridge_socket', 'background_only', 'allow_foreground', 'shell_available',
   ], 'Agent invocation receipt');
   requireCondition(value.version === 1 && value.kind === 'agent'
@@ -541,6 +581,7 @@ function agentInvocation(filePath, agent, plan, planReceipt, lifetime) {
     && value.captured_at_milliseconds >= lifetime.started_at_milliseconds
     && value.captured_at_milliseconds <= lifetime.completed_at_milliseconds,
   'Agent invocation receipt falls outside the Agent lifetime');
+  validateLaunchEnvironment(value, 'Agent');
   return { retained, value, code_signature_hash: codeSignatureHash };
 }
 
@@ -552,7 +593,8 @@ function coordinatorInvocation(filePath, coordinator, plan, planReceipt, eventsP
     'arguments', 'plan_path', 'plan_sha256', 'monitor_executable_path',
     'monitor_executable_sha256', 'monitor_code_signature_hash',
     'identity_handshake_path', 'identity_handshake_sha256',
-    'stdout_path', 'stderr_path', 'captured_at_milliseconds', 'coordinator_source_path',
+    'stdout_path', 'stderr_path', 'environment_policy_version', 'environment_keys',
+    'environment_sha256', 'captured_at_milliseconds', 'coordinator_source_path',
     'coordinator_source_sha256',
   ], 'coordinator invocation receipt');
   requireCondition(value.version === 1 && value.kind === 'coordinator'
@@ -563,6 +605,10 @@ function coordinatorInvocation(filePath, coordinator, plan, planReceipt, eventsP
   });
   requireCondition(value.executable_sha256 === executable.sha256,
     'coordinator Node executable bytes changed');
+  const codeSignatureHash = verifiedCodeSignatureHash(
+    value.executable_path,
+    'coordinator Node executable',
+  );
   const source = readStableFile(value.coordinator_source_path, 'coordinator source', {
     privateFile: false,
   });
@@ -594,7 +640,8 @@ function coordinatorInvocation(filePath, coordinator, plan, planReceipt, eventsP
     && value.captured_at_milliseconds >= lifetime.started_at_milliseconds
     && value.captured_at_milliseconds <= lifetime.completed_at_milliseconds,
   'coordinator invocation receipt falls outside its lifetime');
-  return { retained, value };
+  validateLaunchEnvironment(value, 'coordinator');
+  return { retained, value, code_signature_hash: codeSignatureHash };
 }
 
 function integratedReadback(filePath, phase, expected) {
@@ -759,6 +806,12 @@ export function validateConcurrentRun(specPath, outputPath) {
     plan,
     corpus,
   );
+  const cuPerformAt = performReadback.value.observed_at_milliseconds;
+  requireCondition(readbacks.action_intervals.some((entry) => (
+    entry.completed_at_milliseconds < cuPerformAt
+  )) && readbacks.action_intervals.some((entry) => (
+    entry.started_at_milliseconds > cuPerformAt
+  )), 'Agent mutations do not prove progress both before and after integrated Computer Use');
   const report = {
     version: 1,
     passed: true,
@@ -767,6 +820,7 @@ export function validateConcurrentRun(specPath, outputPath) {
     coordinator: {
       pid: coordinatorExit.pid,
       start_identity: coordinatorExit.start_identity,
+      code_signature_hash: coordinatorLaunch.code_signature_hash,
       exit_code: coordinatorExit.exit_code,
       exit_receipt_sha256: coordinatorExit.sha256,
       invocation_sha256: coordinatorLaunch.retained.sha256,
@@ -795,6 +849,10 @@ export function validateConcurrentRun(specPath, outputPath) {
       signed_bundles: readbacks.bundles,
       semantic_readbacks: readbacks.readbacks,
       trace_entry_count: trace.trace.entries.length,
+      progress_interleaving: {
+        integrated_cu_perform_at_milliseconds: cuPerformAt,
+        action_intervals: readbacks.action_intervals,
+      },
     },
     integrated_cu: {
       emitter,

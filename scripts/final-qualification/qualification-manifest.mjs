@@ -24,6 +24,7 @@ const QUALIFICATION_TOOL_FILES = [
   'lib.mjs',
   'managed-launcher.mjs',
   'project-live-bindings.mjs',
+  'process-lifecycle-guard.c',
   'process-tree-collector.mjs',
   'publish-coordinator-marker.mjs',
   'qualification-manifest.mjs',
@@ -108,9 +109,169 @@ function immutableReceipt(filePath, label) {
   return { path: retained.path, size: retained.bytes.length, sha256: retained.sha256 };
 }
 
+function immutableRetainedReceipt(retained, label) {
+  requireCondition((retained.info.mode & 0o222n) === 0n, `${label} must be non-writable`);
+  return { path: retained.path, size: retained.bytes.length, sha256: retained.sha256 };
+}
+
 function stableSourceReceipt(filePath, label) {
   const retained = readStableFile(filePath, label, { privateFile: false });
   return { path: retained.path, size: retained.bytes.length, sha256: retained.sha256 };
+}
+
+function semanticPeekabooArtifactManifest(filePath, label, expectedSourceCommit) {
+  const retained = readStableJSON(filePath, label);
+  const value = retained.value;
+  requireCondition(Number.isSafeInteger(value.schema) && value.schema >= 5
+    && value.phase === 'candidate_verified_not_installed'
+    && value.source_commit === expectedSourceCommit
+    && value.version === '4.2.1'
+    && value.app?.source_commit === expectedSourceCommit
+    && value.playground?.source_commit === expectedSourceCommit
+    && SHA256.test(value.cli?.sha256 ?? '')
+    && CODE_SIGNATURE_HASH.test(value.cli?.cdhash ?? '')
+    && SHA256.test(value.app?.zip_sha256 ?? '')
+    && CODE_SIGNATURE_HASH.test(value.app?.cdhash ?? '')
+    && SHA256.test(value.playground?.zip_sha256 ?? '')
+    && CODE_SIGNATURE_HASH.test(value.playground?.cdhash ?? '')
+    && value.verification?.cli_source === true
+    && value.verification?.cli_native_only === true
+    && value.verification?.app_source === true
+    && value.verification?.app_native_only === true
+    && value.verification?.playground_native_only === true,
+  `${label} is not one complete source-bound Peekaboo artifact manifest`);
+  return {
+    value,
+    receipt: immutableRetainedReceipt(retained, label),
+  };
+}
+
+function semanticOpenClawArtifactReceipt(filePath, label, expected) {
+  const retained = readStableJSON(filePath, label);
+  const value = retained.value;
+  exactKeys(value, [
+    'schemaVersion', 'kind', 'archive', 'archiveSha256', 'archiveChecksum', 'installer',
+    'installerSha256', 'installerChecksum', 'sourceCommit', 'peekabooCommit', 'version',
+    'build', 'authority', 'teamIdentifier', 'cdhashes', 'architectures',
+    'entitlementsSha256', 'notarizationId',
+  ], label);
+  exactKeys(value.cdhashes, ['arm64', 'x86_64'], `${label}.cdhashes`);
+  exactKeys(value.architectures, ['main', 'helper'], `${label}.architectures`);
+  exactKeys(value.entitlementsSha256, ['main', 'helper'], `${label}.entitlementsSha256`);
+  requireCondition(value.schemaVersion === 1 && value.kind === 'openclaw-elevation-artifact'
+    && value.sourceCommit === expected.openclawSourceCommit
+    && value.peekabooCommit === expected.peekabooSourceCommit
+    && typeof value.archive === 'string' && value.archive.length > 0
+    && value.archiveChecksum === `${value.archive}.sha256`
+    && SHA256.test(value.archiveSha256)
+    && typeof value.installer === 'string' && value.installer.length > 0
+    && value.installerChecksum === `${value.installer}.sha256`
+    && SHA256.test(value.installerSha256)
+    && typeof value.version === 'string' && value.version.length > 0
+    && typeof value.build === 'string' && value.build.length > 0
+    && typeof value.authority === 'string' && value.authority.length > 0
+    && TEAM.test(value.teamIdentifier)
+    && CODE_SIGNATURE_HASH.test(value.cdhashes.arm64)
+    && CODE_SIGNATURE_HASH.test(value.cdhashes.x86_64)
+    && typeof value.architectures.main === 'string' && value.architectures.main.length > 0
+    && typeof value.architectures.helper === 'string' && value.architectures.helper.length > 0
+    && SHA256.test(value.entitlementsSha256.main)
+    && SHA256.test(value.entitlementsSha256.helper)
+    && typeof value.notarizationId === 'string'
+    && /^[0-9a-fA-F-]{36}$/.test(value.notarizationId),
+  `${label} is not one authenticated source-bound OpenClaw artifact receipt`);
+  return {
+    value,
+    receipt: immutableRetainedReceipt(retained, label),
+  };
+}
+
+function semanticArtifactBinding(filePath, label, deployment) {
+  const retained = readStableJSON(filePath, label);
+  const value = retained.value;
+  exactKeys(value, [
+    'version', 'deployment_envelope_sha256', 'peekaboo_source_commit',
+    'openclaw_source_commit', 'qualification_tools_aggregate_sha256',
+    'peekaboo_artifact_manifest', 'openclaw_artifact_receipt',
+  ], label);
+  exactKeys(value.peekaboo_artifact_manifest, ['path', 'sha256'],
+    `${label}.peekaboo_artifact_manifest`);
+  exactKeys(value.openclaw_artifact_receipt, ['path', 'sha256'],
+    `${label}.openclaw_artifact_receipt`);
+  requireCondition(value.version === 2
+    && value.deployment_envelope_sha256 === deployment.installed[0].envelopeSHA256
+    && value.peekaboo_source_commit === deployment.peekabooSourceCommit
+    && value.openclaw_source_commit === deployment.installed[0].projection.openclaw_source_commit
+    && value.qualification_tools_aggregate_sha256
+      === deployment.qualificationToolsAggregateSHA256,
+  `${label} differs from deployed envelope/source/tool identity`);
+  const peekaboo = semanticPeekabooArtifactManifest(
+    value.peekaboo_artifact_manifest.path,
+    `${label} Peekaboo artifact manifest`,
+    value.peekaboo_source_commit,
+  );
+  const openclaw = semanticOpenClawArtifactReceipt(
+    value.openclaw_artifact_receipt.path,
+    `${label} OpenClaw artifact receipt`,
+    {
+      openclawSourceCommit: value.openclaw_source_commit,
+      peekabooSourceCommit: value.peekaboo_source_commit,
+    },
+  );
+  requireCondition(value.peekaboo_artifact_manifest.sha256 === peekaboo.receipt.sha256
+    && value.openclaw_artifact_receipt.sha256 === openclaw.receipt.sha256,
+  `${label} nested artifact digest is invalid`);
+  return {
+    evidence: {
+      binding: immutableRetainedReceipt(retained, label),
+      peekaboo_artifact_manifest: peekaboo.receipt,
+      openclaw_artifact_receipt: openclaw.receipt,
+    },
+    peekaboo: peekaboo.value,
+    openclaw: openclaw.value,
+  };
+}
+
+function semanticElevationInstallReceipt(filePath, label, installed) {
+  const retained = readStableJSON(filePath, label);
+  const value = retained.value;
+  exactKeys(value, [
+    'schemaVersion', 'kind', 'transactionState', 'transactionId', 'sourceCommit',
+    'peekabooCommit', 'archiveSha256', 'artifactReceiptSha256', 'installerSha256',
+    'cdhashes', 'nodeId', 'nodeProfile', 'appPath', 'stateDir', 'configPath',
+    'backupPath', 'backupCDHashes', 'plistPath', 'previousPlist',
+    'previousPlistSha256', 'previousPlistWasLoaded', 'previousReceipt',
+    'previousReceiptSha256', 'migration', 'adoptedApp',
+  ], label);
+  exactKeys(value.cdhashes, ['arm64', 'x86_64'], `${label}.cdhashes`);
+  exactKeys(value.backupCDHashes, ['arm64', 'x86_64'], `${label}.backupCDHashes`);
+  exactKeys(value.adoptedApp, ['wasRunning', 'attachOnly'], `${label}.adoptedApp`);
+  requireCondition(value.schemaVersion === 3 && value.kind === 'openclaw-elevation-install'
+    && value.transactionState === 'installed'
+    && typeof value.transactionId === 'string' && /^[0-9A-F-]{36}$/.test(value.transactionId)
+    && value.sourceCommit === installed.projection.openclaw_source_commit
+    && value.peekabooCommit === installed.projection.peekaboo_source_commit
+    && SHA256.test(value.archiveSha256)
+    && SHA256.test(value.artifactReceiptSha256)
+    && SHA256.test(value.installerSha256)
+    && CODE_SIGNATURE_HASH.test(value.cdhashes.arm64)
+    && CODE_SIGNATURE_HASH.test(value.cdhashes.x86_64)
+    && typeof value.nodeId === 'string' && value.nodeId.length >= 8 && value.nodeId.length <= 256
+    && /^[A-Za-z0-9._:-]+$/.test(value.nodeId)
+    && ['primary', 'node'].includes(value.nodeProfile)
+    && value.appPath === '/Applications/OpenClaw.app'
+    && typeof value.stateDir === 'string' && path.isAbsolute(value.stateDir)
+    && typeof value.configPath === 'string' && path.isAbsolute(value.configPath)
+    && typeof value.plistPath === 'string' && path.isAbsolute(value.plistPath)
+    && typeof value.previousPlistWasLoaded === 'boolean'
+    && (value.migration === null || (value.migration && typeof value.migration === 'object'))
+    && typeof value.adoptedApp.wasRunning === 'boolean'
+    && typeof value.adoptedApp.attachOnly === 'boolean',
+  `${label} is not one installed source-bound elevation receipt`);
+  return {
+    value,
+    receipt: { path: retained.path, size: retained.bytes.length, sha256: retained.sha256 },
+  };
 }
 
 const DEPLOYMENT_HOST_ROLES = ['local', 'studio'];
@@ -211,6 +372,7 @@ function semanticInstalledInventory(filePath, label) {
     role: value.role,
     hostUUID: value.host_uuid,
     envelopeSHA256: value.deployment_envelope_sha256,
+    aggregateSHA256: value.aggregate_sha256,
     elevationReceiptSHA256: value.elevation_receipt_sha256,
     qualificationToolsAggregateSHA256: value.qualification_tools_aggregate_sha256,
     capturedAtMilliseconds: value.captured_at_milliseconds,
@@ -236,6 +398,8 @@ function processRoot(value, label) {
   return {
     rootID: value.root_id,
     rootClass: value.root_class,
+    pid: value.pid,
+    startIdentity: value.start_identity,
     identity: processIdentity(
       { pid: value.pid, start_identity: value.start_identity },
       `${label} process`,
@@ -300,12 +464,60 @@ function semanticProcessTree(filePath, label) {
   const value = retained.value;
   exactKeys(value, [
     'version', 'role', 'host_uuid', 'deployment_envelope_sha256', 'epoch', 'scope',
-    'captured_at_milliseconds', 'collector_sha256', 'complete', 'roots', 'processes',
+    'requested_observation_milliseconds', 'target_sample_interval_milliseconds',
+    'coverage_started_at_milliseconds', 'final_sample_started_at_milliseconds',
+    'coverage_completed_at_milliseconds', 'captured_at_milliseconds',
+    'sample_count', 'maximum_sample_gap_milliseconds',
+    'observed_maximum_sample_gap_milliseconds', 'continuous_lifecycle_observation',
+    'lifecycle_guard_sha256', 'lifecycle_guard_binary_sha256',
+    'lifecycle_started_at_milliseconds',
+    'lifecycle_completed_at_milliseconds', 'lifecycle_watched_pids',
+    'lifecycle_event_count', 'collector_sha256', 'complete',
+    'roots', 'processes',
   ], label);
-  requireCondition(value.version === 1 && DEPLOYMENT_HOST_ROLES.includes(value.role)
+  requireCondition(value.version === 2 && DEPLOYMENT_HOST_ROLES.includes(value.role)
     && HOST_UUID.test(value.host_uuid) && SHA256.test(value.deployment_envelope_sha256)
     && PROCESS_TREE_EPOCHS.includes(value.epoch) && value.scope === 'task_owned_descendants'
+    && Number.isSafeInteger(value.requested_observation_milliseconds)
+    && value.requested_observation_milliseconds >= 50
+    && value.requested_observation_milliseconds <= 7_200_000
+    && Number.isSafeInteger(value.target_sample_interval_milliseconds)
+    && value.target_sample_interval_milliseconds >= 5
+    && value.target_sample_interval_milliseconds <= 100
+    && Number.isSafeInteger(value.coverage_started_at_milliseconds)
+    && value.coverage_started_at_milliseconds > 0
+    && Number.isSafeInteger(value.final_sample_started_at_milliseconds)
+    && value.final_sample_started_at_milliseconds
+      >= value.coverage_started_at_milliseconds + value.requested_observation_milliseconds
+    && Number.isSafeInteger(value.coverage_completed_at_milliseconds)
+    && value.coverage_completed_at_milliseconds >= value.final_sample_started_at_milliseconds
     && Number.isSafeInteger(value.captured_at_milliseconds) && value.captured_at_milliseconds > 0
+    && value.captured_at_milliseconds >= value.coverage_completed_at_milliseconds
+    && Number.isSafeInteger(value.sample_count) && value.sample_count >= 2
+    && Number.isSafeInteger(value.maximum_sample_gap_milliseconds)
+    && value.maximum_sample_gap_milliseconds >= value.target_sample_interval_milliseconds
+    && value.maximum_sample_gap_milliseconds <= 10_000
+    && Number.isSafeInteger(value.observed_maximum_sample_gap_milliseconds)
+    && value.observed_maximum_sample_gap_milliseconds >= 0
+    && value.observed_maximum_sample_gap_milliseconds
+      <= value.maximum_sample_gap_milliseconds
+    && value.sample_count >= Math.ceil(
+      value.requested_observation_milliseconds / value.maximum_sample_gap_milliseconds,
+    ) + 1
+    && value.continuous_lifecycle_observation === true
+    && SHA256.test(value.lifecycle_guard_sha256)
+    && SHA256.test(value.lifecycle_guard_binary_sha256)
+    && Number.isSafeInteger(value.lifecycle_started_at_milliseconds)
+    && value.lifecycle_started_at_milliseconds > 0
+    && value.lifecycle_started_at_milliseconds <= value.coverage_started_at_milliseconds
+    && Number.isSafeInteger(value.lifecycle_completed_at_milliseconds)
+    && value.lifecycle_completed_at_milliseconds >= value.captured_at_milliseconds
+    && Array.isArray(value.lifecycle_watched_pids) && value.lifecycle_watched_pids.length > 0
+    && value.lifecycle_watched_pids.every((pid) => Number.isSafeInteger(pid) && pid > 0)
+    && new Set(value.lifecycle_watched_pids).size === value.lifecycle_watched_pids.length
+    && value.lifecycle_watched_pids.every((pid, index) => index === 0
+      || value.lifecycle_watched_pids[index - 1] < pid)
+    && value.lifecycle_event_count === 0
     && SHA256.test(value.collector_sha256) && value.complete === true
     && Array.isArray(value.roots) && value.roots.length > 0
     && Array.isArray(value.processes) && value.processes.length > 0,
@@ -351,32 +563,80 @@ function semanticProcessTree(filePath, label) {
   }
   requireCondition(reachable.size === records.length,
     `${label} contains a cycle or process outside its declared task roots`);
+  requireCondition(sameJSON(
+    value.lifecycle_watched_pids,
+    records.map((record) => record.value.pid),
+  ), `${label} continuous lifecycle coverage differs from its process inventory`);
   return {
     role: value.role,
     hostUUID: value.host_uuid,
     envelopeSHA256: value.deployment_envelope_sha256,
     epoch: value.epoch,
+    coverageStartedAtMilliseconds: value.coverage_started_at_milliseconds,
+    finalSampleStartedAtMilliseconds: value.final_sample_started_at_milliseconds,
+    coverageCompletedAtMilliseconds: value.coverage_completed_at_milliseconds,
     capturedAtMilliseconds: value.captured_at_milliseconds,
     collectorSHA256: value.collector_sha256,
+    lifecycleGuardSHA256: value.lifecycle_guard_sha256,
+    lifecycleGuardBinarySHA256: value.lifecycle_guard_binary_sha256,
     roots,
     receipt: { path: retained.path, size: retained.bytes.length, sha256: retained.sha256 },
   };
 }
 
-function semanticExecutablePolicyReport(filePath, label) {
+function semanticExecutablePolicyReport(filePath, label, installed) {
   const retained = readStableJSON(filePath, label);
   const value = retained.value;
   exactKeys(value, [
     'version', 'role', 'host_uuid', 'deployment_envelope_sha256', 'scanner_sha256',
-    'complete', 'scanned_executable_count', 'scanned_script_count', 'forbidden_findings',
+    'complete', 'installed_inventory_aggregate_sha256', 'scanned_roots', 'covered_entries',
+    'file_coverage', 'coverage_aggregate_sha256', 'scanned_executable_count',
+    'scanned_script_count', 'forbidden_findings',
   ], label);
   requireCondition(value.version === 1 && DEPLOYMENT_HOST_ROLES.includes(value.role)
     && HOST_UUID.test(value.host_uuid) && SHA256.test(value.deployment_envelope_sha256)
     && SHA256.test(value.scanner_sha256) && value.complete === true
+    && SHA256.test(value.installed_inventory_aggregate_sha256)
+    && sameJSON(value.scanned_roots, INSTALLED_ARTIFACTS)
+    && Array.isArray(value.covered_entries) && Array.isArray(value.file_coverage)
+    && SHA256.test(value.coverage_aggregate_sha256)
     && Number.isSafeInteger(value.scanned_executable_count) && value.scanned_executable_count > 0
     && Number.isSafeInteger(value.scanned_script_count) && value.scanned_script_count > 0
     && Array.isArray(value.forbidden_findings) && value.forbidden_findings.length === 0,
   `${label} is not one complete clean executable/script policy report`);
+  requireCondition(value.installed_inventory_aggregate_sha256 === installed.aggregateSHA256,
+    `${label} installed inventory aggregate is not bound`);
+  requireCondition(sameJSON(value.covered_entries, installed.projection.entries),
+    `${label} does not cover the complete installed inventory`);
+  const installedFiles = installed.projection.entries.filter((entry) => entry.type === 'file');
+  requireCondition(value.file_coverage.length === installedFiles.length,
+    `${label} does not classify every installed file`);
+  const classifications = ['data', 'executable', 'script'];
+  value.file_coverage.forEach((entry, index) => {
+    exactKeys(entry, ['artifact', 'relative_path', 'sha256', 'classification'],
+      `${label}.file_coverage[${index}]`);
+    const installedFile = installedFiles[index];
+    requireCondition(entry.artifact === installedFile.artifact
+      && entry.relative_path === installedFile.relative_path
+      && entry.sha256 === installedFile.sha256
+      && classifications.includes(entry.classification),
+    `${label}.file_coverage[${index}] differs from its installed file`);
+  });
+  requireCondition(value.scanned_executable_count === value.file_coverage.filter((entry) => (
+    entry.classification === 'executable'
+  )).length, `${label} executable count differs from per-file coverage`);
+  requireCondition(value.scanned_script_count === value.file_coverage.filter((entry) => (
+    entry.classification === 'script'
+  )).length, `${label} script count differs from per-file coverage`);
+  const coverage = {
+    installed_inventory_aggregate_sha256: value.installed_inventory_aggregate_sha256,
+    scanned_roots: value.scanned_roots,
+    covered_entries: value.covered_entries,
+    file_coverage: value.file_coverage,
+  };
+  requireCondition(value.coverage_aggregate_sha256
+    === aggregateSHA256('executable-policy-coverage', coverage),
+  `${label} coverage aggregate is invalid`);
   return {
     role: value.role,
     hostUUID: value.host_uuid,
@@ -413,15 +673,29 @@ function semanticDeploymentEvidence(value, label) {
   requireCondition(installed.slice(1).every((entry) => (
     sameJSON(entry.projection, installed[0].projection)
   )), `${label} local and Studio installed inventories differ`);
-  const elevationReceipts = value.elevation_receipts.map((filePath, index) => (
-    fileReceipt(filePath, `${label}.elevation_receipts[${index}]`)
+  const elevations = value.elevation_receipts.map((filePath, index) => (
+    semanticElevationInstallReceipt(
+      filePath,
+      `${label}.elevation_receipts[${index}]`,
+      installed[index],
+    )
   ));
-  requireCondition(elevationReceipts.every((receipt, index) => (
-    receipt.sha256 === installed[index].elevationReceiptSHA256
+  requireCondition(elevations.every((elevation, index) => (
+    elevation.receipt.sha256 === installed[index].elevationReceiptSHA256
   )), `${label} elevation receipt differs from its installed inventory`);
+  requireCondition(new Set(elevations.map((entry) => entry.value.transactionId)).size
+    === elevations.length, `${label} elevation transaction IDs are not host-distinct`);
+  requireCondition(new Set(elevations.map((entry) => entry.value.nodeId)).size
+    === elevations.length, `${label} elevation node IDs are not host-distinct`);
+  requireCondition(new Set(elevations.map((entry) => entry.receipt.sha256)).size
+    === elevations.length, `${label} elevation receipts are not host-distinct`);
   const collector = stableSourceReceipt(
     value.process_tree_collector,
     `${label}.process_tree_collector`,
+  );
+  const lifecycleGuard = stableSourceReceipt(
+    path.join(path.dirname(value.process_tree_collector), 'process-lifecycle-guard.c'),
+    `${label}.process_lifecycle_guard`,
   );
   const expectedTrees = DEPLOYMENT_HOST_ROLES.flatMap((role) => (
     PROCESS_TREE_EPOCHS.map((epoch) => ({ role, epoch }))
@@ -433,6 +707,12 @@ function semanticDeploymentEvidence(value, label) {
     && tree.epoch === expectedTrees[index].epoch), `${label} process-tree ordering is invalid`);
   requireCondition(trees.every((tree) => tree.collectorSHA256 === collector.sha256),
     `${label} process tree collector differs from the bound source`);
+  requireCondition(trees.every((tree) => (
+    tree.lifecycleGuardSHA256 === lifecycleGuard.sha256
+  )), `${label} process lifecycle guard differs from the bound source`);
+  requireCondition(DEPLOYMENT_HOST_ROLES.every((role) => new Set(
+    trees.filter((tree) => tree.role === role).map((tree) => tree.lifecycleGuardBinarySHA256),
+  ).size === 1), `${label} process lifecycle guard binary differs within one host`);
   for (const tree of trees) {
     const host = installed.find((entry) => entry.role === tree.role);
     requireCondition(tree.hostUUID === host.hostUUID && tree.envelopeSHA256 === host.envelopeSHA256,
@@ -450,6 +730,10 @@ function semanticDeploymentEvidence(value, label) {
     requireCondition(hostTrees.every((tree, index) => index === 0
       || hostTrees[index - 1].capturedAtMilliseconds < tree.capturedAtMilliseconds),
     `${label} ${role} process-tree timestamps are not strictly ordered`);
+    requireCondition(hostTrees.every((tree, index) => index === 0
+      || hostTrees[index - 1].coverageCompletedAtMilliseconds
+        < tree.coverageStartedAtMilliseconds),
+    `${label} ${role} process-tree coverage intervals overlap or are not ordered`);
     const persistentClasses = role === 'local'
       ? ['bridge', 'elevation', 'integrated_cu'] : ['bridge', 'elevation'];
     for (const rootClass of persistentClasses) {
@@ -459,13 +743,23 @@ function semanticDeploymentEvidence(value, label) {
         && authority.codeSignatureHash === authorities[0].codeSignatureHash),
       `${label} ${role} ${rootClass} root generation drifted across epochs`);
     }
+    const elevation = elevations[DEPLOYMENT_HOST_ROLES.indexOf(role)];
+    const admittedCDHashes = new Set(Object.values(elevation.value.cdhashes));
+    requireCondition(hostTrees.every((tree) => {
+      const root = tree.roots.find((entry) => entry.rootClass === 'elevation');
+      return root && admittedCDHashes.has(root.codeSignatureHash);
+    }), `${label} ${role} elevation root differs from its installed receipt`);
   }
   const scanner = stableSourceReceipt(
     value.executable_policy_scanner,
     `${label}.executable_policy_scanner`,
   );
   const policyReports = value.executable_policy_reports.map((filePath, index) => (
-    semanticExecutablePolicyReport(filePath, `${label}.executable_policy_reports[${index}]`)
+    semanticExecutablePolicyReport(
+      filePath,
+      `${label}.executable_policy_reports[${index}]`,
+      installed[index],
+    )
   ));
   requireCondition(sameJSON(policyReports.map((entry) => entry.role), DEPLOYMENT_HOST_ROLES),
     `${label} executable policy report role ordering is invalid`);
@@ -476,7 +770,7 @@ function semanticDeploymentEvidence(value, label) {
   return {
     evidence: {
       installed_inventories: installed.map((entry) => entry.receipt),
-      elevation_receipts: elevationReceipts,
+      elevation_receipts: elevations.map((entry) => entry.receipt),
       process_tree_collector: collector,
       process_trees: trees.map((entry) => entry.receipt),
       executable_policy_scanner: scanner,
@@ -484,7 +778,53 @@ function semanticDeploymentEvidence(value, label) {
     },
     peekabooSourceCommit: installed[0].projection.peekaboo_source_commit,
     qualificationToolsAggregateSHA256: installed[0].qualificationToolsAggregateSHA256,
+    installed,
+    elevations,
+    trees,
+    collectorSource: collector,
+    lifecycleGuardSource: lifecycleGuard,
   };
+}
+
+function validatePeekabooArtifactDeployment(artifact, deployment, label) {
+  const cliCandidates = deployment.installed[0].projection.entries.filter((entry) => (
+    entry.artifact === 'peekaboo_cli'
+      && entry.type === 'file'
+      && path.basename(entry.relative_path) === 'peekaboo'
+      && (entry.mode & 0o111) !== 0
+  ));
+  requireCondition(cliCandidates.length === 1
+    && cliCandidates[0].sha256 === artifact.cli.sha256,
+  `${label} CLI artifact differs from the installed executable`);
+  for (const role of DEPLOYMENT_HOST_ROLES) {
+    const hostTrees = deployment.trees.filter((tree) => tree.role === role);
+    requireCondition(hostTrees.length === PROCESS_TREE_EPOCHS.length
+      && hostTrees.every((tree) => {
+        const bridge = tree.roots.find((root) => root.rootClass === 'bridge');
+        return bridge?.codeSignatureHash === artifact.app.cdhash;
+      }), `${label} Peekaboo.app artifact differs from the ${role} Bridge root`);
+    const during = hostTrees.find((tree) => tree.epoch === 'during');
+    const fixtures = during?.roots.filter((root) => root.rootClass === 'fixture') ?? [];
+    requireCondition(fixtures.length > 0 && fixtures.every((root) => (
+      root.codeSignatureHash === artifact.playground.cdhash
+    )), `${label} Playground artifact differs from the ${role} fixture root`);
+  }
+}
+
+function validateDeploymentToolSources(deployment, toolsManifest, label) {
+  const files = new Map(toolsManifest.files.map((entry) => [entry.relative_path, entry]));
+  const expected = [
+    ['process-tree-collector.mjs', deployment.collectorSource],
+    ['process-lifecycle-guard.c', deployment.lifecycleGuardSource],
+  ];
+  for (const [relativePath, receipt] of expected) {
+    const entry = files.get(relativePath);
+    requireCondition(entry
+      && receipt.path === path.join(toolsManifest.directory, relativePath)
+      && receipt.sha256 === entry.sha256
+      && receipt.size === entry.size,
+    `${label} ${relativePath} differs from the reviewed qualification tools`);
+  }
 }
 
 function exactTarget(value, label) {
@@ -496,27 +836,70 @@ function exactTarget(value, label) {
   return value;
 }
 
-function semanticCertificate(filePath, label) {
+function semanticCertificate(filePath, label, expected) {
   const retained = readStableJSON(filePath, label);
-  exactKeys(retained.value, [
-    'success', 'catalog_version', 'expected_cases', 'observed_cases', 'failures',
+  const value = retained.value;
+  exactKeys(value, [
+    'version', 'cycle', 'success', 'catalog_version', 'expected_cases', 'observed_cases',
+    'failures', 'execution_nonce', 'host_uuid', 'peekaboo_source_commit',
+    'bridge_source_commit', 'deployment_envelope_sha256',
+    'installed_inventory_aggregate_sha256', 'peekaboo_artifact_manifest_sha256',
+    'started_at_milliseconds', 'completed_at_milliseconds',
   ], label);
-  requireCondition(retained.value.success === true
-    && retained.value.catalog_version === 2
-    && retained.value.expected_cases === 42
-    && retained.value.observed_cases === 42
-    && Array.isArray(retained.value.failures) && retained.value.failures.length === 0,
+  requireCondition(value.version === 2 && value.cycle === expected.cycle
+    && value.success === true && value.catalog_version === 2
+    && value.expected_cases === 42 && value.observed_cases === 42
+    && Array.isArray(value.failures) && value.failures.length === 0
+    && SHA256.test(value.execution_nonce) && value.host_uuid === expected.hostUUID
+    && value.peekaboo_source_commit === expected.sourceCommit
+    && value.bridge_source_commit === expected.sourceCommit
+    && value.deployment_envelope_sha256 === expected.deploymentEnvelopeSHA256
+    && value.installed_inventory_aggregate_sha256 === expected.installedInventoryAggregateSHA256
+    && value.peekaboo_artifact_manifest_sha256 === expected.peekabooArtifactManifestSHA256
+    && Number.isSafeInteger(value.started_at_milliseconds) && value.started_at_milliseconds > 0
+    && Number.isSafeInteger(value.completed_at_milliseconds)
+    && value.completed_at_milliseconds > value.started_at_milliseconds,
   `${label} is not one passing 42/42 certificate`);
-  return { path: retained.path, size: retained.bytes.length, sha256: retained.sha256 };
+  return {
+    receipt: { path: retained.path, size: retained.bytes.length, sha256: retained.sha256 },
+    value,
+  };
 }
 
-function semanticCrashComparison(filePath, label) {
+function semanticCrashComparison(filePath, label, expected = null) {
   const retained = readStableJSON(filePath, label);
-  exactKeys(retained.value, ['version', 'passed', 'added', 'changed', 'removed'], label);
-  requireCondition(retained.value.version === 1 && retained.value.passed === true
-    && ['added', 'changed', 'removed'].every((key) => (
-      Array.isArray(retained.value[key]) && retained.value[key].length === 0
-    )), `${label} is not one passing zero-delta crash comparison`);
+  const value = retained.value;
+  if (expected === null) {
+    exactKeys(value, ['version', 'passed', 'added', 'changed', 'removed'], label);
+    requireCondition(value.version === 1 && value.passed === true
+      && ['added', 'changed', 'removed'].every((key) => (
+        Array.isArray(value[key]) && value[key].length === 0
+      )), `${label} is not one passing zero-delta crash comparison`);
+  } else {
+    exactKeys(value, [
+      'version', 'cycle', 'execution_nonce', 'host_uuid', 'peekaboo_source_commit',
+      'deployment_envelope_sha256', 'installed_inventory_aggregate_sha256',
+      'peekaboo_artifact_manifest_sha256', 'started_at_milliseconds',
+      'completed_at_milliseconds', 'passed', 'added',
+      'changed', 'removed',
+    ], label);
+    requireCondition(value.version === 2 && value.cycle === expected.cycle
+      && value.execution_nonce === expected.execution_nonce
+      && value.host_uuid === expected.host_uuid
+      && value.peekaboo_source_commit === expected.peekaboo_source_commit
+      && value.deployment_envelope_sha256 === expected.deployment_envelope_sha256
+      && value.installed_inventory_aggregate_sha256
+        === expected.installed_inventory_aggregate_sha256
+      && value.peekaboo_artifact_manifest_sha256
+        === expected.peekaboo_artifact_manifest_sha256
+      && Number.isSafeInteger(value.started_at_milliseconds)
+      && value.started_at_milliseconds <= expected.started_at_milliseconds
+      && Number.isSafeInteger(value.completed_at_milliseconds)
+      && value.completed_at_milliseconds >= expected.completed_at_milliseconds
+      && value.passed === true && ['added', 'changed', 'removed'].every((key) => (
+        Array.isArray(value[key]) && value[key].length === 0
+      )), `${label} is not one run-bound zero-delta crash comparison`);
+  }
   return { path: retained.path, size: retained.bytes.length, sha256: retained.sha256 };
 }
 
@@ -527,21 +910,104 @@ function semanticConcurrentValidation(filePath) {
     'version', 'passed', 'execution_nonce', 'monitor_instance_id', 'coordinator', 'agent',
     'integrated_cu', 'overlap', 'externally_supplied_authority',
   ], 'Agent/CU concurrent validation report');
+  const actionIntervals = value.agent?.progress_interleaving?.action_intervals;
+  requireCondition(Array.isArray(actionIntervals),
+    'Agent/CU concurrent validation report action intervals are absent');
+  actionIntervals.forEach((entry, index) => {
+    exactKeys(entry, [
+      'trace_call_id', 'started_at_milliseconds', 'completed_at_milliseconds',
+    ], `Agent/CU concurrent validation report action_intervals[${index}]`);
+    requireCondition(typeof entry.trace_call_id === 'string' && entry.trace_call_id.length > 0
+      && Number.isSafeInteger(entry.started_at_milliseconds)
+      && Number.isSafeInteger(entry.completed_at_milliseconds)
+      && entry.completed_at_milliseconds >= entry.started_at_milliseconds,
+    `Agent/CU concurrent validation report action_intervals[${index}] is malformed`);
+  });
+  const overlap = value.overlap;
   requireCondition(value.version === 1 && value.passed === true
     && value.coordinator?.exit_code === 0
+    && CODE_SIGNATURE_HASH.test(value.coordinator?.code_signature_hash ?? '')
     && value.coordinator?.completed_event === 'completed'
     && value.coordinator?.certification_eligible === true
     && value.agent?.exit_code === 0
     && Array.isArray(value.agent?.mapped_call_ids) && value.agent.mapped_call_ids.length === 4
     && new Set(value.agent.mapped_call_ids).size === 4
     && Array.isArray(value.agent?.mutation_families) && value.agent.mutation_families.length >= 2
+    && Number.isSafeInteger(value.agent?.progress_interleaving?.integrated_cu_perform_at_milliseconds)
+    && actionIntervals.length === 4
+    && new Set(actionIntervals.map((entry) => entry.trace_call_id)).size === actionIntervals.length
+    && sameJSON(
+      actionIntervals.map((entry) => entry.trace_call_id).sort(),
+      [...value.agent.mapped_call_ids].sort(),
+    )
+    && actionIntervals.some((entry) => (
+      entry.completed_at_milliseconds
+        < value.agent.progress_interleaving.integrated_cu_perform_at_milliseconds
+    ))
+    && actionIntervals.some((entry) => (
+      entry.started_at_milliseconds
+        > value.agent.progress_interleaving.integrated_cu_perform_at_milliseconds
+    ))
     && Number.isSafeInteger(value.agent?.signed_bundle_count) && value.agent.signed_bundle_count >= 4
     && Array.isArray(value.agent?.signed_bundles)
     && value.agent.signed_bundles.length === value.agent.signed_bundle_count
     && Array.isArray(value.agent?.semantic_readbacks) && value.agent.semantic_readbacks.length === 6
-    && value.overlap?.agent_covers_operation_interval === true,
+    && Number.isSafeInteger(overlap?.agent_started_at_milliseconds)
+    && Number.isSafeInteger(overlap?.operations_started_at_milliseconds)
+    && Number.isSafeInteger(overlap?.operations_completed_at_milliseconds)
+    && Number.isSafeInteger(overlap?.agent_completed_at_milliseconds)
+    && overlap.agent_started_at_milliseconds <= overlap.operations_started_at_milliseconds
+    && overlap.operations_started_at_milliseconds < overlap.operations_completed_at_milliseconds
+    && overlap.operations_completed_at_milliseconds <= overlap.agent_completed_at_milliseconds
+    && overlap.agent_covers_operation_interval === true,
   'Agent/CU concurrent validation report is not semantically complete');
   return { retained, value, receipt: { path: retained.path, size: retained.bytes.length, sha256: retained.sha256 } };
+}
+
+function validateLocalDuringConcurrentBinding(deployment, concurrent, plan, label) {
+  const candidates = deployment.trees.filter((tree) => (
+    tree.role === 'local' && tree.epoch === 'during'
+  ));
+  requireCondition(candidates.length === 1, `${label} lacks one local/during process tree`);
+  const during = candidates[0];
+  requireCondition(
+    during.coverageStartedAtMilliseconds <= concurrent.overlap.operations_started_at_milliseconds
+      && during.finalSampleStartedAtMilliseconds
+        >= concurrent.overlap.operations_completed_at_milliseconds,
+    `${label} local/during process coverage does not bracket the concurrent operation interval`,
+  );
+  const expected = {
+    agent: {
+      pid: concurrent.agent.pid,
+      startIdentity: concurrent.agent.start_identity,
+      codeSignatureHash: concurrent.agent.code_signature_hash,
+    },
+    coordinator: {
+      pid: concurrent.coordinator.pid,
+      startIdentity: concurrent.coordinator.start_identity,
+      codeSignatureHash: concurrent.coordinator.code_signature_hash,
+    },
+    bridge: {
+      pid: plan.bridge?.expected_host?.process_identifier,
+      startIdentity: plan.bridge?.expected_host?.process_start_identity_decimal,
+      codeSignatureHash: plan.bridge?.expected_host?.code_signature_hash,
+    },
+    integrated_cu: {
+      pid: concurrent.integrated_cu?.emitter?.pid,
+      startIdentity: concurrent.integrated_cu?.emitter?.start_identity,
+      codeSignatureHash: concurrent.integrated_cu?.emitter?.code_signature_hash,
+    },
+  };
+  for (const [rootClass, identity] of Object.entries(expected)) {
+    const roots = during.roots.filter((root) => root.rootClass === rootClass);
+    requireCondition(roots.length === 1 && Number.isSafeInteger(identity.pid) && identity.pid > 0
+      && typeof identity.startIdentity === 'string' && /^[1-9][0-9]*$/.test(identity.startIdentity)
+      && CODE_SIGNATURE_HASH.test(identity.codeSignatureHash ?? '')
+      && roots[0].pid === identity.pid
+      && roots[0].startIdentity === identity.startIdentity
+      && roots[0].codeSignatureHash === identity.codeSignatureHash,
+    `${label} local/during ${rootClass} root differs from the concurrent run`);
+  }
 }
 
 function bundlePayload(bundle, label) {
@@ -595,6 +1061,78 @@ function semanticValidatorPair(bundlePath, validatorPath, label, {
     `${label} lacks one target-attested background mutation`);
   }
   return { bundle, validator, payload, report };
+}
+
+function validateConcurrentInterleavingBinding(
+  concurrent,
+  agentReadbacksPath,
+  bundlePairs,
+  performReadbackPath,
+  label,
+) {
+  const readbacks = readStableJSON(agentReadbacksPath, `${label} Agent readback map`).value;
+  exactKeys(readbacks, ['version', 'agent', 'targets'], `${label} Agent readback map`);
+  requireCondition(readbacks.version === 1 && Array.isArray(readbacks.targets)
+    && readbacks.targets.length === 2, `${label} Agent readback map is malformed`);
+  const pairsByBundlePath = new Map(bundlePairs.map((pair) => [pair.bundle.path, pair]));
+  requireCondition(pairsByBundlePath.size === bundlePairs.length,
+    `${label} Agent bundle paths are not unique`);
+  const actionIntervals = [];
+  for (const [targetIndex, target] of readbacks.targets.entries()) {
+    exactKeys(target, [
+      'label', 'target', 'baseline_readback_path', 'mutation', 'restoration',
+    ], `${label} Agent target ${targetIndex}`);
+    for (const kind of ['mutation', 'restoration']) {
+      const action = target[kind];
+      exactKeys(action, [
+        'trace_call_id', 'family', 'readback_path', 'bundle_path', 'validator_report_path',
+      ], `${label} Agent target ${targetIndex}.${kind}`);
+      const pair = pairsByBundlePath.get(action.bundle_path);
+      requireCondition(pair && pair.validator.path === action.validator_report_path,
+        `${label} Agent target ${targetIndex}.${kind} is absent from the bound corpus`);
+      const startedAt = pair.payload.startedAtUnixMilliseconds;
+      const completedAt = pair.payload.completedAtUnixMilliseconds;
+      requireCondition(typeof action.trace_call_id === 'string' && action.trace_call_id.length > 0
+        && Number.isSafeInteger(startedAt) && startedAt > 0
+        && Number.isSafeInteger(completedAt) && completedAt > startedAt,
+      `${label} Agent target ${targetIndex}.${kind} interval is malformed`);
+      actionIntervals.push({
+        trace_call_id: action.trace_call_id,
+        started_at_milliseconds: startedAt,
+        completed_at_milliseconds: completedAt,
+      });
+    }
+  }
+  const perform = readStableJSON(
+    performReadbackPath,
+    `${label} integrated-CU perform readback`,
+  ).value;
+  requireCondition(Number.isSafeInteger(perform.observed_at_milliseconds)
+    && perform.observed_at_milliseconds > 0,
+  `${label} integrated-CU perform time is malformed`);
+  const derived = {
+    integrated_cu_perform_at_milliseconds: perform.observed_at_milliseconds,
+    action_intervals: actionIntervals,
+  };
+  requireCondition(sameJSON(concurrent.agent.progress_interleaving, derived),
+    `${label} progress interleaving differs from the bound bundles/readback`);
+  requireCondition(sameJSON(
+    [...concurrent.agent.mapped_call_ids].sort(),
+    actionIntervals.map((entry) => entry.trace_call_id).sort(),
+  ), `${label} mapped call IDs differ from the bound Agent readback map`);
+  requireCondition(perform.observed_at_milliseconds
+    >= concurrent.overlap.operations_started_at_milliseconds
+    && perform.observed_at_milliseconds <= concurrent.overlap.operations_completed_at_milliseconds,
+  `${label} integrated-CU perform time is outside the operation interval`);
+  requireCondition(actionIntervals.every((entry) => (
+    entry.started_at_milliseconds >= concurrent.overlap.operations_started_at_milliseconds
+      && entry.completed_at_milliseconds <= concurrent.overlap.operations_completed_at_milliseconds
+  )), `${label} Agent interval is outside the operation interval`);
+  requireCondition(actionIntervals.some((entry) => (
+    entry.completed_at_milliseconds < perform.observed_at_milliseconds
+  )) && actionIntervals.some((entry) => (
+    entry.started_at_milliseconds > perform.observed_at_milliseconds
+  )), `${label} does not prove strict Agent progress before and after integrated Computer Use`);
 }
 
 function targetFromPayload(payload, label) {
@@ -1019,18 +1557,46 @@ function projectInput(input) {
   ], 'agent_cu');
   exactKeys(input.adjuncts, ['middle_click', 'held_key', 'held_pointer'], 'adjuncts');
   exactKeys(input.restoration_cleanup, ['restoration_evidence', 'cleanup_evidence'], 'restoration_cleanup');
+  const deployment = semanticDeploymentEvidence(input.deployment, 'deployment');
+  const artifacts = semanticArtifactBinding(input.artifact_manifest, 'artifact manifest', deployment);
+  validatePeekabooArtifactDeployment(artifacts.peekaboo, deployment, 'artifact manifest');
+  requireCondition(deployment.elevations.every((elevation) => (
+    elevation.value.artifactReceiptSha256 === artifacts.evidence.openclaw_artifact_receipt.sha256
+      && elevation.value.archiveSha256 === artifacts.openclaw.archiveSha256
+      && elevation.value.installerSha256 === artifacts.openclaw.installerSha256
+      && sameJSON(elevation.value.cdhashes, artifacts.openclaw.cdhashes)
+  )), 'elevation receipts differ from the authenticated OpenClaw artifact');
   requireCondition(Array.isArray(input.matrix_cycles) && input.matrix_cycles.length === 5, 'exactly five matrix cycles are required');
   const matrixCycles = input.matrix_cycles.map((cycle, index) => {
     exactKeys(cycle, ['certificate', 'crash_inventory'], `matrix_cycles[${index}]`);
+    const certificate = semanticCertificate(
+      cycle.certificate,
+      `matrix cycle ${index + 1} certificate`,
+      {
+        cycle: index + 1,
+        hostUUID: deployment.installed[0].hostUUID,
+        sourceCommit: deployment.peekabooSourceCommit,
+        deploymentEnvelopeSHA256: deployment.installed[0].envelopeSHA256,
+        installedInventoryAggregateSHA256: deployment.installed[0].aggregateSHA256,
+        peekabooArtifactManifestSHA256: artifacts.evidence.peekaboo_artifact_manifest.sha256,
+      },
+    );
     return {
       cycle: index + 1,
-      certificate: semanticCertificate(cycle.certificate, `matrix cycle ${index + 1} certificate`),
+      certificate: certificate.receipt,
       crash_inventory: semanticCrashComparison(
         cycle.crash_inventory,
         `matrix cycle ${index + 1} crash comparison`,
+        certificate.value,
       ),
+      binding: certificate.value,
     };
   });
+  requireCondition(new Set(matrixCycles.map((cycle) => cycle.binding.execution_nonce)).size
+    === matrixCycles.length, 'matrix cycle nonces are not distinct');
+  requireCondition(matrixCycles.every((cycle, index) => index === 0
+    || matrixCycles[index - 1].binding.completed_at_milliseconds
+      < cycle.binding.started_at_milliseconds), 'matrix cycle intervals overlap or are not ordered');
   const concurrentValidation = semanticConcurrentValidation(input.agent_cu.validation_report);
   const concurrentValue = concurrentValidation.value;
   const boundLive = {
@@ -1061,6 +1627,16 @@ function projectInput(input) {
       'bound monitor evidence',
     ),
   };
+  const boundPlanValue = readStableJSON(
+    boundLive.plan.path,
+    'bound live-v4 plan semantics',
+  ).value;
+  validateLocalDuringConcurrentBinding(
+    deployment,
+    concurrentValue,
+    boundPlanValue,
+    'deployment',
+  );
   const coordinatorInvocation = readStableJSON(
     input.live_v4.coordinator_invocation,
     'bound coordinator invocation semantics',
@@ -1128,12 +1704,14 @@ function projectInput(input) {
   const bundleReceipts = [];
   const validatorReceipts = [];
   const semanticBundleProjection = [];
+  const semanticBundlePairs = [];
   for (let index = 0; index < input.agent_cu.signed_bundles.length; index += 1) {
     const pair = semanticValidatorPair(
       input.agent_cu.signed_bundles[index],
       input.agent_cu.live_validator_reports[index],
       `Agent manifest bundle ${index}`,
     );
+    semanticBundlePairs.push(pair);
     bundleReceipts.push({ path: pair.bundle.path, size: pair.bundle.bytes.length, sha256: pair.bundle.sha256 });
     validatorReceipts.push({
       path: pair.validator.path,
@@ -1153,6 +1731,13 @@ function projectInput(input) {
     [...concurrentValidation.value.agent.signed_bundles]
       .sort((left, right) => left.bundle_path.localeCompare(right.bundle_path)),
   ), 'Agent manifest bundle corpus differs from concurrent validation');
+  validateConcurrentInterleavingBinding(
+    concurrentValue,
+    input.agent_cu.agent_readbacks,
+    semanticBundlePairs,
+    input.agent_cu.perform_readback,
+    'Agent manifest',
+  );
   requireCondition(Array.isArray(input.agent_cu.semantic_readbacks)
     && input.agent_cu.semantic_readbacks.length === 6,
   'Agent manifest needs exactly six semantic readbacks');
@@ -1181,7 +1766,6 @@ function projectInput(input) {
         value_sha256: entry.value_sha256,
       })).sort((left, right) => left.path.localeCompare(right.path)),
   ), 'Agent semantic readbacks differ from concurrent validation');
-  const deployment = semanticDeploymentEvidence(input.deployment, 'deployment');
   const qualificationTools = semanticSourceManifest(
     input.tooling.qualification_tools_manifest,
     'qualification tools source manifest',
@@ -1191,8 +1775,13 @@ function projectInput(input) {
   requireCondition(qualificationTools.value.aggregate_sha256
     === deployment.qualificationToolsAggregateSHA256,
   'qualification tools aggregate differs from installed inventories');
+  validateDeploymentToolSources(
+    deployment,
+    qualificationTools.value,
+    'deployment',
+  );
   return {
-    artifact_manifest: immutableReceipt(input.artifact_manifest, 'immutable artifact manifest'),
+    artifact_manifest: artifacts.evidence,
     deployment: deployment.evidence,
     tooling: {
       qualification_tools_manifest: {
@@ -1212,7 +1801,7 @@ function projectInput(input) {
       certification_summary: boundLive.certification_summary,
       monitor_evidence: boundLive.monitor_evidence,
     },
-    matrix_cycles: matrixCycles,
+    matrix_cycles: matrixCycles.map(({ binding: _binding, ...cycle }) => cycle),
     agent_cu: {
       task: boundAgentTask,
       agent_result: boundAgent.result,
@@ -1245,7 +1834,12 @@ function validateEvidenceShape(evidence, visitReceipt) {
     'artifact_manifest', 'deployment', 'tooling', 'live_v4', 'matrix_cycles', 'agent_cu',
     'adjuncts', 'restoration_cleanup',
   ], 'qualification evidence');
-  visitReceipt(evidence.artifact_manifest, 'evidence.artifact_manifest');
+  exactKeys(evidence.artifact_manifest, [
+    'binding', 'peekaboo_artifact_manifest', 'openclaw_artifact_receipt',
+  ], 'evidence.artifact_manifest');
+  for (const [key, receipt] of Object.entries(evidence.artifact_manifest)) {
+    visitReceipt(receipt, `evidence.artifact_manifest.${key}`);
+  }
   exactKeys(evidence.deployment, [
     'installed_inventories', 'elevation_receipts', 'process_tree_collector', 'process_trees',
     'executable_policy_scanner', 'executable_policy_reports',
@@ -1386,6 +1980,24 @@ function validateSemanticEvidence(evidence) {
     executable_policy_scanner: evidence.deployment.executable_policy_scanner.path,
     executable_policy_reports: evidence.deployment.executable_policy_reports.map((entry) => entry.path),
   }, 'verified deployment');
+  const artifacts = semanticArtifactBinding(
+    evidence.artifact_manifest.binding.path,
+    'verified artifact manifest',
+    deployment,
+  );
+  requireCondition(sameJSON(artifacts.evidence, evidence.artifact_manifest),
+    'verified artifact evidence differs from the manifest');
+  validatePeekabooArtifactDeployment(
+    artifacts.peekaboo,
+    deployment,
+    'verified artifact manifest',
+  );
+  requireCondition(deployment.elevations.every((elevation) => (
+    elevation.value.artifactReceiptSha256 === artifacts.evidence.openclaw_artifact_receipt.sha256
+      && elevation.value.archiveSha256 === artifacts.openclaw.archiveSha256
+      && elevation.value.installerSha256 === artifacts.openclaw.installerSha256
+      && sameJSON(elevation.value.cdhashes, artifacts.openclaw.cdhashes)
+  )), 'verified elevation receipts differ from the authenticated OpenClaw artifact');
   const qualificationTools = semanticSourceManifest(
     evidence.tooling.qualification_tools_manifest.path,
     'verified qualification tools source manifest',
@@ -1395,10 +2007,36 @@ function validateSemanticEvidence(evidence) {
   requireCondition(qualificationTools.value.aggregate_sha256
     === deployment.qualificationToolsAggregateSHA256,
   'verified qualification tools aggregate differs from installed inventories');
-  for (const [index, cycle] of evidence.matrix_cycles.entries()) {
-    semanticCertificate(cycle.certificate.path, `verified matrix cycle ${index + 1} certificate`);
-    semanticCrashComparison(cycle.crash_inventory.path, `verified matrix cycle ${index + 1} crash comparison`);
-  }
+  validateDeploymentToolSources(
+    deployment,
+    qualificationTools.value,
+    'verified deployment',
+  );
+  const matrixBindings = evidence.matrix_cycles.map((cycle, index) => {
+    const certificate = semanticCertificate(
+      cycle.certificate.path,
+      `verified matrix cycle ${index + 1} certificate`,
+      {
+        cycle: index + 1,
+        hostUUID: deployment.installed[0].hostUUID,
+        sourceCommit: deployment.peekabooSourceCommit,
+        deploymentEnvelopeSHA256: deployment.installed[0].envelopeSHA256,
+        installedInventoryAggregateSHA256: deployment.installed[0].aggregateSHA256,
+        peekabooArtifactManifestSHA256: artifacts.evidence.peekaboo_artifact_manifest.sha256,
+      },
+    );
+    semanticCrashComparison(
+      cycle.crash_inventory.path,
+      `verified matrix cycle ${index + 1} crash comparison`,
+      certificate.value,
+    );
+    return certificate.value;
+  });
+  requireCondition(new Set(matrixBindings.map((cycle) => cycle.execution_nonce)).size
+    === matrixBindings.length, 'verified matrix cycle nonces are not distinct');
+  requireCondition(matrixBindings.every((cycle, index) => index === 0
+    || matrixBindings[index - 1].completed_at_milliseconds < cycle.started_at_milliseconds),
+  'verified matrix cycle intervals overlap or are not ordered');
   const concurrent = semanticConcurrentValidation(evidence.agent_cu.validation_report.path);
   const concurrentValue = concurrent.value;
   for (const [receipt, expected, label] of [
@@ -1416,6 +2054,16 @@ function validateSemanticEvidence(evidence) {
     [evidence.agent_cu.perform_readback, concurrentValue.integrated_cu.perform_readback_sha256, 'verified CU perform'],
     [evidence.agent_cu.restore_readback, concurrentValue.integrated_cu.restore_readback_sha256, 'verified CU restore'],
   ]) requireCondition(receipt.sha256 === expected, `${label} differs from concurrent validation`);
+  const verifiedPlanValue = readStableJSON(
+    evidence.live_v4.plan.path,
+    'verified live-v4 plan semantics',
+  ).value;
+  validateLocalDuringConcurrentBinding(
+    deployment,
+    concurrentValue,
+    verifiedPlanValue,
+    'verified deployment',
+  );
   const phases = ['launch', 'perform', 'restore'];
   evidence.agent_cu.agent_process_receipts.forEach((receipt, index) => {
     requireCondition(receipt.sha256 === concurrentValue.agent.process_receipt_sha256[phases[index]],
@@ -1437,6 +2085,7 @@ function validateSemanticEvidence(evidence) {
   requireCondition(agentInvocation.task_path === evidence.agent_cu.task.path
     && agentInvocation.task_sha256 === evidence.agent_cu.task.sha256,
   'verified Agent task differs from its invocation');
+  const verifiedBundlePairs = [];
   const bundleProjection = evidence.agent_cu.signed_bundles.map((bundle, index) => {
     const validator = evidence.agent_cu.live_validator_reports[index];
     const pair = semanticValidatorPair(
@@ -1444,6 +2093,7 @@ function validateSemanticEvidence(evidence) {
       validator.path,
       `verified Agent bundle ${index}`,
     );
+    verifiedBundlePairs.push(pair);
     return {
       bundle_path: pair.bundle.path,
       bundle_sha256: pair.bundle.sha256,
@@ -1457,6 +2107,13 @@ function validateSemanticEvidence(evidence) {
     [...concurrent.value.agent.signed_bundles]
       .sort((left, right) => left.bundle_path.localeCompare(right.bundle_path)),
   ), 'verified Agent corpus differs from concurrent validation');
+  validateConcurrentInterleavingBinding(
+    concurrentValue,
+    evidence.agent_cu.agent_readbacks.path,
+    verifiedBundlePairs,
+    evidence.agent_cu.perform_readback.path,
+    'verified Agent manifest',
+  );
   const semanticReadbacks = evidence.agent_cu.semantic_readbacks.map((receipt, index) => (
     semanticAgentReadback(receipt.path, `verified Agent semantic readback ${index}`)
   ));
@@ -1539,7 +2196,7 @@ export function verifyManifest(manifestPath) {
     exactKeys(receipt, ['path', 'size', 'sha256'], label);
     requireCondition(!checkedPaths.has(receipt.path), `${label} reuses an evidence path`);
     checkedPaths.add(receipt.path);
-    const current = label === 'evidence.artifact_manifest'
+    const current = label.startsWith('evidence.artifact_manifest.')
       ? immutableReceipt(receipt.path, label)
       : ['evidence.deployment.process_tree_collector', 'evidence.deployment.executable_policy_scanner']
           .includes(label)

@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { projectBindings } from '../project-live-bindings.mjs';
 import { runManagedLaunch } from '../managed-launcher.mjs';
+import {
+  accumulateDescendantPIDs,
+  isFinalProcessTableSample,
+  validateRepeatedExecutable,
+  validateRepeatedObservation,
+  validateSampleGap,
+} from '../process-tree-collector.mjs';
 import { publishCoordinatorMarker } from '../publish-coordinator-marker.mjs';
 import {
   generateManifest,
@@ -13,13 +20,16 @@ import {
   verifyManifest,
 } from '../qualification-manifest.mjs';
 import { validateConcurrentRun } from '../validate-concurrent-run.mjs';
-import { aggregateSHA256, sha256 } from '../lib.mjs';
+import { aggregateSHA256, canonicalBytes, sha256 } from '../lib.mjs';
 
 const TEAM = 'FWJYW4S8P8';
 const SOURCE = 'a'.repeat(40);
+const OPENCLAW_SOURCE = '9'.repeat(40);
 const CDHASH = 'b'.repeat(40);
 const UUID = '12345678-1234-4abc-8def-123456789abc';
 const NONCE = 'c'.repeat(64);
+const LOCAL_UUID = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
+const STUDIO_UUID = 'BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB';
 const toolRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 function codeSignatureHash(executablePath) {
@@ -47,6 +57,17 @@ function writeJSON(filePath, value, mode = 0o600) {
   return writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, mode);
 }
 
+function launchEnvironment(kind, receiptDirectory = null) {
+  const environment = { HOME: '/private/tmp/fixture-home', PATH: '/usr/bin:/bin:/usr/sbin:/sbin' };
+  if (kind === 'agent') environment.PEEKABOO_OPERATION_RECEIPT_DIRECTORY = receiptDirectory;
+  const environmentKeys = Object.keys(environment).sort();
+  return {
+    environment_policy_version: 1,
+    environment_keys: environmentKeys,
+    environment_sha256: sha256(canonicalBytes(environment)),
+  };
+}
+
 function installedInventory(
   root,
   role,
@@ -59,7 +80,7 @@ function installedInventory(
   const projection = {
     deployment_envelope_sha256: '8'.repeat(64),
     peekaboo_source_commit: SOURCE,
-    openclaw_source_commit: '9'.repeat(40),
+    openclaw_source_commit: OPENCLAW_SOURCE,
     qualification_tools_aggregate_sha256: qualificationToolsAggregate,
     entries,
   };
@@ -77,9 +98,13 @@ function installedInventory(
 
 function taskProcessTree(root, role, hostUUID, epoch, {
   collectorSHA256,
+  lifecycleGuardSHA256 = sha256(fs.readFileSync(path.join(toolRoot, 'process-lifecycle-guard.c'))),
+  lifecycleGuardBinarySHA256 = '1'.repeat(64),
   forbiddenName = null,
   forbiddenRoot = false,
   orphan = false,
+  processBindings = {},
+  coverage = null,
 } = {}) {
   const requiredClasses = role === 'local'
     ? (epoch === 'during'
@@ -106,13 +131,14 @@ function taskProcessTree(root, role, hostUUID, epoch, {
     agent: '1', bridge: '2', coordinator: '3', elevation: '4', fixture: '5', integrated_cu: '6',
   };
   const roots = requiredClasses.map((rootClass) => {
-    const pid = classPID[rootClass];
+    const binding = processBindings[rootClass] ?? {};
+    const pid = binding.pid ?? classPID[rootClass];
     return {
       root_id: `${rootClass}-root`,
       root_class: rootClass,
       pid,
-      start_identity: `${pid}001`,
-      code_signature_hash: classCodeHash[rootClass].repeat(40),
+      start_identity: binding.start_identity ?? `${pid}001`,
+      code_signature_hash: binding.code_signature_hash ?? classCodeHash[rootClass].repeat(40),
     };
   }).sort((left, right) => (left.root_id < right.root_id ? -1 : 1));
   const processes = roots.map((authority) => {
@@ -148,14 +174,35 @@ function taskProcessTree(root, role, hostUUID, epoch, {
   });
   processes.sort((left, right) => left.pid - right.pid);
   const epochOffset = { before: 1, during: 2, after: 3 }[epoch];
+  const coverageStartedAt = coverage?.started_at_milliseconds ?? 1787000010000 + (epochOffset * 1000);
+  const coverageCompletedAt = coverage?.completed_at_milliseconds ?? coverageStartedAt + 500;
+  const requestedObservation = coverage?.requested_observation_milliseconds ?? 400;
+  const finalSampleStartedAt = coverage?.final_sample_started_at_milliseconds
+    ?? coverageCompletedAt - 1;
+  const capturedAt = coverage?.captured_at_milliseconds ?? coverageCompletedAt + 1;
   return writeJSON(path.join(root, `${role}-${epoch}-${forbiddenName ?? (orphan ? 'orphan' : 'tree')}.json`), {
-    version: 1,
+    version: 2,
     role,
     host_uuid: hostUUID,
     deployment_envelope_sha256: '8'.repeat(64),
     epoch,
     scope: 'task_owned_descendants',
-    captured_at_milliseconds: 1787000010000 + epochOffset,
+    requested_observation_milliseconds: requestedObservation,
+    target_sample_interval_milliseconds: 50,
+    coverage_started_at_milliseconds: coverageStartedAt,
+    final_sample_started_at_milliseconds: finalSampleStartedAt,
+    coverage_completed_at_milliseconds: coverageCompletedAt,
+    captured_at_milliseconds: capturedAt,
+    sample_count: 5,
+    maximum_sample_gap_milliseconds: 1000,
+    observed_maximum_sample_gap_milliseconds: 100,
+    continuous_lifecycle_observation: true,
+    lifecycle_guard_sha256: lifecycleGuardSHA256,
+    lifecycle_guard_binary_sha256: lifecycleGuardBinarySHA256,
+    lifecycle_started_at_milliseconds: coverageStartedAt - 10,
+    lifecycle_completed_at_milliseconds: capturedAt + 10,
+    lifecycle_watched_pids: processes.map((process) => process.pid),
+    lifecycle_event_count: 0,
     collector_sha256: collectorSHA256,
     complete: true,
     roots,
@@ -163,9 +210,93 @@ function taskProcessTree(root, role, hostUUID, epoch, {
   });
 }
 
-function deploymentFixture(root, qualificationToolsAggregate, { studioEntries = null } = {}) {
-  const localUUID = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
-  const studioUUID = 'BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB';
+function artifactFixture(root) {
+  const peekaboo = writeJSON(path.join(root, 'peekaboo-artifact-manifest.json'), {
+    schema: 5,
+    phase: 'candidate_verified_not_installed',
+    source_commit: SOURCE,
+    version: '4.2.1',
+    cli: { sha256: 'f'.repeat(64), cdhash: CDHASH },
+    app: { source_commit: SOURCE, zip_sha256: '2'.repeat(64), cdhash: 'd'.repeat(40) },
+    playground: {
+      source_commit: SOURCE,
+      zip_sha256: '3'.repeat(64),
+      cdhash: '5'.repeat(40),
+    },
+    verification: {
+      cli_source: true,
+      cli_native_only: true,
+      app_source: true,
+      app_native_only: true,
+      playground_native_only: true,
+    },
+  }, 0o400);
+  const openclawValue = {
+    schemaVersion: 1,
+    kind: 'openclaw-elevation-artifact',
+    archive: 'OpenClaw.app.zip',
+    archiveSha256: '4'.repeat(64),
+    archiveChecksum: 'OpenClaw.app.zip.sha256',
+    installer: 'install-openclaw-elevation',
+    installerSha256: '5'.repeat(64),
+    installerChecksum: 'install-openclaw-elevation.sha256',
+    sourceCommit: OPENCLAW_SOURCE,
+    peekabooCommit: SOURCE,
+    version: '2026.8.2',
+    build: '1',
+    authority: 'Developer ID Application: Fixture',
+    teamIdentifier: TEAM,
+    cdhashes: { arm64: '6'.repeat(40), x86_64: '7'.repeat(40) },
+    architectures: { main: 'arm64 x86_64', helper: 'arm64 x86_64' },
+    entitlementsSha256: { main: '8'.repeat(64), helper: '9'.repeat(64) },
+    notarizationId: '12345678-1234-4abc-8def-123456789abc',
+  };
+  const openclaw = writeJSON(path.join(root, 'openclaw-artifact-receipt.json'), openclawValue, 0o400);
+  return { peekaboo, openclaw, openclawValue };
+}
+
+function elevationReceipt(root, role, artifact) {
+  return writeJSON(path.join(root, `${role}-elevation-receipt.json`), {
+    schemaVersion: 3,
+    kind: 'openclaw-elevation-install',
+    transactionState: 'installed',
+    transactionId: role === 'local'
+      ? 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'
+      : 'BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB',
+    sourceCommit: OPENCLAW_SOURCE,
+    peekabooCommit: SOURCE,
+    archiveSha256: artifact.openclawValue.archiveSha256,
+    artifactReceiptSha256: sha256(fs.readFileSync(artifact.openclaw)),
+    installerSha256: artifact.openclawValue.installerSha256,
+    cdhashes: artifact.openclawValue.cdhashes,
+    nodeId: `${role}-node`,
+    nodeProfile: role === 'local' ? 'primary' : 'node',
+    appPath: '/Applications/OpenClaw.app',
+    stateDir: `/private/tmp/${role}/state`,
+    configPath: `/private/tmp/${role}/state/openclaw.json`,
+    backupPath: '',
+    backupCDHashes: { arm64: '', x86_64: '' },
+    plistPath: `/private/tmp/${role}/Library/LaunchAgents/ai.openclaw.elevation.plist`,
+    previousPlist: '',
+    previousPlistSha256: '',
+    previousPlistWasLoaded: false,
+    previousReceipt: '',
+    previousReceiptSha256: '',
+    migration: null,
+    adoptedApp: { wasRunning: true, attachOnly: true },
+  });
+}
+
+function deploymentFixture(
+  root,
+  qualificationToolsAggregate,
+  artifact,
+  concurrentReport,
+  plan,
+  { studioEntries = null } = {},
+) {
+  const localUUID = LOCAL_UUID;
+  const studioUUID = STUDIO_UUID;
   const entries = [
     {
       artifact: 'openclaw_app', relative_path: 'OpenClaw.app/Contents/MacOS/OpenClaw',
@@ -189,8 +320,8 @@ function deploymentFixture(root, qualificationToolsAggregate, { studioEntries = 
     },
   ];
   const elevationReceipts = [
-    writeJSON(path.join(root, 'local-elevation-receipt.json'), { role: 'local', receipt: true }),
-    writeJSON(path.join(root, 'studio-elevation-receipt.json'), { role: 'studio', receipt: true }),
+    elevationReceipt(root, 'local', artifact),
+    elevationReceipt(root, 'studio', artifact),
   ];
   const installed = [
     installedInventory(
@@ -204,29 +335,112 @@ function deploymentFixture(root, qualificationToolsAggregate, { studioEntries = 
   ];
   const collector = path.join(toolRoot, 'process-tree-collector.mjs');
   const collectorSHA256 = sha256(fs.readFileSync(collector));
+  const localBindings = {
+    agent: {
+      pid: concurrentReport.agent.pid,
+      start_identity: concurrentReport.agent.start_identity,
+      code_signature_hash: concurrentReport.agent.code_signature_hash,
+    },
+    bridge: {
+      pid: plan.bridge.expected_host.process_identifier,
+      start_identity: plan.bridge.expected_host.process_start_identity_decimal,
+      code_signature_hash: plan.bridge.expected_host.code_signature_hash,
+    },
+    coordinator: {
+      pid: concurrentReport.coordinator.pid,
+      start_identity: concurrentReport.coordinator.start_identity,
+      code_signature_hash: concurrentReport.coordinator.code_signature_hash,
+    },
+    elevation: {
+      pid: 740,
+      start_identity: '740001',
+      code_signature_hash: artifact.openclawValue.cdhashes.arm64,
+    },
+    integrated_cu: concurrentReport.integrated_cu.emitter,
+  };
+  const studioBindings = {
+    bridge: {
+      pid: 820,
+      start_identity: '820001',
+      code_signature_hash: 'd'.repeat(40),
+    },
+    elevation: {
+      pid: 840,
+      start_identity: '840001',
+      code_signature_hash: artifact.openclawValue.cdhashes.arm64,
+    },
+  };
+  const localCoverage = {
+    before: {
+      started_at_milliseconds: concurrentReport.overlap.operations_started_at_milliseconds - 1000,
+      completed_at_milliseconds: concurrentReport.overlap.operations_started_at_milliseconds - 500,
+      captured_at_milliseconds: concurrentReport.overlap.operations_started_at_milliseconds - 499,
+    },
+    during: {
+      started_at_milliseconds: concurrentReport.overlap.operations_started_at_milliseconds - 100,
+      completed_at_milliseconds: concurrentReport.overlap.operations_completed_at_milliseconds + 100,
+      captured_at_milliseconds: concurrentReport.overlap.operations_completed_at_milliseconds + 101,
+    },
+    after: {
+      started_at_milliseconds: concurrentReport.overlap.operations_completed_at_milliseconds + 200,
+      completed_at_milliseconds: concurrentReport.overlap.operations_completed_at_milliseconds + 700,
+      captured_at_milliseconds: concurrentReport.overlap.operations_completed_at_milliseconds + 701,
+    },
+  };
   const processTrees = [
     ...['before', 'during', 'after'].map((epoch) => (
-      taskProcessTree(root, 'local', localUUID, epoch, { collectorSHA256 })
+      taskProcessTree(root, 'local', localUUID, epoch, {
+        collectorSHA256,
+        processBindings: epoch === 'during'
+          ? localBindings
+          : {
+              bridge: localBindings.bridge,
+              elevation: localBindings.elevation,
+              integrated_cu: localBindings.integrated_cu,
+            },
+        coverage: localCoverage[epoch],
+      })
     )),
     ...['before', 'during', 'after'].map((epoch) => (
-      taskProcessTree(root, 'studio', studioUUID, epoch, { collectorSHA256 })
+      taskProcessTree(root, 'studio', studioUUID, epoch, {
+        collectorSHA256,
+        lifecycleGuardBinarySHA256: '2'.repeat(64),
+        processBindings: studioBindings,
+      })
     )),
   ];
   const policyScanner = writeFile(path.join(root, 'executable-policy-scanner'), 'scanner', 0o500);
   const scannerSHA256 = sha256(fs.readFileSync(policyScanner));
   const policyReports = [
     ['local', localUUID], ['studio', studioUUID],
-  ].map(([role, hostUUID]) => writeJSON(path.join(root, `${role}-executable-policy.json`), {
-    version: 1,
-    role,
-    host_uuid: hostUUID,
-    deployment_envelope_sha256: '8'.repeat(64),
-    scanner_sha256: scannerSHA256,
-    complete: true,
-    scanned_executable_count: 3,
-    scanned_script_count: 3,
-    forbidden_findings: [],
-  }));
+  ].map(([role, hostUUID], inventoryIndex) => {
+    const coveredEntries = inventoryIndex === 0 ? entries : (studioEntries ?? entries);
+    const fileCoverage = coveredEntries.filter((entry) => entry.type === 'file').map((entry, index) => ({
+      artifact: entry.artifact,
+      relative_path: entry.relative_path,
+      sha256: entry.sha256,
+      classification: index === 0 ? 'script' : index === 2 ? 'data' : 'executable',
+    }));
+    const coverage = {
+      installed_inventory_aggregate_sha256: JSON.parse(fs.readFileSync(installed[inventoryIndex])).aggregate_sha256,
+      scanned_roots: ['openclaw_app', 'peekaboo_app', 'peekaboo_cli'],
+      covered_entries: coveredEntries,
+      file_coverage: fileCoverage,
+    };
+    return writeJSON(path.join(root, `${role}-executable-policy.json`), {
+      version: 1,
+      role,
+      host_uuid: hostUUID,
+      deployment_envelope_sha256: '8'.repeat(64),
+      scanner_sha256: scannerSHA256,
+      complete: true,
+      ...coverage,
+      coverage_aggregate_sha256: aggregateSHA256('executable-policy-coverage', coverage),
+      scanned_executable_count: fileCoverage.filter((entry) => entry.classification === 'executable').length,
+      scanned_script_count: fileCoverage.filter((entry) => entry.classification === 'script').length,
+      forbidden_findings: [],
+    });
+  });
   return {
     installed,
     elevationReceipts,
@@ -451,13 +665,147 @@ test('native emitter calibrator compiles and its source-only self-test uses no e
   }
 });
 
-test('process-tree collector is read-only and its self-test does not inspect live processes', () => {
+test('process-tree collector is read-only and continuously detects short-lived children', async () => {
   const collector = path.join(toolRoot, 'process-tree-collector.mjs');
   const source = fs.readFileSync(collector, 'utf8');
-  assert.doesNotMatch(source, /\b(?:killall|pkill)\b|\.kill\s*\(|SIG(?:TERM|KILL)/);
+  assert.doesNotMatch(source, /\b(?:killall|pkill)\b|process\.kill\s*\(/);
   const selfTest = spawnSync(process.execPath, [collector, '--self-test'], { encoding: 'utf8' });
   assert.equal(selfTest.status, 0, selfTest.stderr);
   assert.deepEqual(JSON.parse(selfTest.stdout), { version: 1, passed: true });
+  const root = fs.mkdtempSync('/private/tmp/pbq-lifecycle-guard-');
+  fs.chmodSync(root, 0o700);
+  let parent = null;
+  let lifecycle = null;
+  try {
+    const guard = path.join(root, 'process-lifecycle-guard');
+    const build = spawnSync('/usr/bin/xcrun', [
+      'cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
+      path.join(toolRoot, 'process-lifecycle-guard.c'), '-o', guard,
+    ], { encoding: 'utf8' });
+    assert.equal(build.status, 0, build.stderr);
+    const guardSelfTest = spawnSync(guard, ['--self-test'], { encoding: 'utf8' });
+    assert.equal(guardSelfTest.status, 0, guardSelfTest.stderr);
+    assert.deepEqual(JSON.parse(guardSelfTest.stdout), { version: 1, passed: true });
+    const parentSource = writeFile(path.join(root, 'fork-parent.c'), [
+      '#include <signal.h>',
+      '#include <stdbool.h>',
+      '#include <stdio.h>',
+      '#include <sys/wait.h>',
+      '#include <time.h>',
+      '#include <unistd.h>',
+      'static volatile sig_atomic_t should_fork = 0;',
+      'static void request_fork(int value) { (void)value; should_fork = 1; }',
+      'int main(int argc, char **argv) {',
+      '  if (argc != 2) return 1;',
+      '  if (signal(SIGUSR1, request_fork) == SIG_ERR) return 2;',
+      '  puts("READY"); fflush(stdout);',
+      '  while (true) {',
+      '    if (should_fork) {',
+      '      should_fork = 0;',
+      '      pid_t child = fork();',
+      '      if (child < 0) return 3;',
+      '      if (child == 0) _exit(0);',
+      '      while (waitpid(child, NULL, 0) < 0) {}',
+      '      FILE *marker = fopen(argv[1], "w");',
+      '      if (!marker) return 4;',
+      '      fputs("forked\\n", marker); fclose(marker);',
+      '    }',
+      '    struct timespec delay = { .tv_sec = 0, .tv_nsec = 1000000 };',
+      '    nanosleep(&delay, NULL);',
+      '  }',
+      '}',
+      '',
+    ].join('\n'), 0o400);
+    const parentBinary = path.join(root, 'fork-parent');
+    const forkedMarker = path.join(root, 'forked.marker');
+    const parentBuild = spawnSync('/usr/bin/xcrun', [
+      'cc', '-std=c11', '-Wall', '-Wextra', '-Werror', parentSource, '-o', parentBinary,
+    ], { encoding: 'utf8' });
+    assert.equal(parentBuild.status, 0, parentBuild.stderr);
+    parent = spawn(parentBinary, [forkedMarker], { stdio: ['ignore', 'pipe', 'pipe'] });
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('fork parent did not become ready')), 5000);
+      parent.stdout.once('data', (bytes) => {
+        clearTimeout(timeout);
+        assert.match(bytes.toString('utf8'), /READY/);
+        resolve();
+      });
+    });
+    const ready = path.join(root, 'lifecycle-ready.json');
+    const stop = path.join(root, 'lifecycle-stop.json');
+    const output = path.join(root, 'lifecycle-result.json');
+    lifecycle = spawn(guard, [
+      '--ready', ready, '--stop', stop, '--output', output, '--pid', String(parent.pid),
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const waitForPath = async (filePath) => {
+      const startedAt = Date.now();
+      while (!fs.existsSync(filePath) && Date.now() - startedAt < 5000) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      assert.equal(fs.existsSync(filePath), true, `${filePath} was not published`);
+    };
+    await waitForPath(ready);
+    parent.kill('SIGUSR1');
+    await waitForPath(forkedMarker);
+    writeJSON(stop, { version: 1, stop_at_milliseconds: Date.now() });
+    await waitForPath(output);
+    const violation = JSON.parse(fs.readFileSync(output));
+    assert.equal(violation.passed, false);
+    assert.equal(violation.event_pid, parent.pid);
+    assert.equal((violation.event_flags & 0x40000000) !== 0, true);
+  } finally {
+    if (lifecycle?.exitCode === null && lifecycle?.signalCode === null) lifecycle.kill('SIGKILL');
+    if (parent?.exitCode === null && parent?.signalCode === null) parent.kill('SIGKILL');
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  const observedPIDs = new Set();
+  accumulateDescendantPIDs(observedPIDs, new Map([[10, 1]]), [10]);
+  accumulateDescendantPIDs(observedPIDs, new Map([[10, 1], [11, 10]]), [10]);
+  accumulateDescendantPIDs(observedPIDs, new Map([[10, 1]]), [10]);
+  assert.deepEqual([...observedPIDs].sort((left, right) => left - right), [10, 11]);
+  assert.throws(
+    () => validateRepeatedObservation(
+      { start_identity: '1001' },
+      { pid: 10, startIdentity: '1002' },
+      1,
+      1,
+      10,
+    ),
+    /was reused during collection/,
+  );
+  assert.throws(
+    () => validateRepeatedObservation(
+      { start_identity: '1001' },
+      { pid: 10, startIdentity: '1001' },
+      1,
+      2,
+      10,
+    ),
+    /changed parent during collection/,
+  );
+  assert.throws(
+    () => validateRepeatedExecutable(
+      {
+        executable_path: '/usr/bin/true', executable_sha256: '1'.repeat(64),
+        code_signature_hash: '2'.repeat(40), signing_identifier: 'com.apple.true',
+        team_id: TEAM,
+      },
+      {
+        executable_path: '/usr/bin/osascript', executable_sha256: '3'.repeat(64),
+        code_signature_hash: '4'.repeat(40), signing_identifier: 'com.apple.osascript',
+        team_id: TEAM,
+      },
+      10,
+    ),
+    /changed executable identity during collection/,
+  );
+  assert.equal(validateSampleGap(1000, 1100, 100), 100);
+  assert.throws(
+    () => validateSampleGap(1000, 1101, 100),
+    /sampling gap 101ms exceeds 100ms/,
+  );
+  assert.equal(isFinalProcessTableSample(2, 1099, 1100), false);
+  assert.equal(isFinalProcessTableSample(2, 1100, 1100), true);
 });
 
 test('native atomic publisher uses renameatx no-replace semantics', () => {
@@ -507,26 +855,49 @@ test('managed launcher suspends Agent/coordinator until signed-monitor identity 
   const root = fs.mkdtempSync('/private/tmp/pbq-tools-launcher-');
   fs.chmodSync(root, 0o700);
   const priorCWD = process.cwd();
+  const priorNodeOptions = process.env.NODE_OPTIONS;
   try {
     process.chdir(root);
+    const injectionMarker = path.join(root, 'node-options-injected');
+    const injectionSource = writeFile(
+      path.join(root, 'node-options-injection.cjs'),
+      `require('node:fs').writeFileSync(${JSON.stringify(injectionMarker)}, 'injected\\n');\n`,
+      0o400,
+    );
+    process.env.NODE_OPTIONS = `--require=${injectionSource}`;
     const childMarker = path.join(root, 'agent-child-ran');
-    writeFile(path.join(root, 'process-identity'), [
-      'use strict;',
-      `die "child ran before handshake" if -e "${childMarker}";`,
-      'select(undef, undef, undef, 0.10);',
-      'my ($pid, $output);',
-      'for (my $i = 0; $i < @ARGV; $i++) {',
-      '  $pid = $ARGV[$i + 1] if $ARGV[$i] eq "--pid";',
-      '  $output = $ARGV[$i + 1] if $ARGV[$i] eq "--output";',
+    const monitorSource = writeFile(path.join(root, 'process-identity.c'), [
+      '#include <fcntl.h>',
+      '#include <libproc.h>',
+      '#include <stdio.h>',
+      '#include <stdlib.h>',
+      '#include <string.h>',
+      '#include <sys/proc_info.h>',
+      '#include <unistd.h>',
+      'int main(int argc, char **argv) {',
+      `  if (access("${childMarker}", F_OK) == 0) return 3;`,
+      '  int pid = 0; const char *output = NULL;',
+      '  for (int i = 1; i + 1 < argc; i++) {',
+      '    if (strcmp(argv[i], "--pid") == 0) pid = atoi(argv[++i]);',
+      '    else if (strcmp(argv[i], "--output") == 0) output = argv[++i];',
+      '  }',
+      '  if (pid <= 0 || output == NULL) return 4;',
+      '  struct proc_bsdinfo info;',
+      '  if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) != sizeof(info)) return 5;',
+      '  unsigned long long start = (info.pbi_start_tvsec * 1000000ULL) + info.pbi_start_tvusec;',
+      '  int fd = open(output, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);',
+      '  if (fd < 0) return 6;',
+      '  if (dprintf(fd, "{\\n  \\"pid\\": %d,\\n  \\"startIdentity\\": \\"%llu\\"\\n}\\n", pid, start) < 0) return 7;',
+      '  if (fsync(fd) != 0 || close(fd) != 0) return 8;',
+      '  return 0;',
       '}',
-      'die "missing" unless $pid && $output;',
-      'open(my $fh, ">", $output) or die $!;',
-      'chmod 0600, $output;',
-      'print $fh "{\\n  \\"pid\\": $pid,\\n  \\"startIdentity\\": \\"123456789\\"\\n}\\n";',
-      'close($fh);',
       '',
     ].join('\n'), 0o400);
-    const monitor = '/usr/bin/perl';
+    const monitor = path.join(root, 'process-identity-monitor');
+    const monitorBuild = spawnSync('/usr/bin/xcrun', [
+      'cc', '-std=c11', '-Wall', '-Wextra', '-Werror', monitorSource, '-o', monitor, '-lproc',
+    ], { encoding: 'utf8' });
+    assert.equal(monitorBuild.status, 0, monitorBuild.stderr);
     const agentExecutable = writeFile(path.join(root, 'agent-fixture'), [
       '#!/usr/bin/perl',
       'use strict;',
@@ -564,6 +935,9 @@ test('managed launcher suspends Agent/coordinator until signed-monitor identity 
     assert.equal(agentInvocation.kind, 'agent');
     assert.equal(agentInvocation.background_only, true);
     assert.equal(agentInvocation.allow_foreground, false);
+    assert.equal(agentInvocation.environment_policy_version, 1);
+    assert.equal(agentInvocation.environment_keys.includes('NODE_OPTIONS'), false);
+    assert.match(agentInvocation.environment_sha256, /^[0-9a-f]{64}$/);
     assert.equal(agentInvocation.pid, agentExit.pid);
     assert.equal(agentInvocation.start_identity, agentExit.start_identity);
     assert.equal(fs.readFileSync(childMarker, 'utf8'), 'ran\n');
@@ -604,7 +978,10 @@ test('managed launcher suspends Agent/coordinator until signed-monitor identity 
     const coordinatorRun = await runManagedLaunch(coordinatorSpecPath);
     assert.equal(coordinatorRun.exit_code, 0);
     assert.match(fs.readFileSync(coordinatorSpec.stdout_path, 'utf8'), /coordinator fixture/);
-    assert.equal(JSON.parse(fs.readFileSync(coordinatorSpec.invocation_receipt_path)).kind, 'coordinator');
+    const coordinatorInvocation = JSON.parse(fs.readFileSync(coordinatorSpec.invocation_receipt_path));
+    assert.equal(coordinatorInvocation.kind, 'coordinator');
+    assert.equal(coordinatorInvocation.environment_keys.includes('NODE_OPTIONS'), false);
+    assert.equal(fs.existsSync(injectionMarker), false);
 
     const signalSource = writeFile(
       path.join(root, 'signal-coordinator.mjs'),
@@ -628,6 +1005,31 @@ test('managed launcher suspends Agent/coordinator until signed-monitor identity 
     const signalExit = JSON.parse(fs.readFileSync(signalSpec.exit_receipt_path));
     assert.equal(signalExit.exit_code, null);
     assert.equal(signalExit.signal, 15);
+
+    const orphanSource = writeFile(
+      path.join(root, 'orphan-coordinator.mjs'),
+      'setTimeout(() => {}, 30_000);\n',
+      0o400,
+    );
+    const orphanSpec = managedLaunchSpec(
+      root,
+      'coordinator',
+      planPath,
+      process.execPath,
+      [orphanSource, '--plan', planPath],
+      { coordinator_source_path: orphanSource },
+      'orphan',
+    );
+    await assert.rejects(
+      runManagedLaunch(
+        writeJSON(path.join(root, 'orphan-spec.json'), orphanSpec),
+        { afterRelease: ({ guardian }) => guardian.kill('SIGKILL') },
+      ),
+      /guardian failed/,
+    );
+    const orphanPID = JSON.parse(fs.readFileSync(orphanSpec.pid_path)).pid;
+    assert.throws(() => process.kill(orphanPID, 0), /ESRCH/);
+    assert.equal(fs.existsSync(orphanSpec.exit_receipt_path), false);
 
     const noHandshakePlan = writeJSON(path.join(root, 'no-handshake-plan.json'), {
       version: 1,
@@ -653,8 +1055,110 @@ test('managed launcher suspends Agent/coordinator until signed-monitor identity 
     assert.equal(fs.existsSync(failedSpec.invocation_receipt_path), false);
     assert.equal(fs.existsSync(failedSpec.exit_receipt_path), false);
     assert.equal(fs.existsSync(childMarker), false);
+    const failedPID = JSON.parse(fs.readFileSync(failedSpec.pid_path)).pid;
+    assert.throws(() => process.kill(failedPID, 0), /ESRCH/);
+    assert.doesNotMatch(
+      fs.readFileSync(path.join(toolRoot, 'managed-launcher.mjs'), 'utf8'),
+      /process\.kill\(childPID/,
+    );
   } finally {
     process.chdir(priorCWD);
+    if (priorNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+    else process.env.NODE_OPTIONS = priorNodeOptions;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('managed guardian cleans only its owned child even when the PID receipt is substituted', async () => {
+  const root = fs.mkdtempSync('/private/tmp/pbq-tools-guardian-');
+  fs.chmodSync(root, 0o700);
+  let sentinel = null;
+  let guardian = null;
+  let pipeGuardian = null;
+  try {
+    const binary = path.join(root, 'managed-launch-suspended');
+    const build = spawnSync('/usr/bin/xcrun', [
+      'cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
+      path.join(toolRoot, 'managed-launch-suspended.c'), '-o', binary, '-lproc',
+    ], { encoding: 'utf8' });
+    assert.equal(build.status, 0, build.stderr);
+    sentinel = spawn('/bin/sleep', ['30'], { stdio: 'ignore' });
+    const pidPath = path.join(root, 'child-pid.json');
+    guardian = spawn(binary, [
+      '--stdout', path.join(root, 'child.stdout'),
+      '--stderr', path.join(root, 'child.stderr'),
+      '--pid-file', pidPath,
+      '--ack-file', path.join(root, 'start.ack'),
+      '--start-timeout', '10',
+      '--run-timeout', '30',
+      '--', '/bin/sleep', '30',
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const spawnedLine = await new Promise((resolve, reject) => {
+      let output = '';
+      const timeout = setTimeout(() => reject(new Error('guardian did not publish SPAWNED')), 5000);
+      guardian.stdout.on('data', (bytes) => {
+        output += bytes.toString('utf8');
+        const line = output.split('\n').find((entry) => entry.startsWith('SPAWNED '));
+        if (line) {
+          clearTimeout(timeout);
+          resolve(line);
+        }
+      });
+      guardian.once('error', (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+    });
+    const childPID = Number(spawnedLine.split(' ')[1]);
+    assert.equal(Number.isSafeInteger(childPID) && childPID > 0, true);
+    writeJSON(pidPath, { version: 1, pid: sentinel.pid });
+    const guardianClosed = new Promise((resolve) => {
+      guardian.once('close', (code, signal) => resolve({ code, signal }));
+    });
+    guardian.kill('SIGTERM');
+    const guardianResult = await guardianClosed;
+    assert.equal(guardianResult.code, 2);
+    assert.equal(guardianResult.signal, null);
+    assert.throws(() => process.kill(childPID, 0), /ESRCH/);
+    assert.doesNotThrow(() => process.kill(sentinel.pid, 0));
+
+    const pipePIDPath = path.join(root, 'pipe-child-pid.json');
+    pipeGuardian = spawn(binary, [
+      '--stdout', path.join(root, 'pipe-child.stdout'),
+      '--stderr', path.join(root, 'pipe-child.stderr'),
+      '--pid-file', pipePIDPath,
+      '--ack-file', path.join(root, 'pipe-start.ack'),
+      '--start-timeout', '10',
+      '--run-timeout', '30',
+      '--', '/bin/sleep', '30',
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const pipeGuardianClosed = new Promise((resolve) => {
+      pipeGuardian.once('close', (code, signal) => resolve({ code, signal }));
+    });
+    pipeGuardian.stdout.destroy();
+    await new Promise((resolve, reject) => {
+      const startedAt = Date.now();
+      const interval = setInterval(() => {
+        if (fs.existsSync(pipePIDPath)) {
+          clearInterval(interval);
+          resolve();
+        } else if (Date.now() - startedAt >= 5000) {
+          clearInterval(interval);
+          reject(new Error('SIGPIPE guardian did not publish its child PID'));
+        }
+      }, 5);
+    });
+    const pipeChildPID = JSON.parse(fs.readFileSync(pipePIDPath)).pid;
+    const pipeGuardianResult = await pipeGuardianClosed;
+    assert.equal(pipeGuardianResult.code, 2);
+    assert.equal(pipeGuardianResult.signal, null);
+    assert.throws(() => process.kill(pipeChildPID, 0), /ESRCH/);
+  } finally {
+    if (pipeGuardian?.exitCode === null && pipeGuardian?.signalCode === null) {
+      pipeGuardian.kill('SIGKILL');
+    }
+    if (guardian?.exitCode === null && guardian?.signalCode === null) guardian.kill('SIGKILL');
+    if (sentinel?.exitCode === null && sentinel?.signalCode === null) sentinel.kill('SIGKILL');
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
@@ -841,7 +1345,11 @@ function semanticReadbackFixture(root, name, targetValue, phase, value, observed
   return filePath;
 }
 
-function concurrentFixture(root, { aliasAgentTarget = false } = {}) {
+function concurrentFixture(root, {
+  aliasAgentTarget = false,
+  agentFinishesBeforeIntegratedCU = false,
+  agentTouchesIntegratedCUBoundary = false,
+} = {}) {
   const runRoot = privateDirectory(root, 'run');
   const monitorDirectory = privateDirectory(runRoot, 'monitor');
   const agentExecutable = '/usr/bin/true';
@@ -941,6 +1449,7 @@ function concurrentFixture(root, { aliasAgentTarget = false } = {}) {
     identity_handshake_sha256: sha256(fs.readFileSync(coordinatorHandshake)),
     stdout_path: eventPath,
     stderr_path: coordinatorStderr,
+    ...launchEnvironment('coordinator'),
     captured_at_milliseconds: now - 4500,
     coordinator_source_path: coordinatorSource,
     coordinator_source_sha256: sha256(fs.readFileSync(coordinatorSource)),
@@ -978,6 +1487,7 @@ function concurrentFixture(root, { aliasAgentTarget = false } = {}) {
     identity_handshake_sha256: sha256(fs.readFileSync(invocationHandshake)),
     stdout_path: invocationStdout,
     stderr_path: invocationStderr,
+    ...launchEnvironment('agent', agentReceipts),
     task_path: taskPath,
     task_sha256: sha256(fs.readFileSync(taskPath)),
     receipt_directory: agentReceipts,
@@ -1031,12 +1541,22 @@ function concurrentFixture(root, { aliasAgentTarget = false } = {}) {
   );
   const bundleB = signedBundleFixture(
     root, 'b-mutate', 'exactWindowTargetedTypeActions', targetB,
-    operationsStart + 550, operationsStart + 650,
+    operationsStart + (agentFinishesBeforeIntegratedCU
+      ? 410
+      : agentTouchesIntegratedCUBoundary ? 450 : 550),
+    operationsStart + (agentFinishesBeforeIntegratedCU
+      ? 440
+      : agentTouchesIntegratedCUBoundary ? 500 : 650),
     { directory: agentReceipts, client: agentClient },
   );
   const bundleBRestore = signedBundleFixture(
     root, 'b-restore', 'exactWindowTargetedTypeActions', targetB,
-    operationsStart + 750, operationsStart + 850,
+    operationsStart + (agentFinishesBeforeIntegratedCU
+      ? 450
+      : agentTouchesIntegratedCUBoundary ? 500 : 750),
+    operationsStart + (agentFinishesBeforeIntegratedCU
+      ? 480
+      : agentTouchesIntegratedCUBoundary ? 550 : 850),
     { directory: agentReceipts, client: agentClient },
   );
   const action = (id, family, readbackPath, bundle) => ({
@@ -1220,6 +1740,36 @@ test('post-run validator rejects Agent target reuse with live-v4 controlled proc
   }
 });
 
+test('post-run validator requires Agent progress on both sides of integrated Computer Use', () => {
+  const root = fs.mkdtempSync('/private/tmp/pbq-tools-interleaving-');
+  fs.chmodSync(root, 0o700);
+  try {
+    const fix = concurrentFixture(root, { agentFinishesBeforeIntegratedCU: true });
+    const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'non-interleaved-report.json')),
+      /progress both before and after integrated Computer Use/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('post-run validator requires strict progress beyond the integrated-CU boundary', () => {
+  const root = fs.mkdtempSync('/private/tmp/pbq-tools-strict-interleaving-');
+  fs.chmodSync(root, 0o700);
+  try {
+    const fix = concurrentFixture(root, { agentTouchesIntegratedCUBoundary: true });
+    const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'boundary-report.json')),
+      /progress both before and after integrated Computer Use/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('qualification manifest closes every required evidence class and detects byte drift', () => {
   const root = fs.mkdtempSync('/private/tmp/pbq-tools-manifest-');
   fs.chmodSync(root, 0o700);
@@ -1230,18 +1780,43 @@ test('qualification manifest closes every required evidence class and detects by
     const concurrentInput = writeJSON(path.join(root, 'concurrent-input.json'), concurrent.spec);
     const concurrentReport = path.join(root, 'concurrent-report.json');
     validateConcurrentRun(concurrentInput, concurrentReport);
-    const matrix = Array.from({ length: 5 }, (_, cycle) => ({
-      certificate: writeJSON(path.join(root, `matrix-${cycle + 1}.json`), {
-        success: true,
-        catalog_version: 2,
-        expected_cases: 42,
-        observed_cases: 42,
-        failures: [],
-      }),
-      crash_inventory: writeJSON(path.join(root, `crash-${cycle + 1}.json`), {
-        version: 1, passed: true, added: [], changed: [], removed: [],
-      }),
-    }));
+    const matrixStartedAt = Date.now() - 200_000;
+    const matrix = Array.from({ length: 5 }, (_, cycleIndex) => {
+      const cycle = cycleIndex + 1;
+      const startedAt = matrixStartedAt + (cycleIndex * 2000);
+      const completedAt = startedAt + 1000;
+      const executionNonce = `${cycle}`.repeat(64);
+      return {
+        certificate: writeJSON(path.join(root, `matrix-${cycle}.json`), {
+          version: 2,
+          cycle,
+          success: true,
+          catalog_version: 2,
+          expected_cases: 42,
+          observed_cases: 42,
+          failures: [],
+          execution_nonce: executionNonce,
+          host_uuid: LOCAL_UUID,
+          peekaboo_source_commit: SOURCE,
+          bridge_source_commit: SOURCE,
+          started_at_milliseconds: startedAt,
+          completed_at_milliseconds: completedAt,
+        }),
+        crash_inventory: writeJSON(path.join(root, `crash-${cycle}.json`), {
+          version: 2,
+          cycle,
+          execution_nonce: executionNonce,
+          host_uuid: LOCAL_UUID,
+          peekaboo_source_commit: SOURCE,
+          started_at_milliseconds: startedAt - 10,
+          completed_at_milliseconds: completedAt + 10,
+          passed: true,
+          added: [],
+          changed: [],
+          removed: [],
+        }),
+      };
+    });
     const adjunctTarget = { pid: 501, start_identity: '501001', window_id: 601 };
     const adjunctTime = Date.now();
     const middleBundle = signedBundleFixture(
@@ -1387,8 +1962,6 @@ test('qualification manifest closes every required evidence class and detects by
     const pointerCrash = writeJSON(path.join(root, 'pointer-crash.json'), {
       version: 1, passed: true, added: [], changed: [], removed: [],
     });
-    const artifactManifest = evidence();
-    fs.chmodSync(artifactManifest, 0o400);
     const toolsManifest = path.join(root, 'qualification-tools-source.json');
     generateSourceManifest(toolRoot, [
       'README.md',
@@ -1398,6 +1971,7 @@ test('qualification manifest closes every required evidence class and detects by
       'lib.mjs',
       'managed-launcher.mjs',
       'project-live-bindings.mjs',
+      'process-lifecycle-guard.c',
       'process-tree-collector.mjs',
       'publish-coordinator-marker.mjs',
       'qualification-manifest.mjs',
@@ -1411,7 +1985,47 @@ test('qualification manifest closes every required evidence class and detects by
     const completion = liveEvents.at(-1);
     const agentInvocation = JSON.parse(fs.readFileSync(concurrent.spec.agent_invocation));
     const qualificationToolsAggregate = JSON.parse(fs.readFileSync(toolsManifest)).aggregate_sha256;
-    const deployment = deploymentFixture(root, qualificationToolsAggregate);
+    const artifact = artifactFixture(root);
+    const concurrentValue = JSON.parse(fs.readFileSync(concurrentReport));
+    const planValue = JSON.parse(fs.readFileSync(concurrent.spec.plan));
+    const deployment = deploymentFixture(
+      root,
+      qualificationToolsAggregate,
+      artifact,
+      concurrentValue,
+      planValue,
+    );
+    const artifactManifest = writeJSON(path.join(root, 'artifact-binding.json'), {
+      version: 2,
+      deployment_envelope_sha256: '8'.repeat(64),
+      peekaboo_source_commit: SOURCE,
+      openclaw_source_commit: OPENCLAW_SOURCE,
+      qualification_tools_aggregate_sha256: qualificationToolsAggregate,
+      peekaboo_artifact_manifest: {
+        path: artifact.peekaboo,
+        sha256: sha256(fs.readFileSync(artifact.peekaboo)),
+      },
+      openclaw_artifact_receipt: {
+        path: artifact.openclaw,
+        sha256: sha256(fs.readFileSync(artifact.openclaw)),
+      },
+    }, 0o400);
+    const installedAggregate = JSON.parse(fs.readFileSync(deployment.installed[0])).aggregate_sha256;
+    const candidateBinding = {
+      deployment_envelope_sha256: '8'.repeat(64),
+      installed_inventory_aggregate_sha256: installedAggregate,
+      peekaboo_artifact_manifest_sha256: sha256(fs.readFileSync(artifact.peekaboo)),
+    };
+    for (const cycle of matrix) {
+      writeJSON(cycle.certificate, {
+        ...JSON.parse(fs.readFileSync(cycle.certificate)),
+        ...candidateBinding,
+      });
+      writeJSON(cycle.crash_inventory, {
+        ...JSON.parse(fs.readFileSync(cycle.crash_inventory)),
+        ...candidateBinding,
+      });
+    }
     const inputValue = {
       version: 2,
       artifact_manifest: artifactManifest,
@@ -1482,6 +2096,49 @@ test('qualification manifest closes every required evidence class and detects by
       ),
       /input version is not 2/,
     );
+    for (const [artifactDrift, mutateArtifact, expectedError] of [
+      [
+        'cli',
+        (value) => { value.cli.sha256 = '0'.repeat(64); },
+        /CLI artifact differs from the installed executable/,
+      ],
+      [
+        'app',
+        (value) => { value.app.cdhash = '0'.repeat(40); },
+        /Peekaboo\.app artifact differs from the local Bridge root/,
+      ],
+      [
+        'playground',
+        (value) => { value.playground.cdhash = '0'.repeat(40); },
+        /Playground artifact differs from the local fixture root/,
+      ],
+    ]) {
+      const driftedArtifactValue = structuredClone(JSON.parse(fs.readFileSync(artifact.peekaboo)));
+      mutateArtifact(driftedArtifactValue);
+      const driftedArtifact = writeJSON(
+        path.join(root, `drifted-${artifactDrift}-artifact.json`),
+        driftedArtifactValue,
+        0o400,
+      );
+      const driftedBindingValue = structuredClone(JSON.parse(fs.readFileSync(artifactManifest)));
+      driftedBindingValue.peekaboo_artifact_manifest = {
+        path: driftedArtifact,
+        sha256: sha256(fs.readFileSync(driftedArtifact)),
+      };
+      const driftedInput = structuredClone(inputValue);
+      driftedInput.artifact_manifest = writeJSON(
+        path.join(root, `drifted-${artifactDrift}-binding.json`),
+        driftedBindingValue,
+        0o400,
+      );
+      assert.throws(
+        () => generateManifest(
+          writeJSON(path.join(root, `drifted-${artifactDrift}-input.json`), driftedInput),
+          path.join(root, `drifted-${artifactDrift}-manifest.json`),
+        ),
+        expectedError,
+      );
+    }
     const localInventory = JSON.parse(fs.readFileSync(deployment.installed[0]));
     const installedDrifts = [
       ['size', (entries) => { entries[0].size += 1; }],
@@ -1586,6 +2243,9 @@ test('qualification manifest closes every required evidence class and detects by
     const fixtureRoot = missingRootTree.roots.find((entry) => entry.root_class === 'fixture');
     missingRootTree.roots = missingRootTree.roots.filter((entry) => entry.root_class !== 'fixture');
     missingRootTree.processes = missingRootTree.processes.filter((entry) => entry.pid !== fixtureRoot.pid);
+    missingRootTree.lifecycle_watched_pids = missingRootTree.lifecycle_watched_pids.filter((pid) => (
+      pid !== fixtureRoot.pid
+    ));
     missingRootInput.deployment.process_trees[1] = writeJSON(
       path.join(root, 'missing-root-process-tree.json'),
       missingRootTree,
@@ -1611,12 +2271,54 @@ test('qualification manifest closes every required evidence class and detects by
       ),
       /collector differs from the bound source/,
     );
+    const wrongLifecycleGuardInput = structuredClone(inputValue);
+    const wrongLifecycleGuardTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
+    wrongLifecycleGuardTree.lifecycle_guard_sha256 = '0'.repeat(64);
+    wrongLifecycleGuardInput.deployment.process_trees[1] = writeJSON(
+      path.join(root, 'wrong-lifecycle-guard-process-tree.json'),
+      wrongLifecycleGuardTree,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'wrong-lifecycle-guard-input.json'), wrongLifecycleGuardInput),
+        path.join(root, 'wrong-lifecycle-guard-manifest.json'),
+      ),
+      /process lifecycle guard differs from the bound source/,
+    );
+    const substitutedToolInput = structuredClone(inputValue);
+    const substitutedToolDirectory = privateDirectory(root, 'substituted-process-tools');
+    const substitutedCollector = writeFile(
+      path.join(substitutedToolDirectory, 'process-tree-collector.mjs'),
+      fs.readFileSync(deployment.collector),
+      0o400,
+    );
+    const substitutedGuard = writeFile(
+      path.join(substitutedToolDirectory, 'process-lifecycle-guard.c'),
+      `${fs.readFileSync(path.join(toolRoot, 'process-lifecycle-guard.c'), 'utf8')}\n/* altered */\n`,
+      0o400,
+    );
+    substitutedToolInput.deployment.process_tree_collector = substitutedCollector;
+    substitutedToolInput.deployment.process_trees = deployment.processTrees.map((treePath, index) => {
+      const tree = JSON.parse(fs.readFileSync(treePath));
+      tree.collector_sha256 = sha256(fs.readFileSync(substitutedCollector));
+      tree.lifecycle_guard_sha256 = sha256(fs.readFileSync(substitutedGuard));
+      return writeJSON(path.join(root, `substituted-tool-tree-${index}.json`), tree);
+    });
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'substituted-tool-input.json'), substitutedToolInput),
+        path.join(root, 'substituted-tool-manifest.json'),
+      ),
+      /differs from the reviewed qualification tools/,
+    );
     const timestampInput = structuredClone(inputValue);
-    const timestampTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
+    const timestampTree = JSON.parse(fs.readFileSync(deployment.processTrees[0]));
     timestampTree.captured_at_milliseconds = JSON.parse(
-      fs.readFileSync(deployment.processTrees[0]),
+      fs.readFileSync(deployment.processTrees[1]),
     ).captured_at_milliseconds;
-    timestampInput.deployment.process_trees[1] = writeJSON(
+    timestampTree.lifecycle_completed_at_milliseconds
+      = timestampTree.captured_at_milliseconds + 10;
+    timestampInput.deployment.process_trees[0] = writeJSON(
       path.join(root, 'unordered-process-tree.json'),
       timestampTree,
     );
@@ -1660,14 +2362,244 @@ test('qualification manifest closes every required evidence class and detects by
       ),
       /PID reuse in one epoch/,
     );
+    for (const [substitutionIndex, rootClass] of [
+      'agent', 'coordinator', 'bridge', 'integrated_cu',
+    ].entries()) {
+      const substitutionInput = structuredClone(inputValue);
+      const treeIndexes = ['bridge', 'integrated_cu'].includes(rootClass) ? [0, 1, 2] : [1];
+      const duringTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
+      const replacementPID = duringTree.roots.find((entry) => (
+        entry.root_class === rootClass
+      )).pid + 10_000 + substitutionIndex;
+      for (const treeIndex of treeIndexes) {
+        const substitutionTree = JSON.parse(fs.readFileSync(deployment.processTrees[treeIndex]));
+        const rootEntry = substitutionTree.roots.find((entry) => entry.root_class === rootClass);
+        const processEntry = substitutionTree.processes.find((entry) => entry.pid === rootEntry.pid
+          && entry.start_identity === rootEntry.start_identity);
+        const priorPID = rootEntry.pid;
+        const priorStartIdentity = rootEntry.start_identity;
+        rootEntry.pid = replacementPID;
+        rootEntry.start_identity = `${rootEntry.pid}001`;
+        if (rootClass !== 'bridge') rootEntry.code_signature_hash = '0'.repeat(40);
+        processEntry.pid = rootEntry.pid;
+        processEntry.start_identity = rootEntry.start_identity;
+        processEntry.code_signature_hash = rootEntry.code_signature_hash;
+        for (const process of substitutionTree.processes) {
+          if (process.parent_pid === priorPID
+            && process.parent_start_identity === priorStartIdentity) {
+            process.parent_pid = rootEntry.pid;
+            process.parent_start_identity = rootEntry.start_identity;
+          }
+        }
+        substitutionTree.lifecycle_watched_pids = substitutionTree.lifecycle_watched_pids
+          .map((pid) => (pid === priorPID ? rootEntry.pid : pid))
+          .sort((left, right) => left - right);
+        substitutionTree.processes.sort((left, right) => left.pid - right.pid);
+        substitutionInput.deployment.process_trees[treeIndex] = writeJSON(
+          path.join(root, `substituted-${rootClass}-process-tree-${treeIndex}.json`),
+          substitutionTree,
+        );
+      }
+      assert.throws(
+        () => generateManifest(
+          writeJSON(path.join(root, `substituted-${rootClass}-input.json`), substitutionInput),
+          path.join(root, `substituted-${rootClass}-manifest.json`),
+        ),
+        new RegExp(`local/during ${rootClass} root differs from the concurrent run`),
+      );
+    }
+    const lateCoverageInput = structuredClone(inputValue);
+    const lateCoverageTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
+    lateCoverageTree.coverage_started_at_milliseconds
+      = concurrentValue.overlap.operations_started_at_milliseconds + 1;
+    lateCoverageInput.deployment.process_trees[1] = writeJSON(
+      path.join(root, 'late-coverage-process-tree.json'),
+      lateCoverageTree,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'late-coverage-input.json'), lateCoverageInput),
+        path.join(root, 'late-coverage-manifest.json'),
+      ),
+      /coverage does not bracket the concurrent operation interval/,
+    );
+    const earlyCoverageInput = structuredClone(inputValue);
+    const earlyCoverageTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
+    earlyCoverageTree.coverage_completed_at_milliseconds
+      = concurrentValue.overlap.operations_completed_at_milliseconds - 1;
+    earlyCoverageTree.final_sample_started_at_milliseconds
+      = earlyCoverageTree.coverage_completed_at_milliseconds - 1;
+    earlyCoverageTree.captured_at_milliseconds
+      = earlyCoverageTree.coverage_completed_at_milliseconds + 1;
+    earlyCoverageInput.deployment.process_trees[1] = writeJSON(
+      path.join(root, 'early-coverage-process-tree.json'),
+      earlyCoverageTree,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'early-coverage-input.json'), earlyCoverageInput),
+        path.join(root, 'early-coverage-manifest.json'),
+      ),
+      /coverage does not bracket the concurrent operation interval/,
+    );
+    const lateEnrichmentInput = structuredClone(inputValue);
+    const lateEnrichmentTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
+    lateEnrichmentTree.final_sample_started_at_milliseconds
+      = concurrentValue.overlap.operations_completed_at_milliseconds - 1;
+    lateEnrichmentInput.deployment.process_trees[1] = writeJSON(
+      path.join(root, 'late-enrichment-process-tree.json'),
+      lateEnrichmentTree,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'late-enrichment-input.json'), lateEnrichmentInput),
+        path.join(root, 'late-enrichment-manifest.json'),
+      ),
+      /coverage does not bracket the concurrent operation interval/,
+    );
+    for (const [timingDrift, mutateTiming] of [
+      ['legacy-version', (tree) => { tree.version = 1; }],
+      [
+        'excessive-gap',
+        (tree) => {
+          tree.observed_maximum_sample_gap_milliseconds
+            = tree.maximum_sample_gap_milliseconds + 1;
+        },
+      ],
+      [
+        'insufficient-samples',
+        (tree) => {
+          tree.maximum_sample_gap_milliseconds = 100;
+          tree.observed_maximum_sample_gap_milliseconds = 50;
+          tree.sample_count = 4;
+        },
+      ],
+      [
+        'missing-continuous-lifecycle',
+        (tree) => { tree.continuous_lifecycle_observation = false; },
+      ],
+    ]) {
+      const timingInput = structuredClone(inputValue);
+      const timingTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
+      mutateTiming(timingTree);
+      timingInput.deployment.process_trees[1] = writeJSON(
+        path.join(root, `${timingDrift}-process-tree.json`),
+        timingTree,
+      );
+      assert.throws(
+        () => generateManifest(
+          writeJSON(path.join(root, `${timingDrift}-input.json`), timingInput),
+          path.join(root, `${timingDrift}-manifest.json`),
+        ),
+        /process_trees\[1\] is malformed/,
+      );
+    }
     const wrongElevationInput = structuredClone(inputValue);
-    wrongElevationInput.deployment.elevation_receipts[1] = evidence();
+    wrongElevationInput.deployment.elevation_receipts[1] = writeJSON(
+      path.join(root, 'wrong-elevation-receipt.json'),
+      {
+        ...JSON.parse(fs.readFileSync(deployment.elevationReceipts[1])),
+        transactionId: 'CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC',
+      },
+    );
     assert.throws(
       () => generateManifest(
         writeJSON(path.join(root, 'wrong-elevation-input.json'), wrongElevationInput),
         path.join(root, 'wrong-elevation-manifest.json'),
       ),
       /elevation receipt differs from its installed inventory/,
+    );
+    const duplicateElevationInput = structuredClone(inputValue);
+    const duplicateElevationReceipt = writeFile(
+      path.join(root, 'duplicate-local-as-studio-elevation.json'),
+      fs.readFileSync(deployment.elevationReceipts[0]),
+    );
+    duplicateElevationInput.deployment.elevation_receipts[1] = duplicateElevationReceipt;
+    duplicateElevationInput.deployment.installed_inventories[1] = installedInventory(
+      root,
+      'studio',
+      deployment.studioUUID,
+      localInventory.entries,
+      qualificationToolsAggregate,
+      sha256(fs.readFileSync(duplicateElevationReceipt)),
+      '-duplicate-elevation',
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'duplicate-elevation-input.json'), duplicateElevationInput),
+        path.join(root, 'duplicate-elevation-manifest.json'),
+      ),
+      /elevation transaction IDs are not host-distinct/,
+    );
+    const duplicateNodeInput = structuredClone(inputValue);
+    const duplicateNodeReceiptValue = JSON.parse(fs.readFileSync(deployment.elevationReceipts[1]));
+    duplicateNodeReceiptValue.nodeId = JSON.parse(
+      fs.readFileSync(deployment.elevationReceipts[0]),
+    ).nodeId;
+    const duplicateNodeReceipt = writeJSON(
+      path.join(root, 'duplicate-node-elevation.json'),
+      duplicateNodeReceiptValue,
+    );
+    duplicateNodeInput.deployment.elevation_receipts[1] = duplicateNodeReceipt;
+    duplicateNodeInput.deployment.installed_inventories[1] = installedInventory(
+      root,
+      'studio',
+      deployment.studioUUID,
+      localInventory.entries,
+      qualificationToolsAggregate,
+      sha256(fs.readFileSync(duplicateNodeReceipt)),
+      '-duplicate-node',
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'duplicate-node-input.json'), duplicateNodeInput),
+        path.join(root, 'duplicate-node-manifest.json'),
+      ),
+      /elevation node IDs are not host-distinct/,
+    );
+    const invalidProfileInput = structuredClone(inputValue);
+    const invalidProfileReceiptValue = JSON.parse(fs.readFileSync(deployment.elevationReceipts[0]));
+    invalidProfileReceiptValue.nodeProfile = 'local';
+    const invalidProfileReceipt = writeJSON(
+      path.join(root, 'invalid-profile-elevation.json'),
+      invalidProfileReceiptValue,
+    );
+    invalidProfileInput.deployment.elevation_receipts[0] = invalidProfileReceipt;
+    invalidProfileInput.deployment.installed_inventories[0] = installedInventory(
+      root,
+      'local',
+      deployment.localUUID,
+      localInventory.entries,
+      qualificationToolsAggregate,
+      sha256(fs.readFileSync(invalidProfileReceipt)),
+      '-invalid-profile',
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'invalid-profile-input.json'), invalidProfileInput),
+        path.join(root, 'invalid-profile-manifest.json'),
+      ),
+      /not one installed source-bound elevation receipt/,
+    );
+    const wrongElevationRootInput = structuredClone(inputValue);
+    for (const treeIndex of [0, 1, 2]) {
+      const tree = JSON.parse(fs.readFileSync(deployment.processTrees[treeIndex]));
+      const elevationRoot = tree.roots.find((entry) => entry.root_class === 'elevation');
+      const elevationProcess = tree.processes.find((entry) => entry.pid === elevationRoot.pid
+        && entry.start_identity === elevationRoot.start_identity);
+      elevationRoot.code_signature_hash = '0'.repeat(40);
+      elevationProcess.code_signature_hash = elevationRoot.code_signature_hash;
+      wrongElevationRootInput.deployment.process_trees[treeIndex] = writeJSON(
+        path.join(root, `wrong-elevation-root-tree-${treeIndex}.json`),
+        tree,
+      );
+    }
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'wrong-elevation-root-input.json'), wrongElevationRootInput),
+        path.join(root, 'wrong-elevation-root-manifest.json'),
+      ),
+      /local elevation root differs from its installed receipt/,
     );
     const duplicateHostInput = structuredClone(inputValue);
     duplicateHostInput.deployment.installed_inventories[1] = installedInventory(
@@ -1707,6 +2639,49 @@ test('qualification manifest closes every required evidence class and detects by
         '-wrong-tools',
       ),
     ];
+    wrongToolsAggregateInput.deployment.executable_policy_reports
+      = deployment.policyReports.map((reportPath, reportIndex) => {
+        const report = JSON.parse(fs.readFileSync(reportPath));
+        const inventory = JSON.parse(fs.readFileSync(
+          wrongToolsAggregateInput.deployment.installed_inventories[reportIndex],
+        ));
+        report.installed_inventory_aggregate_sha256 = inventory.aggregate_sha256;
+        const coverage = {
+          installed_inventory_aggregate_sha256: report.installed_inventory_aggregate_sha256,
+          scanned_roots: report.scanned_roots,
+          covered_entries: report.covered_entries,
+          file_coverage: report.file_coverage,
+        };
+        report.coverage_aggregate_sha256 = aggregateSHA256('executable-policy-coverage', coverage);
+        return writeJSON(path.join(root, `wrong-tools-policy-${reportIndex}.json`), report);
+      });
+    wrongToolsAggregateInput.artifact_manifest = writeJSON(
+      path.join(root, 'wrong-tools-artifact-binding.json'),
+      {
+        ...JSON.parse(fs.readFileSync(artifactManifest)),
+        qualification_tools_aggregate_sha256: '0'.repeat(64),
+      },
+      0o400,
+    );
+    const wrongInstalledAggregate = JSON.parse(fs.readFileSync(
+      wrongToolsAggregateInput.deployment.installed_inventories[0],
+    )).aggregate_sha256;
+    wrongToolsAggregateInput.matrix_cycles = matrix.map((cycle, cycleIndex) => {
+      const certificate = JSON.parse(fs.readFileSync(cycle.certificate));
+      const crash = JSON.parse(fs.readFileSync(cycle.crash_inventory));
+      certificate.installed_inventory_aggregate_sha256 = wrongInstalledAggregate;
+      crash.installed_inventory_aggregate_sha256 = wrongInstalledAggregate;
+      return {
+        certificate: writeJSON(
+          path.join(root, `wrong-tools-cycle-${cycleIndex + 1}.json`),
+          certificate,
+        ),
+        crash_inventory: writeJSON(
+          path.join(root, `wrong-tools-crash-${cycleIndex + 1}.json`),
+          crash,
+        ),
+      };
+    });
     assert.throws(
       () => generateManifest(
         writeJSON(path.join(root, 'wrong-tools-aggregate-input.json'), wrongToolsAggregateInput),
@@ -1728,6 +2703,30 @@ test('qualification manifest closes every required evidence class and detects by
       ),
       /not one complete clean executable\/script policy report/,
     );
+    const subsetPolicyInput = structuredClone(inputValue);
+    const subsetPolicy = JSON.parse(fs.readFileSync(deployment.policyReports[0]));
+    subsetPolicy.covered_entries = subsetPolicy.covered_entries.slice(0, -1);
+    const subsetCoverage = {
+      installed_inventory_aggregate_sha256: subsetPolicy.installed_inventory_aggregate_sha256,
+      scanned_roots: subsetPolicy.scanned_roots,
+      covered_entries: subsetPolicy.covered_entries,
+      file_coverage: subsetPolicy.file_coverage,
+    };
+    subsetPolicy.coverage_aggregate_sha256 = aggregateSHA256(
+      'executable-policy-coverage',
+      subsetCoverage,
+    );
+    subsetPolicyInput.deployment.executable_policy_reports[0] = writeJSON(
+      path.join(root, 'subset-executable-policy.json'),
+      subsetPolicy,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'subset-executable-policy-input.json'), subsetPolicyInput),
+        path.join(root, 'subset-executable-policy-manifest.json'),
+      ),
+      /does not cover the complete installed inventory/,
+    );
     assert.doesNotMatch(
       fs.readFileSync(path.join(toolRoot, 'qualification-manifest.mjs'), 'utf8'),
       /\b(?:killall|pkill)\b|\.kill\s*\(/,
@@ -1741,10 +2740,51 @@ test('qualification manifest closes every required evidence class and detects by
       ),
       /keys are not closed|passing 42\/42 certificate/,
     );
+    const duplicateCycleInput = structuredClone(inputValue);
+    const duplicateCycleCertificate = JSON.parse(fs.readFileSync(matrix[1].certificate));
+    const duplicateCycleCrash = JSON.parse(fs.readFileSync(matrix[1].crash_inventory));
+    duplicateCycleCertificate.execution_nonce
+      = JSON.parse(fs.readFileSync(matrix[0].certificate)).execution_nonce;
+    duplicateCycleCrash.execution_nonce = duplicateCycleCertificate.execution_nonce;
+    duplicateCycleInput.matrix_cycles[1] = {
+      certificate: writeJSON(
+        path.join(root, 'duplicate-cycle-certificate.json'),
+        duplicateCycleCertificate,
+      ),
+      crash_inventory: writeJSON(
+        path.join(root, 'duplicate-cycle-crash.json'),
+        duplicateCycleCrash,
+      ),
+    };
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'duplicate-cycle-input.json'), duplicateCycleInput),
+        path.join(root, 'duplicate-cycle-manifest.json'),
+      ),
+      /matrix cycle nonces are not distinct/,
+    );
+    const staleCandidateCycleInput = structuredClone(inputValue);
+    const staleCandidateCertificate = JSON.parse(fs.readFileSync(matrix[0].certificate));
+    staleCandidateCertificate.peekaboo_artifact_manifest_sha256 = '0'.repeat(64);
+    staleCandidateCycleInput.matrix_cycles[0].certificate = writeJSON(
+      path.join(root, 'stale-candidate-cycle.json'),
+      staleCandidateCertificate,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'stale-candidate-cycle-input.json'), staleCandidateCycleInput),
+        path.join(root, 'stale-candidate-cycle-manifest.json'),
+      ),
+      /passing 42\/42 certificate/,
+    );
     const badCrashInput = structuredClone(inputValue);
     badCrashInput.matrix_cycles[0].crash_inventory = writeJSON(
       path.join(root, 'bad-crash.json'),
-      { version: 1, passed: false, added: [{ name: 'Peekaboo.crash' }], changed: [], removed: [] },
+      {
+        ...JSON.parse(fs.readFileSync(matrix[0].crash_inventory)),
+        passed: false,
+        added: [{ name: 'Peekaboo.crash' }],
+      },
     );
     assert.throws(
       () => generateManifest(
@@ -1763,6 +2803,24 @@ test('qualification manifest closes every required evidence class and detects by
         path.join(root, 'cross-run-manifest.json'),
       ),
       /differs from concurrent validation/,
+    );
+    const fabricatedInterleavingInput = structuredClone(inputValue);
+    const fabricatedInterleaving = JSON.parse(fs.readFileSync(concurrentReport));
+    fabricatedInterleaving.agent.progress_interleaving.action_intervals[0]
+      .started_at_milliseconds -= 1;
+    fabricatedInterleavingInput.agent_cu.validation_report = writeJSON(
+      path.join(root, 'fabricated-interleaving-report.json'),
+      fabricatedInterleaving,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(
+          path.join(root, 'fabricated-interleaving-input.json'),
+          fabricatedInterleavingInput,
+        ),
+        path.join(root, 'fabricated-interleaving-manifest.json'),
+      ),
+      /progress interleaving differs from the bound bundles\/readback/,
     );
     const badPointerInput = structuredClone(inputValue);
     badPointerInput.adjuncts.held_pointer.controller_results = [writeJSON(
@@ -1824,6 +2882,33 @@ test('qualification manifest closes every required evidence class and detects by
     assert.equal(generatedManifest.version, 2);
     assert.equal(generatedManifest.evidence.deployment.installed_inventories.length, 2);
     assert.equal(generatedManifest.evidence.deployment.process_trees.length, 6);
+
+    const resealedInterleavingManifest = structuredClone(generatedManifest);
+    const resealedInterleavingReportValue = JSON.parse(fs.readFileSync(concurrentReport));
+    resealedInterleavingReportValue.agent.progress_interleaving
+      .integrated_cu_perform_at_milliseconds += 1;
+    const resealedInterleavingReport = writeJSON(
+      path.join(root, 'resealed-fabricated-interleaving-report.json'),
+      resealedInterleavingReportValue,
+    );
+    const resealedInterleavingBytes = fs.readFileSync(resealedInterleavingReport);
+    resealedInterleavingManifest.evidence.agent_cu.validation_report = {
+      path: resealedInterleavingReport,
+      size: resealedInterleavingBytes.length,
+      sha256: sha256(resealedInterleavingBytes),
+    };
+    resealedInterleavingManifest.evidence_aggregate_sha256 = aggregateSHA256(
+      'evidence-manifest',
+      resealedInterleavingManifest.evidence,
+    );
+    const resealedInterleavingPath = writeJSON(
+      path.join(root, 'resealed-fabricated-interleaving-manifest.json'),
+      resealedInterleavingManifest,
+    );
+    assert.throws(
+      () => verifyManifest(resealedInterleavingPath),
+      /progress interleaving differs from the bound bundles\/readback/,
+    );
 
     const originalInstalledInventory = fs.readFileSync(deployment.installed[0]);
     fs.appendFileSync(deployment.installed[0], 'drift');

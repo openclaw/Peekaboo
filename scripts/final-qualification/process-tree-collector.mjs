@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import {
   exactKeys,
   parseOptions,
+  readStableFile,
   readStableJSON,
   requireCondition,
   requireStableExecutable,
@@ -64,6 +66,59 @@ function descendantPIDs(table, roots) {
   return [...selected].sort((left, right) => left - right);
 }
 
+export function accumulateDescendantPIDs(observedPIDs, table, roots) {
+  for (const pid of descendantPIDs(table, roots)) observedPIDs.add(pid);
+  return [...observedPIDs].sort((left, right) => left - right);
+}
+
+export function accumulatedDescendantPIDs(tables, roots) {
+  const observedPIDs = new Set();
+  for (const table of tables) accumulateDescendantPIDs(observedPIDs, table, roots);
+  return [...observedPIDs].sort((left, right) => left - right);
+}
+
+export function validateRepeatedObservation(
+  priorIdentity,
+  currentIdentity,
+  priorParent,
+  currentParent,
+  pid,
+) {
+  requireCondition(currentIdentity.pid === pid
+    && currentIdentity.startIdentity === priorIdentity.start_identity,
+  `task process ${pid} was reused during collection`);
+  requireCondition(priorParent === currentParent,
+    `task process ${pid} changed parent during collection`);
+}
+
+export function validateRepeatedExecutable(prior, current, pid) {
+  requireCondition(
+    prior.executable_path === current.executable_path
+      && prior.executable_sha256 === current.executable_sha256
+      && prior.code_signature_hash === current.code_signature_hash
+      && prior.signing_identifier === current.signing_identifier
+      && prior.team_id === current.team_id,
+    `task process ${pid} changed executable identity during collection`,
+  );
+}
+
+export function validateSampleGap(previousSampleAt, currentSampleAt, maximumGap) {
+  requireCondition(Number.isSafeInteger(previousSampleAt) && previousSampleAt > 0
+    && Number.isSafeInteger(currentSampleAt) && currentSampleAt >= previousSampleAt
+    && Number.isSafeInteger(maximumGap) && maximumGap > 0,
+  'process-table sample timestamps are malformed');
+  const gap = currentSampleAt - previousSampleAt;
+  requireCondition(gap <= maximumGap,
+    `process-table sampling gap ${gap}ms exceeds ${maximumGap}ms`);
+  return gap;
+}
+
+export function isFinalProcessTableSample(sampleCount, sampleStartedAt, deadline) {
+  return Number.isSafeInteger(sampleCount) && sampleCount >= 2
+    && Number.isFinite(sampleStartedAt) && Number.isFinite(deadline)
+    && sampleStartedAt >= deadline;
+}
+
 function monitorJSON(monitor, command, pid, directory, sequence) {
   const output = path.join(directory, `${sequence}-${command}-${pid}.json`);
   run(monitor, [command, '--pid', String(pid), '--output', output], `monitor ${command} for PID ${pid}`);
@@ -82,13 +137,113 @@ function signingMetadata(executablePath) {
   return { codeSignatureHash, signingIdentifier, teamID };
 }
 
+function monitoredExecutableIdentity(monitorPath, pid, temporary, sequence) {
+  const executable = monitorJSON(
+    monitorPath,
+    'process-executable',
+    pid,
+    temporary,
+    `${sequence}-before`,
+  );
+  exactKeys(executable, ['pid', 'startIdentity', 'path', 'sha256'],
+    `process executable ${pid}`);
+  requireCondition(executable.pid === pid && /^[1-9][0-9]*$/.test(executable.startIdentity)
+    && path.isAbsolute(executable.path) && HEX64.test(executable.sha256),
+  `process executable ${pid} is malformed`);
+  const canonicalPath = fs.realpathSync(executable.path);
+  requireCondition(canonicalPath === executable.path,
+    `process executable ${pid} is not canonical`);
+  const signing = signingMetadata(canonicalPath);
+  const after = monitorJSON(
+    monitorPath,
+    'process-executable',
+    pid,
+    temporary,
+    `${sequence}-after`,
+  );
+  exactKeys(after, ['pid', 'startIdentity', 'path', 'sha256'],
+    `final process executable ${pid}`);
+  requireCondition(after.pid === executable.pid
+    && after.startIdentity === executable.startIdentity
+    && after.path === executable.path
+    && after.sha256 === executable.sha256
+    && fs.realpathSync(after.path) === canonicalPath,
+  `process executable ${pid} changed during signed identity inspection`);
+  return {
+    pid,
+    start_identity: executable.startIdentity,
+    executable_path: canonicalPath,
+    executable_name: path.basename(canonicalPath),
+    executable_sha256: executable.sha256,
+    code_signature_hash: signing.codeSignatureHash,
+    signing_identifier: signing.signingIdentifier,
+    team_id: signing.teamID,
+  };
+}
+
+function compileLifecycleGuard(temporary) {
+  const sourcePath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'process-lifecycle-guard.c');
+  const source = readStableFile(sourcePath, 'process lifecycle guard source', {
+    privateFile: false,
+  });
+  const retainedSource = path.join(temporary, 'process-lifecycle-guard.c');
+  fs.writeFileSync(retainedSource, source.bytes, { flag: 'wx', mode: 0o400 });
+  const binary = path.join(temporary, 'process-lifecycle-guard');
+  const build = spawnSync('/usr/bin/xcrun', [
+    'cc', '-x', 'c', '-std=c11', '-Wall', '-Wextra', '-Werror', '-', '-o', binary,
+  ], {
+    input: source.bytes,
+    encoding: 'utf8',
+    timeout: 30_000,
+    maxBuffer: 4 * 1024 * 1024,
+    env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'C', LC_ALL: 'C' },
+  });
+  requireCondition(!build.error && build.status === 0,
+    `cannot build process lifecycle guard: ${build.stderr?.trim() || build.error?.message}`);
+  fs.chmodSync(binary, 0o500);
+  const executable = requireStableExecutable(binary, 'compiled process lifecycle guard');
+  requireCondition(readStableFile(retainedSource, 'retained process lifecycle guard source').sha256
+    === source.sha256, 'retained lifecycle guard source changed during compilation');
+  return {
+    binary: executable.path,
+    binary_sha256: executable.sha256,
+    source_sha256: source.sha256,
+  };
+}
+
+function waitForFile(filePath, timeoutMilliseconds, label) {
+  const deadline = Date.now() + timeoutMilliseconds;
+  while (!fs.existsSync(filePath) && Date.now() < deadline) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+  }
+  requireCondition(fs.existsSync(filePath), `${label} was not published before its deadline`);
+}
+
+function requireNoLifecycleViolation(outputPath) {
+  if (!fs.existsSync(outputPath)) return;
+  const result = readStableJSON(outputPath, 'process lifecycle result').value;
+  requireCondition(result.passed === true,
+    `continuous process lifecycle guard observed PID ${result.event_pid} flags ${result.event_flags}`);
+}
+
 function validateSpec(value) {
   exactKeys(value, [
-    'version', 'role', 'host_uuid', 'deployment_envelope_sha256', 'epoch', 'roots',
+    'version', 'role', 'host_uuid', 'deployment_envelope_sha256', 'epoch',
+    'observation_milliseconds', 'sample_interval_milliseconds',
+    'maximum_sample_gap_milliseconds', 'roots',
   ], 'collector spec');
   requireCondition(value.version === 1 && HOST_ROLES.includes(value.role)
     && HOST_UUID.test(value.host_uuid) && HEX64.test(value.deployment_envelope_sha256)
-    && EPOCHS.includes(value.epoch) && Array.isArray(value.roots) && value.roots.length > 0,
+    && EPOCHS.includes(value.epoch)
+    && Number.isSafeInteger(value.observation_milliseconds)
+    && value.observation_milliseconds >= 50 && value.observation_milliseconds <= 7_200_000
+    && Number.isSafeInteger(value.sample_interval_milliseconds)
+    && value.sample_interval_milliseconds >= 5 && value.sample_interval_milliseconds <= 100
+    && value.sample_interval_milliseconds < value.observation_milliseconds
+    && Number.isSafeInteger(value.maximum_sample_gap_milliseconds)
+    && value.maximum_sample_gap_milliseconds >= value.sample_interval_milliseconds
+    && value.maximum_sample_gap_milliseconds <= 10_000
+    && Array.isArray(value.roots) && value.roots.length > 0,
   'collector spec is malformed');
   const roots = value.roots.map((root, index) => {
     exactKeys(root, [
@@ -111,52 +266,194 @@ export function collectProcessTree(specPath, monitorPath, outputPath) {
   const spec = validateSpec(readStableJSON(specPath, 'collector spec').value);
   requireStableExecutable(monitorPath, 'signed process monitor');
   const collectorBytes = fs.readFileSync(fileURLToPath(import.meta.url));
-  const before = processTable();
-  requireCondition(spec.roots.every((root) => before.has(root.pid)),
-    'one or more task roots are absent');
-  const pids = descendantPIDs(before, spec.roots.map((root) => root.pid));
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'pbq-process-tree.'));
   fs.chmodSync(temporary, 0o700);
+  let lifecycleChild = null;
+  let lifecycleCompleted = false;
+  let lifecycleResultPath = null;
   try {
+    const rootPIDs = spec.roots.map((root) => root.pid);
+    const bootstrapTable = processTable();
+    requireCondition(spec.roots.every((root) => bootstrapTable.has(root.pid)),
+      'one or more task roots are absent before lifecycle observation');
+    const lifecycleWatchedPIDs = descendantPIDs(bootstrapTable, rootPIDs);
+    const lifecycleGuard = compileLifecycleGuard(temporary);
+    const lifecycleReadyPath = path.join(temporary, 'lifecycle-ready.json');
+    const lifecycleStopPath = path.join(temporary, 'lifecycle-stop.json');
+    const lifecycleOutputPath = path.join(temporary, 'lifecycle-result.json');
+    lifecycleResultPath = lifecycleOutputPath;
+    const lifecycleStderrPath = path.join(temporary, 'lifecycle.stderr');
+    const lifecycleStderr = fs.openSync(
+      lifecycleStderrPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
+      0o600,
+    );
+    requireCondition(
+      requireStableExecutable(
+        lifecycleGuard.binary,
+        'pre-spawn process lifecycle guard',
+      ).sha256 === lifecycleGuard.binary_sha256,
+      'compiled process lifecycle guard changed before spawn',
+    );
+    lifecycleChild = spawn(lifecycleGuard.binary, [
+      '--ready', lifecycleReadyPath,
+      '--stop', lifecycleStopPath,
+      '--output', lifecycleOutputPath,
+      ...lifecycleWatchedPIDs.flatMap((pid) => ['--pid', String(pid)]),
+    ], { stdio: ['ignore', 'ignore', lifecycleStderr] });
+    fs.closeSync(lifecycleStderr);
+    lifecycleChild.on('error', () => {});
+    requireCondition(Number.isSafeInteger(lifecycleChild.pid) && lifecycleChild.pid > 0,
+      'process lifecycle guard did not start');
+    waitForFile(lifecycleReadyPath, 5000, 'process lifecycle readiness');
+    requireNoLifecycleViolation(lifecycleOutputPath);
+    const lifecycleReady = readStableJSON(
+      lifecycleReadyPath,
+      'process lifecycle readiness',
+    ).value;
+    exactKeys(lifecycleReady, ['version', 'pid', 'started_at_milliseconds'],
+      'process lifecycle readiness');
+    requireCondition(lifecycleReady.version === 1 && lifecycleReady.pid === lifecycleChild.pid
+      && Number.isSafeInteger(lifecycleReady.started_at_milliseconds)
+      && lifecycleReady.started_at_milliseconds > 0,
+    'process lifecycle readiness is malformed');
+    const readyTable = processTable();
+    requireCondition(JSON.stringify(descendantPIDs(readyTable, rootPIDs))
+      === JSON.stringify(lifecycleWatchedPIDs),
+    'task process membership changed before continuous lifecycle coverage');
     const identities = new Map();
-    for (const [index, pid] of pids.entries()) {
-      const executable = monitorJSON(monitorPath, 'process-executable', pid, temporary, index);
-      exactKeys(executable, ['pid', 'startIdentity', 'path', 'sha256'], `process executable ${pid}`);
-      requireCondition(executable.pid === pid && /^[1-9][0-9]*$/.test(executable.startIdentity)
-        && path.isAbsolute(executable.path) && HEX64.test(executable.sha256),
-      `process executable ${pid} is malformed`);
-      const canonicalPath = fs.realpathSync(executable.path);
-      requireCondition(canonicalPath === executable.path, `process executable ${pid} is not canonical`);
-      const signing = signingMetadata(canonicalPath);
-      identities.set(pid, {
-        pid,
-        start_identity: executable.startIdentity,
-        executable_path: canonicalPath,
-        executable_name: path.basename(canonicalPath),
-        executable_sha256: executable.sha256,
-        code_signature_hash: signing.codeSignatureHash,
-        signing_identifier: signing.signingIdentifier,
-        team_id: signing.teamID,
-      });
-    }
-    const after = processTable();
-    requireCondition(JSON.stringify(descendantPIDs(after, spec.roots.map((root) => root.pid)))
-      === JSON.stringify(pids), 'task process membership changed during collection');
-    requireCondition(pids.every((pid) => after.get(pid) === before.get(pid)),
-      'task process ancestry changed during collection');
-    for (const [index, pid] of pids.entries()) {
-      const finalIdentity = monitorJSON(
-        monitorPath,
-        'process-identity',
-        pid,
-        temporary,
-        pids.length + index,
+    const parents = new Map();
+    let sequence = 0;
+    let sampleCount = 0;
+    const observedPIDs = new Set();
+    let coverageStartedAt = null;
+    let coverageDeadlineMonotonic = null;
+    let finalSampleStartedAt = null;
+    let coverageCompletedAt = null;
+    let previousSampleCompletedMonotonic = null;
+    let nextSampleTargetMonotonic = null;
+    let observedMaximumSampleGap = 0;
+    do {
+      requireNoLifecycleViolation(lifecycleOutputPath);
+      const sampleStartedAt = Date.now();
+      const sampleStartedMonotonic = performance.now();
+      const table = processTable();
+      const sampleCompletedAt = Date.now();
+      const sampleCompletedMonotonic = performance.now();
+      requireCondition(sampleCompletedAt >= sampleStartedAt,
+        'wall clock moved backward during process-table sampling');
+      const sampleDuration = Math.ceil(sampleCompletedMonotonic - sampleStartedMonotonic);
+      requireCondition(sampleDuration <= spec.maximum_sample_gap_milliseconds,
+        `process-table sample duration ${sampleDuration}ms exceeds ${spec.maximum_sample_gap_milliseconds}ms`);
+      if (previousSampleCompletedMonotonic !== null) {
+        observedMaximumSampleGap = Math.max(
+          observedMaximumSampleGap,
+          validateSampleGap(
+            Math.floor(previousSampleCompletedMonotonic),
+            Math.ceil(sampleCompletedMonotonic),
+            spec.maximum_sample_gap_milliseconds,
+          ),
+        );
+      } else {
+        coverageStartedAt = sampleCompletedAt;
+        coverageDeadlineMonotonic = sampleCompletedMonotonic + spec.observation_milliseconds;
+        nextSampleTargetMonotonic = sampleCompletedMonotonic;
+      }
+      previousSampleCompletedMonotonic = sampleCompletedMonotonic;
+      finalSampleStartedAt = sampleStartedAt;
+      coverageCompletedAt = sampleCompletedAt;
+      requireCondition(spec.roots.every((root) => table.has(root.pid)),
+        'one or more task roots disappeared during collection');
+      const pids = accumulateDescendantPIDs(
+        observedPIDs,
+        table,
+        spec.roots.map((root) => root.pid),
+      ).filter((pid) => table.has(pid));
+      for (const pid of pids) {
+        const current = monitoredExecutableIdentity(
+          monitorPath,
+          pid,
+          temporary,
+          sequence++,
+        );
+        const prior = identities.get(pid);
+        if (prior) {
+          validateRepeatedObservation(
+            prior,
+            { pid: current.pid, startIdentity: current.start_identity },
+            parents.get(pid),
+            table.get(pid),
+            pid,
+          );
+          validateRepeatedExecutable(prior, current, pid);
+          continue;
+        }
+        identities.set(pid, current);
+        parents.set(pid, table.get(pid));
+      }
+      requireNoLifecycleViolation(lifecycleOutputPath);
+      sampleCount += 1;
+      const finalSampleEligible = isFinalProcessTableSample(
+        sampleCount,
+        sampleStartedMonotonic,
+        coverageDeadlineMonotonic,
       );
-      exactKeys(finalIdentity, ['pid', 'startIdentity'], `final process identity ${pid}`);
-      requireCondition(finalIdentity.pid === pid
-        && finalIdentity.startIdentity === identities.get(pid).start_identity,
-      `task process ${pid} generation changed during collection`);
-    }
+      if (!finalSampleEligible) {
+        nextSampleTargetMonotonic += spec.sample_interval_milliseconds;
+        const waitMilliseconds = Math.max(
+          0,
+          Math.ceil(nextSampleTargetMonotonic - performance.now()),
+        );
+        Atomics.wait(
+          new Int32Array(new SharedArrayBuffer(4)),
+          0,
+          0,
+          waitMilliseconds,
+        );
+      }
+      if (finalSampleEligible) break;
+    } while (true);
+    const minimumSampleCount = Math.ceil(
+      spec.observation_milliseconds / spec.maximum_sample_gap_milliseconds,
+    ) + 1;
+    requireCondition(sampleCount >= minimumSampleCount,
+      'process-tree sample count is too small for the observation/gap contract');
+    const capturedAt = Date.now();
+    requireCondition(finalSampleStartedAt
+      >= coverageStartedAt + spec.observation_milliseconds
+      && finalSampleStartedAt <= coverageCompletedAt
+      && coverageCompletedAt <= capturedAt,
+    'process-tree wall-clock coverage ordering is invalid');
+    writePrivateExclusive(lifecycleStopPath, {
+      version: 1,
+      stop_at_milliseconds: capturedAt,
+    });
+    waitForFile(lifecycleOutputPath, 5000, 'process lifecycle result');
+    const lifecycleResult = readStableJSON(
+      lifecycleOutputPath,
+      'process lifecycle result',
+    ).value;
+    lifecycleCompleted = true;
+    requireCondition(
+      requireStableExecutable(
+        lifecycleGuard.binary,
+        'post-run process lifecycle guard',
+      ).sha256 === lifecycleGuard.binary_sha256,
+      'compiled process lifecycle guard changed during observation',
+    );
+    exactKeys(lifecycleResult, [
+      'version', 'passed', 'started_at_milliseconds', 'completed_at_milliseconds',
+      'watched_pids', 'event_count', 'event_pid', 'event_flags',
+    ], 'process lifecycle result');
+    requireCondition(lifecycleResult.version === 1 && lifecycleResult.passed === true
+      && lifecycleResult.started_at_milliseconds === lifecycleReady.started_at_milliseconds
+      && lifecycleResult.started_at_milliseconds <= coverageStartedAt
+      && Number.isSafeInteger(lifecycleResult.completed_at_milliseconds)
+      && lifecycleResult.completed_at_milliseconds >= capturedAt
+      && JSON.stringify(lifecycleResult.watched_pids) === JSON.stringify(lifecycleWatchedPIDs)
+      && lifecycleResult.event_count === 0
+      && lifecycleResult.event_pid === null && lifecycleResult.event_flags === null,
+    'continuous process lifecycle result is invalid');
     const rootByPID = new Map(spec.roots.map((root) => [root.pid, root]));
     for (const root of spec.roots) {
       const observed = identities.get(root.pid);
@@ -164,9 +461,9 @@ export function collectProcessTree(specPath, monitorPath, outputPath) {
         && observed.code_signature_hash === root.code_signature_hash,
       `task root ${root.root_id} generation or code identity changed`);
     }
-    const processes = pids.map((pid) => {
+    const processes = [...identities.keys()].sort((left, right) => left - right).map((pid) => {
       const process = identities.get(pid);
-      const parentPID = before.get(pid);
+      const parentPID = parents.get(pid);
       const parent = identities.get(parentPID);
       return {
         pid: process.pid,
@@ -184,19 +481,38 @@ export function collectProcessTree(specPath, monitorPath, outputPath) {
     requireCondition(processes.every((process) => process.parent_pid === null
       || process.parent_start_identity !== null), 'a task descendant parent escaped the collected tree');
     return writePrivateExclusive(outputPath, {
-      version: 1,
+      version: 2,
       role: spec.role,
       host_uuid: spec.host_uuid,
       deployment_envelope_sha256: spec.deployment_envelope_sha256,
       epoch: spec.epoch,
       scope: 'task_owned_descendants',
-      captured_at_milliseconds: Date.now(),
+      requested_observation_milliseconds: spec.observation_milliseconds,
+      target_sample_interval_milliseconds: spec.sample_interval_milliseconds,
+      coverage_started_at_milliseconds: coverageStartedAt,
+      final_sample_started_at_milliseconds: finalSampleStartedAt,
+      coverage_completed_at_milliseconds: coverageCompletedAt,
+      captured_at_milliseconds: capturedAt,
+      sample_count: sampleCount,
+      maximum_sample_gap_milliseconds: spec.maximum_sample_gap_milliseconds,
+      observed_maximum_sample_gap_milliseconds: observedMaximumSampleGap,
+      continuous_lifecycle_observation: true,
+      lifecycle_guard_sha256: lifecycleGuard.source_sha256,
+      lifecycle_guard_binary_sha256: lifecycleGuard.binary_sha256,
+      lifecycle_started_at_milliseconds: lifecycleResult.started_at_milliseconds,
+      lifecycle_completed_at_milliseconds: lifecycleResult.completed_at_milliseconds,
+      lifecycle_watched_pids: lifecycleWatchedPIDs,
+      lifecycle_event_count: lifecycleResult.event_count,
       collector_sha256: sha256(collectorBytes),
       complete: true,
       roots: spec.roots,
       processes,
     });
   } finally {
+    if (!lifecycleCompleted && !fs.existsSync(lifecycleResultPath ?? '')
+      && lifecycleChild?.exitCode === null && lifecycleChild?.signalCode === null) {
+      lifecycleChild.kill('SIGKILL');
+    }
     fs.rmSync(temporary, { recursive: true, force: true });
   }
 }
@@ -211,6 +527,34 @@ if (invokedAsScript()) {
       const fixture = new Map([[10, 1], [11, 10], [12, 11], [20, 1]]);
       requireCondition(JSON.stringify(descendantPIDs(fixture, [10])) === JSON.stringify([10, 11, 12]),
         'descendant self-test failed');
+      const before = new Map([[10, 1]]);
+      const during = new Map([[10, 1], [11, 10]]);
+      const after = new Map([[10, 1]]);
+      requireCondition(JSON.stringify(accumulatedDescendantPIDs([before, during, after], [10]))
+        === JSON.stringify([10, 11]), 'short-lived descendant self-test failed');
+      let reuseRejected = false;
+      try {
+        validateRepeatedObservation(
+          { start_identity: '1001' },
+          { pid: 10, startIdentity: '1002' },
+          1,
+          1,
+          10,
+        );
+      } catch {
+        reuseRejected = true;
+      }
+      requireCondition(reuseRejected, 'PID-reuse self-test failed');
+      let sampleGapRejected = false;
+      try {
+        validateSampleGap(1000, 1101, 100);
+      } catch {
+        sampleGapRejected = true;
+      }
+      requireCondition(sampleGapRejected, 'sample-gap self-test failed');
+      requireCondition(!isFinalProcessTableSample(2, 1099, 1100)
+        && isFinalProcessTableSample(2, 1100, 1100),
+      'final process-table sample self-test failed');
       process.stdout.write('{"version":1,"passed":true}\n');
     } else {
       const options = parseOptions(process.argv.slice(2), ['spec', 'monitor', 'output']);

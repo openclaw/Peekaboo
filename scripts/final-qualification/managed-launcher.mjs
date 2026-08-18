@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   HEX40,
   HEX64,
+  canonicalBytes,
   exactKeys,
   parseOptions,
   positiveDecimal,
@@ -21,6 +22,37 @@ import {
 } from './lib.mjs';
 
 const TOOL_ROOT = path.dirname(fileURLToPath(import.meta.url));
+const COMMON_ENVIRONMENT_KEYS = [
+  'HOME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'LOGNAME', 'SSL_CERT_DIR', 'SSL_CERT_FILE',
+  'TMPDIR', 'TZ', 'USER',
+];
+const AGENT_CREDENTIAL_ENVIRONMENT_KEYS = [
+  'ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GROK_API_KEY',
+  'MINIMAX_API_KEY', 'MOONSHOT_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY',
+  'XAI_API_KEY',
+];
+
+function closedEnvironment(fix) {
+  const environment = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' };
+  const allowedKeys = fix.spec.kind === 'agent'
+    ? [...COMMON_ENVIRONMENT_KEYS, ...AGENT_CREDENTIAL_ENVIRONMENT_KEYS]
+    : COMMON_ENVIRONMENT_KEYS;
+  for (const key of allowedKeys) {
+    const value = process.env[key];
+    if (value === undefined) continue;
+    requireCondition(!value.includes('\0'), `environment ${key} contains NUL`);
+    environment[key] = value;
+  }
+  if (fix.spec.kind === 'agent') {
+    environment.PEEKABOO_OPERATION_RECEIPT_DIRECTORY = fix.spec.context.receipt_directory;
+  }
+  const keys = Object.keys(environment).sort();
+  return {
+    values: Object.fromEntries(keys.map((key) => [key, environment[key]])),
+    keys,
+    sha256: sha256(canonicalBytes(environment)),
+  };
+}
 
 function requireAbsentPrivateOutput(filePath, label) {
   requireCondition(path.isAbsolute(filePath), `${label} must be absolute`);
@@ -122,16 +154,27 @@ function validateMonitor(monitor, expectedCDHash) {
 
 function compileGuardian() {
   const source = path.join(TOOL_ROOT, 'managed-launch-suspended.c');
-  readStableFile(source, 'suspended launch guardian source', { privateFile: false });
+  const retainedSource = readStableFile(source, 'suspended launch guardian source', {
+    privateFile: false,
+  });
   const directory = fs.mkdtempSync('/private/tmp/pbq-managed-launch-');
   fs.chmodSync(directory, 0o700);
   const binary = path.join(directory, 'managed-launch-suspended');
   const build = spawnSync('/usr/bin/xcrun', [
-    'clang', '-std=c11', '-Wall', '-Wextra', '-Werror', source, '-o', binary,
-  ], { encoding: 'utf8', timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
+    'clang', '-x', 'c', '-std=c11', '-Wall', '-Wextra', '-Werror', '-', '-o', binary,
+    '-lproc',
+  ], {
+    input: retainedSource.bytes,
+    encoding: 'utf8',
+    timeout: 30_000,
+    maxBuffer: 4 * 1024 * 1024,
+    env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'C', LC_ALL: 'C' },
+  });
   requireCondition(!build.error && build.status === 0,
     `cannot build suspended launch guardian: ${build.stderr?.trim() || build.error?.message}`);
-  return { directory, binary };
+  fs.chmodSync(binary, 0o500);
+  const executable = requireStableExecutable(binary, 'compiled suspended launch guardian');
+  return { directory, binary: executable.path, sha256: executable.sha256 };
 }
 
 function cleanupGuardian(value) {
@@ -178,7 +221,38 @@ function monitorHandshake(fix, pid, spawnedAt) {
   };
 }
 
-function invocationReceipt(fix, identity, spawnedAt) {
+function cleanupAuthenticatedChild(guardian, identity) {
+  requireCondition(requireStableExecutable(
+    guardian.binary,
+    'generation-safe cleanup helper',
+  ).sha256 === guardian.sha256, 'managed cleanup helper changed after launch');
+  const run = spawnSync(guardian.binary, [
+    '--terminate-exact', String(identity.pid), identity.start_identity,
+  ], {
+    encoding: 'utf8',
+    timeout: 5000,
+    maxBuffer: 1024 * 1024,
+    env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'C', LC_ALL: 'C' },
+  });
+  requireCondition(!run.error && run.status === 0,
+    `generation-safe managed cleanup failed: ${run.stderr?.trim() || run.error?.message}`);
+  let result;
+  try {
+    result = JSON.parse(run.stdout);
+  } catch {
+    throw new Error('generation-safe managed cleanup returned malformed JSON');
+  }
+  exactKeys(result, [
+    'version', 'pid', 'start_identity', 'terminated', 'absent',
+  ], 'generation-safe managed cleanup result');
+  requireCondition(result.version === 1 && result.pid === identity.pid
+    && result.start_identity === identity.start_identity
+    && typeof result.terminated === 'boolean' && typeof result.absent === 'boolean'
+    && result.terminated !== result.absent,
+  'generation-safe managed cleanup result is invalid');
+}
+
+function invocationReceipt(fix, identity, spawnedAt, environment) {
   const common = {
     version: 1,
     kind: fix.spec.kind,
@@ -196,6 +270,9 @@ function invocationReceipt(fix, identity, spawnedAt) {
     identity_handshake_sha256: identity.retained.sha256,
     stdout_path: fix.spec.stdout_path,
     stderr_path: fix.spec.stderr_path,
+    environment_policy_version: 1,
+    environment_keys: environment.keys,
+    environment_sha256: environment.sha256,
     captured_at_milliseconds: Date.now(),
   };
   if (fix.spec.kind === 'agent') {
@@ -229,15 +306,14 @@ function helperArguments(fix, guardian) {
   ];
 }
 
-export async function runManagedLaunch(specPath) {
+export async function runManagedLaunch(specPath, testHooks = {}) {
   const fix = validateSpec(specPath);
   validateMonitor(fix.monitor, fix.plan.monitor.code_signature_hash);
   const guardian = compileGuardian();
+  const environment = closedEnvironment(fix);
   const helper = spawn(guardian.binary, helperArguments(fix, guardian), {
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: fix.spec.kind === 'agent'
-      ? { ...process.env, PEEKABOO_OPERATION_RECEIPT_DIRECTORY: fix.spec.context.receipt_directory }
-      : { ...process.env },
+    env: environment.values,
   });
   helper.stdout.setEncoding('utf8');
   helper.stderr.setEncoding('utf8');
@@ -245,6 +321,7 @@ export async function runManagedLaunch(specPath) {
   let helperStderr = '';
   let childPID = null;
   let startedAt = null;
+  let authenticatedIdentity = null;
   let exitEvent = null;
   let resolveSpawned;
   let rejectSpawned;
@@ -266,6 +343,7 @@ export async function runManagedLaunch(specPath) {
         resolveSpawned({ childPID, startedAt });
       } else if (fields[0] === 'RELEASED' && fields.length === 2) {
         process.stderr.write(`managed-launcher: released authenticated ${fix.spec.kind} pid ${fields[1]}\n`);
+        testHooks.afterRelease?.({ guardian: helper, childPID: Number(fields[1]) });
       } else if (fields[0] === 'EXIT' && fields.length === 5) {
         exitEvent = {
           pid: Number(fields[1]),
@@ -296,14 +374,15 @@ export async function runManagedLaunch(specPath) {
         (error) => { clearTimeout(timer); reject(error); },
       );
     });
+    const identity = monitorHandshake(fix, launch.childPID, launch.startedAt);
+    authenticatedIdentity = identity;
     const pidReceipt = readStableJSON(fix.spec.pid_path, 'suspended child PID receipt');
     exactKeys(pidReceipt.value, ['version', 'pid'], 'suspended child PID receipt');
     requireCondition(pidReceipt.value.version === 1 && pidReceipt.value.pid === launch.childPID,
       'suspended child PID file differs from guardian protocol');
     stopStdout = startTail(fix.spec.stdout_path, process.stdout);
     stopStderr = startTail(fix.spec.stderr_path, process.stderr);
-    const identity = monitorHandshake(fix, launch.childPID, launch.startedAt);
-    const invocation = invocationReceipt(fix, identity, launch.startedAt);
+    const invocation = invocationReceipt(fix, identity, launch.startedAt, environment);
     const invocationPublished = publishPrivateAtomicNoReplace(
       fix.spec.invocation_receipt_path,
       invocation,
@@ -343,10 +422,14 @@ export async function runManagedLaunch(specPath) {
       signal: exitReceipt.signal,
     };
   } catch (error) {
-    if (childPID !== null) {
-      try { process.kill(childPID, 'SIGKILL'); } catch {}
+    try { helper.kill('SIGTERM'); } catch {}
+    await Promise.race([
+      helperClosed.catch(() => null),
+      new Promise((resolve) => setTimeout(resolve, 2000)),
+    ]);
+    if (authenticatedIdentity !== null) {
+      cleanupAuthenticatedChild(guardian, authenticatedIdentity);
     }
-    try { helper.kill('SIGKILL'); } catch {}
     throw error;
   } finally {
     stopStdout();
