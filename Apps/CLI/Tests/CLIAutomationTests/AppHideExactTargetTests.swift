@@ -78,6 +78,30 @@ struct AppHideExactTargetTests {
     }
 
     @Test
+    func `frontmost mutation refusal renders direct guidance instead of an app name payload`() async throws {
+        let application = ServiceApplicationInfo(
+            processIdentifier: 4070,
+            processStartIdentity: 70,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture",
+            isHiddenKnown: true,
+            activationPolicy: .regular
+        )
+        let service = ExactHideApplicationService(applications: [application])
+        let services = TestServicesFactory.makePeekabooServices(applications: service)
+
+        let result = try await InProcessCommandRunner.run(
+            ["app", "hide", "--app", "frontmost", "--json", "--no-remote"],
+            services: services
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(result.combinedOutput.contains("Application 'frontmost' is not a mutation-safe target"))
+        #expect(!result.combinedOutput.contains("not found"))
+        #expect(service.targetedHideRequests.isEmpty)
+    }
+
+    @Test
     func `app hide rejects a mismatched returned process generation`() async throws {
         let application = ServiceApplicationInfo(
             processIdentifier: 4070,

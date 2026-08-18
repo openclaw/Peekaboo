@@ -37,6 +37,11 @@ extension MenuCommand {
                     try self.validateForegroundOptions()
                     try self.validateTargetConsent()
                     let appIdentifier = try await self.resolveTargetApplicationIdentifier()
+                    let appInfo = try await self.resolveApplicationForMutation(
+                        appIdentifier,
+                        services: self.services
+                    )
+                    let pinnedAppIdentifier = "PID:\(appInfo.processIdentifier)"
                     if self.foreground {
                         let windowID = try await self.target.resolveWindowID(services: self.services)
                         if self.focusOptions.autoFocus {
@@ -45,7 +50,7 @@ extension MenuCommand {
                         if let focusResult = try await ensureFocusIgnoringMissingWindows(
                             request: FocusIgnoringMissingWindowsRequest(
                                 windowID: windowID,
-                                applicationName: appIdentifier,
+                                applicationName: pinnedAppIdentifier,
                                 windowTitle: self.target.windowTitle
                             ),
                             options: self.focusOptions,
@@ -72,10 +77,6 @@ extension MenuCommand {
                     if let canonicalPath {
                         try await self.ensureMenuItemEnabled(appIdentifier: appIdentifier, menuPath: canonicalPath)
                     }
-                    let appInfo = try await self.resolveApplicationForMutation(
-                        appIdentifier,
-                        services: self.services
-                    )
                     let clickedPath = canonicalPath ?? normalizedItem!
 
                     self.resolvedRuntime.beginInteractionMutation()

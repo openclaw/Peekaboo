@@ -1175,6 +1175,35 @@ struct CLIActionResultConsumerTests {
     }
 }
 
+extension CLIActionResultConsumerTests {
+    @Test
+    func `foreground menu click refuses a fuzzy app before focus or menu lookup`() async throws {
+        let fixture = Self.menuFixture()
+        let menu = OutcomeStubMenuService(menusByApp: [fixture.application.name: fixture.structure])
+        let windows = OutcomeStubWindowService(windowsByApp: [:])
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: [fixture.application]),
+            windows: windows,
+            menu: menu
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "menu", "click", "--app", "Fixt", "--item", "Open",
+                "--foreground", "--json", "--no-remote",
+            ],
+            services: services
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(result.combinedOutput.contains("not allowed for mutation"))
+        #expect(windows.focusCalls.isEmpty)
+        #expect(menu.listMenusRequests.isEmpty)
+        #expect(menu.clickItemCalls.isEmpty)
+        #expect(menu.clickPathCalls.isEmpty)
+    }
+}
+
 private enum PostDispatchOutputTestError: Error {
     case failed
 }

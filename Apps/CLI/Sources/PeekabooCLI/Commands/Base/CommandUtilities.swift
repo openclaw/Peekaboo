@@ -437,7 +437,7 @@ extension ApplicationResolver {
             message += "\n  • Use `see` without arguments to capture the current screen"
             message += "\n  • Resolve a concrete name or PID with `app list` before mutation"
             message += "\n  • Use `--app frontmost` only with read-only observation commands that support it"
-            throw PeekabooError.appNotFound(message)
+            throw ValidationError(message)
         }
     }
 }
