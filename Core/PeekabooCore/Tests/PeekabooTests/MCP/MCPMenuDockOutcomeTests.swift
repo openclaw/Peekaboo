@@ -101,6 +101,83 @@ struct MCPMenuDockOutcomeTests {
         #expect(menu.requests.isEmpty)
     }
 
+    @Test
+    func `foreground menu click validates selector against retained authority before focus`() async throws {
+        let windows = ForegroundMenuWindowService()
+        let menu = ResultMenuService()
+        let applications = MenuGenerationApplicationService(
+            generations: [7, 7, 7],
+            processIdentifier: 42)
+        let context = await Self.makeContext(
+            menu: menu,
+            windows: windows,
+            applications: applications,
+            executionPolicy: .backgroundOnly)
+        let authority = try AuthorizedDesktopTargetPlan(
+            targetIdentity: DesktopTargetIdentity(processIdentity: ApplicationProcessIdentity(
+                processIdentifier: 43,
+                processStartIdentity: 8)))
+
+        let response = try await AuthorizedDesktopTargetPlan.$current.withValue(authority) {
+            try await MenuTool(context: context).execute(arguments: ToolArguments(raw: [
+                "action": "click",
+                "app": "Fixture",
+                "path": "File > Save",
+                "foreground": true,
+            ]))
+        }
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["state"] == .string("refused"))
+        #expect(response.meta?.objectValue?["dispatch_state"] == .string("none"))
+        #expect(response.meta?.objectValue?["retry_safe"] == .bool(true))
+        #expect(windows.focusCalls == 0)
+        #expect(menu.pathRequests.isEmpty)
+    }
+
+    @Test
+    func `foreground menu click retains an authorized exact window`() async throws {
+        let windows = ForegroundMenuWindowService()
+        let menu = ResultMenuService()
+        menu.outcome = .confirmedChange(
+            delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+            unitCount: .one)
+        menu.targetIdentity = try DesktopTargetIdentity(processIdentity: windows.identity.processIdentity)
+        let context = await Self.makeContext(
+            menu: menu,
+            windows: windows,
+            executionPolicy: .backgroundOnly)
+        let bounds = try #require(windows.identity.capturedBounds)
+        let authority = try AuthorizedDesktopTargetPlan(
+            targetIdentity: DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+                identity: windows.identity,
+                bounds: bounds)),
+            selectedWindow: ServiceWindowInfo(
+                windowID: windows.identity.windowID,
+                title: "Fixture",
+                bounds: bounds,
+                mutationIdentity: windows.identity))
+
+        let response = try await AuthorizedDesktopTargetPlan.$current.withValue(authority) {
+            try await MenuTool(context: context).execute(arguments: ToolArguments(raw: [
+                "action": "click",
+                "app": "Fixture",
+                "path": "File > Save",
+                "foreground": true,
+            ]))
+        }
+
+        #expect(!response.isError)
+        #expect(windows.focusCalls == 1)
+        #expect(menu.pathRequests.count == 1)
+        let inventoryTarget = try #require(windows.inventoryTargets.first)
+        guard case let .windowId(windowID) = inventoryTarget else {
+            Issue.record("Expected the retained exact window inventory target")
+            return
+        }
+        #expect(windowID == windows.identity.windowID)
+    }
+
     @Test(arguments: ["path", "item"])
     func `foreground menu click keeps the planned process generation`(_ selection: String) async throws {
         let windows = ForegroundMenuWindowService()
@@ -725,7 +802,7 @@ struct MCPMenuDockOutcomeTests {
             permissionsStatusProvider: base.permissionsStatusProvider,
             snapshotExecutionGate: base.snapshotExecutionGate,
             snapshotOwner: MCPToolSnapshotOwner(),
-            executionPolicy: executionPolicy ?? base.executionPolicy)
+            executionPolicy: executionPolicy ?? (windows == nil ? base.executionPolicy : .foregroundAllowed))
     }
 
     private static func menuStructure() -> MenuStructure {

@@ -409,9 +409,7 @@ public struct MenuTool: MCPTool {
         operation: String,
         requiresWindow: Bool = false) async throws -> PreparedApplicationTarget
     {
-        let authorizedTarget = requiresWindow
-            ? nil
-            : try self.context.authorizedDesktopTargetPlan(operation: operation)
+        let authorizedTarget = try self.context.authorizedDesktopTargetPlan(operation: operation)
 
         do {
             if requiresWindow {
@@ -425,9 +423,17 @@ public struct MenuTool: MCPTool {
                     applications: self.context.applications,
                     windows: self.context.windows)
                 let authority = try await planner.plan(
-                    selector: InteractionTargetSelector(applicationIdentifier: app),
+                    selector: InteractionTargetSelector(
+                        applicationIdentifier: app,
+                        windowID: authorizedTarget?.targetIdentity.exactWindow?.identity.windowID),
                     requirement: .exactWindow(
-                        automaticSelection: .preferredMutationWindow(.general)))
+                        automaticSelection: .preferredMutationWindow(.general)),
+                    expectedProcessIdentity: authorizedTarget?.processIdentity)
+                if let authorizedTarget {
+                    _ = try authorizedTarget.coalescing(
+                        authority.targetIdentity,
+                        operation: operation)
+                }
                 let plan = authority.application
                 return PreparedApplicationTarget(
                     application: plan.application,
