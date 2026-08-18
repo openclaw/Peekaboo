@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Keep JSON-output flags after the `--` option terminator as child arguments instead of changing Peekaboo's own error envelope.
 - Route CLI and MCP multi-phase result composition through the canonical target-aware sequence accumulator while preserving their established output contracts.
 - Bound asynchronous Accessibility notification add and remove waits, removal joins, and subscription setup retries so one wedged endpoint cannot hang global observer startup or teardown. Thanks @SebTardif for AXorcist #47.
 - Centralize snapshot target-evidence adapters and receipt planning across AutomationKit, CLI, Bridge, and MCP so exact-window identity, coordinate authority, source contradictions, and cancellation keep one fail-closed contract.
