@@ -111,14 +111,14 @@ struct MCPInteractionFocusResult {
             reason: .operationUnsupported,
             message: error.localizedDescription,
             causeDescription: String(describing: error))
-        var sequence = DesktopActionSequenceAccumulator()
-        self.record(into: &sequence)
-        let failure = sequence.failure(
+        let sequence = self.resultSequence()
+        return sequence.failure(
             combining: leaf,
+            operation: operation,
+            requiresCompatibleOperationTarget: true,
             message: "\(operation) failed after its exact setup focus completed.",
             hint: "Observe the focused target before deciding whether to retry.",
             causeDescription: leaf.causeDescription ?? error.localizedDescription)
-        return self.assigningCompatibleTarget(to: failure, leafTarget: leaf.targetReceipt)
     }
 
     /// Composes an exact setup focus with a global pointer failure without attributing the
@@ -131,26 +131,25 @@ struct MCPInteractionFocusResult {
             reason: .operationUnsupported,
             message: error.localizedDescription,
             causeDescription: String(describing: error))
-        var sequence = DesktopActionSequenceAccumulator()
-        self.record(into: &sequence)
-        let failure = sequence.failure(
+        var sequence = self.resultSequence()
+        sequence.record(
+            outcome: nil,
+            attribution: .targetless)
+        return sequence.failure(
             combining: leaf,
+            operation: operation,
             message: "\(operation) failed after its exact setup focus completed.",
             hint: "Observe the desktop before deciding whether to retry.",
             causeDescription: leaf.causeDescription ?? error.localizedDescription)
-        guard let unattributed = DesktopActionFailure(
-            outcome: failure.outcome,
-            message: failure.message,
-            hint: failure.hint,
-            causeDescription: failure.causeDescription)
-        else {
-            preconditionFailure("A composed global pointer failure must remain non-confirmed")
-        }
-        return unattributed
     }
 
     func attributing(_ failure: DesktopActionFailure) -> DesktopActionFailure {
-        self.assigningCompatibleTarget(to: failure, leafTarget: failure.targetReceipt)
+        var sequence = UIAutomationActionResultSequenceAccumulator()
+        sequence.record(
+            outcome: nil,
+            targetIdentity: self.targetIdentity,
+            attribution: .operationTarget)
+        return sequence.reconcilingTarget(of: failure)
     }
 
     func combining<Payload: Sendable>(
@@ -165,37 +164,26 @@ struct MCPInteractionFocusResult {
                     hint: "Observe the target before retrying and update the runtime host."),
                 operation: operation)
         }
-        var sequence = DesktopActionSequenceAccumulator()
-        self.record(into: &sequence)
-        sequence.record(.reportedOutcome(leafOutcome, defaultDispatchedUnitCount: .one))
-        let targetIdentity: DesktopTargetIdentity
-        do {
-            targetIdentity = try self.targetIdentity.coalescing(leaf.targetIdentity ?? self.targetIdentity)
-        } catch {
-            throw self.preservingLeafResultFailure(
-                DesktopActionFailure.preDispatchRefusal(
-                    reason: .targetUnavailable,
-                    message: "\(operation) returned a target different from its setup focus.",
-                    hint: "Observe both targets before retrying.",
-                    causeDescription: error.localizedDescription),
-                leafOutcome: leafOutcome,
-                leafTarget: leaf.targetIdentity?.actionTargetReceipt,
-                operation: operation)
+        var sequence = self.resultSequence(targetProjectionPolicy: .coalescedIdentity)
+        let step = DesktopActionSequenceAccumulator.Step.reportedOutcome(
+            leafOutcome,
+            defaultDispatchedUnitCount: .one)
+        if let targetIdentity = leaf.targetIdentity {
+            sequence.record(
+                step,
+                targetIdentity: targetIdentity,
+                attribution: .operationTarget)
+        } else {
+            sequence.record(step)
         }
-        guard let outcome = sequence.successResolution().outcome else {
-            throw self.preservingLeafResultFailure(
-                DesktopActionFailure.indeterminate(
-                    evidence: .completionUnknown,
-                    message: "\(operation) returned incompatible focus and leaf outcomes.",
-                    hint: "Observe the target before retrying."),
-                leafOutcome: leafOutcome,
-                leafTarget: leaf.targetIdentity?.actionTargetReceipt,
-                operation: operation)
-        }
-        return UIAutomationActionResult(
+        return try sequence.result(
             payload: leaf.payload,
-            outcome: outcome,
-            targetIdentity: targetIdentity)
+            operation: operation,
+            requiresOutcome: true,
+            requiresCompatibleTarget: true,
+            failureMessage:
+            "\(operation) returned untrustworthy target evidence after its exact setup focus completed.",
+            failureHint: "Observe the focused target before deciding whether to retry.")
     }
 
     func preservingLeafResultFailure(
@@ -208,48 +196,39 @@ struct MCPInteractionFocusResult {
             reason: .operationUnsupported,
             message: error.localizedDescription,
             causeDescription: String(describing: error))
-        var sequence = DesktopActionSequenceAccumulator()
-        self.record(into: &sequence)
-        sequence.record(.reportedOutcome(leafOutcome, defaultDispatchedUnitCount: .one))
-        let failure = sequence.failure(
+        var sequence = self.resultSequence()
+        let step = DesktopActionSequenceAccumulator.Step.reportedOutcome(
+            leafOutcome,
+            defaultDispatchedUnitCount: .one)
+        if let leafTarget {
+            sequence.record(
+                step,
+                targetIdentity: nil,
+                targetReceipt: leafTarget,
+                attribution: .operationTarget)
+        } else {
+            sequence.record(step)
+        }
+        return sequence.failure(
             combining: leafFailure,
+            operation: operation,
             message: "\(operation) returned untrustworthy target evidence after its exact setup focus completed.",
             hint: "Observe the focused target before deciding whether to retry.",
             causeDescription: leafFailure.causeDescription ?? error.localizedDescription)
-        return self.assigningCompatibleTarget(to: failure, leafTarget: leafTarget)
     }
 
-    private func compatibleTarget(
-        with leaf: DesktopActionTargetReceipt?) -> DesktopActionTargetReceipt?
+    private func resultSequence(
+        targetProjectionPolicy: UIAutomationActionResultSequenceAccumulator.TargetProjectionPolicy = .commonScope)
+        -> UIAutomationActionResultSequenceAccumulator
     {
-        let focus = self.targetIdentity.actionTargetReceipt
-        guard let leaf else { return focus }
-        guard focus.processIdentifier == leaf.processIdentifier,
-              focus.processStartIdentity == leaf.processStartIdentity,
-              focus.windowID == leaf.windowID || focus.windowID == nil || leaf.windowID == nil
-        else { return nil }
-        return focus.windowID == leaf.windowID ? focus : DesktopActionTargetReceipt(
-            processIdentifier: focus.processIdentifier,
-            processStartIdentity: focus.processStartIdentity)
-    }
-
-    private func assigningCompatibleTarget(
-        to failure: DesktopActionFailure,
-        leafTarget: DesktopActionTargetReceipt?) -> DesktopActionFailure
-    {
-        let target = self.compatibleTarget(with: leafTarget)
-        guard target == nil, leafTarget != nil else {
-            return failure.attributed(to: target)
-        }
-        guard let unattributed = DesktopActionFailure(
-            outcome: failure.outcome,
-            message: failure.message,
-            hint: failure.hint,
-            causeDescription: failure.causeDescription)
-        else {
-            preconditionFailure("A desktop action failure must remain non-confirmed")
-        }
-        return unattributed
+        var sequence = UIAutomationActionResultSequenceAccumulator(
+            targetProjectionPolicy: targetProjectionPolicy)
+        sequence.record(
+            outcome: self.outcome,
+            targetIdentity: self.targetIdentity,
+            attribution: .sequenceTarget,
+            defaultDispatchedUnitCount: .one)
+        return sequence
     }
 }
 

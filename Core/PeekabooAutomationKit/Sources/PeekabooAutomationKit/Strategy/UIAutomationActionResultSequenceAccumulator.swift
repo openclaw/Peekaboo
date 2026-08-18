@@ -7,12 +7,27 @@ import PeekabooFoundation
 /// layer keeps target attribution and selected-leaf evidence aligned with the phases that actually
 /// dispatched, so setup results cannot silently lend their target to an unattributed leaf.
 public struct UIAutomationActionResultSequenceAccumulator: Sendable {
+    public enum TargetProjectionPolicy: Equatable, Sendable {
+        /// Project only the target scope that every contributing phase independently attested.
+        case commonScope
+
+        /// Treat compatible phase identities as fragments of one target and retain the richest identity.
+        ///
+        /// This preserves the established CLI result contract while keeping the coalescing policy in
+        /// the canonical accumulator rather than in command-specific wrappers.
+        case coalescedIdentity
+    }
+
     public enum PhaseAttributionRule: Equatable, Sendable {
         /// Only a phase that dispatched mutation contributes its target to the aggregate.
         case mutationTarget
 
         /// A reported target describes the operation even when no dispatch was necessary.
         case operationTarget
+
+        /// A compatible target describes the surrounding sequence and remains available to a later
+        /// optional phase that dispatches without returning its own target.
+        case sequenceTarget
 
         /// This phase must report its own stable target; an earlier phase cannot substitute for it.
         case requiredTarget
@@ -29,6 +44,7 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
         public let mutationTargetReceipt: DesktopActionTargetReceipt?
         public let selectedLeafEvidence: [DesktopSelectedLeafEvidence]?
         public let hasTargetConflict: Bool
+        public let targetConflictError: DesktopTargetIdentityError?
         public let hasProhibitedTarget: Bool
         public let hasMissingRequiredTarget: Bool
         public let hasContradictoryRequiredTarget: Bool
@@ -39,6 +55,7 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
         private(set) var contributionCount = 0
         private(set) var missingCount = 0
         private(set) var hasContradiction = false
+        private(set) var conflictError: DesktopTargetIdentityError?
         private var mergedReceipt: DesktopActionTargetReceipt?
         private var mergedIdentity: DesktopTargetIdentity?
         private var hasMissingIdentity = false
@@ -70,6 +87,32 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
             return identity
         }
 
+        func projectedReceipt(policy: TargetProjectionPolicy) -> DesktopActionTargetReceipt? {
+            switch policy {
+            case .commonScope:
+                self.receipt
+            case .coalescedIdentity:
+                self.coalescedIdentity?.actionTargetReceipt
+            }
+        }
+
+        func projectedIdentity(policy: TargetProjectionPolicy) -> DesktopTargetIdentity? {
+            switch policy {
+            case .commonScope:
+                self.identity
+            case .coalescedIdentity:
+                self.coalescedIdentity
+            }
+        }
+
+        private var coalescedIdentity: DesktopTargetIdentity? {
+            guard !self.hasContradiction,
+                  self.missingCount == 0,
+                  !self.hasMissingIdentity
+            else { return nil }
+            return self.mergedIdentity
+        }
+
         mutating func record(
             identity: DesktopTargetIdentity?,
             receipt explicitReceipt: DesktopActionTargetReceipt?)
@@ -77,9 +120,7 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
             self.contributionCount += 1
             let identityReceipt = identity?.actionTargetReceipt
             if let identityReceipt, let explicitReceipt, identityReceipt != explicitReceipt {
-                self.hasContradiction = true
-                self.mergedReceipt = nil
-                self.mergedIdentity = nil
+                self.recordConflict(.contradictoryWindowIdentity)
                 return
             }
             guard let receipt = explicitReceipt ?? identityReceipt else {
@@ -90,9 +131,7 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
 
             if let current = self.mergedReceipt {
                 guard let merged = Self.commonScope(current, receipt) else {
-                    self.hasContradiction = true
-                    self.mergedReceipt = nil
-                    self.mergedIdentity = nil
+                    self.recordConflict(Self.conflict(between: current, and: receipt))
                     return
                 }
                 self.mergedReceipt = merged
@@ -107,10 +146,10 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
             if let current = self.mergedIdentity {
                 do {
                     self.mergedIdentity = try current.coalescing(identity)
+                } catch let error as DesktopTargetIdentityError {
+                    self.recordConflict(error)
                 } catch {
-                    self.hasContradiction = true
-                    self.mergedReceipt = nil
-                    self.mergedIdentity = nil
+                    self.recordConflict(.contradictoryWindowIdentity)
                 }
             } else {
                 self.mergedIdentity = identity
@@ -131,6 +170,26 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
             return DesktopActionTargetReceipt(
                 processIdentifier: lhs.processIdentifier,
                 processStartIdentity: lhs.processStartIdentity)
+        }
+
+        private static func conflict(
+            between lhs: DesktopActionTargetReceipt,
+            and rhs: DesktopActionTargetReceipt) -> DesktopTargetIdentityError
+        {
+            if lhs.processIdentifier != rhs.processIdentifier {
+                return .contradictoryProcessIdentifier
+            }
+            if lhs.processStartIdentity != rhs.processStartIdentity {
+                return .contradictoryProcessGeneration
+            }
+            return .contradictoryWindowIdentifier
+        }
+
+        private mutating func recordConflict(_ error: DesktopTargetIdentityError) {
+            self.hasContradiction = true
+            self.conflictError = self.conflictError ?? error
+            self.mergedReceipt = nil
+            self.mergedIdentity = nil
         }
 
         fileprivate static func contains(
@@ -154,8 +213,32 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
     private var missingRequiredTarget = false
     private var contradictoryRequiredTarget = false
     private var invalidSelectedLeafEvidence = false
+    private let targetProjectionPolicy: TargetProjectionPolicy
 
-    public init() {}
+    public init(targetProjectionPolicy: TargetProjectionPolicy = .commonScope) {
+        self.targetProjectionPolicy = targetProjectionPolicy
+    }
+
+    /// Records presentation-neutral sequence state without attaching target evidence.
+    public mutating func record(_ step: DesktopActionSequenceAccumulator.Step) {
+        self.sequence.record(step)
+    }
+
+    /// Records a raw sequence step together with its phase target policy.
+    public mutating func record(
+        _ step: DesktopActionSequenceAccumulator.Step,
+        targetIdentity: DesktopTargetIdentity?,
+        targetReceipt: DesktopActionTargetReceipt? = nil,
+        attribution: PhaseAttributionRule)
+    {
+        self.sequence.record(step)
+        self.recordTargetMetadata(
+            didDispatch: Self.didDispatch(step),
+            targetIdentity: targetIdentity,
+            targetReceipt: targetReceipt,
+            selectedLeafEvidence: nil,
+            attribution: attribution)
+    }
 
     public mutating func record(
         _ result: UIAutomationActionResult<some Sendable>,
@@ -189,7 +272,21 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
             }
         }
 
-        let didDispatch = outcome?.dispatchState.mutationDispatched == true
+        self.recordTargetMetadata(
+            didDispatch: outcome?.dispatchState.mutationDispatched == true,
+            targetIdentity: targetIdentity,
+            targetReceipt: targetReceipt,
+            selectedLeafEvidence: selectedLeafEvidence,
+            attribution: attribution)
+    }
+
+    private mutating func recordTargetMetadata(
+        didDispatch: Bool,
+        targetIdentity: DesktopTargetIdentity?,
+        targetReceipt: DesktopActionTargetReceipt?,
+        selectedLeafEvidence: [DesktopSelectedLeafEvidence]?,
+        attribution: PhaseAttributionRule)
+    {
         let hasTarget = targetIdentity != nil || targetReceipt != nil
         switch attribution {
         case .mutationTarget:
@@ -205,6 +302,11 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
                 receipt: targetReceipt,
                 contributesToOperation: true,
                 contributesToMutation: didDispatch)
+        case .sequenceTarget:
+            self.recordTargetContribution(
+                identity: targetIdentity,
+                receipt: targetReceipt,
+                contributesToOperation: true)
         case .requiredTarget:
             if !hasTarget {
                 self.missingRequiredTarget = true
@@ -252,7 +354,9 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
         let sequenceResolution = self.sequence.successResolution()
         let targetConflict = self.targetlessPhaseReturnedTarget ||
             self.operationTargets.hasIncompatibleContributions
-        let targetReceipt = self.forcesTargetlessResult ? nil : self.operationTargets.receipt
+        let targetReceipt = self.forcesTargetlessResult
+            ? nil
+            : self.operationTargets.projectedReceipt(policy: self.targetProjectionPolicy)
         let selectedLeafEvidence: [DesktopSelectedLeafEvidence]? = if let targetReceipt,
                                                                       !self.selectedLeaves.isEmpty,
                                                                       self.selectedLeaves.allSatisfy({ leaf in
@@ -268,15 +372,24 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
         return Resolution(
             outcome: sequenceResolution.outcome,
             mutationDisposition: sequenceResolution.mutationDisposition,
-            targetIdentity: self.forcesTargetlessResult ? nil : self.operationTargets.identity,
+            targetIdentity: self.forcesTargetlessResult
+                ? nil
+                : self.operationTargets.projectedIdentity(policy: self.targetProjectionPolicy),
             targetReceipt: targetReceipt,
-            mutationTargetReceipt: self.forcesTargetlessResult ? nil : self.mutationTargets.receipt,
+            mutationTargetReceipt: self.forcesTargetlessResult
+                ? nil
+                : self.mutationTargets.projectedReceipt(policy: self.targetProjectionPolicy),
             selectedLeafEvidence: selectedLeafEvidence,
             hasTargetConflict: targetConflict,
+            targetConflictError: self.operationTargets.conflictError,
             hasProhibitedTarget: self.targetlessPhaseReturnedTarget,
             hasMissingRequiredTarget: self.missingRequiredTarget,
             hasContradictoryRequiredTarget: self.contradictoryRequiredTarget,
             hasInvalidSelectedLeafEvidence: self.invalidSelectedLeafEvidence)
+    }
+
+    public var sequenceResolution: DesktopActionSequenceAccumulator.Resolution {
+        self.sequence.successResolution()
     }
 
     public func result<Payload: Sendable>(
@@ -330,7 +443,8 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
                 operation: operation,
                 message: failureMessage ?? "\(operation) returned contradictory phase targets.",
                 hint: failureHint,
-                causeDescription: DesktopTargetIdentityError.contradictoryWindowIdentity.localizedDescription)
+                causeDescription: resolution.targetConflictError?.localizedDescription ??
+                    DesktopTargetIdentityError.contradictoryWindowIdentity.localizedDescription)
         }
         if requiresTarget, resolution.targetIdentity == nil {
             throw self.compositionFailure(
@@ -358,6 +472,7 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
     public func failure(
         combining leafFailure: DesktopActionFailure,
         operation: String,
+        requiresCompatibleOperationTarget: Bool = false,
         message: String? = nil,
         hint: String? = nil,
         causeDescription: String? = nil) -> DesktopActionFailure
@@ -367,7 +482,9 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
             message: message ?? leafFailure.message,
             hint: hint ?? leafFailure.hint,
             causeDescription: causeDescription ?? leafFailure.causeDescription)
-        let targetReceipt = self.failureTargetReceipt(leafFailure)
+        let targetReceipt = requiresCompatibleOperationTarget
+            ? self.operationTargetReceipt(combining: leafFailure.targetReceipt)
+            : self.failureTargetReceipt(leafFailure)
         let evidence = self.combinedSelectedLeafEvidence(
             leafFailure,
             targetReceipt: targetReceipt)
@@ -382,6 +499,24 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
             preconditionFailure("Composed action failures must retain a non-confirmed canonical outcome")
         }
         return normalized
+    }
+
+    /// Reconciles a completed failure's target with this sequence's operation target without
+    /// recomposing the already-aggregated outcome.
+    public func reconcilingTarget(of failure: DesktopActionFailure) -> DesktopActionFailure {
+        let targetReceipt = self.operationTargetReceipt(combining: failure.targetReceipt)
+        if targetReceipt == nil, failure.targetReceipt != nil {
+            guard let unattributed = DesktopActionFailure(
+                outcome: failure.outcome,
+                message: failure.message,
+                hint: failure.hint,
+                causeDescription: failure.causeDescription)
+            else {
+                preconditionFailure("A reconciled desktop action failure must remain non-confirmed")
+            }
+            return unattributed
+        }
+        return failure.attributed(to: targetReceipt)
     }
 
     private mutating func recordTargetContribution(
@@ -423,6 +558,17 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
                 return nil
             }
         }
+    }
+
+    private func operationTargetReceipt(
+        combining leafTargetReceipt: DesktopActionTargetReceipt?) -> DesktopActionTargetReceipt?
+    {
+        guard !self.forcesTargetlessResult else { return nil }
+        var targets = self.operationTargets
+        if let leafTargetReceipt {
+            targets.record(identity: nil, receipt: leafTargetReceipt)
+        }
+        return targets.projectedReceipt(policy: self.targetProjectionPolicy)
     }
 
     private func combinedSelectedLeafEvidence(
@@ -477,5 +623,14 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
         return failure
             .attributed(to: self.resolution.targetReceipt)
             .selectingLeaves(self.resolution.selectedLeafEvidence)
+    }
+
+    private static func didDispatch(_ step: DesktopActionSequenceAccumulator.Step) -> Bool {
+        switch step {
+        case let .outcome(outcome), let .reportedOutcome(outcome, _):
+            outcome.dispatchState.mutationDispatched
+        case .dispatched, .mayHaveDispatched:
+            true
+        }
     }
 }

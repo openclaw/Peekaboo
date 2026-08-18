@@ -71,6 +71,34 @@ struct CommandActionSequenceAccumulatorTests {
     }
 
     @Test
+    func `cancellation after dispatch delegates retry and target semantics`() throws {
+        let target = try Self.target(pid: 48, generation: 14, windowID: 108)
+        let sequence = CommandActionSequenceAccumulator()
+        try sequence.record(UIAutomationActionResult(
+            payload: (),
+            outcome: .dispatchedUnverified(
+                route: .bridge,
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .one
+            ),
+            targetIdentity: target
+        ))
+
+        let preserved = try #require(sequence.preservingFailure(
+            CancellationError(),
+            fallbackRoute: .bridge,
+            message: "The action was cancelled after dispatch.",
+            hint: "Observe before retrying."
+        ) as? DesktopActionFailure)
+
+        #expect(preserved.outcome.state == .indeterminate)
+        #expect(preserved.outcome.retrySafety == .unsafe)
+        #expect(preserved.outcome.dispatchState == .mayHaveDispatched(unitCount: .one))
+        #expect(preserved.targetReceipt == target.actionTargetReceipt)
+    }
+
+    @Test
     func `successful focus and leaf coalesce target and dispatch units`() throws {
         let target = try Self.target(pid: 42, generation: 8, windowID: 102)
         let processTarget = try DesktopTargetIdentity(processIdentity: target.processIdentity)
@@ -93,6 +121,37 @@ struct CommandActionSequenceAccumulatorTests {
         ))
 
         let result = sequence.result(payload: "done")
+        var canonical = UIAutomationActionResultSequenceAccumulator(
+            targetProjectionPolicy: .coalescedIdentity
+        )
+        canonical.record(
+            .reportedOutcome(
+                .confirmedChange(
+                    route: .local,
+                    delivery: .init(mechanism: .accessibilityAction, mode: .foreground)
+                ),
+                defaultDispatchedUnitCount: .one
+            ),
+            targetIdentity: target,
+            attribution: .sequenceTarget
+        )
+        canonical.record(
+            .reportedOutcome(
+                .confirmedChange(
+                    route: .local,
+                    delivery: .init(mechanism: .accessibilityValue, mode: .foreground)
+                ),
+                defaultDispatchedUnitCount: .one
+            ),
+            targetIdentity: processTarget,
+            attribution: .sequenceTarget
+        )
+        let canonicalResult = try canonical.result(
+            payload: "done",
+            operation: "Canonical command sequence",
+            requiresOutcome: true,
+            requiresCompatibleTarget: true
+        )
         #expect(result.payload == "done")
         #expect(result.outcome == .confirmedChange(
             route: .local,
@@ -100,6 +159,8 @@ struct CommandActionSequenceAccumulatorTests {
             unitCount: DesktopActionOutcome.DispatchUnitCount(2)
         ))
         #expect(result.targetIdentity == target)
+        #expect(result.outcome == canonicalResult.outcome)
+        #expect(result.targetIdentity == canonicalResult.targetIdentity)
     }
 
     @Test
@@ -206,6 +267,7 @@ struct CommandActionSequenceAccumulatorTests {
         } catch {
             contradiction = error
         }
+        #expect(contradiction as? DesktopTargetIdentityError == .contradictoryProcessIdentifier)
 
         let preserved = try #require(sequence.preservingFailure(
             contradiction,

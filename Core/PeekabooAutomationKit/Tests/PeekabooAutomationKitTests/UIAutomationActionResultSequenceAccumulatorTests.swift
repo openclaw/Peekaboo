@@ -449,6 +449,72 @@ struct UIAutomationActionResultSequenceAccumulatorTests {
     }
 
     @Test
+    func `coalesced projection preserves legacy richest-target semantics`() throws {
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001),
+            windowID: 71,
+            bounds: Self.windowBounds)
+        var sequence = UIAutomationActionResultSequenceAccumulator(
+            targetProjectionPolicy: .coalescedIdentity)
+        for target in [fixture.windowTargetIdentity, fixture.processTargetIdentity] {
+            sequence.record(
+                .reportedOutcome(
+                    .confirmedChange(delivery: self.backgroundDelivery),
+                    defaultDispatchedUnitCount: .one),
+                targetIdentity: target,
+                attribution: .sequenceTarget)
+        }
+
+        let result = try sequence.result(
+            payload: (),
+            operation: "Legacy-compatible sequence",
+            requiresOutcome: true,
+            requiresCompatibleTarget: true)
+
+        #expect(result.outcome?.dispatchState.unitCount == DesktopActionOutcome.DispatchUnitCount(2))
+        #expect(result.targetIdentity == fixture.windowTargetIdentity)
+        #expect(sequence.sequenceResolution.outcome == result.outcome)
+    }
+
+    @Test
+    func `raw required phase cannot borrow a sequence target`() throws {
+        let target = AutomationTestFixtures.linkedDesktopTarget(
+            windowID: 71,
+            bounds: Self.windowBounds).windowTargetIdentity
+        var sequence = UIAutomationActionResultSequenceAccumulator(
+            targetProjectionPolicy: .coalescedIdentity)
+        sequence.record(
+            .reportedOutcome(
+                .confirmedChange(delivery: self.backgroundDelivery),
+                defaultDispatchedUnitCount: .one),
+            targetIdentity: target,
+            attribution: .sequenceTarget)
+        sequence.record(
+            .reportedOutcome(
+                .dispatchedUnverified(
+                    delivery: self.backgroundDelivery,
+                    evidence: .deliveryAccepted),
+                defaultDispatchedUnitCount: .one),
+            targetIdentity: nil,
+            attribution: .requiredTarget)
+
+        #expect(sequence.resolution.hasMissingRequiredTarget)
+        #expect(sequence.resolution.targetIdentity == nil)
+        do {
+            _ = try sequence.result(
+                payload: (),
+                operation: "Required raw phase",
+                requiresOutcome: true)
+            Issue.record("Expected the missing required target to fail")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .dispatchedUnverified)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.dispatchState.unitCount == DesktopActionOutcome.DispatchUnitCount(2))
+            #expect(failure.targetReceipt == nil)
+        }
+    }
+
+    @Test
     func `no-dispatch failure cannot hide a prior operation target conflict`() {
         let first = AutomationTestFixtures.linkedDesktopTarget(
             windowID: 71,

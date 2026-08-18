@@ -8,21 +8,21 @@ func commandActionRoute(for services: any PeekabooServiceProviding) -> DesktopAc
 
 /// Command-layer composition for setup actions followed by one or more mutation leaves.
 ///
-/// `DesktopActionSequenceAccumulator` owns outcome semantics. This wrapper keeps the matching
-/// stable target identity beside it so a successful focus cannot be erased by a later refusal,
-/// and two successful phases cannot silently claim different targets.
+/// `UIAutomationActionResultSequenceAccumulator` owns outcome and target composition. This wrapper
+/// retains the command-facing validation and result surface used by the CLI.
 @MainActor
 final class CommandActionSequenceAccumulator {
-    private var sequence = DesktopActionSequenceAccumulator()
-    private var targetIdentityIsConsistent = true
+    private var sequence = UIAutomationActionResultSequenceAccumulator(
+        targetProjectionPolicy: .coalescedIdentity
+    )
     private(set) var targetIdentity: DesktopTargetIdentity?
 
     var mutationDisposition: DesktopActionMutationDisposition {
-        self.sequence.mutationDisposition
+        self.sequence.resolution.mutationDisposition
     }
 
     var resolution: DesktopActionSequenceAccumulator.Resolution {
-        self.sequence.successResolution()
+        self.sequence.sequenceResolution
     }
 
     func record(
@@ -44,28 +44,60 @@ final class CommandActionSequenceAccumulator {
         operation: String = "Desktop action",
         receiptlessStep: DesktopActionSequenceAccumulator.Step? = nil
     ) throws {
+        try self.record(
+            outcome: outcome,
+            targetIdentity: targetIdentity,
+            attribution: .sequenceTarget,
+            operation: operation,
+            receiptlessStep: receiptlessStep
+        )
+    }
+
+    private func record(
+        outcome: DesktopActionOutcome?,
+        targetIdentity: DesktopTargetIdentity?,
+        attribution: UIAutomationActionResultSequenceAccumulator.PhaseAttributionRule,
+        operation: String,
+        receiptlessStep: DesktopActionSequenceAccumulator.Step?
+    ) throws {
         if let outcome {
             try Self.requireSuccessfulOutcome(
                 outcome,
                 targetReceipt: targetIdentity?.actionTargetReceipt,
                 operation: operation
             )
-            self.sequence.record(.reportedOutcome(outcome, defaultDispatchedUnitCount: .one))
-        } else if let receiptlessStep {
-            self.sequence.record(receiptlessStep)
         }
 
-        guard let targetIdentity else { return }
-        do {
-            self.targetIdentity = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.coalesce([
-                self.targetIdentity,
-                targetIdentity,
-            ])
-        } catch {
-            // Once two completed phases disagree, no target may be projected for the aggregate.
-            self.targetIdentity = nil
-            self.targetIdentityIsConsistent = false
-            throw error
+        let step = outcome.map {
+            DesktopActionSequenceAccumulator.Step.reportedOutcome(
+                $0,
+                defaultDispatchedUnitCount: .one
+            )
+        } ?? receiptlessStep
+        let effectiveAttribution: UIAutomationActionResultSequenceAccumulator.PhaseAttributionRule =
+            attribution == .requiredTarget && targetIdentity != nil ? .sequenceTarget : attribution
+        let priorConflict = self.sequence.resolution.targetConflictError
+        if let step {
+            if targetIdentity != nil || attribution == .requiredTarget {
+                self.sequence.record(
+                    step,
+                    targetIdentity: targetIdentity,
+                    attribution: effectiveAttribution
+                )
+            } else {
+                self.sequence.record(step)
+            }
+        } else if targetIdentity != nil || attribution == .requiredTarget {
+            self.sequence.record(
+                outcome: nil,
+                targetIdentity: targetIdentity,
+                attribution: effectiveAttribution
+            )
+        }
+        let targetResolution = self.sequence.resolution
+        self.targetIdentity = targetResolution.targetIdentity
+        if priorConflict == nil, let conflict = targetResolution.targetConflictError {
+            throw conflict
         }
     }
 
@@ -80,13 +112,10 @@ final class CommandActionSequenceAccumulator {
         operation: String,
         receiptlessStep: DesktopActionSequenceAccumulator.Step? = nil
     ) throws {
-        if targetIdentity == nil {
-            self.targetIdentity = nil
-            self.targetIdentityIsConsistent = false
-        }
         try self.record(
             outcome: outcome,
             targetIdentity: targetIdentity,
+            attribution: .requiredTarget,
             operation: operation,
             receiptlessStep: receiptlessStep
         )
@@ -96,7 +125,7 @@ final class CommandActionSequenceAccumulator {
         UIAutomationActionResult(
             payload: payload,
             outcome: self.resolution.outcome,
-            targetIdentity: self.targetIdentityIsConsistent ? self.targetIdentity : nil
+            targetIdentity: self.targetIdentity
         )
     }
 
@@ -106,7 +135,7 @@ final class CommandActionSequenceAccumulator {
         message: String,
         hint: String
     ) -> any Error {
-        guard self.sequence.mutationDisposition.mutationDispatched else { return error }
+        guard self.sequence.resolution.mutationDisposition.mutationDispatched else { return error }
 
         let leafFailure: DesktopActionFailure = if let failure = error as? DesktopActionFailure {
             failure
@@ -118,56 +147,13 @@ final class CommandActionSequenceAccumulator {
                 causeDescription: String(describing: error)
             )
         }
-        let composite = self.sequence.failure(
+        return self.sequence.failure(
             combining: leafFailure,
+            operation: message,
             message: message,
             hint: hint,
             causeDescription: leafFailure.causeDescription ?? error.localizedDescription
         )
-        return composite.attributed(to: self.aggregateTarget(with: leafFailure))
-    }
-
-    private func aggregateTarget(with leafFailure: DesktopActionFailure) -> DesktopActionTargetReceipt? {
-        guard self.targetIdentityIsConsistent else { return nil }
-        let priorTarget = self.targetIdentity?.actionTargetReceipt
-        switch (
-            self.sequence.mutationDisposition.mutationDispatched,
-            leafFailure.outcome.dispatchState.mutationDispatched
-        ) {
-        case (true, true):
-            guard priorTarget != nil, leafFailure.targetReceipt != nil else { return nil }
-            return Self.compatibleTarget(priorTarget, leafFailure.targetReceipt)
-        case (true, false):
-            return priorTarget
-        case (false, true):
-            return leafFailure.targetReceipt
-        case (false, false):
-            return Self.compatibleTarget(priorTarget, leafFailure.targetReceipt)
-        }
-    }
-
-    private static func compatibleTarget(
-        _ prior: DesktopActionTargetReceipt?,
-        _ later: DesktopActionTargetReceipt?
-    ) -> DesktopActionTargetReceipt? {
-        switch (prior, later) {
-        case let (prior?, later?):
-            guard prior.processIdentifier == later.processIdentifier,
-                  prior.processStartIdentity == later.processStartIdentity
-            else { return nil }
-            if prior.windowID == later.windowID {
-                return prior
-            }
-            guard prior.windowID == nil || later.windowID == nil else { return nil }
-            return DesktopActionTargetReceipt(
-                processIdentifier: prior.processIdentifier,
-                processStartIdentity: prior.processStartIdentity
-            )
-        case let (target?, nil), let (nil, target?):
-            return target
-        case (nil, nil):
-            return nil
-        }
     }
 
     private static func requireSuccessfulOutcome(

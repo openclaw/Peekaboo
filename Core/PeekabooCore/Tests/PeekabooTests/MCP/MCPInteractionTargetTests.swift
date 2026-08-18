@@ -296,6 +296,80 @@ struct MCPInteractionTargetTests {
     }
 
     @Test
+    func `focus combination matches canonical coalesced sequence semantics`() throws {
+        let service = MCPFocusResultWindowService()
+        let bounds = try #require(service.identity.capturedBounds)
+        let focusTarget = try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+            identity: service.identity,
+            bounds: bounds))
+        let processTarget = try DesktopTargetIdentity(processIdentity: focusTarget.processIdentity)
+        let focusOutcome = DesktopActionOutcome.confirmedChange(
+            delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+            unitCount: .one)
+        let leafOutcome = DesktopActionOutcome.confirmedChange(
+            delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+            unitCount: .one)
+        let focus = MCPInteractionFocusResult(
+            target: .windowId(service.identity.windowID),
+            actionResult: UIAutomationActionResult(
+                payload: (),
+                outcome: focusOutcome,
+                targetIdentity: focusTarget))
+        let leaf = UIAutomationActionResult(
+            payload: "done",
+            outcome: leafOutcome,
+            targetIdentity: processTarget)
+
+        let result = try focus.combining(leaf, operation: "Focused leaf")
+        var canonical = UIAutomationActionResultSequenceAccumulator(
+            targetProjectionPolicy: .coalescedIdentity)
+        canonical.record(
+            outcome: focusOutcome,
+            targetIdentity: focusTarget,
+            attribution: .sequenceTarget,
+            defaultDispatchedUnitCount: .one)
+        canonical.record(
+            outcome: leafOutcome,
+            targetIdentity: processTarget,
+            attribution: .operationTarget,
+            defaultDispatchedUnitCount: .one)
+        let canonicalResult = try canonical.result(
+            payload: "done",
+            operation: "Focused leaf",
+            requiresOutcome: true,
+            requiresCompatibleTarget: true)
+
+        #expect(result.outcome == canonicalResult.outcome)
+        #expect(result.targetIdentity == canonicalResult.targetIdentity)
+        #expect(result.targetIdentity == focusTarget)
+    }
+
+    @Test
+    func `focus cancellation after dispatch remains retry unsafe and exact`() throws {
+        let service = MCPFocusResultWindowService()
+        let bounds = try #require(service.identity.capturedBounds)
+        let focusTarget = try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+            identity: service.identity,
+            bounds: bounds))
+        let focus = MCPInteractionFocusResult(
+            target: .windowId(service.identity.windowID),
+            actionResult: UIAutomationActionResult(
+                payload: (),
+                outcome: .dispatchedUnverified(
+                    delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one),
+                targetIdentity: focusTarget))
+
+        let failure = focus.preservingFailure(CancellationError(), operation: "Focused leaf")
+
+        #expect(failure.outcome.state == .indeterminate)
+        #expect(failure.outcome.retrySafety == .unsafe)
+        #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: .one))
+        #expect(failure.targetReceipt == focusTarget.actionTargetReceipt)
+    }
+
+    @Test
     func `focus and completed leaf target mismatch retains both dispatched units`() throws {
         let service = MCPFocusResultWindowService()
         let bounds = try #require(service.identity.capturedBounds)
