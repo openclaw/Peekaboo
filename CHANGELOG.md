@@ -4,6 +4,7 @@
 
 ### Fixed
 - Bound asynchronous Accessibility notification add and remove waits, removal joins, and subscription setup retries so one wedged endpoint cannot hang global observer startup or teardown. Thanks @SebTardif for AXorcist #47.
+- Route background mutation authorization through one completeness-aware application/window planner, so MCP window, Space, and exact-window paste targets reject fuzzy selectors and partial catalogs before dispatch.
 
 ## [4.2.1] - 2026-08-17
 

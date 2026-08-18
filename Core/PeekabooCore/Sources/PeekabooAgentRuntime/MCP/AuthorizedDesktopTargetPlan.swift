@@ -10,6 +10,7 @@ import PeekabooFoundation
 struct AuthorizedDesktopTargetPlan: Sendable, Equatable {
     let targetIdentity: DesktopTargetIdentity
     let selectedWindow: ServiceWindowInfo?
+    let mutationAuthority: DesktopTargetPlanning.MutationAuthorityPlan?
 
     init(
         targetIdentity: DesktopTargetIdentity,
@@ -17,6 +18,13 @@ struct AuthorizedDesktopTargetPlan: Sendable, Equatable {
     {
         self.targetIdentity = targetIdentity
         self.selectedWindow = selectedWindow
+        self.mutationAuthority = nil
+    }
+
+    init(mutationAuthority: DesktopTargetPlanning.MutationAuthorityPlan) throws {
+        self.targetIdentity = try mutationAuthority.targetIdentity
+        self.selectedWindow = mutationAuthority.window?.selectionWindow
+        self.mutationAuthority = mutationAuthority
     }
 
     @TaskLocal

@@ -47,16 +47,14 @@ extension DesktopTargetPlanning {
     /// eligibility, and implicit-window ambiguity.
     @MainActor
     public struct BackgroundKeyboardTargetPlanner {
-        private let applications: ApplicationMutationPlanner
-        private let windows: WindowMutationPlanner
+        private let authorities: MutationAuthorityPlanner
         private let windowInventoryProvider: WindowMutationPlanner.WindowInventoryProvider
 
         public init(
             applications: any ApplicationServiceProtocol,
             windows: any WindowManagementServiceProtocol)
         {
-            self.applications = ApplicationMutationPlanner(applications: applications)
-            self.windows = WindowMutationPlanner(applications: applications, windows: windows)
+            self.authorities = MutationAuthorityPlanner(applications: applications, windows: windows)
             self.windowInventoryProvider = { target in
                 try await windows.mutationInventory(target: target)
             }
@@ -67,8 +65,9 @@ extension DesktopTargetPlanning {
             windowPlanner: WindowMutationPlanner,
             windowInventoryProvider: @escaping WindowMutationPlanner.WindowInventoryProvider)
         {
-            self.applications = applicationPlanner
-            self.windows = windowPlanner
+            self.authorities = MutationAuthorityPlanner(
+                applicationPlanner: applicationPlanner,
+                windowPlanner: windowPlanner)
             self.windowInventoryProvider = windowInventoryProvider
         }
 
@@ -87,25 +86,12 @@ extension DesktopTargetPlanning {
             let snapshotIdentity = try Self.snapshotIdentity(
                 processIdentity: snapshotProcessIdentity,
                 exactWindow: snapshotExactWindow)
-            let windowPlan: WindowMutationPlan?
-            let selectedApplication: ApplicationMutationPlan?
-            let selectedIdentity: DesktopTargetIdentity?
-
-            if selector.hasWindowInput {
-                let plan = try await self.windows.plan(selector: selector)
-                windowPlan = plan
-                selectedApplication = plan.owner
-                selectedIdentity = try plan.expectedTargetIdentity
-            } else if selector.hasOwnerInput {
-                let plan = try await self.applications.plan(selector: selector)
-                windowPlan = nil
-                selectedApplication = plan
-                selectedIdentity = try plan.expectedTargetIdentity
+            let selectedAuthority = if selector.hasAnyInput {
+                try await self.authorities.plan(selector: selector)
             } else {
-                windowPlan = nil
-                selectedApplication = nil
-                selectedIdentity = nil
+                nil as MutationAuthorityPlan?
             }
+            let selectedIdentity = try selectedAuthority?.targetIdentity
 
             guard let resolvedIdentity = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.coalesce([
                 snapshotIdentity,
@@ -114,14 +100,16 @@ extension DesktopTargetPlanning {
                 throw BackgroundKeyboardTargetPlanningError.targetRequired
             }
 
-            let applicationPlan: ApplicationMutationPlan = if let selectedApplication {
-                selectedApplication
+            var currentAuthority: MutationAuthorityPlan = if let selectedAuthority {
+                selectedAuthority
             } else {
-                try await self.applications.plan(
-                    processIdentifier: resolvedIdentity.processIdentity.processIdentifier,
-                    expectedIdentity: resolvedIdentity.processIdentity)
+                try await self.authorities.plan(
+                    selector: InteractionTargetSelector(
+                        processIdentifier: Int(resolvedIdentity.processIdentity.processIdentifier)),
+                    expectedProcessIdentity: resolvedIdentity.processIdentity)
             }
-            var currentApplication = try await self.applications.revalidate(applicationPlan)
+            currentAuthority = try await self.authorities.revalidate(currentAuthority)
+            var currentApplication = currentAuthority.application
             try Self.requireBackgroundInputEligibility(currentApplication)
 
             if let exactWindow = resolvedIdentity.exactWindow {
@@ -133,7 +121,7 @@ extension DesktopTargetPlanning {
                         process: process,
                         exactWindow: exactWindow),
                     application: currentApplication,
-                    window: windowPlan,
+                    window: currentAuthority.window,
                     snapshotIdentity: snapshotIdentity)
             }
 
@@ -161,7 +149,8 @@ extension DesktopTargetPlanning {
 
             // Window enumeration can race process exit/relaunch. Revalidate after the catalog read
             // before returning authority to a caller that will dispatch keyboard input.
-            currentApplication = try await self.applications.revalidate(currentApplication)
+            currentAuthority = try await self.authorities.revalidate(currentAuthority)
+            currentApplication = currentAuthority.application
             try Self.requireBackgroundInputEligibility(currentApplication)
             let process = try UIAutomationTarget.Process(
                 processIdentifier: currentApplication.processIdentity.processIdentifier,
@@ -171,7 +160,7 @@ extension DesktopTargetPlanning {
                     process: process,
                     eligibleWindows: eligibleWindows),
                 application: currentApplication,
-                window: windowPlan,
+                window: currentAuthority.window,
                 snapshotIdentity: snapshotIdentity)
         }
 

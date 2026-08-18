@@ -1,5 +1,6 @@
 import Foundation
 import PeekabooAutomationKit
+import PeekabooFoundation
 import TachikomaMCP
 
 extension MCPToolContext {
@@ -12,16 +13,39 @@ extension MCPToolContext {
 
     private struct BackgroundExactWindowSelector {
         let keys: BackgroundExactWindowSelectorKeys
-        let applicationIdentifier: String?
-        let selection: ExactWindowSelectorResolver.Selection
-        let windowID: Int?
+        let selector: InteractionTargetSelector
     }
 
+    @MainActor
     func backgroundTargetRevalidation(
         _ authorization: BackgroundTargetAuthorization,
         toolName: String) async -> ToolResponse?
     {
         guard let plan = authorization.targetPlan else { return nil }
+        if let authority = plan.mutationAuthority {
+            let planner = DesktopTargetPlanning.MutationAuthorityPlanner(
+                applications: self.applications,
+                windows: self.windows)
+            do {
+                let current = try await planner.revalidate(authority)
+                _ = try plan.targetIdentity.coalescing(current.targetIdentity)
+                let application = current.application.application
+                return self.executionPolicy.systemSurfaceRejection(
+                    toolName: toolName,
+                    applicationBundleIdentifier: application.bundleIdentifier,
+                    applicationName: application.name)
+            } catch {
+                let detail = plan.targetIdentity.exactWindow == nil
+                    ? "the selected application changed process generation before dispatch"
+                    : "the selected window changed identity or bounds before dispatch"
+                return self.executionPolicy.unresolvedTargetRejection(
+                    toolName: toolName,
+                    detail: detail)
+            }
+        }
+
+        // Snapshot-backed authorizations do not originate from a live inventory plan. Retain their
+        // exact identity revalidation until snapshot receipt planning moves into the shared planner.
         let identity = plan.processIdentity
         do {
             let application = try await self.applications.findApplication(
@@ -101,6 +125,7 @@ extension MCPToolContext {
         }
     }
 
+    @MainActor
     func backgroundExactWindowTargetAuthorization(
         toolName: String,
         arguments: ToolArguments) async throws -> BackgroundTargetAuthorization?
@@ -110,84 +135,45 @@ extension MCPToolContext {
             arguments: arguments)
         else { return nil }
 
-        let explicitlyResolvedApplications = try await self.resolveApplications(
-            selector.applicationIdentifier.map { [$0] } ?? [])
-        let inventoryTarget: WindowTarget
-        if let windowID = selector.windowID {
-            inventoryTarget = .windowId(windowID)
-        } else if let application = explicitlyResolvedApplications.first {
-            inventoryTarget = .application("PID:\(application.processIdentifier)")
-        } else {
-            throw BackgroundTargetResolutionError(
-                "the selected application owner could not be resolved before dispatch")
-        }
-
-        let windows: [ServiceWindowInfo]
+        let planner = DesktopTargetPlanning.MutationAuthorityPlanner(
+            applications: self.applications,
+            windows: self.windows)
+        let authority: DesktopTargetPlanning.MutationAuthorityPlan
         do {
-            windows = try await self.windows.listWindows(target: inventoryTarget)
-        } catch {
-            throw BackgroundTargetResolutionError("the selected window inventory could not be resolved before dispatch")
-        }
-        let selectedWindow: ServiceWindowInfo
-        do {
-            selectedWindow = try ExactWindowSelectorResolver.select(
-                from: windows,
-                selection: selector.selection,
-                operation: "Background \(toolName)")
+            let automaticSelection: DesktopTargetPlanning.WindowSelectionPolicy =
+                toolName == "window" && arguments.getString("action")?.lowercased() == "restore"
+                    ? .preferredMutationWindow(.restore)
+                    : .preferredMutationWindow(.general)
+            authority = try await planner.plan(
+                selector: selector.selector,
+                requirement: .exactWindow(automaticSelection: automaticSelection))
         } catch {
             throw BackgroundTargetResolutionError(error.localizedDescription)
         }
-
-        let exactWindowTarget: DesktopTargetIdentity
-        do {
-            exactWindowTarget = try DesktopTargetIdentity(
-                exactWindow: UIAutomationTarget.ExactWindow(window: selectedWindow))
-        } catch {
+        guard let windowPlan = authority.window else {
             throw BackgroundTargetResolutionError(
-                "the selected window has no generation-pinned identity with immutable bounds")
+                "background \(toolName) did not resolve one exact window authority")
         }
-        let ownerApplications: [ServiceApplicationInfo] = if explicitlyResolvedApplications.isEmpty {
-            try await self.resolveApplications([
-                "PID:\(exactWindowTarget.processIdentity.processIdentifier)",
-            ])
-        } else {
-            explicitlyResolvedApplications
-        }
-        let processIdentity = try Self.validatedProcessIdentity(
-            applications: ownerApplications,
-            windowProcessIdentities: [exactWindowTarget.processIdentity])
-        for application in ownerApplications {
-            if let rejection = self.executionPolicy.systemSurfaceRejection(
-                toolName: toolName,
-                applicationBundleIdentifier: application.bundleIdentifier,
-                applicationName: application.name)
-            {
-                return BackgroundTargetAuthorization(arguments: arguments, rejection: rejection, targetPlan: nil)
-            }
-        }
-
-        let processTarget = try DesktopTargetIdentity(processIdentity: processIdentity)
-        let authorizedTarget: DesktopTargetIdentity
-        do {
-            authorizedTarget = try processTarget.coalescing(exactWindowTarget)
-        } catch {
-            throw BackgroundTargetResolutionError(
-                "the selected application and window identify different process-generation owners")
+        let application = authority.application.application
+        if let rejection = self.executionPolicy.systemSurfaceRejection(
+            toolName: toolName,
+            applicationBundleIdentifier: application.bundleIdentifier,
+            applicationName: application.name)
+        {
+            return BackgroundTargetAuthorization(arguments: arguments, rejection: rejection, targetPlan: nil)
         }
 
         var pinned = Self.argumentsPinnedToProcess(
             arguments,
             toolName: toolName,
-            processIdentifier: processIdentity.processIdentifier).rawDictionary
-        pinned["window_id"] = selectedWindow.windowID
+            processIdentifier: authority.application.processIdentity.processIdentifier).rawDictionary
+        pinned["window_id"] = windowPlan.identity.windowID
         pinned.removeValue(forKey: selector.keys.title)
         pinned.removeValue(forKey: selector.keys.index)
-        return BackgroundTargetAuthorization(
+        return try BackgroundTargetAuthorization(
             arguments: ToolArguments(raw: pinned),
             rejection: nil,
-            targetPlan: AuthorizedDesktopTargetPlan(
-                targetIdentity: authorizedTarget,
-                selectedWindow: selectedWindow))
+            targetPlan: AuthorizedDesktopTargetPlan(mutationAuthority: authority))
     }
 
     private static func backgroundExactWindowSelector(
@@ -213,8 +199,6 @@ extension MCPToolContext {
         guard applicationSelector.value == nil || pid == nil else {
             throw BackgroundTargetResolutionError("app and pid are mutually exclusive")
         }
-        let applicationIdentifier = applicationSelector.value ?? pid.map { "PID:\($0)" }
-
         let windowID = try arguments.validatedInt("window_id")
         let windowIndex = try arguments.validatedInt(keys.index)
         guard windowID.map({ $0 > 0 && UInt32(exactly: $0) != nil }) ?? true else {
@@ -230,25 +214,18 @@ extension MCPToolContext {
         if toolName == "paste", selectorCount == 0 {
             return nil
         }
-        guard windowID != nil || applicationIdentifier != nil else {
+        guard windowID != nil || applicationSelector.value != nil || pid != nil else {
             throw BackgroundTargetResolutionError(
                 "background window mutation requires an application or exact window_id owner")
         }
-
-        let selection: ExactWindowSelectorResolver.Selection = if let windowID {
-            .id(windowID)
-        } else if let title = titleSelector.value {
-            .title(title)
-        } else if let windowIndex {
-            .index(windowIndex)
-        } else {
-            .automatic
-        }
         return BackgroundExactWindowSelector(
             keys: keys,
-            applicationIdentifier: applicationIdentifier,
-            selection: selection,
-            windowID: windowID)
+            selector: InteractionTargetSelector(
+                applicationIdentifier: applicationSelector.value,
+                processIdentifier: pid,
+                windowID: windowID,
+                windowTitle: titleSelector.value,
+                windowIndex: windowIndex))
     }
 
     private static func backgroundExactWindowSelectorKeys(

@@ -538,7 +538,7 @@ private final class PredispatchProcessPasteAutomationService: MockAutomationServ
     }
 }
 
-private actor PasteSiblingWindowService: WindowManagementServiceProtocol {
+private actor PasteSiblingWindowService: WindowManagementServiceProtocol, WindowMutationInventoryProviding {
     private let windows: [ServiceWindowInfo]
 
     init(windows: [ServiceWindowInfo]) {
@@ -564,6 +564,12 @@ private actor PasteSiblingWindowService: WindowManagementServiceProtocol {
         case .application, .frontmost:
             self.windows
         }
+    }
+
+    func windowMutationInventory(
+        target: WindowTarget) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo>
+    {
+        try await .complete(self.listWindows(target: target))
     }
 
     func getFocusedWindow() async throws -> ServiceWindowInfo? {
