@@ -73,6 +73,10 @@ struct PreRuntimeInvalidInputOrderingTests {
                 "Invalid value '-1ms' for end: Unable to parse CLIDuration"
             ),
             (
+                ["--end", "0ms"],
+                "Invalid input: end-ms must exceed start-ms"
+            ),
+            (
                 ["--start", "2s", "--end", "1s"],
                 "Invalid input: end-ms must exceed start-ms"
             ),

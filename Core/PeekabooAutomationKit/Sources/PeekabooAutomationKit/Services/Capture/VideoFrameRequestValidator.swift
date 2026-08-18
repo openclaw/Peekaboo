@@ -22,7 +22,7 @@ public enum VideoFrameRequestValidator {
         if let endMs, endMs < 0 {
             throw PeekabooError.invalidInput("end-ms must be zero or greater")
         }
-        if let startMs, let endMs, endMs <= startMs {
+        if let endMs, endMs <= (startMs ?? 0) {
             throw PeekabooError.invalidInput("end-ms must exceed start-ms")
         }
         if let resolutionCap, !resolutionCap.isFinite || resolutionCap <= 0 {

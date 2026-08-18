@@ -44,6 +44,13 @@ struct VideoFrameRequestValidatorTests {
         Case(
             sampleFps: nil,
             everyMs: nil,
+            startMs: nil,
+            endMs: 0,
+            resolutionCap: nil,
+            expectedMessage: "Invalid input: end-ms must exceed start-ms"),
+        Case(
+            sampleFps: nil,
+            everyMs: nil,
             startMs: 2000,
             endMs: 1000,
             resolutionCap: nil,

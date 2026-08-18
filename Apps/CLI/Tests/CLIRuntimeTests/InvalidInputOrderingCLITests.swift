@@ -114,6 +114,12 @@ struct InvalidInputOrderingCLITests {
                 nil
             ),
             (
+                ["--end", "0ms"],
+                "INVALID_INPUT",
+                "Invalid input: end-ms must exceed start-ms",
+                "Correct the video sampling options and retry."
+            ),
+            (
                 ["--start", "2s", "--end", "1s"],
                 "INVALID_INPUT",
                 "Invalid input: end-ms must exceed start-ms",
