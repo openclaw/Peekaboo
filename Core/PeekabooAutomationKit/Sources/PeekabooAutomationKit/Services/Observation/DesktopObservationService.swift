@@ -282,10 +282,8 @@ public enum ObservationActionResultSemantics {
         .Evidence]
     {
         if let mutationTarget = result.target.mutationTargetIdentity {
-            return [.init(
-                processIdentifier: mutationTarget.processIdentity.processIdentifier,
+            return [DesktopTargetEvidenceAdapter.evidence(
                 processIdentity: mutationTarget.processIdentity,
-                windowID: mutationTarget.windowIdentity?.windowID,
                 windowIdentity: mutationTarget.windowIdentity,
                 windowBounds: mutationTarget.windowBounds)]
         }
@@ -308,34 +306,25 @@ public enum ObservationActionResultSemantics {
         .Evidence?
     {
         guard let application,
-              let processStartIdentity = application.processStartIdentity
+              application.processStartIdentity != nil
         else { return nil }
-        return .init(
-            processIdentifier: application.processIdentifier,
-            processIdentity: .init(
-                processIdentifier: application.processIdentifier,
-                processStartIdentity: processStartIdentity))
+        return DesktopTargetEvidenceAdapter.evidence(application: application)
     }
 
     private static func targetEvidence(_ application: ServiceApplicationInfo?)
         -> DesktopTargetIdentity.Evidence?
     {
         guard let application,
-              let processIdentity = application.processIdentity
+              application.processIdentity != nil
         else { return nil }
-        return .init(
-            processIdentifier: application.processIdentifier,
-            processIdentity: processIdentity)
+        return DesktopTargetEvidenceAdapter.evidence(application: application)
     }
 
     private static func targetEvidence(_ window: ServiceWindowInfo) -> DesktopTargetIdentity.Evidence? {
         guard let identity = window.mutationIdentity else { return nil }
-        return .init(
-            processIdentifier: identity.ownerProcessIdentifier,
-            processIdentity: identity.processIdentity,
-            windowID: identity.windowID,
+        return DesktopTargetEvidenceAdapter.evidence(
             windowIdentity: identity,
-            windowBounds: window.bounds)
+            bounds: window.bounds)
     }
 
     private static func targetEvidence(_ context: WindowContext?) -> [DesktopTargetIdentity.Evidence] {
@@ -344,12 +333,9 @@ public enum ObservationActionResultSemantics {
               let bounds = context.windowBounds
         else { return [] }
         return [
-            .init(
-                processIdentifier: identity.ownerProcessIdentifier,
-                processIdentity: identity.processIdentity,
-                windowID: identity.windowID,
+            DesktopTargetEvidenceAdapter.evidence(
                 windowIdentity: identity,
-                windowBounds: bounds,
+                bounds: bounds,
                 focusedElement: context.focusedElement),
         ]
     }

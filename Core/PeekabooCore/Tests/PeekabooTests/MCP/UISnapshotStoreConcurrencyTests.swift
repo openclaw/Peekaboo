@@ -215,6 +215,36 @@ struct UISnapshotStoreConcurrencyTests {
     }
 
     @Test
+    func `receiptless window metadata does not mint exact-window authority`() async throws {
+        let snapshot = UISnapshot()
+        let bounds = CGRect(x: 10, y: 20, width: 200, height: 100)
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: CaptureMetadata(
+                size: bounds.size,
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 901,
+                    processStartIdentity: 91,
+                    bundleIdentifier: "com.example.editor",
+                    name: "Editor")))
+
+        await snapshot.setTargetMetadata(from: WindowContext(
+            applicationName: "Editor",
+            applicationProcessId: 901,
+            windowTitle: "Document",
+            windowID: 42,
+            windowBounds: bounds))
+
+        let identity = try snapshot.targetReceipt().requireIdentity()
+        #expect(identity.processIdentity == ApplicationProcessIdentity(
+            processIdentifier: 901,
+            processStartIdentity: 91))
+        #expect(identity.exactWindow == nil)
+        #expect(!snapshot.targetReceiptInvalidated)
+    }
+
+    @Test
     func `screenshot rejects conflicting application and window receipts`() async {
         let conflictingIdentities = [
             WindowMutationIdentity(

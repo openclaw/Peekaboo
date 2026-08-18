@@ -26,7 +26,7 @@ extension ClickCommand {
     ) async throws -> UIAutomationTarget.ExactWindow {
         guard !snapshotId.isEmpty,
               let detection = try await self.services.snapshots.getDetectionResult(snapshotId: snapshotId),
-              let context = detection.metadata.windowContext
+              detection.metadata.windowContext != nil
         else {
             throw ValidationError(
                 "Background middle- and triple-clicks require a fresh exact-window snapshot."
@@ -34,15 +34,10 @@ extension ClickCommand {
         }
         let receipt: SnapshotTargetReceipt
         do {
-            receipt = try SnapshotTargetReceipt(
+            receipt = try SnapshotTargetReceiptPlanner.assemble(
                 snapshotID: snapshotId,
-                evidence: [.init(
-                    processIdentifier: context.applicationProcessId,
-                    windowID: context.windowID,
-                    windowIdentity: context.windowMutationIdentity,
-                    windowBounds: context.windowBounds
-                )]
-            )
+                detectionResult: detection
+            ).receipt
         } catch {
             throw ValidationError(
                 "Background middle- and triple-clicks require a consistent exact-window snapshot."

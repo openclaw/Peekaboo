@@ -87,7 +87,10 @@ extension AutomationTestFixtures {
                 window: window,
                 processTargetIdentity: processTargetIdentity,
                 windowTargetIdentity: windowTargetIdentity,
-                windowContext: self.windowContext(application: application, window: window))
+                windowContext: self.windowContext(
+                    application: application,
+                    window: window,
+                    focusedElement: focusedElement))
         } catch {
             preconditionFailure("Invalid linked desktop target fixture: \(error.localizedDescription)")
         }

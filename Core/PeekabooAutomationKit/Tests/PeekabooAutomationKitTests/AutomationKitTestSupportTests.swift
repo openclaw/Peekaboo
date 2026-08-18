@@ -8,6 +8,33 @@ import Testing
 @MainActor
 struct AutomationKitTestSupportTests {
     @Test
+    func `linked snapshot target keeps automation and detection sources coherent`() throws {
+        let fixture = AutomationTestFixtures.linkedSnapshotTarget(
+            snapshotID: "snapshot-linked",
+            processIdentity: AutomationTestFixtures.processIdentity(
+                processIdentifier: 42,
+                processStartIdentity: 1001),
+            windowID: 71)
+
+        #expect(fixture.automationSnapshot.applicationProcessId == 42)
+        #expect(fixture.automationSnapshot.windowMutationIdentity == fixture.desktopTarget.windowIdentity)
+        #expect(fixture.automationSnapshot.windowBounds == fixture.desktopTarget.window.bounds)
+        #expect(fixture.automationSnapshot.captureCoordinateContext == fixture.coordinateContext)
+        #expect(fixture.detectionResult.snapshotId == fixture.snapshotID)
+        let detectionContext = try #require(fixture.detectionResult.metadata.windowContext)
+        #expect(
+            DesktopTargetEvidenceAdapter.evidence(context: detectionContext) ==
+                DesktopTargetEvidenceAdapter.evidence(context: fixture.desktopTarget.windowContext))
+        #expect(fixture.detectionResult.metadata.captureCoordinateContext == fixture.coordinateContext)
+
+        let authority = try SnapshotTargetReceiptPlanner.assemble(
+            snapshotID: fixture.snapshotID,
+            automationSnapshot: fixture.automationSnapshot,
+            detectionResult: fixture.detectionResult).receipt.requireCoordinateAuthority()
+        #expect(authority.target.identity == fixture.desktopTarget.windowIdentity)
+    }
+
+    @Test
     func `linked desktop target keeps every receipt on one process generation`() {
         let process = AutomationTestFixtures.processIdentity(
             processIdentifier: 42,

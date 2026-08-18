@@ -101,6 +101,7 @@ public enum DesktopTargetIdentityError: LocalizedError, Equatable, Sendable {
     case incompleteExactWindow
     case invalidatedSnapshotReceipt
     case invalidSnapshotIdentifier
+    case snapshotSourceMismatch
     case coordinateReferenceMismatch
     case coordinateWindowMismatch
     case coordinateBoundsMismatch
@@ -133,6 +134,8 @@ public enum DesktopTargetIdentityError: LocalizedError, Equatable, Sendable {
             "Snapshot target receipt was invalidated by contradictory or removed metadata."
         case .invalidSnapshotIdentifier:
             "Snapshot identifier must not be empty."
+        case .snapshotSourceMismatch:
+            "Snapshot receipt sources refer to a different snapshot identifier."
         case .coordinateReferenceMismatch:
             "Capture coordinate reference does not identify the selected snapshot."
         case .coordinateWindowMismatch:

@@ -346,6 +346,7 @@ public struct PeekabooBridgeTargetAttributionFailure: Codable, Equatable, Sendab
         case incompleteExactWindow = "incomplete_exact_window"
         case invalidatedSnapshotReceipt = "invalidated_snapshot_receipt"
         case invalidSnapshotIdentifier = "invalid_snapshot_identifier"
+        case snapshotSourceMismatch = "snapshot_source_mismatch"
         case coordinateReferenceMismatch = "coordinate_reference_mismatch"
         case coordinateWindowMismatch = "coordinate_window_mismatch"
         case coordinateBoundsMismatch = "coordinate_bounds_mismatch"
@@ -378,6 +379,7 @@ extension PeekabooBridgeTargetAttributionFailure.Code {
         case .incompleteExactWindow: .incompleteExactWindow
         case .invalidatedSnapshotReceipt: .invalidatedSnapshotReceipt
         case .invalidSnapshotIdentifier: .invalidSnapshotIdentifier
+        case .snapshotSourceMismatch: .snapshotSourceMismatch
         case .coordinateReferenceMismatch: .coordinateReferenceMismatch
         case .coordinateWindowMismatch: .coordinateWindowMismatch
         case .coordinateBoundsMismatch: .coordinateBoundsMismatch

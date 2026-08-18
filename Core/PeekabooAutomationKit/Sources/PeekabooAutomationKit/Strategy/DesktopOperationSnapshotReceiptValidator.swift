@@ -27,8 +27,7 @@ enum DesktopOperationSnapshotReceiptValidator {
         guard detectionResult.snapshotId == snapshotID else {
             throw PeekabooError.snapshotStale("snapshot identity changed before desktop mutation planning")
         }
-        guard let context = detectionResult.metadata.windowContext,
-              let identity = context.windowMutationIdentity
+        guard detectionResult.metadata.windowContext?.windowMutationIdentity != nil
         else {
             guard !requireExactWindow else {
                 throw PeekabooError.snapshotStale(
@@ -48,16 +47,10 @@ enum DesktopOperationSnapshotReceiptValidator {
         }
         let captureReceipt: DesktopOperationPlan.CaptureReceipt
         do {
-            captureReceipt = try DesktopOperationPlan.CaptureReceipt(snapshotReceipt: SnapshotTargetReceipt(
-                snapshotID: snapshotID,
-                evidence: [.init(
-                    processIdentifier: context.applicationProcessId,
-                    windowID: context.windowID,
-                    windowIdentity: identity,
-                    windowBounds: context.windowBounds)],
-                applicationBundleIdentifier: context.applicationBundleId,
-                applicationName: context.applicationName,
-                coordinateContext: detectionResult.metadata.captureCoordinateContext))
+            captureReceipt = try DesktopOperationPlan.CaptureReceipt(snapshotReceipt: SnapshotTargetReceiptPlanner
+                .assemble(
+                    snapshotID: snapshotID,
+                    detectionResult: detectionResult).receipt)
         } catch let error as DesktopTargetIdentityError {
             throw SnapshotTargetReceiptPreDispatchError(error)
         }

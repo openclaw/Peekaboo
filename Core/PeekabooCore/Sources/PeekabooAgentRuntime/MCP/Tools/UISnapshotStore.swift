@@ -325,26 +325,18 @@ actor UISnapshot {
                 focusedElement: cache.focusedElement,
                 invalidated: cache.targetReceiptInvalidated)
         }
-        let processIdentity: ApplicationProcessIdentity? = if let processIdentifier = cached.processIdentifier,
-                                                              let processStartIdentity = cached.processStartIdentity
-        {
-            ApplicationProcessIdentity(
-                processIdentifier: processIdentifier,
-                processStartIdentity: processStartIdentity)
-        } else {
-            nil
-        }
-        return try SnapshotTargetReceipt(
+        let evidence = DesktopTargetEvidenceAdapter.evidence(
+            processIdentifier: cached.processIdentifier,
+            processStartIdentity: cached.processStartIdentity,
+            windowID: cached.windowIdentity == nil ? nil : cached.windowID,
+            windowIdentity: cached.windowIdentity,
+            windowBounds: cached.windowIdentity == nil ? nil : cached.windowBounds,
+            focusedElement: cached.windowIdentity == nil ? nil : cached.focusedElement)
+        return try SnapshotTargetReceiptPlanner.assemble(
             snapshotID: self.id,
-            evidence: [.init(
-                processIdentifier: cached.processIdentifier,
-                processIdentity: processIdentity,
-                windowID: cached.windowIdentity == nil ? nil : cached.windowID,
-                windowIdentity: cached.windowIdentity,
-                windowBounds: cached.windowIdentity == nil ? nil : cached.windowBounds,
-                focusedElement: cached.windowIdentity == nil ? nil : cached.focusedElement)],
+            additionalEvidence: [evidence],
             targetReceiptInvalidated: cached.invalidated,
-            applicationName: cached.applicationName)
+            applicationName: cached.applicationName).receipt
     }
 }
 

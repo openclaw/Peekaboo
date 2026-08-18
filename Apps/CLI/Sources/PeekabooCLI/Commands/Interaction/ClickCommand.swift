@@ -1043,33 +1043,22 @@ extension ClickCommand {
     private func backgroundClickSnapshotProcessIdentity(snapshotId: String?) async throws
     -> ApplicationProcessIdentity? {
         guard let snapshotId else { return nil }
-        var evidence: [DesktopTargetIdentity.Evidence] = []
-        var hasProcessIdentifier = false
-        if let snapshot = try? await self.services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId),
-           let processIdentifier = snapshot.applicationProcessId {
-            hasProcessIdentifier = true
-            evidence.append(.init(
-                processIdentifier: processIdentifier,
-                processIdentity: snapshot.windowMutationIdentity?.processIdentity
-            ))
-        }
-        if let detection = try? await self.services.snapshots.getDetectionResult(snapshotId: snapshotId),
-           let context = detection.metadata.windowContext,
-           let processIdentifier = context.applicationProcessId {
-            hasProcessIdentifier = true
-            evidence.append(.init(
-                processIdentifier: processIdentifier,
-                processIdentity: context.windowMutationIdentity?.processIdentity
-            ))
-        }
-        guard hasProcessIdentifier else {
-            throw ValidationError(
-                "Snapshot '\(snapshotId)' does not identify a target process. Run see again before clicking."
-            )
-        }
         do {
-            return try SnapshotTargetReceipt(snapshotID: snapshotId, evidence: evidence)
-                .requireIdentity().processIdentity
+            let plan = try await SnapshotTargetReceiptPlanner(
+                snapshots: self.services.snapshots,
+                sourceFailurePolicy: .omitUnavailableSources
+            )
+            .planProcessIdentity(snapshotID: snapshotId)
+            guard plan.hasProcessIdentifierEvidence else {
+                throw ValidationError(
+                    "Snapshot '\(snapshotId)' does not identify a target process. Run see again before clicking."
+                )
+            }
+            return try plan.receipt.requireIdentity().processIdentity
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as Commander.ValidationError {
+            throw error
         } catch DesktopTargetIdentityError.missingProcessGeneration,
             DesktopTargetIdentityError.incompleteExactWindow {
             throw ValidationError(
@@ -1097,25 +1086,16 @@ extension ClickCommand {
     ) async throws -> InteractionCoordinateResolution {
         guard let detection = try await self.services.snapshots.getDetectionResult(snapshotId: snapshotId),
               !detection.screenshotPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let captured = detection.metadata.windowContext
+              detection.metadata.windowContext != nil
         else {
             throw ValidationError(Self.backgroundCoordinateReferenceMessage)
         }
         let coordinateAuthority: SnapshotTargetReceipt.CoordinateAuthority
         do {
-            coordinateAuthority = try SnapshotTargetReceipt(
+            coordinateAuthority = try SnapshotTargetReceiptPlanner.assemble(
                 snapshotID: snapshotId,
-                evidence: [.init(
-                    processIdentifier: captured.applicationProcessId,
-                    windowID: captured.windowID,
-                    windowIdentity: captured.windowMutationIdentity,
-                    windowBounds: captured.windowBounds
-                )],
-                applicationBundleIdentifier: captured.applicationBundleId,
-                applicationName: captured.applicationName,
-                coordinateContext: detection.metadata.captureCoordinateContext
-            )
-            .requireCoordinateAuthority()
+                detectionResult: detection
+            ).receipt.requireCoordinateAuthority()
         } catch {
             throw ValidationError(Self.backgroundCoordinateReferenceMessage)
         }
@@ -1200,23 +1180,16 @@ extension ClickCommand {
             throw ValidationError(Self.backgroundCoordinateReferenceMessage)
         }
         guard let detection = try await self.services.snapshots.getDetectionResult(snapshotId: snapshotId),
-              let captured = detection.metadata.windowContext
+              detection.metadata.windowContext != nil
         else {
             throw ValidationError(Self.backgroundCoordinateReferenceMessage)
         }
         let authority: SnapshotTargetReceipt.CoordinateAuthority
         do {
-            authority = try SnapshotTargetReceipt(
+            authority = try SnapshotTargetReceiptPlanner.assemble(
                 snapshotID: snapshotId,
-                evidence: [.init(
-                    processIdentifier: captured.applicationProcessId,
-                    windowID: captured.windowID,
-                    windowIdentity: captured.windowMutationIdentity,
-                    windowBounds: captured.windowBounds
-                )],
-                coordinateContext: detection.metadata.captureCoordinateContext
-            )
-            .requireCoordinateAuthority()
+                detectionResult: detection
+            ).receipt.requireCoordinateAuthority()
         } catch {
             throw ValidationError(Self.backgroundCoordinateReferenceMessage)
         }

@@ -72,38 +72,36 @@ extension PeekabooBridgeResponse {
             return payload.response.operationTargetEvidence(for: operation)
         case let .desktopObservation(result):
             if let mutationTargetIdentity = result.target.mutationTargetIdentity {
-                return [.init(
-                    processIdentifier: mutationTargetIdentity.processIdentity.processIdentifier,
+                return [DesktopTargetEvidenceAdapter.evidence(
                     processIdentity: mutationTargetIdentity.processIdentity,
-                    windowID: mutationTargetIdentity.windowIdentity?.windowID,
                     windowIdentity: mutationTargetIdentity.windowIdentity,
                     windowBounds: mutationTargetIdentity.windowBounds)]
             }
             return [
-                Self.evidence(result.target.detectionContext),
-                Self.evidence(result.target.app),
-                Self.evidence(result.target.window),
-            ].compactMap(\.self) + Self.evidence(result.capture.metadata)
+                result.target.detectionContext.map { DesktopTargetEvidenceAdapter.evidence(context: $0) },
+                result.target.app.map { DesktopTargetEvidenceAdapter.evidence(application: $0) },
+                result.target.window.map { DesktopTargetEvidenceAdapter.evidence(window: $0) },
+            ].compactMap(\.self) + DesktopTargetEvidenceAdapter.fragments(captureMetadata: result.capture.metadata)
         case let .capture(result):
-            return Self.evidence(result.metadata)
+            return DesktopTargetEvidenceAdapter.fragments(captureMetadata: result.metadata)
         case let .elementDetection(result):
             return operation == .inspectAccessibilityTree
-                ? [Self.evidence(result.metadata.windowContext)].compactMap(\.self)
+                ? result.metadata.windowContext.map { [DesktopTargetEvidenceAdapter.evidence(context: $0)] } ?? []
                 : []
         case let .window(window):
             return PeekabooBridgeOperationResultSemantics.operationPolicy(for: operation)
                 .windowResponseProof == .postMutationState
                 ? []
-                : window.map(Self.evidence).map { [$0] } ?? []
+                : window.map { [DesktopTargetEvidenceAdapter.evidence(window: $0)] } ?? []
         case let .application(application):
-            return [Self.evidence(application)].compactMap(\.self)
+            return [DesktopTargetEvidenceAdapter.evidence(application: application)]
         case let .browserToolResponse(result):
             return operation == .browserExecute
-                ? [Self.evidence(result.connectionReceipt)].compactMap(\.self)
+                ? [Self.browserEvidence(result.connectionReceipt)].compactMap(\.self)
                 : []
         case let .browserStatus(status):
             return operation == .browserConnect
-                ? [Self.evidence(status.connectionReceipt)].compactMap(\.self)
+                ? [Self.browserEvidence(status.connectionReceipt)].compactMap(\.self)
                 : []
         case let .preparedDialogAction(receipt):
             return [.init(target: DesktopTargetIdentity(exactWindow: receipt.target))]
@@ -115,125 +113,26 @@ extension PeekabooBridgeResponse {
             }
             return [.init(target: DesktopTargetIdentity(exactWindow: target))]
         case let .dialogResult(result):
-            return Self.evidence(result)
+            return DesktopTargetEvidenceAdapter.fragments(dialogResult: result)
         case let .exactWindowHeldPointerTermination(termination?):
-            return [.init(
-                processIdentifier: termination.receipt.windowIdentity.ownerProcessIdentifier,
-                processIdentity: termination.receipt.windowIdentity.processIdentity,
-                windowID: termination.receipt.windowIdentity.windowID,
+            return [DesktopTargetEvidenceAdapter.evidence(
                 windowIdentity: termination.receipt.windowIdentity,
-                windowBounds: termination.receipt.windowBounds)]
+                bounds: termination.receipt.windowBounds)]
         case .focusedElement:
             return []
         case let .error(envelope):
-            return [Self.evidence(envelope.actionTargetReceipt)].compactMap(\.self)
+            return envelope.actionTargetReceipt.map { [DesktopTargetEvidenceAdapter.evidence(receipt: $0)] } ?? []
         default:
             return []
         }
     }
 
-    private static func evidence(_ metadata: CaptureMetadata) -> [DesktopTargetIdentity.Evidence] {
-        [
-            self.evidence(metadata.applicationInfo),
-            metadata.windowInfo.map(self.evidence),
-        ].compactMap(\.self)
-    }
-
-    private static func evidence(_ context: WindowContext?) -> DesktopTargetIdentity.Evidence? {
-        guard let context else { return nil }
-        return .init(
-            processIdentifier: context.applicationProcessId,
-            windowID: context.windowID,
-            windowIdentity: context.windowMutationIdentity,
-            windowBounds: context.windowBounds,
-            focusedElement: context.focusedElement)
-    }
-
-    private static func evidence(_ window: WindowIdentity?) -> DesktopTargetIdentity.Evidence? {
-        guard let window else { return nil }
-        return .init(windowID: window.windowID, windowBounds: window.bounds)
-    }
-
-    private static func evidence(_ window: ServiceWindowInfo) -> DesktopTargetIdentity.Evidence {
-        .init(
-            processIdentifier: window.mutationIdentity?.ownerProcessIdentifier,
-            processIdentity: window.mutationIdentity?.processIdentity,
-            windowID: window.windowID,
-            windowIdentity: window.mutationIdentity,
-            windowBounds: window.bounds)
-    }
-
-    private static func evidence(_ identity: WindowMutationIdentity) -> DesktopTargetIdentity.Evidence {
-        .init(
-            processIdentifier: identity.ownerProcessIdentifier,
-            processIdentity: identity.processIdentity,
-            windowID: identity.windowID,
-            windowIdentity: identity,
-            windowBounds: identity.capturedBounds)
-    }
-
-    private static func evidence(_ application: ApplicationIdentity?) -> DesktopTargetIdentity.Evidence? {
-        guard let application else { return nil }
-        return .init(
-            processIdentifier: application.processIdentifier,
-            processIdentity: application.processStartIdentity.map {
-                .init(
-                    processIdentifier: application.processIdentifier,
-                    processStartIdentity: $0)
-            })
-    }
-
-    private static func evidence(
+    private static func browserEvidence(
         _ receipt: PeekabooBridgeBrowserConnectionReceipt?) -> DesktopTargetIdentity.Evidence?
     {
         guard let processIdentity = receipt?.localProcessIdentity else { return nil }
         return .init(
             processIdentifier: processIdentity.processIdentifier,
             processIdentity: processIdentity)
-    }
-
-    private static func evidence(
-        _ application: ServiceApplicationInfo?) -> DesktopTargetIdentity.Evidence?
-    {
-        guard let application else { return nil }
-        return .init(
-            processIdentifier: application.processIdentifier,
-            processIdentity: application.processStartIdentity.map {
-                .init(
-                    processIdentifier: application.processIdentifier,
-                    processStartIdentity: $0)
-            })
-    }
-
-    private static func evidence(_ result: DialogActionResult) -> [DesktopTargetIdentity.Evidence] {
-        var evidence: [DesktopTargetIdentity.Evidence] = []
-        if let resolvedTarget = result.resolvedTarget {
-            evidence.append(.init(target: DesktopTargetIdentity(exactWindow: resolvedTarget.target)))
-        }
-        if result.targetWindowIdentity != nil || result.targetWindowBounds != nil || result.focusedElement != nil {
-            evidence.append(.init(
-                processIdentifier: result.targetWindowIdentity?.ownerProcessIdentifier,
-                processIdentity: result.targetWindowIdentity?.processIdentity,
-                windowID: result.targetWindowIdentity?.windowID,
-                windowIdentity: result.targetWindowIdentity,
-                windowBounds: result.targetWindowBounds,
-                focusedElement: result.focusedElement))
-        }
-        if let receiptEvidence = self.evidence(result.targetReceipt) {
-            evidence.append(receiptEvidence)
-        }
-        return evidence
-    }
-
-    private static func evidence(
-        _ receipt: DesktopActionTargetReceipt?) -> DesktopTargetIdentity.Evidence?
-    {
-        guard let receipt else { return nil }
-        return .init(
-            processIdentifier: receipt.processIdentifier,
-            processIdentity: .init(
-                processIdentifier: receipt.processIdentifier,
-                processStartIdentity: receipt.processStartIdentity),
-            windowID: receipt.windowID)
     }
 }

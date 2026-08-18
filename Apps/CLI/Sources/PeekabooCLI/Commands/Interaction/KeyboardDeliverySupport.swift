@@ -86,33 +86,15 @@ enum KeyboardDeliverySupport {
         snapshotId: String,
         services: any PeekabooServiceProviding
     ) async throws -> UIAutomationTarget.ExactWindow {
-        var evidence: [DesktopTargetIdentity.Evidence] = []
-        if let snapshot = try await services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId) {
-            evidence.append(.init(
-                processIdentifier: snapshot.applicationProcessId,
-                windowID: snapshot.windowID.map(Int.init),
-                windowIdentity: snapshot.windowMutationIdentity,
-                windowBounds: snapshot.windowBounds,
-                focusedElement: snapshot.focusedElement
-            ))
-        }
-        if let detectionResult = try await services.snapshots.getDetectionResult(snapshotId: snapshotId),
-           let context = detectionResult.metadata.windowContext {
-            evidence.append(.init(
-                processIdentifier: context.applicationProcessId,
-                windowID: context.windowID,
-                windowIdentity: context.windowMutationIdentity,
-                windowBounds: context.windowBounds,
-                focusedElement: context.focusedElement
-            ))
-        }
-
         do {
-            let receipt = try SnapshotTargetReceipt(snapshotID: snapshotId, evidence: evidence)
+            let receipt = try await SnapshotTargetReceiptPlanner(snapshots: services.snapshots)
+                .plan(snapshotID: snapshotId).receipt
             guard let exactWindow = try receipt.requireIdentity().exactWindow else {
                 throw DesktopTargetIdentityError.incompleteExactWindow
             }
             return exactWindow
+        } catch is CancellationError {
+            throw CancellationError()
         } catch DesktopTargetIdentityError.missingProcessGeneration,
             DesktopTargetIdentityError.incompleteExactWindow {
             throw ValidationError(

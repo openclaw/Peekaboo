@@ -224,6 +224,7 @@ public enum AutomationTestFixtures {
     public static func windowContext(
         application: ServiceApplicationInfo = Self.application(),
         window: ServiceWindowInfo = Self.window(),
+        focusedElement: FocusedElementIdentity? = nil,
         requiresFreshAccessibilityTree: Bool = true) -> WindowContext
     {
         if let receipt = window.mutationIdentity {
@@ -240,6 +241,7 @@ public enum AutomationTestFixtures {
             windowID: window.windowID,
             windowBounds: window.bounds,
             windowMutationIdentity: window.mutationIdentity,
+            focusedElement: focusedElement,
             requiresFreshAccessibilityTree: requiresFreshAccessibilityTree)
     }
 
