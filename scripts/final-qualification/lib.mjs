@@ -199,10 +199,11 @@ export function authenticateLiveBridgeBundle({
     && new Set(trustedHostTeamIDs).size === trustedHostTeamIDs.length,
   `${label} trusted Bridge host teams are invalid`);
   exactKeys(expectedHost, [
-    'process_identifier', 'process_start_identity_decimal', 'code_signature_hash',
+    'host_kind', 'process_identifier', 'process_start_identity_decimal', 'code_signature_hash',
     'source_commit',
   ], `${label} expected Bridge host`);
-  requireCondition(positiveInteger(expectedHost.process_identifier)
+  requireCondition(expectedHost.host_kind === 'gui'
+    && positiveInteger(expectedHost.process_identifier)
     && positiveDecimal(expectedHost.process_start_identity_decimal)
     && HEX40.test(expectedHost.code_signature_hash ?? '')
     && HEX40.test(expectedHost.source_commit ?? ''),
