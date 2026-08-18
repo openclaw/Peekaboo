@@ -46,6 +46,38 @@ struct AppHideExactTargetTests {
     }
 
     @Test
+    func `app hide refuses fuzzy selector while exact name bundle and PID selectors remain valid`() async throws {
+        let application = ServiceApplicationInfo(
+            processIdentifier: 4070,
+            processStartIdentity: 70,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture",
+            isHiddenKnown: true,
+            activationPolicy: .regular
+        )
+        let service = ExactHideApplicationService(applications: [application])
+        let services = TestServicesFactory.makePeekabooServices(applications: service)
+
+        let fuzzy = try await InProcessCommandRunner.run(
+            ["app", "hide", "--app", "Fixt", "--json", "--no-remote"],
+            services: services
+        )
+        #expect(fuzzy.exitStatus == 1)
+        #expect(fuzzy.combinedOutput.contains("not allowed for mutation"))
+        #expect(service.targetedHideRequests.isEmpty)
+
+        for selector in ["Fixture", "com.example.fixture", "PID:4070"] {
+            let exact = try await InProcessCommandRunner.run(
+                ["app", "hide", "--app", selector, "--json", "--no-remote"],
+                services: services
+            )
+            #expect(exact.exitStatus == 0, "Expected exact selector \(selector) to pass")
+        }
+        #expect(service.targetedHideRequests.count == 3)
+        #expect(service.targetedHideRequests.allSatisfy { $0.identifier == "PID:4070" })
+    }
+
+    @Test
     func `app hide rejects a mismatched returned process generation`() async throws {
         let application = ServiceApplicationInfo(
             processIdentifier: 4070,

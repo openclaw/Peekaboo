@@ -72,7 +72,10 @@ extension MenuCommand {
                     if let canonicalPath {
                         try await self.ensureMenuItemEnabled(appIdentifier: appIdentifier, menuPath: canonicalPath)
                     }
-                    let appInfo = try await self.services.applications.findApplication(identifier: appIdentifier)
+                    let appInfo = try await self.resolveApplicationForMutation(
+                        appIdentifier,
+                        services: self.services
+                    )
                     let clickedPath = canonicalPath ?? normalizedItem!
 
                     self.resolvedRuntime.beginInteractionMutation()
@@ -275,6 +278,8 @@ extension MenuCommand {
         }
     }
 }
+
+extension MenuCommand.ClickSubcommand: ApplicationResolver {}
 
 @MainActor
 private func findMenuItem(

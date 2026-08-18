@@ -1071,13 +1071,10 @@ extension ClickCommand {
     }
 
     private func currentProcessIdentity(identifier: String) async throws -> ApplicationProcessIdentity {
-        let application = try await self.services.applications.findApplication(identifier: identifier)
-        guard let identity = application.processIdentity else {
-            throw ValidationError(
-                "The runtime host could not pin \(identifier) to a process generation; update the host."
-            )
-        }
-        return identity
+        let planner = DesktopTargetPlanning.ApplicationMutationPlanner(
+            applications: self.services.applications
+        )
+        return try await planner.plan(identifier: identifier).processIdentity
     }
 
     private func resolveBackgroundCoordinateReference(
@@ -1111,11 +1108,11 @@ extension ClickCommand {
             )
         }
         if let app = self.target.app?.trimmingCharacters(in: .whitespacesAndNewlines), !app.isEmpty {
-            let requestedApplication = try await self.services.applications.findApplication(identifier: app)
-            guard requestedApplication.processIdentifier == processIdentifier else {
+            let requestedIdentity = try await self.currentProcessIdentity(identifier: app)
+            guard requestedIdentity.processIdentifier == processIdentifier else {
                 throw ValidationError(
                     "Snapshot '\(snapshotId)' belongs to PID \(processIdentifier), not \(app) " +
-                        "(PID \(requestedApplication.processIdentifier))."
+                        "(PID \(requestedIdentity.processIdentifier))."
                 )
             }
         }

@@ -71,7 +71,7 @@ struct AppCommand: ParsableCommand {
 
             do {
                 let appIdentifier = try self.resolveApplicationIdentifier()
-                let appInfo = try await resolveApplication(appIdentifier, services: self.services)
+                let appInfo = try await resolveApplicationForMutation(appIdentifier, services: self.services)
 
                 self.resolvedRuntime.beginInteractionMutation()
                 let actionResult = try await ApplicationServiceBridge.hideApplication(
@@ -153,7 +153,7 @@ struct AppCommand: ParsableCommand {
                     throw ApplicationLifecycleRefusalError.unhideRequiresForegroundConsent()
                 }
                 let appIdentifier = try self.resolveApplicationIdentifier()
-                let appInfo = try await resolveApplication(appIdentifier, services: self.services)
+                let appInfo = try await resolveApplicationForMutation(appIdentifier, services: self.services)
 
                 self.resolvedRuntime.beginInteractionMutation()
                 let actionResult = try await ApplicationServiceBridge.activateApplication(
@@ -250,7 +250,7 @@ struct AppCommand: ParsableCommand {
                     }
                     AutomationEventLogger.log(.app, "switch action=cycle success=true")
                 } else if let targetApp = to {
-                    let appInfo = try await resolveApplication(targetApp, services: self.services)
+                    let appInfo = try await resolveApplicationForMutation(targetApp, services: self.services)
                     guard let processIdentity = appInfo.processIdentity else {
                         throw DesktopActionFailure.preDispatchRefusal(
                             reason: .targetUnavailable,
@@ -374,7 +374,7 @@ struct AppCommand: ParsableCommand {
             self.runtime = runtime
             do {
                 let appIdentifier = try self.resolveApplicationIdentifier()
-                let appInfo = try await resolveApplication(appIdentifier, services: self.services)
+                let appInfo = try await resolveApplicationForMutation(appIdentifier, services: self.services)
                 self.resolvedRuntime.beginInteractionMutation()
                 let actionResult = try await ApplicationServiceBridge.activateApplication(
                     applications: self.services.applications,

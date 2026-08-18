@@ -420,22 +420,24 @@ struct ExactWindowSelectorResolutionError: Error, LocalizedError, Sendable, Equa
 protocol ApplicationResolver {}
 
 extension ApplicationResolver {
-    func resolveApplication(
+    @MainActor
+    func resolveApplicationForMutation(
         _ identifier: String,
         services: any PeekabooServiceProviding
     ) async throws -> ServiceApplicationInfo {
+        let planner = DesktopTargetPlanning.ApplicationMutationPlanner(
+            applications: services.applications
+        )
         do {
-            return try await services.applications.findApplication(identifier: identifier)
+            return try await planner.plan(identifier: identifier).application
         } catch {
-            if identifier.lowercased() == "frontmost" {
-                var message = "Application 'frontmost' not found"
-                message += "\n\n💡 Note: 'frontmost' is not a valid app name. To work with the currently active app:"
-                message += "\n  • Use `see` without arguments to capture current screen"
-                message += "\n  • Use `app focus` with a specific app name"
-                message += "\n  • Use `--app frontmost` with image/see commands to capture the active window"
-                throw PeekabooError.appNotFound(identifier)
-            }
-            throw error
+            guard identifier.lowercased() == "frontmost" else { throw error }
+            var message = "Application 'frontmost' is not a mutation-safe target"
+            message += "\n\n💡 To work with the currently active app:"
+            message += "\n  • Use `see` without arguments to capture the current screen"
+            message += "\n  • Resolve a concrete name or PID with `app list` before mutation"
+            message += "\n  • Use `--app frontmost` only with read-only observation commands that support it"
+            throw PeekabooError.appNotFound(message)
         }
     }
 }

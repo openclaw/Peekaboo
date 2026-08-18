@@ -642,7 +642,8 @@ public struct MCPToolContext: @unchecked Sendable {
                 throw BackgroundTargetResolutionError(
                     "the mutation has no explicit application or exact-window owner")
             }
-            let applications = try await self.resolveApplications(identifiers)
+            let authorities = try await self.resolveApplicationAuthorities(identifiers)
+            let applications = authorities.map(\.application.application)
             let processIdentity = try Self.validatedProcessIdentity(
                 applications: applications,
                 windowProcessIdentities: windowProcessIdentities)
@@ -662,13 +663,18 @@ public struct MCPToolContext: @unchecked Sendable {
             let authorizedTarget = try windowTargetIdentities.reduce(processTarget) { partial, windowTarget in
                 try partial.coalescing(windowTarget)
             }
+            let targetPlan = if windowTargetIdentities.isEmpty, let authority = authorities.first {
+                try AuthorizedDesktopTargetPlan(mutationAuthority: authority)
+            } else {
+                AuthorizedDesktopTargetPlan(targetIdentity: authorizedTarget)
+            }
             return BackgroundTargetAuthorization(
                 arguments: Self.argumentsPinnedToProcess(
                     arguments,
                     toolName: toolName,
                     processIdentifier: processIdentity.processIdentifier),
                 rejection: nil,
-                targetPlan: AuthorizedDesktopTargetPlan(targetIdentity: authorizedTarget))
+                targetPlan: targetPlan)
         } catch let error as BackgroundTargetResolutionError {
             let detail = if toolName == "app",
                             arguments.getString("action")?.lowercased() == "launch"

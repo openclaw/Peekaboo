@@ -53,7 +53,7 @@ extension AppCommand {
 
                 // Find the application first
                 let appIdentifier = try resolveApplicationIdentifier()
-                let appInfo = try await resolveApplication(appIdentifier, services: services)
+                let appInfo = try await resolveApplicationForMutation(appIdentifier, services: services)
                 let originalPID = appInfo.processIdentifier
                 guard originalPID != self.resolvedRuntime.selectedRemoteHostProcessIdentifier else {
                     throw PeekabooError.serviceUnavailable(

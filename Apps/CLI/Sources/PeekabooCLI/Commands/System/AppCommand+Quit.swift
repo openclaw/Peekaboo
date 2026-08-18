@@ -320,7 +320,7 @@ extension AppCommand {
                 }
             }
             if let appName = self.app {
-                let appInfo = try await resolveApplication(appName, services: self.services)
+                let appInfo = try await resolveApplicationForMutation(appName, services: self.services)
                 return try [AppQuitTarget(appInfo: appInfo)]
             }
             guard let pid = self.pid else {

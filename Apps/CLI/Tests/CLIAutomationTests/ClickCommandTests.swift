@@ -878,3 +878,28 @@ struct ClickCommandTests {
         }
     }
 }
+
+extension ClickCommandTests {
+    @Test
+    func `background click refuses a fuzzy application selector before dispatch`() async throws {
+        let application = Self.makeApplication()
+        let context = await self.makeContext(application: application)
+        let element = DetectedElement(
+            id: "B1",
+            type: .button,
+            label: "Save",
+            bounds: CGRect(x: 20, y: 30, width: 80, height: 30)
+        )
+        _ = try await self.storeSnapshot(element: element, windowID: 42, in: context.snapshots)
+
+        let result = try await InProcessCommandRunner.run(
+            ["click", "Save", "--app", "Test", "--json"],
+            services: context.services
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(result.combinedOutput.contains("not allowed for mutation"))
+        #expect(await self.automationState(context) { $0.targetedClickCalls }.isEmpty)
+        #expect(await self.automationState(context) { $0.clickCalls }.isEmpty)
+    }
+}

@@ -112,6 +112,91 @@ struct MCPBackgroundPolicyExecutionTests {
     }
 
     @Test
+    func `background-only process mutation families refuse fuzzy application selectors before dispatch`() async throws {
+        let textEdit = ServiceApplicationInfo(
+            processIdentifier: 89,
+            processStartIdentity: 890,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit",
+            isHiddenKnown: true,
+            activationPolicy: .regular)
+        let applications = await MainActor.run { MockApplicationService(applications: [textEdit]) }
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: applications,
+            snapshotOwner: Self.uiSnapshots.owner,
+            executionPolicy: .backgroundOnly)
+        let cases: [(tool: String, action: String?, key: String)] = [
+            ("app", "quit", "name"),
+            ("menu", "click", "app"),
+            ("dialog", "click", "app"),
+            ("paste", nil, "app"),
+        ]
+
+        for item in cases {
+            let counter = BackgroundPolicyInvocationCounter()
+            var raw: [String: Any] = [item.key: "Text"]
+            if let action = item.action {
+                raw["action"] = action
+            }
+            if item.tool == "dialog" {
+                raw["button"] = "OK"
+            }
+            if item.tool == "paste" {
+                raw["text"] = "must not dispatch"
+            }
+            let response = try await context.execute(
+                tool: BackgroundPolicyMutationProbe(name: item.tool, counter: counter),
+                arguments: ToolArguments(raw: raw))
+
+            #expect(response.isError, "Expected fuzzy \(item.tool) target to fail")
+            #expect(await counter.invocationCount == 0)
+            guard case let .text(text, _, _)? = response.content.first,
+                  case let .object(meta)? = response.meta
+            else {
+                Issue.record("Missing fuzzy-selector refusal for \(item.tool)")
+                continue
+            }
+            #expect(text.contains("not allowed for mutation"))
+            #expect(meta["mutation_dispatched"] == .bool(false))
+            #expect(meta["retry_safe"] == .bool(true))
+        }
+    }
+
+    @Test
+    func `background-only process mutation authorization accepts exact name bundle and PID selectors`() async throws {
+        let textEdit = ServiceApplicationInfo(
+            processIdentifier: 89,
+            processStartIdentity: 890,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit",
+            isHiddenKnown: true,
+            activationPolicy: .regular)
+        let applications = await MainActor.run { MockApplicationService(applications: [textEdit]) }
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: applications,
+            snapshotOwner: Self.uiSnapshots.owner,
+            executionPolicy: .backgroundOnly)
+
+        for (key, value) in [
+            ("name", "TextEdit"),
+            ("bundleId", "com.apple.TextEdit"),
+            ("name", "PID:89"),
+        ] {
+            let counter = BackgroundPolicyInvocationCounter()
+            let response = try await context.execute(
+                tool: BackgroundPolicyMutationProbe(name: "app", counter: counter),
+                arguments: ToolArguments(raw: [
+                    "action": "quit",
+                    key: value,
+                ]))
+
+            #expect(!response.isError, "Expected exact selector \(value) to pass")
+            #expect(await counter.invocationCount == 1)
+            #expect(await counter.lastName == "PID:89")
+        }
+    }
+
+    @Test
     func `App tool lifecycle examples include required foreground consent`() async {
         let context = await MCPToolTestHelpers.makeContext(snapshotOwner: Self.uiSnapshots.owner)
         let description = AppTool(context: context).description
@@ -518,7 +603,11 @@ private struct BackgroundPolicyMutationProbe: MCPTool {
             properties: [
                 "action": SchemaBuilder.string(),
                 "app": SchemaBuilder.string(),
+                "button": SchemaBuilder.string(),
+                "bundleId": SchemaBuilder.string(),
                 "name": SchemaBuilder.string(),
+                "pid": SchemaBuilder.integer(),
+                "text": SchemaBuilder.string(),
             ],
             required: [])
     }

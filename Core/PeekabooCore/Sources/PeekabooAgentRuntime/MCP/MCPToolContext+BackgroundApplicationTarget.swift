@@ -311,16 +311,29 @@ extension MCPToolContext {
         return identities
     }
 
-    func resolveApplications(_ identifiers: [String]) async throws -> [ServiceApplicationInfo] {
+    @MainActor
+    func resolveApplicationAuthorities(
+        _ identifiers: [String]) async throws -> [DesktopTargetPlanning.MutationAuthorityPlan]
+    {
+        let planner = DesktopTargetPlanning.MutationAuthorityPlanner(
+            applications: self.applications,
+            windows: self.windows)
         do {
-            var resolved: [ServiceApplicationInfo] = []
+            var resolved: [DesktopTargetPlanning.MutationAuthorityPlan] = []
+            var expectedIdentity: ApplicationProcessIdentity?
             for identifier in identifiers {
-                try await resolved.append(self.applications.findApplication(identifier: identifier))
+                let authority = try await planner.plan(
+                    selector: InteractionTargetSelector(applicationIdentifier: identifier),
+                    expectedProcessIdentity: expectedIdentity)
+                expectedIdentity = authority.application.processIdentity
+                resolved.append(authority)
             }
             return resolved
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw BackgroundTargetResolutionError(
-                "the selected application owner could not be resolved before dispatch")
+                error.localizedDescription)
         }
     }
 

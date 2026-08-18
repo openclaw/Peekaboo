@@ -372,6 +372,26 @@ struct CLIActionResultConsumerTests {
     }
 
     @Test
+    func `menu click refuses a fuzzy application selector before dispatch`() async throws {
+        let fixture = Self.menuFixture()
+        let menu = OutcomeStubMenuService(menusByApp: [fixture.application.name: fixture.structure])
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: [fixture.application]),
+            menu: menu
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            ["menu", "click", "--app", "Fixt", "--item", "Open", "--json", "--no-remote"],
+            services: services
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(result.combinedOutput.contains("not allowed for mutation"))
+        #expect(menu.clickItemCalls.isEmpty)
+        #expect(menu.clickPathCalls.isEmpty)
+    }
+
+    @Test
     func `named menu bar click publishes its AX process target`() async throws {
         let outcome = DesktopActionOutcome.dispatchedUnverified(
             route: .bridge,

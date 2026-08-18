@@ -215,7 +215,7 @@ struct AppCommandLaunchFlowTests {
 
         try await command.run(using: self.makeRuntime(applicationService: service))
 
-        #expect(service.findCalls == ["Finder"])
+        #expect(service.findCalls == ["PID:42"])
         #expect(service.activateCalls == ["PID:42"])
         #expect(service.activationRequests.first?.expectedIdentity?.processIdentifier == 42)
         #expect(service.activationRequests.first?.expectedIdentity?.processStartIdentity == 1001)
@@ -289,7 +289,7 @@ struct AppCommandLaunchFlowTests {
         await #expect(throws: ExitCode.self) {
             try await command.run(using: runtime)
         }
-        #expect(applicationService.findCalls == ["Peekaboo daemon"])
+        #expect(applicationService.findCalls == ["PID:321"])
         #expect(applicationService.quitCalls.isEmpty)
         #expect(applicationService.quitRequests.isEmpty)
     }
@@ -516,6 +516,7 @@ struct AppCommandLaunchFlowTests {
     func `Relaunch rejects the selected daemon before quitting it`() async throws {
         let application = ServiceApplicationInfo(
             processIdentifier: 321,
+            processStartIdentity: 3001,
             bundleIdentifier: "boo.peekaboo.peekaboo",
             name: "Peekaboo daemon"
         )
@@ -533,7 +534,7 @@ struct AppCommandLaunchFlowTests {
         await #expect(throws: ExitCode.self) {
             try await command.run(using: runtime)
         }
-        #expect(applicationService.findCalls == ["Peekaboo daemon"])
+        #expect(applicationService.findCalls == ["PID:321"])
         #expect(applicationService.quitCalls.isEmpty)
         #expect(applicationService.launchRequests.isEmpty)
     }
@@ -805,7 +806,8 @@ private final class RecordingHotkeyAutomationService: MockAutomationService {
 }
 
 @MainActor
-private final class RecordingApplicationService: ApplicationServiceActionResultProviding {
+private final class RecordingApplicationService: ApplicationServiceActionResultProviding,
+ApplicationMutationInventoryProviding {
     let supportsApplicationLaunchOptions = true
     let supportsApplicationRelaunch = true
     let supportsProcessGenerationPinnedApplicationActivation = true
@@ -841,6 +843,11 @@ private final class RecordingApplicationService: ApplicationServiceActionResultP
             summary: .init(brief: "Stub application list", status: .success),
             metadata: .init(duration: 0)
         )
+    }
+
+    func applicationMutationInventory() async throws
+    -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo> {
+        .complete(self.applications.filter { self.runningPIDs.contains($0.processIdentifier) })
     }
 
     func findApplication(identifier: String) async throws -> ServiceApplicationInfo {

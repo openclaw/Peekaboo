@@ -192,7 +192,10 @@ extension WindowIdentificationOptions {
             return nil
         }
         let identifier = try self.resolveApplicationIdentifier()
-        return try await services.applications.findApplication(identifier: identifier)
+        let planner = DesktopTargetPlanning.ApplicationMutationPlanner(
+            applications: services.applications
+        )
+        return try await planner.plan(identifier: identifier).application
     }
 
     func displayName(windowInfo: ServiceWindowInfo?) -> String {

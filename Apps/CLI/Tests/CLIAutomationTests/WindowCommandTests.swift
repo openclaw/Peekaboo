@@ -131,6 +131,25 @@ struct WindowCommandTests {
     }
 
     @Test
+    func `window mutation refuses a fuzzy application selector before window lookup`() async throws {
+        let context = await MainActor.run {
+            self.makeStrictSelectionContext(titles: ["Draft"])
+        }
+
+        let result = try await self.runWindowCommand(
+            [
+                "window", "move", "--app", "Fixt", "--window-title", "Draft",
+                "--x", "20", "--y", "30", "--json",
+            ],
+            context: context,
+            allowedExitStatuses: [1]
+        )
+
+        #expect((result.stdout + result.stderr).contains("not allowed for mutation"))
+        #expect(await MainActor.run { context.windowService.moveCalls.isEmpty })
+    }
+
+    @Test
     func `window mutation dispatches to the unique partial title match`() async throws {
         let context = await MainActor.run {
             self.makeStrictSelectionContext(titles: ["Draft One", "Release Notes"])
