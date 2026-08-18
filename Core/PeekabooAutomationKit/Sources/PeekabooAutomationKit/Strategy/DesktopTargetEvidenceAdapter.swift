@@ -25,10 +25,6 @@ public enum DesktopTargetEvidenceAdapter {
             windowBounds: window.bounds)
     }
 
-    public static func evidence(window: WindowIdentity) -> DesktopTargetIdentity.Evidence {
-        .init(windowID: window.windowID, windowBounds: window.bounds)
-    }
-
     public static func evidence(
         windowIdentity: WindowMutationIdentity,
         bounds: CGRect? = nil,
