@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Preserve local Option/Meta chords while buffering fragmented terminal escape sequences longer over SSH, and ignore stale cancelled escape timers that arrive after a newer sequence.
 - Update AXorcist so synchronous and legacy element observers share the bounded registration and cleanup state machine, preventing a wedged endpoint from blocking Peekaboo's main actor indefinitely or escaping late-result rollback.
 - Keep JSON-output flags after the `--` option terminator as child arguments instead of changing Peekaboo's own error envelope.
 - Route CLI and MCP multi-phase result composition through the canonical target-aware sequence accumulator while preserving their established output contracts.
