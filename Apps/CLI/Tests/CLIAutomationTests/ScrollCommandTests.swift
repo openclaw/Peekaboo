@@ -125,6 +125,9 @@ struct ScrollCommandTests {
         #expect(storedResult.elements.findById("B1") != nil)
         #expect(call.request.delay == 0)
         #expect(!call.request.foreground)
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: Data(self.output(from: result).utf8))
+        #expect(payload.effect == .unverifiable)
+        #expect(payload.outcome == nil)
     }
 
     @Test

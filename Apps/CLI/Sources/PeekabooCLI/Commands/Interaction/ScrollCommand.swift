@@ -176,7 +176,7 @@ RuntimeBackedCommand {
             )
             output(
                 outputPayload,
-                effect: self.focusOptions.foreground ? .unverifiable : .confirmed,
+                effect: .unverifiable,
                 outcome: compositeResult.outcome,
                 targetIdentity: compositeResult.targetIdentity
             ) {
