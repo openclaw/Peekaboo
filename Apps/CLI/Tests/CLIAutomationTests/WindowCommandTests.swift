@@ -273,8 +273,10 @@ struct WindowCommandTests {
         )
 
         let windows = response.data.windows
-        #expect(response.data.inventory_completeness == "complete")
-        #expect(response.data.inventory_warnings == [])
+        #expect(response.data.inventory_completeness == "partial")
+        #expect(response.data.inventory_warnings?.contains(where: {
+            $0.contains("omitted 1 non-renderable or duplicate inventory row")
+        }) == true)
         #expect(windows.count == 1)
         let window = try #require(windows.first)
         #expect(window.window_title == "Document")

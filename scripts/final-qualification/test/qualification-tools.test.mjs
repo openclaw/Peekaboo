@@ -2037,7 +2037,9 @@ test('qualification manifest closes every required evidence class and detects by
           host: pointerHost,
           clientInstanceID: pointerClientInstanceID,
           sessionSequence: String(entryIndex),
-          targetAbsent: operation === 'disconnectExactWindowHeldPointerOwner',
+          targetAbsent: [
+            'createExactWindowHeldPointerOwner', 'disconnectExactWindowHeldPointerOwner',
+          ].includes(operation),
           outcomeAttested: mutating || operation === 'disconnectExactWindowHeldPointerOwner',
           outcome: operation === 'beginExactWindowHeldPointer' ? {
             ...actionOutcome(), delivery_mechanism: 'window_targeted_events',
@@ -3109,6 +3111,76 @@ test('qualification manifest closes every required evidence class and detects by
         path.join(root, 'foreign-pointer-target-manifest.json'),
       ),
       /is not one exact controlled fixture target/,
+    );
+    const foreignPointerListInput = structuredClone(inputValue);
+    const foreignPointerListBundleValue = JSON.parse(fs.readFileSync(pointerPairs[0].bundle));
+    foreignPointerListBundleValue.receipt.payload.target.processIdentifier = 999;
+    foreignPointerListBundleValue.receipt.payload.target.processStartIdentity = '999001';
+    foreignPointerListBundleValue.receipt.payload.target.windowID = 999;
+    const foreignPointerListBundle = writeJSON(
+      path.join(root, 'foreign-pointer-list-bundle.json'),
+      foreignPointerListBundleValue,
+    );
+    const foreignPointerListValidatorValue = JSON.parse(fs.readFileSync(pointerPairs[0].validator));
+    foreignPointerListValidatorValue.data.bundle_sha256 = sha256(fs.readFileSync(foreignPointerListBundle));
+    const foreignPointerListValidator = writeJSON(
+      path.join(root, 'foreign-pointer-list-validator.json'),
+      foreignPointerListValidatorValue,
+    );
+    const foreignPointerListControllerValue = JSON.parse(fs.readFileSync(pointerControllerResult));
+    foreignPointerListControllerValue.operations[0].bundle.sha256
+      = sha256(fs.readFileSync(foreignPointerListBundle));
+    foreignPointerListInput.adjuncts.held_pointer.raw_bundles[0] = foreignPointerListBundle;
+    foreignPointerListInput.adjuncts.held_pointer.live_validator_reports[0]
+      = foreignPointerListValidator;
+    foreignPointerListInput.adjuncts.held_pointer.controller_results = [writeJSON(
+      path.join(root, 'foreign-pointer-list-controller.json'),
+      foreignPointerListControllerValue,
+    )];
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'foreign-pointer-list-input.json'), foreignPointerListInput),
+        path.join(root, 'foreign-pointer-list-manifest.json'),
+      ),
+      /target-bearing operation differs from the controlled fixture/,
+    );
+    const targetedPointerCreateInput = structuredClone(inputValue);
+    const targetedPointerCreateBundleValue = JSON.parse(fs.readFileSync(pointerPairs[2].bundle));
+    targetedPointerCreateBundleValue.receipt.payload.target = {
+      kind: 'window',
+      processIdentifier: adjunctTarget.pid,
+      processStartIdentity: adjunctTarget.start_identity,
+      windowID: adjunctTarget.window_id,
+    };
+    const targetedPointerCreateBundle = writeJSON(
+      path.join(root, 'targeted-pointer-create-bundle.json'),
+      targetedPointerCreateBundleValue,
+    );
+    const targetedPointerCreateValidatorValue = JSON.parse(fs.readFileSync(pointerPairs[2].validator));
+    targetedPointerCreateValidatorValue.data.target_attested = true;
+    targetedPointerCreateValidatorValue.data.bundle_sha256
+      = sha256(fs.readFileSync(targetedPointerCreateBundle));
+    const targetedPointerCreateValidator = writeJSON(
+      path.join(root, 'targeted-pointer-create-validator.json'),
+      targetedPointerCreateValidatorValue,
+    );
+    const targetedPointerCreateControllerValue = JSON.parse(fs.readFileSync(pointerControllerResult));
+    targetedPointerCreateControllerValue.operations[2].bundle.sha256
+      = sha256(fs.readFileSync(targetedPointerCreateBundle));
+    targetedPointerCreateInput.adjuncts.held_pointer.raw_bundles[2]
+      = targetedPointerCreateBundle;
+    targetedPointerCreateInput.adjuncts.held_pointer.live_validator_reports[2]
+      = targetedPointerCreateValidator;
+    targetedPointerCreateInput.adjuncts.held_pointer.controller_results = [writeJSON(
+      path.join(root, 'targeted-pointer-create-controller.json'),
+      targetedPointerCreateControllerValue,
+    )];
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'targeted-pointer-create-input.json'), targetedPointerCreateInput),
+        path.join(root, 'targeted-pointer-create-manifest.json'),
+      ),
+      /targetless held-pointer operation claimed a target/,
     );
     const input = writeJSON(path.join(root, 'manifest-input.json'), inputValue);
     const output = path.join(root, 'qualification-manifest.json');

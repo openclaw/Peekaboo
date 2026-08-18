@@ -37,6 +37,16 @@ extension WindowCommand {
                 )
                 let rawWindows = inventory.items
                 let windows = ObservationTargetResolver.filteredWindows(from: rawWindows, mode: .list)
+                var outputCompleteness = inventory.completeness
+                var outputWarnings = inventory.warnings
+                let omittedRowCount = rawWindows.count - windows.count
+                if omittedRowCount > 0 {
+                    outputCompleteness = .partial
+                    outputWarnings.append(
+                        "Window list omitted \(omittedRowCount) non-renderable or duplicate inventory " +
+                            "row\(omittedRowCount == 1 ? "" : "s")."
+                    )
+                }
 
                 // Convert ServiceWindowInfo to WindowInfo for consistency
                 let windowInfos = windows.map(WindowInfo.init(serviceWindow:))
@@ -49,14 +59,14 @@ extension WindowCommand {
                         bundle_id: appInfo.bundleIdentifier,
                         pid: appInfo.processIdentifier
                     ),
-                    inventory_completeness: inventory.completeness.rawValue,
-                    inventory_warnings: inventory.warnings
+                    inventory_completeness: outputCompleteness.rawValue,
+                    inventory_warnings: outputWarnings
                 )
 
                 output(data) {
                     print("\(data.target_application_info.app_name) has \(data.windows.count) window(s):")
 
-                    for warning in inventory.warnings {
+                    for warning in outputWarnings {
                         print("Warning: \(warning)")
                     }
 

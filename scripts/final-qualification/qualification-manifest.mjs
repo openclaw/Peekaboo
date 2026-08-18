@@ -1667,15 +1667,26 @@ function adjunct(value, label, { kind, binding }) {
         && pair.bundle.sha256 === controller.operations[index].bundle.sha256
         && sameJSON(pair.payload.outcome ?? null, controller.operations[index].outcome),
       `${label}[${index}] signed controller, host, listener, request, or operation differs`);
-      if (['beginExactWindowHeldPointer', 'releaseExactWindowHeldPointer'].includes(pair.payload.operation)) {
-        requireCondition(pair.report.target_attested === true && pair.report.outcome_attested === true
-          && pair.payload.outcome?.delivery_mode === 'background'
-          && pair.payload.outcome?.delivery_mechanism === 'window_targeted_events'
-          && pair.payload.outcome?.dispatched_unit_count
-            === (pair.payload.operation === 'beginExactWindowHeldPointer' ? 2 : 1)
+      const targetBoundOperations = [
+        'listWindows', 'beginExactWindowHeldPointer', 'releaseExactWindowHeldPointer',
+      ];
+      if (targetBoundOperations.includes(pair.payload.operation)) {
+        requireCondition(pair.report.target_attested === true
           && sameJSON(targetFromPayload(pair.payload, `${label}[${index}]`), controller.target),
-        `${label}[${index}] held-pointer mutation is not target-attested background delivery`);
-      } else if (pair.payload.operation === 'disconnectExactWindowHeldPointerOwner') {
+        `${label}[${index}] held-pointer target-bearing operation differs from the controlled fixture`);
+        if (pair.payload.operation !== 'listWindows') {
+          requireCondition(pair.report.outcome_attested === true
+            && pair.payload.outcome?.delivery_mode === 'background'
+            && pair.payload.outcome?.delivery_mechanism === 'window_targeted_events'
+            && pair.payload.outcome?.dispatched_unit_count
+              === (pair.payload.operation === 'beginExactWindowHeldPointer' ? 2 : 1),
+          `${label}[${index}] held-pointer mutation is not target-attested background delivery`);
+        }
+      } else {
+        requireCondition(pair.payload.target == null && pair.report.target_attested === false,
+          `${label}[${index}] targetless held-pointer operation claimed a target`);
+      }
+      if (pair.payload.operation === 'disconnectExactWindowHeldPointerOwner') {
         requireCondition(pair.payload.target == null
           && pair.report.target_attested === false
           && pair.report.outcome_attested === true
