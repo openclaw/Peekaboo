@@ -36,16 +36,22 @@ extension MenuCommand {
                     try self.target.validate()
                     try self.validateForegroundOptions()
                     try self.validateTargetConsent()
-                    let appIdentifier = try await self.resolveTargetApplicationIdentifier()
+                    let appIdentifier = try await MenuForegroundTargetSupport.resolveApplicationIdentifier(
+                        target: self.target,
+                        services: self.services
+                    )
                     let appInfo = try await self.resolveApplicationForMutation(
                         appIdentifier,
                         services: self.services
                     )
-                    let pinnedAppIdentifier = "PID:\(appInfo.processIdentifier)"
+                    let preparedTarget = try MenuForegroundTargetSupport.prepare(application: appInfo)
                     if self.foreground, self.focusOptions.autoFocus {
-                        let focusResult = try await self.performForegroundFocus(
-                            appInfo: appInfo,
-                            pinnedAppIdentifier: pinnedAppIdentifier
+                        let focusResult = try await MenuForegroundTargetSupport.focus(
+                            target: preparedTarget,
+                            selector: self.target,
+                            options: self.focusOptions,
+                            services: self.services,
+                            beginMutation: { self.resolvedRuntime.beginInteractionMutation() }
                         )
                         try actionSequence.record(
                             focusResult,
@@ -65,7 +71,7 @@ extension MenuCommand {
 
                     self.resolvedRuntime.beginInteractionMutation()
                     let actionResult = try await self.performMenuClick(
-                        appInfo: appInfo,
+                        target: preparedTarget,
                         itemName: normalizedItem,
                         path: canonicalPath
                     )
@@ -95,7 +101,7 @@ extension MenuCommand {
                         if self.jsonOutput {
                             let data = MenuClickResult(
                                 action: "menu_click",
-                                app: appInfo.name,
+                                app: preparedTarget.application.name,
                                 menu_path: clickedPath,
                                 clicked_item: clickedPath
                             )
@@ -175,21 +181,19 @@ extension MenuCommand {
         }
 
         private func performMenuClick(
-            appInfo: ServiceApplicationInfo,
+            target: MenuForegroundTargetSupport.PreparedTarget,
             itemName: String?,
             path: String?
         ) async throws -> UIAutomationActionResult<Void> {
-            let identity = try Self.requireMenuProcessIdentity(appInfo)
-            let pinnedAppIdentifier = "PID:\(identity.processIdentifier)"
             let deliveryMode: DesktopActionOutcome.Delivery.Mode = self.foreground ? .foreground : .background
 
             if let itemName {
                 return try await MenuServiceBridge.clickMenuItemByName(
                     menu: self.services.menu,
                     request: MenuItemByNameActionRequest(
-                        appIdentifier: pinnedAppIdentifier,
+                        appIdentifier: target.identifier,
                         itemName: itemName,
-                        expectedIdentity: identity,
+                        expectedIdentity: target.identity,
                         deliveryMode: deliveryMode
                     )
                 )
@@ -201,107 +205,12 @@ extension MenuCommand {
             return try await MenuServiceBridge.clickMenuItem(
                 menu: self.services.menu,
                 request: MenuItemActionRequest(
-                    appIdentifier: pinnedAppIdentifier,
+                    appIdentifier: target.identifier,
                     itemPath: path,
-                    expectedIdentity: identity,
+                    expectedIdentity: target.identity,
                     deliveryMode: deliveryMode
                 )
             )
-        }
-
-        private static func requireMenuProcessIdentity(
-            _ application: ServiceApplicationInfo
-        ) throws -> ApplicationProcessIdentity {
-            guard let identity = application.processIdentity else {
-                throw DesktopActionFailure.preDispatchRefusal(
-                    reason: .targetUnavailable,
-                    message: "Menu click requires a stable application process receipt.",
-                    hint: "Refresh the application inventory before retrying."
-                )
-            }
-            return identity
-        }
-
-        private func performForegroundFocus(
-            appInfo: ServiceApplicationInfo,
-            pinnedAppIdentifier: String
-        ) async throws -> UIAutomationActionResult<Void> {
-            if let preparedWindow = try await self.resolvePreparedForegroundWindow(appInfo: appInfo) {
-                self.resolvedRuntime.beginInteractionMutation()
-                return try await ensureFocused(
-                    preparedWindow: preparedWindow,
-                    applicationName: pinnedAppIdentifier,
-                    options: self.focusOptions,
-                    services: self.services
-                )
-            }
-
-            self.resolvedRuntime.beginInteractionMutation()
-            return try await ApplicationServiceBridge.activateApplicationTargeted(
-                applications: self.services.applications,
-                application: appInfo
-            )
-        }
-
-        private func resolvePreparedForegroundWindow(
-            appInfo: ServiceApplicationInfo
-        ) async throws -> ServiceWindowInfo? {
-            let expectedIdentity = try Self.requireMenuProcessIdentity(appInfo)
-            let hasExplicitWindowSelector = self.target.windowId != nil ||
-                self.target.windowTitle != nil ||
-                self.target.windowIndex != nil
-            let inventoryTarget: WindowTarget = if let windowID = self.target.windowId {
-                .windowId(windowID)
-            } else {
-                .application("PID:\(expectedIdentity.processIdentifier)")
-            }
-            let windows = try await WindowServiceBridge.listWindows(
-                windows: self.services.windows,
-                target: inventoryTarget
-            )
-            let window: ServiceWindowInfo
-            if hasExplicitWindowSelector {
-                do {
-                    window = try ExactWindowSelectorResolver.select(
-                        from: windows,
-                        selector: self.target.selector,
-                        operation: "Menu focus"
-                    )
-                } catch {
-                    throw DesktopActionFailure.preDispatchRefusal(
-                        reason: .targetUnavailable,
-                        message: error.localizedDescription,
-                        hint: "Refresh the window inventory and select one exact --window-id."
-                    )
-                }
-            } else {
-                guard let bestWindow = ObservationTargetResolver.bestWindow(from: windows) else {
-                    return nil
-                }
-                window = bestWindow
-            }
-            guard let windowIdentity = window.mutationIdentity,
-                  windowIdentity.ownerProcessIdentifier == expectedIdentity.processIdentifier,
-                  windowIdentity.ownerProcessStartIdentity == expectedIdentity.processStartIdentity
-            else {
-                throw DesktopTargetPlanningError.windowOwnerMismatch(
-                    windowID: window.windowID,
-                    expected: expectedIdentity
-                ).desktopActionFailure
-            }
-            return window
-        }
-
-        private func resolveTargetApplicationIdentifier() async throws -> String {
-            if let appIdentifier = try self.target.resolveApplicationIdentifierOptional() {
-                return appIdentifier
-            }
-
-            guard let frontmost = try? await self.services.applications.getFrontmostApplication() else {
-                throw ValidationError("No frontmost app found; provide --app or --pid")
-            }
-
-            return frontmost.bundleIdentifier ?? frontmost.name
         }
 
         private func validateForegroundOptions() throws {

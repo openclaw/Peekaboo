@@ -381,17 +381,23 @@ struct CommanderBinderTests {
 
     @Test
     func `Menu list requires invalidation only when auto focus may run`() throws {
-        let autoFocus = try CommanderCLIBinder.makeRuntimeOptions(
+        let background = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(positional: [], options: [:], flags: []),
             commandType: MenuCommand.ListSubcommand.self
         )
-        #expect(autoFocus.requiresImplicitSnapshotInvalidation)
+        #expect(!background.requiresImplicitSnapshotInvalidation)
 
-        let background = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(positional: [], options: [:], flags: ["noAutoFocus"]),
+        let foreground = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: ["foreground"]),
             commandType: MenuCommand.ListSubcommand.self
         )
-        #expect(!background.requiresImplicitSnapshotInvalidation)
+        #expect(foreground.requiresImplicitSnapshotInvalidation)
+
+        let foregroundWithoutFocus = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: ["foreground", "noAutoFocus"]),
+            commandType: MenuCommand.ListSubcommand.self
+        )
+        #expect(!foregroundWithoutFocus.requiresImplicitSnapshotInvalidation)
     }
 
     @Test

@@ -147,11 +147,25 @@ final class OutcomeStubMenuService: StubMenuService, MenuServiceGenerationPinned
     var actionTargetIdentity: DesktopTargetIdentity?
     var actionError: (any Error)?
     var actionCompleted: (() -> Void)?
+    var listMenusError: (any Error)?
+    var listMenusResult: MenuStructure?
     var menuBarClickResult = ClickResult(elementDescription: "Menu bar item", location: nil)
     private(set) var menuBarNameClickCalls: [String] = []
     private(set) var menuBarIndexClickCalls: [Int] = []
     private(set) var menuItemRequests: [MenuItemActionRequest] = []
     private(set) var namedMenuItemRequests: [MenuItemByNameActionRequest] = []
+
+    override func listMenus(for appIdentifier: String) async throws -> MenuStructure {
+        if let listMenusError {
+            self.listMenusRequests.append(appIdentifier)
+            throw listMenusError
+        }
+        if let listMenusResult {
+            self.listMenusRequests.append(appIdentifier)
+            return listMenusResult
+        }
+        return try await super.listMenus(for: appIdentifier)
+    }
 
     override func listMenuBarItems(includeRaw: Bool) async throws -> [MenuBarItemInfo] {
         self.menuBarItems

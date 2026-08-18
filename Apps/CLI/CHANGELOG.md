@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Pin foreground menu focus, clicks, and listing to one exact process/window generation across CLI and MCP, preserving focus outcomes when a later menu read fails.
 - Refuse fuzzy application selectors before app, menu, window, or background click mutations are pinned to a process, while preserving fuzzy read-only discovery.
 - Preserve local Option/Meta chords while buffering fragmented terminal escape sequences longer over SSH, and ignore stale cancelled escape timers that arrive after a newer sequence.
 - Update AXorcist so synchronous and legacy element observers share the bounded registration and cleanup state machine, preventing a wedged endpoint from blocking Peekaboo's main actor indefinitely or escaping late-result rollback.

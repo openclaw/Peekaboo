@@ -6,6 +6,16 @@ import TachikomaMCP
 
 /// MCP tool for interacting with application menu bars
 public struct MenuTool: MCPTool {
+    private struct PreparedApplicationTarget {
+        let application: ServiceApplicationInfo
+        let identity: ApplicationProcessIdentity
+        let window: DesktopTargetPlanning.WindowMutationPlan?
+
+        var identifier: String {
+            "PID:\(self.identity.processIdentifier)"
+        }
+    }
+
     private struct ClickResponsePolicy {
         let requiredDeliveryMode: DesktopActionOutcome.Delivery.Mode
         let requiresTarget: Bool
@@ -24,7 +34,8 @@ public struct MenuTool: MCPTool {
         - click: Click on a specific menu item using path notation
 
         Target applications by name (e.g., "Safari"), bundle ID (e.g., "com.apple.Safari"),
-        or process ID (e.g., "PID:663"). Fuzzy matching is supported for names.
+        or process ID (e.g., "PID:663"). Click and foreground-list actions require an exact
+        name, bundle ID, or PID; background read-only listing retains fuzzy name matching.
 
         Examples:
         - List Chrome menus: { "action": "list", "app": "Google Chrome" }
@@ -45,8 +56,8 @@ public struct MenuTool: MCPTool {
                     """.trimmingCharacters(in: .whitespacesAndNewlines),
                     enum: ["list", "click"]),
                 "app": SchemaBuilder.string(
-                    description: "Target application name, bundle ID, or process ID " +
-                        "(required for list and click actions)"),
+                    description: "Target application name, bundle ID, or process ID. Click and foreground list " +
+                        "require an exact selector; background list permits fuzzy names."),
                 "path": SchemaBuilder.string(
                     description: "Menu path for nested items (e.g., 'File > Save As...' or 'Edit > Copy')"),
                 "item": SchemaBuilder.string(
@@ -86,11 +97,27 @@ public struct MenuTool: MCPTool {
             return ToolResponse.error("Missing required parameter: app (required for list action)")
         }
 
+        let foreground = arguments.getBool("foreground") == true
+        let target: PreparedApplicationTarget?
+        do {
+            target = foreground
+                ? try await self.prepareApplicationTarget(
+                    app: app,
+                    operation: "Foreground menu list",
+                    requiresWindow: true)
+                : nil
+        } catch let failure as DesktopActionFailure {
+            return try await MCPDesktopActionFailureHandler.response(
+                for: failure,
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: nil)
+        }
+
         let focusResult: UIAutomationActionResult<Void>?
         do {
             focusResult = try await self.foregroundFocusResult(
-                app: app,
-                requested: arguments.getBool("foreground") == true)
+                target: target,
+                requested: foreground)
         } catch let failure as DesktopActionFailure {
             return try await MCPDesktopActionFailureHandler.response(
                 for: failure,
@@ -99,7 +126,13 @@ public struct MenuTool: MCPTool {
         }
 
         do {
-            let menuStructure = try await self.context.menu.listMenus(for: app)
+            let menuStructure = if let target {
+                try await self.context.menu.listMenus(request: MenuListRequest(
+                    appIdentifier: target.identifier,
+                    expectedIdentity: target.identity))
+            } else {
+                try await self.context.menu.listMenus(for: app)
+            }
             let formattedOutput = self.formatMenuStructure(menuStructure)
 
             var baseMeta: [String: Value] = [
@@ -149,12 +182,33 @@ public struct MenuTool: MCPTool {
         guard let app = arguments.getString("app") else {
             return ToolResponse.error("Missing required parameter: app (required for click action)")
         }
+        let path = arguments.getString("path")
+        let item = arguments.getString("item")
+        guard (path != nil) != (item != nil) else {
+            return ToolResponse.error("Menu click requires exactly one of 'path' or 'item'")
+        }
+
+        let foreground = arguments.getBool("foreground") == true
+        let target: PreparedApplicationTarget
+        let service: any MenuServiceGenerationPinnedActionResultProviding
+        do {
+            target = try await self.prepareApplicationTarget(
+                app: app,
+                operation: "Menu click",
+                requiresWindow: foreground)
+            service = try self.generationPinnedMenuService()
+        } catch let failure as DesktopActionFailure {
+            return try await MCPDesktopActionFailureHandler.response(
+                for: failure,
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: nil)
+        }
 
         let focusResult: UIAutomationActionResult<Void>?
         do {
             focusResult = try await self.foregroundFocusResult(
-                app: app,
-                requested: arguments.getBool("foreground") == true)
+                target: target,
+                requested: foreground)
         } catch let failure as DesktopActionFailure {
             return try await MCPDesktopActionFailureHandler.response(
                 for: failure,
@@ -163,89 +217,67 @@ public struct MenuTool: MCPTool {
         }
 
         // Try path first, then item
-        if let path = arguments.getString("path") {
+        if let path {
             do {
-                let result: UIAutomationActionResult<Void>
-                if arguments.getBool("foreground") != true {
-                    let identity = try await self.backgroundMenuProcessIdentity(app: app)
-                    let service = try self.generationPinnedMenuService()
-                    let request = try MenuItemActionRequest(
-                        appIdentifier: "PID:\(identity.processIdentifier)",
-                        itemPath: path,
-                        expectedIdentity: identity,
-                        deliveryMode: .background)
-                    let rawResult = try await service.clickMenuItemActionResult(request: request)
-                    result = try service.validatedGenerationPinnedMenuResult(
-                        rawResult,
-                        expectedIdentity: identity,
-                        operation: "Background menu click")
-                } else {
-                    result = try await self.context.menu.clickMenuItemResult(app: app, itemPath: path)
-                }
+                let request = try MenuItemActionRequest(
+                    appIdentifier: target.identifier,
+                    itemPath: path,
+                    expectedIdentity: target.identity,
+                    deliveryMode: foreground ? .foreground : .background)
+                let rawResult = try await service.clickMenuItemActionResult(request: request)
+                let result = try service.validatedGenerationPinnedMenuResult(
+                    rawResult,
+                    expectedIdentity: target.identity,
+                    operation: foreground ? "Foreground menu click" : "Background menu click")
                 return try await self.clickResponse(
-                    app: app,
+                    app: target.application.name,
                     item: path,
                     result: result,
                     focusResult: focusResult,
                     policy: .init(
-                        requiredDeliveryMode: arguments.getBool("foreground") == true ? .foreground : .background,
-                        requiresTarget: self.context.menu is any MenuServiceActionResultProviding))
+                        requiredDeliveryMode: foreground ? .foreground : .background,
+                        requiresTarget: true))
             } catch let failure as DesktopActionFailure {
                 return try await self.failureResponse(
                     failure,
                     after: focusResult,
                     operation: "menu click")
             } catch {
-                if focusResult != nil {
-                    return try await self.failureResponse(
-                        error,
-                        after: focusResult,
-                        operation: "menu click")
-                }
-                return ToolResponse
-                    .error("Failed to click menu item '\(path)' in app '\(app)': \(error.localizedDescription)")
+                return try await self.failureResponse(
+                    error,
+                    after: focusResult,
+                    operation: "menu click")
             }
-        } else if let item = arguments.getString("item") {
+        } else if let item {
             do {
-                let result: UIAutomationActionResult<Void>
-                if arguments.getBool("foreground") != true {
-                    let identity = try await self.backgroundMenuProcessIdentity(app: app)
-                    let service = try self.generationPinnedMenuService()
-                    let request = try MenuItemByNameActionRequest(
-                        appIdentifier: "PID:\(identity.processIdentifier)",
-                        itemName: item,
-                        expectedIdentity: identity,
-                        deliveryMode: .background)
-                    let rawResult = try await service.clickMenuItemByNameActionResult(request: request)
-                    result = try service.validatedGenerationPinnedMenuResult(
-                        rawResult,
-                        expectedIdentity: identity,
-                        operation: "Background named menu click")
-                } else {
-                    result = try await self.context.menu.clickMenuItemByNameResult(app: app, itemName: item)
-                }
+                let request = try MenuItemByNameActionRequest(
+                    appIdentifier: target.identifier,
+                    itemName: item,
+                    expectedIdentity: target.identity,
+                    deliveryMode: foreground ? .foreground : .background)
+                let rawResult = try await service.clickMenuItemByNameActionResult(request: request)
+                let result = try service.validatedGenerationPinnedMenuResult(
+                    rawResult,
+                    expectedIdentity: target.identity,
+                    operation: foreground ? "Foreground named menu click" : "Background named menu click")
                 return try await self.clickResponse(
-                    app: app,
+                    app: target.application.name,
                     item: item,
                     result: result,
                     focusResult: focusResult,
                     policy: .init(
-                        requiredDeliveryMode: arguments.getBool("foreground") == true ? .foreground : .background,
-                        requiresTarget: self.context.menu is any MenuServiceActionResultProviding))
+                        requiredDeliveryMode: foreground ? .foreground : .background,
+                        requiresTarget: true))
             } catch let failure as DesktopActionFailure {
                 return try await self.failureResponse(
                     failure,
                     after: focusResult,
                     operation: "menu click")
             } catch {
-                if focusResult != nil {
-                    return try await self.failureResponse(
-                        error,
-                        after: focusResult,
-                        operation: "menu click")
-                }
-                return ToolResponse
-                    .error("Failed to click menu item '\(item)' in app '\(app)': \(error.localizedDescription)")
+                return try await self.failureResponse(
+                    error,
+                    after: focusResult,
+                    operation: "menu click")
             }
         } else {
             return ToolResponse
@@ -254,10 +286,16 @@ public struct MenuTool: MCPTool {
     }
 
     private func foregroundFocusResult(
-        app: String,
+        target: PreparedApplicationTarget?,
         requested: Bool) async throws -> UIAutomationActionResult<Void>?
     {
         guard requested else { return nil }
+        guard let target else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .runtimeIncompatible,
+                message: "Foreground menu access reached focus without exact application authority.",
+                hint: "Retry through the current Peekaboo runtime.")
+        }
         guard self.context.windows is any WindowManagementPinnedFocusActionResultProviding else {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .runtimeIncompatible,
@@ -265,36 +303,20 @@ public struct MenuTool: MCPTool {
                 hint: "Update the runtime host before retrying with foreground=true.")
         }
 
-        let windows: [ServiceWindowInfo]
-        do {
-            windows = try await self.context.windows.listWindows(target: .application(app))
-        } catch let failure as DesktopActionFailure {
-            throw failure
-        } catch {
+        guard let window = target.window else {
             throw DesktopActionFailure.preDispatchRefusal(
-                reason: .targetUnavailable,
-                message: "The foreground menu window could not be resolved before focus.",
-                hint: "Refresh the application window inventory before retrying.",
-                causeDescription: error.localizedDescription)
-        }
-        guard let window = ObservationTargetResolver.captureCandidates(from: windows).first,
-              let identity = window.mutationIdentity,
-              let bounds = identity.capturedBounds,
-              bounds == window.bounds
-        else {
-            throw DesktopActionFailure.preDispatchRefusal(
-                reason: .targetUnavailable,
-                message: "Foreground menu access requires one window with a stable exact receipt.",
-                hint: "Refresh the application windows before retrying.")
+                reason: .runtimeIncompatible,
+                message: "Foreground menu access reached focus without exact window authority.",
+                hint: "Retry through the current Peekaboo runtime.")
         }
 
         do {
             let result = try await self.context.windows.focusWindowResult(
-                target: .windowId(window.windowID),
-                expectedIdentity: identity)
+                target: window.target,
+                expectedIdentity: window.identity)
             return try self.context.windows.validatedWindowMutationResult(
                 result,
-                expectedIdentity: identity,
+                expectedIdentity: window.identity,
                 operation: "Foreground menu focus")
         } catch let failure as DesktopActionFailure {
             throw failure
@@ -306,9 +328,9 @@ public struct MenuTool: MCPTool {
                 hint: "Observe the exact window before retrying foreground menu access.",
                 causeDescription: error.localizedDescription)
                 .attributed(to: DesktopActionTargetReceipt(
-                    processIdentifier: identity.ownerProcessIdentifier,
-                    processStartIdentity: identity.ownerProcessStartIdentity,
-                    windowID: identity.windowID))
+                    processIdentifier: window.identity.ownerProcessIdentifier,
+                    processStartIdentity: window.identity.ownerProcessStartIdentity,
+                    windowID: window.identity.windowID))
         }
     }
 
@@ -381,27 +403,60 @@ public struct MenuTool: MCPTool {
             targetIdentity: targetIdentity)
     }
 
-    private func backgroundMenuProcessIdentity(app: String) async throws -> ApplicationProcessIdentity {
-        let application: ServiceApplicationInfo
+    @MainActor
+    private func prepareApplicationTarget(
+        app: String,
+        operation: String,
+        requiresWindow: Bool = false) async throws -> PreparedApplicationTarget
+    {
+        let authorizedTarget = requiresWindow
+            ? nil
+            : try self.context.authorizedDesktopTargetPlan(operation: operation)
+
         do {
-            application = try await self.context.applications.findApplication(identifier: app)
+            if requiresWindow {
+                guard self.context.windows is any WindowManagementPinnedFocusActionResultProviding else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: .runtimeIncompatible,
+                        message: "Foreground menu access requires result-aware exact-window focus.",
+                        hint: "Update the runtime host before retrying with foreground=true.")
+                }
+                let planner = DesktopTargetPlanning.MutationAuthorityPlanner(
+                    applications: self.context.applications,
+                    windows: self.context.windows)
+                let authority = try await planner.plan(
+                    selector: InteractionTargetSelector(applicationIdentifier: app),
+                    requirement: .exactWindow(
+                        automaticSelection: .preferredMutationWindow(.general)))
+                let plan = authority.application
+                return PreparedApplicationTarget(
+                    application: plan.application,
+                    identity: plan.processIdentity,
+                    window: authority.window)
+            }
+
+            let planner = DesktopTargetPlanning.ApplicationMutationPlanner(
+                applications: self.context.applications)
+            let plan = try await planner.plan(
+                identifier: app,
+                expectedIdentity: authorizedTarget?.processIdentity)
+            return PreparedApplicationTarget(
+                application: plan.application,
+                identity: plan.processIdentity,
+                window: nil)
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch let error as DesktopTargetPlanningError {
+            throw error.desktopActionFailure
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .targetUnavailable,
-                message: "The authorized menu application disappeared before dispatch.",
+                message: "The menu application could not be authorized before dispatch.",
                 hint: "Refresh the application inventory before retrying.",
                 causeDescription: error.localizedDescription)
         }
-        guard let processIdentity = application.processIdentity else {
-            throw DesktopActionFailure.preDispatchRefusal(
-                reason: .targetUnavailable,
-                message: "The authorized menu application has no stable process-generation identity.",
-                hint: "Refresh the application inventory before retrying.")
-        }
-        let candidate = try DesktopTargetIdentity(processIdentity: processIdentity)
-        return try self.context.coalesceAuthorizedDesktopTarget(
-            candidate,
-            operation: "Menu click").processIdentity
     }
 
     private func generationPinnedMenuService() throws -> any MenuServiceGenerationPinnedActionResultProviding {
@@ -409,7 +464,7 @@ public struct MenuTool: MCPTool {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .runtimeIncompatible,
                 message: "The selected menu service cannot preserve the authorized process generation.",
-                hint: "Update the runtime host before retrying this background menu mutation.")
+                hint: "Update the runtime host before retrying this menu mutation.")
         }
         return service
     }

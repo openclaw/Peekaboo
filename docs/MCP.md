@@ -240,6 +240,8 @@ Pointer tools use an explicit interruption policy. `scroll` is background-safe o
 
 Background process mutations resolve application selectors through the complete mutation inventory before rewriting them to a generation-pinned PID. Exact case-insensitive names, exact bundle IDs, and explicit PIDs are accepted; fuzzy partial application names are refused before the tool leaf runs. Read-only application/window discovery keeps its fuzzy compatibility behavior.
 
+MCP `menu` foreground click and list plan one exact application/window authority before focus. Path and named clicks carry that PID and process generation through dispatch, while foreground listing rejects a returned menu tree whose owner generation changed. If menu access fails after focus, the response retains the focus outcome and exact window receipt. Background menu listing remains read-only and keeps fuzzy selector compatibility.
+
 ```json
 {
   "coords": "300,220",

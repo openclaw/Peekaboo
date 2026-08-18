@@ -936,6 +936,15 @@ enum MenuServiceBridge {
         }.value
     }
 
+    static func listMenus(
+        menu: any MenuServiceProtocol,
+        request: MenuListRequest
+    ) async throws -> MenuStructure {
+        try await Task { @MainActor in
+            try await menu.listMenus(request: request)
+        }.value
+    }
+
     static func clickMenuItem(
         menu: any MenuServiceProtocol,
         request: MenuItemActionRequest

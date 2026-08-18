@@ -451,7 +451,7 @@ enum CommanderCLIBinder {
 
     private static func menuListMayFocus(_ parsedValues: ParsedValues) -> Bool {
         let values = CommanderBindableValues(parsedValues: parsedValues)
-        return !values.flag("noAutoFocus")
+        return values.flag("foreground") && !values.flag("noAutoFocus")
     }
 
     private static func captureCommandMayFocus(

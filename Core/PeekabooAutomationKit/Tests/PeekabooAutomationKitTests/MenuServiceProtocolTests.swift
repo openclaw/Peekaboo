@@ -44,6 +44,45 @@ struct MenuServiceProtocolTests {
     }
 
     @Test
+    func `menu list requests require the expected PID identifier`() throws {
+        let request = try MenuListRequest(
+            appIdentifier: "PID:701",
+            expectedIdentity: self.identity)
+        let decoded = try JSONDecoder().decode(
+            MenuListRequest.self,
+            from: JSONEncoder().encode(request))
+
+        #expect(decoded == request)
+        #expect(throws: (any Error).self) {
+            try MenuListRequest(appIdentifier: "Fixture", expectedIdentity: self.identity)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `menu list requests reject a substituted process generation`() async throws {
+        let replacement = ServiceApplicationInfo(
+            processIdentifier: self.identity.processIdentifier,
+            processStartIdentity: self.identity.processStartIdentity + 1,
+            bundleIdentifier: "dev.peekaboo.fixture",
+            name: "Fixture")
+        let service = LegacyMenuProtocolProbe(menuStructure: MenuStructure(application: replacement, menus: []))
+        let request = try MenuListRequest(
+            appIdentifier: "PID:701",
+            expectedIdentity: self.identity)
+
+        do {
+            _ = try await service.listMenus(request: request)
+            Issue.record("Expected a substituted menu generation to fail")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.targetReceipt?.processIdentifier == self.identity.processIdentifier)
+            #expect(failure.targetReceipt?.processStartIdentity == self.identity.processStartIdentity)
+        }
+        #expect(service.listIdentifiers == ["PID:701"])
+    }
+
+    @Test
     @MainActor
     func `legacy app menu result adapters describe background delivery`() async throws {
         let service: any MenuServiceProtocol = LegacyMenuProtocolProbe()
@@ -66,8 +105,19 @@ struct MenuServiceProtocolTests {
 
 @MainActor
 private final class LegacyMenuProtocolProbe: MenuServiceProtocol {
-    func listMenus(for _: String) async throws -> MenuStructure {
-        throw PeekabooError.notImplemented("unused")
+    let menuStructure: MenuStructure?
+    private(set) var listIdentifiers: [String] = []
+
+    init(menuStructure: MenuStructure? = nil) {
+        self.menuStructure = menuStructure
+    }
+
+    func listMenus(for identifier: String) async throws -> MenuStructure {
+        self.listIdentifiers.append(identifier)
+        guard let menuStructure else {
+            throw PeekabooError.notImplemented("unused")
+        }
+        return menuStructure
     }
 
     func listFrontmostMenus() async throws -> MenuStructure {

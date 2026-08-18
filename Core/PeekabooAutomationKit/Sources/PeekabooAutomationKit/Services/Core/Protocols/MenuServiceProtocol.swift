@@ -151,6 +151,43 @@ public protocol MenuServiceExactLeafActionResultProviding: MenuServiceActionResu
         -> UIAutomationActionResult<ClickResult>
 }
 
+/// A menu inventory read pinned to the application process generation selected by the caller.
+public struct MenuListRequest: Sendable, Codable, Equatable {
+    public let appIdentifier: String
+    public let expectedIdentity: ApplicationProcessIdentity
+
+    public init(
+        appIdentifier: String,
+        expectedIdentity: ApplicationProcessIdentity) throws
+    {
+        guard appIdentifier == "PID:\(expectedIdentity.processIdentifier)" else {
+            throw PeekabooError.invalidInput(
+                "Exact menu list identifier must match its process-generation identity")
+        }
+        self.appIdentifier = appIdentifier
+        self.expectedIdentity = expectedIdentity
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case appIdentifier
+        case expectedIdentity
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let appIdentifier = try container.decode(String.self, forKey: .appIdentifier)
+        let expectedIdentity = try container.decode(ApplicationProcessIdentity.self, forKey: .expectedIdentity)
+        do {
+            try self.init(appIdentifier: appIdentifier, expectedIdentity: expectedIdentity)
+        } catch {
+            throw DecodingError.dataCorruptedError(
+                forKey: .appIdentifier,
+                in: container,
+                debugDescription: "Exact menu list identifier contradicts its process identity")
+        }
+    }
+}
+
 /// An application-menu path mutation pinned to the process generation selected by the caller.
 public struct MenuItemActionRequest: Sendable, Codable, Equatable {
     public let appIdentifier: String
@@ -266,6 +303,18 @@ public protocol MenuServiceGenerationPinnedActionResultProviding: MenuServiceAct
 }
 
 extension MenuServiceProtocol {
+    public func listMenus(request: MenuListRequest) async throws -> MenuStructure {
+        let structure = try await self.listMenus(for: request.appIdentifier)
+        guard structure.application.processIdentity == request.expectedIdentity else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Application PID \(request.expectedIdentity.processIdentifier) changed generation " +
+                    "while listing its menu.",
+                hint: "Refresh the application inventory before retrying.").attributed(to: request.expectedIdentity)
+        }
+        return structure
+    }
+
     public nonisolated func validatedGenerationPinnedMenuResult(
         _ result: UIAutomationActionResult<Void>,
         expectedIdentity: ApplicationProcessIdentity,

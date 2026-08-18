@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Pin foreground menu focus, clicks, and listing to one exact process/window generation across CLI and MCP, preserving focus outcomes when a later menu read fails.
 - Refuse fuzzy application selectors before CLI or MCP mutations are pinned to a process, while preserving fuzzy read-only discovery.
 - Preserve exact target and dispatch receipts when a submitted Accessibility `set-value` write cannot be verified, so CLI, MCP, and Bridge callers receive retry-unsafe guidance instead of a raw error.
 - Preserve exact scroll dispatch counts and stop retrying through another route after any accepted or possibly accepted scroll prefix; SwiftUI tab presses likewise require fresh observation instead of replaying a synthetic click after an accepted `AXPress`.

@@ -65,6 +65,135 @@ struct MCPMenuDockOutcomeTests {
         #expect(meta["retry_safe"] == .bool(true))
     }
 
+    @Test(arguments: ["fuzzy", "different"])
+    func `background menu click validates selector against retained authority`(_ scenario: String) async throws {
+        let authorizedIdentity = ApplicationProcessIdentity(
+            processIdentifier: 844,
+            processStartIdentity: 100)
+        let requestedPID: Int32 = scenario == "different" ? 845 : 844
+        let requestedGeneration: UInt64 = scenario == "different" ? 200 : 100
+        let requestedName = scenario == "different" ? "Other" : "Fixture"
+        let selector = scenario == "different" ? requestedName : "Fixt"
+        let applications = MenuGenerationApplicationService(
+            generations: [requestedGeneration, requestedGeneration],
+            processIdentifier: requestedPID,
+            applicationName: requestedName)
+        let menu = GenerationPinnedMenuService()
+        let context = await Self.makeContext(
+            menu: menu,
+            applications: applications,
+            executionPolicy: .backgroundOnly)
+        let authority = try AuthorizedDesktopTargetPlan(
+            targetIdentity: DesktopTargetIdentity(processIdentity: authorizedIdentity))
+
+        let response = try await AuthorizedDesktopTargetPlan.$current.withValue(authority) {
+            try await MenuTool(context: context).execute(arguments: ToolArguments(raw: [
+                "action": "click",
+                "app": selector,
+                "path": "File > Save",
+            ]))
+        }
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["state"] == .string("refused"))
+        #expect(response.meta?.objectValue?["dispatch_state"] == .string("none"))
+        #expect(response.meta?.objectValue?["retry_safe"] == .bool(true))
+        #expect(menu.requests.isEmpty)
+    }
+
+    @Test(arguments: ["path", "item"])
+    func `foreground menu click keeps the planned process generation`(_ selection: String) async throws {
+        let windows = ForegroundMenuWindowService()
+        let menu = ResultMenuService()
+        menu.outcome = .confirmedChange(
+            delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+            unitCount: .one)
+        menu.targetIdentity = try DesktopTargetIdentity(processIdentity: windows.identity.processIdentity)
+        let context = await Self.makeContext(menu: menu, windows: windows)
+        var arguments: [String: Any] = [
+            "action": "click",
+            "app": "Fixture",
+            "foreground": true,
+        ]
+        arguments[selection] = selection == "path" ? "File > Save" : "Save"
+
+        let response = try await MenuTool(context: context).execute(
+            arguments: ToolArguments(raw: arguments))
+
+        #expect(!response.isError)
+        #expect(windows.focusCalls == 1)
+        #expect(menu.legacyResultCalls == 0)
+        let inventoryTarget = try #require(windows.inventoryTargets.first)
+        guard case let .application(identifier) = inventoryTarget else {
+            Issue.record("Expected a process-pinned window inventory")
+            return
+        }
+        #expect(identifier == "PID:42")
+        if selection == "path" {
+            let request = try #require(menu.pathRequests.first)
+            #expect(request.appIdentifier == "PID:42")
+            #expect(request.expectedIdentity == windows.identity.processIdentity)
+            #expect(request.deliveryMode == .foreground)
+        } else {
+            let request = try #require(menu.nameRequests.first)
+            #expect(request.appIdentifier == "PID:42")
+            #expect(request.expectedIdentity == windows.identity.processIdentity)
+            #expect(request.deliveryMode == .foreground)
+        }
+    }
+
+    @Test(arguments: ["missing", "both"])
+    func `foreground menu click validates one selector before focus`(_ shape: String) async throws {
+        let windows = ForegroundMenuWindowService()
+        let menu = ResultMenuService()
+        let context = await Self.makeContext(menu: menu, windows: windows)
+        var arguments: [String: Any] = [
+            "action": "click",
+            "app": "Fixture",
+            "foreground": true,
+        ]
+        if shape == "both" {
+            arguments["path"] = "File > Save"
+            arguments["item"] = "Save"
+        }
+
+        let response = try await MenuTool(context: context).execute(
+            arguments: ToolArguments(raw: arguments))
+
+        #expect(response.isError)
+        #expect(windows.inventoryTargets.isEmpty)
+        #expect(windows.focusCalls == 0)
+        #expect(menu.pathRequests.isEmpty)
+        #expect(menu.nameRequests.isEmpty)
+    }
+
+    @Test
+    func `foreground menu click refuses a legacy menu service before focus`() async throws {
+        let windows = ForegroundMenuWindowService()
+        let menu = LegacyForegroundMenuService()
+        let applications = MenuGenerationApplicationService(
+            generations: [7, 7, 7],
+            processIdentifier: 42)
+        let context = await Self.makeContext(
+            menu: menu,
+            windows: windows,
+            applications: applications)
+
+        let response = try await MenuTool(context: context).execute(arguments: ToolArguments(raw: [
+            "action": "click",
+            "app": "Fixture",
+            "path": "File > Save",
+            "foreground": true,
+        ]))
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["state"] == .string("refused"))
+        #expect(response.meta?.objectValue?["refusal_reason"] == .string("runtime_incompatible"))
+        #expect(response.meta?.objectValue?["dispatch_state"] == .string("none"))
+        #expect(windows.focusCalls == 0)
+        #expect(menu.legacyMutationCalls == 0)
+    }
+
     @Test
     func `foreground focus success plus menu refusal preserves focus mutation`() async throws {
         let windows = ForegroundMenuWindowService()
@@ -195,6 +324,65 @@ struct MCPMenuDockOutcomeTests {
         #expect(response.meta?.objectValue?["target_receipt"]?.objectValue?["window_id"] == .int(924))
         #expect(windows.focusCalls == 1)
         #expect(menu.listCalls == 1)
+        #expect(menu.listIdentifiers == ["PID:42"])
+    }
+
+    @Test
+    func `foreground menu list discards a replacement generation and preserves focus mutation`() async throws {
+        let windows = ForegroundMenuWindowService()
+        windows.focusOutcome = .confirmedChange(
+            delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+            unitCount: .one)
+        let menu = ResultMenuService()
+        menu.menuStructure = MenuStructure(
+            application: ServiceApplicationInfo(
+                processIdentifier: 42,
+                processStartIdentity: 8,
+                bundleIdentifier: "dev.peekaboo.fixture",
+                name: "Replacement"),
+            menus: [Menu(title: "Replacement", items: [])])
+        let context = await Self.makeContext(menu: menu, windows: windows)
+
+        let response = try await MenuTool(context: context).execute(arguments: ToolArguments(raw: [
+            "action": "list",
+            "app": "Fixture",
+            "foreground": true,
+        ]))
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["state"] == .string("indeterminate"))
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(true))
+        #expect(response.meta?.objectValue?["retry_safe"] == .bool(false))
+        #expect(response.meta?.objectValue?["dispatched_unit_count"] == .int(1))
+        #expect(response.meta?.objectValue?["target_receipt"]?.objectValue?["window_id"] == .int(924))
+        #expect(windows.focusCalls == 1)
+        #expect(menu.listIdentifiers == ["PID:42"])
+    }
+
+    @Test
+    func `foreground menu list refuses a fuzzy selector before focus or listing`() async throws {
+        let windows = ForegroundMenuWindowService()
+        let menu = ResultMenuService()
+        menu.menuStructure = Self.menuStructure()
+        let applications = MenuGenerationApplicationService(
+            generations: [7, 7, 7],
+            processIdentifier: 42)
+        let context = await Self.makeContext(
+            menu: menu,
+            windows: windows,
+            applications: applications)
+
+        let response = try await MenuTool(context: context).execute(arguments: ToolArguments(raw: [
+            "action": "list",
+            "app": "Fixt",
+            "foreground": true,
+        ]))
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["state"] == .string("refused"))
+        #expect(response.meta?.objectValue?["dispatch_state"] == .string("none"))
+        #expect(windows.focusCalls == 0)
+        #expect(menu.listCalls == 0)
     }
 
     @Test
@@ -511,8 +699,11 @@ struct MCPMenuDockOutcomeTests {
             applications
         } else if menu is ResultMenuService {
             MenuGenerationApplicationService(
-                generations: [9_007_199_254_740_993],
-                processIdentifier: 42)
+                generations: windows is ForegroundMenuWindowService
+                    ? [7, 7, 7]
+                    : [9_007_199_254_740_993, 9_007_199_254_740_993, 9_007_199_254_740_993],
+                processIdentifier: 42,
+                applicationName: windows is ForegroundMenuWindowService ? "Fixture" : "TextEdit")
         } else {
             base.applications
         }
@@ -583,6 +774,7 @@ enum ForegroundMenuFailure: CaseIterable, Sendable {
 }
 
 private final class ForegroundMenuWindowService: WindowManagementPinnedFocusActionResultProviding,
+    WindowMutationInventoryProviding,
     @unchecked Sendable
 {
     let identity = WindowMutationIdentity(
@@ -595,6 +787,7 @@ private final class ForegroundMenuWindowService: WindowManagementPinnedFocusActi
         unitCount: .one)
     nonisolated(unsafe) var focusFailure: DesktopActionFailure?
     private(set) nonisolated(unsafe) var focusCalls = 0
+    private(set) nonisolated(unsafe) var inventoryTargets: [WindowTarget] = []
 
     private var window: ServiceWindowInfo {
         ServiceWindowInfo(
@@ -606,6 +799,13 @@ private final class ForegroundMenuWindowService: WindowManagementPinnedFocusActi
 
     func listWindows(target _: WindowTarget) async throws -> [ServiceWindowInfo] {
         [self.window]
+    }
+
+    func windowMutationInventory(
+        target: WindowTarget) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo>
+    {
+        self.inventoryTargets.append(target)
+        return .complete([self.window])
     }
 
     func focusWindow(target _: WindowTarget) async throws {
@@ -681,25 +881,43 @@ private enum ForegroundMenuWindowError: Error {
 }
 
 @MainActor
-private final class MenuGenerationApplicationService: StubApplicationService {
+private final class MenuGenerationApplicationService: StubApplicationService,
+    ApplicationMutationInventoryProviding
+{
     private let generations: [UInt64]
     private let processIdentifier: Int32
+    private let applicationName: String
     private var readIndex = 0
 
-    init(generations: [UInt64], processIdentifier: Int32 = 844) {
+    init(
+        generations: [UInt64],
+        processIdentifier: Int32 = 844,
+        applicationName: String = "Fixture")
+    {
         self.generations = generations
         self.processIdentifier = processIdentifier
+        self.applicationName = applicationName
         super.init()
     }
 
     override func findApplication(identifier: String) async throws -> ServiceApplicationInfo {
+        self.nextApplication(identifier: identifier)
+    }
+
+    func applicationMutationInventory() async throws
+        -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo>
+    {
+        .complete([self.nextApplication(identifier: "Fixture")])
+    }
+
+    private func nextApplication(identifier _: String) -> ServiceApplicationInfo {
         let generation = self.generations[min(self.readIndex, self.generations.count - 1)]
         self.readIndex += 1
         return ServiceApplicationInfo(
             processIdentifier: self.processIdentifier,
             processStartIdentity: generation,
             bundleIdentifier: "dev.peekaboo.menu-generation-fixture",
-            name: identifier)
+            name: self.applicationName)
     }
 }
 
@@ -799,6 +1017,52 @@ private final class GenerationPinnedMenuService: MenuServiceGenerationPinnedActi
 }
 
 @MainActor
+private final class LegacyForegroundMenuService: MenuServiceProtocol {
+    private(set) var legacyMutationCalls = 0
+
+    func listMenus(for _: String) throws -> MenuStructure {
+        throw PeekabooError.notImplemented("unused")
+    }
+
+    func listFrontmostMenus() throws -> MenuStructure {
+        throw PeekabooError.notImplemented("unused")
+    }
+
+    func clickMenuItem(app _: String, itemPath _: String) {
+        self.legacyMutationCalls += 1
+    }
+
+    func clickMenuItemByName(app _: String, itemName _: String) {
+        self.legacyMutationCalls += 1
+    }
+
+    func clickMenuExtra(title _: String) {}
+    func isMenuExtraMenuOpen(title _: String, ownerPID _: pid_t?) -> Bool {
+        false
+    }
+
+    func menuExtraOpenMenuFrame(title _: String, ownerPID _: pid_t?) -> CGRect? {
+        nil
+    }
+
+    func listMenuExtras() -> [MenuExtraInfo] {
+        []
+    }
+
+    func listMenuBarItems(includeRaw _: Bool) -> [MenuBarItemInfo] {
+        []
+    }
+
+    func clickMenuBarItem(named name: String) -> ClickResult {
+        ClickResult(elementDescription: name, location: nil)
+    }
+
+    func clickMenuBarItem(at index: Int) -> ClickResult {
+        ClickResult(elementDescription: String(index), location: nil)
+    }
+}
+
+@MainActor
 private final class ResultMenuService: MenuServiceGenerationPinnedActionResultProviding {
     var outcome: DesktopActionOutcome?
     var targetIdentity: DesktopTargetIdentity?
@@ -809,22 +1073,18 @@ private final class ResultMenuService: MenuServiceGenerationPinnedActionResultPr
     var nameResultCalls = 0
     var listCalls = 0
     var legacyMutationCalls = 0
+    var legacyResultCalls = 0
+    var pathRequests: [MenuItemActionRequest] = []
+    var nameRequests: [MenuItemByNameActionRequest] = []
+    var listIdentifiers: [String] = []
 
     func clickMenuItemActionResult(
         app _: String,
         itemPath _: String) throws -> UIAutomationActionResult<Void>
     {
         self.pathResultCalls += 1
-        if let failure {
-            throw failure
-        }
-        if let genericFailure {
-            throw genericFailure
-        }
-        return UIAutomationActionResult(
-            payload: (),
-            outcome: self.outcome,
-            targetIdentity: self.targetIdentity)
+        self.legacyResultCalls += 1
+        return try self.menuActionResult()
     }
 
     func clickMenuItemByNameActionResult(
@@ -832,30 +1092,22 @@ private final class ResultMenuService: MenuServiceGenerationPinnedActionResultPr
         itemName _: String) throws -> UIAutomationActionResult<Void>
     {
         self.nameResultCalls += 1
-        if let failure {
-            throw failure
-        }
-        if let genericFailure {
-            throw genericFailure
-        }
-        return UIAutomationActionResult(
-            payload: (),
-            outcome: self.outcome,
-            targetIdentity: self.targetIdentity)
+        self.legacyResultCalls += 1
+        return try self.menuActionResult()
     }
 
     func clickMenuItemActionResult(request: MenuItemActionRequest) throws -> UIAutomationActionResult<Void> {
-        try self.clickMenuItemActionResult(
-            app: request.appIdentifier,
-            itemPath: request.itemPath)
+        self.pathResultCalls += 1
+        self.pathRequests.append(request)
+        return try self.menuActionResult()
     }
 
     func clickMenuItemByNameActionResult(request: MenuItemByNameActionRequest) throws
         -> UIAutomationActionResult<Void>
     {
-        try self.clickMenuItemByNameActionResult(
-            app: request.appIdentifier,
-            itemName: request.itemName)
+        self.nameResultCalls += 1
+        self.nameRequests.append(request)
+        return try self.menuActionResult()
     }
 
     func clickMenuExtraActionResult(title _: String) throws -> UIAutomationActionResult<Void> {
@@ -888,8 +1140,9 @@ private final class ResultMenuService: MenuServiceGenerationPinnedActionResultPr
             targetIdentity: self.targetIdentity)
     }
 
-    func listMenus(for _: String) throws -> MenuStructure {
+    func listMenus(for identifier: String) throws -> MenuStructure {
         self.listCalls += 1
+        self.listIdentifiers.append(identifier)
         if let genericFailure {
             throw genericFailure
         }
@@ -897,6 +1150,19 @@ private final class ResultMenuService: MenuServiceGenerationPinnedActionResultPr
             throw PeekabooError.notImplemented("stub")
         }
         return menuStructure
+    }
+
+    private func menuActionResult() throws -> UIAutomationActionResult<Void> {
+        if let failure {
+            throw failure
+        }
+        if let genericFailure {
+            throw genericFailure
+        }
+        return UIAutomationActionResult(
+            payload: (),
+            outcome: self.outcome,
+            targetIdentity: self.targetIdentity)
     }
 
     func listFrontmostMenus() throws -> MenuStructure {
