@@ -36,7 +36,16 @@ enum DialogToolInputError: LocalizedError {
         case let .missingForAction(action, field):
             "Missing required parameter for \(action.rawValue): \(field)"
         case let .foregroundRequired(action):
-            "Dialog \(action.rawValue) uses global keyboard/coordinate input and requires foreground=true."
+            switch action {
+            case .input:
+                "Targetless dialog input uses global keyboard input and requires foreground=true."
+            case .file:
+                "Dialog file uses global keyboard/coordinate input and requires foreground=true."
+            case .dismiss:
+                "Forced dialog dismiss sends global Escape and requires foreground=true."
+            case .click, .list:
+                "Dialog \(action.rawValue) requires foreground=true."
+            }
         }
     }
 

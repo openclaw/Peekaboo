@@ -21,6 +21,15 @@ private func makeTestTool<T>(_ builder: () -> T) -> T {
 }
 
 @MainActor
+private func makeTestTool<T>(
+    executionPolicy: MCPToolExecutionPolicy,
+    _ factory: (MCPToolContext) -> T) -> T
+{
+    let services = PeekabooServices()
+    return factory(MCPToolContext(services: services, executionPolicy: executionPolicy))
+}
+
+@MainActor
 struct MCPSpecificToolTests {
     @Test
     func `Clipboard schema uses snake case payload names and excludes load`() {
@@ -211,6 +220,9 @@ struct MCPSpecificToolTests {
         #expect(props["force"] != nil)
         #expect(props["field_index"] != nil)
         #expect(props["foreground"] != nil)
+        #expect(tool.description.contains("targeted input defaults to background AXValue"))
+        #expect(tool.description.contains(#""action": "input""#))
+        #expect(tool.description.contains(#""foreground": true"#))
 
         // Check action enum values
         if let actionSchema = props["action"],
@@ -227,19 +239,20 @@ struct MCPSpecificToolTests {
     @Test
     func `Dialog tool requires foreground for global input paths`() async throws {
         let tool = makeTestTool(DialogTool.init)
-        let requests: [[String: Any]] = [
-            ["action": "input", "text": "hello"],
-            ["action": "file", "path": "/tmp"],
-            ["action": "dismiss", "force": true],
+        let requests: [([String: Any], String)] = [
+            (["action": "input", "text": "hello"], "Targetless dialog input"),
+            (["action": "file", "path": "/tmp"], "Dialog file"),
+            (["action": "dismiss", "force": true], "Forced dialog dismiss"),
         ]
 
-        for request in requests {
+        for (request, expectedPrefix) in requests {
             let response = try await tool.execute(arguments: ToolArguments(raw: request))
             #expect(response.isError)
             guard case let .text(text, _, _) = response.content.first else {
                 Issue.record("Expected foreground validation error")
                 continue
             }
+            #expect(text.contains(expectedPrefix))
             #expect(text.contains("requires foreground=true"))
         }
     }
@@ -323,35 +336,6 @@ struct MCPSpecificToolTests {
             #expect(actions.contains(.string("switch")))
             #expect(actions.contains(.string("move-window")))
         }
-    }
-
-    // MARK: - Press Tool Tests
-
-    @Test
-    func `Press tool schema includes both chord shapes`() {
-        let tool = makeTestTool(PressTool.init)
-
-        guard case let .object(schema) = tool.inputSchema,
-              let properties = schema["properties"],
-              case let .object(props) = properties
-        else {
-            Issue.record("Expected object schema with properties")
-            return
-        }
-
-        #expect(props["keys"] != nil)
-        #expect(props["key"] != nil)
-        #expect(props["modifiers"] != nil)
-        #expect(props["hold"] != nil)
-        guard case let .object(foreground) = props["foreground"],
-              case let .string(description) = foreground["description"]
-        else {
-            Issue.record("Expected foreground schema description")
-            return
-        }
-        #expect(description.contains("Required true"))
-        #expect(tool.description.contains("Raw chords cannot prove semantic intent or effect"))
-        #expect(tool.description.contains("foreground=true"))
     }
 
     // MARK: - Drag Tool Tests
@@ -658,7 +642,9 @@ struct MCPSpecificToolTests {
     func `MCP Agent advertises background-only authority without shell`() {
         let description = makeTestTool(MCPAgentTool.init).description
         #expect(description.contains("always background-only"))
-        #expect(description.contains("raw keyboard press"))
+        #expect(description.contains("raw `press` only with a fresh exact non-dialog snapshot receipt"))
+        #expect(description.contains("typing requires an explicit fresh exact non-dialog snapshot receipt"))
+        #expect(description.contains("input resolves the exact target and uses AXValue"))
         #expect(description.contains("Space listing and unfollowed"))
         #expect(description.contains("Shell-tool access"))
         #expect(description.contains("not a process sandbox"))
@@ -938,6 +924,93 @@ struct MCPSpecificToolTests {
         task.cancel()
         await task.value
         #expect(cancelledAt.duration(to: .now) < .seconds(1))
+    }
+}
+
+@MainActor
+struct MCPKeyboardCapabilitySchemaTests {
+    @Test
+    func `Action tool explains foreground exposing accessibility actions`() {
+        let description = makeTestTool(ActionTool.init).description
+        #expect(description.contains("including AXPress and"))
+        #expect(description.contains("AXShowMenu"))
+        #expect(description.contains("background semantic tool"))
+        #expect(description.contains("foreground-capable session"))
+    }
+
+    @Test
+    func `Press tool schema requires snapshot only for background policy`() {
+        let tool = makeTestTool(PressTool.init)
+
+        guard case let .object(schema) = tool.inputSchema,
+              let properties = schema["properties"],
+              case let .object(props) = properties,
+              case let .array(required)? = schema["required"]
+        else {
+            Issue.record("Expected object schema with properties")
+            return
+        }
+
+        #expect(props["keys"] != nil)
+        #expect(props["key"] != nil)
+        #expect(props["modifiers"] != nil)
+        #expect(props["hold"] != nil)
+        #expect(props["snapshot"] != nil)
+        #expect(props["foreground"] == nil)
+        #expect(props["app"] == nil)
+        #expect(props["window_id"] == nil)
+        #expect(required == [.string("snapshot")])
+        #expect(tool.description.contains("Raw chords cannot prove semantic intent or effect"))
+        #expect(tool.description.contains("explicit fresh exact non-dialog snapshot receipt"))
+
+        let foregroundTool = makeTestTool(executionPolicy: .foregroundAllowed, PressTool.init)
+        guard case let .object(foregroundSchema) = foregroundTool.inputSchema,
+              case let .object(foregroundProps)? = foregroundSchema["properties"]
+        else {
+            Issue.record("Expected foreground-capable press schema")
+            return
+        }
+        #expect(foregroundProps["foreground"] != nil)
+        #expect(foregroundProps["app"] != nil)
+        #expect(foregroundProps["window_id"] != nil)
+        if case let .array(foregroundRequired)? = foregroundSchema["required"] {
+            #expect(foregroundRequired.isEmpty)
+        }
+    }
+
+    @Test
+    func `Type tool schema requires an explicit background snapshot without competing selectors`() {
+        let tool = makeTestTool(TypeTool.init)
+        guard case let .object(schema) = tool.inputSchema,
+              case let .object(props)? = schema["properties"],
+              case let .array(required)? = schema["required"]
+        else {
+            Issue.record("Expected background type schema")
+            return
+        }
+        #expect(props["snapshot"] != nil)
+        #expect(props["on"] != nil)
+        #expect(props["foreground"] == nil)
+        #expect(props["app"] == nil)
+        #expect(props["pid"] == nil)
+        #expect(props["window_id"] == nil)
+        #expect(required == [.string("snapshot")])
+        #expect(tool.description.contains("explicit fresh exact non-dialog snapshot receipt"))
+        #expect(tool.description.contains("implicit-latest"))
+
+        let foregroundTool = makeTestTool(executionPolicy: .foregroundAllowed, TypeTool.init)
+        guard case let .object(foregroundSchema) = foregroundTool.inputSchema,
+              case let .object(foregroundProps)? = foregroundSchema["properties"]
+        else {
+            Issue.record("Expected foreground-capable type schema")
+            return
+        }
+        #expect(foregroundProps["foreground"] != nil)
+        #expect(foregroundProps["app"] != nil)
+        #expect(foregroundProps["window_id"] != nil)
+        if case let .array(foregroundRequired)? = foregroundSchema["required"] {
+            #expect(foregroundRequired.isEmpty)
+        }
     }
 }
 

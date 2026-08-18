@@ -3,6 +3,28 @@ import Tachikoma
 
 // MARK: - Agent System Prompt
 
+/// Shared user-facing guidance for the narrow mutation forms admitted by background-only policy.
+enum AgentBackgroundCapabilityContract {
+    static let receiptPinnedPress =
+        "Background-only Agent sessions may use raw `press` only with a fresh exact non-dialog snapshot receipt. " +
+        "Targetless, app/PID-only, window-selector-only, and `foreground: true` raw press remain unavailable."
+
+    static let snapshotPinnedType =
+        "Background-only Agent typing requires an explicit fresh exact non-dialog snapshot receipt. An optional " +
+        "element ID must come from that snapshot. Do not combine snapshot typing with app, PID, or window selectors; " +
+        "implicit-latest, selector-only, and targetless typing remain unavailable."
+
+    static let exactDialogMutations =
+        "Background-only Agent sessions may use exact targeted `dialog click`, `dismiss`, and `input` with an " +
+        "explicit app, PID, or window target. Click and dismiss use prepared one-shot dialog receipts; input " +
+        "resolves the exact target and uses AXValue. Targetless dialog mutations, dialog `file`, forced dismiss, " +
+        "and foreground dialog routes remain unavailable."
+
+    static let rawPressObservation =
+        "After receipt-pinned raw press, observe the exact target before another mutation because delivery is " +
+        "semantically unverified."
+}
+
 /// Manages the system prompt for the Peekaboo agent
 @available(macOS 14.0, *)
 public struct AgentSystemPrompt {
@@ -60,12 +82,17 @@ public struct AgentSystemPrompt {
             """
         } else {
             """
-            - This session has immutable background-only authority. Raw `press`, foreground/global input, activation,
+            - This session has immutable background-only authority. Foreground/global input, activation,
               shared-pointer tools, Dock mutations, Space switch/follow, persistent clipboard writes, browser
               setup/fronting, and shell behavior are impossible and refused before dispatch. Space list, unfollowed
-              move-window, menu list, and exact targeted direct-text paste remain available. Never emit
-              `foreground: true`, focus/switch actions, or retry/routing workarounds; only a human can start a new
-              foreground-capable session.
+              move-window, menu list, exact targeted direct-text paste, snapshot-pinned typing and raw press, and
+              exact targeted dialog mutations remain available only under their fail-closed contracts.
+            - \(AgentBackgroundCapabilityContract.receiptPinnedPress)
+            - \(AgentBackgroundCapabilityContract.snapshotPinnedType)
+            - \(AgentBackgroundCapabilityContract.exactDialogMutations)
+            - \(AgentBackgroundCapabilityContract.rawPressObservation)
+            - Never emit `foreground: true`, focus/switch actions, or retry/routing workarounds; only a human can start
+              a new foreground-capable session.
             """
         }
         let launchGuidance = if allowsForeground {
@@ -89,9 +116,17 @@ public struct AgentSystemPrompt {
             """
         } else {
             """
-            - When the user names a tool outside background-only authority, explain the policy refusal with `need_info`;
-              do not substitute shell commands or another foreground/global route.
+            - When the user names a tool, first use its allowed snapshot- or receipt-pinned background form when one
+              exists. Otherwise explain the policy refusal with `need_info`; do not substitute shell commands or
+              another foreground/global route.
             """
+        }
+        let rawKeyboardGuidance = if allowsForeground {
+            "Prefer receipt-pinned background `press`; use `foreground: true` only when foreground interruption is " +
+                "explicitly acceptable."
+        } else {
+            AgentBackgroundCapabilityContract.receiptPinnedPress + " " +
+                AgentBackgroundCapabilityContract.rawPressObservation
         }
         return """
         You are Peekaboo, an AI-powered screen automation assistant. You help users interact
@@ -153,7 +188,7 @@ public struct AgentSystemPrompt {
           autocomplete, IME behavior, or key actions matter.
         - Verify each action succeeds before moving on.
         - If an action fails, try a semantic menu, window, app, dialog, or alternate element action using the JSON
-          contracts for each tool. Raw keyboard shortcuts require explicit foreground consent.
+          contracts for each tool. \(rawKeyboardGuidance)
         - Avoid shell scripting or osascript pipelines during UI automation. Prefer first-class automation tools.
         \(launchGuidance)
         \(authorityGuidance)
@@ -243,21 +278,22 @@ public struct AgentSystemPrompt {
     private static func dialogSection(allowsForeground: Bool) -> String {
         let interactionGuidance = if allowsForeground {
             """
-            3. Use the `dialog` tool with action "input" for text fields when foreground dialog input is intentional.
+            3. Use exact targeted `dialog input` for background AXValue by default. Use a foreground dialog route only
+               when targetless/global keyboard input or file interaction is intentional.
             4. If dialog helpers fail, fall back to a precise element click only after a fresh exact observation.
             """
         } else {
             """
-            3. Use exact targeted background `dialog click`, `dismiss`, or `input` only when the tool preserves a
-               prepared dialog receipt. Targetless input, file actions, and broader click fallbacks require unavailable
-               foreground authority.
+            3. \(AgentBackgroundCapabilityContract.exactDialogMutations)
             4. If exact dialog mutation is refused, use `need_info`; never route around it with raw input.
             """
         }
         let keyboardGuidance = if allowsForeground {
-            "Keyboard shortcuts → `press` with chords such as `cmd+shift+t` and `foreground: true`."
+            "Keyboard shortcuts → prefer `press` with a fresh exact non-dialog snapshot receipt; use " +
+                "`foreground: true` only when foreground interruption is acceptable."
         } else {
-            "Keyboard shortcuts → unavailable in this background-only session; use semantic actions instead."
+            "Keyboard shortcuts → use `press` with a fresh exact non-dialog snapshot receipt; otherwise use semantic " +
+                "actions or `need_info`."
         }
         return """
         **Dialog Interaction**
@@ -271,8 +307,7 @@ public struct AgentSystemPrompt {
         **Common Patterns**
         - Menus → the `menu` tool with action "click" and the full path.
         - \(keyboardGuidance)
-        - Text entry → use `type` with an exact non-dialog snapshot/element target. Background-only Agent sessions
-          cannot use app/PID-only typing because the process-focused control could be a dialog.
+        - Text entry → \(AgentBackgroundCapabilityContract.snapshotPinnedType)
         - Scrolling → `scroll` with direction and amount.
         """
     }
@@ -320,8 +355,10 @@ public struct AgentSystemPrompt {
 
     private static func toolUsageSection(allowsForeground: Bool) -> String {
         let inputRecovery = allowsForeground
-            ? "Use raw `press` only with explicit foreground consent and verify it with a fresh observation."
-            : "Raw `press`, move, and drag are unavailable; recover with semantic background actions or `need_info`."
+            ? "Prefer receipt-pinned background `press`; use foreground raw press only with explicit consent, and " +
+            "verify either route with a fresh observation."
+            : AgentBackgroundCapabilityContract.receiptPinnedPress + " Otherwise recover with semantic background " +
+            "actions or `need_info`; move and drag remain unavailable."
         let pointerGuidance = allowsForeground
             ? "When pointer tools are necessary, use the human motion profile."
             : "Do not emit move or drag calls; they require the shared physical pointer."
@@ -353,8 +390,10 @@ public struct AgentSystemPrompt {
 
     private static func efficiencySection(allowsForeground: Bool) -> String {
         let shortcutGuidance = allowsForeground
-            ? "Use raw keyboard shortcuts only when foreground interruption is explicitly acceptable."
-            : "Use semantic background actions; raw keyboard shortcuts are unavailable in this session."
+            ? "Prefer receipt-pinned background shortcuts; use foreground shortcuts only when interruption is " +
+            "explicitly acceptable."
+            : "Use semantic background actions first; receipt-pinned raw shortcuts remain available only with a " +
+            "fresh exact non-dialog snapshot."
         return """
         **Efficiency Tips**
         - Batch related actions whenever possible.

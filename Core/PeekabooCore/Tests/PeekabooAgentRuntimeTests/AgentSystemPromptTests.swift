@@ -110,14 +110,18 @@ struct AgentSystemPromptTests {
     }
 
     @Test
-    func `generated prompt requires structured verify state predicates`() {
+    func `generated prompt requires structured predicates and receipt pinned background input`() {
         guard #available(macOS 14.0, *) else { return }
         let prompt = AgentSystemPrompt.generate()
 
         #expect(prompt.contains("predicates are structured JSON objects"))
         #expect(prompt.contains("never prose strings or AX expressions"))
-        #expect(prompt.contains("Raw keyboard shortcuts require explicit foreground consent"))
-        #expect(prompt.contains("Keyboard shortcuts → unavailable in this background-only session"))
+        #expect(prompt.contains("raw `press` only with a fresh exact non-dialog snapshot receipt"))
+        #expect(prompt.contains("Keyboard shortcuts → use `press` with a fresh exact non-dialog snapshot receipt"))
+        #expect(prompt.contains("typing requires an explicit fresh exact non-dialog snapshot receipt"))
+        #expect(prompt.contains("input resolves the exact target and uses AXValue"))
+        #expect(!prompt.contains("Raw keyboard shortcuts require explicit foreground consent"))
+        #expect(!prompt.contains("Keyboard shortcuts → unavailable in this background-only session"))
         #expect(!prompt.contains(#""foreground": true"#))
         #expect(prompt.contains("predicate schema and examples exactly"))
     }
@@ -168,7 +172,8 @@ struct AgentSystemPromptTests {
         guard #available(macOS 14.0, *) else { return }
         let prompt = AgentSystemPrompt.generate()
 
-        #expect(prompt.contains("Raw `press`"))
+        #expect(prompt.contains("snapshot-pinned typing and raw press"))
+        #expect(prompt.contains("Targetless, app/PID-only, window-selector-only"))
         #expect(prompt.contains("persistent clipboard"))
         #expect(prompt.contains("setup/fronting"))
         #expect(prompt.contains("Space switch/follow"))

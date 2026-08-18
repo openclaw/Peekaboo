@@ -34,14 +34,15 @@ extension PressCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "snapshot",
-                    help: "Snapshot ID (or explicit 'latest'); no snapshot is inferred when omitted",
+                    help: "Fresh exact snapshot receipt for background press; Agent/MCP background-only policy " +
+                        "requires an explicit non-dialog snapshot and never infers latest",
                     long: "snapshot"
                 ),
             ],
             flags: [
                 .commandFlag(
                     "focusBackground",
-                    help: "Deprecated compatibility flag; raw press still requires --foreground",
+                    help: "Deprecated compatibility flag; use an exact receipt or explicit --foreground consent",
                     long: "focus-background"
                 ),
             ],

@@ -14,53 +14,72 @@ public struct TypeTool: MCPTool {
     public let name = "type"
 
     public var description: String {
-        """
+        let targeting = if self.context.executionPolicy == .backgroundOnly {
+            """
+            Default background-only MCP/Agent delivery requires an explicit fresh exact non-dialog snapshot receipt.
+            An optional element ID must come from that snapshot. App/PID/window-only, implicit-latest, competing
+            selector, targetless, and foreground forms are refused before dispatch.
+            """
+        } else {
+            """
+            Foreground-capable callers may use snapshot, element, app, PID, or exact-window targeting and set
+            foreground=true when focused/global input is intentional.
+            """
+        }
+        return """
         Types text into UI elements, a targeted app process, or one exact background window.
         Supports human typing (--wpm) or fixed-delay (--delay) pacing. Use `press` for key presses and chords.
-        Background delivery requires an element/snapshot/app/pid target. Set `foreground=true` for intentional input
-        at the current keyboard focus or when the app must be focused first. app and pid are alternatives; provide at
-        most one window selector, and pair window_title/window_index with app or pid. A process target with one
-        eligible window is upgraded to exact-window delivery; multiple eligible windows are refused.
+        \(targeting)
         \(PeekabooMCPVersion.banner) using openai/gpt-5.6
         and anthropic/claude-opus-5
         """
     }
 
     public var inputSchema: Value {
-        SchemaBuilder.object(
-            properties: [
-                "text": SchemaBuilder.string(description: "The text to type."),
-                "on": SchemaBuilder.string(
-                    description: "Optional. Element ID to type into (from `see` or `inspect_ui`). " +
-                        "If omitted, provide snapshot/app/pid for background delivery or set foreground=true."),
-                "snapshot": SchemaBuilder.string(
-                    description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
-                        "When `on` is omitted, the snapshot process is the background typing target."),
-                "delay": SchemaBuilder.integer(
-                    description: "Optional. Delay between keystrokes in milliseconds (linear profile). Default: 0.",
-                    default: 0),
-                "profile": SchemaBuilder.string(
-                    description: "Optional. Typing profile: linear (default) or human."),
-                "wpm": SchemaBuilder.integer(
-                    description: "Optional. Human typing speed (80-220 WPM). Overrides delay when set."),
-                "clear": SchemaBuilder.boolean(
-                    description: "Optional. Clear the field before typing (Cmd+A, Delete).",
-                    default: false),
+        let backgroundOnly = self.context.executionPolicy == .backgroundOnly
+        var properties: [String: Value] = [
+            "text": SchemaBuilder.string(description: "The text to type."),
+            "on": SchemaBuilder.string(
+                description: backgroundOnly
+                    ? "Optional element ID from the required explicit snapshot."
+                    : "Optional element ID from a supplied or current snapshot."),
+            "snapshot": SchemaBuilder.string(
+                description: backgroundOnly
+                    ? "Required fresh exact non-dialog snapshot ID from `see` or `inspect_ui`."
+                    : "Optional snapshot ID from `see` or `inspect_ui`."),
+            "delay": SchemaBuilder.integer(
+                description: "Optional. Delay between keystrokes in milliseconds (linear profile). Default: 0.",
+                default: 0),
+            "profile": SchemaBuilder.string(
+                description: "Optional. Typing profile: linear (default) or human."),
+            "wpm": SchemaBuilder.integer(
+                description: "Optional. Human typing speed (80-220 WPM). Overrides delay when set."),
+            "clear": SchemaBuilder.boolean(
+                description: "Optional. Clear the field before typing (Cmd+A, Delete).",
+                default: false),
+        ]
+        if !backgroundOnly {
+            properties.merge([
                 "foreground": SchemaBuilder.boolean(
                     description: "Optional. Focus a supplied target or intentionally send global keyboard input.",
                     default: false),
                 "app": SchemaBuilder.string(
-                    description: "Optional. Target app name/bundle ID, or 'PID:<n>' for background typing."),
+                    description: "Optional foreground-capable app target; " +
+                        "unavailable with background snapshot typing."),
                 "pid": SchemaBuilder.integer(
-                    description: "Optional. Target process ID for background typing when no element snapshot is used."),
+                    description: "Optional foreground-capable process target; unavailable with background snapshots."),
                 "window_id": SchemaBuilder.integer(
-                    description: "Optional. Exact background window ID; foreground=true focuses it instead."),
+                    description: "Optional foreground-capable exact-window target; " +
+                        "unavailable with background snapshots."),
                 "window_title": SchemaBuilder
                     .string(description: "Optional. Exact window title substring; must resolve uniquely."),
                 "window_index": SchemaBuilder
                     .integer(description: "Optional. Window index (0-based); requires app/pid."),
-            ],
-            required: [])
+            ]) { _, new in new }
+        }
+        return SchemaBuilder.object(
+            properties: properties,
+            required: backgroundOnly ? ["snapshot"] : [])
     }
 
     public init(context: MCPToolContext = .shared) {

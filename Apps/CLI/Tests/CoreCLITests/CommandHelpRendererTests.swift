@@ -107,6 +107,20 @@ struct CommandHelpRendererTests {
     }
 
     @Test
+    func `keyboard dialog and action help expose exact background authority`() {
+        let pressHelp = PressCommand.helpMessage()
+        let dialogInputHelp = DialogCommand.InputSubcommand.helpMessage()
+        let actionHelp = ActionCommand.helpMessage()
+
+        #expect(pressHelp.contains("Agent/MCP background-only policy"))
+        #expect(pressHelp.contains("explicit non-dialog snapshot"))
+        #expect(pressHelp.contains("exact receipt or explicit --foreground consent"))
+        #expect(dialogInputHelp.contains("exact targeted input defaults to background AXValue"))
+        #expect(actionHelp.contains(#"AXPress --on "$ELEMENT_ID" --foreground"#))
+        #expect(actionHelp.contains("AXPress and AXShowMenu, require"))
+    }
+
+    @Test
     func `verify help labels optional predicate values as expected`() {
         let help = VerifyCommand.helpMessage()
 

@@ -11,7 +11,8 @@ read_when:
 
 Peekaboo is a macOS automation toolkit for humans and agents. It captures pixels, reads the accessibility tree, drives input, and ships an agent runtime plus an MCP server so AI clients (Codex, Claude Code, Cursor) can drive the desktop with the same primitives you'd use from the shell.
 
-> **TL;DR** — `brew install steipete/tap/peekaboo`, grant Screen Recording + Accessibility, then `peekaboo agent "open Safari and search for Peekaboo"`.
+> **TL;DR** — `brew install steipete/tap/peekaboo`, grant Screen Recording + Accessibility, then
+> `peekaboo agent "open Safari and search for Peekaboo" --allow-foreground`.
 
 ## Where to start
 

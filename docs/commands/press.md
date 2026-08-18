@@ -2,7 +2,7 @@
 summary: 'Send xdotool-style keyboard chords via peekaboo press'
 read_when:
   - 'navigating dialogs with arrow/tab/return patterns'
-  - 'sending an explicitly foreground raw key sequence with deterministic timing'
+  - 'sending a receipt-pinned background or explicitly foreground raw key sequence'
 ---
 
 # `peekaboo press`
@@ -23,6 +23,8 @@ read_when:
 
 ## Delivery mode
 - **Exact background** accepts only a fresh exact-window selector or snapshot. Peekaboo pins process generation, window ID/bounds, and focused-element identity; missing, ambiguous, or stale receipts refuse before dispatch. App/PID-only and targetless forms retain the canonical retry-safe refusal.
+- **Background-only Agent/MCP** accepts only an explicit fresh exact non-dialog snapshot. Window-selector-only and
+  implicit-latest forms are also refused by that stricter policy.
 - **Foreground** (`--foreground`) focuses a supplied target first and sends normal/global key presses. A dispatched chord remains `effect: unverifiable`; run a fresh observation before continuing.
 - Prefer named Accessibility actions and dedicated menu/window/app/dialog operations in background workflows. Exact-window `press` exposes the receipt-pinned transport but still reports its semantic effect honestly.
 
@@ -52,6 +54,9 @@ peekaboo press cmd+shift+t --app Safari --foreground
 
 # Send a chord to one already-focused exact window without activating it
 peekaboo press cmd+l --window-id 12345
+
+# Use the only background form exposed to Agent/MCP policy
+peekaboo press cmd+l --snapshot "$FRESH_EXACT_NON_DIALOG_SNAPSHOT"
 ```
 
 ## Troubleshooting

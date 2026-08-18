@@ -32,20 +32,25 @@ read_when:
   free for concurrent use. Use one process per session; if another run is using it, wait and retry the same full ID.
 - Every new Agent session is background-only by default. Provider and MCP arguments are validated first; the runtime
   then enforces the immutable authority ceiling before dispatch, including foreground aliases, shared-pointer tools,
-  focus/activation, foreground capture, global
-  shared system UI mutations, Space switch/follow, dialog mutations, raw `press`, persistent clipboard writes,
-  browser setup, and
-  browser page fronting. Space listing and unfollowed window moves remain available. Refusals report `effect: refused`,
+  focus/activation, foreground capture, global shared system UI mutations, Space switch/follow, persistent clipboard
+  writes, browser setup, and browser page fronting. Space listing and unfollowed window moves remain available.
+  Refusals report `effect: refused`,
   `mutation_dispatched: false`, and `retry_safe: true`.
+- Background-only Agent raw `press` requires a fresh exact non-dialog snapshot receipt. Targetless, app/PID-only,
+  window-selector-only, and `foreground: true` forms are refused. Its semantic effect is unverifiable, so observe the
+  exact target before another mutation.
+- Exact targeted `dialog click`, non-forced `dismiss`, and `input` remain available with an explicit app, PID, or
+  window target. Click/dismiss use prepared one-shot receipts; input resolves the exact target and uses background
+  AXValue. Targetless input, file actions, forced dismiss, and foreground routes remain unavailable.
 - `--allow-foreground` is accepted only as human authority. A new session saves foreground permission as its immutable
   maximum, but every later process invocation defaults back to background-only and must pass the flag again. A
   background-only session cannot be broadened on resume, and editing session JSON cannot authorize foreground work.
   Each continuation regenerates its system prompt for the current invocation ceiling, so a stored foreground-capable
   session resumed without the flag does not keep foreground examples or guidance.
-- Background-only Agent typing requires an exact non-dialog snapshot/element target. Direct-text paste is available
-  only through a generation-pinned app/PID/window authorization with a canonical background result. Targetless,
-  foreground, current-clipboard, and binary paste remain refused. Process-only typing cannot prove that an Agent is not
-  mutating process-focused modal UI.
+- Background-only Agent typing requires an explicit fresh exact non-dialog snapshot; an optional element ID must come
+  from that snapshot. Snapshot typing cannot include competing app/PID/window selectors. Direct-text paste
+  remains available through a generation-pinned app/PID/window authorization with a canonical background result.
+  Targetless, foreground, current-clipboard, and binary paste remain refused.
 - Foreground permission never exposes the Shell tool. Normal Agent toolsets omit `shell`, and the execution boundary
   still refuses it after `--allow-foreground`. Foreground UI authority is not a process sandbox: a trusted prompt can
   operate terminal or scripting apps through their UI, so grant `--allow-foreground` only to trusted prompts. Use

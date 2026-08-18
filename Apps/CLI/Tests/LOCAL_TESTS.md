@@ -17,8 +17,9 @@ The `TestHost` directory contains a simple SwiftUI application that serves as a 
 
 The `TestFixtures/BackgroundHotkeyProbe` package is a focused AppKit process for
 the internal process-targeted hotkey transport used by typed composite operations.
-Public raw `press` refuses background delivery and requires explicit foreground
-consent; the fixture must not be used to advertise raw PID-routed keys as certified intent.
+Raw `press` refuses targetless and PID-only background delivery. Direct CLI exact-window/snapshot receipts and
+background-only Agent/MCP explicit fresh non-dialog snapshots remain available; the fixture must not be used to
+advertise raw PID-routed keys as certified intent.
 
 ## Running Local Tests
 

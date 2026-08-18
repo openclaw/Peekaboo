@@ -27,8 +27,8 @@ Starting with v3, Peekaboo includes comprehensive window focus management that:
 
 - **Tracks window identity** across interactions using stable window IDs
 - **Detects window location** across different Spaces
-- **Switches Spaces automatically** when needed
-- **Ensures window focus** before any interaction
+- **Switches Spaces only with explicit foreground consent**
+- **Ensures window focus** before foreground interaction
 - **Handles edge cases** like minimized windows, closed windows, and multi-display setups
 
 This eliminates the need for manual window management in your automation scripts.
@@ -67,7 +67,7 @@ Foreground interaction commands automatically handle focus:
 peekaboo click "Submit" --app Safari --foreground
 peekaboo type "Hello world" --app TextEdit --foreground
 peekaboo scroll --direction down --foreground
-peekaboo menu click --app Safari --item "New Tab"
+peekaboo menu click --app Safari --item "New Tab" --foreground
 peekaboo press cmd+s --app TextEdit --foreground
 peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID" --foreground
 ```
@@ -75,7 +75,8 @@ peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID" --foreground
 ### Default Behavior
 
 By default, Peekaboo will:
-- ✅ Focus the target window before interaction
+- ✅ Keep targeted interaction in the background when the command supports it
+- ✅ Focus the target window only after explicit foreground consent
 - ✅ Refuse an unintended Space switch unless `--space-switch` or `--bring-to-current-space` is explicit
 - ✅ Wait up to 5 seconds for focus to complete
 - ✅ Retry up to 3 times if focus fails
@@ -167,7 +168,7 @@ Use cases:
 Moves the window to your current Space instead of switching to it.
 
 ```bash
-peekaboo type "Hello" --bring-to-current-space
+peekaboo type "Hello" --foreground --bring-to-current-space
 ```
 
 Use cases:
@@ -228,7 +229,7 @@ The list marks the active Space for each display; add `--json` when a script nee
 
 ```bash
 # Switch to Space 2 (1-based numbering)
-peekaboo space switch --to 2
+peekaboo space switch --to 2 --foreground
 
 ```
 
@@ -313,7 +314,7 @@ peekaboo click "Button" --app YourApp --foreground --space-switch
 peekaboo click "Button" --app YourApp --foreground --bring-to-current-space
 
 # Solution 3: Manually switch first
-peekaboo space switch --to 2
+peekaboo space switch --to 2 --foreground
 peekaboo click "Button" --app YourApp --foreground
 ```
 

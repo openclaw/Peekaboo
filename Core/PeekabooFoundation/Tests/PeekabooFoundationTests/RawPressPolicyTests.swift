@@ -13,7 +13,10 @@ struct RawPressPolicyTests {
         #expect(outcome.retrySafety == .safe)
         #expect(outcome.escalation == .correctRequest)
         #expect(outcome.refusalReason == .foregroundConsentRequired)
+        #expect(RawPressPolicy.foregroundConsentRequiredMessage.contains("fresh exact receipt"))
+        #expect(RawPressPolicy.foregroundConsentRequiredHint.contains("non-dialog snapshot"))
         #expect(RawPressPolicy.foregroundConsentRequiredHint.contains("--foreground"))
-        #expect(RawPressPolicy.foregroundConsentRequiredHint.contains("action"))
+        #expect(RawPressPolicy.foregroundConsentRequiredHint.contains("foreground=true"))
+        #expect(RawPressPolicy.foregroundConsentRequiredHint.contains("semantic action"))
     }
 }

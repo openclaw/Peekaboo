@@ -73,7 +73,7 @@ must never silently stand in for "the click landed."
 | `capture` | drops `watch` alias | `capture live`, `capture video`, `capture action` only. |
 | `click` | drops `--id` alias | `--on <id>` element, `--at <x,y>` coords (renames `--coords`), `--global` (renames `--global-coords`). |
 | `type` | text-only | Drops `--return`, `--escape`, `--delete`, `--tab` (use `press`). Keeps `--clear`. |
-| `press` | absorbs `hotkey` | xdotool `key` grammar with explicit foreground consent: `press cmd+c --foreground`, `press Return --count 3 --foreground`, `press cmd+shift+4 --foreground`. Help says "same syntax as xdotool key". |
+| `press` | absorbs `hotkey` | xdotool `key` grammar with an exact background receipt or explicit foreground consent: `press cmd+c --snapshot <fresh-exact-snapshot>`, `press Return --count 3 --foreground`, `press cmd+shift+4 --foreground`. Help says "same syntax as xdotool key". |
 | `scroll` | + OpenAI shape | Keeps `--direction/--amount`; adds `--dx/--dy` delta form so both Anthropic- and OpenAI-trained agents emit valid calls first try. |
 | `move` | flag cleanup | `--at <x,y>` / `--on <id>`; drops `--id` alias. |
 | `drag` | absorbs `swipe` | `--from` / `--to` each accept element ID *or* `x,y` (pattern-disambiguated; IDs never contain commas). Drops `--from-coords`/`--to-coords`. `--no-drop` covers swipe-without-drop if implementations truly differ (verify during implementation; else `swipe` just dies). |

@@ -14,8 +14,10 @@ public struct ActionTool: MCPTool {
 
     public var description: String {
         """
-        Invokes a named accessibility action on an element, such as AXPress or AXShowMenu.
+        Invokes a named accessibility action on an element, such as AXPress, AXShowMenu, or AXIncrement.
         Use with element IDs from `see` or `inspect_ui` when a semantic action is available.
+        Background-only policy refuses actions that can raise or expose foreground UI, including AXPress and
+        AXShowMenu; use a dedicated background semantic tool or a human-authorized foreground-capable session.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
         """
     }

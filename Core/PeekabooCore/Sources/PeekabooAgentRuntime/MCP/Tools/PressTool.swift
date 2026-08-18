@@ -14,53 +14,69 @@ public struct PressTool: MCPTool {
     public let name = "press"
 
     public var description: String {
-        """
+        let targeting = if self.context.executionPolicy == .backgroundOnly {
+            """
+            Background-only MCP/Agent delivery requires an explicit fresh exact non-dialog snapshot receipt.
+            App, PID, window-selector-only, targetless, competing-selector, and foreground forms are refused.
+            """
+        } else {
+            """
+            Foreground-capable callers may use foreground=true or an exact window/snapshot receipt whose focused
+            element can be pinned through native background dispatch.
+            """
+        }
+        return """
         Presses one or more raw keyboard chords. Use `keys` for an xdotool-style chord sequence such as
         ["cmd+c", "Return"], or use `key` plus `modifiers` for a single chord. The two input shapes are
-        mutually exclusive. Raw chords require foreground=true or an exact window/snapshot receipt whose focused
-        element can be pinned through native background dispatch. App/PID-only and targetless background press are
-        refused. Raw chords cannot prove semantic intent or effect; observe the target after unverified delivery.
-        app and pid are alternatives; provide at most one window selector; pair title/index with app or pid.
+        mutually exclusive. \(targeting)
+        Raw chords cannot prove semantic intent or effect; observe the exact target after unverified delivery.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
         """
     }
 
     public var inputSchema: Value {
-        SchemaBuilder.object(
-            properties: [
-                "keys": SchemaBuilder.array(
-                    items: SchemaBuilder.string(),
-                    description: "Optional chord sequence using xdotool key syntax, e.g. ['cmd+c', 'Return'].",
-                    minItems: 1),
-                "key": SchemaBuilder.string(
-                    description: "Optional single primary key, used with modifiers instead of keys."),
-                "modifiers": SchemaBuilder.array(
-                    items: SchemaBuilder.string(enum: [
-                        "cmd",
-                        "command",
-                        "shift",
-                        "option",
-                        "alt",
-                        "ctrl",
-                        "control",
-                        "fn",
-                    ]),
-                    description: "Optional modifiers for the single key form."),
-                "count": SchemaBuilder.integer(
-                    description: "Optional repeat count for the complete chord sequence. Default: 1.",
-                    minimum: 1,
-                    maximum: 100,
-                    default: 1),
-                "delay": SchemaBuilder.integer(
-                    description: "Optional delay between chord presses in milliseconds. Default: 100.",
-                    minimum: 0,
-                    maximum: 10000,
-                    default: 100),
-                "hold": SchemaBuilder.integer(
-                    description: "Optional duration to hold each chord in milliseconds. Default: 50.",
-                    minimum: 0,
-                    maximum: 10000,
-                    default: 50),
+        let backgroundOnly = self.context.executionPolicy == .backgroundOnly
+        var properties: [String: Value] = [
+            "keys": SchemaBuilder.array(
+                items: SchemaBuilder.string(),
+                description: "Optional chord sequence using xdotool key syntax, e.g. ['cmd+c', 'Return'].",
+                minItems: 1),
+            "key": SchemaBuilder.string(
+                description: "Optional single primary key, used with modifiers instead of keys."),
+            "modifiers": SchemaBuilder.array(
+                items: SchemaBuilder.string(enum: [
+                    "cmd",
+                    "command",
+                    "shift",
+                    "option",
+                    "alt",
+                    "ctrl",
+                    "control",
+                    "fn",
+                ]),
+                description: "Optional modifiers for the single key form."),
+            "count": SchemaBuilder.integer(
+                description: "Optional repeat count for the complete chord sequence. Default: 1.",
+                minimum: 1,
+                maximum: 100,
+                default: 1),
+            "delay": SchemaBuilder.integer(
+                description: "Optional delay between chord presses in milliseconds. Default: 100.",
+                minimum: 0,
+                maximum: 10000,
+                default: 100),
+            "hold": SchemaBuilder.integer(
+                description: "Optional duration to hold each chord in milliseconds. Default: 50.",
+                minimum: 0,
+                maximum: 10000,
+                default: 50),
+            "snapshot": SchemaBuilder.string(
+                description: backgroundOnly
+                    ? "Required fresh exact non-dialog snapshot for receipt-pinned background press."
+                    : "Optional exact-window snapshot for receipt-pinned background press."),
+        ]
+        if !backgroundOnly {
+            properties.merge([
                 "app": SchemaBuilder.string(description: "Optional target app name/bundle ID, or 'PID:<n>'."),
                 "pid": SchemaBuilder.integer(
                     description: "Optional process to focus before foreground raw input.",
@@ -70,14 +86,15 @@ public struct PressTool: MCPTool {
                     .string(description: "Optional window title (substring match) to focus before raw input."),
                 "window_index": SchemaBuilder
                     .integer(description: "Optional window index (0-based); requires app/pid."),
-                "snapshot": SchemaBuilder.string(
-                    description: "Optional fresh exact-window snapshot for receipt-pinned background press."),
                 "foreground": SchemaBuilder.boolean(
                     description: "Required true for targetless, app-only, or PID-only raw input; false is allowed " +
                         "only with an exact window or fresh snapshot receipt.",
                     default: false),
-            ],
-            required: [])
+            ]) { _, new in new }
+        }
+        return SchemaBuilder.object(
+            properties: properties,
+            required: backgroundOnly ? ["snapshot"] : [])
     }
 
     public init(context: MCPToolContext = .shared) {

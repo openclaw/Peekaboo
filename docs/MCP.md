@@ -222,7 +222,21 @@ alias); either reference opts into capture-context and live-target validation ev
 
 The `double`, `triple`, `right`, and `middle` click booleans are mutually exclusive; conflicts are rejected before snapshot lookup or dispatch. Background right-, double-, middle-, and triple-clicks use exact PID/window-routed native events without activating the app or moving the physical cursor. Middle/triple require a fresh exact-window snapshot, Event Synthesizing permission, Bridge protocol 1.30, and the `statelessClickVariants` capability; older hosts are refused before the request is encoded. Every event revalidates the normal-layer window owner, process generation, bounds, and point. Since macOS provides no application-level acknowledgment for routed pointer events, successful dispatch responses include `verified: false` and `effect: "unverifiable"`; canonical metadata retains `click_type`, exact target identity/receipt, and three dispatched units for middle or seven for triple. An unprovable or changed route is refused rather than redirected through the desktop-global event tap.
 
-Process-targeted MCP `type`, `paste`, and element `click` calls retain one application process-generation receipt instead of relying on a reusable numeric PID. Type/paste validate before each emitted unit and clicks validate around dispatch. Public raw `press` requires `foreground: true`; omitting it returns a retry-safe pre-dispatch refusal. MCP and Agent runtime selection require Bridge protocol 1.22 for process-only typed routes; older hosts are rejected before input rather than being allowed to ignore the receipt.
+Default background-only MCP/Agent `type` requires an explicit fresh exact non-dialog snapshot receipt; an optional
+element ID must come from that snapshot. Snapshot typing cannot include competing app, PID, or window selectors;
+implicit-latest, selector-only, and targetless forms are refused before dispatch. Direct CLI and explicitly
+foreground-capable runtimes retain their documented process-targeted typing routes.
+
+Background-only raw `press` likewise requires an explicit fresh exact non-dialog snapshot. App/PID-only,
+window-selector-only, targetless, and foreground forms are refused by policy before dispatch. The exact target and
+focused element are revalidated for every chord, but macOS does not acknowledge semantic effect; observe that target
+again before another mutation. Direct CLI callers may also use its documented exact-window selector form.
+
+Process-targeted MCP `paste` and element `click` calls retain one application process-generation receipt instead of
+relying on a reusable numeric PID. Paste validates before each emitted unit and clicks validate around dispatch. MCP
+and Agent foreground-capable or embedded runtimes require Bridge protocol 1.22 for process-only typed routes; default
+background MCP/Agent never selects that route. Older hosts are rejected before input rather than being allowed to
+ignore the receipt.
 
 The MCP `paste` tool also keeps window selectors exact in background mode. With `window_id`, `window_title`, or
 `window_index`, it resolves one window and carries that window's ID, owner PID, and bounds into the atomic keyboard

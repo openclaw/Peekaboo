@@ -46,8 +46,9 @@ a process sandbox; a trusted prompt can operate terminal or scripting apps throu
 standalone MCP tool contexts are also background-only. Foreground-capable CLI wrappers require an explicit
 `--foreground`, while `peekaboo mcp serve` never grants foreground authority. Background-only sessions refuse targetless/process-only raw `press`, persistent
 clipboard writes, targetless dialog input, dialog file actions, browser setup/fronting, and Space switch/follow while
-retaining exact prepared dialog actions, dialog/Space listing, and unfollowed window placement. Agent typing requires
-an exact non-dialog snapshot/element. Agent paste admits
+retaining targeted dialog click/dismiss/input, dialog/Space listing, and unfollowed window placement. Click/dismiss use
+prepared one-shot receipts; targeted input uses exact-target background AXValue. Agent typing requires an explicit
+fresh exact non-dialog snapshot, with any element ID bound to that snapshot. Agent paste admits
 only direct text with a generation-pinned app/PID/window authorization and a canonical background result; targetless,
 foreground, current-clipboard, and binary paste remain refused. Process-only delivery cannot prove that
 the focused target is not modal UI.
@@ -75,7 +76,7 @@ If you disable the `clipboard` tool via allow/deny filters, the injected DESKTOP
   Disable by clearing `PEEKABOO_AI_PROVIDERS`, removing API keys, or adding these names to your deny list when running offline.
 - **Medium risk** – can manipulate apps or data  
   - `capture`: records retained screen/window/region frames, contact sheets, metadata, and optional MP4 files. Disable it when MCP or agent clients should not persist screen contents.
-  - `click`, `type`, and `paste`: can trigger actions in foreground apps or target a background app when a safe receipt is known. Background clicks use Accessibility; background typed delivery requires Event Synthesizing. Raw `press` requires either an exact window/focused-element receipt or explicit `--foreground` consent.
+  - `click`, `type`, and `paste`: can trigger actions in foreground apps or target a background app when a safe receipt is known. Background clicks use Accessibility; background typed delivery requires Event Synthesizing. Direct CLI raw `press` requires either an exact window/focused-element receipt or explicit `--foreground` consent; background-only Agent/MCP accepts only an explicit fresh exact non-dialog snapshot.
   - `scroll`: targeted background scrolling prefers Accessibility. A fresh exact-window pixel snapshot may use retry-unsafe PID-routed wheel delivery only for visible WebKit-linked, non-Electron apps; targetless, smooth, and delayed scrolling require explicit foreground mode and Event Synthesizing.
   - `drag`, `move`: manipulate the shared physical cursor, require explicit foreground consent, and need Event Synthesizing.
   - `window`, `app`, `menu_click`, `dock_launch`, `space`: can close apps, move windows, switch spaces.  

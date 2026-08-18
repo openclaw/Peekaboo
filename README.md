@@ -68,14 +68,18 @@ peekaboo type "github.com/openclaw/Peekaboo" --app Safari
 peekaboo press Return --app Safari --foreground
 ```
 
-Targeted semantic and typed input uses background delivery when Peekaboo can resolve the process, so the app does not have to become frontmost. Raw `press` chords always require explicit `--foreground`; prefer a semantic action such as `menu click` in background workflows. See the [automation guide](docs/automation.md) for element IDs, coordinates, snapshots, waits, and input behavior.
+Targeted semantic and typed CLI input uses background delivery when Peekaboo can resolve the process, so the app does
+not have to become frontmost. Raw `press` chords can also stay background with a fresh exact non-dialog snapshot
+receipt; app/PID-only, window-selector-only under Agent/MCP policy, and targetless chords require explicit foreground
+consent. Prefer a semantic action such as `menu click` when one exists. See the
+[automation guide](docs/automation.md) for element IDs, coordinates, snapshots, waits, and input behavior.
 
 ## Agent and MCP
 
 The agent combines the same observation and action tools into a natural-language run:
 
 ```sh
-peekaboo agent "Open Safari, go to github.com, and search for Peekaboo"
+peekaboo agent "Open Safari, go to github.com, and search for Peekaboo" --allow-foreground
 ```
 
 Agent runs need a configured model provider. See [agent setup](docs/commands/agent.md) for providers and sessions, or [MCP setup](docs/MCP.md) to expose Peekaboo's tools to another client.

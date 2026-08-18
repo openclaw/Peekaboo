@@ -167,7 +167,9 @@ private enum BackgroundOnlyToolPolicy {
             self.clipboardViolation(arguments)
         case "click":
             self.explicitForeground(arguments, inverseBackgroundKey: "background")
-        case "type", "scroll":
+        case "type":
+            self.backgroundTypeViolation(arguments)
+        case "scroll":
             self.explicitForeground(arguments)
         case "press":
             self.rawPressViolation(arguments)
@@ -269,6 +271,18 @@ private enum BackgroundOnlyToolPolicy {
         }
         return .sharedDesktop(
             "public raw press requires foreground consent or a fresh exact non-dialog snapshot receipt")
+    }
+
+    private static func backgroundTypeViolation(_ arguments: ToolArguments) -> Violation? {
+        if let violation = self.explicitForeground(arguments) {
+            return violation
+        }
+        let snapshot = arguments.getString("snapshot")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard snapshot?.isEmpty == false else {
+            return .sharedDesktop(
+                "public background type requires a fresh exact non-dialog snapshot receipt")
+        }
+        return nil
     }
 
     private static func hasExactWindowSelector(_ arguments: ToolArguments) -> Bool {

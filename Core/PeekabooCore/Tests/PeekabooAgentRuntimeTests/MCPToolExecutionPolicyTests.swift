@@ -34,6 +34,10 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "see", arguments: ["web_focus": true]),
             .init(tool: "inspect_ui", arguments: ["web_focus": true]),
             .init(tool: "type", arguments: ["foreground": true]),
+            .init(tool: "type", arguments: ["foreground": false]),
+            .init(tool: "type", arguments: ["app": "TextEdit"]),
+            .init(tool: "type", arguments: ["on": "T1"]),
+            .init(tool: "type", arguments: ["snapshot": "   "]),
             .init(tool: "scroll", arguments: ["foreground": true]),
             .init(tool: "press", arguments: [:]),
             .init(tool: "press", arguments: ["foreground": false]),
@@ -143,7 +147,8 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "inspect_ui", arguments: [:]),
             .init(tool: "verify_state", arguments: [:]),
             .init(tool: "click", arguments: ["foreground": false]),
-            .init(tool: "type", arguments: ["foreground": false]),
+            .init(tool: "type", arguments: ["snapshot": "fresh-exact-non-dialog"]),
+            .init(tool: "type", arguments: ["snapshot": "fresh-exact-non-dialog", "on": "T1"]),
             .init(tool: "press", arguments: ["snapshot": "exact-window"]),
             .init(tool: "action", arguments: ["action": "AXIncrement"]),
             .init(tool: "set_value", arguments: [:]),
@@ -470,6 +475,7 @@ struct MCPToolExecutionPolicyTests {
 
     @Test
     @MainActor
+    // swiftlint:disable:next function_body_length
     func `background-only rejects conflicting snapshot selectors before dispatch`() async throws {
         let snapshotID = "selector-policy-\(UUID().uuidString)"
         let processIdentifier = getpid()
@@ -508,6 +514,7 @@ struct MCPToolExecutionPolicyTests {
         let toolSnapshot = await UISnapshotManager.shared.createSnapshot(id: snapshotID)
         await toolSnapshot.setTargetMetadata(from: windowContext)
         let capture = PolicySnapshotArgumentCapture()
+        let typeCapture = PolicySnapshotArgumentCapture()
         let pressCapture = PolicySnapshotArgumentCapture()
 
         let response = try await context.execute(
@@ -534,7 +541,7 @@ struct MCPToolExecutionPolicyTests {
             tool: PolicySnapshotProbeTool(name: "click", capture: capture),
             arguments: ToolArguments(raw: ["coords": "120,120"]))
         let mixedTypeResponse = try await context.execute(
-            tool: PolicySnapshotProbeTool(name: "type", capture: capture),
+            tool: PolicySnapshotProbeTool(name: "type", capture: typeCapture),
             arguments: ToolArguments(raw: [
                 "text": "hello",
                 "on": "B1",
@@ -542,10 +549,23 @@ struct MCPToolExecutionPolicyTests {
                 "app": "TextEdit",
             ]))
         let processTypeResponse = try await context.execute(
-            tool: PolicySnapshotProbeTool(name: "type", capture: capture),
+            tool: PolicySnapshotProbeTool(name: "type", capture: typeCapture),
             arguments: ToolArguments(raw: [
                 "text": "hello",
                 "app": "TextEdit",
+            ]))
+        let elementOnlyTypeResponse = try await context.execute(
+            tool: PolicySnapshotProbeTool(name: "type", capture: typeCapture),
+            arguments: ToolArguments(raw: [
+                "text": "hello",
+                "on": "B1",
+            ]))
+        let exactTypeResponse = try await context.execute(
+            tool: PolicySnapshotProbeTool(name: "type", capture: typeCapture),
+            arguments: ToolArguments(raw: [
+                "text": "hello",
+                "on": "B1",
+                "snapshot": snapshotID,
             ]))
         let exactPressResponse = try await context.execute(
             tool: PolicySnapshotProbeTool(name: "press", capture: pressCapture),
@@ -599,12 +619,16 @@ struct MCPToolExecutionPolicyTests {
         #expect(missingReceiptResponse.isError)
         #expect(mixedTypeResponse.isError)
         #expect(processTypeResponse.isError)
+        #expect(elementOnlyTypeResponse.isError)
+        #expect(!exactTypeResponse.isError)
         #expect(!exactPressResponse.isError)
         #expect(mixedPressResponse.isError)
         #expect(windowOnlyPressResponse.isError)
         #expect(genericDialogResponse.isError)
         #expect(dialogPressResponse.isError)
         #expect(await pressCapture.callCount == 1)
+        #expect(await typeCapture.callCount == 1)
+        #expect(await typeCapture.snapshotID == snapshotID)
         #expect(await capture.snapshotID == nil)
         guard case let .object(meta)? = response.meta else {
             Issue.record("Missing selector-conflict refusal metadata")

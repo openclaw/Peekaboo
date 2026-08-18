@@ -90,10 +90,11 @@ Targeted `scroll --on <id>` is background-safe through Accessibility or, for a f
 The agent picks tools, plans, and executes — give it a goal in natural language:
 
 ```bash
-peekaboo agent "Open Safari, go to github.com, and search for Peekaboo"
+peekaboo agent "Open Safari, go to github.com, and search for Peekaboo" --allow-foreground
 ```
 
-Default background work stays overlay-free so Peekaboo does not interrupt the foreground desktop. Run
+Cold-launching Safari needs the explicit foreground opt-in shown above. Default background work against already-running
+targets stays overlay-free so Peekaboo does not interrupt the foreground desktop. Run
 `peekaboo visualizer` when you explicitly want to exercise the overlay catalog. Continue a saved run with
 `peekaboo agent resume <session-id>`. See [commands/agent.md](commands/agent.md) for provider switching and session management.
 

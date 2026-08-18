@@ -32,16 +32,18 @@ public struct MCPAgentTool: MCPTool {
         - Window management (move, resize, close)
         - Background text delivery and native Accessibility actions
 
-        MCP-started Agent sessions are always background-only. They refuse raw keyboard press, focus/activation,
-        shared-pointer/global input, foreground capture, persistent clipboard writes, targetless dialog input, dialog
-        file actions, shared system UI mutations, Space switch/follow, browser setup/fronting, and Shell-tool access
-        before dispatch. Exact prepared dialog actions remain available. Space listing and unfollowed window placement
-        remain available. This UI authority boundary
+        MCP-started Agent sessions are always background-only. They refuse focus/activation, shared-pointer/global
+        input, foreground capture, persistent clipboard writes, targetless dialog input, dialog file actions, shared
+        system UI mutations, Space switch/follow, browser setup/fronting, and Shell-tool access before dispatch.
+        \(AgentBackgroundCapabilityContract.receiptPinnedPress)
+        \(AgentBackgroundCapabilityContract.snapshotPinnedType)
+        \(AgentBackgroundCapabilityContract.exactDialogMutations)
+        \(AgentBackgroundCapabilityContract.rawPressObservation)
+        Space listing and unfollowed window placement remain available. This UI authority boundary
         is not a process sandbox; trusted prompts can operate terminal or scripting apps through their UI. Only the
-        human-facing CLI can explicitly authorize foreground UI for a session. Background typing requires an exact
-        non-dialog snapshot/element. Direct text paste is available only with a generation-pinned app/PID/window
-        target and a canonical background result; targetless, foreground, current-clipboard, and binary paste remain
-        refused.
+        human-facing CLI can explicitly authorize foreground UI for a session. Direct text paste is available only
+        with a generation-pinned app/PID/window target and a canonical background result; targetless, foreground,
+        current-clipboard, and binary paste remain refused.
 
         Example tasks:
         - "Inspect the current page in an already-running Safari window"

@@ -108,9 +108,11 @@ extension ActionCommand: ParsableCommand {
             abstract: "Invoke a named accessibility action on an element",
             discussion: """
                 Invokes an accessibility action without synthesizing a mouse or keyboard event.
+                Actions that can raise or expose foreground UI, including AXPress and AXShowMenu, require
+                --foreground. State-only actions such as AXIncrement remain background-capable.
 
                 EXAMPLES:
-                  peekaboo action AXPress --on "$ELEMENT_ID"
+                  peekaboo action AXPress --on "$ELEMENT_ID" --foreground
                   peekaboo action --action AXIncrement --on Stepper --app Calculator
             """,
             showHelpOnEmptyInvocation: true

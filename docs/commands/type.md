@@ -7,13 +7,16 @@ read_when:
 
 # `peekaboo type`
 
-`type` sends text through the automation service. Background delivery is the default and requires an explicit app, PID, or snapshot whose metadata identifies a process. Use `press` for standalone keys or chords.
+`type` sends text through the automation service. Direct CLI background delivery is the default and accepts an
+explicit app, PID, exact window, or snapshot whose metadata identifies a process. Default background-only Agent/MCP
+calls are stricter: they require an explicit fresh exact non-dialog snapshot, and an optional element ID must come from
+that snapshot. Use `press` for standalone keys or chords.
 
 ## Key options
 | Flag | Description |
 | --- | --- |
 | `[text]` | Optional positional string; supports escape sequences like `\n` (Return) and `\t` (Tab). |
-| `--snapshot <id>` | Target a specific snapshot (or pass `latest` explicitly). |
+| `--snapshot <id>` | Target a specific snapshot. Background-only Agent/MCP requires an explicit fresh exact non-dialog ID and does not infer `latest`. |
 | `--delay <duration>` | Time between synthetic keystrokes (default `0`; bare values are milliseconds). |
 | `--wpm <80-220>` | Enable human-typing cadence at the chosen words per minute. |
 | `--profile <linear|human>` | Switch between linear (default, honors `--delay`) and human (honors `--wpm`). |
@@ -24,6 +27,8 @@ read_when:
 
 ## Delivery modes
 - **Background** is the default when Peekaboo can resolve a target from flags or snapshot metadata. Exact window/snapshot routes pin the process generation, window ID/bounds, and focused element without activating the app. App/PID routes upgrade when one eligible window exists and refuse when several are eligible.
+- **Background-only Agent/MCP** requires an explicit fresh exact non-dialog `snapshot`. It refuses implicit-latest,
+  targetless, app/PID/window-only, and snapshot-plus-selector requests before dispatch.
 - **Foreground** (`--foreground`) focuses the target first and sends normal/global keyboard input. Use it for apps or fields that only accept text in the focused key window, or when focus changes are desired.
 - If no target process can be resolved, `type` fails before sending input. Add `--foreground` only when global delivery is intentional.
 
