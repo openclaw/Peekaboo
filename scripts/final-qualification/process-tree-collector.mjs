@@ -126,6 +126,14 @@ function monitorJSON(monitor, command, pid, directory, sequence) {
 }
 
 function signingMetadata(executablePath) {
+  const verification = spawnSync('/usr/bin/codesign', ['--verify', '--strict', executablePath], {
+    encoding: 'utf8',
+    timeout: 10_000,
+    maxBuffer: 1024 * 1024,
+    env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'C', LC_ALL: 'C' },
+  });
+  requireCondition(!verification.error && verification.status === 0,
+    `codesign verification failed for ${executablePath}`);
   const output = run('/usr/bin/codesign', ['-dvvv', executablePath], `codesign ${executablePath}`);
   const value = (key) => output.match(new RegExp(`^${key}=(.+)$`, 'm'))?.[1] ?? null;
   const codeSignatureHash = value('CDHash');
@@ -153,6 +161,13 @@ function monitoredExecutableIdentity(monitorPath, pid, temporary, sequence) {
   const canonicalPath = fs.realpathSync(executable.path);
   requireCondition(canonicalPath === executable.path,
     `process executable ${pid} is not canonical`);
+  const retainedExecutable = requireStableExecutable(
+    canonicalPath,
+    `monitored process executable ${pid}`,
+    { allowRootOwner: true },
+  );
+  requireCondition(retainedExecutable.sha256 === executable.sha256,
+    `monitor reported incorrect executable bytes for PID ${pid}`);
   const signing = signingMetadata(canonicalPath);
   const after = monitorJSON(
     monitorPath,
@@ -264,7 +279,10 @@ function validateSpec(value) {
 
 export function collectProcessTree(specPath, monitorPath, outputPath) {
   const spec = validateSpec(readStableJSON(specPath, 'collector spec').value);
-  requireStableExecutable(monitorPath, 'signed process monitor');
+  const monitor = requireStableExecutable(monitorPath, 'signed process monitor', {
+    allowRootOwner: true,
+  });
+  const monitorSigning = signingMetadata(monitor.path);
   const collectorBytes = fs.readFileSync(fileURLToPath(import.meta.url));
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'pbq-process-tree.'));
   fs.chmodSync(temporary, 0o700);
@@ -480,8 +498,15 @@ export function collectProcessTree(specPath, monitorPath, outputPath) {
     });
     requireCondition(processes.every((process) => process.parent_pid === null
       || process.parent_start_identity !== null), 'a task descendant parent escaped the collected tree');
+    const finalMonitor = requireStableExecutable(monitor.path, 'final signed process monitor', {
+      allowRootOwner: true,
+    });
+    const finalMonitorSigning = signingMetadata(finalMonitor.path);
+    requireCondition(finalMonitor.sha256 === monitor.sha256
+      && finalMonitorSigning.codeSignatureHash === monitorSigning.codeSignatureHash,
+    'signed process monitor changed during collection');
     return writePrivateExclusive(outputPath, {
-      version: 2,
+      version: 3,
       role: spec.role,
       host_uuid: spec.host_uuid,
       deployment_envelope_sha256: spec.deployment_envelope_sha256,
@@ -504,6 +529,9 @@ export function collectProcessTree(specPath, monitorPath, outputPath) {
       lifecycle_watched_pids: lifecycleWatchedPIDs,
       lifecycle_event_count: lifecycleResult.event_count,
       collector_sha256: sha256(collectorBytes),
+      monitor_executable_path: monitor.path,
+      monitor_executable_sha256: monitor.sha256,
+      monitor_code_signature_hash: monitorSigning.codeSignatureHash,
       complete: true,
       roots: spec.roots,
       processes,

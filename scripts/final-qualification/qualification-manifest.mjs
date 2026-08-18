@@ -2,6 +2,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   aggregateSHA256,
@@ -13,26 +14,91 @@ import {
   readStableJSON,
   readStableFile,
   requireCondition,
+  requireStableExecutable,
   sameJSON,
   sha256,
   writePrivateExclusive,
 } from './lib.mjs';
 
 const QUALIFICATION_TOOL_FILES = [
-  'README.md',
-  'atomic-publish-no-replace.swift',
-  'integrated-cu-emitter-calibrator.swift',
-  'managed-launch-suspended.c',
-  'lib.mjs',
-  'managed-launcher.mjs',
-  'project-live-bindings.mjs',
-  'process-lifecycle-guard.c',
-  'process-tree-collector.mjs',
-  'publish-coordinator-marker.mjs',
-  'qualification-manifest.mjs',
-  'validate-concurrent-run.mjs',
-  'test/qualification-tools.test.mjs',
+  'scripts/final-qualification/README.md',
+  'scripts/final-qualification/atomic-publish-no-replace.swift',
+  'scripts/final-qualification/executable-policy-scanner.mjs',
+  'scripts/final-qualification/integrated-cu-emitter-calibrator.swift',
+  'scripts/final-qualification/managed-launch-suspended.c',
+  'scripts/final-qualification/lib.mjs',
+  'scripts/final-qualification/managed-launcher.mjs',
+  'scripts/final-qualification/project-live-bindings.mjs',
+  'scripts/final-qualification/process-lifecycle-guard.c',
+  'scripts/final-qualification/process-tree-collector.mjs',
+  'scripts/final-qualification/publish-coordinator-marker.mjs',
+  'scripts/final-qualification/qualification-manifest.mjs',
+  'scripts/final-qualification/validate-concurrent-run.mjs',
+  'scripts/final-qualification/test/qualification-tools.test.mjs',
+  'scripts/multi-target-certification-catalog.json',
+  'scripts/support/background-computer-use-probe.swift',
 ];
+
+function git(directory, arguments_, label, { binary = false } = {}) {
+  const result = spawnSync('/usr/bin/git', ['-C', directory, ...arguments_], {
+    encoding: binary ? null : 'utf8',
+    timeout: 30_000,
+    maxBuffer: 512 * 1024 * 1024,
+    env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'C', LC_ALL: 'C' },
+  });
+  requireCondition(!result.error && result.status === 0,
+    `${label} failed: ${String(result.stderr ?? result.error?.message ?? result.status).trim()}`);
+  return result.stdout;
+}
+
+function cleanGitStatus(directory, label) {
+  const output = git(directory, [
+    'status', '--porcelain=v2', '--untracked-files=all', '--ignore-submodules=none',
+  ], label);
+  requireCondition(output.length === 0, `${label} is not clean`);
+}
+
+function validateGitSourceTree(directory, files, sourceCommit, label) {
+  const repositoryRoot = git(directory, ['rev-parse', '--show-toplevel'], `${label} repository`)
+    .trim();
+  requireCondition(repositoryRoot === directory && fs.realpathSync(repositoryRoot) === directory,
+    `${label} directory is not the canonical Git repository root`);
+  const headCommit = git(directory, ['rev-parse', '--verify', 'HEAD^{commit}'], `${label} HEAD`)
+    .trim();
+  requireCondition(headCommit === sourceCommit, `${label} commit is not the exact repository HEAD`);
+  cleanGitStatus(directory, `${label} pre-read tree`);
+  for (const [index, entry] of files.entries()) {
+    const listing = git(
+      directory,
+      ['ls-tree', '-z', sourceCommit, '--', entry.relative_path],
+      `${label} file ${index} Git entry`,
+      { binary: true },
+    );
+    const match = listing.toString('utf8').match(/^100(?:644|755) blob ([0-9a-f]{40})\t([^\0]+)\0$/);
+    requireCondition(match && match[2] === entry.relative_path,
+      `${label} file ${index} is not one tracked regular Git blob`);
+    const blob = git(
+      directory,
+      ['cat-file', 'blob', match[1]],
+      `${label} file ${index} Git blob`,
+      { binary: true },
+    );
+    const current = readStableFile(
+      path.join(directory, entry.relative_path),
+      `${label} file ${index} working tree`,
+      { privateFile: false, maximumBytes: 512 * 1024 * 1024 },
+    );
+    requireCondition(blob.equals(current.bytes)
+      && current.bytes.length === entry.size && current.sha256 === entry.sha256,
+    `${label} file ${index} differs from commit ${sourceCommit}`);
+  }
+  requireCondition(
+    git(directory, ['rev-parse', '--verify', 'HEAD^{commit}'], `${label} final HEAD`).trim()
+      === sourceCommit,
+    `${label} HEAD changed during validation`,
+  );
+  cleanGitStatus(directory, `${label} post-read tree`);
+}
 
 function sourceAggregate(files) {
   return sha256(Buffer.from(files.map((entry) => (
@@ -61,6 +127,7 @@ export function generateSourceManifest(directory, relativeFiles, outputPath, sou
   const files = relativeFiles.map((relativePath, index) => (
     sourceFile(directory, relativePath, `source-manifest file ${index}`)
   ));
+  validateGitSourceTree(directory, files, sourceCommit, 'source manifest');
   const value = {
     version: 2,
     source_commit: sourceCommit,
@@ -100,9 +167,24 @@ function semanticSourceManifest(filePath, label, expectedFiles = null, expectedS
   }
   requireCondition(sourceAggregate(files) === retained.value.aggregate_sha256,
     `${label} aggregate is invalid`);
+  validateGitSourceTree(
+    retained.value.directory,
+    files,
+    retained.value.source_commit,
+    label,
+  );
   requireCondition((retained.info.mode & 0o222n) === 0n,
     `${label} must be non-writable before qualification`);
   return { retained, value: retained.value };
+}
+
+export function verifySourceManifest(filePath, expectedFiles = null, expectedSourceCommit = null) {
+  return semanticSourceManifest(
+    filePath,
+    'source manifest verification',
+    expectedFiles,
+    expectedSourceCommit,
+  );
 }
 
 function immutableReceipt(filePath, label) {
@@ -121,10 +203,28 @@ function stableSourceReceipt(filePath, label) {
   return { path: retained.path, size: retained.bytes.length, sha256: retained.sha256 };
 }
 
+function executableIdentity(filePath, label) {
+  const retained = requireStableExecutable(filePath, label, { allowRootOwner: true });
+  const verify = spawnSync('/usr/bin/codesign', ['--verify', '--strict', retained.path], {
+    encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024,
+    env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'C', LC_ALL: 'C' },
+  });
+  requireCondition(!verify.error && verify.status === 0, `${label} signature is invalid`);
+  const display = spawnSync('/usr/bin/codesign', ['-dvvv', retained.path], {
+    encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024,
+    env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'C', LC_ALL: 'C' },
+  });
+  const text = `${display.stdout ?? ''}\n${display.stderr ?? ''}`;
+  const matches = [...text.matchAll(/^CDHash=([0-9a-f]{40})$/gm)].map((match) => match[1]);
+  requireCondition(!display.error && display.status === 0 && matches.length === 1,
+    `${label} CDHash is invalid`);
+  return { retained, codeSignatureHash: matches[0] };
+}
+
 function semanticPeekabooArtifactManifest(filePath, label, expectedSourceCommit) {
   const retained = readStableJSON(filePath, label);
   const value = retained.value;
-  requireCondition(Number.isSafeInteger(value.schema) && value.schema >= 5
+  requireCondition(Number.isSafeInteger(value.schema) && value.schema >= 6
     && value.phase === 'candidate_verified_not_installed'
     && value.source_commit === expectedSourceCommit
     && value.version === '4.2.1'
@@ -132,12 +232,19 @@ function semanticPeekabooArtifactManifest(filePath, label, expectedSourceCommit)
     && value.playground?.source_commit === expectedSourceCommit
     && SHA256.test(value.cli?.sha256 ?? '')
     && CODE_SIGNATURE_HASH.test(value.cli?.cdhash ?? '')
+    && value.monitor?.source_commit === expectedSourceCommit
+    && value.monitor?.source_path === 'scripts/support/background-computer-use-probe.swift'
+    && SHA256.test(value.monitor?.source_sha256 ?? '')
+    && SHA256.test(value.monitor?.executable_sha256 ?? '')
+    && CODE_SIGNATURE_HASH.test(value.monitor?.cdhash ?? '')
     && SHA256.test(value.app?.zip_sha256 ?? '')
     && CODE_SIGNATURE_HASH.test(value.app?.cdhash ?? '')
     && SHA256.test(value.playground?.zip_sha256 ?? '')
     && CODE_SIGNATURE_HASH.test(value.playground?.cdhash ?? '')
     && value.verification?.cli_source === true
     && value.verification?.cli_native_only === true
+    && value.verification?.monitor_source === true
+    && value.verification?.monitor_native_only === true
     && value.verification?.app_source === true
     && value.verification?.app_native_only === true
     && value.verification?.playground_native_only === true,
@@ -475,9 +582,10 @@ function semanticProcessTree(filePath, label) {
     'lifecycle_started_at_milliseconds',
     'lifecycle_completed_at_milliseconds', 'lifecycle_watched_pids',
     'lifecycle_event_count', 'collector_sha256', 'complete',
+    'monitor_executable_path', 'monitor_executable_sha256', 'monitor_code_signature_hash',
     'roots', 'processes',
   ], label);
-  requireCondition(value.version === 2 && DEPLOYMENT_HOST_ROLES.includes(value.role)
+  requireCondition(value.version === 3 && DEPLOYMENT_HOST_ROLES.includes(value.role)
     && HOST_UUID.test(value.host_uuid) && SHA256.test(value.deployment_envelope_sha256)
     && PROCESS_TREE_EPOCHS.includes(value.epoch) && value.scope === 'task_owned_descendants'
     && Number.isSafeInteger(value.requested_observation_milliseconds)
@@ -520,7 +628,12 @@ function semanticProcessTree(filePath, label) {
     && value.lifecycle_watched_pids.every((pid, index) => index === 0
       || value.lifecycle_watched_pids[index - 1] < pid)
     && value.lifecycle_event_count === 0
-    && SHA256.test(value.collector_sha256) && value.complete === true
+    && SHA256.test(value.collector_sha256)
+    && typeof value.monitor_executable_path === 'string'
+    && path.isAbsolute(value.monitor_executable_path)
+    && SHA256.test(value.monitor_executable_sha256)
+    && CODE_SIGNATURE_HASH.test(value.monitor_code_signature_hash)
+    && value.complete === true
     && Array.isArray(value.roots) && value.roots.length > 0
     && Array.isArray(value.processes) && value.processes.length > 0,
   `${label} is malformed`);
@@ -581,24 +694,64 @@ function semanticProcessTree(filePath, label) {
     collectorSHA256: value.collector_sha256,
     lifecycleGuardSHA256: value.lifecycle_guard_sha256,
     lifecycleGuardBinarySHA256: value.lifecycle_guard_binary_sha256,
+    monitorExecutablePath: value.monitor_executable_path,
+    monitorExecutableSHA256: value.monitor_executable_sha256,
+    monitorCodeSignatureHash: value.monitor_code_signature_hash,
     roots,
+    records,
+    byIdentity,
     receipt: { path: retained.path, size: retained.bytes.length, sha256: retained.sha256 },
   };
 }
 
-function semanticExecutablePolicyReport(filePath, label, installed) {
+function verifyExecutablePolicyReport(scanner, installed, filePath, expectedReportSHA256, label) {
+  const result = spawnSync(process.execPath, [
+    scanner.path,
+    'verify',
+    '--inventory', installed.receipt.path,
+    '--report', filePath,
+  ], {
+    encoding: 'utf8',
+    timeout: 120_000,
+    maxBuffer: 16 * 1024 * 1024,
+    env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'C', LC_ALL: 'C' },
+  });
+  requireCondition(!result.error && result.status === 0,
+    `${label} source-owned scanner execution failed: ${String(result.stderr ?? '').trim()}`);
+  let verification;
+  try {
+    verification = JSON.parse(result.stdout);
+  } catch {
+    requireCondition(false, `${label} source-owned scanner verification is not JSON`);
+  }
+  exactKeys(verification, [
+    'version', 'valid', 'report_sha256', 'coverage_aggregate_sha256',
+  ], `${label} source-owned scanner verification`);
+  requireCondition(verification.version === 1 && verification.valid === true
+    && verification.report_sha256 === expectedReportSHA256
+    && SHA256.test(verification.coverage_aggregate_sha256),
+  `${label} source-owned scanner did not authenticate its report`);
+  return verification;
+}
+
+function semanticExecutablePolicyReport(filePath, label, installed, scanner) {
   const retained = readStableJSON(filePath, label);
   const value = retained.value;
   exactKeys(value, [
-    'version', 'role', 'host_uuid', 'deployment_envelope_sha256', 'scanner_sha256',
-    'complete', 'installed_inventory_aggregate_sha256', 'scanned_roots', 'covered_entries',
-    'file_coverage', 'coverage_aggregate_sha256', 'scanned_executable_count',
-    'scanned_script_count', 'forbidden_findings',
+    'version', 'role', 'host_uuid', 'deployment_envelope_sha256', 'scanner_path',
+    'scanner_sha256', 'complete', 'installed_inventory_path', 'installed_inventory_sha256',
+    'installed_inventory_aggregate_sha256', 'artifact_roots', 'scanned_roots',
+    'covered_entries', 'file_coverage', 'coverage_aggregate_sha256',
+    'scanned_executable_count', 'scanned_script_count', 'forbidden_findings',
   ], label);
-  requireCondition(value.version === 1 && DEPLOYMENT_HOST_ROLES.includes(value.role)
+  requireCondition(value.version === 2 && DEPLOYMENT_HOST_ROLES.includes(value.role)
     && HOST_UUID.test(value.host_uuid) && SHA256.test(value.deployment_envelope_sha256)
-    && SHA256.test(value.scanner_sha256) && value.complete === true
+    && value.scanner_path === scanner.path && value.scanner_sha256 === scanner.sha256
+    && value.complete === true
+    && value.installed_inventory_path === installed.receipt.path
+    && value.installed_inventory_sha256 === installed.receipt.sha256
     && SHA256.test(value.installed_inventory_aggregate_sha256)
+    && value.artifact_roots && typeof value.artifact_roots === 'object'
     && sameJSON(value.scanned_roots, INSTALLED_ARTIFACTS)
     && Array.isArray(value.covered_entries) && Array.isArray(value.file_coverage)
     && SHA256.test(value.coverage_aggregate_sha256)
@@ -631,7 +784,10 @@ function semanticExecutablePolicyReport(filePath, label, installed) {
     entry.classification === 'script'
   )).length, `${label} script count differs from per-file coverage`);
   const coverage = {
+    scanner_sha256: value.scanner_sha256,
+    installed_inventory_sha256: value.installed_inventory_sha256,
     installed_inventory_aggregate_sha256: value.installed_inventory_aggregate_sha256,
+    artifact_roots: value.artifact_roots,
     scanned_roots: value.scanned_roots,
     covered_entries: value.covered_entries,
     file_coverage: value.file_coverage,
@@ -639,6 +795,16 @@ function semanticExecutablePolicyReport(filePath, label, installed) {
   requireCondition(value.coverage_aggregate_sha256
     === aggregateSHA256('executable-policy-coverage', coverage),
   `${label} coverage aggregate is invalid`);
+  const scannerVerification = verifyExecutablePolicyReport(
+    scanner,
+    installed,
+    retained.path,
+    retained.sha256,
+    label,
+  );
+  requireCondition(scannerVerification.coverage_aggregate_sha256
+    === value.coverage_aggregate_sha256,
+  `${label} fresh scanner coverage differs from the report`);
   return {
     role: value.role,
     hostUUID: value.host_uuid,
@@ -650,7 +816,8 @@ function semanticExecutablePolicyReport(filePath, label, installed) {
 
 function semanticDeploymentEvidence(value, label) {
   exactKeys(value, [
-    'installed_inventories', 'elevation_receipts', 'process_tree_collector', 'process_trees',
+    'installed_inventories', 'elevation_receipts', 'process_tree_collector',
+    'process_tree_monitor', 'process_trees',
     'executable_policy_scanner', 'executable_policy_reports',
   ], label);
   requireCondition(Array.isArray(value.installed_inventories)
@@ -695,6 +862,10 @@ function semanticDeploymentEvidence(value, label) {
     value.process_tree_collector,
     `${label}.process_tree_collector`,
   );
+  const processTreeMonitor = executableIdentity(
+    value.process_tree_monitor,
+    `${label}.process_tree_monitor`,
+  );
   const lifecycleGuard = stableSourceReceipt(
     path.join(path.dirname(value.process_tree_collector), 'process-lifecycle-guard.c'),
     `${label}.process_lifecycle_guard`,
@@ -709,6 +880,10 @@ function semanticDeploymentEvidence(value, label) {
     && tree.epoch === expectedTrees[index].epoch), `${label} process-tree ordering is invalid`);
   requireCondition(trees.every((tree) => tree.collectorSHA256 === collector.sha256),
     `${label} process tree collector differs from the bound source`);
+  requireCondition(trees.every((tree) => tree.monitorExecutablePath === processTreeMonitor.retained.path
+    && tree.monitorExecutableSHA256 === processTreeMonitor.retained.sha256
+    && tree.monitorCodeSignatureHash === processTreeMonitor.codeSignatureHash),
+  `${label} process tree monitor differs from the exact authenticated executable`);
   requireCondition(trees.every((tree) => (
     tree.lifecycleGuardSHA256 === lifecycleGuard.sha256
   )), `${label} process lifecycle guard differs from the bound source`);
@@ -752,15 +927,21 @@ function semanticDeploymentEvidence(value, label) {
       return root && admittedCDHashes.has(root.codeSignatureHash);
     }), `${label} ${role} elevation root differs from its installed receipt`);
   }
-  const scanner = stableSourceReceipt(
+  const scannerExecutable = requireStableExecutable(
     value.executable_policy_scanner,
     `${label}.executable_policy_scanner`,
   );
+  const scanner = {
+    path: scannerExecutable.path,
+    size: scannerExecutable.bytes.length,
+    sha256: scannerExecutable.sha256,
+  };
   const policyReports = value.executable_policy_reports.map((filePath, index) => (
     semanticExecutablePolicyReport(
       filePath,
       `${label}.executable_policy_reports[${index}]`,
       installed[index],
+      scanner,
     )
   ));
   requireCondition(sameJSON(policyReports.map((entry) => entry.role), DEPLOYMENT_HOST_ROLES),
@@ -774,6 +955,11 @@ function semanticDeploymentEvidence(value, label) {
       installed_inventories: installed.map((entry) => entry.receipt),
       elevation_receipts: elevations.map((entry) => entry.receipt),
       process_tree_collector: collector,
+      process_tree_monitor: {
+        path: processTreeMonitor.retained.path,
+        size: processTreeMonitor.retained.bytes.length,
+        sha256: processTreeMonitor.retained.sha256,
+      },
       process_trees: trees.map((entry) => entry.receipt),
       executable_policy_scanner: scanner,
       executable_policy_reports: policyReports.map((entry) => entry.receipt),
@@ -784,6 +970,7 @@ function semanticDeploymentEvidence(value, label) {
     elevations,
     trees,
     collectorSource: collector,
+    processTreeMonitor,
     lifecycleGuardSource: lifecycleGuard,
   };
 }
@@ -813,11 +1000,12 @@ function validatePeekabooArtifactDeployment(artifact, deployment, label) {
   }
 }
 
-function validateDeploymentToolSources(deployment, toolsManifest, label) {
+function validateDeploymentToolSources(deployment, toolsManifest, artifact, label) {
   const files = new Map(toolsManifest.files.map((entry) => [entry.relative_path, entry]));
   const expected = [
-    ['process-tree-collector.mjs', deployment.collectorSource],
-    ['process-lifecycle-guard.c', deployment.lifecycleGuardSource],
+    ['scripts/final-qualification/process-tree-collector.mjs', deployment.collectorSource],
+    ['scripts/final-qualification/process-lifecycle-guard.c', deployment.lifecycleGuardSource],
+    ['scripts/final-qualification/executable-policy-scanner.mjs', deployment.evidence.executable_policy_scanner],
   ];
   for (const [relativePath, receipt] of expected) {
     const entry = files.get(relativePath);
@@ -827,6 +1015,24 @@ function validateDeploymentToolSources(deployment, toolsManifest, label) {
       && receipt.size === entry.size,
     `${label} ${relativePath} differs from the reviewed qualification tools`);
   }
+  const monitorSource = files.get(artifact.monitor.source_path);
+  requireCondition(monitorSource && monitorSource.sha256 === artifact.monitor.source_sha256,
+    `${label} monitor source differs from the reviewed Git tree`);
+  const catalogPath = 'scripts/multi-target-certification-catalog.json';
+  const catalogEntry = files.get(catalogPath);
+  requireCondition(catalogEntry !== undefined, `${label} monitor catalog is not source-bound`);
+  const catalog = readStableJSON(
+    path.join(toolsManifest.directory, catalogPath),
+    `${label} monitor catalog`,
+    { privateFile: false },
+  );
+  requireCondition(catalog.sha256 === catalogEntry.sha256
+    && catalog.value.monitor_source?.probe_sha256 === monitorSource.sha256,
+  `${label} monitor source differs from the source-owned catalog`);
+  requireCondition(deployment.processTreeMonitor.retained.sha256
+    === artifact.monitor.executable_sha256
+    && deployment.processTreeMonitor.codeSignatureHash === artifact.monitor.cdhash,
+  `${label} process monitor differs from the candidate-bound monitor`);
 }
 
 function exactTarget(value, label) {
@@ -951,8 +1157,11 @@ function semanticConcurrentValidation(filePath) {
   const value = retained.value;
   exactKeys(value, [
     'version', 'passed', 'execution_nonce', 'monitor_instance_id', 'coordinator', 'agent',
-    'integrated_cu', 'overlap', 'externally_supplied_authority',
+    'monitor', 'integrated_cu', 'overlap', 'externally_supplied_authority',
   ], 'Agent/CU concurrent validation report');
+  exactKeys(value.monitor, [
+    'executable_path', 'executable_sha256', 'code_signature_hash',
+  ], 'Agent/CU concurrent validation report monitor');
   const actionIntervals = value.agent?.progress_interleaving?.action_intervals;
   exactKeys(value.agent?.progress_interleaving, [
     'integrated_cu_perform_at_milliseconds',
@@ -978,6 +1187,14 @@ function semanticConcurrentValidation(filePath) {
     && value.coordinator?.completed_event === 'completed'
     && value.coordinator?.certification_eligible === true
     && value.agent?.exit_code === 0
+    && typeof value.agent?.executable_path === 'string'
+    && path.isAbsolute(value.agent.executable_path)
+    && SHA256.test(value.agent?.executable_sha256 ?? '')
+    && CODE_SIGNATURE_HASH.test(value.agent?.code_signature_hash ?? '')
+    && typeof value.monitor.executable_path === 'string'
+    && path.isAbsolute(value.monitor.executable_path)
+    && SHA256.test(value.monitor.executable_sha256)
+    && CODE_SIGNATURE_HASH.test(value.monitor.code_signature_hash)
     && Array.isArray(value.agent?.mapped_call_ids) && value.agent.mapped_call_ids.length === 4
     && new Set(value.agent.mapped_call_ids).size === 4
     && Array.isArray(value.agent?.mutation_families) && value.agent.mutation_families.length >= 2
@@ -1059,6 +1276,36 @@ function validateLocalDuringConcurrentBinding(deployment, concurrent, plan, labe
       && roots[0].codeSignatureHash === identity.codeSignatureHash,
     `${label} local/during ${rootClass} root differs from the concurrent run`);
   }
+}
+
+function validateExercisedCandidateBindings(
+  artifact,
+  deployment,
+  concurrent,
+  agentInvocation,
+  label,
+) {
+  const during = deployment.trees.find((tree) => tree.role === 'local' && tree.epoch === 'during');
+  const agentRoot = during?.roots.find((root) => root.rootClass === 'agent');
+  const sampledAgent = agentRoot ? during.byIdentity.get(agentRoot.identity)?.value : null;
+  requireCondition(sampledAgent
+    && artifact.cli.sha256 === concurrent.agent.executable_sha256
+    && artifact.cli.sha256 === agentInvocation.executable_sha256
+    && artifact.cli.sha256 === sampledAgent.executable_sha256
+    && artifact.cli.cdhash === concurrent.agent.code_signature_hash
+    && artifact.cli.cdhash === sampledAgent.code_signature_hash
+    && agentInvocation.executable_path === concurrent.agent.executable_path
+    && sampledAgent.executable_path === concurrent.agent.executable_path,
+  `${label} exercised Agent CLI differs from the candidate/deployed executable`);
+  requireCondition(artifact.monitor.executable_sha256 === concurrent.monitor.executable_sha256
+    && artifact.monitor.executable_sha256 === agentInvocation.monitor_executable_sha256
+    && artifact.monitor.executable_sha256 === deployment.processTreeMonitor.retained.sha256
+    && artifact.monitor.cdhash === concurrent.monitor.code_signature_hash
+    && artifact.monitor.cdhash === agentInvocation.monitor_code_signature_hash
+    && artifact.monitor.cdhash === deployment.processTreeMonitor.codeSignatureHash
+    && concurrent.monitor.executable_path === agentInvocation.monitor_executable_path
+    && concurrent.monitor.executable_path === deployment.processTreeMonitor.retained.path,
+  `${label} exercised process monitor differs from the candidate-bound executable`);
 }
 
 function bundlePayload(bundle, label) {
@@ -1873,6 +2120,13 @@ function projectInput(input, authenticateBundle) {
   requireCondition(agentInvocation.task_path === input.agent_cu.task
     && agentInvocation.task_sha256 === boundAgentTask.sha256,
   'Agent task differs from its invocation');
+  validateExercisedCandidateBindings(
+    artifacts.peekaboo,
+    deployment,
+    concurrentValue,
+    agentInvocation,
+    'qualification',
+  );
   const processPhases = ['launch', 'perform', 'restore'];
   requireCondition(input.agent_cu.agent_process_receipts.length === processPhases.length,
     'Agent process receipt ordering is incomplete');
@@ -1966,6 +2220,7 @@ function projectInput(input, authenticateBundle) {
   validateDeploymentToolSources(
     deployment,
     qualificationTools.value,
+    artifacts.peekaboo,
     'deployment',
   );
   return {
@@ -2035,7 +2290,8 @@ function validateEvidenceShape(evidence, visitReceipt) {
     visitReceipt(receipt, `evidence.artifact_manifest.${key}`);
   }
   exactKeys(evidence.deployment, [
-    'installed_inventories', 'elevation_receipts', 'process_tree_collector', 'process_trees',
+    'installed_inventories', 'elevation_receipts', 'process_tree_collector',
+    'process_tree_monitor', 'process_trees',
     'executable_policy_scanner', 'executable_policy_reports',
   ], 'evidence.deployment');
   requireCondition(Array.isArray(evidence.deployment.installed_inventories)
@@ -2060,6 +2316,7 @@ function validateEvidenceShape(evidence, visitReceipt) {
     ));
   }
   visitReceipt(evidence.deployment.process_tree_collector, 'evidence.deployment.process_tree_collector');
+  visitReceipt(evidence.deployment.process_tree_monitor, 'evidence.deployment.process_tree_monitor');
   visitReceipt(evidence.deployment.executable_policy_scanner, 'evidence.deployment.executable_policy_scanner');
   exactKeys(evidence.tooling, [
     'qualification_tools_manifest', 'plan_constructor', 'crash_scanner',
@@ -2170,6 +2427,7 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
     installed_inventories: evidence.deployment.installed_inventories.map((entry) => entry.path),
     elevation_receipts: evidence.deployment.elevation_receipts.map((entry) => entry.path),
     process_tree_collector: evidence.deployment.process_tree_collector.path,
+    process_tree_monitor: evidence.deployment.process_tree_monitor.path,
     process_trees: evidence.deployment.process_trees.map((entry) => entry.path),
     executable_policy_scanner: evidence.deployment.executable_policy_scanner.path,
     executable_policy_reports: evidence.deployment.executable_policy_reports.map((entry) => entry.path),
@@ -2204,6 +2462,7 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
   validateDeploymentToolSources(
     deployment,
     qualificationTools.value,
+    artifacts.peekaboo,
     'verified deployment',
   );
   const matrixBindings = evidence.matrix_cycles.map((cycle, index) => {
@@ -2290,6 +2549,13 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
   requireCondition(agentInvocation.task_path === evidence.agent_cu.task.path
     && agentInvocation.task_sha256 === evidence.agent_cu.task.sha256,
   'verified Agent task differs from its invocation');
+  validateExercisedCandidateBindings(
+    artifacts.peekaboo,
+    deployment,
+    concurrentValue,
+    agentInvocation,
+    'verified qualification',
+  );
   const verifiedBundlePairs = [];
   const bundleProjection = evidence.agent_cu.signed_bundles.map((bundle, index) => {
     const validator = evidence.agent_cu.live_validator_reports[index];
@@ -2411,6 +2677,11 @@ export function verifyManifest(manifestPath, {
       : ['evidence.deployment.process_tree_collector', 'evidence.deployment.executable_policy_scanner']
           .includes(label)
         ? stableSourceReceipt(receipt.path, label)
+        : label === 'evidence.deployment.process_tree_monitor'
+          ? (() => {
+              const executable = requireStableExecutable(receipt.path, label, { allowRootOwner: true });
+              return { path: executable.path, size: executable.bytes.length, sha256: executable.sha256 };
+            })()
         : fileReceipt(receipt.path, label);
     requireCondition(sameJSON(current, receipt), `${label} changed after manifest generation`);
   };

@@ -878,6 +878,8 @@ export function validateConcurrentRun(specPath, outputPath, {
     agent: {
       pid: agentExit.pid,
       start_identity: agentExit.start_identity,
+      executable_path: invocation.value.executable_path,
+      executable_sha256: invocation.value.executable_sha256,
       code_signature_hash: invocation.code_signature_hash,
       exit_code: agentExit.exit_code,
       exit_receipt_sha256: agentExit.sha256,
@@ -899,6 +901,11 @@ export function validateConcurrentRun(specPath, outputPath, {
           performReadback.observation.retained_mtime_milliseconds,
         action_intervals: readbacks.action_intervals,
       },
+    },
+    monitor: {
+      executable_path: invocation.value.monitor_executable_path,
+      executable_sha256: invocation.value.monitor_executable_sha256,
+      code_signature_hash: invocation.value.monitor_code_signature_hash,
     },
     integrated_cu: {
       emitter,

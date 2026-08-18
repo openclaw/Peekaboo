@@ -18,19 +18,79 @@ import {
   generateManifest as generateManifestProduction,
   generateSourceManifest,
   verifyManifest as verifyManifestProduction,
+  verifySourceManifest,
 } from '../qualification-manifest.mjs';
 import { validateConcurrentRun as validateConcurrentRunProduction } from '../validate-concurrent-run.mjs';
 import { aggregateSHA256, canonicalBytes, sha256 } from '../lib.mjs';
 
 const TEAM = 'FWJYW4S8P8';
-const SOURCE = 'a'.repeat(40);
 const OPENCLAW_SOURCE = '9'.repeat(40);
 const CDHASH = 'b'.repeat(40);
 const UUID = '12345678-1234-4abc-8def-123456789abc';
 const NONCE = 'c'.repeat(64);
 const LOCAL_UUID = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
 const STUDIO_UUID = 'BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB';
-const toolRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const sourceToolRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const sourceRepositoryRoot = path.dirname(path.dirname(sourceToolRoot));
+const qualificationSourceFiles = [
+  'scripts/final-qualification/README.md',
+  'scripts/final-qualification/atomic-publish-no-replace.swift',
+  'scripts/final-qualification/executable-policy-scanner.mjs',
+  'scripts/final-qualification/integrated-cu-emitter-calibrator.swift',
+  'scripts/final-qualification/managed-launch-suspended.c',
+  'scripts/final-qualification/lib.mjs',
+  'scripts/final-qualification/managed-launcher.mjs',
+  'scripts/final-qualification/project-live-bindings.mjs',
+  'scripts/final-qualification/process-lifecycle-guard.c',
+  'scripts/final-qualification/process-tree-collector.mjs',
+  'scripts/final-qualification/publish-coordinator-marker.mjs',
+  'scripts/final-qualification/qualification-manifest.mjs',
+  'scripts/final-qualification/validate-concurrent-run.mjs',
+  'scripts/final-qualification/test/qualification-tools.test.mjs',
+  'scripts/multi-target-certification-catalog.json',
+  'scripts/support/background-computer-use-probe.swift',
+];
+const qualificationRepositoryRoot = fs.mkdtempSync('/private/tmp/pbq-source-repository-');
+fs.chmodSync(qualificationRepositoryRoot, 0o700);
+fs.mkdirSync(path.join(qualificationRepositoryRoot, 'scripts'), { recursive: true });
+fs.cpSync(sourceToolRoot, path.join(qualificationRepositoryRoot, 'scripts/final-qualification'), {
+  recursive: true,
+});
+fs.mkdirSync(path.join(qualificationRepositoryRoot, 'scripts/support'), { recursive: true });
+fs.copyFileSync(
+  path.join(sourceRepositoryRoot, 'scripts/support/background-computer-use-probe.swift'),
+  path.join(qualificationRepositoryRoot, 'scripts/support/background-computer-use-probe.swift'),
+);
+fs.copyFileSync(
+  path.join(sourceRepositoryRoot, 'scripts/multi-target-certification-catalog.json'),
+  path.join(qualificationRepositoryRoot, 'scripts/multi-target-certification-catalog.json'),
+);
+for (const arguments_ of [
+  ['init', '--quiet'],
+  ['config', 'user.name', 'Qualification Fixture'],
+  ['config', 'user.email', 'qualification@example.invalid'],
+  ['add', '--all'],
+  ['commit', '--quiet', '-m', 'fixture'],
+]) {
+  const result = spawnSync('/usr/bin/git', ['-C', qualificationRepositoryRoot, ...arguments_], {
+    encoding: 'utf8',
+    env: {
+      PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+      LANG: 'C',
+      LC_ALL: 'C',
+      GIT_AUTHOR_DATE: '2000-01-01T00:00:00Z',
+      GIT_COMMITTER_DATE: '2000-01-01T00:00:00Z',
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+}
+const SOURCE = spawnSync(
+  '/usr/bin/git',
+  ['-C', qualificationRepositoryRoot, 'rev-parse', 'HEAD'],
+  { encoding: 'utf8' },
+).stdout.trim();
+const toolRoot = path.join(qualificationRepositoryRoot, 'scripts/final-qualification');
+process.on('exit', () => fs.rmSync(qualificationRepositoryRoot, { recursive: true, force: true }));
 
 function fixtureAuthenticatedBundle({ bundlePath, expectedHost }) {
   const bytes = fs.readFileSync(bundlePath);
@@ -156,6 +216,7 @@ function taskProcessTree(root, role, hostUUID, epoch, {
   orphan = false,
   processBindings = {},
   coverage = null,
+  monitorExecutable = '/usr/bin/true',
 } = {}) {
   const requiredClasses = role === 'local'
     ? (epoch === 'during'
@@ -193,6 +254,7 @@ function taskProcessTree(root, role, hostUUID, epoch, {
     };
   }).sort((left, right) => (left.root_id < right.root_id ? -1 : 1));
   const processes = roots.map((authority) => {
+    const binding = processBindings[authority.root_class] ?? {};
     const originalName = executableNames[authority.root_class];
     const executableName = forbiddenRoot && authority === roots[0] ? forbiddenName : originalName;
     return {
@@ -200,9 +262,9 @@ function taskProcessTree(root, role, hostUUID, epoch, {
       start_identity: authority.start_identity,
       parent_pid: null,
       parent_start_identity: null,
-      executable_path: `/private/tmp/qualification/${executableName}`,
-      executable_name: executableName,
-      executable_sha256: 'a'.repeat(64),
+      executable_path: binding.executable_path ?? `/private/tmp/qualification/${executableName}`,
+      executable_name: binding.executable_path ? path.basename(binding.executable_path) : executableName,
+      executable_sha256: binding.executable_sha256 ?? 'a'.repeat(64),
       code_signature_hash: authority.code_signature_hash,
       signing_identifier: `fixture.${role}.${authority.root_class}`,
       team_id: TEAM,
@@ -232,7 +294,7 @@ function taskProcessTree(root, role, hostUUID, epoch, {
     ?? coverageCompletedAt - 1;
   const capturedAt = coverage?.captured_at_milliseconds ?? coverageCompletedAt + 1;
   return writeJSON(path.join(root, `${role}-${epoch}-${forbiddenName ?? (orphan ? 'orphan' : 'tree')}.json`), {
-    version: 2,
+    version: 3,
     role,
     host_uuid: hostUUID,
     deployment_envelope_sha256: '8'.repeat(64),
@@ -255,19 +317,34 @@ function taskProcessTree(root, role, hostUUID, epoch, {
     lifecycle_watched_pids: processes.map((process) => process.pid),
     lifecycle_event_count: 0,
     collector_sha256: collectorSHA256,
+    monitor_executable_path: monitorExecutable,
+    monitor_executable_sha256: sha256(fs.readFileSync(monitorExecutable)),
+    monitor_code_signature_hash: codeSignatureHash(monitorExecutable),
     complete: true,
     roots,
     processes,
   });
 }
 
-function artifactFixture(root) {
+function artifactFixture(root, executablePath = '/usr/bin/true', monitorPath = '/usr/bin/true') {
   const peekaboo = writeJSON(path.join(root, 'peekaboo-artifact-manifest.json'), {
-    schema: 5,
+    schema: 6,
     phase: 'candidate_verified_not_installed',
     source_commit: SOURCE,
     version: '4.2.1',
-    cli: { sha256: 'f'.repeat(64), cdhash: CDHASH },
+    cli: {
+      sha256: sha256(fs.readFileSync(executablePath)),
+      cdhash: codeSignatureHash(executablePath),
+    },
+    monitor: {
+      source_commit: SOURCE,
+      source_path: 'scripts/support/background-computer-use-probe.swift',
+      source_sha256: sha256(fs.readFileSync(
+        path.join(path.dirname(toolRoot), 'support/background-computer-use-probe.swift'),
+      )),
+      executable_sha256: sha256(fs.readFileSync(monitorPath)),
+      cdhash: codeSignatureHash(monitorPath),
+    },
     app: { source_commit: SOURCE, zip_sha256: '2'.repeat(64), cdhash: 'd'.repeat(40) },
     playground: {
       source_commit: SOURCE,
@@ -277,6 +354,8 @@ function artifactFixture(root) {
     verification: {
       cli_source: true,
       cli_native_only: true,
+      monitor_source: true,
+      monitor_native_only: true,
       app_source: true,
       app_native_only: true,
       playground_native_only: true,
@@ -348,28 +427,68 @@ function deploymentFixture(
 ) {
   const localUUID = LOCAL_UUID;
   const studioUUID = STUDIO_UUID;
+  const artifactRoots = Object.fromEntries([
+    ['openclaw_app', 'installed-openclaw-root'],
+    ['peekaboo_app', 'installed-peekaboo-root'],
+    ['peekaboo_cli', 'installed-cli-root'],
+  ].map(([artifactName, directoryName]) => [artifactName, privateDirectory(root, directoryName)]));
+  const installedFile = (artifactName, relativePath, bytes, mode) => {
+    const filePath = path.join(artifactRoots[artifactName], relativePath);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    writeFile(filePath, bytes, mode);
+    return {
+      artifact: artifactName,
+      relative_path: relativePath,
+      type: 'file',
+      mode,
+      size: fs.statSync(filePath).size,
+      sha256: sha256(fs.readFileSync(filePath)),
+    };
+  };
   const entries = [
-    {
-      artifact: 'openclaw_app', relative_path: 'OpenClaw.app/Contents/MacOS/OpenClaw',
-      type: 'file', mode: 0o755, size: 300, sha256: 'c'.repeat(64),
-    },
-    {
-      artifact: 'peekaboo_app', relative_path: 'Peekaboo.app/Contents/MacOS/Peekaboo',
-      type: 'file', mode: 0o755, size: 200, sha256: 'd'.repeat(64),
-    },
-    {
-      artifact: 'peekaboo_cli', relative_path: 'runtime/libswiftCompatibilitySpan.dylib',
-      type: 'file', mode: 0o644, size: 100, sha256: 'e'.repeat(64),
-    },
-    {
-      artifact: 'peekaboo_cli', relative_path: 'runtime/peekaboo',
-      type: 'file', mode: 0o755, size: 400, sha256: 'f'.repeat(64),
-    },
+    installedFile(
+      'openclaw_app',
+      'OpenClaw.app/Contents/MacOS/OpenClaw',
+      fs.readFileSync('/usr/bin/true'),
+      0o755,
+    ),
+    installedFile(
+      'openclaw_app',
+      'OpenClaw.app/Contents/Resources/bootstrap.sh',
+      '#!/bin/sh\nexit 0\n',
+      0o755,
+    ),
+    installedFile(
+      'peekaboo_app',
+      'Peekaboo.app/Contents/MacOS/Peekaboo',
+      fs.readFileSync('/usr/bin/true'),
+      0o755,
+    ),
+    installedFile(
+      'peekaboo_cli',
+      'runtime/libswiftCompatibilitySpan.dylib',
+      'fixture runtime data\n',
+      0o644,
+    ),
+    installedFile(
+      'peekaboo_cli',
+      'runtime/peekaboo',
+      fs.readFileSync('/usr/bin/true'),
+      0o755,
+    ),
     {
       artifact: 'peekaboo_cli', relative_path: 'symlink/peekaboo',
       type: 'symlink', mode: 0o777, target: '../runtime/peekaboo',
     },
-  ];
+  ].sort((left, right) => (
+    `${left.artifact}\0${left.relative_path}`.localeCompare(`${right.artifact}\0${right.relative_path}`)
+  ));
+  const symlinkPath = path.join(artifactRoots.peekaboo_cli, 'symlink/peekaboo');
+  fs.mkdirSync(path.dirname(symlinkPath), { recursive: true });
+  fs.symlinkSync('../runtime/peekaboo', symlinkPath);
+  entries.find((entry) => entry.type === 'symlink').mode = Number(
+    fs.lstatSync(symlinkPath, { bigint: true }).mode & 0o7777n,
+  );
   const elevationReceipts = [
     elevationReceipt(root, 'local', artifact),
     elevationReceipt(root, 'studio', artifact),
@@ -390,6 +509,8 @@ function deploymentFixture(
     agent: {
       pid: concurrentReport.agent.pid,
       start_identity: concurrentReport.agent.start_identity,
+      executable_path: concurrentReport.agent.executable_path,
+      executable_sha256: concurrentReport.agent.executable_sha256,
       code_signature_hash: concurrentReport.agent.code_signature_hash,
     },
     bridge: {
@@ -460,37 +581,21 @@ function deploymentFixture(
       })
     )),
   ];
-  const policyScanner = writeFile(path.join(root, 'executable-policy-scanner'), 'scanner', 0o500);
-  const scannerSHA256 = sha256(fs.readFileSync(policyScanner));
+  const policyScanner = path.join(toolRoot, 'executable-policy-scanner.mjs');
   const policyReports = [
     ['local', localUUID], ['studio', studioUUID],
-  ].map(([role, hostUUID], inventoryIndex) => {
-    const coveredEntries = inventoryIndex === 0 ? entries : (studioEntries ?? entries);
-    const fileCoverage = coveredEntries.filter((entry) => entry.type === 'file').map((entry, index) => ({
-      artifact: entry.artifact,
-      relative_path: entry.relative_path,
-      sha256: entry.sha256,
-      classification: index === 0 ? 'script' : index === 2 ? 'data' : 'executable',
-    }));
-    const coverage = {
-      installed_inventory_aggregate_sha256: JSON.parse(fs.readFileSync(installed[inventoryIndex])).aggregate_sha256,
-      scanned_roots: ['openclaw_app', 'peekaboo_app', 'peekaboo_cli'],
-      covered_entries: coveredEntries,
-      file_coverage: fileCoverage,
-    };
-    return writeJSON(path.join(root, `${role}-executable-policy.json`), {
+  ].map(([role], inventoryIndex) => {
+    const specPath = writeJSON(path.join(root, `${role}-policy-spec.json`), {
       version: 1,
-      role,
-      host_uuid: hostUUID,
-      deployment_envelope_sha256: '8'.repeat(64),
-      scanner_sha256: scannerSHA256,
-      complete: true,
-      ...coverage,
-      coverage_aggregate_sha256: aggregateSHA256('executable-policy-coverage', coverage),
-      scanned_executable_count: fileCoverage.filter((entry) => entry.classification === 'executable').length,
-      scanned_script_count: fileCoverage.filter((entry) => entry.classification === 'script').length,
-      forbidden_findings: [],
+      installed_inventory: installed[inventoryIndex],
+      artifact_roots: artifactRoots,
     });
+    const outputPath = path.join(root, `${role}-executable-policy.json`);
+    const result = spawnSync(process.execPath, [
+      policyScanner, 'generate', '--spec', specPath, '--output', outputPath,
+    ], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return outputPath;
   });
   return {
     installed,
@@ -502,6 +607,7 @@ function deploymentFixture(
     localUUID,
     studioUUID,
     collectorSHA256,
+    artifactRoots,
   };
 }
 
@@ -1422,6 +1528,7 @@ function concurrentFixture(root, {
   const runRoot = privateDirectory(root, 'run');
   const monitorDirectory = privateDirectory(runRoot, 'monitor');
   const agentExecutable = '/usr/bin/true';
+  const monitorCodeSignatureHash = codeSignatureHash('/usr/bin/true');
   const bridgeSocket = path.join(root, 'bridge.sock');
   const now = Date.now();
   const operationsStart = now - 3000;
@@ -1459,7 +1566,7 @@ function concurrentFixture(root, {
     ],
     observer: { target: foregroundTarget },
     monitor: {
-      code_signature_hash: 'f'.repeat(40),
+      code_signature_hash: monitorCodeSignatureHash,
       foreground_target: foregroundTarget,
       sentinel,
       foreground_controller: { pid: 205, start_identity: '205001', code_signature_hash: 'e'.repeat(40) },
@@ -1515,7 +1622,7 @@ function concurrentFixture(root, {
     plan_sha256: sha256(fs.readFileSync(plan)),
     monitor_executable_path: '/usr/bin/true',
     monitor_executable_sha256: sha256(fs.readFileSync('/usr/bin/true')),
-    monitor_code_signature_hash: 'f'.repeat(40),
+    monitor_code_signature_hash: monitorCodeSignatureHash,
     identity_handshake_path: coordinatorHandshake,
     identity_handshake_sha256: sha256(fs.readFileSync(coordinatorHandshake)),
     stdout_path: eventPath,
@@ -1553,7 +1660,7 @@ function concurrentFixture(root, {
     plan_sha256: sha256(fs.readFileSync(plan)),
     monitor_executable_path: '/usr/bin/true',
     monitor_executable_sha256: sha256(fs.readFileSync('/usr/bin/true')),
-    monitor_code_signature_hash: 'f'.repeat(40),
+    monitor_code_signature_hash: monitorCodeSignatureHash,
     identity_handshake_path: invocationHandshake,
     identity_handshake_sha256: sha256(fs.readFileSync(invocationHandshake)),
     stdout_path: invocationStdout,
@@ -1932,6 +2039,100 @@ test('post-run validator requires strict progress beyond the integrated-CU bound
   }
 });
 
+test('source manifest binds exact clean Git HEAD blobs and rejects hidden byte drift', () => {
+  const root = fs.mkdtempSync('/private/tmp/pbq-source-proof-');
+  fs.chmodSync(root, 0o700);
+  const repository = privateDirectory(root, 'repository');
+  const evidenceRoot = privateDirectory(root, 'evidence');
+  const runGit = (...arguments_) => {
+    const result = spawnSync('/usr/bin/git', ['-C', repository, ...arguments_], {
+      encoding: 'utf8',
+      env: {
+        PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+        LANG: 'C',
+        LC_ALL: 'C',
+        GIT_AUTHOR_DATE: '2000-01-01T00:00:00Z',
+        GIT_COMMITTER_DATE: '2000-01-01T00:00:00Z',
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  try {
+    writeFile(path.join(repository, 'bound.txt'), 'bound\n', 0o644);
+    writeFile(path.join(repository, 'other.txt'), 'other\n', 0o644);
+    runGit('init', '--quiet');
+    runGit('config', 'user.name', 'Qualification Fixture');
+    runGit('config', 'user.email', 'qualification@example.invalid');
+    runGit('add', '--all');
+    runGit('commit', '--quiet', '-m', 'initial');
+    const sourceCommit = runGit('rev-parse', 'HEAD');
+    const manifestPath = path.join(evidenceRoot, 'source.json');
+    generateSourceManifest(repository, ['bound.txt'], manifestPath, sourceCommit);
+    fs.chmodSync(manifestPath, 0o400);
+    assert.equal(
+      verifySourceManifest(manifestPath, ['bound.txt'], sourceCommit).value.source_commit,
+      sourceCommit,
+    );
+
+    assert.throws(
+      () => generateSourceManifest(
+        repository,
+        ['bound.txt'],
+        path.join(evidenceRoot, 'fake-source.json'),
+        '0'.repeat(40),
+      ),
+      /commit is not the exact repository HEAD/,
+    );
+    writeFile(path.join(repository, 'other.txt'), 'dirty\n', 0o644);
+    assert.throws(
+      () => generateSourceManifest(
+        repository,
+        ['bound.txt'],
+        path.join(evidenceRoot, 'dirty-source.json'),
+        sourceCommit,
+      ),
+      /pre-read tree is not clean/,
+    );
+    writeFile(path.join(repository, 'other.txt'), 'other\n', 0o644);
+    writeFile(path.join(repository, 'untracked.txt'), 'untracked\n', 0o644);
+    assert.throws(
+      () => generateSourceManifest(
+        repository,
+        ['bound.txt'],
+        path.join(evidenceRoot, 'untracked-source.json'),
+        sourceCommit,
+      ),
+      /pre-read tree is not clean/,
+    );
+    fs.unlinkSync(path.join(repository, 'untracked.txt'));
+
+    runGit('update-index', '--skip-worktree', 'bound.txt');
+    writeFile(path.join(repository, 'bound.txt'), 'hidden drift\n', 0o644);
+    assert.throws(
+      () => generateSourceManifest(
+        repository,
+        ['bound.txt'],
+        path.join(evidenceRoot, 'hidden-drift-source.json'),
+        sourceCommit,
+      ),
+      /differs from commit/,
+    );
+    writeFile(path.join(repository, 'bound.txt'), 'bound\n', 0o644);
+    runGit('update-index', '--no-skip-worktree', 'bound.txt');
+
+    writeFile(path.join(repository, 'other.txt'), 'new clean head\n', 0o644);
+    runGit('add', 'other.txt');
+    runGit('commit', '--quiet', '-m', 'advance head');
+    assert.throws(
+      () => verifySourceManifest(manifestPath, ['bound.txt'], sourceCommit),
+      /commit is not the exact repository HEAD/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('qualification manifest closes every required evidence class and detects byte drift', () => {
   const root = fs.mkdtempSync('/private/tmp/pbq-tools-manifest-');
   fs.chmodSync(root, 0o700);
@@ -2127,21 +2328,12 @@ test('qualification manifest closes every required evidence class and detects by
       version: 1, passed: true, added: [], changed: [], removed: [],
     });
     const toolsManifest = path.join(root, 'qualification-tools-source.json');
-    generateSourceManifest(toolRoot, [
-      'README.md',
-      'atomic-publish-no-replace.swift',
-      'integrated-cu-emitter-calibrator.swift',
-      'managed-launch-suspended.c',
-      'lib.mjs',
-      'managed-launcher.mjs',
-      'project-live-bindings.mjs',
-      'process-lifecycle-guard.c',
-      'process-tree-collector.mjs',
-      'publish-coordinator-marker.mjs',
-      'qualification-manifest.mjs',
-      'validate-concurrent-run.mjs',
-      'test/qualification-tools.test.mjs',
-    ], toolsManifest, SOURCE);
+    generateSourceManifest(
+      qualificationRepositoryRoot,
+      qualificationSourceFiles,
+      toolsManifest,
+      SOURCE,
+    );
     fs.chmodSync(toolsManifest, 0o400);
     const coordinatorInvocation = JSON.parse(fs.readFileSync(concurrent.spec.coordinator_invocation));
     const liveEvents = fs.readFileSync(concurrent.spec.coordinator_events, 'utf8')
@@ -2197,6 +2389,7 @@ test('qualification manifest closes every required evidence class and detects by
         installed_inventories: deployment.installed,
         elevation_receipts: deployment.elevationReceipts,
         process_tree_collector: deployment.collector,
+        process_tree_monitor: planValue.monitor_executable,
         process_trees: deployment.processTrees,
         executable_policy_scanner: deployment.policyScanner,
         executable_policy_reports: deployment.policyReports,
@@ -2251,6 +2444,43 @@ test('qualification manifest closes every required evidence class and detects by
       },
       restoration_cleanup: { restoration_evidence: [evidence()], cleanup_evidence: [evidence()] },
     };
+    const installedScriptPath = path.join(
+      deployment.artifactRoots.openclaw_app,
+      'OpenClaw.app/Contents/Resources/bootstrap.sh',
+    );
+    const cleanInstalledScript = fs.readFileSync(installedScriptPath);
+    writeFile(installedScriptPath, '#!/bin/sh\nexec osascript forbidden.applescript\n', 0o755);
+    const forbiddenScannerEntries = structuredClone(
+      JSON.parse(fs.readFileSync(deployment.installed[0])).entries,
+    );
+    const forbiddenScriptEntry = forbiddenScannerEntries.find((entry) => (
+      entry.relative_path === 'OpenClaw.app/Contents/Resources/bootstrap.sh'
+    ));
+    forbiddenScriptEntry.size = fs.statSync(installedScriptPath).size;
+    forbiddenScriptEntry.sha256 = sha256(fs.readFileSync(installedScriptPath));
+    const forbiddenScannerInventory = installedInventory(
+      root,
+      'local',
+      deployment.localUUID,
+      forbiddenScannerEntries,
+      qualificationToolsAggregate,
+      sha256(fs.readFileSync(deployment.elevationReceipts[0])),
+      '-forbidden-scanner',
+    );
+    const forbiddenScannerSpec = writeJSON(path.join(root, 'forbidden-scanner-spec.json'), {
+      version: 1,
+      installed_inventory: forbiddenScannerInventory,
+      artifact_roots: deployment.artifactRoots,
+    });
+    const forbiddenScannerRun = spawnSync(process.execPath, [
+      deployment.policyScanner,
+      'generate',
+      '--spec', forbiddenScannerSpec,
+      '--output', path.join(root, 'forbidden-scanner-report.json'),
+    ], { encoding: 'utf8' });
+    assert.notEqual(forbiddenScannerRun.status, 0);
+    assert.match(forbiddenScannerRun.stderr, /forbidden executable or script markers/);
+    writeFile(installedScriptPath, cleanInstalledScript, 0o755);
     const legacyInput = structuredClone(inputValue);
     legacyInput.version = 1;
     assert.throws(
@@ -2265,6 +2495,21 @@ test('qualification manifest closes every required evidence class and detects by
         'cli',
         (value) => { value.cli.sha256 = '0'.repeat(64); },
         /CLI artifact differs from the installed executable/,
+      ],
+      [
+        'cli-cdhash',
+        (value) => { value.cli.cdhash = '0'.repeat(40); },
+        /exercised Agent CLI differs from the candidate\/deployed executable/,
+      ],
+      [
+        'monitor-executable',
+        (value) => { value.monitor.executable_sha256 = '0'.repeat(64); },
+        /process monitor differs from the candidate-bound executable/,
+      ],
+      [
+        'monitor-source',
+        (value) => { value.monitor.source_sha256 = '0'.repeat(64); },
+        /monitor source differs from the reviewed Git tree/,
       ],
       [
         'app',
@@ -2295,6 +2540,22 @@ test('qualification manifest closes every required evidence class and detects by
         driftedBindingValue,
         0o400,
       );
+      driftedInput.matrix_cycles = matrix.map((cycle, cycleIndex) => {
+        const certificate = JSON.parse(fs.readFileSync(cycle.certificate));
+        const crash = JSON.parse(fs.readFileSync(cycle.crash_inventory));
+        certificate.peekaboo_artifact_manifest_sha256 = sha256(fs.readFileSync(driftedArtifact));
+        crash.peekaboo_artifact_manifest_sha256 = certificate.peekaboo_artifact_manifest_sha256;
+        return {
+          certificate: writeJSON(
+            path.join(root, `drifted-${artifactDrift}-certificate-${cycleIndex}.json`),
+            certificate,
+          ),
+          crash_inventory: writeJSON(
+            path.join(root, `drifted-${artifactDrift}-crash-${cycleIndex}.json`),
+            crash,
+          ),
+        };
+      });
       assert.throws(
         () => generateManifest(
           writeJSON(path.join(root, `drifted-${artifactDrift}-input.json`), driftedInput),
@@ -2306,7 +2567,7 @@ test('qualification manifest closes every required evidence class and detects by
     const localInventory = JSON.parse(fs.readFileSync(deployment.installed[0]));
     const installedDrifts = [
       ['size', (entries) => { entries[0].size += 1; }],
-      ['path', (entries) => { entries[0].relative_path = 'OpenClaw2.app/Contents/MacOS/OpenClaw'; }],
+      ['path', (entries) => { entries[0].relative_path = 'OpenClaw.app/Contents/MacOS/OpenClaw2'; }],
       ['mode', (entries) => { entries[0].mode = 0o700; }],
       ['hash', (entries) => { entries[0].sha256 = '0'.repeat(64); }],
       ['symlink', (entries) => { entries.at(-1).target = '../other/peekaboo'; }],
@@ -2421,6 +2682,37 @@ test('qualification manifest closes every required evidence class and detects by
       ),
       /root coverage is incomplete/,
     );
+    const wrongAgentBytesInput = structuredClone(inputValue);
+    const wrongAgentBytesTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
+    const wrongAgentRoot = wrongAgentBytesTree.roots.find((entry) => entry.root_class === 'agent');
+    wrongAgentBytesTree.processes.find((entry) => (
+      entry.pid === wrongAgentRoot.pid && entry.start_identity === wrongAgentRoot.start_identity
+    )).executable_sha256 = '0'.repeat(64);
+    wrongAgentBytesInput.deployment.process_trees[1] = writeJSON(
+      path.join(root, 'wrong-agent-bytes-process-tree.json'),
+      wrongAgentBytesTree,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'wrong-agent-bytes-input.json'), wrongAgentBytesInput),
+        path.join(root, 'wrong-agent-bytes-manifest.json'),
+      ),
+      /exercised Agent CLI differs from the candidate\/deployed executable/,
+    );
+    const wrongMonitorTreeInput = structuredClone(inputValue);
+    const wrongMonitorTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
+    wrongMonitorTree.monitor_executable_sha256 = '0'.repeat(64);
+    wrongMonitorTreeInput.deployment.process_trees[1] = writeJSON(
+      path.join(root, 'wrong-monitor-process-tree.json'),
+      wrongMonitorTree,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'wrong-monitor-tree-input.json'), wrongMonitorTreeInput),
+        path.join(root, 'wrong-monitor-tree-manifest.json'),
+      ),
+      /process tree monitor differs from the exact authenticated executable/,
+    );
     const wrongCollectorInput = structuredClone(inputValue);
     const wrongCollectorTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
     wrongCollectorTree.collector_sha256 = '0'.repeat(64);
@@ -2448,6 +2740,25 @@ test('qualification manifest closes every required evidence class and detects by
         path.join(root, 'wrong-lifecycle-guard-manifest.json'),
       ),
       /process lifecycle guard differs from the bound source/,
+    );
+    const substitutedMonitorInput = structuredClone(inputValue);
+    const substitutedMonitor = writeFile(
+      path.join(root, 'substituted-process-monitor'),
+      fs.readFileSync('/usr/bin/true'),
+      0o500,
+    );
+    substitutedMonitorInput.deployment.process_tree_monitor = substitutedMonitor;
+    substitutedMonitorInput.deployment.process_trees = deployment.processTrees.map((treePath, index) => {
+      const tree = JSON.parse(fs.readFileSync(treePath));
+      tree.monitor_executable_path = substitutedMonitor;
+      return writeJSON(path.join(root, `substituted-monitor-tree-${index}.json`), tree);
+    });
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'substituted-monitor-input.json'), substitutedMonitorInput),
+        path.join(root, 'substituted-monitor-manifest.json'),
+      ),
+      /process monitor differs from the candidate-bound executable/,
     );
     const substitutedToolInput = structuredClone(inputValue);
     const substitutedToolDirectory = privateDirectory(root, 'substituted-process-tools');
@@ -2572,6 +2883,29 @@ test('qualification manifest closes every required evidence class and detects by
         new RegExp(`local/during ${rootClass} root differs from the concurrent run`),
       );
     }
+    const resealedInvocationInput = structuredClone(inputValue);
+    const resealedInvocation = JSON.parse(fs.readFileSync(concurrent.spec.agent_invocation));
+    resealedInvocation.executable_sha256 = '0'.repeat(64);
+    resealedInvocationInput.agent_cu.agent_invocation = writeJSON(
+      path.join(root, 'resealed-agent-invocation.json'),
+      resealedInvocation,
+    );
+    const resealedConcurrent = structuredClone(concurrentValue);
+    resealedConcurrent.agent.executable_sha256 = resealedInvocation.executable_sha256;
+    resealedConcurrent.agent.invocation_sha256 = sha256(
+      fs.readFileSync(resealedInvocationInput.agent_cu.agent_invocation),
+    );
+    resealedInvocationInput.agent_cu.validation_report = writeJSON(
+      path.join(root, 'resealed-concurrent-report.json'),
+      resealedConcurrent,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'resealed-agent-invocation-input.json'), resealedInvocationInput),
+        path.join(root, 'resealed-agent-invocation-manifest.json'),
+      ),
+      /exercised Agent CLI differs from the candidate\/deployed executable/,
+    );
     const lateCoverageInput = structuredClone(inputValue);
     const lateCoverageTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
     lateCoverageTree.coverage_started_at_milliseconds
@@ -2804,20 +3138,19 @@ test('qualification manifest closes every required evidence class and detects by
       ),
     ];
     wrongToolsAggregateInput.deployment.executable_policy_reports
-      = deployment.policyReports.map((reportPath, reportIndex) => {
-        const report = JSON.parse(fs.readFileSync(reportPath));
-        const inventory = JSON.parse(fs.readFileSync(
-          wrongToolsAggregateInput.deployment.installed_inventories[reportIndex],
-        ));
-        report.installed_inventory_aggregate_sha256 = inventory.aggregate_sha256;
-        const coverage = {
-          installed_inventory_aggregate_sha256: report.installed_inventory_aggregate_sha256,
-          scanned_roots: report.scanned_roots,
-          covered_entries: report.covered_entries,
-          file_coverage: report.file_coverage,
-        };
-        report.coverage_aggregate_sha256 = aggregateSHA256('executable-policy-coverage', coverage);
-        return writeJSON(path.join(root, `wrong-tools-policy-${reportIndex}.json`), report);
+      = deployment.policyReports.map((_reportPath, reportIndex) => {
+        const role = reportIndex === 0 ? 'local' : 'studio';
+        const specPath = writeJSON(path.join(root, `wrong-tools-policy-spec-${reportIndex}.json`), {
+          version: 1,
+          installed_inventory: wrongToolsAggregateInput.deployment.installed_inventories[reportIndex],
+          artifact_roots: deployment.artifactRoots,
+        });
+        const outputPath = path.join(root, `wrong-tools-policy-${reportIndex}.json`);
+        const result = spawnSync(process.execPath, [
+          deployment.policyScanner, 'generate', '--spec', specPath, '--output', outputPath,
+        ], { encoding: 'utf8' });
+        assert.equal(result.status, 0, `${role}: ${result.stderr}`);
+        return outputPath;
       });
     wrongToolsAggregateInput.artifact_manifest = writeJSON(
       path.join(root, 'wrong-tools-artifact-binding.json'),
@@ -2853,6 +3186,33 @@ test('qualification manifest closes every required evidence class and detects by
       ),
       /qualification tools aggregate differs from installed inventories/,
     );
+    const substitutedScannerInput = structuredClone(inputValue);
+    const substitutedScannerDirectory = privateDirectory(root, 'substituted-policy-scanner');
+    writeFile(
+      path.join(substitutedScannerDirectory, 'lib.mjs'),
+      fs.readFileSync(path.join(toolRoot, 'lib.mjs')),
+      0o400,
+    );
+    const substitutedScanner = writeFile(
+      path.join(substitutedScannerDirectory, 'executable-policy-scanner.mjs'),
+      fs.readFileSync(deployment.policyScanner),
+      0o500,
+    );
+    substitutedScannerInput.deployment.executable_policy_scanner = substitutedScanner;
+    substitutedScannerInput.deployment.executable_policy_reports = deployment.policyReports.map(
+      (reportPath, reportIndex) => {
+        const report = JSON.parse(fs.readFileSync(reportPath));
+        report.scanner_path = substitutedScanner;
+        return writeJSON(path.join(root, `substituted-scanner-report-${reportIndex}.json`), report);
+      },
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'substituted-scanner-input.json'), substitutedScannerInput),
+        path.join(root, 'substituted-scanner-manifest.json'),
+      ),
+      /executable-policy-scanner\.mjs differs from the reviewed qualification tools/,
+    );
     const dirtyPolicyInput = structuredClone(inputValue);
     const dirtyPolicy = JSON.parse(fs.readFileSync(deployment.policyReports[0]));
     dirtyPolicy.forbidden_findings = [{ family: 'osa', path: '/private/task/worker' }];
@@ -2866,6 +3226,37 @@ test('qualification manifest closes every required evidence class and detects by
         path.join(root, 'dirty-executable-policy-manifest.json'),
       ),
       /not one complete clean executable\/script policy report/,
+    );
+    const forgedClassificationInput = structuredClone(inputValue);
+    const forgedClassification = JSON.parse(fs.readFileSync(deployment.policyReports[0]));
+    const forgedExecutable = forgedClassification.file_coverage.find((entry) => (
+      entry.classification === 'executable'
+    ));
+    forgedExecutable.classification = 'data';
+    forgedClassification.scanned_executable_count -= 1;
+    forgedClassification.coverage_aggregate_sha256 = aggregateSHA256(
+      'executable-policy-coverage',
+      {
+        scanner_sha256: forgedClassification.scanner_sha256,
+        installed_inventory_sha256: forgedClassification.installed_inventory_sha256,
+        installed_inventory_aggregate_sha256:
+          forgedClassification.installed_inventory_aggregate_sha256,
+        artifact_roots: forgedClassification.artifact_roots,
+        scanned_roots: forgedClassification.scanned_roots,
+        covered_entries: forgedClassification.covered_entries,
+        file_coverage: forgedClassification.file_coverage,
+      },
+    );
+    forgedClassificationInput.deployment.executable_policy_reports[0] = writeJSON(
+      path.join(root, 'forged-classification-policy.json'),
+      forgedClassification,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'forged-classification-input.json'), forgedClassificationInput),
+        path.join(root, 'forged-classification-manifest.json'),
+      ),
+      /fresh source-owned scan/,
     );
     const subsetPolicyInput = structuredClone(inputValue);
     const subsetPolicy = JSON.parse(fs.readFileSync(deployment.policyReports[0]));

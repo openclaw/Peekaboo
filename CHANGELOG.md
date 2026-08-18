@@ -37,7 +37,7 @@
 - Add capability-gated exact-window background middle/triple clicks with native center-button and 1/2/3 click-state sequences, signed target receipts, and fail-closed protocol 1.29 compatibility.
 - Add a packaged version-2 digest specification plus `digest` and `verify-digests` commands so operators can independently recompute every live certification root and leaf without source access.
 - Add a live-physical multi-target finalizer that binds exact protocol-1.30 background controllers, a source-owned epoch monitor, attributed foreground activity, restoration, crash evidence, and protocol-1.29 signed receipt validation into one fail-closed run.
-- Add a source-owned final qualification manifest that requires byte-identical local/Studio installations, both elevation receipts, complete task-owned process trees across three epochs, and separate executable/script policy proof with no CUA, AppleScript/JXA/OSA, virtualization, VNC, or remote-desktop path.
+- Add a Git-blob-bound final qualification manifest that requires byte-identical local/Studio installations, candidate-bound CLI and monitor identities, both elevation receipts, complete task-owned process trees across three epochs, and freshly re-executed source-owned policy scans with no CUA, AppleScript/JXA/OSA, virtualization, VNC, or remote-desktop path.
 
 ### Fixed
 - Pin foreground menu focus, clicks, and listing to one exact process/window generation across CLI and MCP, preserving focus outcomes when a later menu read fails.
