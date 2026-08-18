@@ -922,6 +922,15 @@ enum WindowServiceBridge {
         }.value
     }
 
+    static func mutationInventory(
+        windows: any WindowManagementServiceProtocol,
+        target: WindowTarget
+    ) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo> {
+        try await Task { @MainActor in
+            try await windows.mutationInventory(target: target)
+        }.value
+    }
+
     static func getFocusedWindow(windows: any WindowManagementServiceProtocol) async throws -> ServiceWindowInfo? {
         try await Task { @MainActor in
             try await windows.getFocusedWindow()

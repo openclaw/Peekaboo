@@ -1442,6 +1442,8 @@ final class StubDialogService: DialogServiceProtocol {
 @MainActor
 class StubWindowService: WindowManagementServiceProtocol, WindowMutationInventoryProviding {
     var windowsByApp: [String: [ServiceWindowInfo]]
+    var inventoryCompleteness: DesktopTargetPlanning.Inventory<ServiceWindowInfo>.Completeness = .complete
+    var inventoryWarnings: [String] = []
     var focusCalls: [WindowTarget] = []
     var closeFallbackRequests: [Bool] = []
     var moveCalls: [WindowTarget] = []
@@ -1565,7 +1567,11 @@ class StubWindowService: WindowManagementServiceProtocol, WindowMutationInventor
     func windowMutationInventory(
         target: WindowTarget
     ) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo> {
-        try await .complete(self.listWindows(target: target))
+        try await .init(
+            items: self.listWindows(target: target),
+            completeness: self.inventoryCompleteness,
+            warnings: self.inventoryWarnings
+        )
     }
 
     func getFocusedWindow() async throws -> ServiceWindowInfo? {

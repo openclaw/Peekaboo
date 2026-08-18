@@ -92,12 +92,18 @@ public struct TargetApplicationInfo: Codable, Sendable {
 public struct WindowListData: Codable, Sendable {
     public let windows: [WindowInfo]
     public let target_application_info: TargetApplicationInfo
+    public let inventory_completeness: String?
+    public let inventory_warnings: [String]?
 
     public init(
         windows: [WindowInfo],
-        target_application_info: TargetApplicationInfo)
+        target_application_info: TargetApplicationInfo,
+        inventory_completeness: String? = nil,
+        inventory_warnings: [String]? = nil)
     {
         self.windows = windows
         self.target_application_info = target_application_info
+        self.inventory_completeness = inventory_completeness
+        self.inventory_warnings = inventory_warnings
     }
 }

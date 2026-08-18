@@ -31,10 +31,11 @@ extension WindowCommand {
                 let appInfo = try await self.services.applications.findApplication(identifier: appIdentifier)
 
                 let target = WindowTarget.application(appIdentifier)
-                let rawWindows = try await WindowServiceBridge.listWindows(
+                let inventory = try await WindowServiceBridge.mutationInventory(
                     windows: self.services.windows,
                     target: target
                 )
+                let rawWindows = inventory.items
                 let windows = ObservationTargetResolver.filteredWindows(from: rawWindows, mode: .list)
 
                 // Convert ServiceWindowInfo to WindowInfo for consistency
@@ -47,11 +48,17 @@ extension WindowCommand {
                         app_name: appInfo.name,
                         bundle_id: appInfo.bundleIdentifier,
                         pid: appInfo.processIdentifier
-                    )
+                    ),
+                    inventory_completeness: inventory.completeness.rawValue,
+                    inventory_warnings: inventory.warnings
                 )
 
                 output(data) {
                     print("\(data.target_application_info.app_name) has \(data.windows.count) window(s):")
+
+                    for warning in inventory.warnings {
+                        print("Warning: \(warning)")
+                    }
 
                     if self.groupBySpace {
                         // Group windows by space

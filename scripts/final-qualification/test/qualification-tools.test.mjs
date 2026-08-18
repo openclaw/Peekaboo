@@ -562,6 +562,8 @@ function windowReceipt(root, name, pid, windowID, bounds) {
   return writeJSON(path.join(root, `${name}-windows.json`), {
     success: true,
     data: {
+      inventory_completeness: 'complete',
+      inventory_warnings: [],
       windows: [{
         window_title: name,
         window_id: windowID,
@@ -689,6 +691,22 @@ test('closed raw receipts project deterministic live-v4 bindings and reject ambi
     ambiguous.data.windows.push({ ...ambiguous.data.windows[0], window_id: 999 });
     writeJSON(fix.spec.receipts.controller_a.window_inventory, ambiguous);
     assert.throws(() => projectBindings(input, path.join(root, 'ambiguous.json')), /exactly one window/);
+
+    ambiguous.data.windows.pop();
+    ambiguous.data.inventory_completeness = 'partial';
+    ambiguous.data.inventory_warnings = ['Accessibility omitted one unmatched window row'];
+    writeJSON(fix.spec.receipts.controller_a.window_inventory, ambiguous);
+    assert.throws(
+      () => projectBindings(input, path.join(root, 'partial.json')),
+      /complete, omission-free window inventory/,
+    );
+
+    ambiguous.data.inventory_completeness = 'complete';
+    writeJSON(fix.spec.receipts.controller_a.window_inventory, ambiguous);
+    assert.throws(
+      () => projectBindings(input, path.join(root, 'omitted-row.json')),
+      /complete, omission-free window inventory/,
+    );
   } finally {
     if (priorHome === undefined) delete process.env.HOME;
     else process.env.HOME = priorHome;
@@ -1418,6 +1436,7 @@ function concurrentFixture(root, {
       socket_path: bridgeSocket,
       trusted_host_team_ids: [TEAM],
       expected_host: {
+        host_kind: 'gui',
         process_identifier: 200,
         process_start_identity_decimal: '200001',
         code_signature_hash: 'd'.repeat(40),
@@ -1960,7 +1979,7 @@ test('qualification manifest closes every required evidence class and detects by
         }),
       };
     });
-    const adjunctTarget = { pid: 501, start_identity: '501001', window_id: 601 };
+    const adjunctTarget = { pid: 201, start_identity: '201001', window_id: 301 };
     const adjunctTime = Date.now();
     const middleBundle = signedBundleFixture(
       root, 'middle', 'exactWindowTargetedClick', adjunctTarget, adjunctTime, adjunctTime + 10,
@@ -2001,7 +2020,7 @@ test('qualification manifest closes every required evidence class and detects by
       ['pointer-disconnect', 'disconnectExactWindowHeldPointerOwner', false],
     ];
     const pointerClient = { pid: 777, start_identity: '777001', code_signature_hash: '6'.repeat(40) };
-    const pointerHost = { pid: 700, start_identity: '700001', code_signature_hash: '7'.repeat(40) };
+    const pointerHost = { pid: 200, start_identity: '200001', code_signature_hash: 'd'.repeat(40) };
     const pointerClientInstanceID = heldPointerClientID(NONCE);
     const pointerPairs = pointerOperations.map(([name, operation, mutating], entryIndex) => (
       signedBundleFixture(
@@ -3050,6 +3069,47 @@ test('qualification manifest closes every required evidence class and detects by
     const baselineObservedAt = JSON.parse(baselineBytes).observed_at_milliseconds;
     fs.utimesSync(baselinePath, new Date(baselineObservedAt), new Date(baselineObservedAt));
 
+    const staleMiddleSourceInput = structuredClone(inputValue);
+    const staleMiddleValidator = JSON.parse(fs.readFileSync(middleBundle.validator));
+    staleMiddleValidator.data.host_source_commit = '0'.repeat(40);
+    staleMiddleSourceInput.adjuncts.middle_click.live_validator_reports = [writeJSON(
+      path.join(root, 'stale-middle-source-validator.json'), staleMiddleValidator,
+    )];
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'stale-middle-source-input.json'), staleMiddleSourceInput),
+        path.join(root, 'stale-middle-source-manifest.json'),
+      ),
+      /differs from the exact candidate Bridge host/,
+    );
+    const foreignHeldKeyHostInput = structuredClone(inputValue);
+    const foreignHeldKeyValidator = JSON.parse(fs.readFileSync(keyBundle.validator));
+    foreignHeldKeyValidator.data.host.pid += 1;
+    foreignHeldKeyHostInput.adjuncts.held_key.live_validator_reports = [writeJSON(
+      path.join(root, 'foreign-held-key-host-validator.json'), foreignHeldKeyValidator,
+    )];
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'foreign-held-key-host-input.json'), foreignHeldKeyHostInput),
+        path.join(root, 'foreign-held-key-host-manifest.json'),
+      ),
+      /differs from the exact candidate Bridge host/,
+    );
+    const foreignPointerTargetInput = structuredClone(inputValue);
+    const foreignPointerController = JSON.parse(fs.readFileSync(pointerControllerResult));
+    foreignPointerController.target.pid = 999;
+    foreignPointerController.target.start_identity = '999001';
+    foreignPointerController.target.window_id = 999;
+    foreignPointerTargetInput.adjuncts.held_pointer.controller_results = [writeJSON(
+      path.join(root, 'foreign-pointer-target-controller.json'), foreignPointerController,
+    )];
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'foreign-pointer-target-input.json'), foreignPointerTargetInput),
+        path.join(root, 'foreign-pointer-target-manifest.json'),
+      ),
+      /is not one exact controlled fixture target/,
+    );
     const input = writeJSON(path.join(root, 'manifest-input.json'), inputValue);
     const output = path.join(root, 'qualification-manifest.json');
     generateManifest(input, output);
@@ -3114,6 +3174,32 @@ test('qualification manifest closes every required evidence class and detects by
     assert.throws(
       () => verifyManifest(resealedMtimePath),
       /progress interleaving differs from the bound bundles\/readback/,
+    );
+
+    const resealedForeignAdjunctManifest = structuredClone(generatedManifest);
+    const resealedForeignValidator = JSON.parse(fs.readFileSync(keyBundle.validator));
+    resealedForeignValidator.data.host_source_commit = '0'.repeat(40);
+    const resealedForeignValidatorPath = writeJSON(
+      path.join(root, 'resealed-foreign-adjunct-validator.json'),
+      resealedForeignValidator,
+    );
+    const resealedForeignValidatorBytes = fs.readFileSync(resealedForeignValidatorPath);
+    resealedForeignAdjunctManifest.evidence.adjuncts.held_key.live_validator_reports[0] = {
+      path: resealedForeignValidatorPath,
+      size: resealedForeignValidatorBytes.length,
+      sha256: sha256(resealedForeignValidatorBytes),
+    };
+    resealedForeignAdjunctManifest.evidence_aggregate_sha256 = aggregateSHA256(
+      'evidence-manifest',
+      resealedForeignAdjunctManifest.evidence,
+    );
+    const resealedForeignAdjunctPath = writeJSON(
+      path.join(root, 'resealed-foreign-adjunct-manifest.json'),
+      resealedForeignAdjunctManifest,
+    );
+    assert.throws(
+      () => verifyManifest(resealedForeignAdjunctPath),
+      /differs from the exact candidate Bridge host/,
     );
 
     const originalInstalledInventory = fs.readFileSync(deployment.installed[0]);

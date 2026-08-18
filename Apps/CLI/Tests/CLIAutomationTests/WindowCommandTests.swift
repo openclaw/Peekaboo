@@ -273,10 +273,53 @@ struct WindowCommandTests {
         )
 
         let windows = response.data.windows
+        #expect(response.data.inventory_completeness == "complete")
+        #expect(response.data.inventory_warnings == [])
         #expect(windows.count == 1)
         let window = try #require(windows.first)
         #expect(window.window_title == "Document")
         #expect(window.window_index == mainWindow.index)
+    }
+
+    @Test
+    func `window list preserves partial inventory authority in JSON`() async throws {
+        let appName = "PartialApp"
+        let context = await MainActor.run {
+            self.makeWindowContext(
+                appInfo: ServiceApplicationInfo(
+                    processIdentifier: 5556,
+                    bundleIdentifier: "dev.partial",
+                    name: appName
+                ),
+                windows: [
+                    appName: [
+                        ServiceWindowInfo(
+                            windowID: 12,
+                            title: "Document",
+                            bounds: CGRect(x: 50, y: 50, width: 1200, height: 800),
+                            index: 0
+                        ),
+                    ],
+                ]
+            )
+        }
+        await MainActor.run {
+            context.windowService.inventoryCompleteness = .partial
+            context.windowService.inventoryWarnings = ["Accessibility omitted one unmatched window row"]
+        }
+
+        let result = try await self.runWindowCommand([
+            "window", "list", "--app", appName, "--json",
+        ], context: context)
+        let output = result.stdout.isEmpty ? result.stderr : result.stdout
+        let response = try JSONDecoder().decode(
+            CodableJSONResponse<WindowListData>.self,
+            from: Data(output.utf8)
+        )
+
+        #expect(response.data.windows.count == 1)
+        #expect(response.data.inventory_completeness == "partial")
+        #expect(response.data.inventory_warnings == ["Accessibility omitted one unmatched window row"])
     }
 
     @Test

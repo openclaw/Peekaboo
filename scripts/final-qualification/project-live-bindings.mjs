@@ -34,6 +34,10 @@ function exactWindow(filePath, process, label) {
   const receipt = readStableJSON(filePath, label).value;
   requireCondition(receipt.success === true, `${label} did not succeed`);
   requireCondition(receipt.data && typeof receipt.data === 'object', `${label}.data is missing`);
+  requireCondition(receipt.data.inventory_completeness === 'complete'
+    && Array.isArray(receipt.data.inventory_warnings)
+    && receipt.data.inventory_warnings.length === 0,
+  `${label} is not one complete, omission-free window inventory`);
   const windows = receipt.data.windows;
   requireCondition(Array.isArray(windows) && windows.length === 1, `${label} must contain exactly one window`);
   requireCondition(receipt.data.target_application_info?.pid === process.pid, `${label} target PID differs from its process receipt`);

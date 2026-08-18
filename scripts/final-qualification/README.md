@@ -81,7 +81,7 @@ macOS exposes the source PID only when the event is delivered, so there is no tr
 
 ## 2. Project raw receipts into `LIVE_BINDINGS`
 
-The projector accepts no identity literals in its input. `receipts.integrated_cu_emitter` is the calibrator output above. Each target uses the native monitor's exact `{pid,startIdentity}` output plus a `peekaboo window list --pid ... --json` result containing exactly one window whose `target_application_info.pid` matches. The semantic receipt is a closed owner projection of a fresh exact-target AX readback:
+The projector accepts no identity literals in its input. `receipts.integrated_cu_emitter` is the calibrator output above. Each target uses the native monitor's exact `{pid,startIdentity}` output plus a `peekaboo window list --pid ... --json` result with `inventory_completeness:"complete"`, an empty `inventory_warnings` list, and exactly one window whose `target_application_info.pid` matches. A partial catalog or any omitted-row warning is rejected before the projector considers the row count. The semantic receipt is a closed owner projection of a fresh exact-target AX readback:
 
 ```json
 {
@@ -341,7 +341,7 @@ The process policy is deliberately scoped to those task-owned trees. It rejects 
 
 Each matrix certificate is version 2 and binds its ordinal cycle, unique execution nonce, local hardware UUID, exact Peekaboo/Bridge source commit, deployment-envelope SHA-256, installed-inventory aggregate, immutable Peekaboo artifact-manifest SHA-256, start/end interval, and passing 42/42 catalog result. Its version-2 zero-delta crash comparison carries the same cycle/nonce/host/source/candidate identity and brackets that interval. All five nonces must be distinct and the cycle intervals strictly ordered without overlap. The concurrent report must itself be passed with eligible completed/zero exits, four mapped calls, six semantic readbacks, matching bundle count, and true Agent/CU progress interleaving. Every overlapping plan/event/summary/monitor/invocation/exit/result/readback/emitter hash is compared back to that same concurrent report, preventing run-A/run-B evidence mixing.
 
-Adjunct semantic files are executable contracts, not opaque attachments:
+Adjunct semantic files are executable contracts, not opaque attachments. Every adjunct validator must name the candidate source commit and the live-v4 plan's exact Bridge PID, generation, and CDHash; every adjunct target must be one of the plan's two exact controlled fixture targets. The held-pointer controller additionally repeats the plan's host kind and exact candidate source in both its build and handshake. Generation and read-only verification independently rederive these bindings from the retained live-v4 plan and deployment evidence:
 
 - Middle-click readback records exactly two consecutive source-owned Playground events, `{button:"middle",phase:"down"}` then `{button:"middle",phase:"up"}`, on the exact window; restoration carries equal literal baseline/restored values.
 - Held-key readback fixes key `a`, hold 500 ms, and requires `observed_value == baseline_value + "a"`; restoration returns the exact literal baseline.

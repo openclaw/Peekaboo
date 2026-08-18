@@ -838,6 +838,47 @@ function exactTarget(value, label) {
   return value;
 }
 
+function qualificationAdjunctBinding(deployment, plan, label) {
+  const expectedHost = plan?.bridge?.expected_host;
+  exactKeys(expectedHost, [
+    'host_kind', 'process_identifier', 'process_start_identity_decimal',
+    'code_signature_hash', 'source_commit',
+  ], `${label}.expected_host`);
+  requireCondition(['gui', 'daemon'].includes(expectedHost.host_kind)
+    && Number.isSafeInteger(expectedHost.process_identifier)
+    && expectedHost.process_identifier > 0
+    && typeof expectedHost.process_start_identity_decimal === 'string'
+    && /^[1-9][0-9]*$/.test(expectedHost.process_start_identity_decimal)
+    && CODE_SIGNATURE_HASH.test(expectedHost.code_signature_hash ?? '')
+    && expectedHost.source_commit === deployment.peekabooSourceCommit,
+  `${label} Bridge host is not bound to the exact candidate source`);
+  requireCondition(Array.isArray(plan.controllers) && plan.controllers.length === 2,
+    `${label} does not contain both controlled fixture targets`);
+  const fixtureTargets = plan.controllers.map((controller, index) => exactTarget({
+    pid: controller?.target?.process_identifier,
+    start_identity: controller?.target?.process_start_identity_decimal,
+    window_id: controller?.target?.window_id,
+  }, `${label}.controllers[${index}].target`));
+  requireCondition(new Set(fixtureTargets.map((target) => (
+    `${target.pid}:${target.start_identity}:${target.window_id}`
+  ))).size === fixtureTargets.length, `${label} controlled fixture targets are not distinct`);
+  return {
+    sourceCommit: deployment.peekabooSourceCommit,
+    expectedHost: {
+      host_kind: expectedHost.host_kind,
+      pid: expectedHost.process_identifier,
+      start_identity: expectedHost.process_start_identity_decimal,
+      code_signature_hash: expectedHost.code_signature_hash,
+    },
+    fixtureTargets,
+  };
+}
+
+function requireFixtureTarget(target, binding, label) {
+  requireCondition(binding.fixtureTargets.some((candidate) => sameJSON(candidate, target)),
+    `${label} is not one exact controlled fixture target`);
+}
+
 function semanticCertificate(filePath, label, expected) {
   const retained = readStableJSON(filePath, label);
   const value = retained.value;
@@ -1031,6 +1072,7 @@ function semanticValidatorPair(bundlePath, validatorPath, label, {
   expectedOperation = null,
   requireMutation = false,
   authentication = null,
+  adjunctBinding = null,
 } = {}) {
   const bundle = readStableJSON(bundlePath, `${label} bundle`, { maximumBytes: 256 * 1024 * 1024 });
   const payload = bundlePayload(bundle, label);
@@ -1074,6 +1116,13 @@ function semanticValidatorPair(bundlePath, validatorPath, label, {
     && report.client?.start_identity === payload.client.processStartIdentity
     && report.client?.code_signature_hash === payload.client.codeSignatureHash,
   `${label} validator is not bound to one authenticated live bundle`);
+  if (adjunctBinding !== null) {
+    requireCondition(report.host_source_commit === adjunctBinding.sourceCommit
+      && report.host.pid === adjunctBinding.expectedHost.pid
+      && report.host.start_identity === adjunctBinding.expectedHost.start_identity
+      && report.host.code_signature_hash === adjunctBinding.expectedHost.code_signature_hash,
+    `${label} validator differs from the exact candidate Bridge host`);
+  }
   if (expectedOperation !== null) {
     requireCondition(payload.operation === expectedOperation,
       `${label} operation is not ${expectedOperation}`);
@@ -1351,7 +1400,7 @@ function derivedHeldPointerClientID(executionNonce) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function semanticHeldControllerResult(filePath) {
+function semanticHeldControllerResult(filePath, adjunctBinding) {
   const label = 'held-pointer controller result';
   const retained = readStableJSON(filePath, label);
   const value = retained.value;
@@ -1421,6 +1470,15 @@ function semanticHeldControllerResult(filePath) {
     && value.lifecycle_dispatched_units === 3 && value.terminal_reason === 'released'
     && Array.isArray(value.operations) && value.operations.length === 6,
   `${label} is not the closed source-owned 6-receipt result`);
+  requireCondition(value.build.source_commit === adjunctBinding.sourceCommit
+    && value.handshake.host.source_commit === adjunctBinding.sourceCommit
+    && value.handshake.host_kind === adjunctBinding.expectedHost.host_kind
+    && value.handshake.host.process.pid === adjunctBinding.expectedHost.pid
+    && value.handshake.host.process.start_identity === adjunctBinding.expectedHost.start_identity
+    && value.handshake.host.process.code_signature_hash
+      === adjunctBinding.expectedHost.code_signature_hash,
+  `${label} differs from the exact candidate Bridge host/build`);
+  requireFixtureTarget(target, adjunctBinding, `${label} target`);
   const expectedOperations = [
     'listWindows', 'listWindows', 'createExactWindowHeldPointerOwner',
     'beginExactWindowHeldPointer', 'releaseExactWindowHeldPointer',
@@ -1499,7 +1557,7 @@ function semanticTargetProcessReceipt(filePath, label) {
   };
 }
 
-function adjunct(value, label, { kind }) {
+function adjunct(value, label, { kind, binding }) {
   const pointer = kind === 'held_pointer';
   const keys = ['raw_bundles', 'live_validator_reports', 'readbacks', 'restorations'];
   if (pointer) keys.push('controller_results', 'target_process_receipts', 'crash_inventories');
@@ -1515,6 +1573,7 @@ function adjunct(value, label, { kind }) {
   };
   if (kind === 'middle_click') {
     const readback = semanticMiddleReadback(value.readbacks[0]);
+    requireFixtureTarget(readback.target, binding, `${label} readback target`);
     const restoration = semanticRestoration(
       value.restorations[0], kind, readback.target, `${label} restoration`,
     );
@@ -1525,12 +1584,17 @@ function adjunct(value, label, { kind }) {
       value.raw_bundles[0],
       value.live_validator_reports[0],
       label,
-      { expectedOperation: 'exactWindowTargetedClick', requireMutation: true },
+      {
+        expectedOperation: 'exactWindowTargetedClick',
+        requireMutation: true,
+        adjunctBinding: binding,
+      },
     );
     requireCondition(sameJSON(targetFromPayload(pair.payload, label), readback.target),
       `${label} signed target differs from its semantic readback`);
   } else if (kind === 'held_key') {
     const readback = semanticHeldKeyReadback(value.readbacks[0]);
+    requireFixtureTarget(readback.target, binding, `${label} readback target`);
     const restoration = semanticRestoration(
       value.restorations[0], kind, readback.target, `${label} restoration`,
     );
@@ -1542,7 +1606,11 @@ function adjunct(value, label, { kind }) {
       value.raw_bundles[0],
       value.live_validator_reports[0],
       label,
-      { expectedOperation: 'exactWindowTargetedHotkey', requireMutation: true },
+      {
+        expectedOperation: 'exactWindowTargetedHotkey',
+        requireMutation: true,
+        adjunctBinding: binding,
+      },
     );
     requireCondition(sameJSON(targetFromPayload(pair.payload, label), readback.target),
       `${label} signed target differs from its semantic readback`);
@@ -1552,7 +1620,7 @@ function adjunct(value, label, { kind }) {
       value.target_process_receipts, `${label}.target_process_receipts`, 2,
     );
     projection.crash_inventories = receiptArray(value.crash_inventories, `${label}.crash_inventories`, 1);
-    const controller = semanticHeldControllerResult(value.controller_results[0]);
+    const controller = semanticHeldControllerResult(value.controller_results[0], binding);
     const readback = semanticHeldPointerReadback(value.readbacks[0]);
     requireCondition(sameJSON(controller.target, readback.target),
       `${label} controller target differs from its semantic readback`);
@@ -1578,6 +1646,7 @@ function adjunct(value, label, { kind }) {
         value.raw_bundles[index],
         value.live_validator_reports[index],
         `${label}[${index}]`,
+        { adjunctBinding: binding },
       );
       requireCondition(pair.report.host_source_commit === controller.value.build.source_commit,
         `${label}[${index}] host source differs from the controller result`);
@@ -1732,6 +1801,11 @@ function projectInput(input, authenticateBundle) {
     concurrentValue,
     boundPlanValue,
     'deployment',
+  );
+  const adjunctBinding = qualificationAdjunctBinding(
+    deployment,
+    boundPlanValue,
+    'bound live-v4 plan',
   );
   const coordinatorInvocation = readStableJSON(
     input.live_v4.coordinator_invocation,
@@ -1921,9 +1995,15 @@ function projectInput(input, authenticateBundle) {
       validation_report: concurrentValidation.receipt,
     },
     adjuncts: {
-      middle_click: adjunct(input.adjuncts.middle_click, 'adjuncts.middle_click', { kind: 'middle_click' }),
-      held_key: adjunct(input.adjuncts.held_key, 'adjuncts.held_key', { kind: 'held_key' }),
-      held_pointer: adjunct(input.adjuncts.held_pointer, 'adjuncts.held_pointer', { kind: 'held_pointer' }),
+      middle_click: adjunct(input.adjuncts.middle_click, 'adjuncts.middle_click', {
+        kind: 'middle_click', binding: adjunctBinding,
+      }),
+      held_key: adjunct(input.adjuncts.held_key, 'adjuncts.held_key', {
+        kind: 'held_key', binding: adjunctBinding,
+      }),
+      held_pointer: adjunct(input.adjuncts.held_pointer, 'adjuncts.held_pointer', {
+        kind: 'held_pointer', binding: adjunctBinding,
+      }),
     },
     restoration_cleanup: {
       restoration_evidence: receiptArray(input.restoration_cleanup.restoration_evidence, 'restoration evidence'),
@@ -2167,6 +2247,11 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
     verifiedPlanValue,
     'verified deployment',
   );
+  const adjunctBinding = qualificationAdjunctBinding(
+    deployment,
+    verifiedPlanValue,
+    'verified live-v4 plan',
+  );
   const phases = ['launch', 'perform', 'restore'];
   evidence.agent_cu.agent_process_receipts.forEach((receipt, index) => {
     requireCondition(receipt.sha256 === concurrentValue.agent.process_receipt_sha256[phases[index]],
@@ -2256,17 +2341,17 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
   adjunct(
     adjunctPaths(evidence.adjuncts.middle_click, false),
     'verified adjuncts.middle_click',
-    { kind: 'middle_click' },
+    { kind: 'middle_click', binding: adjunctBinding },
   );
   adjunct(
     adjunctPaths(evidence.adjuncts.held_key, false),
     'verified adjuncts.held_key',
-    { kind: 'held_key' },
+    { kind: 'held_key', binding: adjunctBinding },
   );
   adjunct(
     adjunctPaths(evidence.adjuncts.held_pointer, true),
     'verified adjuncts.held_pointer',
-    { kind: 'held_pointer' },
+    { kind: 'held_pointer', binding: adjunctBinding },
   );
 }
 
