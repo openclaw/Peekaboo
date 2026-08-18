@@ -150,6 +150,16 @@ struct AgentSystemPromptTests {
     }
 
     @Test
+    func `foreground prompt retains foreground capable type routes`() {
+        guard #available(macOS 14.0, *) else { return }
+        let prompt = AgentSystemPrompt.generate(executionPolicy: .foregroundAllowed)
+
+        #expect(prompt.contains("foreground-capable session may also use app, PID, or exact-window targeting"))
+        #expect(prompt.contains("when focused/global input is intentional"))
+        #expect(!prompt.contains("implicit-latest, selector-only, and targetless typing remain unavailable"))
+    }
+
+    @Test
     func `default generated prompt recommends only background-reachable launch and navigation`() {
         guard #available(macOS 14.0, *) else { return }
         let prompt = AgentSystemPrompt.generate()

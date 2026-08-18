@@ -295,6 +295,13 @@ public struct AgentSystemPrompt {
             "Keyboard shortcuts → use `press` with a fresh exact non-dialog snapshot receipt; otherwise use semantic " +
                 "actions or `need_info`."
         }
+        let textEntryGuidance = if allowsForeground {
+            "Text entry → prefer an explicit fresh exact non-dialog snapshot for background delivery. This " +
+                "foreground-capable session may also use app, PID, or exact-window targeting, or `foreground: true` " +
+                "when focused/global input is intentional."
+        } else {
+            "Text entry → \(AgentBackgroundCapabilityContract.snapshotPinnedType)"
+        }
         return """
         **Dialog Interaction**
         1. Inspect the dialog with `inspect_ui` when text/control state is enough, or `see` when visual layout
@@ -307,7 +314,7 @@ public struct AgentSystemPrompt {
         **Common Patterns**
         - Menus → the `menu` tool with action "click" and the full path.
         - \(keyboardGuidance)
-        - Text entry → \(AgentBackgroundCapabilityContract.snapshotPinnedType)
+        - \(textEntryGuidance)
         - Scrolling → `scroll` with direction and amount.
         """
     }
