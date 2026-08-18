@@ -122,4 +122,22 @@ struct RootEarlyExitRuntimeTests {
         #expect(result.standardOutput.isEmpty)
         #expect(result.standardError.contains("Unknown command '\(argument)'"))
     }
+
+    @Test(arguments: ["--json", "-j", "--json-output", "--jsonOutput"])
+    func `JSON flags after double dash stay ordinary child arguments`(jsonFlag: String) async throws {
+        guard TestChildProcess.canLocatePeekabooBinary() else {
+            Issue.record("Build peekaboo before running CLI runtime tests.")
+            return
+        }
+
+        let result = try await TestChildProcess.runPeekaboo(
+            ["--junk", "--", jsonFlag],
+            isolateFromRemoteHosts: false
+        )
+
+        #expect(result.status == .exited(1))
+        #expect(result.standardOutput.isEmpty)
+        #expect(result.standardError.contains("Error: Unknown command '--junk'"))
+        #expect(!result.standardError.contains("\"success\""))
+    }
 }
