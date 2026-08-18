@@ -21,7 +21,12 @@ import {
   verifySourceManifest,
 } from '../qualification-manifest.mjs';
 import { validateConcurrentRun as validateConcurrentRunProduction } from '../validate-concurrent-run.mjs';
-import { aggregateSHA256, canonicalBytes, sha256 } from '../lib.mjs';
+import {
+  aggregateSHA256,
+  canonicalBytes,
+  publishPrivateAtomicNoReplace,
+  sha256,
+} from '../lib.mjs';
 
 const TEAM = 'FWJYW4S8P8';
 const OPENCLAW_SOURCE = '9'.repeat(40);
@@ -835,6 +840,23 @@ test('native emitter calibrator compiles and its source-only self-test uses no e
     const selfTest = spawnSync(binary, ['--self-test'], { encoding: 'utf8' });
     assert.equal(selfTest.status, 0, selfTest.stderr);
     assert.deepEqual(JSON.parse(selfTest.stdout), { success: true, tests: 8 });
+    const publication = path.join(root, 'publication-self-test.json');
+    const publicationTest = spawnSync(
+      binary,
+      ['--self-test-output', publication],
+      { encoding: 'utf8' },
+    );
+    assert.equal(publicationTest.status, 0, publicationTest.stderr);
+    assert.deepEqual(JSON.parse(fs.readFileSync(publication)), { success: true, tests: 1 });
+    assert.equal(fs.statSync(publication).mode & 0o777, 0o600);
+    const duplicate = spawnSync(
+      binary,
+      ['--self-test-output', publication],
+      { encoding: 'utf8' },
+    );
+    assert.notEqual(duplicate.status, 0);
+    assert.match(duplicate.stderr, /absent|already exists/);
+    assert.deepEqual(JSON.parse(fs.readFileSync(publication)), { success: true, tests: 1 });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1006,6 +1028,34 @@ test('native atomic publisher uses renameatx no-replace semantics', () => {
   }
 });
 
+test('retained atomic publisher uses a closed toolchain and revalidates published bytes', () => {
+  const root = fs.mkdtempSync('/private/tmp/pbq-tools-retained-atomic-');
+  fs.chmodSync(root, 0o700);
+  const priorDeveloperDirectory = process.env.DEVELOPER_DIR;
+  const priorToolchains = process.env.TOOLCHAINS;
+  try {
+    process.env.DEVELOPER_DIR = '/private/tmp/does-not-exist';
+    process.env.TOOLCHAINS = 'untrusted-toolchain';
+    const output = path.join(root, 'marker.json');
+    const result = publishPrivateAtomicNoReplace(output, { version: 1, passed: true });
+    assert.equal(result.path, output);
+    assert.deepEqual(JSON.parse(result.bytes), { passed: true, version: 1 });
+    assert.equal(result.sha256, sha256(fs.readFileSync(output)));
+    assert.equal(fs.statSync(output).mode & 0o777, 0o600);
+    assert.throws(
+      () => publishPrivateAtomicNoReplace(output, { version: 1, passed: false }),
+      /already exists/,
+    );
+    assert.deepEqual(JSON.parse(fs.readFileSync(output)), { passed: true, version: 1 });
+  } finally {
+    if (priorDeveloperDirectory === undefined) delete process.env.DEVELOPER_DIR;
+    else process.env.DEVELOPER_DIR = priorDeveloperDirectory;
+    if (priorToolchains === undefined) delete process.env.TOOLCHAINS;
+    else process.env.TOOLCHAINS = priorToolchains;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function managedLaunchSpec(root, kind, planPath, executablePath, arguments_, context, prefix) {
   return {
     version: 1,
@@ -1088,6 +1138,7 @@ test('managed launcher suspends Agent/coordinator until signed-monitor identity 
       monitor_executable: monitor,
       bridge: { socket_path: bridgeSocket },
       monitor: { code_signature_hash: codeSignatureHash(monitor) },
+      fixture_value: 'retained-plan',
     });
     const taskText = 'Use only exact background targets.';
     const taskPath = writeFile(path.join(root, 'task.txt'), `${taskText}\n`, 0o400);
@@ -1120,6 +1171,39 @@ test('managed launcher suspends Agent/coordinator until signed-monitor identity 
     assert.equal(fs.statSync(agentSpec.exit_receipt_path).mode & 0o777, 0o600);
     fs.unlinkSync(childMarker);
 
+    const forgedReceipts = privateDirectory(root, 'forged-receipts');
+    const forgedSpec = managedLaunchSpec(
+      root,
+      'agent',
+      planPath,
+      agentExecutable,
+      ['agent', 'run', taskText, '--no-cache', '--max-steps', '40', '--bridge-socket', bridgeSocket, '--json'],
+      { task_path: taskPath, receipt_directory: forgedReceipts, bridge_socket: bridgeSocket },
+      'forged-ack',
+    );
+    await assert.rejects(
+      runManagedLaunch(
+        writeJSON(path.join(root, 'forged-ack-spec.json'), forgedSpec),
+        {
+          beforeAcknowledgement: ({ childPID }) => writeJSON(
+            forgedSpec.start_ack_path,
+            {
+              version: 1,
+              pid: childPID,
+              start_identity: '1',
+              phase: 'start',
+              invocation_sha256: '0'.repeat(64),
+            },
+          ),
+        },
+      ),
+      /already exists/,
+    );
+    assert.equal(fs.existsSync(childMarker), false);
+    const forgedPID = JSON.parse(fs.readFileSync(forgedSpec.pid_path)).pid;
+    assert.throws(() => process.kill(forgedPID, 0), /ESRCH/);
+    assert.equal(fs.existsSync(forgedSpec.exit_receipt_path), false);
+
     const audioReceipts = privateDirectory(root, 'audio-receipts');
     const audioSpec = managedLaunchSpec(
       root,
@@ -1139,7 +1223,12 @@ test('managed launcher suspends Agent/coordinator until signed-monitor identity 
     );
     assert.equal(fs.existsSync(audioSpec.pid_path), false);
 
-    const coordinatorSource = writeFile(path.join(root, 'coordinator.mjs'), 'process.stdout.write("coordinator fixture\\n");\n', 0o400);
+    const coordinatorSource = writeFile(path.join(root, 'coordinator.mjs'), [
+      'import fs from "node:fs";',
+      'const plan = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));',
+      'process.stdout.write(`retained-source:${plan.fixture_value}\\n`);',
+      '',
+    ].join('\n'), 0o400);
     const coordinatorSpec = managedLaunchSpec(
       root,
       'coordinator',
@@ -1150,13 +1239,56 @@ test('managed launcher suspends Agent/coordinator until signed-monitor identity 
       'coordinator',
     );
     const coordinatorSpecPath = writeJSON(path.join(root, 'coordinator-spec.json'), coordinatorSpec);
-    const coordinatorRun = await runManagedLaunch(coordinatorSpecPath);
+    const retainedCoordinatorSource = fs.readFileSync(coordinatorSource);
+    const retainedPlan = fs.readFileSync(planPath);
+    const coordinatorRun = await runManagedLaunch(
+      coordinatorSpecPath,
+      {
+        afterSuspendedSpawn: () => {
+          fs.chmodSync(coordinatorSource, 0o600);
+          writeFile(coordinatorSource, 'process.stdout.write("replacement-source\\n");\n', 0o400);
+          fs.chmodSync(planPath, 0o600);
+          const replacementPlan = JSON.parse(retainedPlan);
+          replacementPlan.fixture_value = 'replacement-plan';
+          writeJSON(planPath, replacementPlan);
+        },
+      },
+    );
+    fs.chmodSync(coordinatorSource, 0o600);
+    writeFile(coordinatorSource, retainedCoordinatorSource, 0o400);
+    fs.chmodSync(planPath, 0o600);
+    writeFile(planPath, retainedPlan, 0o600);
     assert.equal(coordinatorRun.exit_code, 0);
-    assert.match(fs.readFileSync(coordinatorSpec.stdout_path, 'utf8'), /coordinator fixture/);
+    assert.match(fs.readFileSync(coordinatorSpec.stdout_path, 'utf8'), /retained-source:retained-plan/);
+    assert.doesNotMatch(fs.readFileSync(coordinatorSpec.stdout_path, 'utf8'), /replacement/);
     const coordinatorInvocation = JSON.parse(fs.readFileSync(coordinatorSpec.invocation_receipt_path));
     assert.equal(coordinatorInvocation.kind, 'coordinator');
+    assert.equal(coordinatorInvocation.execution_staged, true);
+    assert.equal(coordinatorInvocation.execution_source_sha256, sha256(retainedCoordinatorSource));
+    assert.equal(coordinatorInvocation.execution_plan_sha256, sha256(retainedPlan));
     assert.equal(coordinatorInvocation.environment_keys.includes('NODE_OPTIONS'), false);
     assert.equal(fs.existsSync(injectionMarker), false);
+
+    const timeoutSource = writeFile(
+      path.join(root, 'timeout-coordinator.mjs'),
+      'process.on("SIGTERM", () => process.exit(0));\nsetInterval(() => {}, 1000);\n',
+      0o400,
+    );
+    const timeoutSpec = managedLaunchSpec(
+      root,
+      'coordinator',
+      planPath,
+      process.execPath,
+      [timeoutSource, '--plan', planPath],
+      { coordinator_source_path: timeoutSource },
+      'timeout',
+    );
+    timeoutSpec.run_timeout_seconds = 5;
+    await assert.rejects(
+      runManagedLaunch(writeJSON(path.join(root, 'timeout-spec.json'), timeoutSpec)),
+      /guardian failed \(3\)/,
+    );
+    assert.equal(fs.existsSync(timeoutSpec.exit_receipt_path), false);
 
     const signalSource = writeFile(
       path.join(root, 'signal-coordinator.mjs'),
@@ -1250,6 +1382,7 @@ test('managed guardian cleans only its owned child even when the PID receipt is 
   let sentinel = null;
   let guardian = null;
   let pipeGuardian = null;
+  let ackGuardian = null;
   try {
     const binary = path.join(root, 'managed-launch-suspended');
     const build = spawnSync('/usr/bin/xcrun', [
@@ -1328,7 +1461,61 @@ test('managed guardian cleans only its owned child even when the PID receipt is 
     assert.equal(pipeGuardianResult.code, 2);
     assert.equal(pipeGuardianResult.signal, null);
     assert.throws(() => process.kill(pipeChildPID, 0), /ESRCH/);
+
+    const ackPIDPath = path.join(root, 'ack-child-pid.json');
+    const ackPath = path.join(root, 'content-bound-start.json');
+    ackGuardian = spawn(binary, [
+      '--stdout', path.join(root, 'ack-child.stdout'),
+      '--stderr', path.join(root, 'ack-child.stderr'),
+      '--pid-file', ackPIDPath,
+      '--ack-file', ackPath,
+      '--start-timeout', '10',
+      '--run-timeout', '30',
+      '--', '/bin/sleep', '30',
+    ], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let ackProtocol = '';
+    let ackStderr = '';
+    ackGuardian.stdout.on('data', (bytes) => { ackProtocol += bytes.toString('utf8'); });
+    ackGuardian.stderr.on('data', (bytes) => { ackStderr += bytes.toString('utf8'); });
+    await new Promise((resolve, reject) => {
+      const startedAt = Date.now();
+      const interval = setInterval(() => {
+        if (fs.existsSync(ackPIDPath)) {
+          clearInterval(interval);
+          resolve();
+        } else if (Date.now() - startedAt >= 5000) {
+          clearInterval(interval);
+          reject(new Error('content-bound guardian did not publish its child PID'));
+        }
+      }, 5);
+    });
+    const ackChildPID = JSON.parse(fs.readFileSync(ackPIDPath)).pid;
+    const wrongStart = '1';
+    const invocationSHA256 = '0'.repeat(64);
+    writeFile(ackPath, [
+      '{',
+      `  "invocation_sha256": "${invocationSHA256}",`,
+      '  "phase": "start",',
+      `  "pid": ${ackChildPID},`,
+      `  "start_identity": "${wrongStart}",`,
+      '  "version": 1',
+      '}',
+      '',
+    ].join('\n'));
+    const ackGuardianClosed = new Promise((resolve) => {
+      ackGuardian.once('close', (code, signal) => resolve({ code, signal }));
+    });
+    ackGuardian.stdin.end(`ACK 1 ${ackChildPID} ${wrongStart} ${invocationSHA256}\n`);
+    const ackGuardianResult = await ackGuardianClosed;
+    assert.equal(ackGuardianResult.code, 2);
+    assert.equal(ackGuardianResult.signal, null);
+    assert.match(ackStderr, /process generation differs/);
+    assert.doesNotMatch(ackProtocol, /RELEASED/);
+    assert.throws(() => process.kill(ackChildPID, 0), /ESRCH/);
   } finally {
+    if (ackGuardian?.exitCode === null && ackGuardian?.signalCode === null) {
+      ackGuardian.kill('SIGKILL');
+    }
     if (pipeGuardian?.exitCode === null && pipeGuardian?.signalCode === null) {
       pipeGuardian.kill('SIGKILL');
     }
@@ -1631,6 +1818,9 @@ function concurrentFixture(root, {
     captured_at_milliseconds: now - 4500,
     coordinator_source_path: coordinatorSource,
     coordinator_source_sha256: sha256(fs.readFileSync(coordinatorSource)),
+    execution_source_sha256: sha256(fs.readFileSync(coordinatorSource)),
+    execution_plan_sha256: sha256(fs.readFileSync(plan)),
+    execution_staged: true,
   });
   const agentExit = writeJSON(path.join(root, 'agent-exit.json'), {
     version: 1, process: 'agent', pid: 901, start_identity: '901001',

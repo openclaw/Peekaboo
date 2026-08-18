@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <libproc.h>
 #include <mach/message.h>
+#include <poll.h>
 #include <signal.h>
 #include <spawn.h>
 #include <stdbool.h>
@@ -168,14 +169,159 @@ static bool write_pid_file(const char *path, pid_t child) {
     return true;
 }
 
-static bool private_ack_exists(const char *path, pid_t child) {
-    struct stat info;
-    if (lstat(path, &info) != 0) return false;
-    if (!S_ISREG(info.st_mode) || info.st_nlink != 1 || (info.st_mode & 0077) != 0 ||
-        info.st_uid != geteuid()) {
-        fail_with_child("start acknowledgement is not one owner-private regular file", child);
+static bool process_start_identity(pid_t pid, uint64_t *start_identity) {
+    struct proc_bsdinfo first;
+    struct proc_bsdinfo second;
+    int size = (int)sizeof(first);
+    if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &first, size) != size ||
+        proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &second, size) != size ||
+        first.pbi_pid != (uint32_t)pid || second.pbi_pid != (uint32_t)pid ||
+        first.pbi_start_tvsec != second.pbi_start_tvsec ||
+        first.pbi_start_tvusec != second.pbi_start_tvusec) {
+        return false;
+    }
+    *start_identity = (first.pbi_start_tvsec * 1000000ULL) + first.pbi_start_tvusec;
+    return true;
+}
+
+static bool lower_hex_sha256(const char *value) {
+    if (strlen(value) != 64) return false;
+    for (size_t index = 0; index < 64; index++) {
+        char byte = value[index];
+        if (!((byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'f'))) return false;
     }
     return true;
+}
+
+static void require_private_ack(
+    const char *path,
+    pid_t child,
+    const char *start_identity,
+    const char *invocation_sha256
+) {
+    struct stat info;
+    int descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (descriptor < 0 || fstat(descriptor, &info) != 0 ||
+        !S_ISREG(info.st_mode) || info.st_nlink != 1 || (info.st_mode & 0077) != 0 ||
+        info.st_uid != geteuid()) {
+        if (descriptor >= 0) close(descriptor);
+        fail_with_child("start acknowledgement is not one owner-private regular file", child);
+    }
+    char expected[512];
+    int expected_length = snprintf(
+        expected,
+        sizeof(expected),
+        "{\n  \"invocation_sha256\": \"%s\",\n  \"phase\": \"start\",\n"
+        "  \"pid\": %d,\n  \"start_identity\": \"%s\",\n  \"version\": 1\n}\n",
+        invocation_sha256,
+        child,
+        start_identity);
+    if (expected_length <= 0 || expected_length >= (int)sizeof(expected) ||
+        info.st_size != expected_length) {
+        close(descriptor);
+        fail_with_child("start acknowledgement content is malformed", child);
+    }
+    char observed[512];
+    size_t offset = 0;
+    while (offset < (size_t)expected_length) {
+        ssize_t count = read(descriptor, observed + offset, (size_t)expected_length - offset);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) {
+            close(descriptor);
+            fail_with_child("cannot read complete start acknowledgement", child);
+        }
+        offset += (size_t)count;
+    }
+    char extra;
+    ssize_t extra_count;
+    do {
+        extra_count = read(descriptor, &extra, 1);
+    } while (extra_count < 0 && errno == EINTR);
+    close(descriptor);
+    if (extra_count != 0 || memcmp(expected, observed, (size_t)expected_length) != 0) {
+        fail_with_child("start acknowledgement is not bound to this invocation", child);
+    }
+}
+
+static void wait_for_authenticated_ack(
+    const char *ack_path,
+    pid_t child,
+    pid_t original_parent,
+    uint64_t start_deadline,
+    char accepted_start_identity[32],
+    char accepted_invocation_sha256[65]
+) {
+    char line[128];
+    size_t length = 0;
+    while (true) {
+        if (termination_requested || getppid() != original_parent ||
+            now_milliseconds() >= start_deadline) {
+            fail_with_child("identity acknowledgement timed out or launcher exited", child);
+        }
+        struct pollfd input = { .fd = STDIN_FILENO, .events = POLLIN | POLLHUP };
+        int count = poll(&input, 1, 10);
+        if (count < 0 && errno == EINTR) continue;
+        if (count < 0) fail_with_child("identity acknowledgement channel failed", child);
+        if (count == 0) continue;
+        if ((input.revents & (POLLERR | POLLNVAL)) != 0) {
+            fail_with_child("identity acknowledgement channel is invalid", child);
+        }
+        ssize_t received = read(STDIN_FILENO, line + length, sizeof(line) - length - 1);
+        if (received < 0 && errno == EINTR) continue;
+        if (received <= 0) {
+            fail_with_child("identity acknowledgement channel closed before authentication", child);
+        }
+        length += (size_t)received;
+        line[length] = '\0';
+        char *newline = memchr(line, '\n', length);
+        if (!newline) {
+            if (length == sizeof(line) - 1) {
+                fail_with_child("identity acknowledgement is too long", child);
+            }
+            continue;
+        }
+        if ((size_t)(newline - line) != length - 1) {
+            fail_with_child("identity acknowledgement contains trailing data", child);
+        }
+        *newline = '\0';
+        int acknowledged_pid = 0;
+        int acknowledged_version = 0;
+        char start_identity[32];
+        char invocation_sha256[65];
+        int consumed = 0;
+        if (sscanf(
+                line,
+                "ACK %d %d %31[0-9] %64[0-9a-f]%n",
+                &acknowledged_version,
+                &acknowledged_pid,
+                start_identity,
+                invocation_sha256,
+                &consumed) != 4 ||
+            consumed != (int)strlen(line) || acknowledged_version != 1 ||
+            acknowledged_pid != child ||
+            !lower_hex_sha256(invocation_sha256)) {
+            fail_with_child("identity acknowledgement is malformed", child);
+        }
+        errno = 0;
+        char *end = NULL;
+        unsigned long long acknowledged_start = strtoull(start_identity, &end, 10);
+        uint64_t observed_start = 0;
+        if (errno != 0 || end == start_identity || *end != '\0' || acknowledged_start == 0 ||
+            !process_start_identity(child, &observed_start) || observed_start != acknowledged_start) {
+            fail_with_child("identity acknowledgement process generation differs", child);
+        }
+        require_private_ack(
+            ack_path,
+            child,
+            start_identity,
+            invocation_sha256);
+        if (snprintf(accepted_start_identity, 32, "%s", start_identity) >= 32 ||
+            snprintf(accepted_invocation_sha256, 65, "%s", invocation_sha256) >= 65) {
+            fail_with_child("identity acknowledgement authority is too long", child);
+        }
+        close(STDIN_FILENO);
+        return;
+    }
 }
 
 int main(int argc, char **argv) {
@@ -229,6 +375,8 @@ int main(int argc, char **argv) {
     if (posix_spawn_file_actions_init(&actions) != 0 || posix_spawnattr_init(&attributes) != 0 ||
         posix_spawn_file_actions_adddup2(&actions, stdout_descriptor, STDOUT_FILENO) != 0 ||
         posix_spawn_file_actions_adddup2(&actions, stderr_descriptor, STDERR_FILENO) != 0 ||
+        posix_spawn_file_actions_addopen(
+            &actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0) != 0 ||
         posix_spawn_file_actions_addclose(&actions, stdout_descriptor) != 0 ||
         posix_spawn_file_actions_addclose(&actions, stderr_descriptor) != 0 ||
         posix_spawnattr_setflags(&attributes, POSIX_SPAWN_START_SUSPENDED) != 0) {
@@ -255,23 +403,31 @@ int main(int argc, char **argv) {
     }
 
     uint64_t start_deadline = started + ((uint64_t)start_timeout_seconds * 1000ULL);
-    while (!private_ack_exists(ack_path, child)) {
-        if (termination_requested || getppid() != original_parent ||
-            now_milliseconds() >= start_deadline) {
-            fail_with_child("identity acknowledgement timed out or launcher exited", child);
-        }
-        sleep_milliseconds(10);
-    }
+    char accepted_start_identity[32];
+    char accepted_invocation_sha256[65];
+    wait_for_authenticated_ack(
+        ack_path,
+        child,
+        original_parent,
+        start_deadline,
+        accepted_start_identity,
+        accepted_invocation_sha256);
     if (kill(child, SIGCONT) != 0) {
         fail_with_child("cannot release authenticated child", child);
     }
-    if (printf("RELEASED %d\n", child) < 0 || fflush(stdout) != 0) {
+    if (printf(
+            "RELEASED 1 %d %s %s\n",
+            child,
+            accepted_start_identity,
+            accepted_invocation_sha256) < 0 ||
+        fflush(stdout) != 0) {
         fail_with_child("cannot publish authenticated child release", child);
     }
 
     uint64_t run_deadline = now_milliseconds() + ((uint64_t)run_timeout_seconds * 1000ULL);
     int wait_status = 0;
     bool sent_term = false;
+    bool timed_out = false;
     uint64_t kill_deadline = 0;
     while (true) {
         pid_t result = waitpid(child, &wait_status, WNOHANG);
@@ -286,6 +442,7 @@ int main(int argc, char **argv) {
         if (!sent_term && now >= run_deadline) {
             kill(child, SIGTERM);
             sent_term = true;
+            timed_out = true;
             kill_deadline = now + 2000;
         } else if (sent_term && now >= kill_deadline) {
             kill(child, SIGKILL);
@@ -304,5 +461,5 @@ int main(int argc, char **argv) {
         (unsigned long long)completed) < 0 || fflush(stdout) != 0) {
         fail("cannot publish child exit status");
     }
-    return 0;
+    return timed_out ? 3 : 0;
 }

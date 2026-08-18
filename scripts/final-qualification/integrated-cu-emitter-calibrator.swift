@@ -360,9 +360,88 @@ private func writeReceipt(_ receipt: some Encodable, to outputPath: String) thro
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
     var data = try encoder.encode(receipt)
     data.append(0x0A)
-    try data.write(to: URL(fileURLWithPath: outputPath), options: [.atomic, .withoutOverwriting])
-    guard chmod(outputPath, 0o600) == 0 else {
-        throw CalibrationError.invalid("cannot protect output receipt")
+    let temporaryPath = "\(outputPath).tmp.\(getpid()).\(UUID().uuidString)"
+    let descriptor = open(
+        temporaryPath,
+        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+        0o600)
+    guard descriptor >= 0 else {
+        throw CalibrationError.invalid("cannot create private receipt staging file")
+    }
+    var descriptorIsOpen = true
+    var published = false
+    defer {
+        if descriptorIsOpen {
+            close(descriptor)
+        }
+        if !published {
+            unlink(temporaryPath)
+        }
+    }
+    try data.withUnsafeBytes { bytes in
+        var offset = 0
+        while offset < bytes.count {
+            let result = Darwin.write(
+                descriptor,
+                bytes.baseAddress?.advanced(by: offset),
+                bytes.count - offset)
+            if result < 0, errno == EINTR {
+                continue
+            }
+            guard result > 0 else {
+                throw CalibrationError.invalid("cannot write complete receipt staging bytes")
+            }
+            offset += result
+        }
+    }
+    var stagedInfo = stat()
+    guard fsync(descriptor) == 0,
+          fstat(descriptor, &stagedInfo) == 0,
+          close(descriptor) == 0
+    else { throw CalibrationError.invalid("cannot commit receipt staging bytes") }
+    descriptorIsOpen = false
+    let renameResult = temporaryPath.withCString { source in
+        outputPath.withCString { destination in
+            renameatx_np(
+                AT_FDCWD,
+                source,
+                AT_FDCWD,
+                destination,
+                UInt32(RENAME_EXCL))
+        }
+    }
+    guard renameResult == 0 else {
+        throw CalibrationError.invalid(
+            errno == EEXIST ? "output receipt already exists" : "cannot publish output receipt exclusively")
+    }
+    published = true
+    let parent = URL(fileURLWithPath: outputPath).deletingLastPathComponent().path
+    let parentDescriptor = open(parent, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+    guard parentDescriptor >= 0 else {
+        throw CalibrationError.invalid("cannot open receipt parent for synchronization")
+    }
+    defer { close(parentDescriptor) }
+    guard fsync(parentDescriptor) == 0 else {
+        throw CalibrationError.invalid("cannot synchronize receipt parent")
+    }
+    let publishedDescriptor = open(outputPath, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+    guard publishedDescriptor >= 0 else {
+        throw CalibrationError.invalid("cannot reopen published receipt")
+    }
+    defer { close(publishedDescriptor) }
+    var publishedInfo = stat()
+    guard fstat(publishedDescriptor, &publishedInfo) == 0,
+          (publishedInfo.st_mode & S_IFMT) == S_IFREG,
+          (publishedInfo.st_mode & 0o777) == 0o600,
+          publishedInfo.st_nlink == 1,
+          publishedInfo.st_uid == geteuid(),
+          publishedInfo.st_dev == stagedInfo.st_dev,
+          publishedInfo.st_ino == stagedInfo.st_ino,
+          publishedInfo.st_size == data.count
+    else { throw CalibrationError.invalid("published receipt identity is invalid") }
+    let handle = FileHandle(fileDescriptor: publishedDescriptor, closeOnDealloc: false)
+    guard try (handle.readToEnd()) == data else {
+        throw CalibrationError.invalid("published receipt bytes differ from staging")
     }
 }
 
@@ -499,10 +578,16 @@ private func runSelfTest() throws {
     FileHandle.standardOutput.write(Data("\n".utf8))
 }
 
+private func runPublicationSelfTest(outputPath: String) throws {
+    try writeReceipt(SelfTestReceipt(success: true, tests: 1), to: outputPath)
+}
+
 do {
     let rawArguments = Array(CommandLine.arguments.dropFirst())
     if rawArguments == ["--self-test"] {
         try runSelfTest()
+    } else if rawArguments.count == 2, rawArguments[0] == "--self-test-output" {
+        try runPublicationSelfTest(outputPath: rawArguments[1])
     } else {
         try runCalibration(parseArguments(rawArguments))
     }

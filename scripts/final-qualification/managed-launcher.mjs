@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +19,7 @@ import {
   requireCondition,
   requirePrivateDirectory,
   requireStableExecutable,
+  sameJSON,
   sha256,
 } from './lib.mjs';
 
@@ -174,12 +176,59 @@ function compileGuardian() {
     `cannot build suspended launch guardian: ${build.stderr?.trim() || build.error?.message}`);
   fs.chmodSync(binary, 0o500);
   const executable = requireStableExecutable(binary, 'compiled suspended launch guardian');
-  return { directory, binary: executable.path, sha256: executable.sha256 };
+  return { directory, binary: executable.path, sha256: executable.sha256, stagedPaths: [] };
 }
 
 function cleanupGuardian(value) {
+  for (const stagedPath of value.stagedPaths.reverse()) {
+    try { fs.unlinkSync(stagedPath); } catch {}
+  }
   try { fs.unlinkSync(value.binary); } catch {}
   try { fs.rmdirSync(value.directory); } catch {}
+}
+
+function stageRetainedFile(retained, destination, label) {
+  const descriptor = fs.openSync(destination, 'wx', 0o400);
+  try {
+    fs.writeFileSync(descriptor, retained.bytes);
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  fs.chmodSync(destination, 0o400);
+  const staged = readStableFile(destination, label);
+  requireCondition(staged.sha256 === retained.sha256 && staged.bytes.equals(retained.bytes),
+    `${label} differs from retained bytes`);
+  return staged;
+}
+
+function prepareExecution(fix, guardian) {
+  if (fix.spec.kind === 'agent') {
+    fix.execution = { arguments: structuredClone(fix.spec.arguments) };
+    return;
+  }
+  const sourceStagePath = path.join(
+    path.dirname(fix.details.source.path),
+    `.${path.basename(fix.details.source.path)}.${process.pid}.${randomUUID()}.pbq-stage.mjs`,
+  );
+  const planStagePath = path.join(guardian.directory, 'coordinator-plan.json');
+  const source = stageRetainedFile(
+    fix.details.source,
+    sourceStagePath,
+    'staged coordinator source',
+  );
+  guardian.stagedPaths.push(source.path);
+  const plan = stageRetainedFile(
+    fix.planReceipt,
+    planStagePath,
+    'staged coordinator plan',
+  );
+  guardian.stagedPaths.push(plan.path);
+  fix.execution = {
+    arguments: [source.path, '--plan', plan.path],
+    source_sha256: source.sha256,
+    plan_sha256: plan.sha256,
+  };
 }
 
 function startTail(filePath, stream) {
@@ -291,6 +340,9 @@ function invocationReceipt(fix, identity, spawnedAt, environment) {
     ...common,
     coordinator_source_path: fix.details.source.path,
     coordinator_source_sha256: fix.details.source.sha256,
+    execution_source_sha256: fix.execution.source_sha256,
+    execution_plan_sha256: fix.execution.plan_sha256,
+    execution_staged: true,
   };
 }
 
@@ -302,7 +354,7 @@ function helperArguments(fix, guardian) {
     '--ack-file', fix.spec.start_ack_path,
     '--start-timeout', String(fix.spec.start_timeout_seconds),
     '--run-timeout', String(fix.spec.run_timeout_seconds),
-    '--', fix.spec.executable, ...fix.spec.arguments,
+    '--', fix.spec.executable, ...fix.execution.arguments,
   ];
 }
 
@@ -310,9 +362,15 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
   const fix = validateSpec(specPath);
   validateMonitor(fix.monitor, fix.plan.monitor.code_signature_hash);
   const guardian = compileGuardian();
+  try {
+    prepareExecution(fix, guardian);
+  } catch (error) {
+    cleanupGuardian(guardian);
+    throw error;
+  }
   const environment = closedEnvironment(fix);
   const helper = spawn(guardian.binary, helperArguments(fix, guardian), {
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
     env: environment.values,
   });
   helper.stdout.setEncoding('utf8');
@@ -323,6 +381,9 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
   let startedAt = null;
   let authenticatedIdentity = null;
   let exitEvent = null;
+  let releaseEvent = null;
+  let expectedRelease = null;
+  let protocolError = null;
   let resolveSpawned;
   let rejectSpawned;
   const spawned = new Promise((resolve, reject) => { resolveSpawned = resolve; rejectSpawned = reject; });
@@ -330,6 +391,12 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
     helper.once('error', reject);
     helper.once('close', (code, signal) => resolve({ code, signal }));
   });
+  const rejectProtocol = (message) => {
+    if (protocolError !== null) return;
+    protocolError = new Error(message);
+    if (childPID === null) rejectSpawned(protocolError);
+    try { helper.kill('SIGTERM'); } catch {}
+  };
   helper.stdout.on('data', (chunk) => {
     buffered += chunk;
     while (buffered.includes('\n')) {
@@ -338,13 +405,34 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
       buffered = buffered.slice(index + 1);
       const fields = line.split(' ');
       if (fields[0] === 'SPAWNED' && fields.length === 3) {
+        if (childPID !== null || !positiveInteger(Number(fields[1]))
+          || !positiveInteger(Number(fields[2]))) {
+          rejectProtocol(`guardian emitted invalid SPAWNED protocol: ${line}`);
+          continue;
+        }
         childPID = Number(fields[1]);
         startedAt = Number(fields[2]);
         resolveSpawned({ childPID, startedAt });
-      } else if (fields[0] === 'RELEASED' && fields.length === 2) {
-        process.stderr.write(`managed-launcher: released authenticated ${fix.spec.kind} pid ${fields[1]}\n`);
-        testHooks.afterRelease?.({ guardian: helper, childPID: Number(fields[1]) });
+      } else if (fields[0] === 'RELEASED' && fields.length === 5) {
+        const candidate = {
+          version: Number(fields[1]),
+          pid: Number(fields[2]),
+          startIdentity: fields[3],
+          invocationSHA256: fields[4],
+        };
+        if (releaseEvent !== null || expectedRelease === null
+          || !sameJSON(candidate, expectedRelease)) {
+          rejectProtocol(`guardian emitted invalid RELEASED authority: ${line}`);
+          continue;
+        }
+        releaseEvent = candidate;
+        process.stderr.write(`managed-launcher: released authenticated ${fix.spec.kind} pid ${candidate.pid}\n`);
+        testHooks.afterRelease?.({ guardian: helper, childPID: candidate.pid });
       } else if (fields[0] === 'EXIT' && fields.length === 5) {
+        if (exitEvent !== null) {
+          rejectProtocol('guardian emitted more than one EXIT event');
+          continue;
+        }
         exitEvent = {
           pid: Number(fields[1]),
           exitCode: Number(fields[2]),
@@ -352,13 +440,14 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
           completedAt: Number(fields[4]),
         };
       } else if (line.length > 0) {
-        rejectSpawned(new Error(`guardian emitted unknown protocol line: ${line}`));
+        rejectProtocol(`guardian emitted unknown protocol line: ${line}`);
       }
     }
   });
   helper.stderr.on('data', (chunk) => { helperStderr += chunk; });
   helper.once('error', rejectSpawned);
   helper.once('close', (code) => {
+    if (buffered.length > 0) rejectProtocol(`guardian emitted unterminated protocol: ${buffered}`);
     if (childPID === null) rejectSpawned(new Error(`guardian exited before spawn (${code}): ${helperStderr.trim()}`));
   });
   let stopStdout = () => {};
@@ -374,6 +463,11 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
         (error) => { clearTimeout(timer); reject(error); },
       );
     });
+    testHooks.afterSuspendedSpawn?.({
+      childPID: launch.childPID,
+      sourcePath: fix.details.source?.path ?? null,
+      planPath: fix.planReceipt.path,
+    });
     const identity = monitorHandshake(fix, launch.childPID, launch.startedAt);
     authenticatedIdentity = identity;
     const pidReceipt = readStableJSON(fix.spec.pid_path, 'suspended child PID receipt');
@@ -387,6 +481,11 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
       fix.spec.invocation_receipt_path,
       invocation,
     );
+    testHooks.beforeAcknowledgement?.({
+      childPID: identity.pid,
+      startIdentity: identity.start_identity,
+      invocationSHA256: invocationPublished.sha256,
+    });
     publishPrivateAtomicNoReplace(fix.spec.start_ack_path, {
       version: 1,
       pid: identity.pid,
@@ -394,11 +493,31 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
       phase: 'start',
       invocation_sha256: invocationPublished.sha256,
     });
+    expectedRelease = {
+      version: 1,
+      pid: identity.pid,
+      startIdentity: identity.start_identity,
+      invocationSHA256: invocationPublished.sha256,
+    };
+    await new Promise((resolve, reject) => {
+      const onError = (error) => reject(error);
+      helper.stdin.once('error', onError);
+      helper.stdin.end(
+        `ACK 1 ${identity.pid} ${identity.start_identity} ${invocationPublished.sha256}\n`,
+        () => {
+          helper.stdin.off('error', onError);
+          resolve();
+        },
+      );
+    });
     const helperResult = await helperClosed;
     stopStdout();
     stopStderr();
+    if (protocolError !== null) throw protocolError;
     requireCondition(helperResult.code === 0 && helperResult.signal === null,
       `guardian failed (${helperResult.code ?? helperResult.signal}): ${helperStderr.trim()}`);
+    requireCondition(releaseEvent !== null && sameJSON(releaseEvent, expectedRelease),
+      'guardian omitted the exact authenticated release authority');
     requireCondition(exitEvent && exitEvent.pid === identity.pid && positiveInteger(exitEvent.completedAt),
       'guardian omitted the exact child exit event');
     const exitReceipt = {

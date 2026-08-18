@@ -623,7 +623,8 @@ function coordinatorInvocation(filePath, coordinator, plan, planReceipt, eventsP
     'identity_handshake_path', 'identity_handshake_sha256',
     'stdout_path', 'stderr_path', 'environment_policy_version', 'environment_keys',
     'environment_sha256', 'captured_at_milliseconds', 'coordinator_source_path',
-    'coordinator_source_sha256',
+    'coordinator_source_sha256', 'execution_source_sha256', 'execution_plan_sha256',
+    'execution_staged',
   ], 'coordinator invocation receipt');
   requireCondition(value.version === 1 && value.kind === 'coordinator'
     && sameJSON({ pid: value.pid, start_identity: value.start_identity }, coordinator),
@@ -642,6 +643,10 @@ function coordinatorInvocation(filePath, coordinator, plan, planReceipt, eventsP
   });
   requireCondition(source.sha256 === value.coordinator_source_sha256,
     'coordinator source bytes changed');
+  requireCondition(value.execution_staged === true
+    && value.execution_source_sha256 === source.sha256
+    && value.execution_plan_sha256 === planReceipt.sha256,
+  'coordinator execution staging differs from its retained source/plan bytes');
   requireCondition(sameJSON(value.arguments, [source.path, '--plan', planReceipt.path]),
     'coordinator invocation argv is not the exact source and plan');
   requireCondition(value.plan_path === planReceipt.path && value.plan_sha256 === planReceipt.sha256,
