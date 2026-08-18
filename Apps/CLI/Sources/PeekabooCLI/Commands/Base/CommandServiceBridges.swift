@@ -613,6 +613,30 @@ enum ApplicationServiceBridge {
         }
     }
 
+    static func activateApplicationTargeted(
+        applications: any ApplicationServiceProtocol,
+        application: ServiceApplicationInfo
+    ) async throws -> UIAutomationActionResult<Void> {
+        try await self.perform {
+            guard let expectedIdentity = application.processIdentity else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "Application discovery did not return a process-generation identity for exact activation.",
+                    hint: "Refresh the application inventory before retrying."
+                )
+            }
+            let result = try await applications.activateApplicationTargetedResult(
+                request: ApplicationActivationRequest(application: application)
+            )
+            try ApplicationActionResultSemantics.requireSuccessfulExactProcessResult(
+                result,
+                expectedIdentity: expectedIdentity,
+                operation: "Application activation"
+            )
+            return result
+        }
+    }
+
     static func quitApplication(
         applications: any ApplicationServiceProtocol,
         request: ApplicationQuitRequest
@@ -914,23 +938,13 @@ enum MenuServiceBridge {
 
     static func clickMenuItem(
         menu: any MenuServiceProtocol,
-        appIdentifier: String,
-        itemPath: String
-    ) async throws -> UIAutomationActionResult<Void> {
-        try await Task { @MainActor in
-            try await menu.clickMenuItemResult(app: appIdentifier, itemPath: itemPath)
-        }.value
-    }
-
-    static func clickMenuItem(
-        menu: any MenuServiceProtocol,
         request: MenuItemActionRequest
     ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
             guard let menu = menu as? any MenuServiceGenerationPinnedActionResultProviding else {
                 throw DesktopActionFailure.preDispatchRefusal(
                     reason: .runtimeIncompatible,
-                    message: "Background menu click requires a generation-pinned result provider.",
+                    message: "Exact menu click requires a generation-pinned result provider.",
                     hint: "Update the selected Peekaboo runtime before retrying."
                 )
             }
@@ -938,18 +952,8 @@ enum MenuServiceBridge {
             return try menu.validatedGenerationPinnedMenuResult(
                 result,
                 expectedIdentity: request.expectedIdentity,
-                operation: "Background menu click"
+                operation: "Menu click"
             )
-        }.value
-    }
-
-    static func clickMenuItemByName(
-        menu: any MenuServiceProtocol,
-        appIdentifier: String,
-        itemName: String
-    ) async throws -> UIAutomationActionResult<Void> {
-        try await Task { @MainActor in
-            try await menu.clickMenuItemByNameResult(app: appIdentifier, itemName: itemName)
         }.value
     }
 
@@ -961,7 +965,7 @@ enum MenuServiceBridge {
             guard let menu = menu as? any MenuServiceGenerationPinnedActionResultProviding else {
                 throw DesktopActionFailure.preDispatchRefusal(
                     reason: .runtimeIncompatible,
-                    message: "Background named menu click requires a generation-pinned result provider.",
+                    message: "Exact named menu click requires a generation-pinned result provider.",
                     hint: "Update the selected Peekaboo runtime before retrying."
                 )
             }
@@ -969,7 +973,7 @@ enum MenuServiceBridge {
             return try menu.validatedGenerationPinnedMenuResult(
                 result,
                 expectedIdentity: request.expectedIdentity,
-                operation: "Background named menu click"
+                operation: "Named menu click"
             )
         }.value
     }

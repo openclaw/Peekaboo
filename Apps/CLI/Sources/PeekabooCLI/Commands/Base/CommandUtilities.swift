@@ -431,7 +431,12 @@ extension ApplicationResolver {
         do {
             return try await planner.plan(identifier: identifier).application
         } catch {
-            guard identifier.lowercased() == "frontmost" else { throw error }
+            guard identifier.lowercased() == "frontmost" else {
+                if let planningError = error as? DesktopTargetPlanningError {
+                    throw planningError.desktopActionFailure
+                }
+                throw error
+            }
             var message = "Application 'frontmost' is not a mutation-safe target"
             message += "\n\n💡 To work with the currently active app:"
             message += "\n  • Use `see` without arguments to capture the current screen"

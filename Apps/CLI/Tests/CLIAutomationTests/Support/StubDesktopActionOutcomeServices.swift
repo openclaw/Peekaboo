@@ -150,6 +150,8 @@ final class OutcomeStubMenuService: StubMenuService, MenuServiceGenerationPinned
     var menuBarClickResult = ClickResult(elementDescription: "Menu bar item", location: nil)
     private(set) var menuBarNameClickCalls: [String] = []
     private(set) var menuBarIndexClickCalls: [Int] = []
+    private(set) var menuItemRequests: [MenuItemActionRequest] = []
+    private(set) var namedMenuItemRequests: [MenuItemByNameActionRequest] = []
 
     override func listMenuBarItems(includeRaw: Bool) async throws -> [MenuBarItemInfo] {
         self.menuBarItems
@@ -180,6 +182,7 @@ final class OutcomeStubMenuService: StubMenuService, MenuServiceGenerationPinned
 
     func clickMenuItemActionResult(request: MenuItemActionRequest) async throws -> UIAutomationActionResult<Void> {
         try self.throwActionErrorIfNeeded()
+        self.menuItemRequests.append(request)
         let app = self.menuAppName(for: request.expectedIdentity) ?? request.appIdentifier
         self.clickPathCalls.append((app, request.itemPath))
         self.actionCompleted?()
@@ -193,6 +196,7 @@ final class OutcomeStubMenuService: StubMenuService, MenuServiceGenerationPinned
     func clickMenuItemByNameActionResult(request: MenuItemByNameActionRequest) async throws
     -> UIAutomationActionResult<Void> {
         try self.throwActionErrorIfNeeded()
+        self.namedMenuItemRequests.append(request)
         let app = self.menuAppName(for: request.expectedIdentity) ?? request.appIdentifier
         self.clickItemCalls.append((app, request.itemName))
         self.actionCompleted?()

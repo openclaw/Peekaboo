@@ -612,8 +612,9 @@ struct MenuCommandTargetConsentTests {
         #expect(fixture.applications.frontmostCallCount == 1)
         let click = try #require(fixture.menu.clickedItems.first)
         #expect(fixture.menu.clickedItems.count == 1)
-        #expect(click.app == "com.apple.finder")
+        #expect(click.app == "Finder")
         #expect(click.item == "Close")
+        #expect(fixture.menu.requestedDeliveryModes == [.foreground])
     }
 
     private func makeFixture() -> MenuConsentFixture {

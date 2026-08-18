@@ -392,6 +392,37 @@ struct CLIActionResultConsumerTests {
     }
 
     @Test
+    func `incomplete application inventory is rendered as a retry-safe menu refusal`() async throws {
+        let fixture = Self.menuFixture()
+        let applications = StubApplicationService(applications: [fixture.application])
+        applications.inventoryCompleteness = .partial
+        applications.inventoryWarnings = ["Fixture application metadata was incomplete."]
+        let menu = OutcomeStubMenuService(menusByApp: [fixture.application.name: fixture.structure])
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: applications,
+            menu: menu
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            ["menu", "click", "--app", "Fixt", "--item", "Open", "--json", "--no-remote"],
+            services: services
+        )
+
+        let object = try Self.jsonObject(result.stdout)
+        let outcome = try #require(object["outcome"] as? [String: Any])
+        let error = try #require(object["error"] as? [String: Any])
+        #expect(result.exitStatus == 1)
+        #expect(object["effect"] as? String == "refused")
+        #expect(outcome["state"] as? String == "refused")
+        #expect(outcome["dispatch_state"] as? String == "none")
+        #expect(error["retry_safe"] as? Bool == true)
+        #expect(error["mutation_dispatched"] as? Bool == false)
+        #expect(result.combinedOutput.contains("inventory was incomplete"))
+        #expect(menu.clickItemCalls.isEmpty)
+        #expect(menu.clickPathCalls.isEmpty)
+    }
+
+    @Test
     func `named menu bar click publishes its AX process target`() async throws {
         let outcome = DesktopActionOutcome.dispatchedUnverified(
             route: .bridge,
@@ -961,9 +992,15 @@ struct CLIActionResultConsumerTests {
     }
 
     @Test
-    func `foreground consent without focus preserves receiptless background menu delivery`() async throws {
+    func `foreground named menu click uses the pinned request without focus`() async throws {
         let fixture = Self.menuFixture()
-        let menu = StubMenuService(menusByApp: [fixture.application.name: fixture.structure])
+        let menu = OutcomeStubMenuService(menusByApp: [fixture.application.name: fixture.structure])
+        menu.actionOutcome = .dispatchedUnverified(
+            delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one
+        )
+        menu.actionTargetIdentity = try Self.processTarget()
         let services = TestServicesFactory.makePeekabooServices(
             applications: StubApplicationService(applications: [fixture.application]),
             menu: menu
@@ -979,12 +1016,15 @@ struct CLIActionResultConsumerTests {
 
         let object = try Self.jsonObject(result.stdout)
         let projection = try #require(object["outcome"] as? [String: Any])
+        let request = try #require(menu.namedMenuItemRequests.first)
         #expect(result.exitStatus == 0)
         #expect(projection["state"] as? String == "dispatched_unverified")
         #expect(projection["delivery_mechanism"] as? String == "accessibility_action")
-        #expect(projection["delivery_mode"] as? String == "background")
-        #expect(object["target_identity"] == nil)
-        #expect(object["target_receipt"] == nil)
+        #expect(projection["delivery_mode"] as? String == "foreground")
+        #expect(request.appIdentifier == "PID:\(fixture.application.processIdentifier)")
+        #expect(request.expectedIdentity == fixture.application.processIdentity)
+        #expect(request.deliveryMode == .foreground)
+        try Self.expectProcessTarget(in: object)
     }
 
     @Test
@@ -1201,6 +1241,269 @@ extension CLIActionResultConsumerTests {
         #expect(menu.listMenusRequests.isEmpty)
         #expect(menu.clickItemCalls.isEmpty)
         #expect(menu.clickPathCalls.isEmpty)
+    }
+
+    @Test
+    func `foreground menu path dispatch stays pinned without a separate menu lookup`() async throws {
+        let fixture = Self.menuFixture()
+        let pinnedIdentifier = "PID:\(fixture.application.processIdentifier)"
+        let replacement = ServiceApplicationInfo(
+            processIdentifier: 84,
+            processStartIdentity: 84000,
+            bundleIdentifier: "dev.peekaboo.replacement",
+            name: fixture.application.name
+        )
+        let replacementMenus = MenuStructure(
+            application: replacement,
+            menus: [Menu(
+                title: "File",
+                items: [MenuItem(title: "Open", path: "File > Open")]
+            )]
+        )
+        let menu = OutcomeStubMenuService(menusByApp: [
+            fixture.application.name: replacementMenus,
+            pinnedIdentifier: fixture.structure,
+        ])
+        menu.actionOutcome = .dispatchedUnverified(
+            delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one
+        )
+        menu.actionTargetIdentity = try DesktopTargetIdentity(
+            processIdentity: #require(fixture.application.processIdentity)
+        )
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: [fixture.application]),
+            menu: menu
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "menu", "click", "--app", fixture.application.name, "--path", "File > Open",
+                "--foreground", "--no-auto-focus", "--json", "--no-remote",
+            ],
+            services: services
+        )
+
+        let request = try #require(menu.menuItemRequests.first)
+        #expect(result.exitStatus == 0)
+        #expect(menu.listMenusRequests.isEmpty)
+        #expect(menu.menuItemRequests.count == 1)
+        #expect(menu.namedMenuItemRequests.isEmpty)
+        #expect(request.appIdentifier == pinnedIdentifier)
+        #expect(request.expectedIdentity == fixture.application.processIdentity)
+        #expect(request.deliveryMode == .foreground)
+    }
+
+    @Test
+    func `foreground menu without a window uses exact process activation`() async throws {
+        let fixture = Self.menuFixture()
+        let applications = OutcomeStubApplicationService(applications: [fixture.application])
+        applications.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+            unitCount: .one
+        )
+        let menu = OutcomeStubMenuService(menusByApp: [fixture.application.name: fixture.structure])
+        menu.actionOutcome = .dispatchedUnverified(
+            delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one
+        )
+        menu.actionTargetIdentity = try Self.processTarget()
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: applications,
+            windows: OutcomeStubWindowService(windowsByApp: [:]),
+            menu: menu
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "menu", "click", "--app", fixture.application.name, "--item", "Open",
+                "--foreground", "--json", "--no-remote",
+            ],
+            services: services
+        )
+
+        #expect(result.exitStatus == 0)
+        #expect(applications.activateCalls == ["PID:\(fixture.application.processIdentifier)"])
+        #expect(menu.namedMenuItemRequests.first?.expectedIdentity == fixture.application.processIdentity)
+    }
+
+    @Test
+    func `foreground menu refuses a recycled PID before default activation`() async throws {
+        let fixture = Self.menuFixture()
+        let replacement = ServiceApplicationInfo(
+            processIdentifier: fixture.application.processIdentifier,
+            processStartIdentity: 84000,
+            bundleIdentifier: fixture.application.bundleIdentifier,
+            name: fixture.application.name
+        )
+        let applications = OutcomeStubApplicationService(applications: [replacement])
+        applications.applicationInventorySequence = [.complete([fixture.application])]
+        let menu = OutcomeStubMenuService(menusByApp: [fixture.application.name: fixture.structure])
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: applications,
+            windows: OutcomeStubWindowService(windowsByApp: [:]),
+            menu: menu
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "menu", "click", "--app", fixture.application.name, "--item", "Open",
+                "--foreground", "--json", "--no-remote",
+            ],
+            services: services
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(result.combinedOutput.contains("changed process generation"))
+        #expect(applications.activateCalls.isEmpty)
+        #expect(menu.namedMenuItemRequests.isEmpty)
+    }
+
+    @Test
+    func `foreground menu window index resolves through the planned process`() async throws {
+        let fixture = Self.menuFixture()
+        let expectedIdentity = try #require(fixture.application.processIdentity)
+        let pinnedIdentifier = "PID:\(expectedIdentity.processIdentifier)"
+        let originalBounds = CGRect(x: 10, y: 20, width: 640, height: 480)
+        let originalWindow = ServiceWindowInfo(
+            windowID: 101,
+            title: "Original",
+            bounds: originalBounds,
+            index: 0,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 101,
+                ownerProcessIdentifier: expectedIdentity.processIdentifier,
+                ownerProcessStartIdentity: expectedIdentity.processStartIdentity,
+                capturedBounds: originalBounds
+            )
+        )
+        let replacementBounds = CGRect(x: 30, y: 40, width: 600, height: 440)
+        let replacementWindow = ServiceWindowInfo(
+            windowID: 202,
+            title: "Replacement",
+            bounds: replacementBounds,
+            index: 0,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 202,
+                ownerProcessIdentifier: 84,
+                ownerProcessStartIdentity: 84000,
+                capturedBounds: replacementBounds
+            )
+        )
+        let windows = OutcomeStubWindowService(windowsByApp: [
+            fixture.application.name: [replacementWindow],
+            pinnedIdentifier: [originalWindow],
+        ])
+        let menu = OutcomeStubMenuService(menusByApp: [fixture.application.name: fixture.structure])
+        menu.actionOutcome = .dispatchedUnverified(
+            delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one
+        )
+        menu.actionTargetIdentity = try DesktopTargetIdentity(processIdentity: expectedIdentity)
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: [fixture.application]),
+            windows: windows,
+            menu: menu
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "menu", "click", "--app", fixture.application.name, "--window-index", "0",
+                "--item", "Open", "--foreground", "--json", "--no-remote",
+            ],
+            services: services
+        )
+
+        let focused = try #require(windows.focusCalls.first)
+        let request = try #require(menu.namedMenuItemRequests.first)
+        #expect(result.exitStatus == 0)
+        #expect(windows.focusCalls.count == 1)
+        guard case let .windowId(windowID) = focused else {
+            Issue.record("Expected exact planned-process window focus")
+            return
+        }
+        #expect(windowID == originalWindow.windowID)
+        #expect(request.expectedIdentity == expectedIdentity)
+        #expect(request.deliveryMode == .foreground)
+    }
+
+    @Test
+    func `foreground menu rejects a window owned by another process before focus`() async throws {
+        let fixture = Self.menuFixture()
+        let replacementBounds = CGRect(x: 30, y: 40, width: 600, height: 440)
+        let replacementWindow = ServiceWindowInfo(
+            windowID: 202,
+            title: "Replacement",
+            bounds: replacementBounds,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 202,
+                ownerProcessIdentifier: 84,
+                ownerProcessStartIdentity: 84000,
+                capturedBounds: replacementBounds
+            )
+        )
+        let windows = OutcomeStubWindowService(windowsByApp: ["Replacement": [replacementWindow]])
+        let menu = OutcomeStubMenuService(menusByApp: [fixture.application.name: fixture.structure])
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: [fixture.application]),
+            windows: windows,
+            menu: menu
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "menu", "click", "--app", fixture.application.name, "--window-id", "202",
+                "--item", "Open", "--foreground", "--json", "--no-remote",
+            ],
+            services: services
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(result.combinedOutput.contains("not owned by selected application"))
+        #expect(windows.focusCalls.isEmpty)
+        #expect(menu.namedMenuItemRequests.isEmpty)
+        #expect(menu.menuItemRequests.isEmpty)
+    }
+
+    @Test
+    func `foreground menu rejects a recycled PID window before default focus`() async throws {
+        let fixture = Self.menuFixture()
+        let replacementBounds = CGRect(x: 30, y: 40, width: 600, height: 440)
+        let replacementWindow = ServiceWindowInfo(
+            windowID: 202,
+            title: "Replacement",
+            bounds: replacementBounds,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 202,
+                ownerProcessIdentifier: fixture.application.processIdentifier,
+                ownerProcessStartIdentity: 84000,
+                capturedBounds: replacementBounds
+            )
+        )
+        let pinnedIdentifier = "PID:\(fixture.application.processIdentifier)"
+        let windows = OutcomeStubWindowService(windowsByApp: [pinnedIdentifier: [replacementWindow]])
+        let menu = OutcomeStubMenuService(menusByApp: [fixture.application.name: fixture.structure])
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: [fixture.application]),
+            windows: windows,
+            menu: menu
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "menu", "click", "--app", fixture.application.name, "--item", "Open",
+                "--foreground", "--json", "--no-remote",
+            ],
+            services: services
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(result.combinedOutput.contains("not owned by selected application"))
+        #expect(windows.focusCalls.isEmpty)
+        #expect(menu.namedMenuItemRequests.isEmpty)
     }
 }
 
