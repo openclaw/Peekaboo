@@ -15,6 +15,22 @@ import UniformTypeIdentifiers
 
 @Suite(.serialized)
 struct MCPToolExecutionTests {
+    @Test
+    @MainActor
+    func `Mock application request quit preserves legacy delegation`() async throws {
+        let applications = MockApplicationService()
+
+        #expect(try await applications.quitApplication(request: ApplicationQuitRequest(
+            identifier: "Missing App",
+            force: false)))
+        await #expect(throws: PeekabooError.self) {
+            try await applications.quitApplication(request: ApplicationQuitRequest(
+                identifier: "PID:42",
+                force: false,
+                expectedIdentity: AutomationTestFixtures.processIdentity(processIdentifier: 42)))
+        }
+    }
+
     // MARK: - Sleep Tool Tests
 
     @Test
@@ -1340,6 +1356,14 @@ class MockApplicationService: ScriptedApplicationInventoryService {
 
     override func quitApplication(identifier _: String, force _: Bool) async throws -> Bool {
         true
+    }
+
+    override func quitApplication(request: ApplicationQuitRequest) async throws -> Bool {
+        guard request.expectedIdentity == nil else {
+            throw PeekabooError.serviceUnavailable(
+                "This application service does not support process-generation-pinned quit; update the runtime host")
+        }
+        return try await self.quitApplication(identifier: request.identifier, force: request.force)
     }
 }
 
