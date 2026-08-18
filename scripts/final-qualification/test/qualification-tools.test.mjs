@@ -6,6 +6,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { projectBindings } from '../project-live-bindings.mjs';
 import { runManagedLaunch } from '../managed-launcher.mjs';
+import { classifyPolicyFile } from '../executable-policy-scanner.mjs';
 import {
   accumulateDescendantPIDs,
   isFinalProcessTableSample,
@@ -472,7 +473,7 @@ function deploymentFixture(
     installedFile(
       'peekaboo_cli',
       'runtime/libswiftCompatibilitySpan.dylib',
-      'fixture runtime data\n',
+      Buffer.concat([Buffer.from('cafebabe', 'hex'), Buffer.from('fixture native library')]),
       0o644,
     ),
     installedFile(
@@ -859,6 +860,26 @@ test('native emitter calibrator compiles and its source-only self-test uses no e
     assert.deepEqual(JSON.parse(fs.readFileSync(publication)), { success: true, tests: 1 });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('policy scanner classifies every thin and fat Mach-O byte order as loadable code', () => {
+  const magics = [
+    'feedface', 'cefaedfe',
+    'feedfacf', 'cffaedfe',
+    'cafebabe', 'bebafeca',
+    'cafebabf', 'bfbafeca',
+  ];
+  for (const magic of magics) {
+    const bytes = Buffer.concat([Buffer.from(magic, 'hex'), Buffer.from('fixture')]);
+    assert.equal(classifyPolicyFile('runtime/library.dylib', 0o644, bytes), 'executable');
+    const nearMagic = Buffer.from(bytes);
+    nearMagic[0] ^= 0x10;
+    assert.equal(classifyPolicyFile('runtime/library.bin', 0o644, nearMagic), 'data');
+    assert.equal(
+      classifyPolicyFile('runtime/library.bin', 0o644, bytes.subarray(0, 3)),
+      'data',
+    );
   }
 });
 
@@ -2541,6 +2562,10 @@ test('qualification manifest closes every required evidence class and detects by
       concurrentValue,
       planValue,
     );
+    const localPolicyReport = JSON.parse(fs.readFileSync(deployment.policyReports[0]));
+    assert.equal(localPolicyReport.file_coverage.find((entry) => (
+      entry.relative_path === 'runtime/libswiftCompatibilitySpan.dylib'
+    )).classification, 'executable');
     const artifactManifest = writeJSON(path.join(root, 'artifact-binding.json'), {
       version: 2,
       deployment_envelope_sha256: '8'.repeat(64),
@@ -2671,6 +2696,47 @@ test('qualification manifest closes every required evidence class and detects by
     assert.notEqual(forbiddenScannerRun.status, 0);
     assert.match(forbiddenScannerRun.stderr, /forbidden executable or script markers/);
     writeFile(installedScriptPath, cleanInstalledScript, 0o755);
+    const installedDylibPath = path.join(
+      deployment.artifactRoots.peekaboo_cli,
+      'runtime/libswiftCompatibilitySpan.dylib',
+    );
+    const cleanInstalledDylib = fs.readFileSync(installedDylibPath);
+    writeFile(
+      installedDylibPath,
+      Buffer.concat([Buffer.from('cffaedfe', 'hex'), Buffer.from(' osascript ')]),
+      0o644,
+    );
+    const forbiddenDylibEntries = structuredClone(
+      JSON.parse(fs.readFileSync(deployment.installed[0])).entries,
+    );
+    const forbiddenDylibEntry = forbiddenDylibEntries.find((entry) => (
+      entry.relative_path === 'runtime/libswiftCompatibilitySpan.dylib'
+    ));
+    forbiddenDylibEntry.size = fs.statSync(installedDylibPath).size;
+    forbiddenDylibEntry.sha256 = sha256(fs.readFileSync(installedDylibPath));
+    const forbiddenDylibInventory = installedInventory(
+      root,
+      'local',
+      deployment.localUUID,
+      forbiddenDylibEntries,
+      qualificationToolsAggregate,
+      sha256(fs.readFileSync(deployment.elevationReceipts[0])),
+      '-forbidden-dylib',
+    );
+    const forbiddenDylibSpec = writeJSON(path.join(root, 'forbidden-dylib-spec.json'), {
+      version: 1,
+      installed_inventory: forbiddenDylibInventory,
+      artifact_roots: deployment.artifactRoots,
+    });
+    const forbiddenDylibRun = spawnSync(process.execPath, [
+      deployment.policyScanner,
+      'generate',
+      '--spec', forbiddenDylibSpec,
+      '--output', path.join(root, 'forbidden-dylib-report.json'),
+    ], { encoding: 'utf8' });
+    assert.notEqual(forbiddenDylibRun.status, 0);
+    assert.match(forbiddenDylibRun.stderr, /forbidden executable or script markers/);
+    writeFile(installedDylibPath, cleanInstalledDylib, 0o644);
     const legacyInput = structuredClone(inputValue);
     legacyInput.version = 1;
     assert.throws(

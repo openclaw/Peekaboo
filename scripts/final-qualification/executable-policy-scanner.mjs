@@ -24,6 +24,12 @@ const SCRIPT_EXTENSIONS = new Set([
   '.applescript', '.bash', '.cjs', '.command', '.js', '.jxa', '.mjs', '.osa', '.pl', '.py',
   '.rb', '.sh', '.swift', '.zsh',
 ]);
+const MACH_O_MAGICS = new Set([
+  'feedface', 'cefaedfe',
+  'feedfacf', 'cffaedfe',
+  'cafebabe', 'bebafeca',
+  'cafebabf', 'bfbafeca',
+]);
 const FORBIDDEN_MARKERS = [
   ['apple-script', /(^|[^a-z0-9])(osascript|osascriptd|applescript|nsapplescript|jxa|osaexecute|javascript for automation)([^a-z0-9]|$)/],
   ['cua-driver', /(^|[^a-z0-9])cua-driver([^a-z0-9]|$)/],
@@ -107,10 +113,11 @@ function artifactRoots(value) {
   }));
 }
 
-function classification(relativePath, mode, bytes) {
+export function classifyPolicyFile(relativePath, mode, bytes) {
   if (bytes.subarray(0, 2).equals(Buffer.from('#!'))
     || SCRIPT_EXTENSIONS.has(path.extname(relativePath).toLowerCase())) return 'script';
-  if ((mode & 0o111) !== 0) return 'executable';
+  const magic = bytes.length >= 4 ? bytes.subarray(0, 4).toString('hex') : null;
+  if (MACH_O_MAGICS.has(magic) || (mode & 0o111) !== 0) return 'executable';
   return 'data';
 }
 
@@ -152,7 +159,7 @@ function scanInstalledInventory(inventoryPath, rootsValue) {
     });
     requireCondition(retained.bytes.length === entry.size && retained.sha256 === entry.sha256,
       `policy scanner inventory entry ${index} bytes changed`);
-    const kind = classification(entry.relative_path, entry.mode, retained.bytes);
+    const kind = classifyPolicyFile(entry.relative_path, entry.mode, retained.bytes);
     fileCoverage.push({
       artifact: entry.artifact,
       relative_path: entry.relative_path,
