@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   aggregateSHA256,
   authenticateLiveBridgeBundle,
+  authenticatedBridgeReceiptIdentity,
   corroboratedObservationTime,
   exactKeys,
   fileReceipt,
@@ -15,6 +16,7 @@ import {
   readStableFile,
   requireCondition,
   requireStableExecutable,
+  requireUniqueAuthenticatedBridgeReceipts,
   sameJSON,
   sha256,
   writePrivateExclusive,
@@ -1177,7 +1179,7 @@ function semanticConcurrentValidation(filePath) {
     requireCondition(typeof entry.trace_call_id === 'string' && entry.trace_call_id.length > 0
       && Number.isSafeInteger(entry.started_at_milliseconds)
       && Number.isSafeInteger(entry.completed_at_milliseconds)
-      && entry.completed_at_milliseconds >= entry.started_at_milliseconds,
+      && entry.completed_at_milliseconds > entry.started_at_milliseconds,
     `Agent/CU concurrent validation report action_intervals[${index}] is malformed`);
   });
   const overlap = value.overlap;
@@ -1321,7 +1323,9 @@ function semanticValidatorPair(bundlePath, validatorPath, label, {
   authentication = null,
   adjunctBinding = null,
 } = {}) {
-  const bundle = readStableJSON(bundlePath, `${label} bundle`, { maximumBytes: 256 * 1024 * 1024 });
+  const bundle = readStableJSON(bundlePath, `${label} bundle`, {
+    maximumBytes: 256 * 1024 * 1024,
+  });
   const payload = bundlePayload(bundle, label);
   const validator = readStableJSON(validatorPath, `${label} validator`);
   exactKeys(validator.value, ['success', 'data'], `${label} validator`);
@@ -1340,6 +1344,7 @@ function semanticValidatorPair(bundlePath, validatorPath, label, {
       `${label} retained validator differs from authenticated live validation`);
     report = authenticatedReport;
   }
+  const identity = authenticatedBridgeReceiptIdentity(payload, report, label);
   requireCondition(validator.value.success === true
     && report?.valid === true
     && report.validator_id === 'peekaboo-bridge-receipt-validate-v1'
@@ -1351,8 +1356,6 @@ function semanticValidatorPair(bundlePath, validatorPath, label, {
     && report.retention_basis === 'exported_bundle'
     && report.bundle_sha256 === bundle.sha256
     && report.operation === payload.operation
-    && report.request_id === String(payload.requestID ?? '').toLowerCase()
-    && typeof report.listener_instance_id === 'string' && report.listener_instance_id.length > 0
     && Number.isSafeInteger(report.host?.pid) && report.host.pid > 0
     && typeof report.host?.start_identity === 'string'
     && /^[0-9a-f]{40}$/.test(report.host?.code_signature_hash ?? '')
@@ -1381,7 +1384,7 @@ function semanticValidatorPair(bundlePath, validatorPath, label, {
       && payload.outcome?.mutation_dispatched === true,
     `${label} lacks one target-attested background mutation`);
   }
-  return { bundle, validator, payload, report };
+  return { bundle, validator, payload, report, identity };
 }
 
 function agentBundleAuthentication(plan, invocation, authenticateBundle, label) {
@@ -1478,17 +1481,17 @@ function validateConcurrentInterleavingBinding(
         `${label} Agent target ${targetIndex}.${kind} readback phase is invalid`);
       requireCondition(sameJSON(readback.target, expectedTarget),
         `${label} Agent target ${targetIndex}.${kind} readback belongs to another target`);
-      requireCondition(completedAt <= readback.observed_at_milliseconds,
-        `${label} Agent target ${targetIndex}.${kind} readback predates dispatch completion`);
+      requireCondition(completedAt < readback.observed_at_milliseconds,
+        `${label} Agent target ${targetIndex}.${kind} readback does not strictly follow dispatch completion`);
       actionEvidence[kind] = { startedAt, completedAt, readback };
     }
     requireCondition(
-      baseline.observed_at_milliseconds <= actionEvidence.mutation.startedAt
+      baseline.observed_at_milliseconds < actionEvidence.mutation.startedAt
         && actionEvidence.mutation.readback.observed_at_milliseconds
-          <= actionEvidence.restoration.startedAt,
+          < actionEvidence.restoration.startedAt,
       `${label} Agent target ${targetIndex} baseline/mutation/restoration order is invalid`,
     );
-    requireCondition(actionEvidence.mutation.completedAt <= actionEvidence.restoration.startedAt,
+    requireCondition(actionEvidence.mutation.completedAt < actionEvidence.restoration.startedAt,
       `${label} Agent target ${targetIndex} restoration dispatch predates mutation completion`);
   }
   const retainedPerform = readStableJSON(
@@ -2168,6 +2171,10 @@ function projectInput(input, authenticateBundle) {
       operation: pair.payload.operation,
     });
   }
+  requireUniqueAuthenticatedBridgeReceipts(
+    semanticBundlePairs,
+    'Agent manifest bundle corpus',
+  );
   requireCondition(sameJSON(
     semanticBundleProjection.sort((left, right) => left.bundle_path.localeCompare(right.bundle_path)),
     [...concurrentValidation.value.agent.signed_bundles]
@@ -2574,6 +2581,10 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
       operation: pair.payload.operation,
     };
   });
+  requireUniqueAuthenticatedBridgeReceipts(
+    verifiedBundlePairs,
+    'verified Agent bundle corpus',
+  );
   requireCondition(sameJSON(
     bundleProjection.sort((left, right) => left.bundle_path.localeCompare(right.bundle_path)),
     [...concurrent.value.agent.signed_bundles]

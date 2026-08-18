@@ -59,6 +59,7 @@
 - Release cancelled exact-window held hotkeys only to their original process generation, include cleanup events in typed unit counts, and never retarget cleanup to a recycled PID.
 - Make application and window inventories report omitted or identity-incomplete rows as partial, while keeping complete AX-only window listings usable without Screen Recording.
 - Update AXorcist and Tachikoma so Accessibility permission observation cancellation cannot deadlock the main queue or install timers after termination, while Realtime tool execution preserves the first completion/cancellation winner, keeps timeout returns bounded while owning delayed cleanup, preserves completed results during timer cancellation, and rejects invalid audio deadlines before dispatch. Thanks @SebTardif for AXorcist #46 and Tachikoma #68; follow-up fixes landed in AXorcist #48 and Tachikoma #69/#70.
+- Reject copied, hard-linked, or remapped qualification receipts by authenticated bundle, request, listener, and session identity, with strictly ordered positive-duration Agent mutations and semantic readbacks.
 
 ## [4.2.0] - 2026-08-16
 

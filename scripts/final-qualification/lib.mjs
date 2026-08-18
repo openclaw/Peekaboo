@@ -60,6 +60,8 @@ export const HEX40 = /^[0-9a-f]{40}$/;
 export const HEX64 = /^[0-9a-f]{64}$/;
 export const TEAM_ID = /^[A-Z0-9]{10}$/;
 export const POSITIVE_DECIMAL = /^[1-9][0-9]*$/;
+export const NONNEGATIVE_DECIMAL = /^(0|[1-9][0-9]*)$/;
+export const LOWERCASE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const UINT64_MAX = 0xffff_ffff_ffff_ffffn;
 
 export function positiveInteger(value) {
@@ -72,6 +74,63 @@ export function positiveDecimal(value) {
     return BigInt(value) <= UINT64_MAX;
   } catch {
     return false;
+  }
+}
+
+export function nonnegativeDecimal(value) {
+  if (typeof value !== 'string' || !NONNEGATIVE_DECIMAL.test(value)) return false;
+  try {
+    return BigInt(value) <= UINT64_MAX;
+  } catch {
+    return false;
+  }
+}
+
+export function authenticatedBridgeReceiptIdentity(payload, report, label) {
+  const payloadIdentity = {
+    request_id: String(payload?.requestID ?? '').toLowerCase(),
+    session_id: String(payload?.sessionID ?? '').toLowerCase(),
+    session_sequence: payload?.sessionSequence,
+    listener_instance_id: String(payload?.listenerInstanceID ?? '').toLowerCase(),
+    client_instance_id: String(payload?.clientInstanceID ?? '').toLowerCase(),
+  };
+  requireCondition(
+    LOWERCASE_UUID.test(payloadIdentity.request_id)
+      && LOWERCASE_UUID.test(payloadIdentity.session_id)
+      && nonnegativeDecimal(payloadIdentity.session_sequence)
+      && LOWERCASE_UUID.test(payloadIdentity.listener_instance_id)
+      && LOWERCASE_UUID.test(payloadIdentity.client_instance_id),
+    `${label} signed request/session/listener identity is malformed`,
+  );
+  requireCondition(
+    report?.request_id === payloadIdentity.request_id
+      && report?.session_id === payloadIdentity.session_id
+      && report?.session_sequence === payloadIdentity.session_sequence
+      && report?.listener_instance_id === payloadIdentity.listener_instance_id
+      && report?.client_instance_id === payloadIdentity.client_instance_id,
+    `${label} authenticated request/session/listener identity differs from its signed payload`,
+  );
+  return {
+    ...payloadIdentity,
+    request_key: `${payloadIdentity.listener_instance_id}:${payloadIdentity.request_id}`,
+    session_claim_key: [
+      payloadIdentity.listener_instance_id,
+      payloadIdentity.session_id,
+      payloadIdentity.session_sequence,
+    ].join(':'),
+  };
+}
+
+export function requireUniqueAuthenticatedBridgeReceipts(entries, label) {
+  const dimensions = [
+    ['a bundle SHA-256', (entry) => entry.bundle.sha256],
+    ['an authenticated request identity', (entry) => entry.identity.request_key],
+    ['an authenticated session claim', (entry) => entry.identity.session_claim_key],
+  ];
+  for (const [dimension, project] of dimensions) {
+    const values = entries.map(project);
+    requireCondition(new Set(values).size === values.length,
+      `${label} reuses ${dimension}`);
   }
 }
 
@@ -102,12 +161,13 @@ export function readStableFile(filePath, label, {
   privateFile = true,
   maximumBytes = 16 * 1024 * 1024,
   allowRootOwner = false,
+  requireSingleLink = true,
 } = {}) {
   absolutePath(filePath, label);
   const lstat = fs.lstatSync(filePath, { bigint: true });
   const modeMask = privateFile ? 0o077n : 0o022n;
   requireCondition(
-    lstat.isFile() && !lstat.isSymbolicLink() && lstat.nlink === 1n
+    lstat.isFile() && !lstat.isSymbolicLink() && (!requireSingleLink || lstat.nlink === 1n)
       && lstat.size <= BigInt(maximumBytes) && (lstat.mode & modeMask) === 0n
       && (typeof process.geteuid !== 'function'
         || lstat.uid === BigInt(process.geteuid())

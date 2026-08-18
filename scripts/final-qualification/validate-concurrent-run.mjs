@@ -8,6 +8,7 @@ import {
   HEX40,
   HEX64,
   authenticateLiveBridgeBundle,
+  authenticatedBridgeReceiptIdentity,
   corroboratedObservationTime,
   exactKeys,
   parseOptions,
@@ -20,6 +21,7 @@ import {
   requireCondition,
   requirePrivateDirectory,
   requireStableExecutable,
+  requireUniqueAuthenticatedBridgeReceipts,
   sameJSON,
   sha256,
   validateEmitter,
@@ -235,6 +237,7 @@ function signedBundleTarget(payload, label) {
 function signedBundle(filePath, validatorPath, operation, label, authentication) {
   const bundle = readStableJSON(filePath, `${label} signed bundle`, {
     maximumBytes: 256 * 1024 * 1024,
+    requireSingleLink: false,
   });
   const payload = bundle.value?.receipt?.payload;
   requireCondition(payload && payload.schemaVersion === 1
@@ -244,7 +247,7 @@ function signedBundle(filePath, validatorPath, operation, label, authentication)
     && HEX40.test(payload.client?.codeSignatureHash ?? '')
     && positiveInteger(payload.startedAtUnixMilliseconds)
     && positiveInteger(payload.completedAtUnixMilliseconds)
-    && payload.completedAtUnixMilliseconds >= payload.startedAtUnixMilliseconds,
+    && payload.completedAtUnixMilliseconds > payload.startedAtUnixMilliseconds,
   `${label} signed payload is malformed`);
   const validator = readStableJSON(validatorPath, `${label} live validator`);
   exactKeys(validator.value, ['success', 'data'], `${label} live validator`);
@@ -261,6 +264,7 @@ function signedBundle(filePath, validatorPath, operation, label, authentication)
   requireCondition(sameJSON(validator.value.data, authenticatedReport),
     `${label} retained validator report differs from authenticated live validation`);
   const report = authenticatedReport;
+  const identity = authenticatedBridgeReceiptIdentity(payload, report, label);
   requireCondition(report?.valid === true
     && report.validator_id === 'peekaboo-bridge-receipt-validate-v1'
     && report.trust_source === 'authenticated_live_listener'
@@ -271,7 +275,6 @@ function signedBundle(filePath, validatorPath, operation, label, authentication)
     && report.retention_basis === 'exported_bundle'
     && report.bundle_sha256 === bundle.sha256
     && report.operation === payload.operation
-    && report.request_id === String(payload.requestID ?? '').toLowerCase()
     && report.client?.pid === payload.client.processIdentifier
     && report.client?.start_identity === payload.client.processStartIdentity
     && report.client?.code_signature_hash === payload.client.codeSignatureHash,
@@ -285,7 +288,7 @@ function signedBundle(filePath, validatorPath, operation, label, authentication)
       && payload.outcome?.mutation_dispatched === true,
     `${label} signed outcome is not one definite background dispatch`);
   }
-  return { bundle, validator, payload, report };
+  return { bundle, validator, payload, report, identity };
 }
 
 function expectedBridgeOperation(family) {
@@ -320,7 +323,7 @@ function agentBundleCorpus(entries, receiptDirectory, expectedAgent, expectedHos
   requireCondition(new Set(validatorPaths).size === validatorPaths.length,
     'Agent bundle corpus reuses a live validator report');
   const listenerIDs = new Set();
-  const corpus = new Map(entries.map((entry, index) => {
+  const authenticatedEntries = entries.map((entry, index) => {
     const signed = signedBundle(
       entry.bundle_path,
       entry.validator_report_path,
@@ -341,10 +344,16 @@ function agentBundleCorpus(entries, receiptDirectory, expectedAgent, expectedHos
       && signed.report.listener_instance_id.length > 0,
     `Agent bundle ${index} has no live listener identity`);
     listenerIDs.add(signed.report.listener_instance_id);
-    return [entry.bundle_path, signed];
-  }));
+    return signed;
+  });
+  requireUniqueAuthenticatedBridgeReceipts(authenticatedEntries, 'Agent bundle corpus');
+  requireCondition(authenticatedEntries.every((entry) => entry.bundle.info.nlink === 1n),
+    'Agent bundle corpus contains a hard-linked receipt');
   requireCondition(listenerIDs.size === 1,
     'Agent bundle corpus spans more than one live listener instance');
+  const corpus = new Map(entries.map((entry, index) => (
+    [entry.bundle_path, authenticatedEntries[index]]
+  )));
   return corpus;
 }
 
@@ -445,8 +454,8 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
         operation,
         `Agent ${target.label} ${kind} readback`,
       );
-      requireCondition(signed.payload.completedAtUnixMilliseconds <= readback.value.observed_at_milliseconds,
-        `Agent ${target.label}.${kind} readback predates its signed dispatch`);
+      requireCondition(signed.payload.completedAtUnixMilliseconds < readback.value.observed_at_milliseconds,
+        `Agent ${target.label}.${kind} readback does not strictly follow its signed dispatch`);
       readbackReceipts.push(readback);
       actionReceipts[kind] = { action, signed, readback };
       actionIntervals.push({
@@ -461,17 +470,17 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
       `Agent ${target.label} restoration did not restore the baseline`);
     requireCondition(
       baseline.value.observed_at_milliseconds
-        <= actionReceipts.mutation.signed.payload.startedAtUnixMilliseconds
+        < actionReceipts.mutation.signed.payload.startedAtUnixMilliseconds
       && actionReceipts.mutation.signed.payload.completedAtUnixMilliseconds
-        <= actionReceipts.mutation.readback.value.observed_at_milliseconds
+        < actionReceipts.mutation.readback.value.observed_at_milliseconds
       && actionReceipts.mutation.readback.value.observed_at_milliseconds
-        <= actionReceipts.restoration.signed.payload.startedAtUnixMilliseconds
+        < actionReceipts.restoration.signed.payload.startedAtUnixMilliseconds
       && actionReceipts.restoration.signed.payload.completedAtUnixMilliseconds
-        <= actionReceipts.restoration.readback.value.observed_at_milliseconds
+        < actionReceipts.restoration.readback.value.observed_at_milliseconds
       && actionReceipts.mutation.signed.payload.completedAtUnixMilliseconds
-        <= actionReceipts.restoration.signed.payload.startedAtUnixMilliseconds
+        < actionReceipts.restoration.signed.payload.startedAtUnixMilliseconds
       && actionReceipts.mutation.readback.value.observed_at_milliseconds
-        <= actionReceipts.restoration.readback.value.observed_at_milliseconds,
+        < actionReceipts.restoration.readback.value.observed_at_milliseconds,
       `Agent ${target.label} baseline/mutation/restoration order is invalid`,
     );
     requireCondition(

@@ -33,6 +33,7 @@ const TEAM = 'FWJYW4S8P8';
 const OPENCLAW_SOURCE = '9'.repeat(40);
 const CDHASH = 'b'.repeat(40);
 const UUID = '12345678-1234-4abc-8def-123456789abc';
+const SESSION_ID = '22345678-1234-4abc-8def-123456789abc';
 const NONCE = 'c'.repeat(64);
 const LOCAL_UUID = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
 const STUDIO_UUID = 'BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB';
@@ -107,10 +108,11 @@ function fixtureAuthenticatedBundle({ bundlePath, expectedHost }) {
     trust_source: 'authenticated_live_listener',
     minimum_protocol_version: '1.29',
     request_id: String(payload.requestID).toLowerCase(),
-    operation: payload.operation,
-    listener_instance_id: payload.listenerInstanceID,
-    client_instance_id: payload.clientInstanceID,
+    session_id: String(payload.sessionID).toLowerCase(),
     session_sequence: payload.sessionSequence,
+    operation: payload.operation,
+    listener_instance_id: String(payload.listenerInstanceID).toLowerCase(),
+    client_instance_id: String(payload.clientInstanceID).toLowerCase(),
     host: {
       pid: expectedHost.process_identifier,
       start_identity: expectedHost.process_start_identity_decimal,
@@ -1645,19 +1647,23 @@ function signedBundleFixture(root, name, operation, targetValue, startedAt, comp
   host = { pid: 200, start_identity: '200001', code_signature_hash: 'd'.repeat(40) },
   listenerInstanceID = UUID,
   clientInstanceID = UUID,
-  sessionSequence = '0',
+  sessionID = SESSION_ID,
+  sessionSequence = null,
   targetAbsent = false,
   outcome = null,
   outcomeAttested = mutating,
 } = {}) {
-  const requestID = `00000000-0000-4000-8000-${String(fixtureRequestCounter++).padStart(12, '0')}`;
+  const requestOrdinal = fixtureRequestCounter++;
+  const requestID = `00000000-0000-4000-8000-${String(requestOrdinal).padStart(12, '0')}`;
+  const resolvedSessionSequence = sessionSequence ?? String(requestOrdinal);
   const payload = {
     schemaVersion: 1,
     requestID,
+    sessionID,
     operation,
     listenerInstanceID,
     clientInstanceID,
-    sessionSequence,
+    sessionSequence: resolvedSessionSequence,
     client: {
       processIdentifier: client.pid,
       processStartIdentity: client.start_identity,
@@ -1689,10 +1695,11 @@ function signedBundleFixture(root, name, operation, targetValue, startedAt, comp
       trust_source: 'authenticated_live_listener',
       minimum_protocol_version: '1.29',
       request_id: requestID,
+      session_id: sessionID,
       operation,
       listener_instance_id: listenerInstanceID,
       client_instance_id: clientInstanceID,
-      session_sequence: sessionSequence,
+      session_sequence: resolvedSessionSequence,
       host: {
         pid: host.pid,
         start_identity: host.start_identity,
@@ -1919,7 +1926,7 @@ function concurrentFixture(root, {
   const restorationA = semanticReadbackFixture(root, 'a-restore', targetA, 'restored', 'alpha', operationsStart + 450);
   const baselineB = semanticReadbackFixture(root, 'b-baseline', targetB, 'baseline', 'beta', operationsStart + 350);
   const mutationBObservedAt = operationsStart + (agentFinishesBeforeIntegratedCU
-    ? 445 : agentTouchesIntegratedCUBoundary ? 500 : 700);
+    ? 445 : agentTouchesIntegratedCUBoundary ? 495 : 700);
   const restorationBObservedAt = operationsStart + (agentFinishesBeforeIntegratedCU
     ? 500 : agentTouchesIntegratedCUBoundary ? 600 : 900);
   const mutationB = semanticReadbackFixture(
@@ -1943,7 +1950,7 @@ function concurrentFixture(root, {
       : agentTouchesIntegratedCUBoundary ? 450 : 550),
     operationsStart + (agentFinishesBeforeIntegratedCU
       ? 440
-      : agentTouchesIntegratedCUBoundary ? 500 : 650),
+      : agentTouchesIntegratedCUBoundary ? 490 : 650),
     { directory: agentReceipts, client: agentClient },
   );
   const bundleBRestore = signedBundleFixture(
@@ -2024,6 +2031,23 @@ function concurrentFixture(root, {
     semanticReadbacks: [baselineA, mutationA, restorationA, baselineB, mutationB, restorationB],
     agentBundles,
   };
+}
+
+function refreshFixtureBundleValidator(spec, entry) {
+  const plan = JSON.parse(fs.readFileSync(spec.plan));
+  const validator = JSON.parse(fs.readFileSync(entry.validator_report_path));
+  validator.data = fixtureAuthenticatedBundle({
+    bundlePath: entry.bundle_path,
+    expectedHost: plan.bridge.expected_host,
+  });
+  writeJSON(entry.validator_report_path, validator);
+}
+
+function mutateFixtureBundle(spec, entry, mutate) {
+  const bundle = JSON.parse(fs.readFileSync(entry.bundle_path));
+  mutate(bundle.receipt.payload);
+  writeJSON(entry.bundle_path, bundle);
+  refreshFixtureBundleValidator(spec, entry);
 }
 
 test('post-run validator requires zero exits, exact Agent generation, background trace, restoration, and overlap', () => {
@@ -2185,6 +2209,146 @@ test('post-run validator requires zero exits, exact Agent generation, background
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('post-run validator deduplicates signed receipts by bytes and authenticated identity', async (t) => {
+  const cases = [
+    ['copied bundle', (source, duplicate) => fs.copyFileSync(source, duplicate)],
+    ['hard-linked bundle', (source, duplicate) => fs.linkSync(source, duplicate)],
+  ];
+  for (const [name, duplicateBundle] of cases) {
+    await t.test(name, () => {
+      const root = fs.mkdtempSync('/private/tmp/pbq-tools-receipt-duplicate-');
+      fs.chmodSync(root, 0o700);
+      try {
+        const fix = concurrentFixture(root);
+        const source = fix.agentBundles[0];
+        const receiptDirectory = path.dirname(source.bundle_path);
+        const duplicatePath = path.join(receiptDirectory, `${name.replaceAll(' ', '-')}.json`);
+        const duplicateValidator = path.join(root, `${name.replaceAll(' ', '-')}-validator.json`);
+        duplicateBundle(source.bundle_path, duplicatePath);
+        fs.chmodSync(duplicatePath, 0o600);
+        fs.copyFileSync(source.validator_report_path, duplicateValidator);
+        fs.chmodSync(duplicateValidator, 0o600);
+        fix.spec.agent_bundles.push({
+          bundle_path: duplicatePath,
+          validator_report_path: duplicateValidator,
+        });
+        const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
+        assert.throws(
+          () => validateConcurrentRun(specPath, path.join(root, 'duplicate-report.json')),
+          /reuses a bundle SHA-256/,
+        );
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  await t.test('repeated request identity with distinct bytes', () => {
+    const root = fs.mkdtempSync('/private/tmp/pbq-tools-request-duplicate-');
+    fs.chmodSync(root, 0o700);
+    try {
+      const fix = concurrentFixture(root);
+      const first = JSON.parse(fs.readFileSync(fix.agentBundles[0].bundle_path)).receipt.payload;
+      mutateFixtureBundle(fix.spec, fix.agentBundles[1], (payload) => {
+        payload.requestID = first.requestID;
+      });
+      const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
+      assert.throws(
+        () => validateConcurrentRun(specPath, path.join(root, 'duplicate-request-report.json')),
+        /reuses an authenticated request identity/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('repeated listener-session claim with distinct request and bytes', () => {
+    const root = fs.mkdtempSync('/private/tmp/pbq-tools-session-duplicate-');
+    fs.chmodSync(root, 0o700);
+    try {
+      const fix = concurrentFixture(root);
+      const first = JSON.parse(fs.readFileSync(fix.agentBundles[0].bundle_path)).receipt.payload;
+      mutateFixtureBundle(fix.spec, fix.agentBundles[1], (payload) => {
+        payload.listenerInstanceID = first.listenerInstanceID;
+        payload.sessionID = first.sessionID;
+        payload.sessionSequence = first.sessionSequence;
+      });
+      const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
+      assert.throws(
+        () => validateConcurrentRun(specPath, path.join(root, 'duplicate-session-report.json')),
+        /reuses an authenticated session claim/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('post-run validator rejects trace remapping through a copied signed receipt', () => {
+  const root = fs.mkdtempSync('/private/tmp/pbq-tools-trace-remap-');
+  fs.chmodSync(root, 0o700);
+  try {
+    const fix = concurrentFixture(root);
+    const readbacks = JSON.parse(fs.readFileSync(fix.spec.agent_readbacks));
+    const mutation = readbacks.targets[0].mutation;
+    const restoration = readbacks.targets[0].restoration;
+    fs.copyFileSync(mutation.bundle_path, restoration.bundle_path);
+    fs.chmodSync(restoration.bundle_path, 0o600);
+    refreshFixtureBundleValidator(fix.spec, {
+      bundle_path: restoration.bundle_path,
+      validator_report_path: restoration.validator_report_path,
+    });
+    const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'remapped-report.json')),
+      /reuses a bundle SHA-256/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('post-run validator requires positive signed durations and strict readback ordering', async (t) => {
+  await t.test('zero-duration dispatch', () => {
+    const root = fs.mkdtempSync('/private/tmp/pbq-tools-zero-duration-');
+    fs.chmodSync(root, 0o700);
+    try {
+      const fix = concurrentFixture(root);
+      mutateFixtureBundle(fix.spec, fix.agentBundles[0], (payload) => {
+        payload.completedAtUnixMilliseconds = payload.startedAtUnixMilliseconds;
+      });
+      const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
+      assert.throws(
+        () => validateConcurrentRun(specPath, path.join(root, 'zero-duration-report.json')),
+        /signed payload is malformed/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('readback at dispatch completion', () => {
+    const root = fs.mkdtempSync('/private/tmp/pbq-tools-equal-readback-');
+    fs.chmodSync(root, 0o700);
+    try {
+      const fix = concurrentFixture(root);
+      const payload = JSON.parse(fs.readFileSync(fix.agentBundles[0].bundle_path)).receipt.payload;
+      const readbackPath = fix.semanticReadbacks[1];
+      const readback = JSON.parse(fs.readFileSync(readbackPath));
+      readback.observed_at_milliseconds = payload.completedAtUnixMilliseconds;
+      writeJSON(readbackPath, readback);
+      fs.utimesSync(readbackPath, new Date(readback.observed_at_milliseconds), new Date(readback.observed_at_milliseconds));
+      const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
+      assert.throws(
+        () => validateConcurrentRun(specPath, path.join(root, 'equal-readback-report.json')),
+        /does not strictly follow its signed dispatch/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 test('post-run validator does not accept caller-authored validator JSON without live authentication', () => {
