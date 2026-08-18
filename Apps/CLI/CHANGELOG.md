@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Update AXorcist so synchronous and legacy element observers share the bounded registration and cleanup state machine, preventing a wedged endpoint from blocking Peekaboo's main actor indefinitely or escaping late-result rollback.
 - Bound asynchronous Accessibility notification add and remove waits, removal joins, and subscription setup retries so one wedged endpoint cannot hang global observer startup or teardown. Thanks @SebTardif for AXorcist #47.
 
 ## [4.2.1] - 2026-08-17
