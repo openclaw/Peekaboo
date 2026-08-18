@@ -102,6 +102,25 @@ struct ActionInputDriverTests {
         #expect(reason == .valueNotSettable)
     }
 
+    @MainActor
+    @Test
+    func `set value predispatch refusal never acquires dispatch semantics`() {
+        let element = MockAutomationElement(
+            role: "AXSecureTextField",
+            value: "secret",
+            isValueSettable: true)
+
+        do {
+            _ = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("replacement"))
+            Issue.record("Expected secure value mutation to be refused")
+        } catch let error as ActionInputError {
+            #expect(error == .unsupported(.secureValueNotAllowed))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(element.setValues.isEmpty)
+    }
+
     @Test
     func `scroll action unavailable becomes fallback eligible`() {
         #expect(ActionInputDriver.shouldContinueTryingScrollActionForTesting(after: .targetUnavailable))
@@ -829,7 +848,7 @@ struct ActionInputDriverTests {
 
     @MainActor
     @Test
-    func `phantom-success setter fails when value does not change`() {
+    func `accepted value setter with unconfirmed readback is retry unsafe`() {
         let element = MockAutomationElement(
             role: AXRoleNames.kAXSliderRole,
             value: 50.0,
@@ -839,22 +858,23 @@ struct ActionInputDriverTests {
         do {
             _ = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("0.75"))
             Issue.record("Expected unchanged value to fail verification")
-        } catch let error as ActionInputError {
-            guard case let .failed(message) = error else {
-                Issue.record("Unexpected action input error: \(error)")
-                return
-            }
-            #expect(message.contains("did not change"))
-            #expect(message.contains("targeted typing"))
-            #expect(element.setValues == [.double(0.75)])
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.evidence == .completionUnknown)
+            #expect(failure.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
+            #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: .one))
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.projection.requiresFreshObservation)
+            #expect(failure.hint?.contains("Observe the exact target") == true)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
+        #expect(element.setValues == [.double(0.75)])
     }
 
     @MainActor
     @Test
-    func `unverifiable value setter fails instead of fabricating a result`() {
+    func `unreadable post-dispatch value is indeterminate instead of a raw driver error`() {
         let element = MockAutomationElement(
             role: AXRoleNames.kAXSliderRole,
             isValueSettable: true,
@@ -863,14 +883,15 @@ struct ActionInputDriverTests {
         do {
             _ = try ActionInputDriver().trySetValueForTesting(element: element, value: .double(0.75))
             Issue.record("Expected unverifiable value to fail")
-        } catch let error as ActionInputError {
-            guard case .failed = error else {
-                Issue.record("Unexpected action input error: \(error)")
-                return
-            }
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: .one))
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.targetReceipt == nil)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
+        #expect(element.setValues == [.double(0.75)])
     }
 
     @MainActor

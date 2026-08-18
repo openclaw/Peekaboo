@@ -200,6 +200,42 @@ struct DesktopOperationExecutorTests {
     }
 
     @Test
+    func `target-aware execution attributes post-dispatch failure to exact window`() async throws {
+        let process = ApplicationProcessIdentity(processIdentifier: 503, processStartIdentity: 17)
+        let bounds = CGRect(x: 10, y: 20, width: 640, height: 480)
+        let windowIdentity = WindowMutationIdentity(
+            windowID: 91,
+            ownerProcessIdentifier: process.processIdentifier,
+            ownerProcessStartIdentity: process.processStartIdentity,
+            capturedBounds: bounds)
+        let receipt = try DesktopOperationPlan.CaptureReceipt(
+            target: .exactWindow(.init(identity: windowIdentity, bounds: bounds)))
+        let plan = try self.makePlan(
+            strategy: .actionOnly,
+            receipt: receipt,
+            action: .init {
+                throw DesktopActionFailure.indeterminate(
+                    delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                    evidence: .completionUnknown,
+                    unitCount: .one,
+                    message: "Readback failed")
+            },
+            synthesis: .init { Self.backgroundSynthOutcome })
+
+        do {
+            _ = try await DesktopOperationExecutor().executeWithTargetIdentity(plan)
+            Issue.record("Expected attributed post-dispatch failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.targetReceipt == DesktopActionTargetReceipt(
+                processIdentifier: process.processIdentifier,
+                processStartIdentity: process.processStartIdentity,
+                windowID: windowIdentity.windowID))
+            #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: .one))
+            #expect(failure.outcome.retrySafety == .unsafe)
+        }
+    }
+
+    @Test
     func `background plan preserves unsafe foreground failure semantics`() async throws {
         let identity = ApplicationProcessIdentity(processIdentifier: 501, processStartIdentity: 1)
         let plan = try self.makePlan(

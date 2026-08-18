@@ -401,6 +401,10 @@ enum PeekabooBridgeOperationResultSemantics {
             switch (self.typedResponseRule, response) {
             case (.none, _):
                 return
+            case (.setValue, .error):
+                // A canonical failure has no success payload to bind. Its outcome, target receipt,
+                // and dispatch count are validated by the failure and receipt contracts instead.
+                return
             case let (.typeActions(expected), .typeResult(result)):
                 guard expected.keyPresses > 0 else {
                     throw PeekabooBridgeOperationReceiptError.receiptMismatch(

@@ -817,6 +817,52 @@ struct MCPToolExecutionTests {
     }
 
     @Test
+    func `set_value tool preserves post-dispatch readback failure and exact retry guidance`() async throws {
+        let automation = await MainActor.run { MockElementActionAutomationService(accessibilityGranted: true) }
+        let receipt = DesktopActionTargetReceipt(
+            processIdentifier: 42,
+            processStartIdentity: 9,
+            windowID: 73)
+        await MainActor.run {
+            automation.uiAutomationOutcomeScript.appendFailure(
+                DesktopActionFailure.indeterminate(
+                    delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                    evidence: .completionUnknown,
+                    unitCount: .one,
+                    message: "The submitted value could not be read back.",
+                    hint: "Observe the exact target before retrying.")
+                    .attributed(to: receipt),
+                for: .setValue)
+        }
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotID = await snapshot.id
+
+        let response = try await SetValueTool(context: context).execute(arguments: ToolArguments(raw: [
+            "on": "T1",
+            "value": "hello",
+            "snapshot": snapshotID,
+        ]))
+
+        let meta = try #require(response.meta?.objectValue)
+        let target = try #require(meta["target_receipt"]?.objectValue)
+        #expect(response.isError)
+        #expect(meta["state"] == .string("indeterminate"))
+        #expect(meta["delivery_mechanism"] == .string("accessibility_value"))
+        #expect(meta["delivery_mode"] == .string("background"))
+        #expect(meta["dispatch_state"] == .string("may_have_dispatched"))
+        #expect(meta["dispatched_unit_count"] == .int(1))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["requires_fresh_observation"] == .bool(true))
+        #expect(meta["invalidated_snapshot"] == .string(snapshotID))
+        #expect(target["pid"] == .int(Int(receipt.processIdentifier)))
+        #expect(target["process_start_identity_decimal"] == .string("9"))
+        #expect(target["window_id"] == .int(73))
+        #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
+        #expect(await MainActor.run { automation.setValueCalls.isEmpty })
+    }
+
+    @Test
     func `action tool validates request shape`() async throws {
         let automation = await MainActor.run { MockElementActionAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
@@ -1151,7 +1197,8 @@ TargetedTypeServiceProtocol {
 }
 
 @MainActor
-private final class MockElementActionAutomationService: MockAutomationService, ElementActionAutomationServiceProtocol {
+private final class MockElementActionAutomationService: MockAutomationService, ElementActionAutomationServiceProtocol,
+ScriptedUIAutomationActionOutcomeProviding {
     struct SetValueCall {
         let target: String
         let value: UIElementValue
@@ -1166,6 +1213,7 @@ private final class MockElementActionAutomationService: MockAutomationService, E
 
     private(set) var setValueCalls: [SetValueCall] = []
     private(set) var performActionCalls: [PerformActionCall] = []
+    let uiAutomationOutcomeScript = UIAutomationOutcomeScript()
 
     func setValue(target: String, value: UIElementValue, snapshotId: String?) async throws -> ElementActionResult {
         self.setValueCalls.append(SetValueCall(target: target, value: value, snapshotId: snapshotId))

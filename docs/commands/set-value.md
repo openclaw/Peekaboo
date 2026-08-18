@@ -28,6 +28,9 @@ read_when:
 - A result with `requires_fresh_observation: true`, or no canonical outcome, makes that snapshot mutation-ineligible.
   The old evidence stays readable, but another mutation must use a new `peekaboo see` snapshot and otherwise fails
   before dispatch.
+- If the Accessibility write is accepted but its readback cannot be verified, Peekaboo reports an indeterminate,
+  retry-unsafe result with the exact target receipt. Observe the target again before deciding whether to retry; never
+  replay the write against the old snapshot.
 - Secure/password fields are rejected; use explicit typing flows for those contexts.
 - This is not a replacement for `peekaboo type` when the app needs observable keystrokes, IME handling, autocomplete, or undo grouping.
 - JSON output includes `target`, `actionName`, `oldValue`, `newValue`, and `executionTime`.

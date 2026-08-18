@@ -22,11 +22,15 @@ final class DesktopOperationExecutor {
         _ plan: DesktopOperationPlan) async throws -> UIAutomationActionResult<UIInputExecutionResult>
     {
         let targetIdentity = try plan.targetIdentity()
-        let result = try await self.execute(plan)
-        return UIAutomationActionResult(
-            payload: result,
-            outcome: result.outcome,
-            targetIdentity: targetIdentity)
+        do {
+            let result = try await self.execute(plan)
+            return UIAutomationActionResult(
+                payload: result,
+                outcome: result.outcome,
+                targetIdentity: targetIdentity)
+        } catch let failure as DesktopActionFailure {
+            throw failure.attributed(to: targetIdentity?.actionTargetReceipt)
+        }
     }
 
     func executeOwned(_ plan: DesktopOperationPlan) async throws -> UIInputExecutionResult {

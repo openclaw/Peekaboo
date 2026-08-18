@@ -355,18 +355,18 @@ struct ActionInputDriver: ActionInputDriving {
                 let requested = try Self.booleanValue(value, role: element.role)
                 let selectedBefore = element.selectedValue
                 let alreadyMatched = selectedBefore == requested
-                if !alreadyMatched {
-                    try element.setAutomationSelected(requested)
+                if alreadyMatched {
+                    return UIInputExecutionResult.Action(
+                        outcome: .confirmedNoChange(),
+                        actionName: kAXSelectedAttribute as String,
+                        anchorPoint: element.anchorPoint,
+                        elementRole: element.role)
                 }
+                try element.setAutomationSelected(requested)
                 guard element.selectedValue == requested else {
-                    throw ActionInputError.failed(
-                        "Accessibility selection did not change to the requested value. " +
-                            "This control may require input events; click or focus it, then use targeted typing, " +
-                            "or retry with explicit foreground delivery.")
+                    throw Self.unverifiedValueMutationFailure(attribute: kAXSelectedAttribute as String)
                 }
-                let outcome = Self.valueMutationOutcome(
-                    alreadyMatched: alreadyMatched,
-                    preStateKnown: selectedBefore != nil)
+                let outcome = Self.dispatchedValueMutationOutcome(preStateKnown: selectedBefore != nil)
                 return UIInputExecutionResult.Action(
                     outcome: outcome,
                     actionName: kAXSelectedAttribute as String,
@@ -377,35 +377,41 @@ struct ActionInputDriver: ActionInputDriving {
             let valueBefore = element.value
             let requested = try Self.coerceValue(value, currentValue: valueBefore, role: element.role)
             let alreadyMatched = Self.value(valueBefore, matches: requested)
-            if !alreadyMatched {
-                try element.setAutomationValue(requested)
+            if alreadyMatched {
+                return UIInputExecutionResult.Action(
+                    outcome: .confirmedNoChange(),
+                    actionName: AXActionNames.kAXSetValueAction,
+                    anchorPoint: element.anchorPoint,
+                    elementRole: element.role)
             }
+            try element.setAutomationValue(requested)
             guard Self.value(element.value, matches: requested) else {
-                throw ActionInputError.failed(
-                    "Accessibility value did not change to the requested value. " +
-                        "This control may require input events; click or focus it, then use targeted typing, " +
-                        "or retry with explicit foreground delivery.")
+                throw Self.unverifiedValueMutationFailure(attribute: AXActionNames.kAXSetValueAction)
             }
-            let outcome = Self.valueMutationOutcome(
-                alreadyMatched: alreadyMatched,
-                preStateKnown: valueBefore != nil)
+            let outcome = Self.dispatchedValueMutationOutcome(preStateKnown: valueBefore != nil)
             return UIInputExecutionResult.Action(
                 outcome: outcome,
                 actionName: AXActionNames.kAXSetValueAction,
                 anchorPoint: element.anchorPoint,
                 elementRole: element.role)
+        } catch let failure as DesktopActionFailure {
+            throw failure
         } catch {
             throw Self.classify(error)
         }
     }
 
-    private static func valueMutationOutcome(
-        alreadyMatched: Bool,
-        preStateKnown: Bool) -> DesktopActionOutcome
-    {
-        if alreadyMatched {
-            return .confirmedNoChange()
-        }
+    private static func unverifiedValueMutationFailure(attribute: String) -> DesktopActionFailure {
+        .indeterminate(
+            delivery: self.accessibilityValueDelivery,
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: "The accessibility value write was accepted, but its requested result could not be verified.",
+            hint: "Observe the exact target before deciding whether to retry; do not reuse the prior snapshot.",
+            causeDescription: "Post-dispatch readback did not confirm \(attribute).")
+    }
+
+    private static func dispatchedValueMutationOutcome(preStateKnown: Bool) -> DesktopActionOutcome {
         if preStateKnown {
             return .confirmedChange(delivery: self.accessibilityValueDelivery)
         }

@@ -1245,7 +1245,7 @@ struct ActionOutcomeCommandTests {
         return snapshotID
     }
 
-    private static func storeExactWindowElementSnapshot(in snapshots: StubSnapshotManager) async throws -> String {
+    static func storeExactWindowElementSnapshot(in snapshots: StubSnapshotManager) async throws -> String {
         let snapshotID = try await snapshots.createSnapshot()
         let bounds = CGRect(x: 100, y: 100, width: 500, height: 400)
         let processIdentity = AutomationTestFixtures.processIdentity(
