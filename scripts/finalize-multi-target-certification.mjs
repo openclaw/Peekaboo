@@ -2835,6 +2835,231 @@ const SUMMARY_KEYS = [
   'offline_protocol_validation', 'failures', 'summary_core_sha256',
 ];
 
+const SUMMARY_DIGEST_KEYS = [
+  'digest_spec_sha256', 'run_binding_sha256', 'catalog_file_sha256',
+  'contract_sha256', 'operation_manifest_sha256', 'sanitized_raw_evidence_sha256',
+  'monitor_evidence_sha256', 'monitor_history_commitment_sha256',
+  'monitor_baseline_commitment_sha256', 'foreground_postcondition_sha256',
+  'raw_bundle_inventory_sha256', 'first_party_verdict_set_sha256',
+  'offline_protocol_validation_sha256', 'summary_core_sha256',
+];
+
+const SUMMARY_FIRST_PARTY_VERDICT_KEYS = [
+  'valid', 'validator_id', 'trust_source', 'minimum_protocol_version',
+  'host_protocol_version', 'request_id', 'session_id', 'session_sequence',
+  'predecessor_session_id', 'operation', 'listener_instance_id',
+  'listener_public_key_sha256', 'host', 'client_instance_id', 'host_source_commit',
+  'client', 'request_sha256', 'response_sha256', 'bundle_sha256',
+  'terminal_receipt_attested', 'target_attested', 'outcome_attested', 'retention_basis',
+];
+
+const SUMMARY_OFFLINE_RECEIPT_KEYS = [
+  'slot_id', 'operation_id', 'request_id', 'session_id', 'session_sequence',
+  'operation', 'controller_id', 'target_id', 'target', 'interval', 'source',
+  'expected_outcome', 'request_sha256', 'response_sha256', 'file', 'file_sha256',
+];
+
+export function validateSuccessfulCertificationSummary(summary, label = 'certification summary') {
+  if (!exactKeys(summary, SUMMARY_KEYS)) {
+    throw new TypeError(`${label} is not one closed version-2 object`);
+  }
+  if (summary.version !== 2
+      || summary.certification_kind !== LIVE_CERTIFICATION_KIND
+      || summary.claim_scope !== LIVE_CLAIM_SCOPE
+      || summary.authority !== 'display-only-rerun-finalize-for-authoritative-result'
+      || summary.structural_validation_passed !== true
+      || summary.foreground_task_postcondition_passed !== true
+      || summary.catalog_file_sha256 !== BUILTIN_CATALOG_SHA256
+      || summary.digest_spec_sha256 !== BUILTIN_DIGEST_SPEC_SHA256
+      || !/^multi-target-[0-9a-f-]{36}$/.test(summary.certification_run_id ?? '')
+      || SUMMARY_DIGEST_KEYS.some((key) => !HEX64.test(summary[key] ?? ''))
+      || !Array.isArray(summary.failures) || summary.failures.length !== 0) {
+    throw new TypeError(`${label} is not one successful live certification core`);
+  }
+  if (!Number.isSafeInteger(summary.target_count) || summary.target_count < 2
+      || !Number.isSafeInteger(summary.slot_count) || summary.slot_count < 1
+      || !Array.isArray(summary.controlled_targets)
+      || summary.controlled_targets.length !== summary.target_count
+      || !Array.isArray(summary.slot_verdicts)
+      || summary.slot_verdicts.length !== summary.slot_count
+      || !Array.isArray(summary.first_party_verdicts)
+      || summary.first_party_verdicts.length !== summary.slot_count) {
+    throw new TypeError(`${label} target or slot cardinality is not a closed successful run`);
+  }
+  const controlledTargetIDs = [];
+  for (const row of summary.controlled_targets) {
+    if (!exactKeys(row, ['id', 'controller_id', 'controller_sha256', 'target_sha256'])
+        || typeof row.id !== 'string' || row.id.length === 0
+        || typeof row.controller_id !== 'string' || row.controller_id.length === 0
+        || !HEX64.test(row.controller_sha256 ?? '') || !HEX64.test(row.target_sha256 ?? '')) {
+      throw new TypeError(`${label} controlled target rows are not closed`);
+    }
+    controlledTargetIDs.push(row.id);
+  }
+  if (new Set(controlledTargetIDs).size !== controlledTargetIDs.length) {
+    throw new TypeError(`${label} controlled target IDs are not unique`);
+  }
+  const slotIDs = [];
+  for (const row of summary.slot_verdicts) {
+    if (!exactKeys(row, [
+      'slot_id', 'operation_id', 'manifest_slot_sha256', 'request_id', 'session_id',
+      'session_sequence', 'bundle_sha256', 'first_party_verdict_sha256',
+      'offline_receipt_sha256', 'passed',
+    ]) || typeof row.slot_id !== 'string' || row.slot_id.length === 0
+        || typeof row.operation_id !== 'string' || row.operation_id.length === 0
+        || typeof row.request_id !== 'string' || row.request_id.length === 0
+        || typeof row.session_id !== 'string' || row.session_id.length === 0
+        || typeof row.session_sequence !== 'string' || row.session_sequence.length === 0
+        || !HEX64.test(row.manifest_slot_sha256 ?? '')
+        || !HEX64.test(row.bundle_sha256 ?? '')
+        || !HEX64.test(row.first_party_verdict_sha256 ?? '')
+        || !HEX64.test(row.offline_receipt_sha256 ?? '')
+        || row.passed !== true) {
+      throw new TypeError(`${label} slot verdict rows are not closed and successful`);
+    }
+    slotIDs.push(row.slot_id);
+  }
+  if (new Set(slotIDs).size !== slotIDs.length) {
+    throw new TypeError(`${label} slot verdict IDs are not unique`);
+  }
+  const firstPartyIDs = [];
+  for (const row of summary.first_party_verdicts) {
+    if (!exactKeys(row, ['slot_id', 'bundle_file', 'file_sha256', 'verdict'])
+        || typeof row.slot_id !== 'string' || row.slot_id.length === 0
+        || typeof row.bundle_file !== 'string' || row.bundle_file.length === 0
+        || !HEX64.test(row.file_sha256 ?? '')
+        || !exactKeys(row.verdict, SUMMARY_FIRST_PARTY_VERDICT_KEYS)
+        || row.verdict.valid !== true
+        || row.verdict.validator_id !== 'peekaboo-bridge-receipt-validate-v1'
+        || row.verdict.trust_source !== 'authenticated_live_listener'
+        || row.verdict.minimum_protocol_version !== '1.29'
+        || row.verdict.host_protocol_version !== '1.30'
+        || row.verdict.terminal_receipt_attested !== true
+        || row.verdict.target_attested !== true
+        || typeof row.verdict.outcome_attested !== 'boolean'
+        || row.verdict.retention_basis !== 'exported_bundle'
+        || normalizedUUID(row.verdict.request_id, UUID_V8) === null
+        || normalizedUUID(row.verdict.session_id, UUID_V4) === null
+        || normalizedDecimal(row.verdict.session_sequence, false) === null
+        || !(row.verdict.predecessor_session_id === null
+          || normalizedUUID(row.verdict.predecessor_session_id, UUID_V4) !== null)
+        || typeof row.verdict.operation !== 'string' || row.verdict.operation.length === 0
+        || normalizedUUID(row.verdict.listener_instance_id, UUID_V4) === null
+        || normalizedUUID(row.verdict.client_instance_id, UUID_V4) === null
+        || !validProcess(row.verdict.host) || !validProcess(row.verdict.client)
+        || !HEX40.test(row.verdict.host_source_commit ?? '')
+        || !HEX64.test(row.verdict.listener_public_key_sha256 ?? '')
+        || !HEX64.test(row.verdict.request_sha256 ?? '')
+        || !HEX64.test(row.verdict.response_sha256 ?? '')
+        || row.verdict.bundle_sha256 !== row.file_sha256) {
+      throw new TypeError(`${label} first-party verdict rows are not closed`);
+    }
+    firstPartyIDs.push(row.slot_id);
+  }
+  const offline = summary.offline_protocol_validation;
+  if (!exactKeys(offline, [
+    'version', 'success', 'contract_sha256', 'operation_manifest_sha256',
+    'receipts', 'failures',
+  ]) || offline.version !== 3 || offline.success !== true
+      || offline.contract_sha256 !== summary.contract_sha256
+      || offline.operation_manifest_sha256 !== summary.operation_manifest_sha256
+      || !Array.isArray(offline.receipts) || offline.receipts.length !== summary.slot_count
+      || !Array.isArray(offline.failures) || offline.failures.length !== 0) {
+    throw new TypeError(`${label} offline protocol result is not closed and successful`);
+  }
+  const offlineIDs = offline.receipts.map((row) => row?.slot_id);
+  if (offline.receipts.some((row) => !exactKeys(row, SUMMARY_OFFLINE_RECEIPT_KEYS)
+      || typeof row.slot_id !== 'string' || row.slot_id.length === 0
+      || typeof row.operation_id !== 'string' || row.operation_id.length === 0
+      || typeof row.request_id !== 'string' || row.request_id.length === 0
+      || typeof row.session_id !== 'string' || row.session_id.length === 0
+      || typeof row.session_sequence !== 'string' || row.session_sequence.length === 0
+      || typeof row.operation !== 'string' || row.operation.length === 0
+      || typeof row.controller_id !== 'string' || row.controller_id.length === 0
+      || typeof row.target_id !== 'string' || row.target_id.length === 0
+      || !validTarget(row.target) || !validInterval(row.interval)
+      || !exactKeys(row.source, [
+        'protocol_source_commit', 'host_source_commit', 'listener_instance_id', 'host',
+      ])
+      || !HEX40.test(row.source.protocol_source_commit ?? '')
+      || !HEX40.test(row.source.host_source_commit ?? '')
+      || normalizedUUID(row.source.listener_instance_id, UUID_V4) === null
+      || !validProcess(row.source.host)
+      || !(row.expected_outcome === null || validExpectedOutcome(row.expected_outcome))
+      || !HEX64.test(row.request_sha256 ?? '') || !HEX64.test(row.response_sha256 ?? '')
+      || typeof row.file !== 'string' || row.file.length === 0
+      || !HEX64.test(row.file_sha256 ?? ''))) {
+    throw new TypeError(`${label} offline receipt rows are not closed`);
+  }
+  const expectedIDs = [...slotIDs].sort();
+  if (!sameJSON([...firstPartyIDs].sort(), expectedIDs)
+      || !sameJSON([...offlineIDs].sort(), expectedIDs)) {
+    throw new TypeError(`${label} successful slot evidence is not bijective`);
+  }
+  const firstPartyBySlot = new Map(summary.first_party_verdicts.map((row) => [row.slot_id, row]));
+  const offlineBySlot = new Map(offline.receipts.map((row) => [row.slot_id, row]));
+  const controlledByID = new Map(summary.controlled_targets.map((row) => [row.id, row]));
+  const coveredTargetIDs = new Set();
+  const physicalTargetKeys = new Set();
+  for (const row of summary.slot_verdicts) {
+    const firstParty = firstPartyBySlot.get(row.slot_id);
+    const offlineReceipt = offlineBySlot.get(row.slot_id);
+    const controlled = controlledByID.get(offlineReceipt.target_id);
+    if (!controlled || controlled.controller_id !== offlineReceipt.controller_id
+        || controlled.controller_sha256
+          !== aggregateSHA256('controller', firstParty.verdict.client)
+        || controlled.target_sha256
+          !== aggregateSHA256('controlled-target', offlineReceipt.target)
+        || offlineReceipt.source.listener_instance_id !== firstParty.verdict.listener_instance_id
+        || offlineReceipt.source.host_source_commit !== firstParty.verdict.host_source_commit
+        || !sameJSON(offlineReceipt.source.host, firstParty.verdict.host)
+        || row.operation_id !== offlineReceipt.operation_id
+        || row.request_id !== firstParty.verdict.request_id
+        || row.request_id !== offlineReceipt.request_id
+        || row.session_id !== firstParty.verdict.session_id
+        || row.session_id !== offlineReceipt.session_id
+        || row.session_sequence !== firstParty.verdict.session_sequence
+        || row.session_sequence !== offlineReceipt.session_sequence
+        || firstParty.verdict.operation !== offlineReceipt.operation
+        || row.bundle_sha256 !== firstParty.file_sha256
+        || row.bundle_sha256 !== firstParty.verdict.bundle_sha256
+        || row.bundle_sha256 !== offlineReceipt.file_sha256
+        || firstParty.bundle_file !== offlineReceipt.file
+        || firstParty.verdict.request_sha256 !== offlineReceipt.request_sha256
+        || firstParty.verdict.response_sha256 !== offlineReceipt.response_sha256
+        || row.first_party_verdict_sha256
+          !== aggregateSHA256('first-party-verdict', firstParty)
+        || row.offline_receipt_sha256
+          !== aggregateSHA256('offline-receipt', offlineReceipt)) {
+      throw new TypeError(`${label} slot evidence commitments are invalid`);
+    }
+    coveredTargetIDs.add(offlineReceipt.target_id);
+    physicalTargetKeys.add([
+      offlineReceipt.target.pid,
+      offlineReceipt.target.start_identity,
+      offlineReceipt.target.window_id,
+    ].join('\0'));
+  }
+  if (!sameJSON([...coveredTargetIDs].sort(), [...controlledByID.keys()].sort())) {
+    throw new TypeError(`${label} slots do not cover every controlled target`);
+  }
+  if (physicalTargetKeys.size !== controlledByID.size) {
+    throw new TypeError(`${label} controlled targets are not physically distinct`);
+  }
+  if (summary.first_party_verdict_set_sha256
+        !== aggregateSHA256('first-party-verdict-set', summary.first_party_verdicts)
+      || summary.offline_protocol_validation_sha256
+        !== aggregateSHA256('offline-protocol-validation', offline)) {
+    throw new TypeError(`${label} nested evidence commitments are invalid`);
+  }
+  const summaryCore = structuredClone(summary);
+  delete summaryCore.summary_core_sha256;
+  if (summary.summary_core_sha256 !== aggregateSHA256('summary-core', summaryCore)) {
+    throw new TypeError(`${label} core digest is invalid`);
+  }
+  return summary;
+}
+
 function digestJSONValue(kindID, value) {
   return computeDigestClaim({
     kindID,

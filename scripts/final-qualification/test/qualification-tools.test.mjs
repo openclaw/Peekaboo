@@ -22,6 +22,7 @@ import {
   verifySourceManifest,
 } from '../qualification-manifest.mjs';
 import { validateConcurrentRun as validateConcurrentRunProduction } from '../validate-concurrent-run.mjs';
+import { aggregateSHA256 as multiTargetAggregateSHA256 } from '../../finalize-multi-target-certification.mjs';
 import {
   aggregateSHA256,
   canonicalBytes,
@@ -40,6 +41,8 @@ const STUDIO_UUID = 'BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB';
 const sourceToolRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const sourceRepositoryRoot = path.dirname(path.dirname(sourceToolRoot));
 const qualificationSourceFiles = [
+  'scripts/finalize-multi-target-certification.mjs',
+  'scripts/run-live-multi-target-certification.mjs',
   'scripts/final-qualification/README.md',
   'scripts/final-qualification/atomic-publish-no-replace.swift',
   'scripts/final-qualification/executable-policy-scanner.mjs',
@@ -64,6 +67,14 @@ fs.cpSync(sourceToolRoot, path.join(qualificationRepositoryRoot, 'scripts/final-
   recursive: true,
 });
 fs.mkdirSync(path.join(qualificationRepositoryRoot, 'scripts/support'), { recursive: true });
+fs.copyFileSync(
+  path.join(sourceRepositoryRoot, 'scripts/finalize-multi-target-certification.mjs'),
+  path.join(qualificationRepositoryRoot, 'scripts/finalize-multi-target-certification.mjs'),
+);
+fs.copyFileSync(
+  path.join(sourceRepositoryRoot, 'scripts/run-live-multi-target-certification.mjs'),
+  path.join(qualificationRepositoryRoot, 'scripts/run-live-multi-target-certification.mjs'),
+);
 fs.copyFileSync(
   path.join(sourceRepositoryRoot, 'scripts/support/background-computer-use-probe.swift'),
   path.join(qualificationRepositoryRoot, 'scripts/support/background-computer-use-probe.swift'),
@@ -185,6 +196,184 @@ function launchEnvironment(kind, receiptDirectory = null) {
     environment_keys: environmentKeys,
     environment_sha256: sha256(canonicalBytes(environment)),
   };
+}
+
+function certificationSummaryFixture(monitorEvidence, planControllers) {
+  const digest = '7'.repeat(64);
+  const catalogDigest = sha256(fs.readFileSync(
+    path.join(sourceRepositoryRoot, 'scripts/multi-target-certification-catalog.json'),
+  ));
+  const digestSpecDigest = sha256(fs.readFileSync(
+    path.join(sourceRepositoryRoot, 'scripts/multi-target-digest-spec.json'),
+  ));
+  const host = { pid: 200, start_identity: '200001', code_signature_hash: 'd'.repeat(40) };
+  assert.equal(planControllers.length, 2);
+  const requestIDs = [
+    '12345678-1234-8abc-8def-123456789ab1',
+    '12345678-1234-8abc-8def-123456789ab4',
+  ];
+  const sessionIDs = [
+    '12345678-1234-4abc-8def-123456789ab2',
+    '12345678-1234-4abc-8def-123456789ab5',
+  ];
+  const clientInstanceIDs = [
+    '12345678-1234-4abc-8def-123456789ab3',
+    '12345678-1234-4abc-8def-123456789ab6',
+  ];
+  const rows = planControllers.map((entry, index) => ({
+    slotID: `slot-${index + 1}`,
+    operationID: `operation-${index + 1}`,
+    controllerID: entry.controller_id,
+    targetID: entry.target_id,
+    requestID: requestIDs[index],
+    sessionID: sessionIDs[index],
+    clientInstanceID: clientInstanceIDs[index],
+    controller: {
+      pid: 901 + index,
+      start_identity: `${901 + index}001`,
+      code_signature_hash: CDHASH,
+    },
+    target: {
+      scope: 'window',
+      pid: entry.target.process_identifier,
+      start_identity: entry.target.process_start_identity_decimal,
+      window_id: entry.target.window_id,
+      bounds: structuredClone(entry.target.bounds),
+      is_minimized: entry.target.is_minimized,
+    },
+    interval: {
+      started_at_milliseconds: 1 + (index * 2),
+      completed_at_milliseconds: 2 + (index * 2),
+    },
+  }));
+  const firstPartyVerdicts = rows.map((row) => ({
+    slot_id: row.slotID,
+    bundle_file: `${row.slotID}.json`,
+    file_sha256: digest,
+    verdict: {
+      valid: true,
+      validator_id: 'peekaboo-bridge-receipt-validate-v1',
+      trust_source: 'authenticated_live_listener',
+      minimum_protocol_version: '1.29',
+      host_protocol_version: '1.30',
+      request_id: row.requestID,
+      session_id: row.sessionID,
+      session_sequence: '0',
+      predecessor_session_id: null,
+      operation: 'listWindows',
+      listener_instance_id: UUID,
+      listener_public_key_sha256: digest,
+      host,
+      client_instance_id: row.clientInstanceID,
+      host_source_commit: SOURCE,
+      client: row.controller,
+      request_sha256: digest,
+      response_sha256: digest,
+      bundle_sha256: digest,
+      terminal_receipt_attested: true,
+      target_attested: true,
+      outcome_attested: false,
+      retention_basis: 'exported_bundle',
+    },
+  }));
+  const offlineReceipts = rows.map((row) => ({
+    slot_id: row.slotID,
+    operation_id: row.operationID,
+    request_id: row.requestID,
+    session_id: row.sessionID,
+    session_sequence: '0',
+    operation: 'listWindows',
+    controller_id: row.controllerID,
+    target_id: row.targetID,
+    target: row.target,
+    interval: row.interval,
+    source: {
+      protocol_source_commit: SOURCE,
+      host_source_commit: SOURCE,
+      listener_instance_id: UUID,
+      host,
+    },
+    expected_outcome: null,
+    request_sha256: digest,
+    response_sha256: digest,
+    file: `${row.slotID}.json`,
+    file_sha256: digest,
+  }));
+  const offlineProtocolValidation = {
+    version: 3,
+    success: true,
+    contract_sha256: digest,
+    operation_manifest_sha256: digest,
+    receipts: offlineReceipts,
+    failures: [],
+  };
+  const summaryCore = {
+    version: 2,
+    certification_kind: 'live-physical',
+    claim_scope: 'multi-target-background-with-attributed-foreground-overlap',
+    authority: 'display-only-rerun-finalize-for-authoritative-result',
+    structural_validation_passed: true,
+    certification_run_id: 'multi-target-12345678-1234-4abc-8def-123456789abc',
+    run_binding_sha256: digest,
+    digest_spec_sha256: digestSpecDigest,
+    catalog_file_sha256: catalogDigest,
+    contract_sha256: digest,
+    operation_manifest_sha256: digest,
+    sanitized_raw_evidence_sha256: digest,
+    monitor_evidence_sha256: multiTargetAggregateSHA256(
+      'monitor-evidence', monitorEvidence,
+    ),
+    monitor_history_commitment_sha256: digest,
+    monitor_baseline_commitment_sha256: digest,
+    foreground_postcondition_sha256: digest,
+    foreground_task_postcondition_passed: true,
+    raw_bundle_inventory_sha256: digest,
+    first_party_verdict_set_sha256: multiTargetAggregateSHA256(
+      'first-party-verdict-set', firstPartyVerdicts,
+    ),
+    first_party_verdicts: firstPartyVerdicts,
+    offline_protocol_validation_sha256: multiTargetAggregateSHA256(
+      'offline-protocol-validation', offlineProtocolValidation,
+    ),
+    target_count: 2,
+    slot_count: rows.length,
+    controlled_targets: rows.map((row) => ({
+      id: row.targetID,
+      controller_id: row.controllerID,
+      controller_sha256: multiTargetAggregateSHA256('controller', row.controller),
+      target_sha256: multiTargetAggregateSHA256('controlled-target', row.target),
+    })),
+    slot_verdicts: rows.map((row, index) => ({
+      slot_id: row.slotID,
+      operation_id: row.operationID,
+      manifest_slot_sha256: digest,
+      request_id: row.requestID,
+      session_id: row.sessionID,
+      session_sequence: '0',
+      bundle_sha256: digest,
+      first_party_verdict_sha256: multiTargetAggregateSHA256(
+        'first-party-verdict', firstPartyVerdicts[index],
+      ),
+      offline_receipt_sha256: multiTargetAggregateSHA256(
+        'offline-receipt', offlineReceipts[index],
+      ),
+      passed: true,
+    })),
+    offline_protocol_validation: offlineProtocolValidation,
+    failures: [],
+  };
+  return {
+    ...summaryCore,
+    summary_core_sha256: multiTargetAggregateSHA256('summary-core', summaryCore),
+  };
+}
+
+function updateCoordinatorSummaryCommitment(eventsPath, summaryPath) {
+  const events = fs.readFileSync(eventsPath, 'utf8').trim().split('\n').map(JSON.parse);
+  const summary = fs.readFileSync(summaryPath);
+  events.at(-1).summary_size = summary.length;
+  events.at(-1).summary_sha256 = sha256(summary);
+  writeFile(eventsPath, `${events.map(JSON.stringify).join('\n')}\n`);
 }
 
 function installedInventory(
@@ -1831,7 +2020,7 @@ function concurrentFixture(root, {
   const plan = writeJSON(path.join(root, 'plan.json'), planValue);
   const marker = `peekaboo-foreground-postcondition:${NONCE}`;
   const baselineDigest = '1'.repeat(64);
-  const monitorEvidence = writeJSON(path.join(monitorDirectory, 'monitor-evidence.json'), {
+  const monitorEvidenceValue = {
     version: 1, execution_nonce: NONCE, monitor_instance_id: UUID,
     fences: [
       { name: 'operations-start', heartbeat: { wallClockMilliseconds: operationsStart } },
@@ -1842,37 +2031,26 @@ function concurrentFixture(root, {
       expected_value_sha256: sha256(Buffer.from(marker)),
       baseline_value_sha256: baselineDigest,
     },
-  });
-  const summary = writeJSON(path.join(runRoot, 'certification-summary.json'), {
-    version: 2,
-    certification_kind: 'live-physical',
-    claim_scope: 'multi-target-background-with-attributed-foreground-overlap',
-    structural_validation_passed: true,
-    target_count: 2,
-    controlled_targets: planValue.controllers.map((controller) => ({
-      id: controller.target_id,
-      controller_id: controller.controller_id,
-      controller_sha256: 'f'.repeat(64),
-      target_sha256: sha256(Buffer.concat([
-        Buffer.from('peekaboo.multi-target-certification.controlled-target.v2\0', 'utf8'),
-        canonicalBytes({
-          scope: 'window',
-          pid: controller.target.process_identifier,
-          start_identity: controller.target.process_start_identity_decimal,
-          window_id: controller.target.window_id,
-          bounds: controller.target.bounds,
-          is_minimized: controller.target.is_minimized,
-        }),
-      ])),
-    })),
-    failures: [],
-  });
+  };
+  const monitorEvidence = writeJSON(
+    path.join(monitorDirectory, 'monitor-evidence.json'),
+    monitorEvidenceValue,
+  );
+  const summary = writeJSON(
+    path.join(runRoot, 'certification-summary.json'),
+    certificationSummaryFixture(monitorEvidenceValue, planValue.controllers),
+  );
   const windowPath = path.join(runRoot, 'external-foreground-window.json');
   const events = [
     { event: 'run-created', version: 1, execution_nonce: NONCE, monitor_instance_id: UUID, run_root: runRoot },
     { event: 'external-foreground-window', version: 1, execution_nonce: NONCE, monitor_instance_id: UUID, phase: 'perform', window_path: windowPath, deadline_milliseconds: now + 30_000 },
     { event: 'external-foreground-window', version: 1, execution_nonce: NONCE, monitor_instance_id: UUID, phase: 'restore', window_path: windowPath, deadline_milliseconds: now + 60_000 },
-    { event: 'completed', version: 1, execution_nonce: NONCE, monitor_instance_id: UUID, run_root: runRoot, summary_path: summary, certification_eligible: true },
+    {
+      event: 'completed', version: 1, execution_nonce: NONCE, monitor_instance_id: UUID,
+      run_root: runRoot, summary_path: summary,
+      summary_size: fs.statSync(summary).size,
+      summary_sha256: sha256(fs.readFileSync(summary)), certification_eligible: true,
+    },
   ];
   const eventPath = writeFile(path.join(root, 'events.jsonl'), `${events.map(JSON.stringify).join('\n')}\n`);
   const coordinatorExit = writeJSON(path.join(root, 'coordinator-exit.json'), {
@@ -2091,6 +2269,7 @@ function concurrentFixture(root, {
   return {
     spec,
     agentResult,
+    summary,
     monitorEvidence,
     semanticReadbacks: [baselineA, mutationA, restorationA, baselineB, mutationB, restorationB],
     agentBundles,
@@ -2415,6 +2594,204 @@ test('post-run validator rejects trace remapping through a copied signed receipt
     assert.throws(
       () => validateConcurrentRun(specPath, path.join(root, 'remapped-report.json')),
       /reuses a bundle SHA-256/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('post-run validator requires one closed successful certification summary', () => {
+  const root = fs.mkdtempSync('/private/tmp/pbq-tools-summary-');
+  fs.chmodSync(root, 0o700);
+  try {
+    const fix = concurrentFixture(root);
+    const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
+    const originalSummary = fs.readFileSync(fix.summary);
+
+    writeFile(fix.summary, `${originalSummary.toString('utf8').trimEnd()} \n`);
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'summary-drift-report.json')),
+      /differs from the coordinator completion commitment/,
+    );
+
+    writeFile(fix.summary, '{ malformed\n');
+    updateCoordinatorSummaryCommitment(fix.spec.coordinator_events, fix.summary);
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'malformed-summary-report.json')),
+      /final certification summary is not JSON/,
+    );
+
+    const openSummary = JSON.parse(originalSummary);
+    openSummary.caller_success = true;
+    writeJSON(fix.summary, openSummary);
+    updateCoordinatorSummaryCommitment(fix.spec.coordinator_events, fix.summary);
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'open-summary-report.json')),
+      /not one closed version-2 object/,
+    );
+
+    const failedNestedSummary = JSON.parse(originalSummary);
+    failedNestedSummary.first_party_verdicts[0].verdict.valid = false;
+    failedNestedSummary.first_party_verdict_set_sha256 = multiTargetAggregateSHA256(
+      'first-party-verdict-set', failedNestedSummary.first_party_verdicts,
+    );
+    failedNestedSummary.slot_verdicts[0].first_party_verdict_sha256
+      = multiTargetAggregateSHA256(
+        'first-party-verdict', failedNestedSummary.first_party_verdicts[0],
+      );
+    delete failedNestedSummary.summary_core_sha256;
+    failedNestedSummary.summary_core_sha256 = multiTargetAggregateSHA256(
+      'summary-core', failedNestedSummary,
+    );
+    writeJSON(fix.summary, failedNestedSummary);
+    updateCoordinatorSummaryCommitment(fix.spec.coordinator_events, fix.summary);
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'failed-nested-summary-report.json')),
+      /first-party verdict rows are not closed/,
+    );
+
+    const emptyNestedSummary = JSON.parse(originalSummary);
+    emptyNestedSummary.first_party_verdicts[0].verdict.host = {};
+    emptyNestedSummary.first_party_verdict_set_sha256 = multiTargetAggregateSHA256(
+      'first-party-verdict-set', emptyNestedSummary.first_party_verdicts,
+    );
+    emptyNestedSummary.slot_verdicts[0].first_party_verdict_sha256
+      = multiTargetAggregateSHA256(
+        'first-party-verdict', emptyNestedSummary.first_party_verdicts[0],
+      );
+    delete emptyNestedSummary.summary_core_sha256;
+    emptyNestedSummary.summary_core_sha256 = multiTargetAggregateSHA256(
+      'summary-core', emptyNestedSummary,
+    );
+    writeJSON(fix.summary, emptyNestedSummary);
+    updateCoordinatorSummaryCommitment(fix.spec.coordinator_events, fix.summary);
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'empty-nested-summary-report.json')),
+      /first-party verdict rows are not closed/,
+    );
+
+    const openNestedSummary = JSON.parse(originalSummary);
+    openNestedSummary.offline_protocol_validation.receipts[0].caller_success = true;
+    openNestedSummary.offline_protocol_validation_sha256 = multiTargetAggregateSHA256(
+      'offline-protocol-validation', openNestedSummary.offline_protocol_validation,
+    );
+    openNestedSummary.slot_verdicts[0].offline_receipt_sha256 = multiTargetAggregateSHA256(
+      'offline-receipt', openNestedSummary.offline_protocol_validation.receipts[0],
+    );
+    delete openNestedSummary.summary_core_sha256;
+    openNestedSummary.summary_core_sha256 = multiTargetAggregateSHA256(
+      'summary-core', openNestedSummary,
+    );
+    writeJSON(fix.summary, openNestedSummary);
+    updateCoordinatorSummaryCommitment(fix.spec.coordinator_events, fix.summary);
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'open-nested-summary-report.json')),
+      /offline receipt rows are not closed/,
+    );
+
+    const foreignCatalogSummary = JSON.parse(originalSummary);
+    foreignCatalogSummary.catalog_file_sha256 = '0'.repeat(64);
+    delete foreignCatalogSummary.summary_core_sha256;
+    foreignCatalogSummary.summary_core_sha256 = multiTargetAggregateSHA256(
+      'summary-core', foreignCatalogSummary,
+    );
+    writeJSON(fix.summary, foreignCatalogSummary);
+    updateCoordinatorSummaryCommitment(fix.spec.coordinator_events, fix.summary);
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'foreign-catalog-summary-report.json')),
+      /not one successful live certification core/,
+    );
+
+    const mixedSlotSummary = JSON.parse(originalSummary);
+    mixedSlotSummary.slot_verdicts[0].request_id = 'another-request';
+    delete mixedSlotSummary.summary_core_sha256;
+    mixedSlotSummary.summary_core_sha256 = multiTargetAggregateSHA256(
+      'summary-core', mixedSlotSummary,
+    );
+    writeJSON(fix.summary, mixedSlotSummary);
+    updateCoordinatorSummaryCommitment(fix.spec.coordinator_events, fix.summary);
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'mixed-slot-summary-report.json')),
+      /slot evidence commitments are invalid/,
+    );
+
+    const unlistedTargetSummary = JSON.parse(originalSummary);
+    unlistedTargetSummary.offline_protocol_validation.receipts[0].target_id = 'target-c';
+    unlistedTargetSummary.offline_protocol_validation_sha256 = multiTargetAggregateSHA256(
+      'offline-protocol-validation', unlistedTargetSummary.offline_protocol_validation,
+    );
+    unlistedTargetSummary.slot_verdicts[0].offline_receipt_sha256
+      = multiTargetAggregateSHA256(
+        'offline-receipt', unlistedTargetSummary.offline_protocol_validation.receipts[0],
+      );
+    delete unlistedTargetSummary.summary_core_sha256;
+    unlistedTargetSummary.summary_core_sha256 = multiTargetAggregateSHA256(
+      'summary-core', unlistedTargetSummary,
+    );
+    writeJSON(fix.summary, unlistedTargetSummary);
+    updateCoordinatorSummaryCommitment(fix.spec.coordinator_events, fix.summary);
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'unlisted-target-summary-report.json')),
+      /slot evidence commitments are invalid/,
+    );
+
+    const duplicatePhysicalTargetSummary = JSON.parse(originalSummary);
+    duplicatePhysicalTargetSummary.offline_protocol_validation.receipts[1].target
+      = structuredClone(duplicatePhysicalTargetSummary.offline_protocol_validation.receipts[0].target);
+    duplicatePhysicalTargetSummary.controlled_targets[1].target_sha256
+      = multiTargetAggregateSHA256(
+        'controlled-target',
+        duplicatePhysicalTargetSummary.offline_protocol_validation.receipts[1].target,
+      );
+    duplicatePhysicalTargetSummary.offline_protocol_validation_sha256
+      = multiTargetAggregateSHA256(
+        'offline-protocol-validation',
+        duplicatePhysicalTargetSummary.offline_protocol_validation,
+      );
+    duplicatePhysicalTargetSummary.slot_verdicts[1].offline_receipt_sha256
+      = multiTargetAggregateSHA256(
+        'offline-receipt',
+        duplicatePhysicalTargetSummary.offline_protocol_validation.receipts[1],
+      );
+    delete duplicatePhysicalTargetSummary.summary_core_sha256;
+    duplicatePhysicalTargetSummary.summary_core_sha256 = multiTargetAggregateSHA256(
+      'summary-core', duplicatePhysicalTargetSummary,
+    );
+    writeJSON(fix.summary, duplicatePhysicalTargetSummary);
+    updateCoordinatorSummaryCommitment(fix.spec.coordinator_events, fix.summary);
+    assert.throws(
+      () => validateConcurrentRun(
+        specPath,
+        path.join(root, 'duplicate-physical-target-summary-report.json'),
+      ),
+      /controlled targets are not physically distinct/,
+    );
+
+    const foreignMonitorSummary = JSON.parse(originalSummary);
+    foreignMonitorSummary.monitor_evidence_sha256 = multiTargetAggregateSHA256(
+      'monitor-evidence', { another: 'run' },
+    );
+    delete foreignMonitorSummary.summary_core_sha256;
+    foreignMonitorSummary.summary_core_sha256 = multiTargetAggregateSHA256(
+      'summary-core', foreignMonitorSummary,
+    );
+    writeJSON(fix.summary, foreignMonitorSummary);
+    updateCoordinatorSummaryCommitment(fix.spec.coordinator_events, fix.summary);
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'foreign-monitor-summary-report.json')),
+      /belongs to another monitor run/,
+    );
+
+    const failedSummary = JSON.parse(originalSummary);
+    failedSummary.structural_validation_passed = false;
+    failedSummary.failures = [{ rule: 'fixture_failure', message: 'failed', slot_id: null }];
+    delete failedSummary.summary_core_sha256;
+    failedSummary.summary_core_sha256 = multiTargetAggregateSHA256('summary-core', failedSummary);
+    writeJSON(fix.summary, failedSummary);
+    updateCoordinatorSummaryCommitment(fix.spec.coordinator_events, fix.summary);
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'failed-summary-report.json')),
+      /not one successful live certification core/,
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -3065,18 +3442,51 @@ test('qualification manifest closes every required evidence class and detects by
     );
     const forgedSummaryInput = structuredClone(inputValue);
     const forgedSummaryValue = JSON.parse(fs.readFileSync(completion.summary_path));
-    forgedSummaryValue.controlled_targets[0].target_sha256 = '0'.repeat(64);
+    const foreignSummaryTarget = {
+      scope: 'window', pid: 999, start_identity: '999001', window_id: 1999,
+      bounds: { x: 0, y: 0, width: 400, height: 300 }, is_minimized: false,
+    };
+    forgedSummaryValue.offline_protocol_validation.receipts[0].target
+      = foreignSummaryTarget;
+    forgedSummaryValue.controlled_targets[0].target_sha256
+      = multiTargetAggregateSHA256('controlled-target', foreignSummaryTarget);
+    forgedSummaryValue.slot_verdicts[0].offline_receipt_sha256
+      = multiTargetAggregateSHA256(
+        'offline-receipt',
+        forgedSummaryValue.offline_protocol_validation.receipts[0],
+      );
+    forgedSummaryValue.offline_protocol_validation_sha256
+      = multiTargetAggregateSHA256(
+        'offline-protocol-validation',
+        forgedSummaryValue.offline_protocol_validation,
+      );
+    delete forgedSummaryValue.summary_core_sha256;
+    forgedSummaryValue.summary_core_sha256 = multiTargetAggregateSHA256(
+      'summary-core', forgedSummaryValue,
+    );
     const forgedSummary = writeJSON(
       path.join(root, 'forged-controlled-target-summary.json'),
       forgedSummaryValue,
     );
+    const forgedSummaryBytes = fs.readFileSync(forgedSummary);
+    const forgedEventsValue = fs.readFileSync(concurrent.spec.coordinator_events, 'utf8')
+      .trim().split('\n').map(JSON.parse);
+    forgedEventsValue.at(-1).summary_path = forgedSummary;
+    forgedEventsValue.at(-1).summary_size = forgedSummaryBytes.length;
+    forgedEventsValue.at(-1).summary_sha256 = sha256(forgedSummaryBytes);
+    const forgedEvents = writeFile(
+      path.join(root, 'forged-controlled-target-events.jsonl'),
+      `${forgedEventsValue.map(JSON.stringify).join('\n')}\n`,
+    );
     const forgedSummaryReportValue = JSON.parse(fs.readFileSync(concurrentReport));
-    forgedSummaryReportValue.coordinator.summary_sha256 = sha256(fs.readFileSync(forgedSummary));
+    forgedSummaryReportValue.coordinator.summary_sha256 = sha256(forgedSummaryBytes);
+    forgedSummaryReportValue.coordinator.events_sha256 = sha256(fs.readFileSync(forgedEvents));
     const forgedSummaryReport = writeJSON(
       path.join(root, 'forged-controlled-target-report.json'),
       forgedSummaryReportValue,
     );
     forgedSummaryInput.live_v4.certification_summary = forgedSummary;
+    forgedSummaryInput.live_v4.coordinator_events = forgedEvents;
     forgedSummaryInput.agent_cu.validation_report = forgedSummaryReport;
     assert.throws(
       () => generateManifest(
@@ -4234,6 +4644,65 @@ test('qualification manifest closes every required evidence class and detects by
       () => verifyManifest(resealedTargetManifestPath),
       /controlled_fixture_targets\[0\] is not canonical/,
     );
+
+    const originalSummaryBytes = fs.readFileSync(concurrent.summary);
+    const originalCoordinatorEventBytes = fs.readFileSync(concurrent.spec.coordinator_events);
+    const resealedFailedSummary = JSON.parse(originalSummaryBytes);
+    resealedFailedSummary.structural_validation_passed = false;
+    resealedFailedSummary.failures = [{
+      rule: 'resealed_failure', message: 'failed', slot_id: null,
+    }];
+    delete resealedFailedSummary.summary_core_sha256;
+    resealedFailedSummary.summary_core_sha256 = multiTargetAggregateSHA256(
+      'summary-core',
+      resealedFailedSummary,
+    );
+    writeJSON(concurrent.summary, resealedFailedSummary);
+    updateCoordinatorSummaryCommitment(
+      concurrent.spec.coordinator_events,
+      concurrent.summary,
+    );
+    const resealedSummaryManifest = structuredClone(generatedManifest);
+    const resealedSummaryBytes = fs.readFileSync(concurrent.summary);
+    resealedSummaryManifest.evidence.live_v4.certification_summary = {
+      path: concurrent.summary,
+      size: resealedSummaryBytes.length,
+      sha256: sha256(resealedSummaryBytes),
+    };
+    const resealedCoordinatorEventBytes = fs.readFileSync(concurrent.spec.coordinator_events);
+    resealedSummaryManifest.evidence.live_v4.coordinator_events = {
+      path: concurrent.spec.coordinator_events,
+      size: resealedCoordinatorEventBytes.length,
+      sha256: sha256(resealedCoordinatorEventBytes),
+    };
+    const resealedSummaryReportValue = JSON.parse(fs.readFileSync(concurrentReport));
+    resealedSummaryReportValue.coordinator.summary_sha256 = sha256(resealedSummaryBytes);
+    resealedSummaryReportValue.coordinator.events_sha256
+      = sha256(resealedCoordinatorEventBytes);
+    const resealedSummaryReport = writeJSON(
+      path.join(root, 'resealed-failed-summary-report.json'),
+      resealedSummaryReportValue,
+    );
+    const resealedSummaryReportBytes = fs.readFileSync(resealedSummaryReport);
+    resealedSummaryManifest.evidence.agent_cu.validation_report = {
+      path: resealedSummaryReport,
+      size: resealedSummaryReportBytes.length,
+      sha256: sha256(resealedSummaryReportBytes),
+    };
+    resealedSummaryManifest.evidence_aggregate_sha256 = aggregateSHA256(
+      'evidence-manifest',
+      resealedSummaryManifest.evidence,
+    );
+    const resealedSummaryPath = writeJSON(
+      path.join(root, 'resealed-failed-summary-manifest.json'),
+      resealedSummaryManifest,
+    );
+    assert.throws(
+      () => verifyManifest(resealedSummaryPath),
+      /not one successful live certification core/,
+    );
+    writeFile(concurrent.summary, originalSummaryBytes);
+    writeFile(concurrent.spec.coordinator_events, originalCoordinatorEventBytes);
 
     const resealedInterleavingManifest = structuredClone(generatedManifest);
     const resealedInterleavingReportValue = JSON.parse(fs.readFileSync(concurrentReport));

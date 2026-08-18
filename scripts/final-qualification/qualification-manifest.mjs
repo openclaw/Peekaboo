@@ -5,6 +5,10 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
+  aggregateSHA256 as multiTargetAggregateSHA256,
+  validateSuccessfulCertificationSummary,
+} from '../finalize-multi-target-certification.mjs';
+import {
   aggregateSHA256,
   authenticateLiveBridgeBundle,
   authenticatedBridgeReceiptIdentity,
@@ -14,6 +18,7 @@ import {
   fileReceipt,
   parseOptions,
   readStableJSON,
+  readStableJSONLines,
   readStableFile,
   requireCondition,
   requireStableExecutable,
@@ -25,6 +30,8 @@ import {
 } from './lib.mjs';
 
 const QUALIFICATION_TOOL_FILES = [
+  'scripts/finalize-multi-target-certification.mjs',
+  'scripts/run-live-multi-target-certification.mjs',
   'scripts/final-qualification/README.md',
   'scripts/final-qualification/atomic-publish-no-replace.swift',
   'scripts/final-qualification/executable-policy-scanner.mjs',
@@ -1832,6 +1839,31 @@ function boundReceipt(filePath, expectedSHA256, label) {
   return receipt;
 }
 
+function semanticCertificationSummary(retained, expectedSHA256, monitorEvidencePath, label) {
+  validateSuccessfulCertificationSummary(retained.value, label);
+  const monitorEvidence = readStableJSON(
+    monitorEvidencePath,
+    `${label} monitor evidence`,
+  );
+  requireCondition(retained.value.monitor_evidence_sha256
+    === multiTargetAggregateSHA256('monitor-evidence', monitorEvidence.value),
+  `${label} belongs to another monitor run`);
+  requireCondition(retained.sha256 === expectedSHA256,
+    `${label} differs from concurrent validation`);
+  return { path: retained.path, size: retained.bytes.length, sha256: retained.sha256 };
+}
+
+function validateCertificationSummaryEventBinding(eventsPath, summary, label) {
+  const events = readStableJSONLines(eventsPath, `${label} coordinator events`);
+  const completed = events.values.at(-1);
+  requireCondition(completed?.event === 'completed'
+    && completed.certification_eligible === true
+    && completed.summary_path === summary.path
+    && completed.summary_size === summary.size
+    && completed.summary_sha256 === summary.sha256,
+  `${label} certification summary is not the coordinator's eligible completion output`);
+}
+
 function semanticTargetProcessReceipt(filePath, label) {
   const retained = readStableJSON(filePath, label);
   exactKeys(retained.value, ['pid', 'startIdentity'], label);
@@ -2068,9 +2100,6 @@ function projectInput(input, authenticateBundle) {
     input.live_v4.certification_summary,
     'bound certification summary',
   );
-  requireCondition(boundCertificationSummary.sha256
-    === concurrentValue.coordinator.summary_sha256,
-  'bound certification summary differs from concurrent validation');
   const boundLive = {
     plan: boundReceipt(input.live_v4.plan, concurrentValue.coordinator.plan_sha256, 'bound live-v4 plan'),
     coordinator_invocation: boundReceipt(
@@ -2088,17 +2117,23 @@ function projectInput(input, authenticateBundle) {
       concurrentValue.coordinator.exit_receipt_sha256,
       'bound coordinator exit',
     ),
-    certification_summary: {
-      path: boundCertificationSummary.path,
-      size: boundCertificationSummary.bytes.length,
-      sha256: boundCertificationSummary.sha256,
-    },
+    certification_summary: semanticCertificationSummary(
+      boundCertificationSummary,
+      concurrentValue.coordinator.summary_sha256,
+      input.live_v4.monitor_evidence,
+      'bound certification summary',
+    ),
     monitor_evidence: boundReceipt(
       input.live_v4.monitor_evidence,
       concurrentValue.coordinator.monitor_evidence_sha256,
       'bound monitor evidence',
     ),
   };
+  validateCertificationSummaryEventBinding(
+    boundLive.coordinator_events.path,
+    boundLive.certification_summary,
+    'bound live-v4',
+  );
   const boundPlanValue = readStableJSON(
     boundLive.plan.path,
     'bound live-v4 plan semantics',
@@ -2579,14 +2614,25 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
     [evidence.agent_cu.perform_readback, concurrentValue.integrated_cu.perform_readback_sha256, 'verified CU perform'],
     [evidence.agent_cu.restore_readback, concurrentValue.integrated_cu.restore_readback_sha256, 'verified CU restore'],
   ]) requireCondition(receipt.sha256 === expected, `${label} differs from concurrent validation`);
-  const verifiedPlanValue = readStableJSON(
-    evidence.live_v4.plan.path,
-    'verified live-v4 plan semantics',
-  ).value;
   const verifiedCertificationSummary = readStableJSON(
     evidence.live_v4.certification_summary.path,
     'verified final certification summary',
   );
+  semanticCertificationSummary(
+    verifiedCertificationSummary,
+    concurrentValue.coordinator.summary_sha256,
+    evidence.live_v4.monitor_evidence.path,
+    'verified certification summary',
+  );
+  validateCertificationSummaryEventBinding(
+    evidence.live_v4.coordinator_events.path,
+    evidence.live_v4.certification_summary,
+    'verified live-v4',
+  );
+  const verifiedPlanValue = readStableJSON(
+    evidence.live_v4.plan.path,
+    'verified live-v4 plan semantics',
+  ).value;
   requireCondition(sameJSON(evidence.live_v4.certification_summary, {
     path: verifiedCertificationSummary.path,
     size: verifiedCertificationSummary.bytes.length,

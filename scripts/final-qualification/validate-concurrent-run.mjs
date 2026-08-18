@@ -5,6 +5,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  aggregateSHA256 as multiTargetAggregateSHA256,
+  validateSuccessfulCertificationSummary,
+} from '../finalize-multi-target-certification.mjs';
+import {
   HEX40,
   HEX64,
   authenticateLiveBridgeBundle,
@@ -104,9 +108,11 @@ function coordinatorEvents(filePath) {
   }
   exactKeys(completed, [
     'event', 'version', 'execution_nonce', 'monitor_instance_id', 'run_root',
-    'summary_path', 'certification_eligible',
+    'summary_path', 'summary_size', 'summary_sha256', 'certification_eligible',
   ], 'completed event');
-  requireCondition(completed.certification_eligible === true, 'coordinator completion is not certification-eligible');
+  requireCondition(completed.certification_eligible === true
+    && positiveInteger(completed.summary_size) && HEX64.test(completed.summary_sha256 ?? ''),
+  'coordinator completion is not certification-eligible with an exact summary commitment');
   requireCondition(HEX64.test(created.execution_nonce ?? '')
     && typeof created.monitor_instance_id === 'string', 'coordinator run identity is malformed');
   for (const event of events.slice(1)) {
@@ -758,6 +764,10 @@ export function validateConcurrentRun(specPath, outputPath, {
     coordinatorExit,
   );
   const summary = readStableJSON(events.completed.summary_path, 'final certification summary');
+  requireCondition(summary.bytes.length === events.completed.summary_size
+    && summary.sha256 === events.completed.summary_sha256,
+  'final certification summary differs from the coordinator completion commitment');
+  validateSuccessfulCertificationSummary(summary.value, 'final certification summary');
   validateControlledFixtureSummary(
     summary,
     controlledFixtureBindings(plan, 'live-v4 plan'),
@@ -768,6 +778,9 @@ export function validateConcurrentRun(specPath, outputPath, {
     events.created.execution_nonce,
     events.created.monitor_instance_id,
   );
+  requireCondition(summary.value.monitor_evidence_sha256
+    === multiTargetAggregateSHA256('monitor-evidence', operation.evidence),
+  'final certification summary belongs to another monitor run');
   requireCondition(operation.start < events.perform.deadline_milliseconds, 'perform deadline precedes operations-start');
   requireCondition(operation.complete < events.restore.deadline_milliseconds, 'restore deadline precedes operations-complete');
 

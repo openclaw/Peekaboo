@@ -2087,6 +2087,7 @@ async function runCoordinator(
       waitForExit(observerChild, 'foreground observer', 5000),
     ]);
     await terminateChild(monitorChild, 'live monitor');
+    const summaryBytes = requirePrivateFile(shared.summary, 'completed certification summary');
     const completion = {
       event: testRuntime ? 'test-runtime-complete' : 'completed',
       version: 1,
@@ -2094,6 +2095,8 @@ async function runCoordinator(
       monitor_instance_id: monitorID,
       run_root: runRoot,
       summary_path: shared.summary,
+      summary_size: summaryBytes.length,
+      summary_sha256: sha256(summaryBytes),
       certification_eligible: !testRuntime,
     };
     emit(completion);
