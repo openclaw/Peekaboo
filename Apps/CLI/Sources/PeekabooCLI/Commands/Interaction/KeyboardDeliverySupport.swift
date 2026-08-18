@@ -9,6 +9,18 @@ enum KeyboardDeliveryMode: String {
 }
 
 enum KeyboardDeliverySupport {
+    static func validateBackgroundTargetRequirement(
+        target: InteractionTargetOptions,
+        snapshotId: String?,
+        foreground: Bool
+    ) throws {
+        guard !foreground else { return }
+        let hasSnapshot = snapshotId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        guard target.hasAnyTarget || hasSnapshot else {
+            throw self.backgroundTargetRequiredError()
+        }
+    }
+
     static func requireBackgroundKeyboardTarget(
         target: InteractionTargetOptions,
         snapshotId: String?,
@@ -31,12 +43,7 @@ enum KeyboardDeliverySupport {
                 requiresExplicitExactWindow: requiresExplicitExactWindow
             ).target
         } catch DesktopTargetPlanning.BackgroundKeyboardTargetPlanningError.targetRequired {
-            throw PreDispatchActionError(
-                message: "Keyboard input requires --app, --pid, --window-id, or --snapshot for background delivery.",
-                code: .VALIDATION_ERROR,
-                hint: "Use --foreground for intentional global input.",
-                reason: .invalidRequest
-            )
+            throw self.backgroundTargetRequiredError()
         } catch let error as DesktopTargetPlanning.BackgroundKeyboardTargetPlanningError {
             throw ValidationError(error.localizedDescription)
         } catch let error as DesktopTargetPlanningError {
@@ -51,6 +58,15 @@ enum KeyboardDeliverySupport {
                     "Capture fresh UI state. (\(error.localizedDescription))"
             )
         }
+    }
+
+    private static func backgroundTargetRequiredError() -> PreDispatchActionError {
+        PreDispatchActionError(
+            message: "Keyboard input requires --app, --pid, --window-id, or --snapshot for background delivery.",
+            code: .VALIDATION_ERROR,
+            hint: "Use --foreground for intentional global input.",
+            reason: .invalidRequest
+        )
     }
 
     private static func validationError(for error: DesktopTargetPlanningError) -> Commander.ValidationError {

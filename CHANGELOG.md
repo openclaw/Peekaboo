@@ -8,6 +8,7 @@
 - Preserve exact target and dispatch receipts when a submitted Accessibility `set-value` write cannot be verified, so CLI, MCP, and Bridge callers receive retry-unsafe guidance instead of a raw error.
 - Preserve exact scroll dispatch counts and stop retrying through another route after any accepted or possibly accepted scroll prefix; SwiftUI tab presses likewise require fresh observation instead of replaying a synthetic click after an accepted `AXPress`.
 - Align Agent, MCP, CLI help, and documentation with snapshot-pinned background press/type, targeted background dialog AXValue, and explicit foreground consent for cold launch, Space switching, and foreground-exposing AX actions.
+- Refuse targetless background typing, malformed browser requests, and invalid video inputs before runtime discovery, with path-specific media errors and CLI-native browser recovery.
 - Preserve local Option/Meta chords while buffering fragmented terminal escape sequences longer over SSH, and ignore stale cancelled escape timers that arrive after a newer sequence.
 - Update AXorcist so synchronous and legacy element observers share the bounded registration and cleanup state machine, preventing a wedged endpoint from blocking Peekaboo's main actor indefinitely or escaping late-result rollback.
 - Keep JSON-output flags after the `--` option terminator as child arguments instead of changing Peekaboo's own error envelope.

@@ -408,6 +408,11 @@ extension TypeCommand: PreRuntimeValidatingCommand {
         var command = self
         try command.validate()
         _ = try command.buildActions()
+        try KeyboardDeliverySupport.validateBackgroundTargetRequirement(
+            target: self.target,
+            snapshotId: self.snapshot,
+            foreground: self.focusOptions.foreground
+        )
     }
 }
 

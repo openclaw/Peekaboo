@@ -38,21 +38,12 @@ public final class VideoFrameSource: CaptureFrameSource {
     {
         self.sourceURL = url
         self.decodeTimeout = .seconds(5)
-        if let sampleFps, !sampleFps.isFinite || sampleFps <= 0 {
-            throw PeekabooError.invalidInput("sample-fps must be a positive finite value")
-        }
-        if let everyMs, everyMs <= 0 {
-            throw PeekabooError.invalidInput("every-ms must be greater than zero")
-        }
-        if let startMs, startMs < 0 {
-            throw PeekabooError.invalidInput("start-ms must be zero or greater")
-        }
-        if let endMs, endMs < 0 {
-            throw PeekabooError.invalidInput("end-ms must be zero or greater")
-        }
-        if let resolutionCap, !resolutionCap.isFinite || resolutionCap <= 0 {
-            throw PeekabooError.invalidInput("resolution-cap must be a positive finite value")
-        }
+        try VideoFrameRequestValidator.validate(
+            sampleFps: sampleFps,
+            everyMs: everyMs,
+            startMs: startMs,
+            endMs: endMs,
+            resolutionCap: resolutionCap.map(Double.init))
 
         let asset = AVAsset(url: url)
         let duration: CMTime = if #available(macOS 13.0, *) {

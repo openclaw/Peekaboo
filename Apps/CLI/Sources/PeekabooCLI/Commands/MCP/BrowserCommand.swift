@@ -1,7 +1,37 @@
 import Commander
 import Foundation
 import PeekabooCore
+import PeekabooFoundation
 import TachikomaMCP
+
+private struct BrowserCommandInputError: LocalizedError, ResultEnvelopeError {
+    let errorDescription: String?
+    let envelopeHint: String?
+
+    nonisolated var envelopeCode: ErrorCode? {
+        .VALIDATION_ERROR
+    }
+
+    nonisolated var envelopeEffect: ActionEffect? {
+        nil
+    }
+
+    nonisolated var envelopeRetrySafe: Bool? {
+        true
+    }
+
+    nonisolated var envelopeMutationDispatched: Bool? {
+        false
+    }
+
+    static func invalidBrowserURL() -> Self {
+        Self(
+            errorDescription: "Invalid --browser-url. Expected http://127.0.0.1:<port>, " +
+                "http://[::1]:<port>, or http://localhost:<port>.",
+            envelopeHint: "Run `peekaboo browser connect --browser-url http://127.0.0.1:9222 --foreground`."
+        )
+    }
+}
 
 @MainActor
 struct BrowserCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable,
@@ -127,6 +157,10 @@ InjectedRuntimeBackedCommand {
         self.foreground ? .foregroundAllowed : .backgroundOnly
     }
 
+    func validateBeforeRuntime() throws {
+        _ = try self.arguments()
+    }
+
     private func arguments() throws -> [String: Any] {
         let normalizedAction = self.action
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -137,6 +171,11 @@ InjectedRuntimeBackedCommand {
         if let channel, BrowserMCPChannel(rawValue: channel) == nil {
             let choices = BrowserMCPChannel.allCases.map(\.rawValue).joined(separator: "|")
             throw ValidationError("Unsupported browser channel '\(channel)' (expected \(choices))")
+        }
+        if normalizedAction == BrowserAction.connect.rawValue,
+           let browserUrl,
+           BrowserLoopbackEndpoint(browserURL: browserUrl) == nil {
+            throw BrowserCommandInputError.invalidBrowserURL()
         }
 
         var arguments: [String: Any] = ["action": normalizedAction]
@@ -222,6 +261,7 @@ InjectedRuntimeBackedCommand {
 
 extension BrowserCommand: ParsableCommand {}
 extension BrowserCommand: AsyncRuntimeCommand {}
+extension BrowserCommand: PreRuntimeValidatingCommand {}
 
 extension BrowserCommand: CommanderSignatureProviding {
     static func commanderSignature() -> CommandSignature {

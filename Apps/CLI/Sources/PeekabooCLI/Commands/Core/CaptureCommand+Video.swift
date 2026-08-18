@@ -7,6 +7,55 @@ import PeekabooFoundation
 
 // MARK: Video capture
 
+private enum CaptureVideoInputError: LocalizedError, ResultEnvelopeError {
+    case invalidOption(String)
+    case missingFile(String)
+    case unreadableFile(String)
+    case nonFileInput(String)
+
+    nonisolated var errorDescription: String? {
+        switch self {
+        case let .invalidOption(message):
+            "Invalid input: \(message)"
+        case let .missingFile(path):
+            "Input video file does not exist: \(path)"
+        case let .unreadableFile(path):
+            "Input video file is not readable: \(path)"
+        case let .nonFileInput(path):
+            "Input video path is not a regular file: \(path)"
+        }
+    }
+
+    nonisolated var envelopeCode: ErrorCode? {
+        .INVALID_INPUT
+    }
+
+    nonisolated var envelopeEffect: ActionEffect? {
+        nil
+    }
+
+    nonisolated var envelopeRetrySafe: Bool? {
+        true
+    }
+
+    nonisolated var envelopeMutationDispatched: Bool? {
+        false
+    }
+
+    nonisolated var envelopeHint: String? {
+        switch self {
+        case let .invalidOption(message):
+            if message.hasPrefix("sample-fps") {
+                "Use --sample-fps with a finite value greater than 0."
+            } else {
+                "Correct the video sampling options and retry."
+            }
+        case .missingFile, .unreadableFile, .nonFileInput:
+            "Check the path and pass an existing readable video file."
+        }
+    }
+}
+
 @MainActor
 struct CaptureVideoCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable,
 InjectedRuntimeBackedCommand {
@@ -32,14 +81,12 @@ InjectedRuntimeBackedCommand {
     var runtimeOptions = CommandRuntimeOptions()
 
     mutating func run(using runtime: CommandRuntime) async throws {
+        try self.validateBeforeRuntime()
         self.runtime = runtime
         self.logger.setJsonOutputMode(self.jsonOutput)
         self.logger.operationStart("capture_video", metadata: ["input": self.input])
 
         do {
-            if self.sampleFps != nil, self.every != nil {
-                throw ValidationError("--sample-fps and --every are mutually exclusive")
-            }
             let outputDir = try self.resolveOutputDirectory()
             let options = try self.buildOptions()
             let videoURL = self.inputVideoURL()
@@ -106,6 +153,41 @@ InjectedRuntimeBackedCommand {
         }
     }
 
+    func validateBeforeRuntime() throws {
+        if self.sampleFps != nil, self.every != nil {
+            throw ValidationError("--sample-fps and --every are mutually exclusive")
+        }
+        do {
+            try VideoFrameRequestValidator.validate(
+                sampleFps: self.sampleFps,
+                everyMs: self.every?.roundedMilliseconds,
+                startMs: self.start?.roundedMilliseconds,
+                endMs: self.end?.roundedMilliseconds,
+                resolutionCap: self.resolutionCap
+            )
+        } catch let PeekabooError.invalidInput(message) {
+            throw CaptureVideoInputError.invalidOption(message)
+        }
+        _ = try self.buildOptions()
+
+        let videoURL = self.inputVideoURL()
+        let resolvedVideoURL = videoURL.resolvingSymlinksInPath()
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: resolvedVideoURL.path, isDirectory: &isDirectory) else {
+            throw CaptureVideoInputError.missingFile(videoURL.path)
+        }
+        guard !isDirectory.boolValue else {
+            throw CaptureVideoInputError.nonFileInput(videoURL.path)
+        }
+        let attributes = try? FileManager.default.attributesOfItem(atPath: resolvedVideoURL.path)
+        guard attributes?[.type] as? FileAttributeType == .typeRegular else {
+            throw CaptureVideoInputError.nonFileInput(videoURL.path)
+        }
+        guard FileManager.default.isReadableFile(atPath: resolvedVideoURL.path) else {
+            throw CaptureVideoInputError.unreadableFile(videoURL.path)
+        }
+    }
+
     func buildOptions() throws -> CaptureOptions {
         let maxFrames = max(self.maxFrames ?? 10000, 1)
         let resolutionCap = self.resolutionCap ?? 1440
@@ -169,6 +251,7 @@ extension CaptureVideoCommand: ParsableCommand {
 }
 
 extension CaptureVideoCommand: AsyncRuntimeCommand {}
+extension CaptureVideoCommand: PreRuntimeValidatingCommand {}
 
 @MainActor
 extension CaptureVideoCommand: CommanderBindableCommand {

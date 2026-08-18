@@ -26,12 +26,26 @@ enum CommanderRuntimeExecutorError: LocalizedError {
 
 @MainActor
 enum CommanderRuntimeExecutor {
-    static func resolveAndRun(arguments: [String]) async throws {
-        let resolved = try CommanderRuntimeRouter.resolve(argv: arguments)
-        try await self.run(resolved: resolved)
+    struct RuntimeFactory {
+        let make: @MainActor (CommandRuntimeOptions) async throws -> CommandRuntime
+
+        static let live = Self { options in
+            try await CommandRuntime.makeDefaultAsync(options: options)
+        }
     }
 
-    static func run(resolved: CommanderResolvedCommand) async throws {
+    static func resolveAndRun(
+        arguments: [String],
+        runtimeFactory: RuntimeFactory = .live
+    ) async throws {
+        let resolved = try CommanderRuntimeRouter.resolve(argv: arguments)
+        try await self.run(resolved: resolved, runtimeFactory: runtimeFactory)
+    }
+
+    static func run(
+        resolved: CommanderResolvedCommand,
+        runtimeFactory: RuntimeFactory = .live
+    ) async throws {
         let command = try CommanderCLIBinder.instantiateCommand(
             type: resolved.type,
             parsedValues: resolved.parsedValues
@@ -41,13 +55,14 @@ enum CommanderRuntimeExecutor {
             if let validatingCommand = command as? any PreRuntimeValidatingCommand {
                 try validatingCommand.validateBeforeRuntime()
             }
-            try await self.runCommand(command, resolved: resolved)
+            try await self.runCommand(command, resolved: resolved, runtimeFactory: runtimeFactory)
         }
     }
 
     private static func runCommand(
         _ command: any ParsableCommand,
-        resolved: CommanderResolvedCommand
+        resolved: CommanderResolvedCommand,
+        runtimeFactory: RuntimeFactory
     ) async throws {
         if var runtimeCommand = command as? any AsyncRuntimeCommand {
             let runtimeOptions = try CommanderCLIBinder.makeRuntimeOptions(
@@ -59,7 +74,7 @@ enum CommanderRuntimeExecutor {
                 // Respect explicit engine choice; also allow disabling CG globally.
                 setenv("PEEKABOO_CAPTURE_ENGINE", capturePreference, 1)
             }
-            let runtime = try await CommandRuntime.makeDefaultAsync(options: runtimeOptions)
+            let runtime = try await runtimeFactory.make(runtimeOptions)
             try await self.catchUpSelectedHostIfNeeded(
                 using: runtime,
                 required: runtimeOptions.requiresImplicitSnapshotInvalidation ||
