@@ -278,10 +278,16 @@ public struct MCPToolContext: @unchecked Sendable {
             await self.snapshotExecutionGate.release()
             return rejection
         }
-        if let rejection = try await self.backgroundTargetRevalidation(
-            targetAuthorization,
-            toolName: tool.name)
-        {
+        let targetRevalidation: ToolResponse?
+        do {
+            targetRevalidation = try await self.backgroundTargetRevalidation(
+                targetAuthorization,
+                toolName: tool.name)
+        } catch {
+            await self.snapshotExecutionGate.release()
+            throw error
+        }
+        if let rejection = targetRevalidation {
             await self.snapshotExecutionGate.release()
             return rejection
         }

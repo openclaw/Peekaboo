@@ -168,7 +168,7 @@ struct WindowToolExactRoutingTests {
     @MainActor
     func `background target revalidation preserves cancellation before dispatch`() async throws {
         let service = ExactRoutingWindowService()
-        service.mutationInventoryErrorStartingAtCall = (2, CancellationError())
+        service.mutationInventoryErrorAtCall = (2, CancellationError())
         let context = await MCPToolTestHelpers.makeContext(
             applications: Self.fixtureApplications(),
             windows: service,
@@ -185,6 +185,34 @@ struct WindowToolExactRoutingTests {
 
         #expect(service.mutationDispatchCount == 0)
         #expect(service.closeTargets.isEmpty)
+
+        let followUpCompleted = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                do {
+                    let response = try await context.execute(
+                        tool: WindowTool(context: context),
+                        arguments: ToolArguments(raw: [
+                            "action": "close",
+                            "app": "Fixture",
+                        ]))
+                    return !response.isError
+                } catch {
+                    return false
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(for: .milliseconds(250))
+                return false
+            }
+
+            let completed = await group.next() ?? false
+            group.cancelAll()
+            return completed
+        }
+
+        #expect(followUpCompleted)
+        #expect(service.mutationDispatchCount == 1)
+        #expect(service.closeTargets.map(\.description) == ["windowId(924)"])
     }
 
     @Test(arguments: ["close", "minimize", "restore", "maximize", "move", "resize", "set-bounds"])
@@ -841,7 +869,7 @@ private final class ExactRoutingWindowService: WindowManagementActionResultProvi
     nonisolated(unsafe) var replacementWindowStartingAtListCall: (Int, ServiceWindowInfo)?
     nonisolated(unsafe) var listHandler: ((WindowTarget, Int) -> [ServiceWindowInfo])?
     nonisolated(unsafe) var mutationInventoryWarnings: [String] = []
-    nonisolated(unsafe) var mutationInventoryErrorStartingAtCall: (Int, any Error)?
+    nonisolated(unsafe) var mutationInventoryErrorAtCall: (Int, any Error)?
     private(set) nonisolated(unsafe) var mutationInventoryRequestCount = 0
     private(set) nonisolated(unsafe) var mutationDispatchCount = 0
 
@@ -870,8 +898,8 @@ private final class ExactRoutingWindowService: WindowManagementActionResultProvi
         target: WindowTarget) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo>
     {
         self.mutationInventoryRequestCount += 1
-        if let (startingCall, error) = self.mutationInventoryErrorStartingAtCall,
-           self.mutationInventoryRequestCount >= startingCall
+        if let (call, error) = self.mutationInventoryErrorAtCall,
+           self.mutationInventoryRequestCount == call
         {
             throw error
         }
