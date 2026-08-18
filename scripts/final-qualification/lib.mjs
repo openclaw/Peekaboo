@@ -167,6 +167,90 @@ export function requireStableExecutable(filePath, label, { allowRootOwner = fals
   return retained;
 }
 
+export const OBSERVATION_TIME_SKEW_MILLISECONDS = 2000;
+
+export function corroboratedObservationTime(retained, label) {
+  const observedAt = retained.value?.observed_at_milliseconds;
+  const modifiedAt = Number(retained.info.mtimeNs / 1_000_000n);
+  requireCondition(positiveInteger(observedAt), `${label} observation time is invalid`);
+  requireCondition(Number.isSafeInteger(modifiedAt)
+    && Math.abs(modifiedAt - observedAt) <= OBSERVATION_TIME_SKEW_MILLISECONDS,
+  `${label} file time does not corroborate its observation time`);
+  return {
+    observed_at_milliseconds: observedAt,
+    retained_mtime_milliseconds: modifiedAt,
+  };
+}
+
+export function authenticateLiveBridgeBundle({
+  executablePath,
+  expectedExecutableSHA256,
+  socketPath,
+  trustedHostTeamIDs,
+  expectedHost,
+  bundlePath,
+  label,
+}) {
+  requireCondition(HEX64.test(expectedExecutableSHA256 ?? ''),
+    `${label} validator executable digest is invalid`);
+  absolutePath(socketPath, `${label} Bridge socket`);
+  requireCondition(Array.isArray(trustedHostTeamIDs) && trustedHostTeamIDs.length > 0
+    && trustedHostTeamIDs.every((teamID) => TEAM_ID.test(teamID))
+    && new Set(trustedHostTeamIDs).size === trustedHostTeamIDs.length,
+  `${label} trusted Bridge host teams are invalid`);
+  exactKeys(expectedHost, [
+    'process_identifier', 'process_start_identity_decimal', 'code_signature_hash',
+    'source_commit',
+  ], `${label} expected Bridge host`);
+  requireCondition(positiveInteger(expectedHost.process_identifier)
+    && positiveDecimal(expectedHost.process_start_identity_decimal)
+    && HEX40.test(expectedHost.code_signature_hash ?? '')
+    && HEX40.test(expectedHost.source_commit ?? ''),
+  `${label} expected Bridge host is malformed`);
+  const before = requireStableExecutable(executablePath, `${label} validator executable`, {
+    allowRootOwner: true,
+  });
+  requireCondition(before.sha256 === expectedExecutableSHA256,
+    `${label} validator executable differs from the bound Agent executable`);
+  const arguments_ = [
+    'bridge', 'receipt', 'validate', '--bundle', bundlePath,
+    '--bridge-socket', socketPath,
+    ...trustedHostTeamIDs.flatMap((teamID) => ['--trusted-host-team-id', teamID]),
+    '--json',
+  ];
+  const run = spawnSync(executablePath, arguments_, {
+    encoding: 'utf8',
+    timeout: 30_000,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  const after = requireStableExecutable(executablePath, `${label} validator executable`, {
+    allowRootOwner: true,
+  });
+  requireCondition(before.sha256 === after.sha256 && after.sha256 === expectedExecutableSHA256,
+    `${label} validator executable changed during authenticated validation`);
+  requireCondition(!run.error && run.status === 0,
+    `${label} authenticated live validation failed: ${run.stderr?.trim() || run.error?.message || run.status}`);
+  let envelope;
+  try {
+    envelope = JSON.parse(run.stdout);
+  } catch (error) {
+    throw new QualificationError(`${label} authenticated live validation returned invalid JSON: ${error.message}`);
+  }
+  requireCondition(isPlainObject(envelope)
+    && Object.keys(envelope).every((key) => ['success', 'data', 'debug_logs'].includes(key))
+    && envelope.success === true && isPlainObject(envelope.data)
+    && (envelope.debug_logs === undefined
+      || (Array.isArray(envelope.debug_logs)
+        && envelope.debug_logs.every((entry) => typeof entry === 'string'))),
+  `${label} authenticated live validation returned an invalid envelope`);
+  requireCondition(envelope.data.host?.pid === expectedHost.process_identifier
+    && envelope.data.host?.start_identity === expectedHost.process_start_identity_decimal
+    && envelope.data.host?.code_signature_hash === expectedHost.code_signature_hash
+    && envelope.data.host_source_commit === expectedHost.source_commit,
+  `${label} authenticated validator reached another Bridge host/build`);
+  return envelope.data;
+}
+
 export function writePrivateExclusive(filePath, value) {
   absolutePath(filePath, 'output');
   requirePrivateDirectory(path.dirname(filePath), 'output parent');

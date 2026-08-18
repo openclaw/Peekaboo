@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import {
   HEX40,
   HEX64,
+  authenticateLiveBridgeBundle,
+  corroboratedObservationTime,
   exactKeys,
   parseOptions,
   positiveDecimal,
@@ -205,14 +207,16 @@ function semanticReadback(filePath, expectedTarget, expectedPhase, operation, la
   requireCondition(sameJSON(value.target, expectedTarget), `${label} target differs from the Agent target`);
   requireCondition(typeof value.value === 'string' && Buffer.byteLength(value.value) <= 4096,
     `${label} value is invalid`);
-  requireCondition(positiveInteger(value.observed_at_milliseconds)
-    && value.observed_at_milliseconds >= operation.start
+  requireCondition(value.observed_at_milliseconds >= operation.start
     && value.observed_at_milliseconds <= operation.complete,
   `${label} falls outside the authoritative operation interval`);
-  const modifiedAt = Number(retained.info.mtimeNs / 1_000_000n);
-  requireCondition(Math.abs(modifiedAt - value.observed_at_milliseconds) <= 2000,
-    `${label} file time does not corroborate its observation time`);
-  return { retained, value, value_sha256: sha256(Buffer.from(value.value, 'utf8')) };
+  const observation = corroboratedObservationTime(retained, label);
+  return {
+    retained,
+    value,
+    observation,
+    value_sha256: sha256(Buffer.from(value.value, 'utf8')),
+  };
 }
 
 function signedBundleTarget(payload, label) {
@@ -228,7 +232,7 @@ function signedBundleTarget(payload, label) {
   };
 }
 
-function signedBundle(filePath, validatorPath, operation, label) {
+function signedBundle(filePath, validatorPath, operation, label, authentication) {
   const bundle = readStableJSON(filePath, `${label} signed bundle`, {
     maximumBytes: 256 * 1024 * 1024,
   });
@@ -245,7 +249,18 @@ function signedBundle(filePath, validatorPath, operation, label) {
   const validator = readStableJSON(validatorPath, `${label} live validator`);
   exactKeys(validator.value, ['success', 'data'], `${label} live validator`);
   requireCondition(validator.value.success === true, `${label} live validator did not succeed`);
-  const report = validator.value.data;
+  const authenticatedReport = authentication.authenticateBundle({
+    executablePath: authentication.executable_path,
+    expectedExecutableSHA256: authentication.executable_sha256,
+    socketPath: authentication.bridge_socket,
+    trustedHostTeamIDs: authentication.trusted_host_team_ids,
+    expectedHost: authentication.expected_host,
+    bundlePath: bundle.path,
+    label,
+  });
+  requireCondition(sameJSON(validator.value.data, authenticatedReport),
+    `${label} retained validator report differs from authenticated live validation`);
+  const report = authenticatedReport;
   requireCondition(report?.valid === true
     && report.validator_id === 'peekaboo-bridge-receipt-validate-v1'
     && report.trust_source === 'authenticated_live_listener'
@@ -284,7 +299,7 @@ function expectedBridgeOperation(family) {
   }[family] ?? null;
 }
 
-function agentBundleCorpus(entries, receiptDirectory, expectedAgent, expectedHost) {
+function agentBundleCorpus(entries, receiptDirectory, expectedAgent, expectedHost, authentication) {
   requireCondition(Array.isArray(entries) && entries.length >= 4,
     'Agent bundle corpus must contain every signed bundle');
   const files = fs.readdirSync(receiptDirectory, { withFileTypes: true });
@@ -311,6 +326,7 @@ function agentBundleCorpus(entries, receiptDirectory, expectedAgent, expectedHos
       entry.validator_report_path,
       null,
       `Agent bundle ${index}`,
+      authentication,
     );
     requireCondition(signed.payload.client.processIdentifier === expectedAgent.pid
       && signed.payload.client.processStartIdentity === expectedAgent.start_identity
@@ -407,12 +423,16 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
       requireCondition(corpusEntry
         && corpusEntry.validator.path === action.validator_report_path,
       `Agent ${target.label}.${kind} bundle/validator is absent from the complete corpus`);
-      const signed = signedBundle(
-        action.bundle_path,
-        action.validator_report_path,
-        expectedOperation,
-        `Agent ${target.label}.${kind}`,
-      );
+      const signed = corpusEntry;
+      requireCondition(signed.report.target_attested === true
+        && signed.report.outcome_attested === true,
+      `Agent ${target.label}.${kind} mutation lacks target/outcome attestation`);
+      requireCondition(signed.payload.operation === expectedOperation,
+        `Agent ${target.label}.${kind} signed operation differs from its Agent family`);
+      requireCondition(signed.payload.outcome?.delivery_mode === 'background'
+        && signed.payload.outcome?.dispatch_state === 'dispatched'
+        && signed.payload.outcome?.mutation_dispatched === true,
+      `Agent ${target.label}.${kind} signed outcome is not one definite background dispatch`);
       requireCondition(sameJSON(signedBundleTarget(signed.payload, `Agent ${target.label}.${kind}`), target.target),
         `Agent ${target.label}.${kind} signed target differs from its trace/readback target`);
       requireCondition(signed.payload.startedAtUnixMilliseconds >= operation.start
@@ -440,11 +460,19 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
     requireCondition(actionReceipts.restoration.readback.value.value === baseline.value.value,
       `Agent ${target.label} restoration did not restore the baseline`);
     requireCondition(
-      actionReceipts.mutation.signed.payload.completedAtUnixMilliseconds
+      baseline.value.observed_at_milliseconds
+        <= actionReceipts.mutation.signed.payload.startedAtUnixMilliseconds
+      && actionReceipts.mutation.signed.payload.completedAtUnixMilliseconds
+        <= actionReceipts.mutation.readback.value.observed_at_milliseconds
+      && actionReceipts.mutation.readback.value.observed_at_milliseconds
+        <= actionReceipts.restoration.signed.payload.startedAtUnixMilliseconds
+      && actionReceipts.restoration.signed.payload.completedAtUnixMilliseconds
+        <= actionReceipts.restoration.readback.value.observed_at_milliseconds
+      && actionReceipts.mutation.signed.payload.completedAtUnixMilliseconds
         <= actionReceipts.restoration.signed.payload.startedAtUnixMilliseconds
       && actionReceipts.mutation.readback.value.observed_at_milliseconds
         <= actionReceipts.restoration.readback.value.observed_at_milliseconds,
-      `Agent ${target.label} mutation/restoration order is invalid`,
+      `Agent ${target.label} baseline/mutation/restoration order is invalid`,
     );
     requireCondition(
       trace.entryIndexByID.get(actionReceipts.mutation.action.trace_call_id)
@@ -656,6 +684,7 @@ function integratedReadback(filePath, phase, expected) {
     : ['baseline_value_sha256', 'sentinel', 'observed_sentinel'];
   exactKeys(value, [...common, ...phaseKeys], `integrated-CU ${phase} readback`);
   requireCondition(value.version === 1 && value.phase === phase && value.passed === true, `integrated-CU ${phase} readback did not pass`);
+  const observation = corroboratedObservationTime(retained, `integrated-CU ${phase} readback`);
   requireCondition(value.execution_nonce === expected.nonce && value.monitor_instance_id === expected.monitorID, `integrated-CU ${phase} readback is not run-bound`);
   requireCondition(value.window_path === expected.windowPath && sameJSON(value.emitter, expected.emitter), `integrated-CU ${phase} readback has another owner/emitter`);
   requireCondition(sameJSON(value.target, expected.target), `integrated-CU ${phase} readback has another target`);
@@ -673,10 +702,12 @@ function integratedReadback(filePath, phase, expected) {
       window_id: expected.sentinel.window_id,
     }), 'integrated-CU restore readback did not observe the exact sentinel');
   }
-  return { retained, value };
+  return { retained, value, observation };
 }
 
-export function validateConcurrentRun(specPath, outputPath) {
+export function validateConcurrentRun(specPath, outputPath, {
+  authenticateBundle = authenticateLiveBridgeBundle,
+} = {}) {
   const spec = readStableJSON(specPath, 'concurrent validation input').value;
   exactKeys(spec, [
     'version', 'plan', 'coordinator_invocation', 'coordinator_events', 'coordinator_exit', 'agent_result',
@@ -752,6 +783,11 @@ export function validateConcurrentRun(specPath, outputPath) {
   requireCondition(spec.agent_identity.launch === invocation.value.identity_handshake_path
     && agentIdentities.launch.sha256 === invocation.value.identity_handshake_sha256,
   'Agent launch process receipt is not the managed-launcher identity handshake');
+  requireCondition(Array.isArray(plan.bridge.trusted_host_team_ids)
+    && plan.bridge.trusted_host_team_ids.length > 0
+    && plan.bridge.trusted_host_team_ids.every((teamID) => /^[A-Z0-9]{10}$/.test(teamID))
+    && new Set(plan.bridge.trusted_host_team_ids).size === plan.bridge.trusted_host_team_ids.length,
+  'live-v4 plan Bridge trust policy is invalid');
 
   requireCondition(typeof spec.integrated_cu.emitter === 'string', 'integrated-CU emitter calibration path is invalid');
   const emitterCalibration = readCalibrationEmitter(
@@ -797,6 +833,14 @@ export function validateConcurrentRun(specPath, outputPath) {
     invocation.value.receipt_directory,
     { ...expectedAgent, code_signature_hash: invocation.code_signature_hash },
     plan.bridge.expected_host,
+    {
+      authenticateBundle,
+      executable_path: invocation.value.executable_path,
+      executable_sha256: invocation.value.executable_sha256,
+      bridge_socket: plan.bridge.socket_path,
+      trusted_host_team_ids: plan.bridge.trusted_host_team_ids,
+      expected_host: plan.bridge.expected_host,
+    },
   );
   const readbacks = agentReadbacks(
     spec.agent_readbacks,
@@ -851,6 +895,8 @@ export function validateConcurrentRun(specPath, outputPath) {
       trace_entry_count: trace.trace.entries.length,
       progress_interleaving: {
         integrated_cu_perform_at_milliseconds: cuPerformAt,
+        integrated_cu_perform_readback_mtime_milliseconds:
+          performReadback.observation.retained_mtime_milliseconds,
         action_intervals: readbacks.action_intervals,
       },
     },

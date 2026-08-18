@@ -15,11 +15,11 @@ import {
 } from '../process-tree-collector.mjs';
 import { publishCoordinatorMarker } from '../publish-coordinator-marker.mjs';
 import {
-  generateManifest,
+  generateManifest as generateManifestProduction,
   generateSourceManifest,
-  verifyManifest,
+  verifyManifest as verifyManifestProduction,
 } from '../qualification-manifest.mjs';
-import { validateConcurrentRun } from '../validate-concurrent-run.mjs';
+import { validateConcurrentRun as validateConcurrentRunProduction } from '../validate-concurrent-run.mjs';
 import { aggregateSHA256, canonicalBytes, sha256 } from '../lib.mjs';
 
 const TEAM = 'FWJYW4S8P8';
@@ -31,6 +31,57 @@ const NONCE = 'c'.repeat(64);
 const LOCAL_UUID = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
 const STUDIO_UUID = 'BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB';
 const toolRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+
+function fixtureAuthenticatedBundle({ bundlePath, expectedHost }) {
+  const bytes = fs.readFileSync(bundlePath);
+  const payload = JSON.parse(bytes).receipt.payload;
+  return {
+    valid: true,
+    validator_id: 'peekaboo-bridge-receipt-validate-v1',
+    trust_source: 'authenticated_live_listener',
+    minimum_protocol_version: '1.29',
+    request_id: String(payload.requestID).toLowerCase(),
+    operation: payload.operation,
+    listener_instance_id: payload.listenerInstanceID,
+    client_instance_id: payload.clientInstanceID,
+    session_sequence: payload.sessionSequence,
+    host: {
+      pid: expectedHost.process_identifier,
+      start_identity: expectedHost.process_start_identity_decimal,
+      code_signature_hash: expectedHost.code_signature_hash,
+    },
+    client: {
+      pid: payload.client.processIdentifier,
+      start_identity: payload.client.processStartIdentity,
+      code_signature_hash: payload.client.codeSignatureHash,
+    },
+    host_source_commit: expectedHost.source_commit,
+    host_protocol_version: '1.30',
+    bundle_sha256: sha256(bytes),
+    terminal_receipt_attested: true,
+    target_attested: payload.target !== null,
+    outcome_attested: payload.outcome !== undefined,
+    retention_basis: 'exported_bundle',
+  };
+}
+
+function validateConcurrentRun(specPath, outputPath) {
+  return validateConcurrentRunProduction(specPath, outputPath, {
+    authenticateBundle: fixtureAuthenticatedBundle,
+  });
+}
+
+function generateManifest(inputPath, outputPath) {
+  return generateManifestProduction(inputPath, outputPath, {
+    authenticateBundle: fixtureAuthenticatedBundle,
+  });
+}
+
+function verifyManifest(manifestPath) {
+  return verifyManifestProduction(manifestPath, {
+    authenticateBundle: fixtureAuthenticatedBundle,
+  });
+}
 
 function codeSignatureHash(executablePath) {
   const result = spawnSync('/usr/bin/codesign', ['-dvvv', executablePath], { encoding: 'utf8' });
@@ -1365,6 +1416,7 @@ function concurrentFixture(root, {
     monitor_executable: '/usr/bin/true',
     bridge: {
       socket_path: bridgeSocket,
+      trusted_host_team_ids: [TEAM],
       expected_host: {
         process_identifier: 200,
         process_start_identity_decimal: '200001',
@@ -1528,9 +1580,17 @@ function concurrentFixture(root, {
   const baselineA = semanticReadbackFixture(root, 'a-baseline', targetA, 'baseline', 'alpha', operationsStart + 50);
   const mutationA = semanticReadbackFixture(root, 'a-mutate', targetA, 'mutated', 'alpha!', operationsStart + 250);
   const restorationA = semanticReadbackFixture(root, 'a-restore', targetA, 'restored', 'alpha', operationsStart + 450);
-  const baselineB = semanticReadbackFixture(root, 'b-baseline', targetB, 'baseline', 'beta', operationsStart + 500);
-  const mutationB = semanticReadbackFixture(root, 'b-mutate', targetB, 'mutated', 'beta!', operationsStart + 700);
-  const restorationB = semanticReadbackFixture(root, 'b-restore', targetB, 'restored', 'beta', operationsStart + 900);
+  const baselineB = semanticReadbackFixture(root, 'b-baseline', targetB, 'baseline', 'beta', operationsStart + 350);
+  const mutationBObservedAt = operationsStart + (agentFinishesBeforeIntegratedCU
+    ? 445 : agentTouchesIntegratedCUBoundary ? 500 : 700);
+  const restorationBObservedAt = operationsStart + (agentFinishesBeforeIntegratedCU
+    ? 500 : agentTouchesIntegratedCUBoundary ? 600 : 900);
+  const mutationB = semanticReadbackFixture(
+    root, 'b-mutate', targetB, 'mutated', 'beta!', mutationBObservedAt,
+  );
+  const restorationB = semanticReadbackFixture(
+    root, 'b-restore', targetB, 'restored', 'beta', restorationBObservedAt,
+  );
   const bundleA = signedBundleFixture(
     root, 'a-mutate', 'setValue', targetA, operationsStart + 100, operationsStart + 200,
     { directory: agentReceipts, client: agentClient },
@@ -1609,6 +1669,8 @@ function concurrentFixture(root, {
     sentinel,
     observed_sentinel: { pid: sentinel.pid, start_identity: sentinel.start_identity, window_id: sentinel.window_id },
   });
+  fs.utimesSync(performReadback, new Date(now - 2500), new Date(now - 2500));
+  fs.utimesSync(restoreReadback, new Date(now - 1500), new Date(now - 1500));
   const spec = {
     version: 1, plan, coordinator_invocation: coordinatorInvocation,
     coordinator_events: eventPath, coordinator_exit: coordinatorExit,
@@ -1638,6 +1700,69 @@ test('post-run validator requires zero exits, exact Agent generation, background
     assert.equal(result.report.passed, true);
     assert.deepEqual(result.report.agent.mutation_families, ['paste', 'set_value']);
     assert.equal(result.report.overlap.agent_covers_operation_interval, true);
+    assert.equal(
+      result.report.agent.progress_interleaving
+        .integrated_cu_perform_readback_mtime_milliseconds,
+      Number(fs.statSync(fix.spec.integrated_cu.perform_readback, { bigint: true }).mtimeNs / 1_000_000n),
+    );
+
+    const performValue = JSON.parse(fs.readFileSync(fix.spec.integrated_cu.perform_readback));
+    fs.utimesSync(
+      fix.spec.integrated_cu.perform_readback,
+      new Date(performValue.observed_at_milliseconds + 3000),
+      new Date(performValue.observed_at_milliseconds + 3000),
+    );
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'uncorroborated-perform-report.json')),
+      /integrated-CU perform readback file time does not corroborate its observation time/,
+    );
+    fs.utimesSync(
+      fix.spec.integrated_cu.perform_readback,
+      new Date(performValue.observed_at_milliseconds),
+      new Date(performValue.observed_at_milliseconds),
+    );
+
+    const baselineABytes = fs.readFileSync(fix.semanticReadbacks[0]);
+    const baselineAValue = JSON.parse(baselineABytes);
+    baselineAValue.observed_at_milliseconds
+      = result.report.overlap.operations_started_at_milliseconds + 101;
+    writeJSON(fix.semanticReadbacks[0], baselineAValue);
+    fs.utimesSync(
+      fix.semanticReadbacks[0],
+      new Date(baselineAValue.observed_at_milliseconds),
+      new Date(baselineAValue.observed_at_milliseconds),
+    );
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'late-baseline-report.json')),
+      /baseline\/mutation\/restoration order is invalid/,
+    );
+    writeFile(fix.semanticReadbacks[0], baselineABytes);
+    fs.utimesSync(
+      fix.semanticReadbacks[0],
+      new Date(JSON.parse(baselineABytes).observed_at_milliseconds),
+      new Date(JSON.parse(baselineABytes).observed_at_milliseconds),
+    );
+
+    const mutationABytes = fs.readFileSync(fix.semanticReadbacks[1]);
+    const mutationAValue = JSON.parse(mutationABytes);
+    mutationAValue.observed_at_milliseconds
+      = result.report.overlap.operations_started_at_milliseconds + 301;
+    writeJSON(fix.semanticReadbacks[1], mutationAValue);
+    fs.utimesSync(
+      fix.semanticReadbacks[1],
+      new Date(mutationAValue.observed_at_milliseconds),
+      new Date(mutationAValue.observed_at_milliseconds),
+    );
+    assert.throws(
+      () => validateConcurrentRun(specPath, path.join(root, 'late-mutation-observation-report.json')),
+      /baseline\/mutation\/restoration order is invalid/,
+    );
+    writeFile(fix.semanticReadbacks[1], mutationABytes);
+    fs.utimesSync(
+      fix.semanticReadbacks[1],
+      new Date(JSON.parse(mutationABytes).observed_at_milliseconds),
+      new Date(JSON.parse(mutationABytes).observed_at_milliseconds),
+    );
 
     const originalResult = fs.readFileSync(fix.agentResult);
     const bad = JSON.parse(originalResult);
@@ -1696,7 +1821,7 @@ test('post-run validator requires zero exits, exact Agent generation, background
     writeJSON(foreignValidatorPath, invalidValidator);
     assert.throws(
       () => validateConcurrentRun(specPath, path.join(root, 'invalid-validator-report.json')),
-      /live validator report is not bound to the exact bundle/,
+      /retained validator report differs from authenticated live validation/,
     );
     writeFile(foreignValidatorPath, originalValidator);
 
@@ -1719,6 +1844,24 @@ test('post-run validator requires zero exits, exact Agent generation, background
     assert.throws(
       () => validateConcurrentRun(specPath, path.join(root, 'unlisted-report.json')),
       /does not equal the complete receipt-directory inventory/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('post-run validator does not accept caller-authored validator JSON without live authentication', () => {
+  const root = fs.mkdtempSync('/private/tmp/pbq-tools-validator-auth-');
+  fs.chmodSync(root, 0o700);
+  try {
+    const fix = concurrentFixture(root);
+    const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
+    assert.throws(
+      () => validateConcurrentRunProduction(
+        specPath,
+        path.join(root, 'unauthenticated-report.json'),
+      ),
+      /authenticated live validation returned invalid JSON/,
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -2871,6 +3014,42 @@ test('qualification manifest closes every required evidence class and detects by
       ),
       /not bound to one authenticated live bundle/,
     );
+    const agentValidatorPath = inputValue.agent_cu.live_validator_reports[0];
+    const agentValidatorBytes = fs.readFileSync(agentValidatorPath);
+    const forgedAgentValidator = JSON.parse(agentValidatorBytes);
+    forgedAgentValidator.data.host.pid += 1;
+    writeJSON(agentValidatorPath, forgedAgentValidator);
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'forged-agent-validator-input.json'), inputValue),
+        path.join(root, 'forged-agent-validator-manifest.json'),
+      ),
+      /retained validator differs from authenticated live validation/,
+    );
+    writeFile(agentValidatorPath, agentValidatorBytes);
+
+    const baselinePath = inputValue.agent_cu.semantic_readbacks[0];
+    const baselineBytes = fs.readFileSync(baselinePath);
+    const lateBaseline = JSON.parse(baselineBytes);
+    lateBaseline.observed_at_milliseconds
+      = concurrentValue.overlap.operations_started_at_milliseconds + 101;
+    writeJSON(baselinePath, lateBaseline);
+    fs.utimesSync(
+      baselinePath,
+      new Date(lateBaseline.observed_at_milliseconds),
+      new Date(lateBaseline.observed_at_milliseconds),
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'late-baseline-input.json'), inputValue),
+        path.join(root, 'late-baseline-manifest.json'),
+      ),
+      /baseline\/mutation\/restoration order is invalid/,
+    );
+    writeFile(baselinePath, baselineBytes);
+    const baselineObservedAt = JSON.parse(baselineBytes).observed_at_milliseconds;
+    fs.utimesSync(baselinePath, new Date(baselineObservedAt), new Date(baselineObservedAt));
+
     const input = writeJSON(path.join(root, 'manifest-input.json'), inputValue);
     const output = path.join(root, 'qualification-manifest.json');
     generateManifest(input, output);
@@ -2907,6 +3086,33 @@ test('qualification manifest closes every required evidence class and detects by
     );
     assert.throws(
       () => verifyManifest(resealedInterleavingPath),
+      /progress interleaving differs from the bound bundles\/readback/,
+    );
+
+    const resealedMtimeManifest = structuredClone(generatedManifest);
+    const resealedMtimeReportValue = JSON.parse(fs.readFileSync(concurrentReport));
+    resealedMtimeReportValue.agent.progress_interleaving
+      .integrated_cu_perform_readback_mtime_milliseconds += 1;
+    const resealedMtimeReport = writeJSON(
+      path.join(root, 'resealed-fabricated-perform-mtime-report.json'),
+      resealedMtimeReportValue,
+    );
+    const resealedMtimeBytes = fs.readFileSync(resealedMtimeReport);
+    resealedMtimeManifest.evidence.agent_cu.validation_report = {
+      path: resealedMtimeReport,
+      size: resealedMtimeBytes.length,
+      sha256: sha256(resealedMtimeBytes),
+    };
+    resealedMtimeManifest.evidence_aggregate_sha256 = aggregateSHA256(
+      'evidence-manifest',
+      resealedMtimeManifest.evidence,
+    );
+    const resealedMtimePath = writeJSON(
+      path.join(root, 'resealed-fabricated-perform-mtime-manifest.json'),
+      resealedMtimeManifest,
+    );
+    assert.throws(
+      () => verifyManifest(resealedMtimePath),
       /progress interleaving differs from the bound bundles\/readback/,
     );
 

@@ -5,6 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   aggregateSHA256,
+  authenticateLiveBridgeBundle,
+  corroboratedObservationTime,
   exactKeys,
   fileReceipt,
   parseOptions,
@@ -911,6 +913,11 @@ function semanticConcurrentValidation(filePath) {
     'integrated_cu', 'overlap', 'externally_supplied_authority',
   ], 'Agent/CU concurrent validation report');
   const actionIntervals = value.agent?.progress_interleaving?.action_intervals;
+  exactKeys(value.agent?.progress_interleaving, [
+    'integrated_cu_perform_at_milliseconds',
+    'integrated_cu_perform_readback_mtime_milliseconds',
+    'action_intervals',
+  ], 'Agent/CU concurrent validation report progress_interleaving');
   requireCondition(Array.isArray(actionIntervals),
     'Agent/CU concurrent validation report action intervals are absent');
   actionIntervals.forEach((entry, index) => {
@@ -934,6 +941,9 @@ function semanticConcurrentValidation(filePath) {
     && new Set(value.agent.mapped_call_ids).size === 4
     && Array.isArray(value.agent?.mutation_families) && value.agent.mutation_families.length >= 2
     && Number.isSafeInteger(value.agent?.progress_interleaving?.integrated_cu_perform_at_milliseconds)
+    && Number.isSafeInteger(
+      value.agent?.progress_interleaving?.integrated_cu_perform_readback_mtime_milliseconds,
+    )
     && actionIntervals.length === 4
     && new Set(actionIntervals.map((entry) => entry.trace_call_id)).size === actionIntervals.length
     && sameJSON(
@@ -1020,12 +1030,27 @@ function bundlePayload(bundle, label) {
 function semanticValidatorPair(bundlePath, validatorPath, label, {
   expectedOperation = null,
   requireMutation = false,
+  authentication = null,
 } = {}) {
   const bundle = readStableJSON(bundlePath, `${label} bundle`, { maximumBytes: 256 * 1024 * 1024 });
   const payload = bundlePayload(bundle, label);
   const validator = readStableJSON(validatorPath, `${label} validator`);
   exactKeys(validator.value, ['success', 'data'], `${label} validator`);
-  const report = validator.value.data;
+  let report = validator.value.data;
+  if (authentication !== null) {
+    const authenticatedReport = authentication.authenticateBundle({
+      executablePath: authentication.executable_path,
+      expectedExecutableSHA256: authentication.executable_sha256,
+      socketPath: authentication.bridge_socket,
+      trustedHostTeamIDs: authentication.trusted_host_team_ids,
+      expectedHost: authentication.expected_host,
+      bundlePath: bundle.path,
+      label,
+    });
+    requireCondition(sameJSON(report, authenticatedReport),
+      `${label} retained validator differs from authenticated live validation`);
+    report = authenticatedReport;
+  }
   requireCondition(validator.value.success === true
     && report?.valid === true
     && report.validator_id === 'peekaboo-bridge-receipt-validate-v1'
@@ -1063,6 +1088,31 @@ function semanticValidatorPair(bundlePath, validatorPath, label, {
   return { bundle, validator, payload, report };
 }
 
+function agentBundleAuthentication(plan, invocation, authenticateBundle, label) {
+  requireCondition(typeof authenticateBundle === 'function'
+    && plan?.bridge && typeof plan.bridge.socket_path === 'string'
+    && path.isAbsolute(plan.bridge.socket_path)
+    && Array.isArray(plan.bridge.trusted_host_team_ids)
+    && plan.bridge.trusted_host_team_ids.length > 0
+    && plan.bridge.trusted_host_team_ids.every((teamID) => /^[A-Z0-9]{10}$/.test(teamID))
+    && new Set(plan.bridge.trusted_host_team_ids).size
+      === plan.bridge.trusted_host_team_ids.length,
+  `${label} Bridge validation policy is malformed`);
+  requireCondition(path.isAbsolute(invocation?.executable_path)
+    && /^[0-9a-f]{64}$/.test(invocation.executable_sha256 ?? '')
+    && invocation.executable_path === plan.peekaboo_executable
+    && invocation.bridge_socket === plan.bridge.socket_path,
+  `${label} Agent validator executable/socket differs from the live plan`);
+  return {
+    authenticateBundle,
+    executable_path: invocation.executable_path,
+    executable_sha256: invocation.executable_sha256,
+    bridge_socket: plan.bridge.socket_path,
+    trusted_host_team_ids: plan.bridge.trusted_host_team_ids,
+    expected_host: plan.bridge.expected_host,
+  };
+}
+
 function validateConcurrentInterleavingBinding(
   concurrent,
   agentReadbacksPath,
@@ -1082,7 +1132,20 @@ function validateConcurrentInterleavingBinding(
     exactKeys(target, [
       'label', 'target', 'baseline_readback_path', 'mutation', 'restoration',
     ], `${label} Agent target ${targetIndex}`);
-    for (const kind of ['mutation', 'restoration']) {
+    const expectedTarget = exactTarget(
+      target.target,
+      `${label} Agent target ${targetIndex}.target`,
+    );
+    const baseline = semanticAgentReadback(
+      target.baseline_readback_path,
+      `${label} Agent target ${targetIndex}.baseline`,
+    );
+    requireCondition(baseline.phase === 'baseline',
+      `${label} Agent target ${targetIndex} baseline phase is invalid`);
+    requireCondition(sameJSON(baseline.target, expectedTarget),
+      `${label} Agent target ${targetIndex} baseline belongs to another target`);
+    const actionEvidence = {};
+    for (const [kind, phase] of [['mutation', 'mutated'], ['restoration', 'restored']]) {
       const action = target[kind];
       exactKeys(action, [
         'trace_call_id', 'family', 'readback_path', 'bundle_path', 'validator_report_path',
@@ -1090,6 +1153,16 @@ function validateConcurrentInterleavingBinding(
       const pair = pairsByBundlePath.get(action.bundle_path);
       requireCondition(pair && pair.validator.path === action.validator_report_path,
         `${label} Agent target ${targetIndex}.${kind} is absent from the bound corpus`);
+      requireCondition(pair.report.target_attested === true
+        && pair.report.outcome_attested === true
+        && pair.payload.outcome?.delivery_mode === 'background'
+        && pair.payload.outcome?.dispatch_state === 'dispatched'
+        && pair.payload.outcome?.mutation_dispatched === true,
+      `${label} Agent target ${targetIndex}.${kind} lacks an authenticated background mutation`);
+      requireCondition(sameJSON(
+        targetFromPayload(pair.payload, `${label} Agent target ${targetIndex}.${kind}`),
+        expectedTarget,
+      ), `${label} Agent target ${targetIndex}.${kind} signed target differs`);
       const startedAt = pair.payload.startedAtUnixMilliseconds;
       const completedAt = pair.payload.completedAtUnixMilliseconds;
       requireCondition(typeof action.trace_call_id === 'string' && action.trace_call_id.length > 0
@@ -1101,17 +1174,40 @@ function validateConcurrentInterleavingBinding(
         started_at_milliseconds: startedAt,
         completed_at_milliseconds: completedAt,
       });
+      const readback = semanticAgentReadback(
+        action.readback_path,
+        `${label} Agent target ${targetIndex}.${kind} readback`,
+      );
+      requireCondition(readback.phase === phase,
+        `${label} Agent target ${targetIndex}.${kind} readback phase is invalid`);
+      requireCondition(sameJSON(readback.target, expectedTarget),
+        `${label} Agent target ${targetIndex}.${kind} readback belongs to another target`);
+      requireCondition(completedAt <= readback.observed_at_milliseconds,
+        `${label} Agent target ${targetIndex}.${kind} readback predates dispatch completion`);
+      actionEvidence[kind] = { startedAt, completedAt, readback };
     }
+    requireCondition(
+      baseline.observed_at_milliseconds <= actionEvidence.mutation.startedAt
+        && actionEvidence.mutation.readback.observed_at_milliseconds
+          <= actionEvidence.restoration.startedAt,
+      `${label} Agent target ${targetIndex} baseline/mutation/restoration order is invalid`,
+    );
+    requireCondition(actionEvidence.mutation.completedAt <= actionEvidence.restoration.startedAt,
+      `${label} Agent target ${targetIndex} restoration dispatch predates mutation completion`);
   }
-  const perform = readStableJSON(
+  const retainedPerform = readStableJSON(
     performReadbackPath,
     `${label} integrated-CU perform readback`,
-  ).value;
-  requireCondition(Number.isSafeInteger(perform.observed_at_milliseconds)
-    && perform.observed_at_milliseconds > 0,
-  `${label} integrated-CU perform time is malformed`);
+  );
+  const perform = retainedPerform.value;
+  const performObservation = corroboratedObservationTime(
+    retainedPerform,
+    `${label} integrated-CU perform readback`,
+  );
   const derived = {
     integrated_cu_perform_at_milliseconds: perform.observed_at_milliseconds,
+    integrated_cu_perform_readback_mtime_milliseconds:
+      performObservation.retained_mtime_milliseconds,
     action_intervals: actionIntervals,
   };
   requireCondition(sameJSON(concurrent.agent.progress_interleaving, derived),
@@ -1364,14 +1460,14 @@ function semanticAgentReadback(filePath, label) {
     && Number.isSafeInteger(retained.value.observed_at_milliseconds)
     && retained.value.observed_at_milliseconds > 0,
   `${label} is not one closed passing semantic readback`);
-  requireCondition(Math.abs(
-    Number(retained.info.mtimeNs / 1_000_000n) - retained.value.observed_at_milliseconds,
-  ) <= 2000, `${label} file time does not corroborate its observation time`);
-  exactTarget(retained.value.target, `${label}.target`);
+  const observation = corroboratedObservationTime(retained, label);
+  const target = exactTarget(retained.value.target, `${label}.target`);
   return {
     receipt: { path: retained.path, size: retained.bytes.length, sha256: retained.sha256 },
+    target,
     phase: retained.value.phase,
-    observed_at_milliseconds: retained.value.observed_at_milliseconds,
+    observed_at_milliseconds: observation.observed_at_milliseconds,
+    retained_mtime_milliseconds: observation.retained_mtime_milliseconds,
     value_sha256: sha256(Buffer.from(retained.value.value, 'utf8')),
   };
 }
@@ -1537,7 +1633,7 @@ function adjunct(value, label, { kind }) {
   return projection;
 }
 
-function projectInput(input) {
+function projectInput(input, authenticateBundle) {
   exactKeys(input, [
     'version', 'artifact_manifest', 'deployment', 'tooling', 'live_v4', 'matrix_cycles',
     'agent_cu', 'adjuncts', 'restoration_cleanup',
@@ -1682,6 +1778,12 @@ function projectInput(input) {
     input.agent_cu.agent_invocation,
     'bound Agent invocation semantics',
   ).value;
+  const authentication = agentBundleAuthentication(
+    boundPlanValue,
+    agentInvocation,
+    authenticateBundle,
+    'Agent manifest',
+  );
   const boundAgentTask = fileReceipt(input.agent_cu.task, 'bound Agent task');
   requireCondition(agentInvocation.task_path === input.agent_cu.task
     && agentInvocation.task_sha256 === boundAgentTask.sha256,
@@ -1710,6 +1812,7 @@ function projectInput(input) {
       input.agent_cu.signed_bundles[index],
       input.agent_cu.live_validator_reports[index],
       `Agent manifest bundle ${index}`,
+      { authentication },
     );
     semanticBundlePairs.push(pair);
     bundleReceipts.push({ path: pair.bundle.path, size: pair.bundle.bytes.length, sha256: pair.bundle.sha256 });
@@ -1971,7 +2074,7 @@ function validateEvidenceShape(evidence, visitReceipt) {
   }
 }
 
-function validateSemanticEvidence(evidence) {
+function validateSemanticEvidence(evidence, authenticateBundle) {
   const deployment = semanticDeploymentEvidence({
     installed_inventories: evidence.deployment.installed_inventories.map((entry) => entry.path),
     elevation_receipts: evidence.deployment.elevation_receipts.map((entry) => entry.path),
@@ -2082,6 +2185,12 @@ function validateSemanticEvidence(evidence) {
     evidence.agent_cu.agent_invocation.path,
     'verified Agent invocation semantics',
   ).value;
+  const authentication = agentBundleAuthentication(
+    verifiedPlanValue,
+    agentInvocation,
+    authenticateBundle,
+    'verified Agent manifest',
+  );
   requireCondition(agentInvocation.task_path === evidence.agent_cu.task.path
     && agentInvocation.task_sha256 === evidence.agent_cu.task.sha256,
   'verified Agent task differs from its invocation');
@@ -2092,6 +2201,7 @@ function validateSemanticEvidence(evidence) {
       bundle.path,
       validator.path,
       `verified Agent bundle ${index}`,
+      { authentication },
     );
     verifiedBundlePairs.push(pair);
     return {
@@ -2160,9 +2270,11 @@ function validateSemanticEvidence(evidence) {
   );
 }
 
-export function generateManifest(inputPath, outputPath) {
+export function generateManifest(inputPath, outputPath, {
+  authenticateBundle = authenticateLiveBridgeBundle,
+} = {}) {
   const input = readStableJSON(inputPath, 'qualification manifest input').value;
-  const evidence = projectInput(input);
+  const evidence = projectInput(input, authenticateBundle);
   const generatedPaths = new Set();
   validateEvidenceShape(evidence, (receipt, label) => {
     exactKeys(receipt, ['path', 'size', 'sha256'], label);
@@ -2180,7 +2292,9 @@ export function generateManifest(inputPath, outputPath) {
   return { manifest, manifest_sha256: written.sha256 };
 }
 
-export function verifyManifest(manifestPath) {
+export function verifyManifest(manifestPath, {
+  authenticateBundle = authenticateLiveBridgeBundle,
+} = {}) {
   const retained = readStableJSON(manifestPath, 'qualification manifest');
   const manifest = retained.value;
   exactKeys(manifest, [
@@ -2205,7 +2319,7 @@ export function verifyManifest(manifestPath) {
     requireCondition(sameJSON(current, receipt), `${label} changed after manifest generation`);
   };
   validateEvidenceShape(manifest.evidence, checkReceipt);
-  validateSemanticEvidence(manifest.evidence);
+  validateSemanticEvidence(manifest.evidence, authenticateBundle);
   requireCondition(
     aggregateSHA256('evidence-manifest', manifest.evidence) === manifest.evidence_aggregate_sha256,
     'qualification evidence aggregate is invalid',
