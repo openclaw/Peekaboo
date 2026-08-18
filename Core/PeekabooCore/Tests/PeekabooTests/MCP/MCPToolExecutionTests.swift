@@ -3,6 +3,7 @@ import Foundation
 import ImageIO
 import MCP
 import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
@@ -474,9 +475,11 @@ struct MCPToolExecutionTests {
 
     @Test
     func `See tool app target detects against resolved observation window`() async throws {
-        let (app, windows) = await MainActor.run {
-            Self.makeWindowedTestApp()
+        let graph = try await MainActor.run {
+            try Self.makeWindowedTestGraph()
         }
+        let app = try #require(graph.applications.first)
+        let windows = try #require(graph.nodes.first?.windows)
         let detectionResult = ElementDetectionResult(
             snapshotId: "snapshot-2",
             screenshotPath: "/tmp/peekaboo-see-observation-test.png",
@@ -492,11 +495,13 @@ struct MCPToolExecutionTests {
             MockAutomationService(accessibilityGranted: true, detectionResult: detectionResult)
         }
         let applications = await MainActor.run {
-            MockApplicationService(applications: [app], windowsByIdentifier: [
-                app.bundleIdentifier ?? app.name: windows,
-            ])
+            MockApplicationService(graph: graph)
         }
-        let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: true) }
+        let screenCapture = await MainActor.run {
+            MockScreenCaptureService(
+                screenRecordingGranted: true,
+                windowMetadata: Self.captureMetadata(application: app, windows: windows))
+        }
         let context = await MCPToolTestHelpers.makeLegacyContext(
             automation: automation,
             screenCapture: screenCapture,
@@ -521,9 +526,11 @@ struct MCPToolExecutionTests {
 
     @Test
     func `See tool PID target with window index uses shared observation parser`() async throws {
-        let (app, windows) = await MainActor.run {
-            Self.makeWindowedTestApp()
+        let graph = try await MainActor.run {
+            try Self.makeWindowedTestGraph()
         }
+        let app = try #require(graph.applications.first)
+        let windows = try #require(graph.nodes.first?.windows)
         let detectionResult = ElementDetectionResult(
             snapshotId: "snapshot-pid-window",
             screenshotPath: "/tmp/peekaboo-see-pid-window-test.png",
@@ -539,11 +546,13 @@ struct MCPToolExecutionTests {
             MockAutomationService(accessibilityGranted: true, detectionResult: detectionResult)
         }
         let applications = await MainActor.run {
-            MockApplicationService(applications: [app], windowsByIdentifier: [
-                app.bundleIdentifier ?? app.name: windows,
-            ])
+            MockApplicationService(graph: graph)
         }
-        let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: true) }
+        let screenCapture = await MainActor.run {
+            MockScreenCaptureService(
+                screenRecordingGranted: true,
+                windowMetadata: Self.captureMetadata(application: app, windows: windows))
+        }
         let context = await MCPToolTestHelpers.makeLegacyContext(
             automation: automation,
             screenCapture: screenCapture,
@@ -559,9 +568,10 @@ struct MCPToolExecutionTests {
     }
 
     @MainActor
-    private static func makeWindowedTestApp() -> (ServiceApplicationInfo, [ServiceWindowInfo]) {
-        let app = ServiceApplicationInfo(
+    private static func makeWindowedTestGraph() throws -> LinkedApplicationInventoryGraph {
+        let app = AutomationTestFixtures.application(
             processIdentifier: 1234,
+            processStartIdentity: 700,
             bundleIdentifier: "com.test.zephyr",
             name: "Zephyr Agency",
             isActive: true,
@@ -570,24 +580,39 @@ struct MCPToolExecutionTests {
         let visibleOrigin = CGPoint(x: screenFrame.minX + 20, y: screenFrame.minY + 20)
         let offscreenOrigin = CGPoint(x: screenFrame.maxX + 10000, y: screenFrame.maxY + 10000)
 
-        return (app, [
-            ServiceWindowInfo(
-                windowID: 100,
-                title: "",
-                bounds: CGRect(origin: offscreenOrigin, size: CGSize(width: 2560, height: 30)),
-                index: 0,
-                isOnScreen: false),
-            ServiceWindowInfo(
-                windowID: 41,
-                title: "Small Utility",
-                bounds: CGRect(origin: visibleOrigin, size: CGSize(width: 120, height: 90)),
-                index: 1),
-            ServiceWindowInfo(
-                windowID: 42,
-                title: "Zephyr Agency",
-                bounds: CGRect(origin: visibleOrigin, size: CGSize(width: 1460, height: 945)),
-                index: 2),
+        return try LinkedApplicationInventoryGraph(nodes: [
+            .init(application: app, windows: [
+                ServiceWindowInfo(
+                    windowID: 100,
+                    title: "",
+                    bounds: CGRect(origin: offscreenOrigin, size: CGSize(width: 2560, height: 30)),
+                    index: 0,
+                    isOnScreen: false),
+                ServiceWindowInfo(
+                    windowID: 41,
+                    title: "Small Utility",
+                    bounds: CGRect(origin: visibleOrigin, size: CGSize(width: 120, height: 90)),
+                    index: 1),
+                ServiceWindowInfo(
+                    windowID: 42,
+                    title: "Zephyr Agency",
+                    bounds: CGRect(origin: visibleOrigin, size: CGSize(width: 1460, height: 945)),
+                    index: 2),
+            ]),
         ])
+    }
+
+    private static func captureMetadata(
+        application: ServiceApplicationInfo,
+        windows: [ServiceWindowInfo]) -> [CGWindowID: CaptureMetadata]
+    {
+        Dictionary(uniqueKeysWithValues: windows.map { window in
+            (CGWindowID(window.windowID), CaptureMetadata(
+                size: window.bounds.size,
+                mode: .window,
+                applicationInfo: application,
+                windowInfo: window))
+        })
     }
 
     private static func observationSpanNames(from response: ToolResponse) -> [String] {
@@ -1302,132 +1327,20 @@ final class MockScreenService: ScreenServiceProtocol {
 }
 
 @MainActor
-class MockApplicationService: ApplicationServiceProtocol, ApplicationMutationInventoryProviding {
-    let supportsProcessGenerationPinnedApplicationActivation = true
-    private(set) var applications: [ServiceApplicationInfo]
-    private(set) var launchRequests: [ApplicationLaunchRequest] = []
-    private(set) var relaunchRequests: [ApplicationRelaunchRequest] = []
-    private let windowsByIdentifier: [String: [ServiceWindowInfo]]
-
-    init(
-        applications: [ServiceApplicationInfo] = [],
-        windowsByIdentifier: [String: [ServiceWindowInfo]] = [:])
-    {
-        self.applications = applications
-        self.windowsByIdentifier = windowsByIdentifier
+class MockApplicationService: ScriptedApplicationInventoryService {
+    override func getFrontmostApplication() async throws -> ServiceApplicationInfo {
+        self.applications.first ?? ServiceApplicationInfo(
+            processIdentifier: 0,
+            bundleIdentifier: nil,
+            name: "Mock")
     }
 
-    func replaceApplicationsForTesting(_ applications: [ServiceApplicationInfo]) {
-        self.applications = applications
-    }
+    override func activateApplication(identifier _: String) async throws {}
+    override func activateApplication(request _: ApplicationActivationRequest) async throws {}
 
-    func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
-        let warnings = self.applications.flatMap { $0.metadataWarnings ?? [] }
-        return UnifiedToolOutput(
-            data: ServiceApplicationListData(applications: self.applications),
-            summary: .init(
-                brief: "Found \(self.applications.count) apps",
-                status: warnings.isEmpty ? .success : .partial,
-                counts: ["applications": self.applications.count]),
-            metadata: .init(duration: 0, warnings: warnings))
-    }
-
-    func applicationMutationInventory() async throws
-        -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo>
-    {
-        let warnings = self.applications.flatMap { $0.metadataWarnings ?? [] }
-        return DesktopTargetPlanning.Inventory(
-            items: self.applications,
-            completeness: warnings.isEmpty ? .complete : .partial,
-            warnings: warnings)
-    }
-
-    func findApplication(identifier: String) async throws -> ServiceApplicationInfo {
-        let pid = identifier.uppercased().hasPrefix("PID:") ? Int32(identifier.dropFirst(4)) : nil
-        if let match = self.applications.first(where: {
-            $0.name == identifier || $0.bundleIdentifier == identifier || $0.processIdentifier == pid
-        }) {
-            return match
-        }
-        throw PeekabooError.appNotFound(identifier)
-    }
-
-    func listWindows(for appIdentifier: String, timeout _: Float?) async throws
-        -> UnifiedToolOutput<ServiceWindowListData>
-    {
-        let targetApp = try? await self.findApplication(identifier: appIdentifier)
-        let windows: [ServiceWindowInfo] = if let direct = self.windowsByIdentifier[appIdentifier] {
-            direct
-        } else if let bundleIdentifier = targetApp?.bundleIdentifier,
-                  let bundleWindows = self.windowsByIdentifier[bundleIdentifier]
-        {
-            bundleWindows
-        } else if let appName = targetApp?.name,
-                  let namedWindows = self.windowsByIdentifier[appName]
-        {
-            namedWindows
-        } else {
-            []
-        }
-        return UnifiedToolOutput(
-            data: ServiceWindowListData(windows: windows, targetApplication: targetApp),
-            summary: .init(brief: "Found \(windows.count) windows", status: .success),
-            metadata: .init(duration: 0))
-    }
-
-    func getFrontmostApplication() async throws -> ServiceApplicationInfo {
-        self.applications.first ?? ServiceApplicationInfo(processIdentifier: 0, bundleIdentifier: nil, name: "Mock")
-    }
-
-    func isApplicationRunning(identifier: String) async -> Bool {
-        self.applications.contains { app in
-            app.name == identifier || app.bundleIdentifier == identifier
-        }
-    }
-
-    func launchApplication(identifier: String) async throws -> ServiceApplicationInfo {
-        let app = ServiceApplicationInfo(
-            processIdentifier: Int32(self.applications.count + 1),
-            bundleIdentifier: identifier,
-            name: identifier,
-            isActive: true)
-        self.applications.append(app)
-        return app
-    }
-
-    func launchApplication(request: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {
-        self.launchRequests.append(request)
-        let identifier = request.applicationBundleIdentifier ?? request.applicationIdentifier ?? "Default Handler"
-        let app = ServiceApplicationInfo(
-            processIdentifier: Int32(self.applications.count + 1),
-            processStartIdentity: UInt64(self.applications.count + 1) * 1000,
-            bundleIdentifier: request.applicationBundleIdentifier,
-            name: identifier,
-            isActive: request.activates,
-            isFinishedLaunching: true)
-        self.applications.append(app)
-        return app
-    }
-
-    func relaunchApplication(request: ApplicationRelaunchRequest) async throws -> ServiceApplicationInfo {
-        self.relaunchRequests.append(request)
-        return try await self.launchApplication(request: request.launchRequest)
-    }
-
-    func activateApplication(identifier _: String) async throws {}
-    func activateApplication(request _: ApplicationActivationRequest) async throws {}
-
-    func quitApplication(identifier _: String, force _: Bool) async throws -> Bool {
+    override func quitApplication(identifier _: String, force _: Bool) async throws -> Bool {
         true
     }
-
-    func hideApplication(identifier _: String) async throws {}
-
-    func unhideApplication(identifier _: String) async throws {}
-
-    func hideOtherApplications(identifier _: String) async throws {}
-
-    func showAllApplications() async throws {}
 }
 
 struct MCPToolErrorHandlingTests {

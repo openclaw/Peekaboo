@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import UniformTypeIdentifiers
 @testable import PeekabooCLI
@@ -577,11 +578,7 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
 }
 
 @MainActor
-class StubApplicationService: ApplicationServiceProtocol, ApplicationMutationInventoryProviding {
-    let supportsApplicationLaunchOptions = true
-    let supportsApplicationRelaunch = true
-    var applications: [ServiceApplicationInfo]
-    var windowsByApp: [String: [ServiceWindowInfo]]
+class StubApplicationService: ScriptedApplicationInventoryService {
     var launchResults: [String: ServiceApplicationInfo]
     var launchCalls: [String] = []
     var activateCalls: [String] = []
@@ -596,88 +593,19 @@ class StubApplicationService: ApplicationServiceProtocol, ApplicationMutationInv
     var showAllCallCount = 0
 
     init(applications: [ServiceApplicationInfo], windowsByApp: [String: [ServiceWindowInfo]] = [:]) {
-        self.applications = applications
-        self.windowsByApp = windowsByApp
         self.launchResults = [:]
-    }
-
-    func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
-        let data = ServiceApplicationListData(applications: applications)
-        let summary = UnifiedToolOutput<ServiceApplicationListData>.Summary(
-            brief: "Stub application list",
-            status: .success,
-            counts: ["applications": self.applications.count]
-        )
-        return UnifiedToolOutput(
-            data: data,
-            summary: summary,
-            metadata: .init(duration: 0)
+        super.init(
+            applications: applications,
+            windowsByIdentifier: windowsByApp,
+            propagatesApplicationMetadataWarnings: false,
+            supportsApplicationLaunchOptions: true,
+            supportsApplicationRelaunch: true,
+            supportsProcessGenerationPinnedApplicationQuit: true,
+            supportsProcessGenerationPinnedApplicationActivation: true
         )
     }
 
-    func applicationMutationInventory() async throws
-    -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo> {
-        .complete(self.applications)
-    }
-
-    func findApplication(identifier: String) async throws -> ServiceApplicationInfo {
-        if let pid = Self.parsePID(identifier),
-           let match = applications.first(where: { $0.processIdentifier == pid }) {
-            return match
-        }
-
-        if let match = applications.first(where: { $0.name == identifier || $0.bundleIdentifier == identifier }) {
-            return match
-        }
-        throw PeekabooError.appNotFound(identifier)
-    }
-
-    private static func parsePID(_ identifier: String) -> pid_t? {
-        let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        let pidString: String = if trimmed.uppercased().hasPrefix("PID:") {
-            String(trimmed.dropFirst(4))
-        } else {
-            trimmed
-        }
-
-        guard let rawPID = Int32(pidString), rawPID > 0 else { return nil }
-        return pid_t(rawPID)
-    }
-
-    func listWindows(
-        for appIdentifier: String,
-        timeout: Float?
-    ) async throws -> UnifiedToolOutput<ServiceWindowListData> {
-        let targetApp = self.applications.first {
-            $0.name == appIdentifier || $0.bundleIdentifier == appIdentifier
-        }
-        let windows = self.windowsByApp[appIdentifier]
-            ?? targetApp.flatMap { self.windowsByApp[$0.name] } ?? []
-        let data = ServiceWindowListData(windows: windows, targetApplication: targetApp)
-        let summary = UnifiedToolOutput<ServiceWindowListData>.Summary(
-            brief: "Stub window list",
-            status: .success,
-            counts: ["windows": windows.count]
-        )
-        return UnifiedToolOutput(
-            data: data,
-            summary: summary,
-            metadata: .init(duration: 0)
-        )
-    }
-
-    func getFrontmostApplication() async throws -> ServiceApplicationInfo {
-        guard let first = applications.first else {
-            throw PeekabooError.appNotFound("frontmost")
-        }
-        return first
-    }
-
-    func isApplicationRunning(identifier: String) async -> Bool {
-        self.applications.contains { $0.name == identifier || $0.bundleIdentifier == identifier }
-    }
-
-    func launchApplication(identifier: String) async throws -> ServiceApplicationInfo {
+    override func launchApplication(identifier: String) async throws -> ServiceApplicationInfo {
         self.launchCalls.append(identifier)
         if let result = launchResults[identifier] {
             return result
@@ -693,21 +621,28 @@ class StubApplicationService: ApplicationServiceProtocol, ApplicationMutationInv
         )
     }
 
-    func launchApplication(request: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {
+    override func launchApplication(request: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {
         let identifier = request.applicationBundleIdentifier ?? request.applicationIdentifier ?? "default handler"
         return try await self.launchApplication(identifier: identifier)
     }
 
-    func relaunchApplication(request: ApplicationRelaunchRequest) async throws -> ServiceApplicationInfo {
+    override func relaunchApplication(request: ApplicationRelaunchRequest) async throws -> ServiceApplicationInfo {
         try await self.launchApplication(request: request.launchRequest)
     }
 
-    func activateApplication(identifier: String) async throws {
+    override func getFrontmostApplication() async throws -> ServiceApplicationInfo {
+        guard let application = self.applications.first else {
+            throw PeekabooError.appNotFound("frontmost")
+        }
+        return application
+    }
+
+    override func activateApplication(identifier: String) async throws {
         self.activateCalls.append(identifier)
         try await self.activateApplicationHandler?(identifier)
     }
 
-    func activateApplication(request: ApplicationActivationRequest) async throws {
+    override func activateApplication(request: ApplicationActivationRequest) async throws {
         if let expectedIdentity = request.expectedIdentity {
             let application = try await self.findApplication(identifier: request.identifier)
             guard application.processIdentity == expectedIdentity else {
@@ -717,12 +652,12 @@ class StubApplicationService: ApplicationServiceProtocol, ApplicationMutationInv
         try await self.activateApplication(identifier: request.identifier)
     }
 
-    func quitApplication(identifier: String, force: Bool) async throws -> Bool {
+    override func quitApplication(identifier: String, force: Bool) async throws -> Bool {
         self.quitCalls.append((identifier: identifier, force: force))
         return self.quitShouldSucceed
     }
 
-    func quitApplication(request: ApplicationQuitRequest) async throws -> Bool {
+    override func quitApplication(request: ApplicationQuitRequest) async throws -> Bool {
         self.quitRequests.append(request)
         guard let expectedIdentity = request.expectedIdentity,
               self.applications.first(where: {
@@ -738,19 +673,19 @@ class StubApplicationService: ApplicationServiceProtocol, ApplicationMutationInv
         return self.quitShouldSucceed
     }
 
-    func hideApplication(identifier: String) async throws {
+    override func hideApplication(identifier: String) async throws {
         self.hideCalls.append(identifier)
     }
 
-    func unhideApplication(identifier: String) async throws {
+    override func unhideApplication(identifier: String) async throws {
         self.unhideCalls.append(identifier)
     }
 
-    func hideOtherApplications(identifier: String) async throws {
+    override func hideOtherApplications(identifier: String) async throws {
         self.hideOtherCalls.append(identifier)
     }
 
-    func showAllApplications() async throws {
+    override func showAllApplications() async throws {
         self.showAllCallCount += 1
     }
 }

@@ -2008,7 +2008,7 @@ final class StubServices: PeekabooBridgeServiceProviding {
     init(
         applications: any ApplicationServiceProtocol = StubApplicationService(),
         automation: (any UIAutomationServiceProtocol)? = nil,
-        windows: any WindowManagementServiceProtocol = StubWindowService(),
+        windows: any WindowManagementServiceProtocol = makeStubWindowService(),
         snapshots: any SnapshotManagerProtocol = SnapshotManager(),
         desktopObservation: (any DesktopObservationServiceProtocol)? = nil,
         ownedDesktopOperationLanes: Set<PeekabooBridgeOperation> = [])
@@ -2105,7 +2105,7 @@ private final class StubNonTargetedServices: PeekabooBridgeServiceProviding {
     let screenCapture: any ScreenCaptureServiceProtocol = StubScreenCaptureService()
     let automation: any UIAutomationServiceProtocol = StubNonTargetedAutomationService()
     let applications: any ApplicationServiceProtocol = StubApplicationService()
-    let windows: any WindowManagementServiceProtocol = StubWindowService()
+    let windows: any WindowManagementServiceProtocol = makeStubWindowService()
     let menu: any MenuServiceProtocol = UnimplementedMenuService()
     let dock: any DockServiceProtocol = UnimplementedDockService()
     let dialogs: any DialogServiceProtocol = UnimplementedDialogService()
@@ -2119,7 +2119,7 @@ private final class StubRemoteAutomationServices: PeekabooBridgeServiceProviding
     let screenCapture: any ScreenCaptureServiceProtocol = StubScreenCaptureService()
     let automation: any UIAutomationServiceProtocol
     let applications: any ApplicationServiceProtocol = StubApplicationService()
-    let windows: any WindowManagementServiceProtocol = StubWindowService()
+    let windows: any WindowManagementServiceProtocol = makeStubWindowService()
     let menu: any MenuServiceProtocol = UnimplementedMenuService()
     let dock: any DockServiceProtocol = UnimplementedDockService()
     let dialogs: any DialogServiceProtocol = UnimplementedDialogService()
@@ -2641,25 +2641,25 @@ final class StubNonTargetedAutomationService: UIAutomationServiceProtocol {
 }
 
 @MainActor
-private final class StubWindowService: WindowManagementServiceProtocol {
-    private let windowsList: [ServiceWindowInfo] = [
-        ServiceWindowInfo(windowID: 1, title: "Stub", bounds: .init(x: 0, y: 0, width: 100, height: 100)),
-    ]
-
-    func closeWindow(target _: WindowTarget) async throws {}
-    func minimizeWindow(target _: WindowTarget) async throws {}
-    func maximizeWindow(target _: WindowTarget) async throws {}
-    func moveWindow(target _: WindowTarget, to _: CGPoint) async throws {}
-    func resizeWindow(target _: WindowTarget, to _: CGSize) async throws {}
-    func setWindowBounds(target _: WindowTarget, bounds _: CGRect) async throws {}
-    func focusWindow(target _: WindowTarget) async throws {}
-    func listWindows(target _: WindowTarget) async throws -> [ServiceWindowInfo] {
-        self.windowsList
+private func makeStubWindowService() -> ScriptedWindowInventoryService {
+    let linkedTarget = AutomationTestFixtures.linkedDesktopTarget(
+        processIdentity: AutomationTestFixtures.processIdentity(
+            processIdentifier: 123,
+            processStartIdentity: 456),
+        bundleIdentifier: "dev.stub",
+        applicationName: "StubApp",
+        windowID: 1,
+        windowTitle: "Stub",
+        bounds: .init(x: 0, y: 0, width: 100, height: 100))
+    let graph: LinkedApplicationInventoryGraph
+    do {
+        graph = try LinkedApplicationInventoryGraph(linkedTargets: [linkedTarget])
+    } catch {
+        preconditionFailure("Invalid bridge inventory fixture: \(error)")
     }
-
-    func getFocusedWindow() async throws -> ServiceWindowInfo? {
-        self.windowsList.first
-    }
+    return ScriptedWindowInventoryService(
+        graph: graph,
+        focusedWindow: linkedTarget.window)
 }
 
 @MainActor
