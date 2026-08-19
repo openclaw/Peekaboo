@@ -14,8 +14,10 @@ import {
   authenticateAgentExecutionTerminalBundle,
   authenticateLiveBridgeBundle,
   authenticatedBridgeReceiptIdentity,
+  canonicalBytes,
   controlledFixtureBindings,
   corroboratedObservationTime,
+  decodeCanonicalBase64JSON,
   exactKeys,
   isAgentMutatingToolName,
   normalizedAgentToolName,
@@ -231,12 +233,221 @@ function signedBundle(filePath, validatorPath, operation, label, authentication)
 function expectedBridgeOperation(family) {
   return {
     set_value: 'setValue',
-    action: 'performAction',
-    click: 'exactWindowTargetedClick',
     type: 'exactWindowTargetedTypeActions',
     paste: 'exactWindowTargetedTypeActions',
-    press: 'exactWindowTargetedHotkey',
   }[family] ?? null;
+}
+
+function requiredTraceString(arguments_, key, label) {
+  const value = arguments_?.[key];
+  requireCondition(typeof value === 'string' && value.length > 0 && !value.includes('\0'),
+    `${label} trace ${key} selector is missing`);
+  return value;
+}
+
+function projectedSignedRequest(signed, requestCase, label) {
+  const decoded = decodeCanonicalBase64JSON(
+    signed.bundle.value?.canonicalRequest,
+    `${label} signed canonical request`,
+  ).value;
+  exactKeys(decoded, ['projectedAction'], `${label} signed request`);
+  exactKeys(decoded.projectedAction, ['_0'], `${label} signed projected action`);
+  const projection = decoded.projectedAction._0;
+  exactKeys(projection, ['request'], `${label} signed projected action payload`);
+  exactKeys(projection.request, [requestCase], `${label} signed Bridge request case`);
+  exactKeys(projection.request[requestCase], ['_0'], `${label} signed Bridge request payload`);
+  const request = projection.request[requestCase]._0;
+  requireCondition(request && typeof request === 'object' && !Array.isArray(request),
+    `${label} signed Bridge request payload is malformed`);
+  return request;
+}
+
+// Bind the provider-authored trace call to the listener-authenticated Bridge request. The
+// readback map alone is not authority for call-ID-to-bundle correlation.
+export function validateAgentTraceOperationBinding(entry, signed, family, expectedTarget, label) {
+  requireCondition(entry && typeof entry.arguments === 'object' && !Array.isArray(entry.arguments),
+    `${label} trace arguments are malformed`);
+  if (family === 'set_value') {
+    const on = requiredTraceString(entry.arguments, 'on', label);
+    const snapshot = requiredTraceString(entry.arguments, 'snapshot', label);
+    const request = projectedSignedRequest(signed, 'setValue', label);
+    requireCondition(request.target === on && request.snapshotId === snapshot,
+      `${label} trace selectors differ from the signed Bridge request`);
+    return `set_value:${snapshot}:${on}`;
+  }
+  if (family === 'type') {
+    const snapshot = requiredTraceString(entry.arguments, 'snapshot', label);
+    const request = projectedSignedRequest(signed, 'exactWindowTargetedTypeActions', label);
+    requireCondition(request.snapshotId === snapshot,
+      `${label} trace snapshot differs from the signed Bridge request`);
+    return `type:${snapshot}`;
+  }
+  if (family === 'paste') {
+    const request = projectedSignedRequest(signed, 'exactWindowTargetedTypeActions', label);
+    requireCondition(entry.arguments.pid === expectedTarget.pid
+      && entry.arguments.window_id === expectedTarget.window_id
+      && (request.snapshotId === undefined || request.snapshotId === null),
+    `${label} exact trace target differs from the signed Bridge request target`);
+    return `paste:${expectedTarget.pid}:${expectedTarget.start_identity}:${expectedTarget.window_id}`;
+  }
+  requireCondition(false, `${label} has no closed trace/request binding`);
+}
+
+export const AGENT_TASK_KIND = 'peekaboo-concurrent-agent-qualification';
+export const AGENT_TASK_GOAL = 'two-target-background-mutate-verify-restore-with-concurrent-cu';
+export const AGENT_TASK_CONSTRAINTS = Object.freeze({
+  delivery_mode: 'background',
+  foreground: 'forbidden',
+  progress_interleaving: 'before-and-after-integrated-cu',
+  shell: 'forbidden',
+  skips_and_failures: 'forbidden',
+});
+export const AGENT_TASK_POSTCONDITIONS = Object.freeze({
+  all_targets_restored: true,
+  cleanup: 'restore-exact-baselines',
+  exact_dispatched_mutation_count: 4,
+  exact_target_count: 2,
+  minimum_primary_mutation_family_count: 2,
+  novel_restoration_family_required: true,
+  target_b_distinct_restoration_family: true,
+});
+const AGENT_TASK_STEP_PHASES = [
+  'baseline', 'mutate', 'verify-mutated', 'restore', 'verify-restored',
+];
+
+function taskExpectedValue(value, label) {
+  requireCondition(typeof value === 'string' && Buffer.byteLength(value, 'utf8') <= 4096,
+    `${label} expected value is invalid`);
+  return value;
+}
+
+export function parseAgentTaskContract(taskReceipt, plan) {
+  let fileText;
+  try {
+    fileText = new TextDecoder('utf-8', { fatal: true }).decode(taskReceipt.bytes);
+  } catch {
+    requireCondition(false, 'Agent task must be one closed UTF-8 JSON contract plus one terminal newline');
+  }
+  requireCondition(fileText.endsWith('\n'),
+    'Agent task must be one closed UTF-8 JSON contract plus one terminal newline');
+  const taskText = fileText.slice(0, -1);
+  requireCondition(taskText.length > 0 && !taskText.endsWith('\n') && !taskText.includes('\0')
+    && Buffer.from(`${taskText}\n`, 'utf8').equals(taskReceipt.bytes),
+  'Agent task must be one closed UTF-8 JSON contract plus one terminal newline');
+  let contract;
+  try {
+    contract = JSON.parse(taskText);
+  } catch {
+    requireCondition(false, 'Agent task must be one closed machine-readable JSON contract');
+  }
+  requireCondition(Buffer.from(taskText, 'utf8').equals(canonicalBytes(contract)),
+    'Agent task must be the canonical JSON encoding of its closed contract');
+  exactKeys(contract, [
+    'version', 'kind', 'goal', 'constraints', 'targets', 'postconditions',
+  ], 'Agent task contract');
+  requireCondition(contract.version === 1 && contract.kind === AGENT_TASK_KIND,
+    'Agent task contract kind/version is invalid');
+  requireCondition(contract.goal === AGENT_TASK_GOAL,
+    'Agent task contract goal is not the closed concurrent qualification goal');
+  exactKeys(contract.constraints, Object.keys(AGENT_TASK_CONSTRAINTS),
+    'Agent task contract constraints');
+  requireCondition(sameJSON(contract.constraints, AGENT_TASK_CONSTRAINTS),
+    'Agent task contract constraints do not require background-only, no-Shell, failure-free interleaving');
+  exactKeys(contract.postconditions, Object.keys(AGENT_TASK_POSTCONDITIONS),
+    'Agent task contract postconditions');
+  requireCondition(sameJSON(contract.postconditions, AGENT_TASK_POSTCONDITIONS),
+    'Agent task contract postconditions are not the closed restoration/cleanup contract');
+  requireCondition(Array.isArray(contract.targets) && contract.targets.length === 2,
+    'Agent task contract must contain exactly two controlled targets');
+  const fixtureBindings = controlledFixtureBindings(plan, 'live-v4 plan').targets;
+  const primaryMutationFamilies = new Set();
+  const restorationFamilies = new Set();
+  const targetExpectations = contract.targets.map((entry, index) => {
+    const label = `target-${index === 0 ? 'a' : 'b'}`;
+    exactKeys(entry, ['label', 'target', 'steps'], `Agent task contract ${label}`);
+    requireCondition(entry.label === label, 'Agent task contract target order is not canonical');
+    exactKeys(entry.target, ['pid', 'start_identity', 'window_id'],
+      `Agent task contract ${label}.target`);
+    requireCondition(positiveInteger(entry.target.pid)
+      && positiveDecimal(entry.target.start_identity)
+      && positiveInteger(entry.target.window_id),
+    `Agent task contract ${label} target is malformed`);
+    requireCondition(sameJSON(entry.target, fixtureBindings[index].target),
+      `Agent task contract ${label} is not its exact live-v4 controlled fixture target`);
+    requireCondition(Array.isArray(entry.steps) && entry.steps.length === 5,
+      `Agent task contract ${label} must contain baseline/mutate/verify/restore/verify`);
+    const [baseline, mutation, mutationVerification, restoration, restorationVerification]
+      = entry.steps;
+    for (const [stepIndex, step] of entry.steps.entries()) {
+      const mutating = stepIndex === 1 || stepIndex === 3;
+      exactKeys(step, mutating ? ['phase', 'family', 'expected_value'] : ['phase', 'expected_value'],
+        `Agent task contract ${label}.steps[${stepIndex}]`);
+      requireCondition(step.phase === AGENT_TASK_STEP_PHASES[stepIndex],
+        `Agent task contract ${label} step order is not baseline/mutate/verify/restore/verify`);
+      taskExpectedValue(step.expected_value,
+        `Agent task contract ${label}.steps[${stepIndex}]`);
+    }
+    for (const [step, kind] of [[mutation, 'mutation'], [restoration, 'restoration']]) {
+      requireCondition(step.family === normalizedAgentToolName(step.family)
+        && expectedBridgeOperation(step.family) !== null,
+      `Agent task contract ${label} ${kind} family is unsupported`);
+    }
+    requireCondition(mutation.expected_value !== baseline.expected_value
+      && mutationVerification.expected_value === mutation.expected_value,
+    `Agent task contract ${label} mutated value/postcondition is inconsistent`);
+    requireCondition(restoration.expected_value === baseline.expected_value
+      && restorationVerification.expected_value === baseline.expected_value,
+    `Agent task contract ${label} restoration does not require the exact baseline`);
+    primaryMutationFamilies.add(mutation.family);
+    restorationFamilies.add(restoration.family);
+    if (label === 'target-b') {
+      requireCondition(restoration.family !== mutation.family,
+        'Agent task contract target-b restoration family must differ from its primary mutation');
+    }
+    return {
+      label,
+      target: structuredClone(entry.target),
+      baseline_value: baseline.expected_value,
+      mutation: { family: mutation.family, expected_value: mutation.expected_value },
+      restoration: { family: restoration.family, expected_value: restoration.expected_value },
+    };
+  });
+  requireCondition(primaryMutationFamilies.size >= 2,
+    'Agent task contract must require two primary mutation families');
+  requireCondition([...restorationFamilies].some((family) => !primaryMutationFamilies.has(family)),
+    'Agent task contract must require a restoration family outside the primary mutations');
+  return {
+    receipt: taskReceipt,
+    text: taskText,
+    contract,
+    semantic_sha256: sha256(canonicalBytes(contract)),
+    target_expectations: targetExpectations,
+  };
+}
+
+export function projectAgentTaskContractReport(taskContract, terminal) {
+  const signedTaskSHA256 = sha256(Buffer.from(taskContract.text, 'utf8'));
+  requireCondition(terminal.response.taskSHA256 === signedTaskSHA256,
+    'signed terminal task digest differs from the Agent task contract');
+  return {
+    version: 1,
+    kind: taskContract.contract.kind,
+    goal: taskContract.contract.goal,
+    task_file_sha256: taskContract.receipt.sha256,
+    signed_task_sha256: signedTaskSHA256,
+    semantic_contract_sha256: taskContract.semantic_sha256,
+    constraints: structuredClone(taskContract.contract.constraints),
+    postconditions: structuredClone(taskContract.contract.postconditions),
+    target_expectations: taskContract.target_expectations.map((entry) => ({
+      label: entry.label,
+      target: structuredClone(entry.target),
+      baseline_value_sha256: sha256(Buffer.from(entry.baseline_value, 'utf8')),
+      mutation_family: entry.mutation.family,
+      mutated_value_sha256: sha256(Buffer.from(entry.mutation.expected_value, 'utf8')),
+      restoration_family: entry.restoration.family,
+      restored_value_sha256: sha256(Buffer.from(entry.restoration.expected_value, 'utf8')),
+    })),
+  };
 }
 
 function agentBundleCorpus(
@@ -305,7 +516,7 @@ function agentBundleCorpus(
   return corpus;
 }
 
-function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
+function agentReadbacks(filePath, agent, trace, operation, plan, corpus, taskContract) {
   const retained = readStableJSON(filePath, 'Agent readback evidence');
   const value = retained.value;
   exactKeys(value, ['version', 'agent', 'targets'], 'Agent readback evidence');
@@ -330,6 +541,8 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
   const targetWindows = new Set();
   const readbackReceipts = [];
   const actionIntervals = [];
+  const orderedActionCallIDs = [];
+  const traceRequestBindings = new Set();
   for (const [index, target] of value.targets.entries()) {
     exactKeys(target, [
       'label', 'target', 'baseline_readback_path', 'mutation', 'restoration',
@@ -341,6 +554,10 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
       && positiveInteger(target.target.window_id), `Agent readback ${target.label} identity is invalid`);
     requireCondition(sameJSON(target.target, fixtureBindings[index].target),
       `Agent ${target.label} is not its exact live-v4 controlled fixture target`);
+    const taskExpectation = taskContract.target_expectations[index];
+    requireCondition(taskExpectation.label === target.label
+      && sameJSON(taskExpectation.target, target.target),
+    `Agent ${target.label} readback map differs from its signed task contract`);
     const processKey = `${target.target.pid}:${target.target.start_identity}`;
     targetProcesses.add(processKey);
     targetWindows.add(`${processKey}:${target.target.window_id}`);
@@ -353,6 +570,8 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
       operation,
       `Agent ${target.label} baseline readback`,
     );
+    requireCondition(baseline.value.value === taskExpectation.baseline_value,
+      `Agent ${target.label} baseline differs from its signed task expectation`);
     readbackReceipts.push(baseline);
     const actionReceipts = {};
     for (const [kind, phase] of [['mutation', 'mutated'], ['restoration', 'restored']]) {
@@ -369,11 +588,11 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
       const entry = trace.entriesByID.get(action.trace_call_id);
       requireCondition(action.family === normalizedAgentToolName(action.family)
         && isAgentMutatingToolName(action.family), `Agent readback ${target.label}.${kind} family is invalid`);
+      const taskAction = taskExpectation[kind];
+      requireCondition(action.family === taskAction.family,
+        `Agent readback ${target.label}.${kind} family differs from its signed task contract`);
       requireCondition(entry && normalizedAgentToolName(entry.name) === action.family,
         `Agent readback ${target.label}.${kind} does not match its trace family`);
-      requireCondition(entry.arguments?.pid === target.target.pid
-        && entry.arguments?.window_id === target.target.window_id,
-      `Agent readback ${target.label}.${kind} trace lacks the exact PID/window`);
       const expectedOperation = expectedBridgeOperation(action.family);
       requireCondition(expectedOperation !== null, `Agent ${target.label}.${kind} has no closed Bridge operation map`);
       const corpusEntry = corpus.get(action.bundle_path);
@@ -392,6 +611,16 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
       `Agent ${target.label}.${kind} signed outcome is not one definite background dispatch`);
       requireCondition(sameJSON(signedBundleTarget(signed.payload, `Agent ${target.label}.${kind}`), target.target),
         `Agent ${target.label}.${kind} signed target differs from its trace/readback target`);
+      const traceRequestBinding = validateAgentTraceOperationBinding(
+        entry,
+        signed,
+        action.family,
+        target.target,
+        `Agent ${target.label}.${kind}`,
+      );
+      requireCondition(!traceRequestBindings.has(traceRequestBinding),
+        `Agent ${target.label}.${kind} reuses a trace/request binding`);
+      traceRequestBindings.add(traceRequestBinding);
       requireCondition(signed.payload.startedAtUnixMilliseconds >= operation.start
         && signed.payload.completedAtUnixMilliseconds <= operation.complete,
       `Agent ${target.label}.${kind} signed interval falls outside live-v4 operations`);
@@ -402,6 +631,8 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
         operation,
         `Agent ${target.label} ${kind} readback`,
       );
+      requireCondition(readback.value.value === taskAction.expected_value,
+        `Agent ${target.label}.${kind} readback differs from its signed task expected value`);
       requireCondition(signed.payload.completedAtUnixMilliseconds < readback.value.observed_at_milliseconds,
         `Agent ${target.label}.${kind} readback does not strictly follow its signed dispatch`);
       readbackReceipts.push(readback);
@@ -411,6 +642,7 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
         started_at_milliseconds: signed.payload.startedAtUnixMilliseconds,
         completed_at_milliseconds: signed.payload.completedAtUnixMilliseconds,
       });
+      orderedActionCallIDs.push(action.trace_call_id);
     }
     requireCondition(actionReceipts.mutation.readback.value.value !== baseline.value.value,
       `Agent ${target.label} mutation did not change the baseline`);
@@ -448,6 +680,14 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
   requireCondition(usedCallIDs.size === 4
     && sameJSON([...usedCallIDs].sort(), [...trace.dispatchedCallIDs].sort()),
   'Agent trace must contain exactly the four mapped dispatched mutation call IDs');
+  requireCondition(orderedActionCallIDs.every((callID, index) => index === 0
+    || trace.entryIndexByID.get(orderedActionCallIDs[index - 1])
+      < trace.entryIndexByID.get(callID)),
+  'Agent trace does not follow the signed target-a then target-b mutate/restore task order');
+  requireCondition(actionIntervals.every((entry, index) => index === 0
+    || actionIntervals[index - 1].completed_at_milliseconds
+      < entry.started_at_milliseconds),
+  'Agent signed mutation intervals do not follow the task action order');
   for (const [bundlePath, item] of corpus.entries()) {
     if (usedBundlePaths.has(bundlePath)) continue;
     requireCondition(item.payload.outcome?.mutation_dispatched !== true
@@ -679,11 +919,11 @@ export function validateConcurrentRunSpec(spec, outputPath, {
     && new Set(plan.bridge.trusted_host_team_ids).size === plan.bridge.trusted_host_team_ids.length,
   'live-v4 plan Bridge trust policy is invalid');
   requirePrivateDirectory(spec.agent_run_root, 'Agent execution run root');
-  const agentTask = readStableFile(spec.agent_task, 'Agent task');
-  const taskText = agentTask.bytes.toString('utf8').replace(/\n$/, '');
-  requireCondition(taskText.length > 0 && !taskText.includes('\0')
-    && Buffer.from(`${taskText}\n`, 'utf8').equals(agentTask.bytes),
-  'Agent task must contain exact UTF-8 task text plus one terminal newline');
+  const agentTask = parseAgentTaskContract(
+    readStableFile(spec.agent_task, 'Agent task'),
+    plan,
+  );
+  const taskText = agentTask.text;
   const agentExecutable = requireStableExecutable(plan.peekaboo_executable, 'Agent executable', {
     allowRootOwner: true,
   });
@@ -786,6 +1026,7 @@ export function validateConcurrentRunSpec(spec, outputPath, {
     operation,
     plan,
     corpus,
+    agentTask,
   );
   const cuPerformAt = performReadback.value.observed_at_milliseconds;
   requireCondition(readbacks.action_intervals.some((entry) => (
@@ -835,6 +1076,7 @@ export function validateConcurrentRunSpec(spec, outputPath, {
       acknowledged_at_milliseconds: terminal.response.acknowledgedAt,
       released_at_milliseconds: terminal.response.releasedAt,
       terminal_observation_ended_at_milliseconds: terminal.response.terminalObservationEndedAt,
+      task_contract: projectAgentTaskContractReport(agentTask, terminal),
       readbacks_sha256: readbacks.retained.sha256,
       controlled_fixture_targets: readbacks.controlled_fixture_targets,
       mutation_families: readbacks.mutation_families,

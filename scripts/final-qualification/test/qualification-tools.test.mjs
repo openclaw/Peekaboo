@@ -2008,13 +2008,24 @@ function heldPointerClientID(executionNonce) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function traceEntry(id, name, pid, windowID) {
+function traceEntry(id, name, pid, windowID, arguments_ = null) {
   return {
-    id, name, arguments: { pid, window_id: windowID, foreground: false },
+    id,
+    name,
+    arguments: arguments_ ?? { pid, window_id: windowID, foreground: false },
     result: { success: true, mutation_dispatched: true, mutation_dispatch: 'dispatched' },
     isError: false, disposition: 'executed/succeeded', mutationDispatch: 'dispatched',
     actionOutcome: actionOutcome(),
   };
+}
+
+function signedOperationRequestFixture(operation, traceArguments) {
+  const [requestCase, payload] = operation === 'setValue'
+    ? ['setValue', { target: traceArguments.on, snapshotId: traceArguments.snapshot }]
+    : ['exactWindowTargetedTypeActions', { snapshotId: traceArguments.snapshot ?? null }];
+  return canonicalBytes({
+    projectedAction: { _0: { request: { [requestCase]: { _0: payload } } } },
+  }).toString('base64');
 }
 
 let fixtureRequestCounter = 1;
@@ -2031,6 +2042,7 @@ function signedBundleFixture(root, name, operation, targetValue, startedAt, comp
   targetAbsent = false,
   outcome = null,
   outcomeAttested = mutating,
+  traceArguments = {},
 } = {}) {
   const requestOrdinal = fixtureRequestCounter++;
   const requestID = `00000000-0000-4000-8000-${String(requestOrdinal).padStart(12, '0')}`;
@@ -2065,7 +2077,10 @@ function signedBundleFixture(root, name, operation, targetValue, startedAt, comp
       requires_fresh_observation: false,
     }),
   };
-  const bundle = writeJSON(path.join(directory, `${name}-bundle.json`), { receipt: { payload } });
+  const bundle = writeJSON(path.join(directory, `${name}-bundle.json`), {
+    receipt: { payload },
+    canonicalRequest: signedOperationRequestFixture(operation, traceArguments),
+  });
   const validator = writeJSON(path.join(root, `${name}-validator.json`), {
     success: true,
     data: {
@@ -2273,9 +2288,55 @@ function semanticReadbackFixture(root, name, targetValue, phase, value, observed
   return filePath;
 }
 
+function agentTaskContractFixture(targetA, targetB) {
+  const steps = (baseline, mutationFamily, mutated, restorationFamily) => [
+    { phase: 'baseline', expected_value: baseline },
+    { phase: 'mutate', family: mutationFamily, expected_value: mutated },
+    { phase: 'verify-mutated', expected_value: mutated },
+    { phase: 'restore', family: restorationFamily, expected_value: baseline },
+    { phase: 'verify-restored', expected_value: baseline },
+  ];
+  return {
+    version: 1,
+    kind: 'peekaboo-concurrent-agent-qualification',
+    goal: 'two-target-background-mutate-verify-restore-with-concurrent-cu',
+    constraints: {
+      delivery_mode: 'background',
+      foreground: 'forbidden',
+      progress_interleaving: 'before-and-after-integrated-cu',
+      shell: 'forbidden',
+      skips_and_failures: 'forbidden',
+    },
+    targets: [
+      {
+        label: 'target-a',
+        target: structuredClone(targetA),
+        steps: steps('alpha', 'set_value', 'alpha!', 'set_value'),
+      },
+      {
+        label: 'target-b',
+        target: structuredClone(targetB),
+        steps: steps('beta', 'paste', 'beta!', 'type'),
+      },
+    ],
+    postconditions: {
+      all_targets_restored: true,
+      cleanup: 'restore-exact-baselines',
+      exact_dispatched_mutation_count: 4,
+      exact_target_count: 2,
+      minimum_primary_mutation_family_count: 2,
+      novel_restoration_family_required: true,
+      target_b_distinct_restoration_family: true,
+    },
+  };
+}
+
 function concurrentFixture(root, {
   agentFinishesBeforeIntegratedCU = false,
   agentTouchesIntegratedCUBoundary = false,
+  taskTextOverride = null,
+  taskContractMutator = null,
+  taskEncoding = 'canonical',
 } = {}) {
   const runRoot = privateDirectory(root, 'run');
   const monitorDirectory = privateDirectory(runRoot, 'monitor');
@@ -2287,6 +2348,8 @@ function concurrentFixture(root, {
   const operationsComplete = now - 2000;
   const foregroundTarget = target(203, '203001', 303);
   const sentinel = target(204, '204001', 304, 500);
+  const targetA = { pid: 301, start_identity: '301001', window_id: 401 };
+  const targetB = { pid: 302, start_identity: '302001', window_id: 402 };
   const planValue = {
     version: 1,
     peekaboo_executable: agentExecutable,
@@ -2412,19 +2475,28 @@ function concurrentFixture(root, {
     execution_plan_sha256: sha256(fs.readFileSync(plan)),
     execution_staged: true,
   });
-  const taskText = 'Operate only through Peekaboo background tools on two exact controlled windows.';
+  const taskContract = agentTaskContractFixture(targetA, targetB);
+  if (taskContractMutator !== null) taskContractMutator(taskContract);
+  const encodedTask = taskEncoding === 'pretty'
+    ? JSON.stringify(taskContract, null, 2)
+    : canonicalBytes(taskContract).toString('utf8');
+  const taskText = taskTextOverride ?? encodedTask;
   const taskPath = writeFile(path.join(root, 'agent-task.txt'), `${taskText}\n`, 0o400);
   const agentRunRoot = privateDirectory(root, 'agent-run-root');
   const agentReceipts = privateDirectory(agentRunRoot, 'agent-operation-receipts');
+  const traceArguments = {
+    aMutate: { on: 'fixture-a', snapshot: 'snapshot-a' },
+    aRestore: { on: 'fixture-a', snapshot: 'snapshot-a-restore' },
+    bMutate: { pid: 302, window_id: 402, foreground: false },
+    bRestore: { on: 'fixture-b', snapshot: 'snapshot-b-restore' },
+  };
   const entries = [
-    traceEntry('a-mutate', 'set_value', 301, 401),
-    traceEntry('a-restore', 'set_value', 301, 401),
-    traceEntry('b-mutate', 'paste', 302, 402),
-    traceEntry('b-restore', 'type', 302, 402),
+    traceEntry('a-mutate', 'set_value', 301, 401, traceArguments.aMutate),
+    traceEntry('a-restore', 'set_value', 301, 401, traceArguments.aRestore),
+    traceEntry('b-mutate', 'paste', 302, 402, traceArguments.bMutate),
+    traceEntry('b-restore', 'type', 302, 402, traceArguments.bRestore),
   ];
   const agentTrace = { entries, totalCallCount: entries.length, truncated: false };
-  const targetA = { pid: 301, start_identity: '301001', window_id: 401 };
-  const targetB = { pid: 302, start_identity: '302001', window_id: 402 };
   const agentClient = {
     pid: 901,
     start_identity: '901001',
@@ -2464,11 +2536,11 @@ function concurrentFixture(root, {
   );
   const bundleA = signedBundleFixture(
     root, 'a-mutate', 'setValue', targetA, operationsStart + 100, operationsStart + 200,
-    { directory: agentReceipts, client: agentClient },
+    { directory: agentReceipts, client: agentClient, traceArguments: traceArguments.aMutate },
   );
   const bundleARestore = signedBundleFixture(
     root, 'a-restore', 'setValue', targetA, operationsStart + 300, operationsStart + 400,
-    { directory: agentReceipts, client: agentClient },
+    { directory: agentReceipts, client: agentClient, traceArguments: traceArguments.aRestore },
   );
   const bundleB = signedBundleFixture(
     root, 'b-mutate', 'exactWindowTargetedTypeActions', targetB,
@@ -2478,7 +2550,7 @@ function concurrentFixture(root, {
     operationsStart + (agentFinishesBeforeIntegratedCU
       ? 440
       : agentTouchesIntegratedCUBoundary ? 490 : 650),
-    { directory: agentReceipts, client: agentClient },
+    { directory: agentReceipts, client: agentClient, traceArguments: traceArguments.bMutate },
   );
   const bundleBRestore = signedBundleFixture(
     root, 'b-restore', 'exactWindowTargetedTypeActions', targetB,
@@ -2488,7 +2560,7 @@ function concurrentFixture(root, {
     operationsStart + (agentFinishesBeforeIntegratedCU
       ? 480
       : agentTouchesIntegratedCUBoundary ? 550 : 850),
-    { directory: agentReceipts, client: agentClient },
+    { directory: agentReceipts, client: agentClient, traceArguments: traceArguments.bRestore },
   );
   const action = (id, family, readbackPath, bundle) => ({
     trace_call_id: id,
@@ -2604,6 +2676,48 @@ function mutateAgentTerminalBundle(spec, mutate) {
   writeJSON(spec.agent_execution_validator_report, validator);
 }
 
+function substituteAgentTerminalTask(spec, taskText) {
+  const bundle = JSON.parse(fs.readFileSync(spec.agent_execution_bundle));
+  const requestWire = JSON.parse(Buffer.from(bundle.canonicalRequest, 'base64'));
+  const responseWire = JSON.parse(Buffer.from(bundle.canonicalResponse, 'base64'));
+  const request = requestWire.projectedAction._0.request.agentExecutionTrace._0;
+  const response = responseWire.projectedAction._0.response.agentExecutionTrace._0;
+  request.task = taskText;
+  const taskSHA256 = sha256(Buffer.from(taskText, 'utf8'));
+  response.taskSHA256 = taskSHA256;
+  response.arguments[2] = taskText;
+  response.argumentsSHA256 = sha256(canonicalBytes(response.arguments));
+  const acknowledgement = JSON.parse(Buffer.from(response.acknowledgement.bytes, 'base64'));
+  acknowledgement.taskSHA256 = taskSHA256;
+  acknowledgement.argumentsSHA256 = response.argumentsSHA256;
+  const acknowledgementBytes = canonicalBytes(acknowledgement);
+  writeFile(response.acknowledgementPath, acknowledgementBytes);
+  response.acknowledgement = {
+    bytes: acknowledgementBytes.toString('base64'),
+    sha256: sha256(acknowledgementBytes),
+    byteCount: acknowledgementBytes.length,
+    truncated: false,
+    readErrorCode: null,
+  };
+  const requestBytes = canonicalBytes(requestWire);
+  const responseBytes = canonicalBytes(responseWire);
+  bundle.canonicalRequest = requestBytes.toString('base64');
+  bundle.canonicalResponse = responseBytes.toString('base64');
+  bundle.receipt.payload.requestSHA256 = sha256(requestBytes);
+  bundle.receipt.payload.responseSHA256 = sha256(responseBytes);
+  fs.chmodSync(spec.agent_task, 0o600);
+  writeFile(spec.agent_task, `${taskText}\n`, 0o400);
+  writeJSON(spec.agent_execution_bundle, bundle);
+  const plan = JSON.parse(fs.readFileSync(spec.plan));
+  const validator = JSON.parse(fs.readFileSync(spec.agent_execution_validator_report));
+  validator.data = fixtureAuthenticatedBundle({
+    bundlePath: spec.agent_execution_bundle,
+    expectedHost: plan.bridge.expected_host,
+  });
+  writeJSON(spec.agent_execution_validator_report, validator);
+  return { response, taskSHA256 };
+}
+
 function resealAgentTarget(fixture, targetIndex, replacement) {
   const readbackMap = JSON.parse(fs.readFileSync(fixture.spec.agent_readbacks));
   const targetEntry = readbackMap.targets[targetIndex];
@@ -2651,6 +2765,106 @@ function resealAgentTarget(fixture, targetIndex, replacement) {
   writeJSON(fixture.spec.agent_readbacks, readbackMap);
 }
 
+test('post-run validator rejects signed-consistent complex Agent-task substitutions', async (t) => {
+  const cases = [
+    {
+      name: 'empty task',
+      options: { taskTextOverride: '' },
+      error: /closed UTF-8 JSON contract/,
+    },
+    {
+      name: 'plausible but unstructured task',
+      options: {
+        taskTextOverride: 'Operate safely in the background on two controlled windows and restore them.',
+      },
+      error: /closed machine-readable JSON contract/,
+    },
+    {
+      name: 'empty semantic goal',
+      options: {
+        taskContractMutator: (contract) => {
+          contract.goal = '';
+        },
+      },
+      error: /goal is not the closed concurrent qualification goal/,
+    },
+    {
+      name: 'open task contract',
+      options: {
+        taskContractMutator: (contract) => {
+          contract.caller_claim = true;
+        },
+      },
+      error: /Agent task contract keys are not closed/,
+    },
+    {
+      name: 'noncanonical task encoding',
+      options: { taskEncoding: 'pretty' },
+      error: /canonical JSON encoding/,
+    },
+    {
+      name: 'plausible but wrong expected value',
+      options: {
+        taskContractMutator: (contract) => {
+          contract.targets[0].steps[1].expected_value = 'alpha?';
+          contract.targets[0].steps[2].expected_value = 'alpha?';
+        },
+      },
+      error: /mutation readback differs from its signed task expected value/,
+    },
+    {
+      name: 'cross-target expectation substitution',
+      options: {
+        taskContractMutator: (contract) => {
+          const firstValues = contract.targets[0].steps.map((step) => step.expected_value);
+          const secondValues = contract.targets[1].steps.map((step) => step.expected_value);
+          contract.targets[0].steps.forEach((step, index) => {
+            step.expected_value = secondValues[index];
+          });
+          contract.targets[1].steps.forEach((step, index) => {
+            step.expected_value = firstValues[index];
+          });
+        },
+      },
+      error: /baseline differs from its signed task expectation/,
+    },
+    {
+      name: 'task-goal substitution',
+      options: {
+        taskContractMutator: (contract) => {
+          contract.goal = 'observe-two-controlled-targets-and-report';
+        },
+      },
+      error: /goal is not the closed concurrent qualification goal/,
+    },
+    {
+      name: 'non-novel restoration family',
+      options: {
+        taskContractMutator: (contract) => {
+          contract.targets[1].steps[3].family = 'set_value';
+        },
+      },
+      error: /restoration family outside the primary mutations/,
+    },
+  ];
+  for (const item of cases) {
+    await t.test(item.name, () => {
+      const root = fs.mkdtempSync('/private/tmp/pbq-tools-task-contract-');
+      fs.chmodSync(root, 0o700);
+      try {
+        const fix = concurrentFixture(root, item.options);
+        const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
+        assert.throws(
+          () => validateConcurrentRun(specPath, path.join(root, 'invalid-task-report.json')),
+          item.error,
+        );
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 test('post-run validator requires zero exits, exact Agent generation, background trace, restoration, and overlap', () => {
   const root = fs.mkdtempSync('/private/tmp/pbq-tools-validate-');
   fs.chmodSync(root, 0o700);
@@ -2660,6 +2874,14 @@ test('post-run validator requires zero exits, exact Agent generation, background
     const output = path.join(root, 'validation-report.json');
     const result = validateConcurrentRun(specPath, output);
     assert.equal(result.report.passed, true);
+    const taskFileBytes = fs.readFileSync(fix.spec.agent_task);
+    const signedTaskBytes = taskFileBytes.subarray(0, taskFileBytes.length - 1);
+    assert.equal(result.report.agent.task_contract.task_file_sha256, sha256(taskFileBytes));
+    assert.equal(result.report.agent.task_contract.signed_task_sha256, sha256(signedTaskBytes));
+    assert.equal(
+      result.report.agent.task_contract.semantic_contract_sha256,
+      sha256(canonicalBytes(JSON.parse(signedTaskBytes.toString('utf8')))),
+    );
     assert.deepEqual(result.report.agent.mutation_families, ['paste', 'set_value']);
     assert.equal(result.report.overlap.agent_covers_operation_interval, true);
     assert.equal(
@@ -2914,6 +3136,51 @@ test('post-run validator rejects trace remapping through a copied signed receipt
   }
 });
 
+test('post-run validator binds every allowed trace target to its signed Bridge request', async (t) => {
+  const cases = [
+    {
+      name: 'set-value snapshot substitution',
+      index: 0,
+      mutate: (arguments_) => { arguments_.snapshot = 'substituted-set-value-snapshot'; },
+      error: /trace selectors differ from the signed Bridge request/,
+    },
+    {
+      name: 'paste exact-target substitution',
+      index: 2,
+      mutate: (arguments_) => {
+        arguments_.pid = 999;
+        arguments_.window_id = 1999;
+      },
+      error: /exact trace target differs from the signed Bridge request target/,
+    },
+    {
+      name: 'type snapshot substitution',
+      index: 3,
+      mutate: (arguments_) => { arguments_.snapshot = 'substituted-type-snapshot'; },
+      error: /trace snapshot differs from the signed Bridge request/,
+    },
+  ];
+  for (const testCase of cases) {
+    await t.test(testCase.name, () => {
+      const root = fs.mkdtempSync('/private/tmp/pbq-tools-trace-request-binding-');
+      fs.chmodSync(root, 0o700);
+      try {
+        const fix = concurrentFixture(root);
+        mutateAgentTerminalBundle(fix.spec, ({ stdoutRoot }) => {
+          testCase.mutate(stdoutRoot.result.executionTrace.entries[testCase.index].arguments);
+        });
+        const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
+        assert.throws(
+          () => validateConcurrentRun(specPath, path.join(root, 'binding-substitution-report.json')),
+          testCase.error,
+        );
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 test('post-run validator requires one closed successful certification summary', () => {
   const root = fs.mkdtempSync('/private/tmp/pbq-tools-summary-');
   fs.chmodSync(root, 0o700);
@@ -3146,6 +3413,29 @@ test('post-run validator requires positive signed durations and strict readback 
       assert.throws(
         () => validateConcurrentRun(specPath, path.join(root, 'equal-readback-report.json')),
         /does not strictly follow its signed dispatch/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('cross-target signed interval overlap', () => {
+    const root = fs.mkdtempSync('/private/tmp/pbq-tools-overlapping-actions-');
+    fs.chmodSync(root, 0o700);
+    try {
+      const fix = concurrentFixture(root);
+      const firstPayload = JSON.parse(
+        fs.readFileSync(fix.agentBundles[0].bundle_path),
+      ).receipt.payload;
+      const operationsStart = firstPayload.startedAtUnixMilliseconds - 100;
+      mutateFixtureBundle(fix.spec, fix.agentBundles[2], (payload) => {
+        payload.startedAtUnixMilliseconds = operationsStart + 360;
+        payload.completedAtUnixMilliseconds = operationsStart + 390;
+      });
+      const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
+      assert.throws(
+        () => validateConcurrentRun(specPath, path.join(root, 'overlapping-actions-report.json')),
+        /signed mutation intervals do not follow the task action order/,
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -4289,6 +4579,150 @@ test('qualification manifest closes every required evidence class and detects by
     );
     writeFile(concurrent.spec.agent_execution_bundle, retainedTerminalBundle);
     writeFile(concurrent.spec.agent_execution_validator_report, retainedTerminalValidator);
+    const traceSelectorInput = structuredClone(inputValue);
+    mutateAgentTerminalBundle(concurrent.spec, ({ stdoutRoot }) => {
+      stdoutRoot.result.executionTrace.entries[0].arguments.snapshot
+        = 'manifest-substituted-snapshot';
+    });
+    const traceSelectorBundle = JSON.parse(fs.readFileSync(
+      concurrent.spec.agent_execution_bundle,
+    ));
+    const traceSelectorResponseWire = JSON.parse(Buffer.from(
+      traceSelectorBundle.canonicalResponse,
+      'base64',
+    ));
+    const traceSelectorResponse = traceSelectorResponseWire.projectedAction._0.response
+      .agentExecutionTrace._0;
+    const traceSelectorConcurrent = structuredClone(concurrentValue);
+    traceSelectorConcurrent.agent.terminal_bundle_sha256 = sha256(fs.readFileSync(
+      concurrent.spec.agent_execution_bundle,
+    ));
+    traceSelectorConcurrent.agent.terminal_validator_report_sha256 = sha256(fs.readFileSync(
+      concurrent.spec.agent_execution_validator_report,
+    ));
+    traceSelectorConcurrent.agent.stdout_sha256 = traceSelectorResponse.stdout.sha256;
+    traceSelectorInput.agent_cu.validation_report = writeJSON(
+      path.join(root, 'trace-selector-substitution-concurrent.json'),
+      traceSelectorConcurrent,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'trace-selector-substitution-input.json'), traceSelectorInput),
+        path.join(root, 'trace-selector-substitution-manifest.json'),
+      ),
+      /trace selectors differ from the signed Bridge request/,
+    );
+    writeFile(concurrent.spec.agent_execution_bundle, retainedTerminalBundle);
+    writeFile(concurrent.spec.agent_execution_validator_report, retainedTerminalValidator);
+    const retainedAgentTask = fs.readFileSync(concurrent.spec.agent_task);
+    const retainedAgentAcknowledgement = fs.readFileSync(
+      path.join(concurrent.spec.agent_run_root, 'agent-execution-ack.json'),
+    );
+    const arbitraryTaskContract = JSON.parse(retainedAgentTask);
+    arbitraryTaskContract.goal = 'arbitrary-signed-goal';
+    const arbitraryTaskText = canonicalBytes(arbitraryTaskContract).toString('utf8');
+    const substitutedTask = substituteAgentTerminalTask(concurrent.spec, arbitraryTaskText);
+    const arbitraryTaskInput = structuredClone(inputValue);
+    const arbitraryTaskConcurrent = structuredClone(concurrentValue);
+    arbitraryTaskConcurrent.agent.terminal_bundle_sha256 = sha256(fs.readFileSync(
+      concurrent.spec.agent_execution_bundle,
+    ));
+    arbitraryTaskConcurrent.agent.terminal_validator_report_sha256 = sha256(fs.readFileSync(
+      concurrent.spec.agent_execution_validator_report,
+    ));
+    arbitraryTaskConcurrent.agent.acknowledgement_sha256
+      = substitutedTask.response.acknowledgement.sha256;
+    arbitraryTaskConcurrent.agent.task_contract.task_file_sha256 = sha256(fs.readFileSync(
+      concurrent.spec.agent_task,
+    ));
+    arbitraryTaskConcurrent.agent.task_contract.signed_task_sha256 = substitutedTask.taskSHA256;
+    arbitraryTaskConcurrent.agent.task_contract.semantic_contract_sha256
+      = substitutedTask.taskSHA256;
+    arbitraryTaskInput.agent_cu.validation_report = writeJSON(
+      path.join(root, 'arbitrary-signed-task-concurrent.json'),
+      arbitraryTaskConcurrent,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'arbitrary-signed-task-input.json'), arbitraryTaskInput),
+        path.join(root, 'arbitrary-signed-task-manifest.json'),
+      ),
+      /goal is not the closed concurrent qualification goal/,
+    );
+    fs.chmodSync(concurrent.spec.agent_task, 0o600);
+    writeFile(concurrent.spec.agent_task, retainedAgentTask, 0o400);
+    writeFile(
+      path.join(concurrent.spec.agent_run_root, 'agent-execution-ack.json'),
+      retainedAgentAcknowledgement,
+    );
+    writeFile(concurrent.spec.agent_execution_bundle, retainedTerminalBundle);
+    writeFile(concurrent.spec.agent_execution_validator_report, retainedTerminalValidator);
+    for (const taskMismatch of [
+      {
+        name: 'signed-task-value-mismatch',
+        mutateTask: (task) => {
+          task.targets[0].steps[1].expected_value = 'signed-alpha-different';
+          task.targets[0].steps[2].expected_value = 'signed-alpha-different';
+        },
+        mutateReport: (report) => {
+          report.agent.task_contract.target_expectations[0].mutated_value_sha256
+            = sha256(Buffer.from('signed-alpha-different'));
+        },
+        error: /readback differs from (?:its signed task expected value|its authenticated task expectation)/,
+      },
+      {
+        name: 'signed-task-per-target-family-swap',
+        mutateTask: (task) => {
+          task.targets[0].steps[1].family = 'paste';
+          task.targets[1].steps[1].family = 'set_value';
+        },
+        mutateReport: (report) => {
+          report.agent.task_contract.target_expectations[0].mutation_family = 'paste';
+          report.agent.task_contract.target_expectations[1].mutation_family = 'set_value';
+        },
+        error: /family differs from its signed task contract|differs from its signed terminal trace/,
+      },
+    ]) {
+      const task = JSON.parse(retainedAgentTask);
+      taskMismatch.mutateTask(task);
+      const taskText = canonicalBytes(task).toString('utf8');
+      const substituted = substituteAgentTerminalTask(concurrent.spec, taskText);
+      const mismatchInput = structuredClone(inputValue);
+      const mismatchConcurrent = structuredClone(concurrentValue);
+      mismatchConcurrent.agent.terminal_bundle_sha256 = sha256(fs.readFileSync(
+        concurrent.spec.agent_execution_bundle,
+      ));
+      mismatchConcurrent.agent.terminal_validator_report_sha256 = sha256(fs.readFileSync(
+        concurrent.spec.agent_execution_validator_report,
+      ));
+      mismatchConcurrent.agent.acknowledgement_sha256
+        = substituted.response.acknowledgement.sha256;
+      mismatchConcurrent.agent.task_contract.task_file_sha256 = sha256(fs.readFileSync(
+        concurrent.spec.agent_task,
+      ));
+      mismatchConcurrent.agent.task_contract.signed_task_sha256 = substituted.taskSHA256;
+      mismatchConcurrent.agent.task_contract.semantic_contract_sha256 = substituted.taskSHA256;
+      taskMismatch.mutateReport(mismatchConcurrent);
+      mismatchInput.agent_cu.validation_report = writeJSON(
+        path.join(root, `${taskMismatch.name}-concurrent.json`),
+        mismatchConcurrent,
+      );
+      assert.throws(
+        () => generateManifest(
+          writeJSON(path.join(root, `${taskMismatch.name}-input.json`), mismatchInput),
+          path.join(root, `${taskMismatch.name}-manifest.json`),
+        ),
+        taskMismatch.error,
+      );
+      fs.chmodSync(concurrent.spec.agent_task, 0o600);
+      writeFile(concurrent.spec.agent_task, retainedAgentTask, 0o400);
+      writeFile(
+        path.join(concurrent.spec.agent_run_root, 'agent-execution-ack.json'),
+        retainedAgentAcknowledgement,
+      );
+      writeFile(concurrent.spec.agent_execution_bundle, retainedTerminalBundle);
+      writeFile(concurrent.spec.agent_execution_validator_report, retainedTerminalValidator);
+    }
     const requesterSubstitutionInput = structuredClone(inputValue);
     const requesterSubstitutionConcurrent = structuredClone(concurrentValue);
     requesterSubstitutionConcurrent.agent.requester.pid += 20_000;
@@ -4430,38 +4864,6 @@ test('qualification manifest closes every required evidence class and detects by
       ),
       /does not match its trace family|signed terminal trace does not contain exactly the mapped dispatched calls/,
     );
-    const traceTargetDriftInput = structuredClone(inputValue);
-    mutateAgentTerminalBundle(concurrent.spec, ({ stdoutRoot }) => {
-      stdoutRoot.result.executionTrace.entries[0].arguments.pid += 1;
-    });
-    const traceTargetDriftBundle = JSON.parse(fs.readFileSync(
-      concurrent.spec.agent_execution_bundle,
-    ));
-    const traceTargetDriftResponse = JSON.parse(Buffer.from(
-      traceTargetDriftBundle.canonicalResponse,
-      'base64',
-    )).projectedAction._0.response.agentExecutionTrace._0;
-    const traceTargetDriftConcurrent = structuredClone(concurrentValue);
-    traceTargetDriftConcurrent.agent.terminal_bundle_sha256 = sha256(fs.readFileSync(
-      concurrent.spec.agent_execution_bundle,
-    ));
-    traceTargetDriftConcurrent.agent.terminal_validator_report_sha256 = sha256(fs.readFileSync(
-      concurrent.spec.agent_execution_validator_report,
-    ));
-    traceTargetDriftConcurrent.agent.stdout_sha256 = traceTargetDriftResponse.stdout.sha256;
-    traceTargetDriftInput.agent_cu.validation_report = writeJSON(
-      path.join(root, 'trace-target-drift-concurrent.json'),
-      traceTargetDriftConcurrent,
-    );
-    assert.throws(
-      () => generateManifest(
-        writeJSON(path.join(root, 'trace-target-drift-input.json'), traceTargetDriftInput),
-        path.join(root, 'trace-target-drift-manifest.json'),
-      ),
-      /trace lacks the exact PID\/window|differs from its signed terminal trace/,
-    );
-    writeFile(concurrent.spec.agent_execution_bundle, retainedTerminalBundle);
-    writeFile(concurrent.spec.agent_execution_validator_report, retainedTerminalValidator);
     const extraShellInput = structuredClone(inputValue);
     mutateAgentTerminalBundle(concurrent.spec, ({ stdoutRoot }) => {
       stdoutRoot.result.executionTrace.entries.push({

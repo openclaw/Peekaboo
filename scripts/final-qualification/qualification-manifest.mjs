@@ -9,6 +9,13 @@ import {
   validateSuccessfulCertificationSummary,
 } from '../finalize-multi-target-certification.mjs';
 import {
+  AGENT_TASK_CONSTRAINTS,
+  AGENT_TASK_GOAL,
+  AGENT_TASK_KIND,
+  AGENT_TASK_POSTCONDITIONS,
+  parseAgentTaskContract,
+  projectAgentTaskContractReport,
+  validateAgentTraceOperationBinding,
   validateConcurrentRunSpec,
   validateCoordinatorExecutionEvidence,
 } from './validate-concurrent-run.mjs';
@@ -1314,7 +1321,7 @@ function semanticConcurrentValidation(filePath) {
     'stderr_sha256', 'coordination_receipt_sha256', 'acknowledgement_sha256',
     'spawned_at_milliseconds', 'coordination_published_at_milliseconds',
     'acknowledged_at_milliseconds', 'released_at_milliseconds',
-    'terminal_observation_ended_at_milliseconds', 'readbacks_sha256',
+    'terminal_observation_ended_at_milliseconds', 'task_contract', 'readbacks_sha256',
     'controlled_fixture_targets', 'mutation_families', 'mapped_call_ids',
     'signed_bundle_count', 'signed_bundles', 'semantic_readbacks', 'trace_entry_count',
     'progress_interleaving',
@@ -1360,6 +1367,56 @@ function semanticConcurrentValidation(filePath) {
     `${binding.target.pid}:${binding.target.start_identity}:${binding.target.window_id}`
   ))).size === controlledFixtureTargets.length,
   'Agent/CU concurrent validation report controlled fixture targets are not distinct');
+  const taskContract = value.agent.task_contract;
+  exactKeys(taskContract, [
+    'version', 'kind', 'goal', 'task_file_sha256', 'signed_task_sha256',
+    'semantic_contract_sha256', 'constraints', 'postconditions', 'target_expectations',
+  ], 'Agent/CU concurrent validation report task contract');
+  exactKeys(taskContract.constraints, Object.keys(AGENT_TASK_CONSTRAINTS),
+    'Agent/CU concurrent validation report task constraints');
+  exactKeys(taskContract.postconditions, Object.keys(AGENT_TASK_POSTCONDITIONS),
+    'Agent/CU concurrent validation report task postconditions');
+  requireCondition(taskContract.version === 1
+    && taskContract.kind === AGENT_TASK_KIND
+    && taskContract.goal === AGENT_TASK_GOAL
+    && SHA256.test(taskContract.task_file_sha256 ?? '')
+    && SHA256.test(taskContract.signed_task_sha256 ?? '')
+    && SHA256.test(taskContract.semantic_contract_sha256 ?? '')
+    && taskContract.signed_task_sha256 === taskContract.semantic_contract_sha256
+    && sameJSON(taskContract.constraints, AGENT_TASK_CONSTRAINTS)
+    && sameJSON(taskContract.postconditions, AGENT_TASK_POSTCONDITIONS),
+  'Agent/CU concurrent validation report task contract is not closed');
+  requireCondition(Array.isArray(taskContract.target_expectations)
+    && taskContract.target_expectations.length === 2,
+  'Agent/CU concurrent validation report task contract lacks two expectations');
+  const contractMutationFamilies = new Set();
+  const contractRestorationFamilies = new Set();
+  taskContract.target_expectations.forEach((expectation, index) => {
+    exactKeys(expectation, [
+      'label', 'target', 'baseline_value_sha256', 'mutation_family',
+      'mutated_value_sha256', 'restoration_family', 'restored_value_sha256',
+    ], `Agent/CU concurrent validation report task expectation ${index}`);
+    requireCondition(expectation.label === controlledFixtureTargets[index].label
+      && sameJSON(expectation.target, controlledFixtureTargets[index].target)
+      && SHA256.test(expectation.baseline_value_sha256 ?? '')
+      && SHA256.test(expectation.mutated_value_sha256 ?? '')
+      && SHA256.test(expectation.restored_value_sha256 ?? '')
+      && expectation.baseline_value_sha256 === expectation.restored_value_sha256
+      && expectation.mutated_value_sha256 !== expectation.baseline_value_sha256
+      && expectation.mutation_family === normalizedAgentToolName(expectation.mutation_family)
+      && expectation.restoration_family
+        === normalizedAgentToolName(expectation.restoration_family)
+      && isAgentMutatingToolName(expectation.mutation_family)
+      && isAgentMutatingToolName(expectation.restoration_family),
+    `Agent/CU concurrent validation report task expectation ${index} is invalid`);
+    contractMutationFamilies.add(expectation.mutation_family);
+    contractRestorationFamilies.add(expectation.restoration_family);
+  });
+  requireCondition(contractMutationFamilies.size >= 2
+    && taskContract.target_expectations[1].mutation_family
+      !== taskContract.target_expectations[1].restoration_family
+    && [...contractRestorationFamilies].some((family) => !contractMutationFamilies.has(family)),
+  'Agent/CU concurrent validation report task families are not diverse');
   const overlap = value.overlap;
   requireCondition(value.version === 1 && value.passed === true
     && value.coordinator?.exit_code === 0
@@ -1407,6 +1464,7 @@ function semanticConcurrentValidation(filePath) {
     && Array.isArray(value.agent?.mapped_call_ids) && value.agent.mapped_call_ids.length === 4
     && new Set(value.agent.mapped_call_ids).size === 4
     && Array.isArray(value.agent?.mutation_families) && value.agent.mutation_families.length >= 2
+    && sameJSON([...contractMutationFamilies].sort(), value.agent.mutation_families)
     && Number.isSafeInteger(value.agent?.progress_interleaving?.integrated_cu_perform_at_milliseconds)
     && Number.isSafeInteger(
       value.agent?.progress_interleaving?.integrated_cu_perform_readback_mtime_milliseconds,
@@ -1760,6 +1818,20 @@ function retainedAgentTaskAndRequest(taskPath, runRootPath, label) {
   };
 }
 
+function validateConcurrentTaskBinding(task, terminal, concurrent, plan, label) {
+  const parsed = parseAgentTaskContract(task.task, plan);
+  const signedTaskSHA256 = sha256(Buffer.from(task.request.task, 'utf8'));
+  const projected = projectAgentTaskContractReport(parsed, terminal);
+  requireCondition(task.request.task === parsed.text
+    && task.task.sha256 === concurrent.agent.task_contract.task_file_sha256
+    && signedTaskSHA256 === concurrent.agent.task_contract.signed_task_sha256
+    && signedTaskSHA256 === concurrent.agent.task_contract.semantic_contract_sha256
+    && terminal.response.taskSHA256 === signedTaskSHA256
+    && sameJSON(projected, concurrent.agent.task_contract),
+  `${label} independently derived task contract differs from the signed terminal request/report`);
+  return parsed;
+}
+
 function agentBundleAuthentication(plan, terminal, authenticateBundle, label) {
   requireCondition(typeof authenticateBundle === 'function'
     && plan?.bridge && typeof plan.bridge.socket_path === 'string'
@@ -1843,6 +1915,7 @@ function validateConcurrentInterleavingBinding(
   performReadbackPath,
   controlledFixtureTargets,
   terminal,
+  taskContract,
   label,
 ) {
   const readbacks = readStableJSON(agentReadbacksPath, `${label} Agent readback map`).value;
@@ -1868,6 +1941,7 @@ function validateConcurrentInterleavingBinding(
     `${label} Agent bundle paths are not unique`);
   const actionIntervals = [];
   const primaryMutationFamilies = new Set();
+  const traceRequestBindings = new Set();
   for (const [targetIndex, target] of readbacks.targets.entries()) {
     exactKeys(target, [
       'label', 'target', 'baseline_readback_path', 'mutation', 'restoration',
@@ -1879,6 +1953,10 @@ function validateConcurrentInterleavingBinding(
     requireCondition(target.label === controlledFixtureTargets[targetIndex].label
       && sameJSON(expectedTarget, controlledFixtureTargets[targetIndex].target),
     `${label} Agent target ${targetIndex} is not its exact live-v4 controlled fixture target`);
+    const taskExpectation = taskContract.target_expectations[targetIndex];
+    requireCondition(taskExpectation.label === target.label
+      && sameJSON(taskExpectation.target, expectedTarget),
+    `${label} Agent target ${targetIndex} differs from its authenticated task expectation`);
     const baseline = semanticAgentReadback(
       target.baseline_readback_path,
       `${label} Agent target ${targetIndex}.baseline`,
@@ -1887,6 +1965,9 @@ function validateConcurrentInterleavingBinding(
       `${label} Agent target ${targetIndex} baseline phase is invalid`);
     requireCondition(sameJSON(baseline.target, expectedTarget),
       `${label} Agent target ${targetIndex} baseline belongs to another target`);
+    requireCondition(baseline.value_sha256
+      === sha256(Buffer.from(taskExpectation.baseline_value, 'utf8')),
+    `${label} Agent target ${targetIndex} baseline differs from its authenticated task expectation`);
     const actionEvidence = {};
     for (const [kind, phase] of [['mutation', 'mutated'], ['restoration', 'restored']]) {
       const action = target[kind];
@@ -1898,10 +1979,10 @@ function validateConcurrentInterleavingBinding(
         `${label} Agent target ${targetIndex}.${kind} is absent from the bound corpus`);
       const traceEntry = traceByID.get(action.trace_call_id);
       const traceFamily = normalizedAgentToolName(traceEntry?.name);
+      const taskAction = taskExpectation[kind];
       requireCondition(isAgentMutatingToolName(traceFamily)
         && traceFamily === action.family
-        && traceEntry.arguments?.pid === expectedTarget.pid
-        && traceEntry.arguments?.window_id === expectedTarget.window_id
+        && action.family === taskAction.family
         && traceEntry.disposition === 'executed/succeeded'
         && traceEntry.isError === false
         && traceEntry.mutationDispatch === 'dispatched'
@@ -1918,6 +1999,16 @@ function validateConcurrentInterleavingBinding(
         targetFromPayload(pair.payload, `${label} Agent target ${targetIndex}.${kind}`),
         expectedTarget,
       ), `${label} Agent target ${targetIndex}.${kind} signed target differs`);
+      const traceRequestBinding = validateAgentTraceOperationBinding(
+        traceEntry,
+        pair,
+        action.family,
+        expectedTarget,
+        `${label} Agent target ${targetIndex}.${kind}`,
+      );
+      requireCondition(!traceRequestBindings.has(traceRequestBinding),
+        `${label} Agent target ${targetIndex}.${kind} reuses a trace/request binding`);
+      traceRequestBindings.add(traceRequestBinding);
       const startedAt = pair.payload.startedAtUnixMilliseconds;
       const completedAt = pair.payload.completedAtUnixMilliseconds;
       requireCondition(typeof action.trace_call_id === 'string' && action.trace_call_id.length > 0
@@ -1937,6 +2028,9 @@ function validateConcurrentInterleavingBinding(
         `${label} Agent target ${targetIndex}.${kind} readback phase is invalid`);
       requireCondition(sameJSON(readback.target, expectedTarget),
         `${label} Agent target ${targetIndex}.${kind} readback belongs to another target`);
+      requireCondition(readback.value_sha256
+        === sha256(Buffer.from(taskAction.expected_value, 'utf8')),
+      `${label} Agent target ${targetIndex}.${kind} readback differs from its authenticated task expectation`);
       requireCondition(completedAt < readback.observed_at_milliseconds,
         `${label} Agent target ${targetIndex}.${kind} readback does not strictly follow dispatch completion`);
       actionEvidence[kind] = { startedAt, completedAt, readback };
@@ -1961,6 +2055,10 @@ function validateConcurrentInterleavingBinding(
   requireCondition(primaryMutationFamilies.size >= 2
     && sameJSON([...primaryMutationFamilies].sort(), concurrent.agent.mutation_families),
   `${label} mutation families differ from the signed terminal trace/readback map`);
+  requireCondition(actionIntervals.every((entry, index) => index === 0
+    || actionIntervals[index - 1].completed_at_milliseconds
+      < entry.started_at_milliseconds),
+  `${label} signed mutation intervals do not follow the task action order`);
   const retainedPerform = readStableJSON(
     performReadbackPath,
     `${label} integrated-CU perform readback`,
@@ -2674,6 +2772,13 @@ function projectInput(input, authenticateBundle) {
     authenticateBundle,
     label: 'Agent manifest terminal bundle',
   });
+  const agentTaskContract = validateConcurrentTaskBinding(
+    agentTask,
+    terminal,
+    concurrentValue,
+    boundPlanValue,
+    'Agent manifest',
+  );
   const authentication = agentBundleAuthentication(
     boundPlanValue,
     terminal,
@@ -2751,6 +2856,7 @@ function projectInput(input, authenticateBundle) {
     input.agent_cu.perform_readback,
     adjunctBinding.controlledFixtureTargets,
     terminal,
+    agentTaskContract,
     'Agent manifest',
   );
   requireCondition(Array.isArray(input.agent_cu.semantic_readbacks)
@@ -3201,6 +3307,13 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
     authenticateBundle,
     label: 'verified Agent terminal bundle',
   });
+  const verifiedAgentTaskContract = validateConcurrentTaskBinding(
+    verifiedAgentTask,
+    terminal,
+    concurrentValue,
+    verifiedPlanValue,
+    'verified Agent manifest',
+  );
   validateTerminalConcurrentBinding(
     terminal,
     concurrentValue,
@@ -3270,6 +3383,7 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
     evidence.agent_cu.perform_readback.path,
     adjunctBinding.controlledFixtureTargets,
     terminal,
+    verifiedAgentTaskContract,
     'verified Agent manifest',
   );
   const semanticReadbacks = evidence.agent_cu.semantic_readbacks.map((receipt, index) => (

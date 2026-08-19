@@ -185,12 +185,63 @@ The tool accepts only the coordinator's exact phase-dependent window schema, can
 node "$TOOLS/managed-launcher.mjs" --spec "$EVIDENCE_ROOT/coordinator-launch-spec.json"
 ```
 
-The Agent has no separate launcher, invocation receipt, process receipt, or exit receipt. Protocol 1.31 makes the entire Agent lifetime one authenticated Bridge request. Retain the exact task as UTF-8 plus one terminal newline, create a canonical owner-owned mode-0700 run root, and start the hidden qualification adapter in a second attached PTY. Its stdout is the canonical signed terminal bundle:
+The Agent has no separate launcher, invocation receipt, process receipt, or exit receipt. Protocol 1.31 makes the entire Agent lifetime one authenticated Bridge request. The task is not prose: retain one closed version-1 JSON contract as canonical compact UTF-8 plus exactly one terminal newline. Its two ordered targets must be copied from the plan's `controller-a`/`controller-b` controlled-fixture bindings, while each expected value comes from the fresh baseline and intended postcondition for that exact target. The five evidence-checkpoint slots and all fixed constraints/postconditions below are mandatory; do not paraphrase or add keys. The expanded object is shown only for readability: serialize it with `canonicalBytes` from `lib.mjs`, then append one LF. The expanded representation itself is not a valid retained task.
+
+```json
+{
+  "version": 1,
+  "kind": "peekaboo-concurrent-agent-qualification",
+  "goal": "two-target-background-mutate-verify-restore-with-concurrent-cu",
+  "constraints": {
+    "delivery_mode": "background",
+    "foreground": "forbidden",
+    "progress_interleaving": "before-and-after-integrated-cu",
+    "shell": "forbidden",
+    "skips_and_failures": "forbidden"
+  },
+  "targets": [
+    {
+      "label": "target-a",
+      "target": {"pid": 301, "start_identity": "301001", "window_id": 401},
+      "steps": [
+        {"phase": "baseline", "expected_value": "alpha"},
+        {"phase": "mutate", "family": "set_value", "expected_value": "alpha!"},
+        {"phase": "verify-mutated", "expected_value": "alpha!"},
+        {"phase": "restore", "family": "set_value", "expected_value": "alpha"},
+        {"phase": "verify-restored", "expected_value": "alpha"}
+      ]
+    },
+    {
+      "label": "target-b",
+      "target": {"pid": 302, "start_identity": "302001", "window_id": 402},
+      "steps": [
+        {"phase": "baseline", "expected_value": "beta"},
+        {"phase": "mutate", "family": "paste", "expected_value": "beta!"},
+        {"phase": "verify-mutated", "expected_value": "beta!"},
+        {"phase": "restore", "family": "type", "expected_value": "beta"},
+        {"phase": "verify-restored", "expected_value": "beta"}
+      ]
+    }
+  ],
+  "postconditions": {
+    "all_targets_restored": true,
+    "cleanup": "restore-exact-baselines",
+    "exact_dispatched_mutation_count": 4,
+    "exact_target_count": 2,
+    "minimum_primary_mutation_family_count": 2,
+    "novel_restoration_family_required": true,
+    "target_b_distinct_restoration_family": true
+  }
+}
+```
+
+The example identities and values are illustrative; the retained contract must use the current run's plan and readbacks. `mutate` and `restore` are the four Agent dispatches. `baseline`, `verify-mutated`, and `verify-restored` precommit the owner semantic-readback checkpoints that bracket those dispatches; they are not represented as separate Agent trace calls. Create a canonical owner-owned mode-0700 run root, load the task file without its terminal newline into `AGENT_TASK_TEXT`, and start the hidden qualification adapter in a second attached PTY. Its stdout is the canonical signed terminal bundle:
 
 ```bash
 umask 077
 AGENT_RUN_ROOT="$EVIDENCE_ROOT/agent-execution"
 mkdir -m 700 "$AGENT_RUN_ROOT"
+AGENT_TASK_TEXT="$(/bin/cat "$EVIDENCE_ROOT/agent-task.txt")"
 
 "$PEEKABOO_BIN" bridge _agent-execution-trace \
   --task "$AGENT_TASK_TEXT" \
@@ -260,9 +311,9 @@ A fork, exec, or exit observed before authorization, stale readiness, a pre-exis
 
 The coordinator launcher still writes the only standalone invocation and exit receipts. Successful qualification requires its exit code 0 with no signal. The Agent's outer protocol-1.31 terminal bundle replaces every legacy Agent launcher artifact. Live authentication must prove the connected listener, requester, child PID/generation/CDHash, fixed nine-argument background-only invocation, task/run-root/socket commitments, closed environment policy, `processCreationLimit:0`, exact coordination and acknowledgement bytes, and complete bounded stdout/stderr. A successful terminal response must be `processDisposition:"exited"`, exit code 0, no signal, `outputDisposition:"validated_execution_trace"`, and carry an untruncated execution trace identical to the trace decoded from stdout. Any cleanup, wait-anchor, output, or protocol failure is terminal and cannot be resealed by caller-authored JSON. Manifest validation later proves that the lifecycle guard published those exact signed acknowledgement bytes.
 
-`agent-readbacks.json` contains exactly two ordered targets (`target-a`, `target-b`). Each identity must equal the same-ID controlled target already projected into the live-v4 plan for `controller-a` or `controller-b`; an unrelated, swapped, recycled-generation, or different-window claim fails even when every Agent trace, bundle, validator, and readback is consistently resealed. The source-owned final certification summary must independently carry the matching same-ID `target_sha256` over the full exact-window target, and the local/during process tree must contain both PID generations as candidate Playground fixture roots. Each readback entry has exact `{pid,start_identity,window_id}`, `baseline_readback_path`, and `mutation`/`restoration` objects with `{trace_call_id,family,readback_path,bundle_path,validator_report_path}`. Each referenced semantic readback is closed `{version,target,phase,value,observed_at_milliseconds,passed}` with phases `baseline`, `mutated`, or `restored`; hashes are derived from those actual bytes and values, never accepted as caller claims. The baseline observation must strictly precede mutation dispatch, mutation observation must strictly follow mutation completion and precede restoration dispatch, and the restoration observation must strictly follow restoration completion; zero-duration dispatch receipts fail. Every bundle is revalidated by the exact source-bound Peekaboo executable against the exact authenticated live Bridge socket and host policy; the retained validator JSON must equal that fresh result but is never itself a trust anchor. Each signed bundle must carry the Agent PID/start generation as its client, match the trace/readback PID/window and operation family, prove a definite background dispatch, and fall wholly inside `operations-start..operations-complete`. Bundle SHA-256 values, authenticated listener/request identities, and authenticated listener/session/sequence claims are corpus-unique, so copied or hard-linked files cannot provide a second receipt or remap one receipt to another trace call. The receipt-directory inventory and `agent_bundles` list must be identical, including observation bundles; any unlisted or unmapped dispatched bundle fails.
+`agent-readbacks.json` contains exactly two ordered targets (`target-a`, `target-b`). Each identity must equal both the same-ID task-contract target and the controlled target already projected into the live-v4 plan for `controller-a` or `controller-b`; an unrelated, swapped, recycled-generation, or different-window claim fails even when every Agent trace, bundle, validator, task, and readback is consistently resealed. The source-owned final certification summary must independently carry the matching same-ID `target_sha256` over the full exact-window target, and the local/during process tree must contain both PID generations as candidate Playground fixture roots. Each readback entry has exact `{pid,start_identity,window_id}`, `baseline_readback_path`, and `mutation`/`restoration` objects with `{trace_call_id,family,readback_path,bundle_path,validator_report_path}`. Each referenced semantic readback is closed `{version,target,phase,value,observed_at_milliseconds,passed}` with phases `baseline`, `mutated`, or `restored`; hashes are derived from those actual bytes and values, never accepted as caller claims. Those values and operation families must equal the signed task's explicit baseline/mutate/verify/restore/verify expectations. Qualification actions are restricted to `set_value`, `type`, and `paste`: `set_value` and `type` must carry explicit nonempty snapshot selectors, while `paste` must carry the exact PID/window. The validator decodes each authenticated bundle's signed canonical Bridge request and binds those sanitized trace selectors to the signed request; every resulting trace/request binding must be unique. A caller-authored call-ID-to-bundle map therefore cannot substitute a valid target receipt for a trace call aimed elsewhere. The baseline observation must strictly precede mutation dispatch, mutation observation must strictly follow mutation completion and precede restoration dispatch, and the restoration observation must strictly follow restoration completion; zero-duration dispatch receipts fail. Every bundle is revalidated by the exact source-bound Peekaboo executable against the exact authenticated live Bridge socket and host policy; the retained validator JSON must equal that fresh result but is never itself a trust anchor. Each signed bundle must carry the Agent PID/start generation as its client, match the trace/readback PID/window and operation family, prove a definite background dispatch, and fall wholly inside `operations-start..operations-complete`. Bundle SHA-256 values, authenticated listener/request identities, and authenticated listener/session/sequence claims are corpus-unique, so copied or hard-linked files cannot provide a second receipt or remap one receipt to another trace call. The receipt-directory inventory and `agent_bundles` list must be identical, including observation bundles; any unlisted or unmapped dispatched bundle fails.
 
-Exactly four—and only four—trace call IDs may report `mutationDispatch:"dispatched"`: mutate and restore for target A, then mutate and restore for target B. The two controlled fixtures must be distinct process generations/windows and disjoint from the Bridge host, observer/foreground target, integrated-CU emitter, and sentinel infrastructure. Both primary mutations must use different families; target B's restoration uses a different family from its primary mutation.
+Exactly four—and only four—trace call IDs may report `mutationDispatch:"dispatched"`: mutate and restore for target A, then mutate and restore for target B, in the signed task order. The two controlled fixtures must be distinct process generations/windows and disjoint from the Bridge host, observer/foreground target, integrated-CU emitter, and sentinel infrastructure. Both primary mutations must use different families; at least one restoration family must be outside the primary-family set, and target B's restoration must differ from its primary mutation. The validation report records the task file SHA-256, signed task SHA-256, canonical semantic-contract SHA-256, fixed constraints/postconditions, plan-derived targets, family choices, and hashes of all expected values. Manifest generation and read-only verification do not trust that projection: both reparse the retained canonical task against the bound plan, independently regenerate the complete projection, compare it to the report, bind it back to the terminal response, and then regenerate the remaining semantic validation from the retained trace, bundles, and readbacks.
 
 ```bash
 node "$TOOLS/validate-concurrent-run.mjs" \
@@ -355,6 +406,6 @@ The generated version-2 manifest hashes every file, including both authenticated
 ## Current product-output gaps that remain explicit hard boundaries
 
 - Coordinator stdout has the lifecycle and eligible completion but not process identity, invocation, exit status, or operation-fence timestamps. The managed launcher supplies identity/invocation/exit authority; the validator reads fence times from coordinator-owned `monitor/monitor-evidence.json`.
-- Agent stdout has the authoritative execution trace but not value content or linkage from a trace call to a nested signed receipt/readback file. The outer protocol-1.31 terminal bundle supplies exact requester/child identity, fixed argv/policy, coordination, acknowledgement bytes, complete stdout/stderr, lifetime, and terminal exit authority; the local/during version-4 process receipt separately proves lifecycle-guard publication. The closed Agent readback map remains mandatory for semantic values and trace-to-receipt linkage.
+- Agent stdout has the authoritative execution trace but not value content or linkage from a trace call to a nested signed receipt/readback file. The outer protocol-1.31 terminal bundle supplies exact requester/child identity, fixed argv/policy, coordination, acknowledgement bytes, complete stdout/stderr, lifetime, and terminal exit authority; the local/during version-4 process receipt separately proves lifecycle-guard publication. The closed Agent readback map remains mandatory for semantic values and trace-to-receipt linkage. Those owner-private readbacks are source-shaped, stable-file and mtime corroborated, but not listener-signed producer receipts; qualification treats their controlled owner as an explicit remaining trust boundary rather than claiming the Agent itself emitted the three observation checkpoints.
 - Integrated Computer Use has no machine-readable emitter PID/generation/Team/CDHash or closed semantic readback receipt. The passive native calibrator and the two owner readback files supply those facts. If event-tap permission is unavailable or source identity is ambiguous, qualification stops.
 - A `window list` plus process receipt does not itself emit the observer's exact focused semantic element and baseline in the coordinator schema. The fresh semantic readback must be projected once into the closed `observer_semantic` receipt; a missing/ambiguous identifier/title or frame outside the exact window is rejected.
