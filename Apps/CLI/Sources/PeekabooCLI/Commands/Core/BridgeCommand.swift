@@ -26,6 +26,7 @@ struct BridgeCommand: ParsableCommand {
         subcommands: [
             StatusSubcommand.self,
             ReceiptSubcommand.self,
+            AgentExecutionTraceSubcommand.self,
         ],
         defaultSubcommand: StatusSubcommand.self,
         showHelpOnEmptyInvocation: true

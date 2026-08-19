@@ -14,6 +14,8 @@ extension PeekabooBridgeServer {
         case .permissionsStatus, .daemonStatus, .daemonStop:
             return try await .init(
                 response: self.handleCoreRequest(request, peer: peer, permissions: permissions))
+        case .agentExecutionTrace:
+            return try await self.handleAgentExecutionTraceRequest(request, peer: peer)
         case .requestPostEventPermission:
             return self.handlePostEventPermissionRequest()
         case .browserStatus, .browserDisconnect:

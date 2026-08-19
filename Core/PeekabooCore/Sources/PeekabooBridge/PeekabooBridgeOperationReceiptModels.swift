@@ -423,6 +423,11 @@ public struct PeekabooBridgeOperationReceiptBundle: Codable, Equatable, Sendable
             request: request,
             response: response)
     }
+
+    /// Exact deterministic bytes accepted by `bridge receipt validate` and offline verifiers.
+    public func canonicalEncodedData() throws -> Data {
+        try PeekabooBridgeOperationReceiptCoding.canonicalData(self)
+    }
 }
 
 enum PeekabooBridgeOperationReceiptSemantics {
@@ -526,6 +531,18 @@ enum PeekabooBridgeOperationReceiptSemantics {
                 else {
                     throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                         "read-only action outcome semantics")
+                }
+            }
+        }
+        if request.operation == .agentExecutionTrace {
+            if case .error = semanticResponse {
+                // Signed pre-release refusals have no spawned-process response to bind.
+            } else {
+                guard case let .agentExecutionTrace(result) = semanticResponse,
+                      result.requestingPeer == payload.client
+                else {
+                    throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                        "Agent execution authenticated requesting peer")
                 }
             }
         }
@@ -1107,6 +1124,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
                 selector: selector)
         case (.familyOnly, _, _),
              (.noSuccessResponse, _, _),
+             (.agentExecutionTrace, _, _),
              (.typeActions, _, _),
              (.setValue, _, _),
              (.performAction, _, _),

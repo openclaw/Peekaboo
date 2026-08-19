@@ -137,7 +137,9 @@ extension CommanderCommandSummary {
                 help: flag.help
             )
         }
-        self.subcommands = descriptor.subcommands.map { CommanderCommandSummary(descriptor: $0) }
+        self.subcommands = descriptor.subcommands
+            .filter { !$0.metadata.name.hasPrefix("_") }
+            .map { CommanderCommandSummary(descriptor: $0) }
     }
 }
 

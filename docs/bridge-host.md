@@ -90,10 +90,11 @@ try await runtime.startChecked()
 The standard assembly uses one durable desktop-mutation watermark with one in-memory snapshot manager, copies retained
 capture artifacts into manager-owned storage, and defaults action-capable input to accessibility-first background
 delivery. Its allowlist is native-only: browser MCP, daemon control, interactive permission prompts, and the legacy
-AppleScript probe cannot be enabled by configuration. The containing app remains responsible for presenting permission
-UI and choosing an app-specific socket path; embedded hosts never compete for Peekaboo.app's socket by default. The
-runtime always advertises the `backgroundBridgeHost` capability; caller-supplied capabilities are additive and cannot
-remove that routing contract.
+AppleScript probe cannot be enabled by configuration. Protocol 1.31 Agent execution is also excluded: the embedded
+native Bridge deliberately has no Agent or provider surface. The containing app remains responsible for presenting
+permission UI and choosing an app-specific socket path; embedded hosts never compete for Peekaboo.app's socket by
+default. The runtime always advertises the `backgroundBridgeHost` capability; caller-supplied capabilities are additive
+and cannot remove that routing contract.
 
 Retain the runtime for the full host lifetime. `startChecked()` returns only after the private UNIX listener is ready,
 and `stopChecked()` waits for non-cooperative in-flight requests to release the socket lease. Concurrent start, stop,
@@ -227,6 +228,46 @@ and mouse-down dispatch. Release, revoke, and disconnect accept only the matchin
 and cleanup outcomes through signed operation receipts, and refuse zero-dispatch against protocol 1.29 or older hosts.
 The host retains the exact-window write lane until terminal cleanup; a short watchdog handles expiry, window drift,
 client-generation exit, and target-generation exit without ever posting mouse-up to a recycled PID.
+
+Protocol `1.31` adds the capability-gated `agentExecutionTrace` operation for one long-running, signed background Agent
+execution. It is a single Bridge request from launch through terminal reap, not a prepare/start or other two-call
+lifecycle. The host derives the executable from the exact authenticated Peekaboo CLI peer and accepts only the task and
+bounded coordination inputs. It never accepts an executable path, shell command, AppleScript, JXA, arbitrary arguments,
+or environment overrides. The child invocation is fixed to background-only `agent run --no-cache --bridge-socket
+<serving-host> --json`; there is no foreground-authority flag, session resume, or cache write.
+
+The host creates bounded anonymous stdout and stderr pipes plus an anonymous release pipe whose write end remains
+exclusive to the host under normal process isolation. It spawns with `START_SUSPENDED`, maps only the release reader
+into the child, and revalidates the exact PID, process generation, CDHash, executable SHA-256, and canonical path
+against the authenticated peer. The CLI's earliest entry-point instruction removes the private gate variables and
+blocks on that pipe before command routing. A stray or same-user `SIGCONT` can therefore only reach the blocked read;
+the full signed 64-hex challenge plus EOF is the release authority. The host publishes the owner-private coordination
+file, verifies the no-replace acknowledgement and identities, sends `SIGCONT`, then writes that challenge. Any earlier
+mismatch or partial/failed write closes the gate and refuses before Agent code can run.
+
+The host observes leader exit with `waitid(..., WNOWAIT)`, kills the still-owned process group, and only then reaps the
+leader with `waitpid`, avoiding both zombies and process-group-ID reuse. Cancellation, timeout, overflow, and wait
+failure use the same fail-closed group cleanup. This is deterministic for the exact leader and descendants that remain
+in its PGID; it is not a macOS process sandbox or cgroup. A process that can execute arbitrary native code could call
+`setsid`, change process group, or delegate work to launchd/XPC. Protocol 1.31 removes that prompt-level path by fixing
+the signed CLI/argv/environment, forcing background-only authority, and omitting the Shell tool, but it does not claim
+to roll back external app/tool effects or contain a compromised signed CLI.
+
+The signed terminal v1 response commits the exact request, process identity, fixed argv, task and closed-environment
+commitments, coordination and acknowledgement bytes plus hashes, complete bounded stdout/stderr bytes plus hashes and
+sizes, exit status or terminating signal, and launch/release/termination timestamps. Its canonical
+`responseSHA256` binds those fields into the protocol 1.29 receipt chain. The hidden qualification adapter writes the
+canonical `PeekabooBridgeOperationReceiptBundle` itself, not a newly encoded semantic response, so its exact canonical
+request/response bytes and listener/session signatures remain independently checkable. The connected listener
+attestation captured during the authenticated handshake remains the external trust anchor; a bundle's self-carried
+listener proves integrity but not provenance by itself. Once the release pipe accepts the complete challenge, losing
+the response is retry-unsafe: callers must not launch the task again speculatively.
+
+The outer orchestration request deliberately takes no desktop-operation lane or mutation watermark. Each nested Agent
+tool call returns through the same host and acquires its own exact-target lane and signed operation receipt, so a
+long-running Agent does not serialize unrelated desktop work. Protocol 1.30 and older hosts, and 1.31 hosts that do not
+advertise and enable `agentExecutionTrace`, refuse before child launch. The CLI adapter for qualification is hidden and
+deliberately omitted from public help and shell completions.
 
 The client does not treat the response-carried, self-signed listener as provenance by itself. It captures the connected
 socket peer's audit token and requires exact PID/PID-version, process-start, live kernel CDHash, Apple-anchored signing

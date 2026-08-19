@@ -40,6 +40,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case requestPostEventPermission
     case daemonStatus
     case daemonStop
+    case agentExecutionTrace
     // Browser MCP
     case browserStatus
     case browserConnect
@@ -155,6 +156,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case cleanAllSnapshots
     case _appleScriptProbe
 
+    // swiftlint:disable cyclomatic_complexity
     /// Filters operations to cases a peer at `version` can decode.
     public static func compatible(
         _ operations: Set<Self>,
@@ -253,8 +255,12 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
                 .disconnectExactWindowHeldPointerOwner,
             ])
         }
+        if version < PeekabooBridgeConstants.agentExecutionTraceVersion {
+            compatible.remove(.agentExecutionTrace)
+        }
         return compatible
     }
+    // swiftlint:enable cyclomatic_complexity
 }
 
 public struct PeekabooBridgeClientIdentity: Codable, Sendable {
@@ -359,6 +365,7 @@ public enum PeekabooBridgeHostCapability {
     public static let plannerInventoryTransport = "plannerInventoryTransport"
     public static let exactWindowHeldPointerLifecycle = "exactWindowHeldPointerLifecycle"
     public static let statelessClickVariants = "statelessClickVariants"
+    public static let agentExecutionTrace = "agentExecutionTrace"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {

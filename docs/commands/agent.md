@@ -56,6 +56,17 @@ read_when:
   operate terminal or scripting apps through their UI, so grant `--allow-foreground` only to trusted prompts. Use
   Peekaboo's native app/window/Accessibility/browser tools for UI automation.
 - Agent execution stays in the caller process by default. Pass the global `--bridge-socket <path>` option to route its tools through one specific Bridge host; `--no-remote` keeps the run strictly caller-local.
+- Protocol 1.31 qualification can instead ask an eligible Bridge host to launch the exact authenticated Peekaboo CLI
+  peer for one fixed background-only `agent run --no-cache --bridge-socket <serving-host> --json` execution. This is one
+  long request through terminal `waitpid`, not a public two-call Agent lifecycle. The host accepts the task but no
+  executable, shell, AppleScript, JXA, arbitrary argv, or environment input. The CLI blocks at its earliest entry point
+  on a host-owned anonymous pipe, so `SIGCONT` alone cannot pass the exact process/code/path and owner-private
+  challenge acknowledgement gate. The outer request owns no desktop lane, while each nested tool call owns its exact
+  lane and signed receipt. The fixed background toolset omits Shell; process-group cleanup is not a general macOS
+  sandbox against a compromised signed CLI or native code that deliberately detaches. A pre-1.31 or
+  capability-disabled host refuses before launch, and a response lost after pipe release is retry-unsafe. Its
+  qualification-only CLI adapter emits the canonical signed receipt bundle and is deliberately absent from help and
+  shell completions; ordinary users should invoke `peekaboo agent` directly.
 - An unrelated legacy ScreenCaptureKit owner does not block Agent startup or non-capturing app/window/Accessibility
   tools through an explicitly selected current Bridge. Pixel-producing calls remain refused before dispatch for that
   process lifetime; after fixing the owner, start a fresh Agent process before retrying capture.

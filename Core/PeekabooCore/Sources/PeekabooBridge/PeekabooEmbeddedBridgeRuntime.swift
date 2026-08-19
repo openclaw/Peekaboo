@@ -198,7 +198,9 @@ public actor PeekabooEmbeddedBridgeRuntime {
             // daemon-control, or interactive permission-prompt ownership by configuration accident.
             self.allowedOperations = allowedOperations.intersection(PeekabooBridgeOperation.embeddedDefaultAllowlist)
             self.hostKind = hostKind
-            self.hostCapabilities = hostCapabilities.union([PeekabooBridgeHostCapability.backgroundBridgeHost])
+            self.hostCapabilities = hostCapabilities
+                .subtracting([PeekabooBridgeHostCapability.agentExecutionTrace])
+                .union([PeekabooBridgeHostCapability.backgroundBridgeHost])
             self.maxMessageBytes = maxMessageBytes
             self.requestTimeoutSeconds = requestTimeoutSeconds
             self.requestDrainTimeoutSeconds = requestDrainTimeoutSeconds

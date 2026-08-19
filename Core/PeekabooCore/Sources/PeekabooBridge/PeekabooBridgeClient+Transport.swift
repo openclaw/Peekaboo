@@ -25,7 +25,8 @@ extension PeekabooBridgeClient {
         _ request: PeekabooBridgeRequest,
         timeoutSec: TimeInterval? = nil,
         automaticallyProjectsActions: Bool = true,
-        operationReceiptRequirement: PeekabooBridgeOperationReceiptRequirement = .whenAvailable) async throws
+        operationReceiptRequirement: PeekabooBridgeOperationReceiptRequirement = .whenAvailable,
+        throwsActionFailures: Bool = true) async throws
         -> PeekabooBridgeTransportReply
     {
         try self.requireNegotiatedInputCapabilities(for: request)
@@ -100,10 +101,12 @@ extension PeekabooBridgeClient {
                     targetIdentity: verifiedTargetIdentity,
                     selectedLeafEvidence: bundle?.receipt.payload.selectedLeafEvidence,
                     connectedHost: connectedHost,
-                    hasVerifiedOperationReceipt: bundle != nil)
+                    hasVerifiedOperationReceipt: bundle != nil,
+                    operationReceiptBundle: bundle)
                 let response = reply.response
                 if case let .error(envelope) = response,
-                   request.mayMutateDesktop
+                   request.mayMutateDesktop,
+                   throwsActionFailures
                 {
                     if let failure = envelope.desktopActionFailure {
                         throw failure.attributed(to: Self.actionTargetReceipt(verifiedTargetIdentity))
@@ -187,6 +190,14 @@ extension PeekabooBridgeClient {
     }
 
     private func requireNegotiatedInputCapabilities(for request: PeekabooBridgeRequest) throws {
+        if request.unwrappedOperationRequest.operation == .agentExecutionTrace,
+           !self.agentExecutionTraceEnabled
+        {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge protocol 1.31 signed Agent execution is unavailable",
+                details: "The host must advertise and enable agentExecutionTrace before launch.")
+        }
         if request.requiresStatelessClickVariantSupport, !self.statelessClickVariantPayloadsEnabled {
             throw DesktopActionFailure.preDispatchRefusal(
                 route: .bridge,
@@ -1109,6 +1120,7 @@ struct PeekabooBridgeTransportReply: Sendable {
     let selectedLeafEvidence: [DesktopSelectedLeafEvidence]?
     let connectedHost: PeekabooBridgeConnectedHostIdentity?
     let hasVerifiedOperationReceipt: Bool
+    let operationReceiptBundle: PeekabooBridgeOperationReceiptBundle?
 
     init(
         response: PeekabooBridgeResponse,
@@ -1116,7 +1128,8 @@ struct PeekabooBridgeTransportReply: Sendable {
         targetIdentity: DesktopTargetIdentity? = nil,
         selectedLeafEvidence: [DesktopSelectedLeafEvidence]? = nil,
         connectedHost: PeekabooBridgeConnectedHostIdentity? = nil,
-        hasVerifiedOperationReceipt: Bool = false)
+        hasVerifiedOperationReceipt: Bool = false,
+        operationReceiptBundle: PeekabooBridgeOperationReceiptBundle? = nil)
     {
         self.response = response
         self.outcome = outcome
@@ -1124,6 +1137,7 @@ struct PeekabooBridgeTransportReply: Sendable {
         self.selectedLeafEvidence = selectedLeafEvidence
         self.connectedHost = connectedHost
         self.hasVerifiedOperationReceipt = hasVerifiedOperationReceipt
+        self.operationReceiptBundle = operationReceiptBundle
     }
 }
 

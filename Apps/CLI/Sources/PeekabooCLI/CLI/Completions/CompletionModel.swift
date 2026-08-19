@@ -79,6 +79,7 @@ struct CompletionCommand {
         }
         self.options = Self.makeOptions(from: descriptor.metadata.signature, path: path)
         self.subcommands = descriptor.subcommands
+            .filter { !$0.metadata.name.hasPrefix("_") }
             .sorted { $0.metadata.name < $1.metadata.name }
             .map { subcommand in
                 CompletionCommand(descriptor: subcommand, path: path + [subcommand.metadata.name])

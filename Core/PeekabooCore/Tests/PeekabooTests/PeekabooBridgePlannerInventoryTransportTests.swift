@@ -70,7 +70,7 @@ struct PeekabooBridgePlannerInventoryTransportTests {
             allowlistedTeams: [],
             allowlistedBundles: [])
 
-        #expect(PeekabooBridgeConstants.protocolVersion == .init(major: 1, minor: 30))
+        #expect(PeekabooBridgeConstants.protocolVersion == .init(major: 1, minor: 31))
         #expect(PeekabooBridgeConstants.attestedOperationReceiptVersion == .init(major: 1, minor: 29))
         #expect(PeekabooBridgeConstants.plannerInventoryTransportVersion == .init(major: 1, minor: 30))
         #expect(!legacyServer.hostCapabilities.contains(PeekabooBridgeHostCapability.plannerInventoryTransport))
@@ -163,7 +163,7 @@ struct PeekabooBridgePlannerInventoryTransportTests {
 
         let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
         let current = try await client.handshake(client: Self.clientIdentity)
-        #expect(current.negotiatedVersion == .init(major: 1, minor: 30))
+        #expect(current.negotiatedVersion == .init(major: 1, minor: 31))
         #expect(current.hostCapabilities?.contains(PeekabooBridgeHostCapability.plannerInventoryTransport) == true)
 
         let remoteApplications = RemoteApplicationService(client: client)

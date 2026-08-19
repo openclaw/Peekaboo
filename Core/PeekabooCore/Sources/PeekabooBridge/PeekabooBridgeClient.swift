@@ -54,6 +54,7 @@ public actor PeekabooBridgeClient {
     var exactWindowHeldPointerTerminalCleanupEnabled = false
     var statelessClickVariantPayloadsEnabled = false
     var statelessClickVariantsEnabled = false
+    var agentExecutionTraceEnabled = false
     var operationAttestation: PeekabooBridgeListenerAttestation?
     var latestVerifiedOperationReceipt: PeekabooBridgeOperationReceipt?
     var latestVerifiedOperationReceiptBundle: PeekabooBridgeOperationReceiptBundle?
@@ -440,6 +441,7 @@ public actor PeekabooBridgeClient {
         self.exactWindowHeldPointerTerminalCleanupEnabled = false
         self.statelessClickVariantPayloadsEnabled = false
         self.statelessClickVariantsEnabled = false
+        self.agentExecutionTraceEnabled = false
     }
 
     /// Creates or joins one successor-session handshake using the most recent successful public inputs.
@@ -868,22 +870,27 @@ public actor PeekabooBridgeClient {
                 ]).isSubset(of: Set(handshake.enabledOperations ?? handshake.supportedOperations)),
             statelessClickVariantPayloadsEnabled:
             handshake.negotiatedVersion >= PeekabooBridgeConstants.statelessClickVariantVersion,
-            statelessClickVariantsEnabled:
-            handshake.negotiatedVersion >= PeekabooBridgeConstants.statelessClickVariantVersion &&
-                handshake.hostCapabilities?.contains(
-                    PeekabooBridgeHostCapability.statelessClickVariants) == true &&
-                Set([
-                    PeekabooBridgeOperation.targetedClick,
-                    .exactWindowTargetedClick,
-                ]).isSubset(of: Set(handshake.supportedOperations)) &&
-                Set([
-                    PeekabooBridgeOperation.targetedClick,
-                    .exactWindowTargetedClick,
-                ]).isSubset(of: Set(handshake.enabledOperations ?? handshake.supportedOperations)),
+            statelessClickVariantsEnabled: Self.supportsStatelessClickVariants(handshake),
+            agentExecutionTraceEnabled: Self.supportsAgentExecutionTrace(handshake),
             listenerAttestation: listenerAttestation,
             listenerLiveIdentity: listenerLiveIdentity,
             sessionAttestation: sessionAttestation,
             receiptlessAuthenticatedHost: receiptlessAuthenticatedHost)
+    }
+
+    private static func supportsStatelessClickVariants(_ handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        let requiredOperations: Set<PeekabooBridgeOperation> = [.targetedClick, .exactWindowTargetedClick]
+        return handshake.negotiatedVersion >= PeekabooBridgeConstants.statelessClickVariantVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.statelessClickVariants) == true &&
+            requiredOperations.isSubset(of: Set(handshake.supportedOperations)) &&
+            requiredOperations.isSubset(of: Set(handshake.enabledOperations ?? handshake.supportedOperations))
+    }
+
+    private static func supportsAgentExecutionTrace(_ handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeConstants.agentExecutionTraceVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.agentExecutionTrace) == true &&
+            handshake.supportedOperations.contains(.agentExecutionTrace) &&
+            (handshake.enabledOperations?.contains(.agentExecutionTrace) ?? true)
     }
 
     private func installHandshakeCandidate(
@@ -928,6 +935,7 @@ public actor PeekabooBridgeClient {
         self.exactWindowHeldPointerTerminalCleanupEnabled = candidate.exactWindowHeldPointerTerminalCleanupEnabled
         self.statelessClickVariantPayloadsEnabled = candidate.statelessClickVariantPayloadsEnabled
         self.statelessClickVariantsEnabled = candidate.statelessClickVariantsEnabled
+        self.agentExecutionTraceEnabled = candidate.agentExecutionTraceEnabled
         self.operationAttestation = candidate.listenerAttestation
         self.installReceiptlessAuthenticatedHost(candidate.receiptlessAuthenticatedHost)
         if let listenerAttestation = candidate.listenerAttestation,
@@ -1212,6 +1220,7 @@ private struct PeekabooBridgeClientHandshakeCandidate: Sendable {
     let exactWindowHeldPointerTerminalCleanupEnabled: Bool
     let statelessClickVariantPayloadsEnabled: Bool
     let statelessClickVariantsEnabled: Bool
+    let agentExecutionTraceEnabled: Bool
     let listenerAttestation: PeekabooBridgeListenerAttestation?
     let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity?
     let sessionAttestation: PeekabooBridgeOperationSessionAttestation?

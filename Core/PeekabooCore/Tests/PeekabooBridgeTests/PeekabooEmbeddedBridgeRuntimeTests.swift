@@ -55,6 +55,7 @@ struct PeekabooEmbeddedBridgeRuntimeTests {
         #expect(!operations.contains(.daemonStatus))
         #expect(!operations.contains(.daemonStop))
         #expect(!operations.contains(.requestPostEventPermission))
+        #expect(!operations.contains(.agentExecutionTrace))
         #expect(!operations.contains(._appleScriptProbe))
         #expect(operations.contains(.desktopObservation))
         #expect(operations.contains(.exactWindowTargetedClick))
@@ -69,11 +70,13 @@ struct PeekabooEmbeddedBridgeRuntimeTests {
                 .browserExecute,
                 .daemonStop,
                 .requestPostEventPermission,
+                .agentExecutionTrace,
                 ._appleScriptProbe,
             ],
-            hostCapabilities: [])
+            hostCapabilities: [PeekabooBridgeHostCapability.agentExecutionTrace])
         #expect(attemptedBroadening.allowedOperations == [.desktopObservation])
         #expect(attemptedBroadening.hostCapabilities.contains(PeekabooBridgeHostCapability.backgroundBridgeHost))
+        #expect(!attemptedBroadening.hostCapabilities.contains(PeekabooBridgeHostCapability.agentExecutionTrace))
     }
 
     @Test

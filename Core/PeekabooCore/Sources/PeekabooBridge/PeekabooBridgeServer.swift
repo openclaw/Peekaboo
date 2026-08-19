@@ -73,6 +73,8 @@ public final class PeekabooBridgeServer {
     let allowedOperations: Set<PeekabooBridgeOperation>
     let hostIdentity: PeekabooBridgeHostIdentity?
     let hostCapabilities: Set<String>
+    let servingSocketPath: String?
+    var agentExecutionRunner: (any PeekabooBridgeAgentExecutionRunning)?
     let daemonControl: (any PeekabooDaemonControlProviding)?
     let postEventAccessRequester: @MainActor @Sendable () -> Bool
     let permissionStatusEvaluator: @MainActor @Sendable (_ allowAppleScriptLaunch: Bool) -> PermissionsStatus
@@ -89,6 +91,7 @@ public final class PeekabooBridgeServer {
     var heldPointerBridgeOwners: [ExactWindowHeldPointerOwner: PeekabooBridgeHeldPointerOwnerBinding] = [:]
     var receiptlessNegotiations: [PeekabooBridgeLivePeerIdentity: PeekabooBridgeReceiptlessNegotiation] = [:]
     #if DEBUG
+    var allowsAuthenticatedAgentExecutionPeerForTesting = false
     var requestDecodeObserverForTesting: (@Sendable () -> Void)?
     var admissionRefusalObserverForTesting: (@Sendable () async -> Void)?
     #endif
@@ -103,6 +106,7 @@ public final class PeekabooBridgeServer {
         allowedOperations: Set<PeekabooBridgeOperation> = PeekabooBridgeOperation.remoteDefaultAllowlist,
         hostIdentity: PeekabooBridgeHostIdentity? = .current(),
         hostCapabilities: Set<String> = [],
+        servingSocketPath: String? = nil,
         daemonControl: (any PeekabooDaemonControlProviding)? = nil,
         desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil,
         desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator = .shared,
@@ -128,6 +132,8 @@ public final class PeekabooBridgeServer {
         self.supportedVersions = supportedVersions
         self.operationReceiptSessionCapacity = operationReceiptSessionCapacity
         self.allowedOperations = allowedOperations.subtracting([._appleScriptProbe])
+        self.servingSocketPath = servingSocketPath
+        self.agentExecutionRunner = servingSocketPath == nil ? nil : PeekabooBridgeLiveAgentExecutionRunner()
         self.hostIdentity = hostIdentity
         var resolvedHostCapabilities = protocolHostCapabilities(
             hostCapabilities,
@@ -159,6 +165,15 @@ public final class PeekabooBridgeServer {
             if registeredScreenCaptureKitOwnership {
                 resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership)
             }
+        }
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.agentExecutionTraceVersion,
+           self.allowedOperations.contains(.agentExecutionTrace),
+           servingSocketPath != nil,
+           self.agentExecutionRunner != nil
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.agentExecutionTrace)
+        } else {
+            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.agentExecutionTrace)
         }
         if self.allowedOperations.contains(.launchApplicationWithOptions),
            services.applications.supportsSafeBackgroundApplicationLaunchNoOp
@@ -213,6 +228,14 @@ public final class PeekabooBridgeServer {
     }
 
     #if DEBUG
+    func setAgentExecutionRunnerForTesting(_ runner: (any PeekabooBridgeAgentExecutionRunning)?) {
+        self.agentExecutionRunner = runner
+    }
+
+    func allowAuthenticatedAgentExecutionPeerForTesting() {
+        self.allowsAuthenticatedAgentExecutionPeerForTesting = true
+    }
+
     func setRequestDecodeObserverForTesting(_ observer: (@Sendable () -> Void)?) {
         self.requestDecodeObserverForTesting = observer
     }
@@ -529,6 +552,9 @@ public final class PeekabooBridgeServer {
         peer: PeekabooBridgePeer?,
         permissions: PermissionsStatus) async throws -> PeekabooBridgeHandledResponse
     {
+        if request.bypassesOuterDesktopMutationLane {
+            return try await self.handleAuthorized(request, peer: peer, permissions: permissions)
+        }
         let nativeLeafOwnsLane = request.nativeLeafOwnsDesktopOperationLane &&
             self.services.ownsDesktopOperationLane(for: request.operation)
         if let proposedReadLane = request.desktopReadOperationLane, !nativeLeafOwnsLane {

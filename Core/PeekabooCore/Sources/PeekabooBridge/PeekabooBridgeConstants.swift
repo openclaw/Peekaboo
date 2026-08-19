@@ -2,6 +2,7 @@ import Foundation
 
 public enum PeekabooBridgeConstants {
     public static let socketName = "bridge.sock"
+    public static let cliBundleIdentifier = "boo.peekaboo.peekaboo"
 
     /// Release identities accepted during the OpenClaw Foundation signing migration.
     /// Keep the legacy team while standalone CLIs must interoperate with pre-3.8 GUI hosts.
@@ -64,7 +65,12 @@ public enum PeekabooBridgeConstants {
     }
 
     /// Current protocol version supported by this build.
-    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 30)
+    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 31)
+
+    /// First protocol whose Bridge can launch the exact authenticated CLI peer as a suspended
+    /// background Agent and return one listener-signed terminal execution trace.
+    public static let agentExecutionTraceVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 31)
 
     /// First protocol that transports mutation-planner inventories with explicit completeness evidence.
     public static let plannerInventoryTransportVersion =

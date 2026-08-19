@@ -89,7 +89,9 @@ extension CommanderRuntimeRouter {
         theme: HelpTheme,
         indent: String = "  "
     ) -> [String] {
-        let sorted = commands.sorted { $0.metadata.name < $1.metadata.name }
+        let sorted = commands
+            .filter { !$0.metadata.name.hasPrefix("_") }
+            .sorted { $0.metadata.name < $1.metadata.name }
         let maxNameLength = sorted.map(\.metadata.name.count).max() ?? 0
         let columnWidth = min(max(maxNameLength, 8), 24)
         return sorted.map { descriptor in

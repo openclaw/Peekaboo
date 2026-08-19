@@ -103,6 +103,7 @@ public enum PeekabooBridgeBootstrap {
             allowedOperations: configuration.allowedOperations,
             hostIdentity: configuration.hostIdentity,
             hostCapabilities: configuration.hostCapabilities,
+            servingSocketPath: configuration.socketPath,
             daemonControl: configuration.daemonControl,
             desktopMutationWatermarkStore: configuration.desktopMutationWatermarkStore,
             automationActivityObserver: configuration.automationActivityObserver)

@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import PeekabooAutomationKit
 import Security
 
 @_silgen_name("csops")
@@ -56,6 +57,49 @@ enum PeekabooBridgeCodeSignatureIdentity {
         }
         guard result == 0, hash.contains(where: { $0 != 0 }) else { return nil }
         return self.hexString(for: Data(hash))
+    }
+
+    /// Returns the kernel CDHash for one caller-owned, unreaped process generation.
+    ///
+    /// Unlike a socket peer, a freshly spawned child has no peer audit token. Its parent keeps
+    /// the generation allocated through `waitpid`, and this helper brackets the PID-only kernel
+    /// query with the exact process-start identity so callers cannot accept a different process.
+    static func codeSignatureHash(
+        processIdentifier: pid_t,
+        expectedProcessStartIdentity: UInt64) -> String?
+    {
+        guard processIdentifier > 0,
+              SystemIdentityResolver.processStartIdentity(processIdentifier) == expectedProcessStartIdentity
+        else { return nil }
+        var hash = [UInt8](repeating: 0, count: self.codeDirectoryHashByteCount)
+        let result = hash.withUnsafeMutableBytes { buffer in
+            peekaboo_csops(
+                processIdentifier,
+                self.codeDirectoryHashOperation,
+                buffer.baseAddress,
+                buffer.count)
+        }
+        guard result == 0,
+              hash.contains(where: { $0 != 0 }),
+              SystemIdentityResolver.processStartIdentity(processIdentifier) == expectedProcessStartIdentity
+        else { return nil }
+        return self.hexString(for: Data(hash))
+    }
+
+    /// Returns the validated static CDHash of one exact signed executable path.
+    static func codeSignatureHash(executablePath: String) -> String? {
+        var staticCode: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(
+            URL(fileURLWithPath: executablePath) as CFURL,
+            SecCSFlags(),
+            &staticCode) == errSecSuccess,
+            let staticCode,
+            SecStaticCodeCheckValidity(staticCode, SecCSFlags(), nil) == errSecSuccess,
+            let information = self.signingInformation(staticCode),
+            let hash = information[kSecCodeInfoUnique as String] as? Data,
+            hash.count == self.codeDirectoryHashByteCount
+        else { return nil }
+        return self.hexString(for: hash)
     }
 
     /// Returns the kernel's code-directory hash for the exact process generation named by a socket peer audit token.

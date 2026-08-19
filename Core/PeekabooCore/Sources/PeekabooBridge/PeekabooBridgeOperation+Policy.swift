@@ -46,6 +46,7 @@ extension PeekabooBridgeOperation {
         case .targetedClick, .exactWindowTargetedClick, .targetedScroll:
             [.accessibility]
         case ._appleScriptProbe,
+             .agentExecutionTrace,
              .createExactWindowHeldPointerOwner,
              .releaseExactWindowHeldPointer,
              .revokeExactWindowHeldPointer,
@@ -95,6 +96,7 @@ extension PeekabooBridgeOperation {
         .requestPostEventPermission,
         .daemonStatus,
         .daemonStop,
+        .agentExecutionTrace,
         .browserStatus,
         .browserConnect,
         .browserDisconnect,
@@ -205,6 +207,7 @@ extension PeekabooBridgeOperation {
     /// responsibilities. The containing app remains the owner of those product-specific surfaces.
     public static let embeddedDefaultAllowlist: Set<PeekabooBridgeOperation> =
         PeekabooBridgeOperation.remoteDefaultAllowlist.subtracting([
+            .agentExecutionTrace,
             .requestPostEventPermission,
             .daemonStatus,
             .daemonStop,

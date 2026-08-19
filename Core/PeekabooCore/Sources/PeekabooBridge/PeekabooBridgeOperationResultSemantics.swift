@@ -13,12 +13,23 @@ enum PeekabooBridgeOperationResultSemantics {
         case readOnly
         case requestDependent(mutatesDesktop: Bool)
         case dispatchedUnverified(DesktopActionOutcome.Delivery)
+        /// A child process may dispatch several nested target mutations, but the outer request
+        /// owns no desktop lane or watermark. Its release is still retry-unsafe process dispatch.
+        case externalProcessDispatch(DesktopActionOutcome.Delivery)
 
         var mutatesDesktop: Bool {
             switch self {
             case .readOnly: false
             case let .requestDependent(mutatesDesktop): mutatesDesktop
             case .dispatchedUnverified: true
+            case .externalProcessDispatch: true
+            }
+        }
+
+        var fixedDelivery: DesktopActionOutcome.Delivery? {
+            switch self {
+            case let .dispatchedUnverified(delivery), let .externalProcessDispatch(delivery): delivery
+            case .readOnly, .requestDependent: nil
             }
         }
     }
@@ -43,6 +54,7 @@ enum PeekabooBridgeOperationResultSemantics {
     }
 
     enum ResponseFamily: Hashable, Sendable {
+        case agentExecutionTrace
         case application
         case applicationMutationInventory
         case applications
@@ -84,7 +96,8 @@ enum PeekabooBridgeOperationResultSemantics {
 
         func matches(_ response: PeekabooBridgeResponse) -> Bool {
             switch (self, response) {
-            case (.application, .application),
+            case (.agentExecutionTrace, .agentExecutionTrace),
+                 (.application, .application),
                  (.applicationMutationInventory, .applicationMutationInventory),
                  (.applications, .applications),
                  (.bool, .bool),
@@ -239,6 +252,7 @@ enum PeekabooBridgeOperationResultSemantics {
 
     enum TypedResponseRule: Equatable, Sendable {
         case none
+        case agentExecutionTrace(PeekabooBridgeAgentExecutionTraceRequest)
         case typeActions(TypeActionResultRule)
         case setValue(target: String, value: String)
         case performAction(target: String, actionName: String)
@@ -250,6 +264,12 @@ enum PeekabooBridgeOperationResultSemantics {
 
         func isConsistent(with binding: TypedResponseBinding) -> Bool {
             switch binding {
+            case .agentExecutionTrace:
+                if case .agentExecutionTrace = self {
+                    true
+                } else {
+                    false
+                }
             case .typeActions:
                 if case .typeActions = self {
                     true
@@ -323,6 +343,7 @@ enum PeekabooBridgeOperationResultSemantics {
     enum TypedResponseBinding: Equatable, Sendable {
         /// The response family is the complete typed contract; no request field is echoed by the result.
         case familyOnly
+        case agentExecutionTrace
         /// This operation intentionally has no successful response family.
         case noSuccessResponse
         case typeActions
@@ -401,6 +422,10 @@ enum PeekabooBridgeOperationResultSemantics {
             switch (self.typedResponseRule, response) {
             case (.none, _):
                 return
+            case (.agentExecutionTrace, .error):
+                return
+            case let (.agentExecutionTrace(request), .agentExecutionTrace(result)):
+                try result.validate(request: request)
             case (.setValue, .error):
                 // A canonical failure has no success payload to bind. Its outcome, target receipt,
                 // and dispatch count are validated by the failure and receipt contracts instead.
@@ -442,7 +467,7 @@ enum PeekabooBridgeOperationResultSemantics {
                     throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                         "perform-action response request semantics")
                 }
-            case (.typeActions, _), (.setValue, _), (.performAction, _):
+            case (.agentExecutionTrace, _), (.typeActions, _), (.setValue, _), (.performAction, _):
                 throw PeekabooBridgeOperationReceiptError.receiptMismatch("bound typed response family")
             }
         }
@@ -571,6 +596,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .desktopObservation:
             .service
         case .permissionsStatus,
+             .agentExecutionTrace,
              .createExactWindowHeldPointerOwner,
              .requestPostEventPermission,
              .daemonStatus,
@@ -650,6 +676,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .prepareDialogAction:
             .globalExclusive
         case .permissionsStatus,
+             .agentExecutionTrace,
              .requestPostEventPermission,
              .daemonStatus,
              .daemonStop,
@@ -748,6 +775,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .maximizeWindow:
             .required
         case .permissionsStatus,
+             .agentExecutionTrace,
              .requestPostEventPermission,
              .daemonStatus,
              .daemonStop,
@@ -853,6 +881,8 @@ extension PeekabooBridgeOperationResultSemantics {
     // swiftlint:disable:next cyclomatic_complexity
     private static func typedResponseBinding(for operation: PeekabooBridgeOperation) -> TypedResponseBinding {
         switch operation {
+        case .agentExecutionTrace:
+            .agentExecutionTrace
         case .typeActions, .targetedTypeActions, .exactWindowTargetedTypeActions:
             .typeActions
         case .setValue:
@@ -1012,6 +1042,8 @@ extension PeekabooBridgeOperationResultSemantics {
             mode: .foreground)
 
         return switch operation {
+        case .agentExecutionTrace:
+            .init(completion: .externalProcessDispatch(nativeBackground), targetPolicy: .responseResolved)
         case .requestPostEventPermission:
             .init(completion: .dispatchedUnverified(nativeForeground), targetPolicy: .global)
         case .browserConnect:
@@ -1507,6 +1539,8 @@ extension PeekabooBridgeOperationResultSemantics {
 
     private static func typedResponseRule(for request: PeekabooBridgeRequest) -> TypedResponseRule {
         switch request {
+        case let .agentExecutionTrace(payload):
+            .agentExecutionTrace(payload)
         case let .typeActions(payload):
             .typeActions(.init(actions: payload.actions))
         case let .targetedTypeActions(payload):
@@ -1658,6 +1692,8 @@ extension PeekabooBridgeOperationResultSemantics {
             .suspectedNoop,
         ]
         switch request.operation {
+        case .agentExecutionTrace:
+            return [.dispatchedUnverified]
         case .requestPostEventPermission, .browserExecute, .swipe, .drag, .moveMouse,
              .clickMenuItem, .clickMenuItemByName, .clickMenuExtra,
              .clickMenuBarItemNamed, .clickMenuBarItemIndex,
@@ -1754,6 +1790,7 @@ extension PeekabooBridgeOperationResultSemantics {
     static func responseFamilies(for operation: PeekabooBridgeOperation) -> Set<ResponseFamily> {
         switch operation {
         case .permissionsStatus: [.permissionsStatus]
+        case .agentExecutionTrace: [.agentExecutionTrace]
         case .requestPostEventPermission: [.bool]
         case .daemonStatus: [.daemonStatus]
         case .daemonStop: [.bool]
@@ -2045,13 +2082,15 @@ extension PeekabooBridgeOperationResultSemantics {
             return [rule(axBackground, .exact(1))]
         case .requestPostEventPermission:
             return [rule(nativeForeground, .exact(1))]
+        case .agentExecutionTrace:
+            return [rule(nativeBackground, .exact(1))]
         case .browserConnect:
             return [rule(browserForeground, .exact(1))]
         case .browserExecute:
             return [rule(browserBackground, .variable)]
         default:
             let contract = self.contract(for: request)
-            guard case let .dispatchedUnverified(delivery) = contract.completion else { return [] }
+            guard let delivery = contract.completion.fixedDelivery else { return [] }
             return [rule(delivery, .exact(1))]
         }
     }
@@ -2272,7 +2311,7 @@ extension PeekabooBridgeOperationResultSemantics {
         }
         let plan = self.semanticPlan(for: request)
         let contract = plan.contract
-        guard case .dispatchedUnverified = contract.completion else {
+        guard contract.completion.fixedDelivery != nil else {
             preconditionFailure("Mutating Bridge request has no successful result contract: \(request.operation)")
         }
         guard plan.responseMatches(handled.response) else {

@@ -637,7 +637,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startBridgeHost(services: PeekabooServices) {
         let allowlistedBundles: Set = [
-            "boo.peekaboo.peekaboo", // CLI
+            PeekabooBridgeConstants.cliBundleIdentifier,
             "boo.peekaboo.mac", // GUI
         ]
         let allowlistedTeams = PeekabooBridgeConstants.trustedReleaseTeamIDs

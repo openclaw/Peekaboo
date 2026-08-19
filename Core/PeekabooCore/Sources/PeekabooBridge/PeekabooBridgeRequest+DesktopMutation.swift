@@ -32,6 +32,8 @@ extension PeekabooBridgeRequest {
             return PeekabooBridgeConstants.statelessClickVariantVersion
         }
         switch self.unwrappedOperationRequest.operation {
+        case .agentExecutionTrace:
+            return PeekabooBridgeConstants.agentExecutionTraceVersion
         case .createExactWindowHeldPointerOwner,
              .beginExactWindowHeldPointer,
              .releaseExactWindowHeldPointer,
@@ -83,6 +85,13 @@ extension PeekabooBridgeRequest {
         default:
             false
         }
+    }
+
+    /// Aggregate Agent orchestration is retry-unsafe process dispatch, but the outer request must
+    /// never own the desktop lane or mutation watermark: its child re-enters this same Bridge and
+    /// each nested tool call owns its own exact-target lane and signed receipt.
+    var bypassesOuterDesktopMutationLane: Bool {
+        self.unwrappedOperationRequest.operation == .agentExecutionTrace
     }
 }
 

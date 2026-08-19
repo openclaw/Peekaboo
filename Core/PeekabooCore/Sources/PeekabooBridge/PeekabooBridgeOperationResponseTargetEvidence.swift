@@ -95,6 +95,14 @@ extension PeekabooBridgeResponse {
                 : window.map { [DesktopTargetEvidenceAdapter.evidence(window: $0)] } ?? []
         case let .application(application):
             return [DesktopTargetEvidenceAdapter.evidence(application: application)]
+        case let .agentExecutionTrace(result):
+            guard operation == .agentExecutionTrace else { return [] }
+            let process = result.process.processIdentity
+            return [.init(
+                processIdentifier: process.processIdentifier,
+                processIdentity: .init(
+                    processIdentifier: process.processIdentifier,
+                    processStartIdentity: process.processStartIdentity))]
         case let .browserToolResponse(result):
             return operation == .browserExecute
                 ? [Self.browserEvidence(result.connectionReceipt)].compactMap(\.self)

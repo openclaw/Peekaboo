@@ -148,6 +148,13 @@ extension PeekabooBridgeServer {
         {
             advertisedCapabilities.remove(PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle)
         }
+        if !supportsAttestedOperationReceipts ||
+            negotiated < PeekabooBridgeConstants.agentExecutionTraceVersion ||
+            !advertisedOps.contains(.agentExecutionTrace) ||
+            !enabledOps.contains(.agentExecutionTrace)
+        {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.agentExecutionTrace)
+        }
         if supportsAttestedOperationReceipts {
             advertisedCapabilities.insert(PeekabooBridgeHostCapability.attestedOperationReceipts)
         }
@@ -271,6 +278,9 @@ extension PeekabooBridgeServer {
             operations.remove(.daemonStatus)
             operations.remove(.daemonStop)
             operations.remove(.relaunchApplicationWithOptions)
+        }
+        if self.servingSocketPath == nil || self.agentExecutionRunner == nil {
+            operations.remove(.agentExecutionTrace)
         }
         if (self.services.automation as? any TargetedHotkeyServiceProtocol)?.supportsTargetedHotkeys != true {
             operations.remove(.targetedHotkey)
