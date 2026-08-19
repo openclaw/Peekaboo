@@ -242,6 +242,25 @@ struct AgentExecutionTraceContractTests {
             atPath: stagingSubstitution.operationReceiptDirectory
                 .appendingPathComponent("foreign-staging.json").path))
 
+        let stagingContaminationRoot = try Self.makePrivateRunRoot()
+        defer { try? FileManager.default.removeItem(at: stagingContaminationRoot) }
+        let stagingContamination = try PeekabooBridgeAgentExecutionPaths.validateAndPrepare(
+            Self.request(runRootPath: stagingContaminationRoot.path))
+        try Self.publishCoordinationArtifacts(for: stagingContamination)
+        var contaminatedStaging: URL?
+        #expect(throws: PeekabooBridgeAgentExecutionPreReleaseError.self) {
+            try stagingContamination.provisionOperationReceiptDirectoryBeforeRelease { stagingBasename in
+                let staging = stagingContaminationRoot.appendingPathComponent(stagingBasename, isDirectory: true)
+                contaminatedStaging = staging
+                try Data("foreign-same-inode".utf8).write(
+                    to: staging.appendingPathComponent("foreign-same-inode.json"))
+            }
+        }
+        let retainedStaging = try #require(contaminatedStaging)
+        #expect(FileManager.default.fileExists(
+            atPath: retainedStaging.appendingPathComponent("foreign-same-inode.json").path))
+        #expect(!FileManager.default.fileExists(atPath: stagingContamination.operationReceiptDirectory.path))
+
         let substitutedRoot = try Self.makePrivateRunRoot()
         defer { try? FileManager.default.removeItem(at: substitutedRoot) }
         let substituted = try PeekabooBridgeAgentExecutionPaths.validateAndPrepare(
@@ -588,6 +607,18 @@ struct AgentExecutionTraceContractTests {
                 processCustody: execution.processCustody)
         _ = await Self.finish(execution)
         #expect(terminal.disposition == .waitFailed)
+        Self.expectReaped(execution.pid)
+    }
+
+    @Test
+    func `Retained exact reaper reaps a zombie without live proc identity`() async throws {
+        let execution = try Self.spawnSuspended(executable: "/usr/bin/true", arguments: [])
+        #expect(Darwin.kill(execution.pid, SIGCONT) == 0)
+        try await Self.waitUntilExitedWithoutReaping(execution.pid)
+
+        PeekabooBridgeAgentExecutionProcessWait.retainExactReapForTesting(execution.processCustody)
+        _ = await Self.finish(execution)
+        try await Self.waitUntilReaped(execution.pid)
         Self.expectReaped(execution.pid)
     }
 
@@ -1021,6 +1052,26 @@ struct AgentExecutionTraceContractTests {
                 &info,
                 WEXITED | WNOHANG | WNOWAIT)
             if result == 0, info.si_pid == pid {
+                return
+            }
+            if result < 0, errno != EINTR {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .ECHILD)
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw CocoaError(.coderReadCorrupt)
+    }
+
+    private static func waitUntilReaped(_ pid: pid_t) async throws {
+        for _ in 0..<100 {
+            var info = siginfo_t()
+            errno = 0
+            let result = Darwin.waitid(
+                P_PID,
+                id_t(pid),
+                &info,
+                WEXITED | WNOHANG | WNOWAIT)
+            if result < 0, errno == ECHILD {
                 return
             }
             if result < 0, errno != EINTR {

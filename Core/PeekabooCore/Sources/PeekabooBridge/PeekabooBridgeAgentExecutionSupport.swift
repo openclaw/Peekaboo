@@ -156,10 +156,12 @@ struct PeekabooBridgeAgentExecutionPaths: Sendable {
             // intentionally not retryable. Preserve any later directory or conflict as evidence.
             let stagingChallenge = try PeekabooBridgeAgentExecutionCoding.randomChallenge()
             let stagingBasename = ".agent-operation-receipts.\(stagingChallenge).staging"
+            // The retained parent is exact mode 0700. Request all bits only to neutralize the
+            // process umask, then bind the random staging inode and fchmod it to exact mode 0700.
             guard mkdirat(
                 self.directoryCustody.runRootDescriptor,
                 stagingBasename,
-                S_IRWXU) == 0
+                S_IRWXU | S_IRWXG | S_IRWXO) == 0
             else {
                 throw PeekabooBridgeAgentExecutionPreReleaseError.unsafeRunRoot(
                     self.operationReceiptDirectory.path)
@@ -173,7 +175,12 @@ struct PeekabooBridgeAgentExecutionPaths: Sendable {
                     self.operationReceiptDirectory.path)
             }
             do {
-                guard let identity = Self.privateDirectoryIdentity(descriptor: descriptor),
+                guard let identity = Self.ownedDirectoryIdentity(descriptor: descriptor),
+                      Self.ownedDirectoryIdentity(
+                          at: self.directoryCustody.runRootDescriptor,
+                          basename: stagingBasename) == identity,
+                      fchmod(descriptor, S_IRWXU) == 0,
+                      Self.privateDirectoryIdentity(descriptor: descriptor) == identity,
                       Self.privateDirectoryIdentity(
                           at: self.directoryCustody.runRootDescriptor,
                           basename: stagingBasename) == identity,
@@ -183,6 +190,10 @@ struct PeekabooBridgeAgentExecutionPaths: Sendable {
                         self.operationReceiptDirectory.path)
                 }
                 try beforePublishForTesting?(stagingBasename)
+                guard Self.isDirectoryEmpty(descriptor: descriptor) else {
+                    throw PeekabooBridgeAgentExecutionPreReleaseError.unsafeRunRoot(
+                        self.operationReceiptDirectory.path)
+                }
                 guard renameatx_np(
                     self.directoryCustody.runRootDescriptor,
                     stagingBasename,
@@ -192,6 +203,7 @@ struct PeekabooBridgeAgentExecutionPaths: Sendable {
                     Self.privateDirectoryIdentity(
                         at: self.directoryCustody.runRootDescriptor,
                         basename: PeekabooBridgeAgentExecutionCoding.operationReceiptDirectoryBasename) == identity,
+                    Self.isDirectoryEmpty(descriptor: descriptor),
                     self.revalidateRunRootLocked(),
                     fsync(self.directoryCustody.runRootDescriptor) == 0
                 else {
@@ -216,6 +228,7 @@ struct PeekabooBridgeAgentExecutionPaths: Sendable {
                   Self.privateDirectoryIdentity(
                       at: self.directoryCustody.runRootDescriptor,
                       basename: PeekabooBridgeAgentExecutionCoding.operationReceiptDirectoryBasename) == identity,
+                  Self.isDirectoryEmpty(descriptor: descriptor),
                   Self.isExactPrivateRegularFile(
                       at: self.directoryCustody.runRootDescriptor,
                       basename: PeekabooBridgeAgentExecutionCoding.coordinationBasename),
@@ -255,24 +268,59 @@ struct PeekabooBridgeAgentExecutionPaths: Sendable {
     }
 
     private static func privateDirectoryIdentity(descriptor: Int32) -> Identity? {
+        guard let (identity, info) = self.ownedDirectoryIdentityAndInfo(descriptor: descriptor),
+              (info.st_mode & 0o777) == 0o700
+        else { return nil }
+        return identity
+    }
+
+    private static func ownedDirectoryIdentity(descriptor: Int32) -> Identity? {
+        self.ownedDirectoryIdentityAndInfo(descriptor: descriptor)?.0
+    }
+
+    private static func ownedDirectoryIdentityAndInfo(descriptor: Int32) -> (Identity, stat)? {
         var info = stat()
         guard descriptor >= 0, fstat(descriptor, &info) == 0 else { return nil }
-        return self.privateDirectoryIdentity(info)
+        guard let identity = self.ownedDirectoryIdentity(info) else { return nil }
+        return (identity, info)
     }
 
     private static func privateDirectoryIdentity(at descriptor: Int32, basename: String) -> Identity? {
+        guard let (identity, info) = self.ownedDirectoryIdentityAndInfo(
+            at: descriptor,
+            basename: basename),
+            (info.st_mode & 0o777) == 0o700
+        else { return nil }
+        return identity
+    }
+
+    private static func ownedDirectoryIdentity(at descriptor: Int32, basename: String) -> Identity? {
+        self.ownedDirectoryIdentityAndInfo(at: descriptor, basename: basename)?.0
+    }
+
+    private static func ownedDirectoryIdentityAndInfo(
+        at descriptor: Int32,
+        basename: String) -> (Identity, stat)?
+    {
         var info = stat()
         guard descriptor >= 0,
               fstatat(descriptor, basename, &info, AT_SYMLINK_NOFOLLOW) == 0
         else { return nil }
-        return self.privateDirectoryIdentity(info)
+        guard let identity = self.ownedDirectoryIdentity(info) else { return nil }
+        return (identity, info)
     }
 
     private static func privateDirectoryIdentity(_ info: stat) -> Identity? {
+        guard let identity = self.ownedDirectoryIdentity(info),
+              (info.st_mode & 0o777) == 0o700
+        else { return nil }
+        return identity
+    }
+
+    private static func ownedDirectoryIdentity(_ info: stat) -> Identity? {
         guard (info.st_mode & S_IFMT) == S_IFDIR,
               info.st_uid == geteuid(),
-              info.st_nlink >= 1,
-              (info.st_mode & 0o777) == 0o700
+              info.st_nlink >= 1
         else { return nil }
         return Identity(device: info.st_dev, inode: info.st_ino)
     }
@@ -295,6 +343,30 @@ struct PeekabooBridgeAgentExecutionPaths: Sendable {
               (info.st_mode & 0o777) == 0o600
         else { return false }
         return true
+    }
+
+    private static func isDirectoryEmpty(descriptor: Int32) -> Bool {
+        let scanDescriptor = openat(descriptor, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+        guard scanDescriptor >= 0 else { return false }
+        guard let directory = fdopendir(scanDescriptor) else {
+            close(scanDescriptor)
+            return false
+        }
+        defer { closedir(directory) }
+
+        errno = 0
+        while let entry = readdir(directory) {
+            let name = withUnsafePointer(to: &entry.pointee.d_name) { pointer in
+                pointer.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) {
+                    String(cString: $0)
+                }
+            }
+            if name != ".", name != ".." {
+                return false
+            }
+            errno = 0
+        }
+        return errno == 0
     }
 
     private static func string(fromNullTerminated buffer: [CChar]) -> String? {
@@ -1280,6 +1352,10 @@ enum PeekabooBridgeAgentExecutionProcessWait {
             reap: { _, _, _ in -1 })
         return deliveredExactToken
     }
+
+    static func retainExactReapForTesting(_ processCustody: PeekabooBridgeAgentExecutionProcessCustody) {
+        self.retainExactReap(processCustody)
+    }
     #endif
 
     private enum ExitObservation {
@@ -1390,11 +1466,10 @@ enum PeekabooBridgeAgentExecutionProcessWait {
             while true {
                 switch self.observeExitWithoutReaping(processIdentifier) {
                 case .exited:
-                    guard let token = self.auditToken(
-                        processIdentifier: processIdentifier,
-                        expectedProcessStartIdentity: processCustody.processIdentity.processStartIdentity),
-                        audit_token_to_pidversion(token) == processCustody.processIdentifierVersion
-                    else { return }
+                    // This runner is the child's sole waiter; custody reaches this queue only after
+                    // the synchronous waiter stops. WNOWAIT therefore leaves the exact zombie (and
+                    // its PID allocation) anchored until this waitpid. A zombie may no longer expose
+                    // live proc_pidinfo, so reaping must not depend on rebuilding its token.
                     var waitStatus: Int32 = 0
                     let result = Darwin.waitpid(processIdentifier, &waitStatus, WNOHANG)
                     if result == processIdentifier || (result < 0 && errno == ECHILD) {
