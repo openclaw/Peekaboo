@@ -271,21 +271,22 @@ public struct MCPToolContext: @unchecked Sendable {
 
         // Target authorization and leaf dispatch stay inside the same shared gate. Observation tools therefore cannot
         // replace either snapshot store between the identity check and the exact pinned tool invocation.
-        let targetAuthorization = await self.backgroundTargetAuthorization(
-            toolName: tool.name,
-            arguments: arguments)
-        if let rejection = targetAuthorization.rejection {
-            await self.snapshotExecutionGate.release()
-            return rejection
-        }
+        let targetAuthorization: BackgroundTargetAuthorization
         let targetRevalidation: ToolResponse?
         do {
+            targetAuthorization = try await self.backgroundTargetAuthorization(
+                toolName: tool.name,
+                arguments: arguments)
             targetRevalidation = try await self.backgroundTargetRevalidation(
                 targetAuthorization,
                 toolName: tool.name)
         } catch {
             await self.snapshotExecutionGate.release()
             throw error
+        }
+        if let rejection = targetAuthorization.rejection {
+            await self.snapshotExecutionGate.release()
+            return rejection
         }
         if let rejection = targetRevalidation {
             await self.snapshotExecutionGate.release()
@@ -404,7 +405,7 @@ public struct MCPToolContext: @unchecked Sendable {
         if self.executionPolicy == .backgroundOnly,
            MCPToolRequestSemantics.isSafeBackgroundApplicationLaunchNoOp(arguments)
         {
-            authorization = await self.backgroundTargetAuthorization(
+            authorization = try await self.backgroundTargetAuthorization(
                 toolName: tool.name,
                 arguments: arguments)
             if let rejection = authorization.rejection {
@@ -493,7 +494,7 @@ public struct MCPToolContext: @unchecked Sendable {
 
     private func backgroundTargetAuthorization(
         toolName: String,
-        arguments: ToolArguments) async -> BackgroundTargetAuthorization
+        arguments: ToolArguments) async throws -> BackgroundTargetAuthorization
     {
         func permitted(_ arguments: ToolArguments) -> BackgroundTargetAuthorization {
             BackgroundTargetAuthorization(arguments: arguments, rejection: nil, targetPlan: nil)
@@ -568,11 +569,23 @@ public struct MCPToolContext: @unchecked Sendable {
                 toolName: toolName,
                 detail: "no current snapshot identifies the target"))
         }
-        let detectionResult = try? await self.snapshots.getDetectionResult(snapshotId: effectiveSnapshotID)
-        guard let detectionResult,
-              detectionResult.snapshotId == effectiveSnapshotID,
-              let windowContext = detectionResult.metadata.windowContext
-        else {
+        let detectionResult: ElementDetectionResult
+        do {
+            guard let result = try await self.snapshots.getDetectionResult(snapshotId: effectiveSnapshotID),
+                  result.snapshotId == effectiveSnapshotID
+            else {
+                throw DesktopTargetIdentityError.snapshotSourceMismatch
+            }
+            detectionResult = result
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            try Task.checkCancellation()
+            return refused(self.executionPolicy.unresolvedTargetRejection(
+                toolName: toolName,
+                detail: "snapshot '\(effectiveSnapshotID)' has no authoritative application identity"))
+        }
+        guard let windowContext = detectionResult.metadata.windowContext else {
             return refused(self.executionPolicy.unresolvedTargetRejection(
                 toolName: toolName,
                 detail: "snapshot '\(effectiveSnapshotID)' has no authoritative application identity"))
@@ -601,7 +614,16 @@ public struct MCPToolContext: @unchecked Sendable {
                 toolName: toolName,
                 detail: "snapshot '\(effectiveSnapshotID)' is absent from the tool snapshot store"))
         }
-        guard Self.sameTarget(mirroredSnapshot, windowContext) else {
+        let targetPlan: AuthorizedDesktopTargetPlan
+        do {
+            targetPlan = try await self.backgroundSnapshotTargetPlan(
+                snapshotID: effectiveSnapshotID,
+                mirroredSnapshot: mirroredSnapshot,
+                detectionResult: detectionResult)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            try Task.checkCancellation()
             return refused(self.executionPolicy.unresolvedTargetRejection(
                 toolName: toolName,
                 detail: "the tool and automation snapshots disagree about target ownership"))
@@ -614,7 +636,10 @@ public struct MCPToolContext: @unchecked Sendable {
         if coordinateReference != nil {
             pinnedArguments["coordinate_reference"] = effectiveSnapshotID
         }
-        return permitted(ToolArguments(raw: pinnedArguments))
+        return BackgroundTargetAuthorization(
+            arguments: ToolArguments(raw: pinnedArguments),
+            rejection: nil,
+            targetPlan: targetPlan)
     }
 
     private func backgroundApplicationTargetAuthorization(
@@ -663,10 +688,12 @@ public struct MCPToolContext: @unchecked Sendable {
             let authorizedTarget = try windowTargetIdentities.reduce(processTarget) { partial, windowTarget in
                 try partial.coalescing(windowTarget)
             }
-            let targetPlan = if windowTargetIdentities.isEmpty, let authority = authorities.first {
-                try AuthorizedDesktopTargetPlan(mutationAuthority: authority)
+            let targetPlan: AuthorizedDesktopTargetPlan
+            if windowTargetIdentities.isEmpty, let authority = authorities.first {
+                targetPlan = try AuthorizedDesktopTargetPlan(mutationAuthority: authority)
             } else {
-                AuthorizedDesktopTargetPlan(targetIdentity: authorizedTarget)
+                let authority = try await self.sharedMutationAuthority(for: authorizedTarget)
+                targetPlan = try AuthorizedDesktopTargetPlan(mutationAuthority: authority)
             }
             return BackgroundTargetAuthorization(
                 arguments: Self.argumentsPinnedToProcess(
@@ -718,32 +745,6 @@ public struct MCPToolContext: @unchecked Sendable {
             return StrictStringSelector(isInvalid: true, value: nil)
         }
         return StrictStringSelector(isInvalid: false, value: value)
-    }
-
-    private static func sameTarget(_ snapshot: UISnapshot, _ context: WindowContext) -> Bool {
-        guard let snapshotIdentity = try? snapshot.targetReceipt().requireIdentity(),
-              let snapshotExactWindow = snapshotIdentity.exactWindow,
-              let contextIdentity = try? DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
-                  .init(
-                      processIdentifier: context.applicationProcessId,
-                      windowID: context.windowID,
-                      windowIdentity: context.windowMutationIdentity,
-                      windowBounds: context.windowBounds,
-                      focusedElement: context.focusedElement),
-              ]),
-              let contextExactWindow = contextIdentity.exactWindow,
-              snapshotExactWindow.identity.hasSameStableReceipt(as: contextExactWindow.identity),
-              snapshotExactWindow.bounds == contextExactWindow.bounds
-        else {
-            return false
-        }
-        if let applicationName = Self.nonEmpty(context.applicationName),
-           let mirroredName = Self.nonEmpty(snapshot.applicationName),
-           applicationName.caseInsensitiveCompare(mirroredName) != .orderedSame
-        {
-            return false
-        }
-        return true
     }
 
     @MainActor

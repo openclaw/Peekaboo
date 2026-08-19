@@ -22,81 +22,73 @@ extension MCPToolContext {
         toolName: String) async throws -> ToolResponse?
     {
         guard let plan = authorization.targetPlan else { return nil }
-        if let authority = plan.mutationAuthority {
-            let planner = DesktopTargetPlanning.MutationAuthorityPlanner(
-                applications: self.applications,
-                windows: self.windows)
-            do {
-                let current = try await planner.revalidate(authority)
-                _ = try plan.targetIdentity.coalescing(current.targetIdentity)
-                let application = current.application.application
-                return self.executionPolicy.systemSurfaceRejection(
-                    toolName: toolName,
-                    applicationBundleIdentifier: application.bundleIdentifier,
-                    applicationName: application.name)
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                try Task.checkCancellation()
-                let detail = plan.targetIdentity.exactWindow == nil
-                    ? "the selected application changed process generation before dispatch"
-                    : "the selected window changed identity or bounds before dispatch"
-                return self.executionPolicy.unresolvedTargetRejection(
-                    toolName: toolName,
-                    detail: detail)
-            }
+        guard let authority = plan.mutationAuthority else {
+            return self.executionPolicy.unresolvedTargetRejection(
+                toolName: toolName,
+                detail: "the selected target has no shared mutation authority")
         }
-
-        // Snapshot-backed authorizations do not originate from a live inventory plan. Retain their
-        // exact identity revalidation until snapshot receipt planning moves into the shared planner.
-        let identity = plan.processIdentity
+        let planner = DesktopTargetPlanning.MutationAuthorityPlanner(
+            applications: self.applications,
+            windows: self.windows)
         do {
-            let application = try await self.applications.findApplication(
-                identifier: "PID:\(identity.processIdentifier)")
-            guard application.processStartIdentity == identity.processStartIdentity else {
-                return self.executionPolicy.unresolvedTargetRejection(
-                    toolName: toolName,
-                    detail: "the selected application changed process generation before dispatch")
-            }
-            if let rejection = self.executionPolicy.systemSurfaceRejection(
+            let current = try await planner.revalidate(authority)
+            _ = try plan.targetIdentity.coalescing(current.targetIdentity)
+            let application = current.application.application
+            return self.executionPolicy.systemSurfaceRejection(
                 toolName: toolName,
                 applicationBundleIdentifier: application.bundleIdentifier,
                 applicationName: application.name)
-            {
-                return rejection
-            }
         } catch is CancellationError {
             throw CancellationError()
         } catch {
             try Task.checkCancellation()
+            let detail = plan.targetIdentity.exactWindow == nil
+                ? "the selected application changed process generation before dispatch"
+                : "the selected window changed identity or bounds before dispatch"
             return self.executionPolicy.unresolvedTargetRejection(
                 toolName: toolName,
-                detail: "the selected application disappeared before dispatch")
+                detail: detail)
         }
+    }
 
-        guard let expectedWindow = plan.targetIdentity.exactWindow else { return nil }
-        do {
-            let windows = try await self.windows.listWindows(target: .windowId(expectedWindow.identity.windowID))
-            guard windows.count == 1,
-                  let currentWindow = windows.first,
-                  let currentIdentity = currentWindow.mutationIdentity,
-                  currentIdentity.hasSameStableReceipt(as: expectedWindow.identity),
-                  currentIdentity.capturedBounds == currentWindow.bounds,
-                  currentWindow.bounds == expectedWindow.bounds
-            else {
-                return self.executionPolicy.unresolvedTargetRejection(
-                    toolName: toolName,
-                    detail: "the selected window changed identity or bounds before dispatch")
-            }
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            try Task.checkCancellation()
-            return self.executionPolicy.unresolvedTargetRejection(
-                toolName: toolName,
-                detail: "the selected window disappeared before dispatch")
+    @MainActor
+    func backgroundSnapshotTargetPlan(
+        snapshotID: String,
+        mirroredSnapshot: UISnapshot,
+        detectionResult: ElementDetectionResult) async throws -> AuthorizedDesktopTargetPlan
+    {
+        let mirroredReceipt = try mirroredSnapshot.targetReceipt()
+        let mirroredIdentity = try mirroredReceipt.requireIdentity()
+        if let mirroredName = Self.nonEmpty(mirroredReceipt.applicationName),
+           let detectionName = Self.nonEmpty(detectionResult.metadata.windowContext?.applicationName),
+           mirroredName.caseInsensitiveCompare(detectionName) != .orderedSame
+        {
+            throw DesktopTargetIdentityError.snapshotSourceMismatch
         }
-        return nil
+        guard mirroredIdentity.exactWindow != nil else { throw DesktopTargetIdentityError.incompleteExactWindow }
+        let identity = try SnapshotTargetReceiptPlanner.assemble(
+            snapshotID: snapshotID,
+            detectionResult: detectionResult,
+            additionalEvidence: [.init(target: mirroredIdentity)],
+            applicationName: mirroredReceipt.applicationName).receipt.requireIdentity()
+        let authority = try await self.sharedMutationAuthority(for: identity)
+        return try AuthorizedDesktopTargetPlan(mutationAuthority: authority)
+    }
+
+    @MainActor
+    func sharedMutationAuthority(
+        for identity: DesktopTargetIdentity) async throws -> DesktopTargetPlanning.MutationAuthorityPlan
+    {
+        let planner = DesktopTargetPlanning.MutationAuthorityPlanner(
+            applications: self.applications,
+            windows: self.windows)
+        let authority = try await planner.plan(
+            selector: InteractionTargetSelector(
+                processIdentifier: Int(identity.processIdentity.processIdentifier),
+                windowID: identity.exactWindow?.identity.windowID),
+            expectedProcessIdentity: identity.processIdentity)
+        _ = try identity.coalescing(authority.targetIdentity)
+        return authority
     }
 
     struct BackgroundApplicationTargetSchema {
