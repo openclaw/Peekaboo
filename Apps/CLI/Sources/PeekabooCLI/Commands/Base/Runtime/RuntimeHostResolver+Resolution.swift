@@ -93,7 +93,7 @@ extension RuntimeHostResolver {
 
     enum RemoteCandidateRejection: Equatable {
         case protocolVersionMismatch
-        case hostKindMismatch
+        case hostKindMismatch(expected: PeekabooBridgeHostKind)
         case missingPermissions(Set<PeekabooBridgePermissionKind>)
         case requirementsNotMet
         case reusableDaemonUnavailable
@@ -145,8 +145,9 @@ extension RuntimeHostResolver {
         guard requiredProtocolVersion == nil || handshake.negotiatedVersion == requiredProtocolVersion else {
             return .rejected(.protocolVersionMismatch)
         }
-        guard candidate.requiredHostKind == nil || handshake.hostKind == candidate.requiredHostKind else {
-            return .rejected(.hostKindMismatch)
+        if let requiredHostKind = candidate.requiredHostKind,
+           handshake.hostKind != requiredHostKind {
+            return .rejected(.hostKindMismatch(expected: requiredHostKind))
         }
         let missingPermissions = BridgeCapabilityPolicy.explicitlyMissingRemotePermissions(
             for: handshake,

@@ -260,10 +260,11 @@ struct BridgeCandidateRejectionReport {
                 code: "protocolVersionMismatch",
                 message: "Host protocol does not match the required Bridge version."
             )
-        case .hostKindMismatch:
+        case let .hostKindMismatch(expected):
             return Self(
                 code: "hostKindMismatch",
-                message: "Host kind \(handshake.hostKind.rawValue) does not match this candidate role."
+                message: "Host kind \(handshake.hostKind.rawValue) does not match required " +
+                    "\(expected.rawValue) role."
             )
         case let .missingPermissions(permissions):
             let names = BridgeCapabilityPolicy.missingPermissionNames(permissions)

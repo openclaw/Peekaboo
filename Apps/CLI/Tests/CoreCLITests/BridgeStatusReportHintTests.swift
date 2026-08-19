@@ -234,6 +234,26 @@ struct BridgeStatusReportHintTests {
             handshake: missingCapabilityHandshake
         )
         #expect(capabilityReport.code == "requirementsNotMet")
+
+        let wrongHostKindHandshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .helper,
+            supportedOperations: [.setValue, .performAction]
+        )
+        let hostKindEvaluation = await RuntimeHostResolver.evaluateRemoteCandidate(
+            candidate,
+            handshake: wrongHostKindHandshake,
+            options: CommandRuntimeOptions()
+        )
+        #expect(hostKindEvaluation.validation == nil)
+        #expect(hostKindEvaluation.rejection == .hostKindMismatch(expected: .gui))
+        let hostKindRejection = try #require(hostKindEvaluation.rejection)
+        let hostKindReport = BridgeCandidateRejectionReport.runtime(
+            hostKindRejection,
+            handshake: wrongHostKindHandshake
+        )
+        #expect(hostKindReport.code == "hostKindMismatch")
+        #expect(hostKindReport.message == "Host kind helper does not match required gui role.")
     }
 
     @Test
