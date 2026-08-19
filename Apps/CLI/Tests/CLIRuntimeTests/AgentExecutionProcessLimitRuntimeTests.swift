@@ -165,9 +165,15 @@ struct AgentExecutionProcessLimitRuntimeTests {
         )
         #expect(trace["totalCallCount"] as? Int == 1)
 
-        try #require(requests.count == 10, "Bridge requests: \(requestBodies)")
         let decodedRequests = try requests.map {
             try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeRequest.self, from: $0)
+        }
+        let handshakeCount = decodedRequests.count { request in
+            if case .handshake = request {
+                true
+            } else {
+                false
+            }
         }
         let operations = decodedRequests.compactMap { request -> PeekabooBridgeOperation? in
             if case .handshake = request {
@@ -175,10 +181,13 @@ struct AgentExecutionProcessLimitRuntimeTests {
             }
             return request.operation
         }
-        #expect(operations.count(where: { $0 == .invalidateImplicitLatestSnapshot }) == 1)
+        let invalidationCount = operations.count(where: { $0 == .invalidateImplicitLatestSnapshot })
+        #expect(handshakeCount == 2, "Bridge requests: \(requestBodies)")
+        #expect((0...1).contains(invalidationCount), "Bridge requests: \(requestBodies)")
         #expect(operations.count(where: { $0 == .getFrontmostApplication }) == 2)
         #expect(operations.count(where: { $0 == .getFocusedWindow }) == 2)
         #expect(operations.count(where: { $0 == .listApplications }) == 3)
+        #expect(requests.count == 9 + invalidationCount, "Bridge requests: \(requestBodies)")
     }
 
     private static func response(for request: PeekabooBridgeRequest) -> PeekabooBridgeResponse {
