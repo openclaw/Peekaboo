@@ -1102,7 +1102,7 @@ function calibrationReceipt(root, name, executablePath, controlledTarget, cdhash
       type: 'left_mouse_down',
       source_pid: 205,
       source_start_identity_at_callback: '205001',
-      timestamp_nanoseconds: 123456789,
+      timestamp_nanoseconds: '9007199254740993',
     },
     before: identity,
     after: identity,
@@ -1142,6 +1142,7 @@ function targetSpec(root, name, pid, start, windowID, bounds) {
 function projectionFixture(root) {
   const fixtureHome = privateDirectory(root, 'home');
   const crashDirectory = privateDirectory(privateDirectory(privateDirectory(fixtureHome, 'Library'), 'Logs'), 'DiagnosticReports');
+  fs.chmodSync(crashDirectory, 0o770);
   const runs = privateDirectory(root, 'runs');
   const peekaboo = executable(root, 'peekaboo');
   const controller = executable(root, 'controller');
@@ -1229,6 +1230,7 @@ test('closed raw receipts project deterministic live-v4 bindings and reject ambi
     const output = path.join(root, 'bindings.json');
     const result = projectBindings(input, output);
     const bindings = JSON.parse(fs.readFileSync(output));
+    assert.equal(fs.statSync(fix.spec.paths.crash_directory).mode & 0o777, 0o770);
     assert.equal(result.bindings.monitor.foreground_controller.pid, 205);
     assert.equal(bindings.monitor.code_signature_hash, 'f'.repeat(40));
     assert.deepEqual(bindings.controllers.map((entry) => entry.controller_id), ['controller-a', 'controller-b']);

@@ -69,7 +69,7 @@ private struct CapturedEvent: Codable {
     let type: String
     let sourcePID: Int32
     let sourceStartIdentityAtCallback: String
-    let timestampNanoseconds: UInt64
+    let timestampNanoseconds: String
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -115,7 +115,7 @@ private final class EventState {
             type: eventTypeName(type),
             sourcePID: sourcePID,
             sourceStartIdentityAtCallback: startIdentity,
-            timestampNanoseconds: event.timestamp)
+            timestampNanoseconds: String(event.timestamp))
         self.lock.lock()
         self.values.append(receipt)
         self.lock.unlock()

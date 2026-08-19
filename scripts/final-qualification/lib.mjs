@@ -1029,7 +1029,7 @@ export function readCalibrationEmitter(filePath, expectedTarget = null) {
   ].includes(value.captured_event.type), `${label} event type is not eligible`);
   requireCondition(positiveInteger(value.captured_event.source_pid)
     && positiveDecimal(value.captured_event.source_start_identity_at_callback)
-    && positiveInteger(value.captured_event.timestamp_nanoseconds),
+    && positiveDecimal(value.captured_event.timestamp_nanoseconds),
   `${label} event source is invalid`);
   const identityKeys = [
     'pid', 'start_identity', 'executable_path', 'executable_sha256', 'team_id',

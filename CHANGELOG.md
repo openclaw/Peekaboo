@@ -4,6 +4,7 @@
 
 ### Added
 - Add Bridge protocol 1.31 one-request signed background Agent execution with authenticated CLI derivation, an irreversible no-child-process gate, lifecycle-covered release acknowledgement, exact-leader reaping, canonical terminal receipt bundles, and nested exact-lane receipts.
+- Add a Git-blob-bound final qualification manifest that requires byte-identical local/Studio installations, candidate-bound CLI and monitor identities, both elevation receipts, guarded task-owned process trees, and freshly re-executed native-only policy scans.
 
 ### Fixed
 - Pin foreground menu focus, clicks, and listing to one exact process/window generation across CLI and MCP, preserving focus outcomes when a later menu read fails.
@@ -19,6 +20,7 @@
 - Bound asynchronous Accessibility notification add and remove waits, removal joins, and subscription setup retries so one wedged endpoint cannot hang global observer startup or teardown. Thanks @SebTardif for AXorcist #47.
 - Centralize snapshot target-evidence adapters and receipt planning across AutomationKit, CLI, Bridge, and MCP so exact-window identity, coordinate authority, source contradictions, and cancellation keep one fail-closed contract.
 - Route background mutation authorization through one completeness-aware application/window planner, so MCP window, Space, and exact-window paste targets reject fuzzy selectors and partial catalogs before dispatch.
+- Reject copied, hard-linked, remapped, or caller-resealed qualification evidence by re-running the source-bound concurrent validator and binding exact requester, terminal, process-tree, and lifecycle-guard authority.
 
 ## [4.2.1] - 2026-08-17
 
@@ -37,29 +39,14 @@
 - Add capability-gated exact-window background middle/triple clicks with native center-button and 1/2/3 click-state sequences, signed target receipts, and fail-closed protocol 1.29 compatibility.
 - Add a packaged version-2 digest specification plus `digest` and `verify-digests` commands so operators can independently recompute every live certification root and leaf without source access.
 - Add a live-physical multi-target finalizer that binds exact protocol-1.30 background controllers, a source-owned epoch monitor, attributed foreground activity, restoration, crash evidence, and protocol-1.29 signed receipt validation into one fail-closed run.
-- Add a Git-blob-bound final qualification manifest that requires byte-identical local/Studio installations, candidate-bound CLI and monitor identities, both elevation receipts, complete task-owned process trees across three epochs, and freshly re-executed source-owned policy scans with no CUA, AppleScript/JXA/OSA, virtualization, VNC, or remote-desktop path.
 
 ### Fixed
-- Pin foreground menu focus, clicks, and listing to one exact process/window generation across CLI and MCP, preserving focus outcomes when a later menu read fails.
-- Refuse fuzzy application selectors before CLI or MCP mutations are pinned to a process, while preserving fuzzy read-only discovery.
-- Preserve exact target and dispatch receipts when a submitted Accessibility `set-value` write cannot be verified, so CLI, MCP, and Bridge callers receive retry-unsafe guidance instead of a raw error.
-- Preserve exact scroll dispatch counts and stop retrying through another route after any accepted or possibly accepted scroll prefix; SwiftUI tab presses likewise require fresh observation instead of replaying a synthetic click after an accepted `AXPress`.
-- Align Agent, MCP, CLI help, and documentation with snapshot-pinned background press/type, targeted background dialog AXValue, and explicit foreground consent for cold launch, Space switching, and foreground-exposing AX actions.
-- Refuse targetless background typing, malformed browser requests, and invalid video inputs before runtime discovery, with path-specific media errors and CLI-native browser recovery.
-- Preserve local Option/Meta chords while buffering fragmented terminal escape sequences longer over SSH, and ignore stale cancelled escape timers that arrive after a newer sequence.
-- Update AXorcist so synchronous and legacy element observers share the bounded registration and cleanup state machine, preventing a wedged endpoint from blocking Peekaboo's main actor indefinitely or escaping late-result rollback.
-- Keep JSON-output flags after the `--` option terminator as child arguments instead of changing Peekaboo's own error envelope.
-- Route CLI and MCP multi-phase result composition through the canonical target-aware sequence accumulator while preserving their established output contracts.
-- Bound asynchronous Accessibility notification add and remove waits, removal joins, and subscription setup retries so one wedged endpoint cannot hang global observer startup or teardown. Thanks @SebTardif for AXorcist #47.
-- Centralize snapshot target-evidence adapters and receipt planning across AutomationKit, CLI, Bridge, and MCP so exact-window identity, coordinate authority, source contradictions, and cancellation keep one fail-closed contract.
-- Route background mutation authorization through one completeness-aware application/window planner, so MCP window, Space, and exact-window paste targets reject fuzzy selectors and partial catalogs before dispatch.
 - Route CLI and MCP background keyboard delivery through one completeness-aware target planner, refusing fuzzy application selectors and partial window catalogs before type, paste, or press dispatch.
 - Keep exact background pointer routing and dialog postcondition checks correct for minimized and off-Space windows, while treating failed WindowServer catalog reads as unreadable instead of confirmed absence.
 - Bound held-pointer owner and terminal-replay retention in long-lived hosts, make idle-owner disconnect a signed no-change close, and prevent cancelled begins from returning an already-terminated hold receipt.
 - Release cancelled exact-window held hotkeys only to their original process generation, include cleanup events in typed unit counts, and never retarget cleanup to a recycled PID.
 - Make application and window inventories report omitted or identity-incomplete rows as partial, while keeping complete AX-only window listings usable without Screen Recording.
 - Update AXorcist and Tachikoma so Accessibility permission observation cancellation cannot deadlock the main queue or install timers after termination, while Realtime tool execution preserves the first completion/cancellation winner, keeps timeout returns bounded while owning delayed cleanup, preserves completed results during timer cancellation, and rejects invalid audio deadlines before dispatch. Thanks @SebTardif for AXorcist #46 and Tachikoma #68; follow-up fixes landed in AXorcist #48 and Tachikoma #69/#70.
-- Reject copied, hard-linked, or remapped qualification receipts by authenticated bundle, request, listener, and session identity, with strictly ordered positive-duration Agent mutations and semantic readbacks.
 
 ## [4.2.0] - 2026-08-16
 

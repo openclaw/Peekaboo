@@ -166,7 +166,11 @@ export function projectBindings(specPath, outputPath) {
   requireStableExecutable(spec.paths.monitor_executable, 'paths.monitor_executable');
   const canonicalCrashDirectory = path.join(os.homedir(), 'Library', 'Logs', 'DiagnosticReports');
   requireCondition(spec.paths.crash_directory === canonicalCrashDirectory, 'crash_directory is not the canonical current-user path');
-  requirePrivateDirectory(spec.paths.crash_directory, 'paths.crash_directory');
+  const crashDirectoryInfo = fs.lstatSync(spec.paths.crash_directory);
+  requireCondition(crashDirectoryInfo.isDirectory()
+    && crashDirectoryInfo.uid === process.geteuid()
+    && fs.realpathSync(spec.paths.crash_directory) === spec.paths.crash_directory,
+  'paths.crash_directory must be one canonical current-user-owned directory');
 
   const monitorSignature = parseCodesignReceipt(spec.receipts.monitor_codesign, 'receipts.monitor_codesign');
   requireCondition(fs.realpathSync(monitorSignature.executable) === spec.paths.monitor_executable, 'monitor codesign receipt names another executable');
