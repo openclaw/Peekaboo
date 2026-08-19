@@ -21,7 +21,10 @@ import {
   verifyManifest as verifyManifestProduction,
   verifySourceManifest,
 } from '../qualification-manifest.mjs';
-import { validateConcurrentRun as validateConcurrentRunProduction } from '../validate-concurrent-run.mjs';
+import {
+  validateAgentTraceOperationBinding,
+  validateConcurrentRun as validateConcurrentRunProduction,
+} from '../validate-concurrent-run.mjs';
 import { aggregateSHA256 as multiTargetAggregateSHA256 } from '../../finalize-multi-target-certification.mjs';
 import {
   aggregateSHA256,
@@ -2027,6 +2030,29 @@ function signedOperationRequestFixture(operation, traceArguments) {
     projectedAction: { _0: { request: { [requestCase]: { _0: payload } } } },
   }).toString('base64');
 }
+
+test('same-target paste bindings remain distinct by authenticated request identity', () => {
+  const target = { pid: 302, start_identity: '302001', window_id: 402 };
+  const entry = traceEntry('paste', 'paste', target.pid, target.window_id);
+  const signed = (requestKey) => ({
+    bundle: {
+      value: {
+        canonicalRequest: signedOperationRequestFixture(
+          'exactWindowTargetedTypeActions',
+          entry.arguments,
+        ),
+      },
+    },
+    identity: { request_key: requestKey },
+  });
+  const first = validateAgentTraceOperationBinding(
+    entry, signed('listener:first'), 'paste', target, 'first paste',
+  );
+  const second = validateAgentTraceOperationBinding(
+    entry, signed('listener:second'), 'paste', target, 'second paste',
+  );
+  assert.notEqual(first, second);
+});
 
 let fixtureRequestCounter = 1;
 function signedBundleFixture(root, name, operation, targetValue, startedAt, completedAt, {

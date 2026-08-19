@@ -288,7 +288,13 @@ export function validateAgentTraceOperationBinding(entry, signed, family, expect
       && entry.arguments.window_id === expectedTarget.window_id
       && (request.snapshotId === undefined || request.snapshotId === null),
     `${label} exact trace target differs from the signed Bridge request target`);
-    return `paste:${expectedTarget.pid}:${expectedTarget.start_identity}:${expectedTarget.window_id}`;
+    return [
+      'paste',
+      expectedTarget.pid,
+      expectedTarget.start_identity,
+      expectedTarget.window_id,
+      signed.identity.request_key,
+    ].join(':');
   }
   requireCondition(false, `${label} has no closed trace/request binding`);
 }
