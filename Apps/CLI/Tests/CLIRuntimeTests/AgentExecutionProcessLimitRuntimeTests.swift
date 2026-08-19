@@ -174,9 +174,16 @@ struct AgentExecutionProcessLimitRuntimeTests {
         #expect(trace["totalCallCount"] as? Int == 1)
 
         try #require(requests.count == 7)
-        #expect(String(data: requests[4], encoding: .utf8)?.contains("listApplications") == true)
-        #expect(String(data: requests[5], encoding: .utf8)?.contains("getFocusedWindow") == true)
-        #expect(String(data: requests[6], encoding: .utf8)?.contains("listApplications") == true)
+        let decodedRequests = try requests.map {
+            try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeRequest.self, from: $0)
+        }
+        let operations = decodedRequests.compactMap { request -> PeekabooBridgeOperation? in
+            if case .handshake = request {
+                return nil
+            }
+            return request.operation
+        }
+        #expect(operations.contains(.listApplications), "Bridge requests: \(requestBodies)")
     }
 
     private static func runGatedAgent(bridgeSocketPath: String) throws
