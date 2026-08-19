@@ -291,7 +291,7 @@ private final class ExactKeyboardAutomationService: MockAutomationService,
     }
 }
 
-private actor ExactKeyboardWindowService: WindowManagementServiceProtocol {
+private actor ExactKeyboardWindowService: WindowManagementServiceProtocol, WindowMutationInventoryProviding {
     let windows: [ServiceWindowInfo]
     let cancelWindowListing: Bool
 
@@ -319,6 +319,12 @@ private actor ExactKeyboardWindowService: WindowManagementServiceProtocol {
         case let .index(_, index): self.windows.filter { $0.index == index }
         case .application, .frontmost: self.windows
         }
+    }
+
+    func windowMutationInventory(
+        target: WindowTarget) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo>
+    {
+        try await .complete(self.listWindows(target: target))
     }
 
     func getFocusedWindow() async throws -> ServiceWindowInfo? {
