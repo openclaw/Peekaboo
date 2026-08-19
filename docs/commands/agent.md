@@ -16,7 +16,7 @@ read_when:
 | `resume [session-id]` | Resume the most recent session, or the exact full session ID, in chat mode. |
 | `sessions` | Print cached sessions with full IDs, tasks, lifecycle status, and stored policy maximum; accepts only the global `--json` output switch. |
 | `chat [initial-prompt]` | Start the interactive chat loop. |
-| `--dry-run` | Emit a deterministic preview of a required text task without calling a model, invoking tools, transcribing audio, or creating a session. JSON includes `dryRun`, the normalized `instruction`, and zero tool/trace counts. |
+| `--dry-run` | Emit a deterministic preview of a required text task without calling a model, invoking tools, transcribing audio, or creating a session. Human output names the requested foreground choice and effective UI authority. JSON also includes `uiAuthority.requestedForeground`, `uiAuthority.effectivePolicy`, and `uiAuthority.backgroundOnly`. |
 | `--max-steps <n>` | Cap model turns to `1...100` (default: 100). One turn may contain multiple tool calls. |
 | `--model gpt-5.6|gpt-5-mini|claude-opus-5|claude-fable-5|claude-sonnet-5|gemini-3-flash|minimax|minimax-cn/<model>|openrouter/<provider>/<model>|ollama/<model>|lmstudio/<model>` | Override the configured model. Concrete OpenAI and Anthropic selections are preserved; generic `gpt`/`openai` select GPT-5.6 Sol. Input is validated against supported hosted providers and local model providers. |
 | `--no-cache` | Run ephemerally without saving a resumable session. Cannot be combined with resume/list flags. |

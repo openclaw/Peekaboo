@@ -9,35 +9,50 @@ import Testing
 @MainActor
 struct AgentDryRunTests {
     @Test
-    func `preview normalizes instruction and exposes explicit zero execution`() throws {
-        let command = try AgentCommand.parse(["  Inspect TextEdit  ", "--dry-run"])
-        let instruction = try #require(command.newTaskDryRunInstruction)
+    func `preview normalizes instruction and exposes background authority with zero execution`() throws {
+        for testCase in [
+            (arguments: ["  Inspect TextEdit  ", "--dry-run"], requestedForeground: false, policy: "background_only"),
+            (
+                arguments: ["  Inspect TextEdit  ", "--dry-run", "--allow-foreground"],
+                requestedForeground: true,
+                policy: "foreground_allowed"
+            ),
+        ] {
+            let command = try AgentCommand.parse(testCase.arguments)
+            let instruction = try #require(command.newTaskDryRunInstruction)
 
-        #expect(instruction == "Inspect TextEdit")
-        #expect(command.dryRunHumanLines(instruction: instruction) == [
-            "Dry run preview",
-            "Instruction: Inspect TextEdit",
-            "Model execution: skipped",
-            "Tool calls: 0",
-            "Session saved: no",
-        ])
+            #expect(instruction == "Inspect TextEdit")
+            #expect(command.dryRunHumanLines(instruction: instruction) == [
+                "Dry run preview",
+                "Instruction: Inspect TextEdit",
+                "Requested foreground UI: \(testCase.requestedForeground ? "yes" : "no")",
+                "Effective UI authority: \(testCase.policy)",
+                "Model execution: skipped",
+                "Tool calls: 0",
+                "Session saved: no",
+            ])
 
-        let response = command.makeDryRunJSONResponse(instruction: instruction)
-        #expect(response["success"] as? Bool == true)
-        let result = try #require(response["result"] as? [String: Any])
-        let metadata = try #require(result["metadata"] as? [String: Any])
-        let trace = try #require(result["executionTrace"] as? [String: Any])
-        #expect(result["dryRun"] as? Bool == true)
-        #expect(result["instruction"] as? String == instruction)
-        #expect(result["modelExecution"] as? String == "skipped")
-        #expect(result["sessionId"] is NSNull)
-        #expect((result["toolCalls"] as? [Any])?.isEmpty == true)
-        #expect(result["usage"] is NSNull)
-        #expect(metadata["toolCallCount"] as? Int == 0)
-        #expect(metadata["modelName"] as? String == "not_invoked")
-        #expect((trace["entries"] as? [Any])?.isEmpty == true)
-        #expect(trace["totalCallCount"] as? Int == 0)
-        #expect(trace["truncated"] as? Bool == false)
+            let response = command.makeDryRunJSONResponse(instruction: instruction)
+            #expect(response["success"] as? Bool == true)
+            let result = try #require(response["result"] as? [String: Any])
+            let metadata = try #require(result["metadata"] as? [String: Any])
+            let trace = try #require(result["executionTrace"] as? [String: Any])
+            let authority = try #require(result["uiAuthority"] as? [String: Any])
+            #expect(result["dryRun"] as? Bool == true)
+            #expect(result["instruction"] as? String == instruction)
+            #expect(result["modelExecution"] as? String == "skipped")
+            #expect(result["sessionId"] is NSNull)
+            #expect((result["toolCalls"] as? [Any])?.isEmpty == true)
+            #expect(result["usage"] is NSNull)
+            #expect(authority["requestedForeground"] as? Bool == testCase.requestedForeground)
+            #expect(authority["effectivePolicy"] as? String == testCase.policy)
+            #expect(authority["backgroundOnly"] as? Bool == !testCase.requestedForeground)
+            #expect(metadata["toolCallCount"] as? Int == 0)
+            #expect(metadata["modelName"] as? String == "not_invoked")
+            #expect((trace["entries"] as? [Any])?.isEmpty == true)
+            #expect(trace["totalCallCount"] as? Int == 0)
+            #expect(trace["truncated"] as? Bool == false)
+        }
     }
 
     @Test

@@ -47,9 +47,12 @@ extension AgentCommand {
     }
 
     func dryRunHumanLines(instruction: String) -> [String] {
-        [
+        let policy = self.newSessionToolExecutionPolicy
+        return [
             "Dry run preview",
             "Instruction: \(instruction)",
+            "Requested foreground UI: \(self.allowForeground ? "yes" : "no")",
+            "Effective UI authority: \(policy.rawValue)",
             "Model execution: skipped",
             "Tool calls: 0",
             "Session saved: no",
@@ -76,6 +79,12 @@ extension AgentCommand {
         payload["dryRun"] = true
         payload["instruction"] = instruction
         payload["modelExecution"] = "skipped"
+        let policy = self.newSessionToolExecutionPolicy
+        payload["uiAuthority"] = [
+            "requestedForeground": self.allowForeground,
+            "effectivePolicy": policy.rawValue,
+            "backgroundOnly": policy == .backgroundOnly,
+        ]
         response["result"] = payload
         return response
     }
