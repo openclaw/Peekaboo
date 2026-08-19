@@ -310,7 +310,14 @@ unrelated, swapped, recycled-generation, or different window cannot satisfy thos
 rejects any task-owned root or descendant using CUA, AppleScript/JXA/OSA interpreters, virtualization, VNC, Screen
 Sharing, or remote-desktop helpers, while unrelated ambient services remain outside its closed tree and are never
 stopped. A separate bound executable/script policy report covers in-process native paths that ancestry alone cannot
-prove. See `scripts/final-qualification/README.md` for the exact schemas and commands.
+prove. Every final matrix run uses `--qualification-cycle 1...5` to add one signed-Playground alert lifecycle after the
+fixed 42 rows: background Show Alert, exact sheet observation, alternating background OK/Cancel dismissal, and a fresh
+complete AX-only See with no dialog remaining. The harness retains and hashes raw CLI, monitor, timing, process, signed
+Bridge-bundle, and live-validator artifacts; final manifest generation and verification re-read and authenticate them
+instead of trusting copied summary fields. The initial screenshot See must remain below the overall 2.5-second budget,
+while the final native AX-only See must remain below 1.5 seconds. The cycle's zero-delta DiagnosticReports comparison
+must bracket that trigger, so a clean crash scan without exercising the reported alert/dismiss/AX-refresh path cannot
+certify. See `scripts/final-qualification/README.md` for the exact schemas and commands.
 
 For the interaction commands exercised here, background is the omission contract: `--foreground` is the only consent
 for focus/activation, global keyboard input, physical cursor movement, or synthetic pointer/wheel events. Explicit app

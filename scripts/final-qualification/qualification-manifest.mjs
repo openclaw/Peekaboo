@@ -20,12 +20,16 @@ import {
   validateCoordinatorExecutionEvidence,
 } from './validate-concurrent-run.mjs';
 import {
+  validatePlaygroundAlertLifecycleFile,
+} from './playground-alert-lifecycle.mjs';
+import {
   aggregateSHA256,
   authenticateAgentExecutionTerminalBundle,
   authenticateLiveBridgeBundle,
   authenticatedBridgeReceiptIdentity,
   controlledFixtureBindings,
   corroboratedObservationTime,
+  decodeCanonicalBase64JSON,
   exactKeys,
   fileReceipt,
   isAgentMutatingToolName,
@@ -48,8 +52,11 @@ import {
 const QUALIFICATION_TOOL_FILES = [
   'scripts/finalize-multi-target-certification.mjs',
   'scripts/run-live-multi-target-certification.mjs',
+  'scripts/test-background-computer-use.sh',
   'scripts/final-qualification/README.md',
   'scripts/final-qualification/atomic-publish-no-replace.swift',
+  'scripts/final-qualification/construct-live-plan.mjs',
+  'scripts/final-qualification/crash-inventory.mjs',
   'scripts/final-qualification/executable-policy-scanner.mjs',
   'scripts/final-qualification/integrated-cu-emitter-calibrator.swift',
   'scripts/final-qualification/managed-launch-suspended.c',
@@ -58,6 +65,7 @@ const QUALIFICATION_TOOL_FILES = [
   'scripts/final-qualification/project-live-bindings.mjs',
   'scripts/final-qualification/process-lifecycle-guard.c',
   'scripts/final-qualification/process-tree-collector.mjs',
+  'scripts/final-qualification/playground-alert-lifecycle.mjs',
   'scripts/final-qualification/publish-agent-execution-acknowledgement.mjs',
   'scripts/final-qualification/publish-coordinator-marker.mjs',
   'scripts/final-qualification/qualification-manifest.mjs',
@@ -1186,6 +1194,33 @@ function validateDeploymentToolSources(deployment, toolsManifest, artifact, labe
   `${label} process monitor differs from the candidate-bound monitor`);
 }
 
+function sourceBoundToolReceipt(filePath, relativePath, toolsManifest, label) {
+  const entry = toolsManifest.files.find((candidate) => candidate.relative_path === relativePath);
+  const expectedPath = path.join(toolsManifest.directory, relativePath);
+  const retained = readStableFile(filePath, label, { privateFile: false });
+  const receipt = { path: retained.path, size: retained.bytes.length, sha256: retained.sha256 };
+  requireCondition(entry && receipt.path === expectedPath
+    && receipt.sha256 === entry.sha256 && receipt.size === entry.size,
+  `${label} differs from the reviewed qualification tools`);
+  return receipt;
+}
+
+function qualificationBundleAuthentication(plan, artifact, authenticateBundle, label) {
+  const executable = requireStableExecutable(plan.peekaboo_executable, `${label} CLI`, {
+    allowRootOwner: true,
+  });
+  requireCondition(executable.sha256 === artifact.cli.sha256,
+    `${label} CLI differs from the candidate artifact`);
+  return {
+    authenticateBundle,
+    executable_path: executable.path,
+    executable_sha256: executable.sha256,
+    bridge_socket: plan.bridge.socket_path,
+    trusted_host_team_ids: plan.bridge.trusted_host_team_ids,
+    expected_host: plan.bridge.expected_host,
+  };
+}
+
 function exactTarget(value, label) {
   exactKeys(value, ['pid', 'start_identity', 'window_id'], label);
   requireCondition(Number.isSafeInteger(value.pid) && value.pid > 0
@@ -1301,6 +1336,177 @@ function semanticCrashComparison(filePath, label, expected = null) {
       )), `${label} is not one run-bound zero-delta crash comparison`);
   }
   return { path: retained.path, size: retained.bytes.length, sha256: retained.sha256 };
+}
+
+function semanticPlaygroundAlertLifecycle(
+  filePath,
+  expected,
+  crashPath,
+  playgroundCodeSignatureHash,
+  authentication,
+  clientCodeSignatureHash,
+  label,
+) {
+  const lifecycle = validatePlaygroundAlertLifecycleFile(filePath, {
+    label,
+    cycle: expected.cycle,
+    execution_nonce: expected.execution_nonce,
+    peekaboo_source_commit: expected.peekaboo_source_commit,
+    bridge_source_commit: expected.bridge_source_commit,
+    playground_code_signature_hash: playgroundCodeSignatureHash,
+  });
+  const crash = readStableJSON(crashPath, `${label} crash comparison`).value;
+  const lifecycleTimings = Object.values(lifecycle.phaseData).map((phase) => phase.timing);
+  const lifecycleStartedAt = Math.min(...lifecycleTimings.map((timing) => (
+    timing.started_at_milliseconds
+  )));
+  const lifecycleCompletedAt = Math.max(...lifecycleTimings.map((timing) => (
+    timing.completed_at_milliseconds
+  )));
+  requireCondition(crash.version === 2 && crash.passed === true
+    && crash.cycle === lifecycle.value.qualification_cycle
+    && crash.execution_nonce === lifecycle.value.execution_nonce
+    && expected.started_at_milliseconds <= lifecycleStartedAt
+    && lifecycleCompletedAt <= expected.completed_at_milliseconds
+    && crash.started_at_milliseconds <= lifecycleStartedAt
+    && crash.completed_at_milliseconds >= lifecycleCompletedAt,
+  `${label} is not bracketed by its run-bound zero-delta crash comparison`);
+  const expectedOperations = {
+    'open-fixture-menu': 'clickMenuItem',
+    'open-fixture-window': 'listWindows',
+    'initial-see': 'desktopObservation',
+    'show-alert': 'exactWindowTargetedClick',
+    'dialog-observe': 'targetedDialogListElements',
+    dismiss: 'exactDialogClickButton',
+    'post-dismiss-ax': 'inspectAccessibilityTree',
+  };
+  const expectedMutationPhases = new Set(['open-fixture-menu', 'show-alert', 'dismiss']);
+  const selectedPairs = {};
+  const allPairs = [];
+  for (const [phase, phaseValue] of Object.entries(lifecycle.phaseData)) {
+    const pairs = phaseValue.corpus.map((entry, index) => semanticValidatorPair(
+      entry.bundle.retained.path,
+      entry.validator.retained.path,
+      `${label} ${phase} bundle ${index}`,
+      { authentication },
+    ));
+    const selected = pairs.filter((pair) => pair.payload.operation === expectedOperations[phase]);
+    requireCondition(selected.length === 1,
+      `${label} ${phase} does not contain one authenticated ${expectedOperations[phase]} receipt`);
+    requireCondition(pairs.every((pair) => {
+      const dispatched = pair.payload.outcome?.mutation_dispatched === true;
+      return !dispatched || (expectedMutationPhases.has(phase) && pair === selected[0]);
+    }), `${label} ${phase} contains an uncontracted signed desktop mutation`);
+    requireCondition(pairs.every((pair) => (
+      pair.report.client.code_signature_hash === clientCodeSignatureHash
+    )), `${label} ${phase} was not executed by the candidate CLI`);
+    requireCondition(phaseValue.timing.started_at_milliseconds
+      <= selected[0].payload.startedAtUnixMilliseconds
+      && selected[0].payload.completedAtUnixMilliseconds
+        <= phaseValue.timing.completed_at_milliseconds,
+    `${label} ${phase} retained timing does not bracket its signed operation`);
+    selectedPairs[phase] = selected[0];
+    allPairs.push(...pairs);
+  }
+  requireUniqueAuthenticatedBridgeReceipts(allPairs, `${label} signed receipt corpus`);
+  const exactTargetPhases = [
+    'initial-see', 'show-alert', 'dialog-observe', 'dismiss', 'post-dismiss-ax',
+  ];
+  for (const phase of exactTargetPhases) {
+    requireCondition(selectedPairs[phase].report.target_attested === true
+      && sameJSON(targetFromPayload(selectedPairs[phase].payload, `${label} ${phase}`), lifecycle.target),
+    `${label} ${phase} signed receipt differs from the exact Playground window`);
+  }
+  for (const phase of ['open-fixture-menu', 'show-alert', 'dismiss']) {
+    const outcome = selectedPairs[phase].payload.outcome;
+    requireCondition(selectedPairs[phase].report.outcome_attested === true
+      && outcome?.delivery_mode === 'background'
+      && outcome?.dispatch_state === 'dispatched'
+      && outcome?.mutation_dispatched === true,
+    `${label} ${phase} is not an authenticated background mutation`);
+  }
+  const signedValue = (pair, field) => decodeCanonicalBase64JSON(
+      pair.bundle.value[field],
+      `${label} ${pair.payload.operation} ${field}`,
+    ).value;
+  const stringsIn = (decoded) => {
+    const values = [];
+    const visit = (value) => {
+      if (typeof value === 'string') values.push(value);
+      else if (Array.isArray(value)) value.forEach(visit);
+      else if (value && typeof value === 'object') Object.values(value).forEach(visit);
+    };
+    visit(decoded);
+    return values;
+  };
+  const valuesForKey = (decoded, key) => {
+    const values = [];
+    const visit = (value) => {
+      if (Array.isArray(value)) value.forEach(visit);
+      else if (value && typeof value === 'object') {
+        if (Object.hasOwn(value, key)) values.push(value[key]);
+        Object.values(value).forEach(visit);
+      }
+    };
+    visit(decoded);
+    return values;
+  };
+  const objectsIn = (decoded) => {
+    const values = [];
+    const visit = (value) => {
+      if (Array.isArray(value)) value.forEach(visit);
+      else if (value && typeof value === 'object') {
+        values.push(value);
+        Object.values(value).forEach(visit);
+      }
+    };
+    visit(decoded);
+    return values;
+  };
+  const initialResult = lifecycle.phaseData['initial-see'].result;
+  const initialSnapshot = initialResult.data.snapshot_id;
+  const showElement = initialResult.data.ui_elements.find((element) => (
+    element.identifier === 'dialog-fixture-show-alert'
+  ));
+  const initialRequest = signedValue(selectedPairs['initial-see'], 'canonicalRequest');
+  const initialResponse = signedValue(selectedPairs['initial-see'], 'canonicalResponse');
+  const initialSignedElements = objectsIn(initialResponse);
+  requireCondition(valuesForKey(initialRequest, 'capture').some((value) => (
+    value && typeof value === 'object'
+  ))
+    && valuesForKey(initialResponse, 'snapshotId').includes(initialSnapshot)
+    && initialSignedElements.some((element) => element.id === showElement.id
+      && (element.identifier === 'dialog-fixture-show-alert'
+        || element.attributes?.identifier === 'dialog-fixture-show-alert'))
+    && stringsIn(initialResponse).includes(lifecycle.value.initial_screenshot.path)
+    && stringsIn(initialResponse).includes(lifecycle.value.initial_screenshot.sha256)
+    && stringsIn(signedValue(selectedPairs['show-alert'], 'canonicalRequest'))
+      .includes(initialSnapshot)
+    && stringsIn(signedValue(selectedPairs['show-alert'], 'canonicalRequest'))
+      .includes(showElement.id),
+  `${label} signed observation/click bytes do not bind the exact Show Alert snapshot element`);
+  const dialogResponseStrings = stringsIn(
+    signedValue(selectedPairs['dialog-observe'], 'canonicalResponse'),
+  );
+  requireCondition(['AXSheet', 'Cancel', 'OK'].every((entry) => dialogResponseStrings.includes(entry)),
+    `${label} signed dialog observation does not contain the exact alert sheet`);
+  requireCondition(stringsIn(signedValue(selectedPairs.dismiss, 'canonicalRequest'))
+    .includes(lifecycle.value.dismiss_button),
+  `${label} signed dialog request does not bind the dismissed button`);
+  const postResult = lifecycle.phaseData['post-dismiss-ax'].result;
+  const postResponse = signedValue(selectedPairs['post-dismiss-ax'], 'canonicalResponse');
+  const postSignedElements = objectsIn(postResponse);
+  requireCondition(valuesForKey(postResponse, 'snapshotId').includes(postResult.data.snapshot_id)
+    && valuesForKey(postResponse, 'screenshotPath').includes('')
+    && valuesForKey(postResponse, 'isDialog').includes(false)
+    && valuesForKey(postResponse, 'truncationInfo').length === 0
+    && postSignedElements.some((element) => (
+      (element.identifier === 'dialog-fixture-last-alert-result'
+        || element.attributes?.identifier === 'dialog-fixture-last-alert-result')
+      && stringsIn(element).includes(lifecycle.value.dismiss_button)
+    )),
+  `${label} signed post-dismiss observation does not bind the fresh AX result`);
+  return lifecycle.receipt;
 }
 
 function semanticConcurrentValidation(filePath) {
@@ -2585,7 +2791,9 @@ function projectInput(input, authenticateBundle) {
   )), 'elevation receipts differ from the authenticated OpenClaw artifact');
   requireCondition(Array.isArray(input.matrix_cycles) && input.matrix_cycles.length === 5, 'exactly five matrix cycles are required');
   const matrixCycles = input.matrix_cycles.map((cycle, index) => {
-    exactKeys(cycle, ['certificate', 'crash_inventory'], `matrix_cycles[${index}]`);
+    exactKeys(cycle, [
+      'certificate', 'crash_inventory', 'playground_alert_lifecycle',
+    ], `matrix_cycles[${index}]`);
     const certificate = semanticCertificate(
       cycle.certificate,
       `matrix cycle ${index + 1} certificate`,
@@ -2598,14 +2806,16 @@ function projectInput(input, authenticateBundle) {
         peekabooArtifactManifestSHA256: artifacts.evidence.peekaboo_artifact_manifest.sha256,
       },
     );
+    const crashInventory = semanticCrashComparison(
+      cycle.crash_inventory,
+      `matrix cycle ${index + 1} crash comparison`,
+      certificate.value,
+    );
     return {
       cycle: index + 1,
       certificate: certificate.receipt,
-      crash_inventory: semanticCrashComparison(
-        cycle.crash_inventory,
-        `matrix cycle ${index + 1} crash comparison`,
-        certificate.value,
-      ),
+      crash_inventory: crashInventory,
+      playground_alert_lifecycle_path: cycle.playground_alert_lifecycle,
       binding: certificate.value,
     };
   });
@@ -2709,6 +2919,27 @@ function projectInput(input, authenticateBundle) {
     adjunctBinding.fixtureBinding,
     'bound final certification summary',
   );
+  const matrixBundleAuthentication = qualificationBundleAuthentication(
+    boundPlanValue,
+    artifacts.peekaboo,
+    authenticateBundle,
+    'matrix alert lifecycle',
+  );
+  const qualifiedMatrixCycles = matrixCycles.map((cycle, index) => ({
+    cycle: cycle.cycle,
+    certificate: cycle.certificate,
+    crash_inventory: cycle.crash_inventory,
+    playground_alert_lifecycle: semanticPlaygroundAlertLifecycle(
+      cycle.playground_alert_lifecycle_path,
+      cycle.binding,
+      cycle.crash_inventory.path,
+      artifacts.peekaboo.playground.cdhash,
+      matrixBundleAuthentication,
+      artifacts.peekaboo.cli.cdhash,
+      `matrix cycle ${index + 1} Playground alert lifecycle`,
+    ),
+    binding: cycle.binding,
+  }));
   const coordinatorInvocation = coordinatorAuthority.invocation.value;
   const boundCoordinatorHandshake = fileReceipt(
     input.live_v4.coordinator_identity_handshake,
@@ -2917,8 +3148,18 @@ function projectInput(input, authenticateBundle) {
         size: qualificationTools.retained.bytes.length,
         sha256: qualificationTools.retained.sha256,
       },
-      plan_constructor: fileReceipt(input.tooling.plan_constructor, 'live-v4 plan constructor'),
-      crash_scanner: fileReceipt(input.tooling.crash_scanner, 'crash scanner'),
+      plan_constructor: sourceBoundToolReceipt(
+        input.tooling.plan_constructor,
+        'scripts/final-qualification/construct-live-plan.mjs',
+        qualificationTools.value,
+        'live-v4 plan constructor',
+      ),
+      crash_scanner: sourceBoundToolReceipt(
+        input.tooling.crash_scanner,
+        'scripts/final-qualification/crash-inventory.mjs',
+        qualificationTools.value,
+        'crash scanner',
+      ),
     },
     live_v4: {
       plan: boundLive.plan,
@@ -2929,7 +3170,7 @@ function projectInput(input, authenticateBundle) {
       certification_summary: boundLive.certification_summary,
       monitor_evidence: boundLive.monitor_evidence,
     },
-    matrix_cycles: matrixCycles.map(({ binding: _binding, ...cycle }) => cycle),
+    matrix_cycles: qualifiedMatrixCycles.map(({ binding: _binding, ...cycle }) => cycle),
     agent_cu: {
       task: boundAgentTask,
       run_root: input.agent_cu.run_root,
@@ -3019,10 +3260,16 @@ function validateEvidenceShape(evidence, visitReceipt) {
   requireCondition(Array.isArray(evidence.matrix_cycles) && evidence.matrix_cycles.length === 5,
     'qualification evidence must contain five matrix cycles');
   evidence.matrix_cycles.forEach((cycle, index) => {
-    exactKeys(cycle, ['cycle', 'certificate', 'crash_inventory'], `evidence.matrix_cycles[${index}]`);
+    exactKeys(cycle, [
+      'cycle', 'certificate', 'crash_inventory', 'playground_alert_lifecycle',
+    ], `evidence.matrix_cycles[${index}]`);
     requireCondition(cycle.cycle === index + 1, `evidence matrix cycle ${index + 1} is misnumbered`);
     visitReceipt(cycle.certificate, `evidence.matrix_cycles[${index}].certificate`);
     visitReceipt(cycle.crash_inventory, `evidence.matrix_cycles[${index}].crash_inventory`);
+    visitReceipt(
+      cycle.playground_alert_lifecycle,
+      `evidence.matrix_cycles[${index}].playground_alert_lifecycle`,
+    );
   });
   exactKeys(evidence.agent_cu, [
     'task', 'run_root', 'agent_execution_bundle', 'agent_execution_validator_report', 'agent_readbacks',
@@ -3160,6 +3407,21 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
     artifacts.peekaboo,
     'verified deployment',
   );
+  const verifiedPlanConstructor = sourceBoundToolReceipt(
+    evidence.tooling.plan_constructor.path,
+    'scripts/final-qualification/construct-live-plan.mjs',
+    qualificationTools.value,
+    'verified live-v4 plan constructor',
+  );
+  const verifiedCrashScanner = sourceBoundToolReceipt(
+    evidence.tooling.crash_scanner.path,
+    'scripts/final-qualification/crash-inventory.mjs',
+    qualificationTools.value,
+    'verified crash scanner',
+  );
+  requireCondition(sameJSON(verifiedPlanConstructor, evidence.tooling.plan_constructor)
+    && sameJSON(verifiedCrashScanner, evidence.tooling.crash_scanner),
+  'verified qualification tool receipts differ from the source manifest');
   const matrixBindings = evidence.matrix_cycles.map((cycle, index) => {
     const certificate = semanticCertificate(
       cycle.certificate.path,
@@ -3279,6 +3541,25 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
     adjunctBinding.fixtureBinding,
     'verified final certification summary',
   );
+  const verifiedMatrixAuthentication = qualificationBundleAuthentication(
+    verifiedPlanValue,
+    artifacts.peekaboo,
+    authenticateBundle,
+    'verified matrix alert lifecycle',
+  );
+  evidence.matrix_cycles.forEach((cycle, index) => {
+    const verifiedLifecycle = semanticPlaygroundAlertLifecycle(
+      cycle.playground_alert_lifecycle.path,
+      matrixBindings[index],
+      cycle.crash_inventory.path,
+      artifacts.peekaboo.playground.cdhash,
+      verifiedMatrixAuthentication,
+      artifacts.peekaboo.cli.cdhash,
+      `verified matrix cycle ${index + 1} Playground alert lifecycle`,
+    );
+    requireCondition(sameJSON(verifiedLifecycle, cycle.playground_alert_lifecycle),
+      `verified matrix cycle ${index + 1} alert lifecycle changed after generation`);
+  });
   const coordinatorInvocation = coordinatorAuthority.invocation.value;
   requireCondition(coordinatorInvocation.identity_handshake_path
     === evidence.live_v4.coordinator_identity_handshake.path
@@ -3474,7 +3755,12 @@ export function verifyManifest(manifestPath, {
     checkedPaths.add(receipt.path);
     const current = label.startsWith('evidence.artifact_manifest.')
       ? immutableReceipt(receipt.path, label)
-      : ['evidence.deployment.process_tree_collector', 'evidence.deployment.executable_policy_scanner']
+      : [
+          'evidence.deployment.process_tree_collector',
+          'evidence.deployment.executable_policy_scanner',
+          'evidence.tooling.plan_constructor',
+          'evidence.tooling.crash_scanner',
+        ]
           .includes(label)
         ? stableSourceReceipt(receipt.path, label)
         : label === 'evidence.deployment.process_tree_monitor'

@@ -18,6 +18,7 @@ SKIP_PLAYGROUND_BUILD=false
 RUN_FOREGROUND_PHASE=false
 SELF_TEST_ONLY=false
 NO_REMOTE=false
+QUALIFICATION_CYCLE=""
 BRIDGE_SOCKET="${PEEKABOO_CERTIFICATION_BRIDGE_SOCKET:-${PEEKABOO_BRIDGE_SOCKET:-}}"
 
 usage() {
@@ -39,6 +40,7 @@ Options:
   --bridge-socket PATH      Pin every remote command to one exact Bridge host
                             (default: Peekaboo.app's bridge.sock)
   --sentinel-bundle-id ID   Require this app to already be frontmost (default: current app)
+  --qualification-cycle N   Add the signed Playground alert lifecycle for final cycle 1...5
   --self-test               Compile and self-test the invariant probe only
   -h, --help                Show this help
 EOF
@@ -78,6 +80,10 @@ while [[ $# -gt 0 ]]; do
             SENTINEL_BUNDLE_ID="$2"
             shift 2
             ;;
+        --qualification-cycle)
+            QUALIFICATION_CYCLE="$2"
+            shift 2
+            ;;
         --self-test)
             SELF_TEST_ONLY=true
             shift
@@ -93,6 +99,12 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ -n "$QUALIFICATION_CYCLE" ]] &&
+   [[ ! "$QUALIFICATION_CYCLE" =~ ^[1-5]$ ]]; then
+    echo "--qualification-cycle must be an integer from 1 through 5." >&2
+    exit 2
+fi
 
 if ! $NO_REMOTE && [[ -z "$BRIDGE_SOCKET" ]]; then
     BRIDGE_SOCKET="$HOME/Library/Application Support/Peekaboo/bridge.sock"
@@ -1855,11 +1867,25 @@ run_case() {
         record_failure "$name recorded a background invariant violation before command dispatch"
         return 1
     fi
+    local command_started_at_milliseconds
+    local command_completed_at_milliseconds
+    command_started_at_milliseconds="$(node -e 'process.stdout.write(String(Date.now()))')"
     : > "$command_gate"
     set +e
     wait "$command_pid"
     local command_exit=$?
     set -e
+    command_completed_at_milliseconds="$(node -e 'process.stdout.write(String(Date.now()))')"
+    jq -n \
+        --argjson started "$command_started_at_milliseconds" \
+        --argjson completed "$command_completed_at_milliseconds" '
+        {
+            version: 1,
+            started_at_milliseconds: $started,
+            completed_at_milliseconds: $completed,
+            wall_time_milliseconds: ($completed - $started)
+        }
+    ' > "$case_dir/command-timing.json"
     printf '%s\n' complete > "$phase.tmp"
     mv "$phase.tmp" "$phase"
     printf '%s\n' "$command_exit" > "$exit_file"
@@ -2484,6 +2510,63 @@ open_fixture() {
     fi
 }
 
+validate_alert_receipt_directory() {
+    local phase="$1"
+    local expected_operation="$2"
+    local receipt_directory="$3"
+    local validator_directory="$4"
+    local bundle_files=()
+    local bundle
+    local matching_operations=0
+    mkdir -m 700 "$validator_directory"
+    while IFS= read -r -d '' bundle; do
+        bundle_files+=("$bundle")
+    done < <(find "$receipt_directory" -mindepth 1 -maxdepth 1 -type f -name '*.json' -print0)
+    if [[ ${#bundle_files[@]} -eq 0 ]]; then
+        record_failure "$phase exported no signed Bridge receipt bundle"
+        return 1
+    fi
+    for bundle in "${bundle_files[@]}"; do
+        local validator
+        validator="$validator_directory/$(basename "$bundle")"
+        if ! pb bridge receipt validate --bundle "$bundle" --json > "$validator" ||
+           ! jq -e '.success == true and .data.valid == true' "$validator" >/dev/null; then
+            record_failure "$phase retained a bundle that failed live listener validation"
+            return 1
+        fi
+        if [[ "$(jq -r '.data.operation // empty' "$validator")" == "$expected_operation" ]]; then
+            matching_operations=$((matching_operations + 1))
+        fi
+    done
+    if [[ $matching_operations -ne 1 ]]; then
+        record_failure "$phase did not export exactly one $expected_operation receipt"
+        return 1
+    fi
+}
+
+run_alert_lifecycle_case() {
+    local phase="$1"
+    local expected_operation="$2"
+    shift 2
+    local case_name="playground-alert-$phase"
+    local receipt_directory="$PLAYGROUND_ALERT_ROOT/receipts/$phase"
+    local validator_directory="$PLAYGROUND_ALERT_ROOT/validators/$phase"
+    mkdir -m 700 "$receipt_directory"
+    if ! PEEKABOO_OPERATION_RECEIPT_DIRECTORY="$receipt_directory" \
+        run_checked_case "$case_name" unchanged success "$@"; then
+        record_failure "$phase did not complete its monitored CLI command"
+        return 1
+    fi
+    if ! validate_alert_receipt_directory \
+        "$phase" "$expected_operation" "$receipt_directory" "$validator_directory"; then
+        return 1
+    fi
+    local archived_case="$PLAYGROUND_ALERT_ROOT/phases/$phase"
+    mv "$(case_dir_path "$case_name")" "$archived_case"
+    LAST_RESULT="$archived_case/result.json"
+    LAST_CASE="$case_name"
+}
+
 OPENED_WINDOW_ID=""
 open_fixture "Text Fixture" text
 TEXT_WINDOW_ID="$OPENED_WINDOW_ID"
@@ -2679,6 +2762,90 @@ else
     SCROLL_LOG_AFTER="$ARTIFACT_ROOT/playground-scroll-after.json"
     capture_playground_log "$SCROLL_LOG_AFTER"
     assert_playground_scroll_changed scroll-action-background "$SCROLL_LOG_BEFORE" "$SCROLL_LOG_AFTER" || true
+fi
+
+if [[ -n "$QUALIFICATION_CYCLE" ]]; then
+    if $NO_REMOTE; then
+        record_failure "final Playground alert qualification requires one signed remote Bridge host"
+    else
+        PLAYGROUND_ALERT_ROOT="$ARTIFACT_ROOT/playground-alert-lifecycle"
+        mkdir -m 700 "$PLAYGROUND_ALERT_ROOT"
+        mkdir -m 700 \
+            "$PLAYGROUND_ALERT_ROOT/phases" \
+            "$PLAYGROUND_ALERT_ROOT/receipts" \
+            "$PLAYGROUND_ALERT_ROOT/validators"
+        PLAYGROUND_ALERT_BUTTON="OK"
+        if ((QUALIFICATION_CYCLE % 2 == 0)); then
+            PLAYGROUND_ALERT_BUTTON="Cancel"
+        fi
+        PLAYGROUND_ALERT_CRASH_DIRECTORY="$HOME/Library/Logs/DiagnosticReports"
+        "$PROBE_BIN" process-executable --pid "$PLAYGROUND_PID" \
+            --output "$PLAYGROUND_ALERT_ROOT/target-before.json"
+        node "$ROOT_DIR/scripts/final-qualification/crash-inventory.mjs" capture \
+            --catalog "$ROOT_DIR/scripts/multi-target-certification-catalog.json" \
+            --directory "$PLAYGROUND_ALERT_CRASH_DIRECTORY" \
+            --output "$PLAYGROUND_ALERT_ROOT/crash-before.json"
+
+        run_alert_lifecycle_case open-fixture-menu clickMenuItem \
+            menu click --pid "$PLAYGROUND_PID" --path "Fixtures > Open Dialog Fixture" || true
+        run_alert_lifecycle_case open-fixture-window listWindows \
+            window list --pid "$PLAYGROUND_PID" || true
+        PLAYGROUND_ALERT_WINDOW_ID="$(
+            window_id_from_result "$LAST_RESULT" "Dialog Fixture"
+        )"
+        if [[ -z "$PLAYGROUND_ALERT_WINDOW_ID" ]]; then
+            record_failure "Playground alert lifecycle did not resolve one Dialog Fixture window"
+        else
+            run_alert_lifecycle_case initial-see desktopObservation \
+                see --pid "$PLAYGROUND_PID" --window-id "$PLAYGROUND_ALERT_WINDOW_ID" \
+                --path "$PLAYGROUND_ALERT_ROOT/initial-see.png" || true
+            PLAYGROUND_ALERT_INITIAL_SNAPSHOT="$(snapshot_id_from_result "$LAST_RESULT")"
+            PLAYGROUND_ALERT_SHOW_ID="$(
+                element_id_from_result "$LAST_RESULT" dialog-fixture-show-alert
+            )"
+            if [[ -z "$PLAYGROUND_ALERT_INITIAL_SNAPSHOT" || -z "$PLAYGROUND_ALERT_SHOW_ID" ]]; then
+                record_failure "Playground alert lifecycle initial See lacked its exact Show Alert snapshot"
+            else
+                run_alert_lifecycle_case show-alert exactWindowTargetedClick \
+                    click --on "$PLAYGROUND_ALERT_SHOW_ID" \
+                    --snapshot "$PLAYGROUND_ALERT_INITIAL_SNAPSHOT" \
+                    --pid "$PLAYGROUND_PID" --window-id "$PLAYGROUND_ALERT_WINDOW_ID" || true
+                run_alert_lifecycle_case dialog-observe targetedDialogListElements \
+                    dialog list --pid "$PLAYGROUND_PID" \
+                    --window-id "$PLAYGROUND_ALERT_WINDOW_ID" || true
+                run_alert_lifecycle_case dismiss exactDialogClickButton \
+                    dialog click --button "$PLAYGROUND_ALERT_BUTTON" \
+                    --pid "$PLAYGROUND_PID" --window-id "$PLAYGROUND_ALERT_WINDOW_ID" || true
+                run_alert_lifecycle_case post-dismiss-ax inspectAccessibilityTree \
+                    see --tree --no-screenshot --max-elements 500 \
+                    --pid "$PLAYGROUND_PID" --window-id "$PLAYGROUND_ALERT_WINDOW_ID" || true
+            fi
+        fi
+
+        node "$ROOT_DIR/scripts/final-qualification/crash-inventory.mjs" capture \
+            --catalog "$ROOT_DIR/scripts/multi-target-certification-catalog.json" \
+            --directory "$PLAYGROUND_ALERT_CRASH_DIRECTORY" \
+            --output "$PLAYGROUND_ALERT_ROOT/crash-after.json"
+        "$PROBE_BIN" process-executable --pid "$PLAYGROUND_PID" \
+            --output "$PLAYGROUND_ALERT_ROOT/target-after.json"
+        if ! node "$ROOT_DIR/scripts/final-qualification/crash-inventory.mjs" compare \
+            --baseline "$PLAYGROUND_ALERT_ROOT/crash-before.json" \
+            --final "$PLAYGROUND_ALERT_ROOT/crash-after.json" \
+            --output "$PLAYGROUND_ALERT_ROOT/crash-comparison.json"; then
+            record_failure "Playground alert lifecycle produced a new or changed crash report"
+        fi
+        if ! node "$ROOT_DIR/scripts/final-qualification/playground-alert-lifecycle.mjs" construct \
+            --root "$PLAYGROUND_ALERT_ROOT" \
+            --physical-targets "$ARTIFACT_ROOT/physical-targets.json" \
+            --cycle "$QUALIFICATION_CYCLE" \
+            --execution-nonce "$RUN_EXECUTION_NONCE" \
+            --peekaboo-source "$PEEKABOO_SOURCE_COMMIT" \
+            --bridge-source "$BRIDGE_SOURCE_COMMIT" \
+            --button "$PLAYGROUND_ALERT_BUTTON" \
+            --output "$PLAYGROUND_ALERT_ROOT/report.json"; then
+            record_failure "Playground alert lifecycle evidence could not be closed"
+        fi
+    fi
 fi
 
 sleep 0.3

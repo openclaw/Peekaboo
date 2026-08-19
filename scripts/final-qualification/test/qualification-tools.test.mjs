@@ -5,6 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { projectBindings } from '../project-live-bindings.mjs';
+import { constructLivePlan } from '../construct-live-plan.mjs';
+import { compareCrashInventories } from '../crash-inventory.mjs';
 import { runManagedLaunch } from '../managed-launcher.mjs';
 import { classifyPolicyFile } from '../executable-policy-scanner.mjs';
 import {
@@ -15,6 +17,12 @@ import {
   validateSampleGap,
 } from '../process-tree-collector.mjs';
 import { publishCoordinatorMarker } from '../publish-coordinator-marker.mjs';
+import {
+  constructPlaygroundAlertLifecycle,
+  PLAYGROUND_AX_SEE_BUDGET_MILLISECONDS,
+  PLAYGROUND_OVERALL_SEE_BUDGET_MILLISECONDS,
+  validatePlaygroundAlertLifecycle,
+} from '../playground-alert-lifecycle.mjs';
 import {
   generateManifest as generateManifestProduction,
   generateSourceManifest,
@@ -36,6 +44,7 @@ import {
 const TEAM = 'FWJYW4S8P8';
 const OPENCLAW_SOURCE = '9'.repeat(40);
 const CDHASH = 'b'.repeat(40);
+const PLAYGROUND_CDHASH = '5'.repeat(40);
 const UUID = '12345678-1234-4abc-8def-123456789abc';
 const SESSION_ID = '22345678-1234-4abc-8def-123456789abc';
 const NONCE = 'c'.repeat(64);
@@ -46,8 +55,11 @@ const sourceRepositoryRoot = path.dirname(path.dirname(sourceToolRoot));
 const qualificationSourceFiles = [
   'scripts/finalize-multi-target-certification.mjs',
   'scripts/run-live-multi-target-certification.mjs',
+  'scripts/test-background-computer-use.sh',
   'scripts/final-qualification/README.md',
   'scripts/final-qualification/atomic-publish-no-replace.swift',
+  'scripts/final-qualification/construct-live-plan.mjs',
+  'scripts/final-qualification/crash-inventory.mjs',
   'scripts/final-qualification/executable-policy-scanner.mjs',
   'scripts/final-qualification/integrated-cu-emitter-calibrator.swift',
   'scripts/final-qualification/managed-launch-suspended.c',
@@ -56,6 +68,7 @@ const qualificationSourceFiles = [
   'scripts/final-qualification/project-live-bindings.mjs',
   'scripts/final-qualification/process-lifecycle-guard.c',
   'scripts/final-qualification/process-tree-collector.mjs',
+  'scripts/final-qualification/playground-alert-lifecycle.mjs',
   'scripts/final-qualification/publish-agent-execution-acknowledgement.mjs',
   'scripts/final-qualification/publish-coordinator-marker.mjs',
   'scripts/final-qualification/qualification-manifest.mjs',
@@ -78,6 +91,10 @@ fs.copyFileSync(
 fs.copyFileSync(
   path.join(sourceRepositoryRoot, 'scripts/run-live-multi-target-certification.mjs'),
   path.join(qualificationRepositoryRoot, 'scripts/run-live-multi-target-certification.mjs'),
+);
+fs.copyFileSync(
+  path.join(sourceRepositoryRoot, 'scripts/test-background-computer-use.sh'),
+  path.join(qualificationRepositoryRoot, 'scripts/test-background-computer-use.sh'),
 );
 fs.copyFileSync(
   path.join(sourceRepositoryRoot, 'scripts/support/background-computer-use-probe.swift'),
@@ -1239,6 +1256,11 @@ test('closed raw receipts project deterministic live-v4 bindings and reject ambi
     assert.deepEqual(bindings.controllers.map((entry) => entry.controller_id), ['controller-a', 'controller-b']);
     assert.equal(bindings.controllers[0].target.click_point.x, 200);
     assert.equal(fs.statSync(output).mode & 0o777, 0o600);
+    const planPath = path.join(root, 'live-v4-plan.json');
+    const plan = constructLivePlan(output, planPath);
+    assert.equal(plan.version, 1);
+    assert.equal(plan.bridge.expected_host.source_commit, SOURCE);
+    assert.equal(fs.statSync(planPath).mode & 0o777, 0o600);
 
     const calibrated = JSON.parse(fs.readFileSync(fix.spec.receipts.integrated_cu_emitter));
     calibrated.after.code_signature_hash = '9'.repeat(40);
@@ -1270,6 +1292,212 @@ test('closed raw receipts project deterministic live-v4 bindings and reject ambi
   } finally {
     if (priorHome === undefined) delete process.env.HOME;
     else process.env.HOME = priorHome;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Playground alert lifecycle requires exact generation, ordered background dismissal, fresh AX, and latency budget', () => {
+  const root = fs.mkdtempSync('/private/tmp/pbq-alert-lifecycle-');
+  fs.chmodSync(root, 0o700);
+  const startedAt = 1_900_000_000_000;
+  try {
+    const fixture = playgroundAlertLifecycleFixture(
+      root, 1, '1'.repeat(64), startedAt, codeSignatureHash('/usr/bin/true'),
+    );
+    const expected = {
+      label: 'cycle 1 alert',
+      cycle: 1,
+      execution_nonce: '1'.repeat(64),
+      peekaboo_source_commit: SOURCE,
+      bridge_source_commit: SOURCE,
+      playground_code_signature_hash: PLAYGROUND_CDHASH,
+    };
+    assert.equal(validatePlaygroundAlertLifecycle(fixture.report, expected).target.window_id,
+      fixture.target.window_id);
+
+    const wrongGeneration = structuredClone(fixture.report);
+    wrongGeneration.target_after.sha256 = '0'.repeat(64);
+    assert.throws(() => validatePlaygroundAlertLifecycle(wrongGeneration, expected),
+      /changed after lifecycle construction/);
+
+    const driftedScreenshot = structuredClone(fixture.report);
+    driftedScreenshot.initial_screenshot.sha256 = '0'.repeat(64);
+    assert.throws(() => validatePlaygroundAlertLifecycle(driftedScreenshot, expected),
+      /changed after lifecycle construction/);
+
+    const foregroundDismiss = structuredClone(fixture.report);
+    const dismissResult = JSON.parse(fs.readFileSync(foregroundDismiss.phases.dismiss.result.path));
+    dismissResult.outcome.delivery_mode = 'foreground';
+    const forgedDismissPath = writeJSON(path.join(root, 'foreground-dismiss.json'), dismissResult);
+    foregroundDismiss.phases.dismiss.result = {
+      path: forgedDismissPath,
+      size: fs.statSync(forgedDismissPath).size,
+      sha256: sha256(fs.readFileSync(forgedDismissPath)),
+    };
+    assert.throws(() => validatePlaygroundAlertLifecycle(foregroundDismiss, expected),
+      /background-dismiss/);
+
+    const stalePostDismiss = structuredClone(fixture.report);
+    const postResult = JSON.parse(fs.readFileSync(
+      stalePostDismiss.phases['post-dismiss-ax'].result.path,
+    ));
+    postResult.data.snapshot_id = JSON.parse(fs.readFileSync(
+      stalePostDismiss.phases['initial-see'].result.path,
+    )).data.snapshot_id;
+    const stalePostPath = writeJSON(path.join(root, 'stale-post.json'), postResult);
+    stalePostDismiss.phases['post-dismiss-ax'].result = {
+      path: stalePostPath,
+      size: fs.statSync(stalePostPath).size,
+      sha256: sha256(fs.readFileSync(stalePostPath)),
+    };
+    assert.throws(() => validatePlaygroundAlertLifecycle(stalePostDismiss, expected),
+      /fresh complete no-dialog AX-only See/);
+
+    const slowAX = structuredClone(fixture.report);
+    const timing = JSON.parse(fs.readFileSync(slowAX.phases['post-dismiss-ax'].timing.path));
+    timing.completed_at_milliseconds = timing.started_at_milliseconds
+      + PLAYGROUND_AX_SEE_BUDGET_MILLISECONDS;
+    timing.wall_time_milliseconds = PLAYGROUND_AX_SEE_BUDGET_MILLISECONDS;
+    const slowTimingPath = writeJSON(path.join(root, 'slow-ax-timing.json'), timing);
+    slowAX.phases['post-dismiss-ax'].timing = {
+      path: slowTimingPath,
+      size: fs.statSync(slowTimingPath).size,
+      sha256: sha256(fs.readFileSync(slowTimingPath)),
+    };
+    assert.throws(() => validatePlaygroundAlertLifecycle(slowAX, expected),
+      /1.5-second budget/);
+
+    const slowOverall = structuredClone(fixture.report);
+    const initialTiming = JSON.parse(fs.readFileSync(slowOverall.phases['initial-see'].timing.path));
+    const timingShift = PLAYGROUND_OVERALL_SEE_BUDGET_MILLISECONDS
+      - initialTiming.wall_time_milliseconds;
+    initialTiming.completed_at_milliseconds += timingShift;
+    initialTiming.wall_time_milliseconds = PLAYGROUND_OVERALL_SEE_BUDGET_MILLISECONDS;
+    const slowOverallPath = writeJSON(path.join(root, 'slow-overall-timing.json'), initialTiming);
+    slowOverall.phases['initial-see'].timing = {
+      path: slowOverallPath, size: fs.statSync(slowOverallPath).size,
+      sha256: sha256(fs.readFileSync(slowOverallPath)),
+    };
+    ['show-alert', 'dialog-observe', 'dismiss', 'post-dismiss-ax'].forEach((phase, index) => {
+      const timing = JSON.parse(fs.readFileSync(slowOverall.phases[phase].timing.path));
+      timing.started_at_milliseconds += timingShift;
+      timing.completed_at_milliseconds += timingShift;
+      const timingPath = writeJSON(path.join(root, `slow-overall-${index}.json`), timing);
+      slowOverall.phases[phase].timing = {
+        path: timingPath, size: fs.statSync(timingPath).size,
+        sha256: sha256(fs.readFileSync(timingPath)),
+      };
+    });
+    assert.throws(() => validatePlaygroundAlertLifecycle(slowOverall, expected),
+      /2.5-second budget/);
+
+    const wrongButton = structuredClone(fixture.report);
+    wrongButton.dismiss_button = 'Cancel';
+    assert.throws(() => validatePlaygroundAlertLifecycle(wrongButton, expected),
+      /source-bound alert lifecycle/);
+
+    const omittedBundle = structuredClone(fixture.report);
+    omittedBundle.phases['show-alert'].bundles = [];
+    assert.throws(() => validatePlaygroundAlertLifecycle(omittedBundle, expected),
+      /complete retained receipt corpus/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('crash comparison binds zero delta to one complete matrix cycle', () => {
+  const startedAt = 1_900_000_000_000;
+  const completedAt = startedAt + 1000;
+  const inventory = (capturedAt, entries = []) => ({
+    version: 1,
+    directory: '/Users/fixture/Library/Logs/DiagnosticReports',
+    prefixes: ['Peekaboo', 'Playground'],
+    entries,
+    captured_at_milliseconds: capturedAt,
+  });
+  const binding = {
+    version: 2,
+    cycle: 1,
+    success: true,
+    catalog_version: 2,
+    expected_cases: 42,
+    observed_cases: 42,
+    failures: [],
+    execution_nonce: '1'.repeat(64),
+    host_uuid: LOCAL_UUID,
+    peekaboo_source_commit: SOURCE,
+    bridge_source_commit: SOURCE,
+    deployment_envelope_sha256: '8'.repeat(64),
+    installed_inventory_aggregate_sha256: '9'.repeat(64),
+    peekaboo_artifact_manifest_sha256: 'a'.repeat(64),
+    started_at_milliseconds: startedAt,
+    completed_at_milliseconds: completedAt,
+  };
+  const result = compareCrashInventories(
+    inventory(startedAt - 10), inventory(completedAt + 10), binding,
+  );
+  assert.equal(result.version, 2);
+  assert.equal(result.passed, true);
+  assert.equal(result.execution_nonce, binding.execution_nonce);
+
+  assert.throws(() => compareCrashInventories(
+    inventory(startedAt + 1), inventory(completedAt + 10), binding,
+  ), /do not bracket/);
+  const crashed = compareCrashInventories(
+    inventory(startedAt - 10),
+    inventory(completedAt + 10, [{
+      name: 'Playground-2026-08-19.crash', size: 1,
+      modified_at_milliseconds: completedAt, sha256: 'b'.repeat(64),
+    }]),
+    binding,
+  );
+  assert.equal(crashed.passed, false);
+  assert.equal(crashed.added.length, 1);
+});
+
+test('documented alert and crash helper CLI entrypoints parse their closed options', () => {
+  const root = fs.mkdtempSync('/private/tmp/pbq-alert-helper-cli-');
+  fs.chmodSync(root, 0o700);
+  try {
+    const startedAt = 1_900_000_000_000;
+    const completedAt = startedAt + 1000;
+    const lifecycle = playgroundAlertLifecycleFixture(
+      root, 1, '1'.repeat(64), startedAt, codeSignatureHash('/usr/bin/true'),
+    );
+    const alertRun = spawnSync(process.execPath, [
+      path.join(toolRoot, 'playground-alert-lifecycle.mjs'),
+      'validate', '--input', lifecycle.reportPath,
+    ], { encoding: 'utf8' });
+    assert.equal(alertRun.status, 0, alertRun.stderr);
+    assert.equal(JSON.parse(alertRun.stdout).success, true);
+
+    const inventory = (capturedAt) => ({
+      version: 1,
+      directory: '/Users/fixture/Library/Logs/DiagnosticReports',
+      prefixes: ['Peekaboo', 'Playground'],
+      entries: [],
+      captured_at_milliseconds: capturedAt,
+    });
+    const baseline = writeJSON(path.join(root, 'baseline.json'), inventory(startedAt - 10));
+    const final = writeJSON(path.join(root, 'final.json'), inventory(completedAt + 10));
+    const binding = writeJSON(path.join(root, 'binding.json'), {
+      version: 2, cycle: 1, success: true, catalog_version: 2,
+      expected_cases: 42, observed_cases: 42, failures: [],
+      execution_nonce: '1'.repeat(64), host_uuid: LOCAL_UUID,
+      peekaboo_source_commit: SOURCE, bridge_source_commit: SOURCE,
+      deployment_envelope_sha256: '8'.repeat(64),
+      installed_inventory_aggregate_sha256: '9'.repeat(64),
+      peekaboo_artifact_manifest_sha256: 'a'.repeat(64),
+      started_at_milliseconds: startedAt, completed_at_milliseconds: completedAt,
+    });
+    const output = path.join(root, 'comparison.json');
+    const crashRun = spawnSync(process.execPath, [
+      path.join(toolRoot, 'crash-inventory.mjs'), 'compare',
+      '--baseline', baseline, '--final', final, '--binding', binding, '--output', output,
+    ], { encoding: 'utf8' });
+    assert.equal(crashRun.status, 0, crashRun.stderr);
+    assert.equal(JSON.parse(fs.readFileSync(output)).passed, true);
+  } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
@@ -2000,6 +2228,173 @@ function agentExecutionOutcome() {
   };
 }
 
+function playgroundAlertLifecycleFixture(root, cycle, executionNonce, startedAt, cliCDHash) {
+  const lifecycleRoot = privateDirectory(root, `playground-alert-${cycle}`);
+  for (const directory of ['phases', 'receipts', 'validators']) {
+    privateDirectory(lifecycleRoot, directory);
+  }
+  const target = { pid: 500 + cycle, start_identity: `${500 + cycle}001`, window_id: 600 + cycle };
+  const button = cycle % 2 === 1 ? 'OK' : 'Cancel';
+  const executablePath = '/usr/bin/true';
+  const initialScreenshotPath = writeFile(
+    path.join(lifecycleRoot, 'initial-see.png'),
+    Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from(`cycle-${cycle}-screenshot`, 'utf8'),
+    ]),
+    0o600,
+  );
+  const physicalTargets = writeJSON(path.join(lifecycleRoot, 'physical-targets.json'), {
+    version: 1,
+    targets: {
+      playground: {
+        pid: target.pid,
+        process_start_identity: target.start_identity,
+        window_id: 700 + cycle,
+        executable: {
+          path: executablePath,
+          sha256: sha256(fs.readFileSync(executablePath)),
+          code_signature_hash: PLAYGROUND_CDHASH,
+        },
+      },
+    },
+  });
+  const processValue = {
+    pid: target.pid,
+    startIdentity: target.start_identity,
+    path: executablePath,
+    sha256: sha256(fs.readFileSync(executablePath)),
+  };
+  writeJSON(path.join(lifecycleRoot, 'target-before.json'), processValue);
+  writeJSON(path.join(lifecycleRoot, 'target-after.json'), processValue);
+  writeJSON(path.join(lifecycleRoot, 'crash-comparison.json'), {
+    version: 1, passed: true, added: [], changed: [], removed: [],
+  });
+  const targetReceipt = {
+    pid: target.pid,
+    process_start_identity: Number(target.start_identity),
+    process_start_identity_decimal: target.start_identity,
+    window_id: target.window_id,
+  };
+  const envelope = (data, outcome = null, receipt = targetReceipt) => ({
+    success: true,
+    effect: outcome?.effect ?? null,
+    outcome,
+    data,
+    target_identity: receipt === null ? null : {
+      kind: 'window', pid: receipt.pid,
+      process_start_identity_decimal: receipt.process_start_identity_decimal,
+      window_id: receipt.window_id,
+    },
+    target_receipt: receipt,
+    debug_logs: [],
+    error: null,
+  });
+  const snapshotID = `cycle-${cycle}-show-snapshot`;
+  const postSnapshotID = `cycle-${cycle}-post-snapshot`;
+  const showElementID = 'B42';
+  const phaseSpecs = [
+    ['open-fixture-menu', 'clickMenuItem', true, envelope({ clicked: true }, actionOutcome())],
+    ['open-fixture-window', 'listWindows', false, envelope({
+      windows: [{ window_title: 'Dialog Fixture', window_id: target.window_id }],
+      target_application_info: { pid: target.pid },
+    }, null, null)],
+    ['initial-see', 'desktopObservation', false, envelope({
+      snapshot_id: snapshotID, screenshot_raw: initialScreenshotPath,
+      screenshot_annotated: '', is_dialog: false, truncation: null, execution_time: 0.8,
+      ui_elements: [{ id: showElementID, identifier: 'dialog-fixture-show-alert' }],
+    })],
+    ['show-alert', 'exactWindowTargetedClick', true, envelope({ clicked: true }, actionOutcome())],
+    ['dialog-observe', 'targetedDialogListElements', false, envelope({
+      role: 'AXSheet', buttons: ['OK', 'Cancel'],
+    })],
+    ['dismiss', 'exactDialogClickButton', true, envelope({ button }, actionOutcome())],
+    ['post-dismiss-ax', 'inspectAccessibilityTree', false, envelope({
+      snapshot_id: postSnapshotID, screenshot_raw: '', screenshot_annotated: '',
+      is_dialog: false, truncation: null, execution_time: 0.8,
+      ui_elements: [{
+        id: 'T42', identifier: 'dialog-fixture-last-alert-result', label: button,
+      }],
+    })],
+  ];
+  let cursor = startedAt + 100;
+  for (const [phase, operation, mutating, result] of phaseSpecs) {
+    const phaseDirectory = privateDirectory(path.join(lifecycleRoot, 'phases'), phase);
+    const receiptDirectory = privateDirectory(path.join(lifecycleRoot, 'receipts'), phase);
+    const validatorDirectory = privateDirectory(path.join(lifecycleRoot, 'validators'), phase);
+    const duration = ['initial-see', 'post-dismiss-ax'].includes(phase) ? 800 : 50;
+    writeJSON(path.join(phaseDirectory, 'result.json'), result);
+    writeJSON(path.join(phaseDirectory, 'command-timing.json'), {
+      version: 1,
+      started_at_milliseconds: cursor,
+      completed_at_milliseconds: cursor + duration,
+      wall_time_milliseconds: duration,
+    });
+    writeJSON(path.join(phaseDirectory, 'summary.json'), {
+      result_success: true,
+      evidence: {
+        result_contract: true, monitor_liveness: true, contamination_clear: true,
+        desktop_restored: true, clipboard_policy: true,
+      },
+      monitor_receipt: { execution_nonce: executionNonce },
+      invariants: [{ name: 'focus', passed: true }],
+    });
+    writeJSON(path.join(phaseDirectory, 'before.json'), { phase, moment: 'before' });
+    writeJSON(path.join(phaseDirectory, 'after.json'), { phase, moment: 'after' });
+    const canonicalRequestValue = phase === 'show-alert'
+      ? { snapshot_id: snapshotID, element_id: showElementID }
+      : phase === 'dismiss' ? { button }
+        : phase === 'initial-see' ? {
+          phase, capture: { engine: 'auto' }, output: { path: initialScreenshotPath },
+        } : { phase };
+    const canonicalResponseValue = phase === 'initial-see'
+      ? {
+        snapshotId: snapshotID,
+        screenshotPath: initialScreenshotPath,
+        screenshotSHA256: sha256(fs.readFileSync(initialScreenshotPath)),
+        elements: [{ id: showElementID, identifier: 'dialog-fixture-show-alert' }],
+      }
+      : phase === 'dialog-observe' ? { role: 'AXSheet', buttons: ['Cancel', 'OK'] }
+        : phase === 'post-dismiss-ax' ? {
+          snapshotId: postSnapshotID,
+          screenshotPath: '',
+          metadata: { isDialog: false },
+          elements: [{
+            id: 'T42', identifier: 'dialog-fixture-last-alert-result', label: button,
+          }],
+        } : { success: true };
+    const pair = signedBundleFixture(
+      validatorDirectory,
+      phase,
+      operation,
+      target,
+      cursor,
+      cursor + duration,
+      {
+        mutating,
+        outcomeAttested: true,
+        directory: receiptDirectory,
+        client: { pid: 800 + cycle, start_identity: `${800 + cycle}001`, code_signature_hash: cliCDHash },
+        canonicalRequestValue,
+        canonicalResponseValue,
+      },
+    );
+    fs.renameSync(pair.validator, path.join(validatorDirectory, path.basename(pair.bundle)));
+    cursor += duration + 50;
+  }
+  const report = constructPlaygroundAlertLifecycle({
+    root: lifecycleRoot,
+    physicalTargets,
+    cycle,
+    executionNonce,
+    peekabooSourceCommit: SOURCE,
+    bridgeSourceCommit: SOURCE,
+    button,
+  });
+  const reportPath = writeJSON(path.join(lifecycleRoot, 'report.json'), report);
+  return { report, reportPath, root: lifecycleRoot, target };
+}
+
 function heldPointerClientID(executionNonce) {
   const digest = Buffer.from(sha256(Buffer.concat([
     Buffer.from('peekaboo.held-pointer-certification.client.v1\0', 'utf8'),
@@ -2069,6 +2464,8 @@ function signedBundleFixture(root, name, operation, targetValue, startedAt, comp
   outcome = null,
   outcomeAttested = mutating,
   traceArguments = {},
+  canonicalRequestValue = null,
+  canonicalResponseValue = {},
 } = {}) {
   const requestOrdinal = fixtureRequestCounter++;
   const requestID = `00000000-0000-4000-8000-${String(requestOrdinal).padStart(12, '0')}`;
@@ -2105,7 +2502,10 @@ function signedBundleFixture(root, name, operation, targetValue, startedAt, comp
   };
   const bundle = writeJSON(path.join(directory, `${name}-bundle.json`), {
     receipt: { payload },
-    canonicalRequest: signedOperationRequestFixture(operation, traceArguments),
+    canonicalRequest: canonicalRequestValue === null
+      ? signedOperationRequestFixture(operation, traceArguments)
+      : canonicalBytes(canonicalRequestValue).toString('base64'),
+    canonicalResponse: canonicalBytes(canonicalResponseValue).toString('base64'),
   });
   const validator = writeJSON(path.join(root, `${name}-validator.json`), {
     success: true,
@@ -3679,11 +4079,15 @@ test('qualification manifest closes every required evidence class and detects by
     const concurrentReport = path.join(root, 'concurrent-report.json');
     validateConcurrentRun(concurrentInput, concurrentReport);
     const matrixStartedAt = Date.now() - 200_000;
+    const matrixCLICDHash = codeSignatureHash('/usr/bin/true');
     const matrix = Array.from({ length: 5 }, (_, cycleIndex) => {
       const cycle = cycleIndex + 1;
-      const startedAt = matrixStartedAt + (cycleIndex * 2000);
-      const completedAt = startedAt + 1000;
+      const startedAt = matrixStartedAt + (cycleIndex * 10_000);
+      const completedAt = startedAt + 5000;
       const executionNonce = `${cycle}`.repeat(64);
+      const alertLifecycle = playgroundAlertLifecycleFixture(
+        root, cycle, executionNonce, startedAt, matrixCLICDHash,
+      );
       return {
         certificate: writeJSON(path.join(root, `matrix-${cycle}.json`), {
           version: 2,
@@ -3713,6 +4117,7 @@ test('qualification manifest closes every required evidence class and detects by
           changed: [],
           removed: [],
         }),
+        playground_alert_lifecycle: alertLifecycle.reportPath,
       };
     });
     const adjunctTarget = { pid: 301, start_identity: '301001', window_id: 401 };
@@ -3934,8 +4339,14 @@ test('qualification manifest closes every required evidence class and detects by
       },
       tooling: {
         qualification_tools_manifest: toolsManifest,
-        plan_constructor: evidence(),
-        crash_scanner: evidence(),
+        plan_constructor: path.join(
+          qualificationRepositoryRoot,
+          'scripts/final-qualification/construct-live-plan.mjs',
+        ),
+        crash_scanner: path.join(
+          qualificationRepositoryRoot,
+          'scripts/final-qualification/crash-inventory.mjs',
+        ),
       },
       live_v4: {
         plan: concurrent.spec.plan,
@@ -4132,7 +4543,7 @@ test('qualification manifest closes every required evidence class and detects by
       [
         'cli-cdhash',
         (value) => { value.cli.cdhash = '0'.repeat(40); },
-        /exercised Agent CLI differs from the candidate\/deployed executable/,
+        /not executed by the candidate CLI|exercised Agent CLI differs from the candidate\/deployed executable/,
       ],
       [
         'monitor-executable',
@@ -4152,7 +4563,7 @@ test('qualification manifest closes every required evidence class and detects by
       [
         'playground',
         (value) => { value.playground.cdhash = '0'.repeat(40); },
-        /Playground artifact differs from the local fixture root/,
+        /Playground CDHash differs from the candidate artifact|Playground artifact differs from the local fixture root/,
       ],
     ]) {
       const driftedArtifactValue = structuredClone(JSON.parse(fs.readFileSync(artifact.peekaboo)));
@@ -4187,6 +4598,7 @@ test('qualification manifest closes every required evidence class and detects by
             path.join(root, `drifted-${artifactDrift}-crash-${cycleIndex}.json`),
             crash,
           ),
+          playground_alert_lifecycle: cycle.playground_alert_lifecycle,
         };
       });
       assert.throws(
@@ -5288,6 +5700,7 @@ test('qualification manifest closes every required evidence class and detects by
           path.join(root, `wrong-tools-crash-${cycleIndex + 1}.json`),
           crash,
         ),
+        playground_alert_lifecycle: cycle.playground_alert_lifecycle,
       };
     });
     assert.throws(
@@ -5406,12 +5819,33 @@ test('qualification manifest closes every required evidence class and detects by
       ),
       /keys are not closed|passing 42\/42 certificate/,
     );
+    const substitutedQualificationToolInput = structuredClone(inputValue);
+    const substitutedPlanConstructor = writeFile(
+      path.join(privateDirectory(root, 'substituted-plan-constructor'), 'construct-live-plan.mjs'),
+      fs.readFileSync(inputValue.tooling.plan_constructor),
+      0o500,
+    );
+    substitutedQualificationToolInput.tooling.plan_constructor = substitutedPlanConstructor;
+    assert.throws(
+      () => generateManifest(
+        writeJSON(
+          path.join(root, 'substituted-qualification-tool-input.json'),
+          substitutedQualificationToolInput,
+        ),
+        path.join(root, 'substituted-qualification-tool-manifest.json'),
+      ),
+      /differs from the reviewed qualification tools/,
+    );
     const duplicateCycleInput = structuredClone(inputValue);
     const duplicateCycleCertificate = JSON.parse(fs.readFileSync(matrix[1].certificate));
     const duplicateCycleCrash = JSON.parse(fs.readFileSync(matrix[1].crash_inventory));
+    const duplicateAlertLifecycle = JSON.parse(fs.readFileSync(
+      matrix[1].playground_alert_lifecycle,
+    ));
     duplicateCycleCertificate.execution_nonce
       = JSON.parse(fs.readFileSync(matrix[0].certificate)).execution_nonce;
     duplicateCycleCrash.execution_nonce = duplicateCycleCertificate.execution_nonce;
+    duplicateAlertLifecycle.execution_nonce = duplicateCycleCertificate.execution_nonce;
     duplicateCycleInput.matrix_cycles[1] = {
       certificate: writeJSON(
         path.join(root, 'duplicate-cycle-certificate.json'),
@@ -5420,6 +5854,10 @@ test('qualification manifest closes every required evidence class and detects by
       crash_inventory: writeJSON(
         path.join(root, 'duplicate-cycle-crash.json'),
         duplicateCycleCrash,
+      ),
+      playground_alert_lifecycle: writeJSON(
+        path.join(root, 'duplicate-cycle-alert.json'),
+        duplicateAlertLifecycle,
       ),
     };
     assert.throws(
@@ -5458,6 +5896,128 @@ test('qualification manifest closes every required evidence class and detects by
         path.join(root, 'bad-crash-manifest.json'),
       ),
       /zero-delta crash comparison/,
+    );
+    const missingAlertInput = structuredClone(inputValue);
+    delete missingAlertInput.matrix_cycles[0].playground_alert_lifecycle;
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'missing-alert-input.json'), missingAlertInput),
+        path.join(root, 'missing-alert-manifest.json'),
+      ),
+      /matrix_cycles\[0\] keys are not closed/,
+    );
+    const slowAlertInput = structuredClone(inputValue);
+    const slowAlert = JSON.parse(fs.readFileSync(matrix[0].playground_alert_lifecycle));
+    const slowAlertTiming = JSON.parse(fs.readFileSync(
+      slowAlert.phases['post-dismiss-ax'].timing.path,
+    ));
+    slowAlertTiming.completed_at_milliseconds = slowAlertTiming.started_at_milliseconds
+      + PLAYGROUND_AX_SEE_BUDGET_MILLISECONDS;
+    slowAlertTiming.wall_time_milliseconds = PLAYGROUND_AX_SEE_BUDGET_MILLISECONDS;
+    const slowAlertTimingPath = writeJSON(
+      path.join(root, 'slow-alert-timing.json'),
+      slowAlertTiming,
+    );
+    slowAlert.phases['post-dismiss-ax'].timing = {
+      path: slowAlertTimingPath,
+      size: fs.statSync(slowAlertTimingPath).size,
+      sha256: sha256(fs.readFileSync(slowAlertTimingPath)),
+    };
+    slowAlertInput.matrix_cycles[0].playground_alert_lifecycle = writeJSON(
+      path.join(root, 'slow-alert.json'),
+      slowAlert,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'slow-alert-input.json'), slowAlertInput),
+        path.join(root, 'slow-alert-manifest.json'),
+      ),
+      /1.5-second budget/,
+    );
+    const splicedElementInput = structuredClone(inputValue);
+    const splicedElementReport = JSON.parse(fs.readFileSync(
+      matrix[0].playground_alert_lifecycle,
+    ));
+    const splicedInitial = JSON.parse(fs.readFileSync(
+      splicedElementReport.phases['initial-see'].result.path,
+    ));
+    splicedInitial.data.ui_elements.find((element) => (
+      element.identifier === 'dialog-fixture-show-alert'
+    )).id = 'SPLICED-ELEMENT';
+    const splicedInitialPath = writeJSON(
+      path.join(root, 'spliced-initial-see.json'),
+      splicedInitial,
+    );
+    splicedElementReport.phases['initial-see'].result = {
+      path: splicedInitialPath,
+      size: fs.statSync(splicedInitialPath).size,
+      sha256: sha256(fs.readFileSync(splicedInitialPath)),
+    };
+    splicedElementInput.matrix_cycles[0].playground_alert_lifecycle = writeJSON(
+      path.join(root, 'spliced-element-report.json'),
+      splicedElementReport,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'spliced-element-input.json'), splicedElementInput),
+        path.join(root, 'spliced-element-manifest.json'),
+      ),
+      /signed observation\/click bytes do not bind the exact Show Alert snapshot element/,
+    );
+
+    const forgedPostInput = structuredClone(inputValue);
+    const forgedPostReport = JSON.parse(fs.readFileSync(
+      matrix[0].playground_alert_lifecycle,
+    ));
+    const postPair = forgedPostReport.phases['post-dismiss-ax'].bundles[0];
+    const forgedBundleValue = JSON.parse(fs.readFileSync(postPair.bundle.path));
+    const postSnapshot = JSON.parse(fs.readFileSync(
+      forgedPostReport.phases['post-dismiss-ax'].result.path,
+    )).data.snapshot_id;
+    forgedBundleValue.canonicalResponse = canonicalBytes({
+      snapshotId: postSnapshot,
+      screenshotPath: '',
+      metadata: { isDialog: true },
+      elements: [{
+        id: 'T42', identifier: 'dialog-fixture-last-alert-result', label: 'OK',
+      }],
+    }).toString('base64');
+    const forgedReceiptDirectory = privateDirectory(root, 'forged-post-receipts');
+    const forgedValidatorDirectory = privateDirectory(root, 'forged-post-validators');
+    const forgedBundlePath = writeJSON(
+      path.join(forgedReceiptDirectory, path.basename(postPair.bundle.path)),
+      forgedBundleValue,
+    );
+    const forgedValidatorValue = JSON.parse(fs.readFileSync(postPair.validator.path));
+    forgedValidatorValue.data.bundle_sha256 = sha256(fs.readFileSync(forgedBundlePath));
+    const forgedValidatorPath = writeJSON(
+      path.join(forgedValidatorDirectory, path.basename(postPair.validator.path)),
+      forgedValidatorValue,
+    );
+    forgedPostReport.phases['post-dismiss-ax'].receipt_directory = forgedReceiptDirectory;
+    forgedPostReport.phases['post-dismiss-ax'].validator_directory = forgedValidatorDirectory;
+    forgedPostReport.phases['post-dismiss-ax'].bundles = [{
+      bundle: {
+        path: forgedBundlePath,
+        size: fs.statSync(forgedBundlePath).size,
+        sha256: sha256(fs.readFileSync(forgedBundlePath)),
+      },
+      validator: {
+        path: forgedValidatorPath,
+        size: fs.statSync(forgedValidatorPath).size,
+        sha256: sha256(fs.readFileSync(forgedValidatorPath)),
+      },
+    }];
+    forgedPostInput.matrix_cycles[0].playground_alert_lifecycle = writeJSON(
+      path.join(root, 'forged-post-report.json'),
+      forgedPostReport,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'forged-post-input.json'), forgedPostInput),
+        path.join(root, 'forged-post-manifest.json'),
+      ),
+      /signed post-dismiss observation does not bind the fresh AX result/,
     );
     const crossRunInput = structuredClone(inputValue);
     crossRunInput.live_v4.plan = writeJSON(path.join(root, 'other-run-plan.json'), {
@@ -5926,6 +6486,25 @@ test('qualification manifest closes every required evidence class and detects by
     openManifest.unexpected = true;
     const openPath = writeJSON(path.join(root, 'open-manifest.json'), openManifest);
     assert.throws(() => verifyManifest(openPath), /keys are not closed/);
+
+    const retainedAlertReport = JSON.parse(fs.readFileSync(
+      inputValue.matrix_cycles[0].playground_alert_lifecycle,
+    ));
+    const rawPostDismissPath = retainedAlertReport.phases['post-dismiss-ax'].result.path;
+    const originalRawPostDismiss = fs.readFileSync(rawPostDismissPath);
+    fs.appendFileSync(rawPostDismissPath, 'drift');
+    assert.throws(() => verifyManifest(output), /changed after lifecycle construction/);
+    writeFile(rawPostDismissPath, originalRawPostDismiss);
+
+    const originalAlertLifecycle = fs.readFileSync(
+      inputValue.matrix_cycles[0].playground_alert_lifecycle,
+    );
+    fs.appendFileSync(inputValue.matrix_cycles[0].playground_alert_lifecycle, 'drift');
+    assert.throws(() => verifyManifest(output), /changed after manifest generation/);
+    writeFile(
+      inputValue.matrix_cycles[0].playground_alert_lifecycle,
+      originalAlertLifecycle,
+    );
 
     fs.appendFileSync(inputValue.matrix_cycles[0].certificate, 'drift');
     assert.throws(() => verifyManifest(output), /changed after manifest generation/);
