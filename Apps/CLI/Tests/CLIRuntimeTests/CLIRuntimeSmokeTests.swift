@@ -602,9 +602,12 @@ struct CLIRuntimeSmokeTests {
                 JSONSerialization.jsonObject(with: Data(jsonResult.standardOutput.utf8)) as? [String: Any]
             )
             let error = try #require(response["error"] as? [String: Any])
+            let debugLogs = response["debug_logs"] as? [String] ?? []
             #expect(response["success"] as? Bool == false)
             #expect(error["code"] as? String == "VALIDATION_ERROR")
             #expect((error["message"] as? String)?.contains("Task argument is required for --dry-run.") == true)
+            #expect(!debugLogs.contains { $0.contains("Runtime host:") })
+            #expect(!jsonResult.standardOutput.contains("Runtime host:"))
 
             let humanResult = try await TestChildProcess.runPeekaboo(
                 prefix + ["--dry-run", "--simple", "--no-remote"]
@@ -612,6 +615,7 @@ struct CLIRuntimeSmokeTests {
             #expect(humanResult.status == .exited(1))
             #expect(humanResult.standardOutput.isEmpty)
             #expect(humanResult.standardError.contains("Task argument is required for --dry-run."))
+            #expect(!humanResult.standardError.contains("Runtime host:"))
         }
     }
 

@@ -30,6 +30,19 @@ struct PreRuntimeInvalidInputOrderingTests {
         try await Self.requirePreRuntimeRefusal(arguments: arguments, expectedMessage: expectedMessage)
     }
 
+    @Test(arguments: [
+        ["peekaboo", "agent", "--dry-run", "--no-remote"],
+        ["peekaboo", "agent", "--dry-run", "--json", "--no-remote"],
+        ["peekaboo", "agent", "run", "--dry-run", "--no-remote"],
+        ["peekaboo", "agent", "run", "--dry-run", "--json", "--no-remote"],
+    ])
+    func `taskless agent dry run refuses before runtime construction`(arguments: [String]) async throws {
+        try await Self.requirePreRuntimeRefusal(
+            arguments: arguments,
+            expectedMessage: "Invalid input: Task argument is required for --dry-run."
+        )
+    }
+
     @Test
     func `invalid video file and cadence refuse before runtime construction`() async throws {
         let root = FileManager.default.temporaryDirectory

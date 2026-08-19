@@ -120,11 +120,24 @@ struct AgentRunSubcommand: RuntimeBackedCommand {
     var runtimeOptions = AgentRunSubcommand.localRuntimeOptions()
 
     mutating func run(using runtime: CommandRuntime) async throws {
+        var command = self.makeAgentCommand()
+        try await command.run(using: runtime)
+    }
+
+    private func makeAgentCommand() -> AgentCommand {
         var command = AgentCommand()
         command.task = self.task
         self.options.apply(to: &command)
         command.runtimeOptions = self.runtimeOptions
-        try await command.run(using: runtime)
+        return command
+    }
+
+    func validateBeforeRuntime() throws {
+        do {
+            try self.makeAgentCommand().validateDryRunRequest()
+        } catch {
+            throw ValidationError(error.localizedDescription)
+        }
     }
 }
 
@@ -216,6 +229,7 @@ extension AgentRunSubcommand {
 }
 
 extension AgentRunSubcommand: AsyncRuntimeCommand {}
+extension AgentRunSubcommand: PreRuntimeValidatingCommand {}
 extension AgentResumeSubcommand: AsyncRuntimeCommand {}
 extension AgentSessionsSubcommand: AsyncRuntimeCommand {}
 extension AgentChatSubcommand: AsyncRuntimeCommand {}
