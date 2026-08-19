@@ -374,8 +374,14 @@ function publishReadinessNoReplace(filePath, value) {
 
 export function collectProcessTree(specPath, monitorPath, outputPath) {
   const spec = validateSpec(readStableJSON(specPath, 'collector spec').value);
-  requireCondition(spec.ready_path !== outputPath,
-    'collector readiness and final output paths must be distinct');
+  requirePrivateDirectory(path.dirname(outputPath), 'collector final output parent');
+  requireCondition(!fs.existsSync(outputPath), 'collector final output must be absent');
+  const reservedOutputPaths = [
+    spec.ready_path,
+    ...Object.values(spec.acknowledgement_control ?? {}),
+  ];
+  requireCondition(!reservedOutputPaths.includes(outputPath),
+    'collector final output conflicts with a readiness or acknowledgement control path');
   const monitor = requireStableExecutable(monitorPath, 'signed process monitor', {
     allowRootOwner: true,
   });
