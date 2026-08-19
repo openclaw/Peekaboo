@@ -1,4 +1,3 @@
-import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
 import PeekabooAutomationKitTestSupport
@@ -144,10 +143,21 @@ struct PeekabooBridgePlannerInventoryTransportTests {
             windowID: 77,
             title: "Fixture",
             processIdentity: processIdentity)
-        let applications = PlannerInventoryApplicationService()
-        let windows = PlannerInventoryWindowService(inventory: .partial(
-            [window],
-            warnings: ["AX window enumeration timed out"]))
+        let application = AutomationTestFixtures.application(
+            processIdentifier: processIdentity.processIdentifier,
+            processStartIdentity: processIdentity.processStartIdentity,
+            bundleIdentifier: "dev.stub",
+            name: "StubApp")
+            .withUniqueTestSelectorProof(for: "PID:\(processIdentity.processIdentifier)")
+        let graph = try LinkedApplicationInventoryGraph(nodes: [
+            .init(application: application, windows: [window]),
+        ])
+        let applications = ScriptedApplicationInventoryService(graph: graph)
+        let windows = ScriptedWindowInventoryService(
+            graph: graph,
+            focusedWindow: window,
+            inventoryCompleteness: .partial,
+            inventoryWarnings: ["AX window enumeration timed out"])
         let server = PeekabooBridgeServer(
             services: StubServices(applications: applications, windows: windows),
             allowlistedTeams: [],
@@ -219,49 +229,5 @@ struct PeekabooBridgePlannerInventoryTransportTests {
         }
 
         await host.stop()
-    }
-}
-
-@MainActor
-private final class PlannerInventoryApplicationService: StubApplicationService,
-    ApplicationMutationInventoryProviding
-{
-    func applicationMutationInventory() async throws
-        -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo>
-    {
-        try await .complete(self.listApplications().data.applications)
-    }
-}
-
-@MainActor
-private final class PlannerInventoryWindowService: WindowManagementServiceProtocol,
-    WindowMutationInventoryProviding
-{
-    private let inventory: DesktopTargetPlanning.Inventory<ServiceWindowInfo>
-
-    init(inventory: DesktopTargetPlanning.Inventory<ServiceWindowInfo>) {
-        self.inventory = inventory
-    }
-
-    func closeWindow(target _: WindowTarget) async throws {}
-    func minimizeWindow(target _: WindowTarget) async throws {}
-    func maximizeWindow(target _: WindowTarget) async throws {}
-    func moveWindow(target _: WindowTarget, to _: CGPoint) async throws {}
-    func resizeWindow(target _: WindowTarget, to _: CGSize) async throws {}
-    func setWindowBounds(target _: WindowTarget, bounds _: CGRect) async throws {}
-    func focusWindow(target _: WindowTarget) async throws {}
-
-    func listWindows(target _: WindowTarget) async throws -> [ServiceWindowInfo] {
-        self.inventory.items
-    }
-
-    func windowMutationInventory(
-        target _: WindowTarget) async throws -> DesktopTargetPlanning.Inventory<ServiceWindowInfo>
-    {
-        self.inventory
-    }
-
-    func getFocusedWindow() async throws -> ServiceWindowInfo? {
-        self.inventory.items.first
     }
 }
