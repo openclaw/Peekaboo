@@ -130,7 +130,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
                     inspectOwnerCalls += 1
                     return Self.ownerReceipt()
                 },
-                inspectScreenCaptureKitSafety: { _, _, _ in
+                inspectScreenCaptureKitSafety: { _, _, _, _ in
                     inspectSafetyCalls += 1
                     return RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
                         socketPath: "/tmp/old-host.sock",
@@ -185,7 +185,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
                     inspectOwnerCalls += 1
                     return Self.ownerReceipt()
                 },
-                inspectScreenCaptureKitSafety: { _, _, _ in
+                inspectScreenCaptureKitSafety: { _, _, _, _ in
                     inspectSafetyCalls += 1
                     return RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
                         socketPath: "/tmp/old-host.sock",
@@ -281,7 +281,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
                         inspectCalls += 1
                         return nil
                     },
-                    inspectScreenCaptureKitSafety: { _, _, _ in
+                    inspectScreenCaptureKitSafety: { _, _, _, _ in
                         RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
                             socketPath: explicitSocket,
                             processIdentifier: 3131,
@@ -351,7 +351,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
                 },
                 claimScreenCaptureKitOwner: { Self.ownerReceipt() },
                 inspectScreenCaptureKitOwner: { nil },
-                inspectScreenCaptureKitSafety: { _, _, _ in auxiliaryBlocker },
+                inspectScreenCaptureKitSafety: { _, _, _, _ in auxiliaryBlocker },
                 recordScreenCaptureKitSafetyBlocker: { recordedBlockers.append($0) }
             )
         )
@@ -398,7 +398,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
                     },
                     claimScreenCaptureKitOwner: { Self.ownerReceipt() },
                     inspectScreenCaptureKitOwner: { nil },
-                    inspectScreenCaptureKitSafety: { _, _, _ in auxiliaryBlocker },
+                    inspectScreenCaptureKitSafety: { _, _, _, _ in auxiliaryBlocker },
                     recordScreenCaptureKitSafetyBlocker: { recordedBlockers.append($0) }
                 )
             )
@@ -820,7 +820,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                     inspectOwnerCalls += 1
                     return nil
                 },
-                inspectScreenCaptureKitSafety: { _, _, _ in
+                inspectScreenCaptureKitSafety: { _, _, _, _ in
                     inspectSafetyCalls += 1
                     return RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
                         socketPath: "/tmp/old-host.sock",
@@ -1436,7 +1436,8 @@ extension ScreenCaptureKitOwnerRuntimeTests {
         codeSignatureHash: String,
         ownerAware: Bool = true,
         screenRecording: Bool = true,
-        serviceOverride: (any PeekabooBridgeServiceProviding)? = nil
+        serviceOverride: (any PeekabooBridgeServiceProviding)? = nil,
+        permissionEvaluationObserver: @escaping @MainActor @Sendable () -> Void = {}
     ) async throws -> PeekabooBridgeHost {
         let services: any PeekabooBridgeServiceProviding = if let serviceOverride {
             serviceOverride
@@ -1455,6 +1456,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                 upper: PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion
             )),
             allowedOperations: [
+                .permissionsStatus,
                 .captureScreen,
                 .desktopObservation,
                 .invalidateImplicitLatestSnapshot,
@@ -1477,7 +1479,8 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                 codeSignatureHash: codeSignatureHash
             ),
             permissionStatusEvaluator: { _ in
-                PermissionsStatus(
+                permissionEvaluationObserver()
+                return PermissionsStatus(
                     screenRecording: screenRecording,
                     accessibility: true,
                     appleScript: false,

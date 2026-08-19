@@ -106,7 +106,7 @@ struct CaptureVideoLocalIngestTests {
                     inspectOwnerCalls += 1
                     return Self.ownerReceipt()
                 },
-                inspectScreenCaptureKitSafety: { _, _, _ in
+                inspectScreenCaptureKitSafety: { _, _, _, _ in
                     inspectSafetyCalls += 1
                     return RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
                         socketPath: "/tmp/old-owner.sock",

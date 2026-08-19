@@ -53,7 +53,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                     inspectOwnerCalls += 1
                     return nil
                 },
-                inspectScreenCaptureKitSafety: { _, _, _ in legacyOwner },
+                inspectScreenCaptureKitSafety: { _, _, _, _ in legacyOwner },
                 remoteCandidatePlan: { _, _ in
                     RuntimeHostResolver.RemoteCandidatePlan(
                         explicitSocket: selectedSocket,
@@ -111,7 +111,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                     },
                     claimScreenCaptureKitOwner: { Self.ownerReceipt() },
                     inspectScreenCaptureKitOwner: { nil },
-                    inspectScreenCaptureKitSafety: { _, _, _ in
+                    inspectScreenCaptureKitSafety: { _, _, _, _ in
                         RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
                             socketPath: "/tmp/unrelated-legacy-owner.sock",
                             processIdentifier: nil,
@@ -182,7 +182,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                 makeLocalServices: { _ in PeekabooServices() },
                 claimScreenCaptureKitOwner: { Self.ownerReceipt() },
                 inspectScreenCaptureKitOwner: { nil },
-                inspectScreenCaptureKitSafety: { _, _, _ in legacyOwner },
+                inspectScreenCaptureKitSafety: { _, _, _, _ in legacyOwner },
                 remoteCandidatePlan: { _, _ in
                     RuntimeHostResolver.RemoteCandidatePlan(
                         explicitSocket: selectedSocket,

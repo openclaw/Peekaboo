@@ -17,7 +17,8 @@ extension RuntimeHostResolver {
     typealias ScreenCaptureKitSafetyInspector = @MainActor @Sendable (
         _ options: CommandRuntimeOptions,
         _ environment: [String: String],
-        _ candidates: [ImplicitRemoteCandidate]?
+        _ candidates: [ImplicitRemoteCandidate]?,
+        _ handshakeCache: RemoteHandshakeCache
     ) async throws -> ScreenCaptureKitOwnerUnawareHost?
     typealias ScreenCaptureKitSafetyRecorder = @MainActor (ScreenCaptureKitOwnerUnawareHost) -> Void
     typealias ScreenCaptureKitHandshake = @MainActor @Sendable (
@@ -39,7 +40,7 @@ extension RuntimeHostResolver {
             makeLocalServices: @escaping LocalServiceFactory,
             claimScreenCaptureKitOwner: @escaping ScreenCaptureKitOwnerClaim,
             inspectScreenCaptureKitOwner: @escaping ScreenCaptureKitOwnerInspector,
-            inspectScreenCaptureKitSafety: @escaping ScreenCaptureKitSafetyInspector = { _, _, _ in nil },
+            inspectScreenCaptureKitSafety: @escaping ScreenCaptureKitSafetyInspector = { _, _, _, _ in nil },
             recordScreenCaptureKitSafetyBlocker: @escaping ScreenCaptureKitSafetyRecorder = { _ in },
             remoteCandidatePlan: @escaping RemoteCandidatePlanner = RuntimeHostResolver.remoteCandidatePlan
         ) {
@@ -55,7 +56,7 @@ extension RuntimeHostResolver {
             makeLocalServices: RuntimeServiceFactory.makeLocalServices,
             claimScreenCaptureKitOwner: { try ScreenCaptureKitOwnerLease().claim().receipt },
             inspectScreenCaptureKitOwner: { try ScreenCaptureKitOwnerLease.currentOwnerReceiptIfHeld() },
-            inspectScreenCaptureKitSafety: { options, environment, candidates in
+            inspectScreenCaptureKitSafety: { options, environment, candidates, handshakeCache in
                 let resolvedCandidates: [ImplicitRemoteCandidate]
                 if let suppliedCandidates = candidates {
                     resolvedCandidates = suppliedCandidates
@@ -68,12 +69,8 @@ extension RuntimeHostResolver {
                 }
                 return try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
                     candidates: resolvedCandidates,
-                    identity: PeekabooBridgeClientIdentity(
-                        bundleIdentifier: Bundle.main.bundleIdentifier,
-                        teamIdentifier: nil,
-                        processIdentifier: getpid(),
-                        hostname: Host.current().name
-                    )
+                    identity: handshakeCache.identity,
+                    handshakeCache: handshakeCache
                 )
             },
             recordScreenCaptureKitSafetyBlocker: { host in
@@ -92,11 +89,30 @@ extension RuntimeHostResolver {
         let environment: [String: String]
         let candidatePlan: RemoteCandidatePlan
         let identity: PeekabooBridgeClientIdentity
+        let handshakeCache: RemoteHandshakeCache
         let snapshotInvalidationRemoteSocketPaths: [String]
         let preferredScreenCaptureKitOwner: ScreenCaptureKitOwnerLease.OwnerReceipt?
         let makeLocalServices: LocalServiceFactory
         let inspectScreenCaptureKitSafety: ScreenCaptureKitSafetyInspector
         let recordScreenCaptureKitSafetyBlocker: ScreenCaptureKitSafetyRecorder
+
+        func resolveRemoteServices(
+            candidates: [ImplicitRemoteCandidate],
+            requiredProtocolVersion: PeekabooBridgeProtocolVersion? = nil,
+            requiredOwner: ScreenCaptureKitOwnerLease.OwnerReceipt? = nil,
+            permissionRejections: inout [String]
+        ) async throws -> Resolution? {
+            try await RuntimeHostResolver.resolveRemoteServices(
+                candidates: candidates,
+                identity: self.identity,
+                options: self.options,
+                requiredProtocolVersion: requiredProtocolVersion,
+                requiredOwner: requiredOwner,
+                snapshotInvalidationRemoteSocketPaths: self.snapshotInvalidationRemoteSocketPaths,
+                permissionRejections: &permissionRejections,
+                handshakeCache: self.handshakeCache
+            )
+        }
     }
 
     struct ScreenCaptureKitOwnerUnawareHost: Equatable {
@@ -405,10 +421,8 @@ extension RuntimeHostResolver {
     static func firstScreenCaptureKitOwnerUnawareHost(
         candidates: [ImplicitRemoteCandidate],
         identity: PeekabooBridgeClientIdentity,
-        handshake: @escaping ScreenCaptureKitHandshake = { candidate, identity in
-            try await PeekabooBridgeClient(socketPath: candidate.socketPath)
-                .handshake(client: identity, requestedHost: nil)
-        },
+        handshakeCache: RemoteHandshakeCache? = nil,
+        handshake: ScreenCaptureKitHandshake? = nil,
         externalHostPresence: @escaping ScreenCaptureKitExternalHostInspector = {
             RuntimeHostResolver.knownExternalHostPresence(socketPath: $0)
         }
@@ -417,7 +431,14 @@ extension RuntimeHostResolver {
             try Task.checkCancellation()
             let response: PeekabooBridgeHandshakeResponse
             do {
-                response = try await handshake(candidate, identity)
+                if let handshake {
+                    response = try await handshake(candidate, identity)
+                } else if let handshakeCache {
+                    response = try await handshakeCache.handshake(candidate, identity: identity).response
+                } else {
+                    response = try await PeekabooBridgeClient(socketPath: candidate.socketPath)
+                        .handshake(client: identity, requestedHost: nil)
+                }
                 try Task.checkCancellation()
             } catch let error as CancellationError {
                 throw error
