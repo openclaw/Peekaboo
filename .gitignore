@@ -131,6 +131,9 @@ Package.pins
 **/Package.resolved
 **/.swiftpm/
 *.xcworkspace/xcshareddata/swiftpm/
+!Apps/Peekaboo.xcworkspace/xcshareddata/
+!Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/
+!Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved
 
 ## Playgrounds
 playground.xcworkspace

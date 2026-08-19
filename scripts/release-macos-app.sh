@@ -453,6 +453,9 @@ else
     -configuration "$CONFIGURATION" \
     -destination "$DESTINATION" \
     -derivedDataPath "$DERIVED_DATA_PATH" \
+    -disableAutomaticPackageResolution \
+    -onlyUsePackageVersionsFromResolvedFile \
+    -skipPackageUpdates \
     -quiet \
     MARKETING_VERSION="$VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
@@ -464,10 +467,17 @@ fi
 [[ -d "$APP_BUNDLE" ]] || fail "App bundle not found: $APP_BUNDLE"
 [[ -f "$ENTITLEMENTS_PATH" ]] || fail "Entitlements file not found: $ENTITLEMENTS_PATH"
 verify_app_payload "$APP_BUNDLE"
+"$ROOT/scripts/verify-release-package-resolution.sh" \
+  --source-root "$ROOT" \
+  --derived-data "$DERIVED_DATA_PATH" \
+  --app "$APP_BUNDLE"
 
 log "Developer ID signing"
-"$ROOT/scripts/codesign-with-retry.sh" --force --deep --options runtime --timestamp="$CODESIGN_TIMESTAMP_URL" --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
-"$ROOT/scripts/codesign-with-retry.sh" --force --options runtime --timestamp="$CODESIGN_TIMESTAMP_URL" --entitlements "$ENTITLEMENTS_PATH" --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
+"$ROOT/scripts/sign-release-app.sh" \
+  --app "$APP_BUNDLE" \
+  --entitlements "$ENTITLEMENTS_PATH" \
+  --sign-identity "$SIGN_IDENTITY" \
+  --timestamp-url "$CODESIGN_TIMESTAMP_URL"
 codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 verify_app_entitlements "$APP_BUNDLE"
 verify_developer_id_signature "$APP_BUNDLE"

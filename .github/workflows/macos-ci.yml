@@ -406,8 +406,21 @@ jobs:
             -scheme Peekaboo \
             -configuration Debug \
             -sdk macosx \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipPackageUpdates \
             CODE_SIGNING_ALLOWED=NO \
             -derivedDataPath /tmp/DerivedData-Peekaboo
+
+      - name: Verify Peekaboo workspace package lock
+        working-directory: Apps
+        run: |
+          set -euo pipefail
+          test ! -e CLI/Package.resolved
+          expected_revision="$(jq -er '.pins[] | select(.identity == "sparkle") | .state.revision' \
+            Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved)"
+          actual_revision="$(git -C /tmp/DerivedData-Peekaboo/SourcePackages/checkouts/Sparkle rev-parse HEAD)"
+          test "$actual_revision" = "$expected_revision"
 
       - name: Build Inspector app (Xcode)
         working-directory: Apps/PeekabooInspector

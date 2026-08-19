@@ -87,11 +87,18 @@ for timestamp_surface in \
   "$ROOT_DIR/scripts/build-swift-arm.sh" \
   "$ROOT_DIR/scripts/build-swift-universal.sh" \
   "$ROOT_DIR/scripts/copy-swift-runtime-libraries.sh" \
-  "$ROOT_DIR/scripts/release-macos-app.sh" \
   "$ROOT_DIR/scripts/create-release-dmg.sh"; do
   rg -Fq 'http://timestamp.apple.com/ts01' "$timestamp_surface"
   rg -Fq 'codesign-with-retry.sh' "$timestamp_surface"
 done
+rg -Fq 'http://timestamp.apple.com/ts01' "$ROOT_DIR/scripts/release-macos-app.sh"
+rg -Fq 'sign-release-app.sh' "$ROOT_DIR/scripts/release-macos-app.sh"
+rg -Fq 'codesign-with-retry.sh' "$ROOT_DIR/scripts/sign-release-app.sh"
+if rg -n -- 'codesign-with-retry\.sh.*--deep|--force[[:space:]]+--deep[[:space:]]+--options[[:space:]]+runtime' \
+  "$ROOT_DIR/scripts/release-macos-app.sh" "$ROOT_DIR/scripts/sign-release-app.sh"; then
+  printf 'Release app signing still uses deprecated retry-unsafe --deep signing\n' >&2
+  exit 1
+fi
 
 for release_build in \
   "$ROOT_DIR/scripts/build-swift-arm.sh" \
