@@ -59,6 +59,8 @@ struct AgentExecutionProcessLimitRuntimeTests {
         }
         #expect(spawnResult == 0)
         try #require(processIdentifier > 0)
+        let childProcessIdentifier = processIdentifier
+        var childWasReaped = false
         #expect(getpgid(processIdentifier) == processIdentifier)
         #expect(getsid(processIdentifier) == processIdentifier)
         close(authorization.read)
@@ -68,7 +70,9 @@ struct AgentExecutionProcessLimitRuntimeTests {
             close(authorization.write)
             close(readiness.read)
             close(output.read)
-            _ = Darwin.kill(processIdentifier, SIGKILL)
+            if !childWasReaped {
+                Self.terminateAndReap(childProcessIdentifier)
+            }
         }
 
         let readinessBytes = try Self.readAll(readiness.read)
@@ -79,7 +83,9 @@ struct AgentExecutionProcessLimitRuntimeTests {
 
         let outputBytes = try Self.readAll(output.read)
         var waitStatus: Int32 = 0
-        while Darwin.waitpid(processIdentifier, &waitStatus, 0) < 0, errno == EINTR {}
+        let waitResult = Self.waitForChild(childProcessIdentifier, status: &waitStatus)
+        childWasReaped = waitResult == childProcessIdentifier
+        #expect(childWasReaped)
         #expect((waitStatus & 0x7F) == 0)
         #expect(((waitStatus >> 8) & 0xFF) == 0)
         let object = try #require(JSONSerialization.jsonObject(with: outputBytes) as? [String: Bool])
@@ -94,68 +100,54 @@ struct AgentExecutionProcessLimitRuntimeTests {
 
     @Test
     func `Real gated Agent completes a provider tool provider loop through nested Bridge`() async throws {
-        let bridge = try ScriptedBridgePeer(responses: [
-            .handshake(BridgeTestFixtures.handshake(
-                negotiatedVersion: .init(major: 1, minor: 28),
-                supportedOperations: Array(PeekabooBridgeOperation.allCases),
-                permissions: .init(screenRecording: true, accessibility: true, postEvent: true),
-                hostCapabilities: [
-                    PeekabooBridgeHostCapability.hostGenerationIdentity,
-                    PeekabooBridgeHostCapability.codeSignatureBuildIdentity,
-                    PeekabooBridgeHostCapability.backgroundBridgeHost,
-                    PeekabooBridgeHostCapability.safeBackgroundApplicationLaunchNoOp,
-                    PeekabooBridgeHostCapability.processGenerationPinnedApplicationActivation,
-                ]
-            )),
-            .handshake(BridgeTestFixtures.handshake(
-                negotiatedVersion: .init(major: 1, minor: 28),
-                supportedOperations: Array(PeekabooBridgeOperation.allCases),
-                permissions: .init(screenRecording: true, accessibility: true, postEvent: true),
-                hostCapabilities: [
-                    PeekabooBridgeHostCapability.hostGenerationIdentity,
-                    PeekabooBridgeHostCapability.codeSignatureBuildIdentity,
-                    PeekabooBridgeHostCapability.backgroundBridgeHost,
-                    PeekabooBridgeHostCapability.safeBackgroundApplicationLaunchNoOp,
-                    PeekabooBridgeHostCapability.processGenerationPinnedApplicationActivation,
-                ]
-            )),
-            .ok,
-            .application(ServiceApplicationInfo(
-                processIdentifier: 4242,
-                processStartIdentity: 9001,
-                bundleIdentifier: "dev.peekaboo.fixture",
-                name: "BridgeFixture",
-                activationPolicy: .regular
-            )),
-            .applications([
-                ServiceApplicationInfo(
-                    processIdentifier: 4242,
-                    processStartIdentity: 9001,
-                    bundleIdentifier: "dev.peekaboo.fixture",
-                    name: "BridgeFixture",
-                    activationPolicy: .regular
-                ),
-            ]),
-            .window(nil),
-            .applications([
-                ServiceApplicationInfo(
-                    processIdentifier: 4242,
-                    processStartIdentity: 9001,
-                    bundleIdentifier: "dev.peekaboo.fixture",
-                    name: "BridgeFixture",
-                    activationPolicy: .regular
-                ),
-            ]),
-        ])
-        let result = try Self.runGatedAgent(bridgeSocketPath: bridge.socketPath)
+        let bridge = try ConcurrentGatedBridgePeer()
+        let binaryPath = try TestChildProcess.peekabooBinaryURL().path
+        let challenge = String(repeating: "b", count: 64)
+        let releaseGateEnvironment = [
+            "\(AgentExecutionReleaseGate.descriptorEnvironmentKey)=198",
+            "\(AgentExecutionReleaseGate.challengeEnvironmentKey)=\(challenge)",
+            "\(AgentExecutionReleaseGate.lockdownDescriptorEnvironmentKey)=199",
+            "\(AgentExecutionReleaseGate.processCreationLimitEnvironmentKey)=0",
+        ]
+        let responder = Task {
+            while !Task.isCancelled {
+                let request = try await bridge.nextRequest()
+                try await bridge.respond(Self.response(for: request.decode()), to: request)
+            }
+        }
+        let agent = Task.detached {
+            try Self.runGatedAgent(
+                binaryPath: binaryPath,
+                bridgeSocketPath: bridge.socketPath,
+                challenge: challenge,
+                releaseGateEnvironment: releaseGateEnvironment
+            )
+        }
+        let result: (output: Data, standardError: Data, waitStatus: Int32)
+        do {
+            result = try await agent.value
+        } catch {
+            responder.cancel()
+            await bridge.stop()
+            _ = try? await responder.value
+            throw error
+        }
         let requests = await bridge.requests
         let acceptedConnections = await bridge.acceptedConnectionCount
         let requestBodies = requests.compactMap { String(data: $0, encoding: .utf8) }
+        // Agent completion closes every request socket. Stop any still-waiting responder instead of
+        // trusting a request count before the count assertion below has had a chance to diagnose it.
         await bridge.stop()
+        responder.cancel()
+        _ = try? await responder.value
 
         #expect(
             result.waitStatus == 0,
-            "Agent stdout: \(String(data: result.output, encoding: .utf8) ?? "<non-UTF8>"); stderr: \(String(data: result.standardError, encoding: .utf8) ?? "<non-UTF8>"); accepted: \(acceptedConnections); requests: \(requestBodies)"
+            """
+            Agent stdout: \(String(data: result.output, encoding: .utf8) ?? "<non-UTF8>"); \
+            stderr: \(String(data: result.standardError, encoding: .utf8) ?? "<non-UTF8>"); \
+            accepted: \(acceptedConnections); requests: \(requestBodies)
+            """
         )
         let response = try #require(JSONSerialization.jsonObject(with: result.output) as? [String: Any])
         let payload = try #require(response["result"] as? [String: Any])
@@ -173,7 +165,7 @@ struct AgentExecutionProcessLimitRuntimeTests {
         )
         #expect(trace["totalCallCount"] as? Int == 1)
 
-        try #require(requests.count == 7)
+        try #require(requests.count == 10, "Bridge requests: \(requestBodies)")
         let decodedRequests = try requests.map {
             try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeRequest.self, from: $0)
         }
@@ -183,13 +175,60 @@ struct AgentExecutionProcessLimitRuntimeTests {
             }
             return request.operation
         }
-        #expect(operations.contains(.listApplications), "Bridge requests: \(requestBodies)")
+        #expect(operations.count(where: { $0 == .invalidateImplicitLatestSnapshot }) == 1)
+        #expect(operations.count(where: { $0 == .getFrontmostApplication }) == 2)
+        #expect(operations.count(where: { $0 == .getFocusedWindow }) == 2)
+        #expect(operations.count(where: { $0 == .listApplications }) == 3)
     }
 
-    private static func runGatedAgent(bridgeSocketPath: String) throws
+    private static func response(for request: PeekabooBridgeRequest) -> PeekabooBridgeResponse {
+        switch request {
+        case .handshake:
+            .handshake(BridgeTestFixtures.handshake(
+                negotiatedVersion: .init(major: 1, minor: 28),
+                supportedOperations: Array(PeekabooBridgeOperation.allCases),
+                permissions: .init(screenRecording: true, accessibility: true, postEvent: true),
+                hostCapabilities: [
+                    PeekabooBridgeHostCapability.hostGenerationIdentity,
+                    PeekabooBridgeHostCapability.codeSignatureBuildIdentity,
+                    PeekabooBridgeHostCapability.backgroundBridgeHost,
+                    PeekabooBridgeHostCapability.safeBackgroundApplicationLaunchNoOp,
+                    PeekabooBridgeHostCapability.processGenerationPinnedApplicationActivation,
+                ]
+            ))
+        case .invalidateImplicitLatestSnapshot:
+            .ok
+        case .getFrontmostApplication:
+            .application(self.fixtureApplication)
+        case .listApplications:
+            .applications([self.fixtureApplication])
+        case .getFocusedWindow:
+            .window(nil)
+        default:
+            .error(.init(
+                code: .invalidRequest,
+                message: "Unexpected gated Agent fixture request \(request.operation.rawValue)"
+            ))
+        }
+    }
+
+    private static var fixtureApplication: ServiceApplicationInfo {
+        ServiceApplicationInfo(
+            processIdentifier: 4242,
+            processStartIdentity: 9001,
+            bundleIdentifier: "dev.peekaboo.fixture",
+            name: "BridgeFixture",
+            activationPolicy: .regular
+        )
+    }
+
+    private nonisolated static func runGatedAgent(
+        binaryPath: String,
+        bridgeSocketPath: String,
+        challenge: String,
+        releaseGateEnvironment: [String]
+    ) throws
     -> (output: Data, standardError: Data, waitStatus: Int32) {
-        let binary = try TestChildProcess.peekabooBinaryURL().path
-        let challenge = String(repeating: "b", count: 64)
         let authorization = try self.pipePair()
         let readiness = try self.pipePair()
         let output = try self.pipePair()
@@ -230,7 +269,7 @@ struct AgentExecutionProcessLimitRuntimeTests {
         else { throw POSIXError(.EIO) }
 
         var arguments = self.cStrings([
-            binary, "agent", "run", "List apps through nested Bridge", "--no-cache", "--max-steps", "2",
+            binaryPath, "agent", "run", "List apps through nested Bridge", "--no-cache", "--max-steps", "2",
             "--model", "claude-opus-5", "--bridge-socket", bridgeSocketPath, "--json",
         ])
         defer { self.free(arguments) }
@@ -238,18 +277,21 @@ struct AgentExecutionProcessLimitRuntimeTests {
             "PATH=/usr/bin:/bin",
             "ANTHROPIC_API_KEY=probe-key",
             "PEEKABOO_AGENT_EXECUTION_TEST_PROVIDER=permissions-v1",
-            "\(AgentExecutionReleaseGate.descriptorEnvironmentKey)=\(childAuthorization)",
-            "\(AgentExecutionReleaseGate.challengeEnvironmentKey)=\(challenge)",
-            "\(AgentExecutionReleaseGate.lockdownDescriptorEnvironmentKey)=\(childReadiness)",
-            "\(AgentExecutionReleaseGate.processCreationLimitEnvironmentKey)=0",
-        ])
+        ] + releaseGateEnvironment)
         defer { self.free(environment) }
 
         var processIdentifier: pid_t = 0
-        let spawnResult = binary.withCString {
+        let spawnResult = binaryPath.withCString {
             posix_spawn(&processIdentifier, $0, &actions, &attributes, &arguments, &environment)
         }
         guard spawnResult == 0, processIdentifier > 0 else { throw POSIXError(.EIO) }
+        let childProcessIdentifier = processIdentifier
+        var childWasReaped = false
+        defer {
+            if !childWasReaped {
+                self.terminateAndReap(childProcessIdentifier)
+            }
+        }
         close(authorization.read)
         close(readiness.write)
         close(output.write)
@@ -261,14 +303,18 @@ struct AgentExecutionProcessLimitRuntimeTests {
         let outputBytes = try self.readAll(output.read)
         let errorBytes = try self.readAll(errors.read)
         var waitStatus: Int32 = 0
-        while Darwin.waitpid(processIdentifier, &waitStatus, 0) < 0, errno == EINTR {}
+        let waitResult = self.waitForChild(childProcessIdentifier, status: &waitStatus)
+        guard waitResult == childProcessIdentifier else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .ECHILD)
+        }
+        childWasReaped = true
         close(readiness.read)
         close(output.read)
         close(errors.read)
         return (outputBytes, errorBytes, waitStatus)
     }
 
-    private static func pipePair() throws -> (read: Int32, write: Int32) {
+    private nonisolated static func pipePair() throws -> (read: Int32, write: Int32) {
         var descriptors = [Int32](repeating: -1, count: 2)
         guard pipe(&descriptors) == 0 else { throw POSIXError(.EIO) }
         return (descriptors[0], descriptors[1])
@@ -298,7 +344,7 @@ struct AgentExecutionProcessLimitRuntimeTests {
         #expect(spawnStatus == 0)
     }
 
-    private static func readAll(_ descriptor: Int32) throws -> Data {
+    private nonisolated static func readAll(_ descriptor: Int32) throws -> Data {
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
@@ -313,7 +359,7 @@ struct AgentExecutionProcessLimitRuntimeTests {
         }
     }
 
-    private static func writeAll(_ data: Data, to descriptor: Int32) throws {
+    private nonisolated static func writeAll(_ data: Data, to descriptor: Int32) throws {
         var offset = 0
         while offset < data.count {
             let count = data.withUnsafeBytes {
@@ -329,11 +375,28 @@ struct AgentExecutionProcessLimitRuntimeTests {
         }
     }
 
-    private static func cStrings(_ values: [String]) -> [UnsafeMutablePointer<CChar>?] {
+    private nonisolated static func waitForChild(
+        _ processIdentifier: pid_t,
+        status: inout Int32
+    ) -> pid_t {
+        var result: pid_t
+        repeat {
+            result = Darwin.waitpid(processIdentifier, &status, 0)
+        } while result < 0 && errno == EINTR
+        return result
+    }
+
+    private nonisolated static func terminateAndReap(_ processIdentifier: pid_t) {
+        _ = Darwin.kill(processIdentifier, SIGKILL)
+        var waitStatus: Int32 = 0
+        _ = self.waitForChild(processIdentifier, status: &waitStatus)
+    }
+
+    private nonisolated static func cStrings(_ values: [String]) -> [UnsafeMutablePointer<CChar>?] {
         values.map { strdup($0) } + [nil]
     }
 
-    private static func free(_ values: [UnsafeMutablePointer<CChar>?]) {
+    private nonisolated static func free(_ values: [UnsafeMutablePointer<CChar>?]) {
         values.forEach { Darwin.free($0) }
     }
 }

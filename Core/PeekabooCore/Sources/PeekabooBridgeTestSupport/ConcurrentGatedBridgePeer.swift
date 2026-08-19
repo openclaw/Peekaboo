@@ -31,6 +31,11 @@ public final class ConcurrentGatedBridgePeer: @unchecked Sendable {
         get async { await self.state.acceptedConnectionCount }
     }
 
+    /// Complete request payloads in arrival order, retained for failure diagnostics.
+    public var requests: [Data] {
+        get async { await self.state.requests }
+    }
+
     public init(socketPathPrefix: String = "pb-gated-bridge") throws {
         let socketPath = "/tmp/\(socketPathPrefix)-\(UUID().uuidString).sock"
         let listener = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -224,6 +229,7 @@ public final class ConcurrentGatedBridgePeer: @unchecked Sendable {
 
     private actor State {
         private(set) var acceptedConnectionCount = 0
+        private(set) var requests: [Data] = []
         private var queuedRequests: [Request] = []
         private var requestWaiters: [CheckedContinuation<Request?, Never>] = []
         private var responseWaiters: [UInt64: CheckedContinuation<ResponseAction, Never>] = [:]
@@ -234,7 +240,8 @@ public final class ConcurrentGatedBridgePeer: @unchecked Sendable {
         }
 
         func publish(_ request: Request) async -> ResponseAction {
-            await withCheckedContinuation { continuation in
+            self.requests.append(request.data)
+            return await withCheckedContinuation { continuation in
                 guard !self.stopped else {
                     continuation.resume(returning: .close)
                     return

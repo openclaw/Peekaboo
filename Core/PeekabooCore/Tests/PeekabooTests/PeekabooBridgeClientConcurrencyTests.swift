@@ -9,6 +9,57 @@ import Testing
 @Suite(.serialized)
 struct PeekabooBridgeClientConcurrencyTests {
     @Test
+    func `concurrent receiptless responses stay paired with their exact requests under load`() async throws {
+        let application = ServiceApplicationInfo(
+            processIdentifier: 4242,
+            processStartIdentity: 9001,
+            bundleIdentifier: "dev.peekaboo.fixture",
+            name: "BridgeFixture",
+            activationPolicy: .regular)
+        let handshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: .init(major: 1, minor: 28),
+            supportedOperations: [.getFocusedWindow, .listApplications])
+        let peer = try ConcurrentGatedBridgePeer()
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 2)
+
+        let negotiation = Task {
+            try await client.handshake(
+                client: Self.clientIdentity,
+                protocolVersion: .init(major: 1, minor: 28))
+        }
+        let handshakeRequest = try await peer.nextRequest()
+        try Self.requireHandshake(handshakeRequest)
+        try await peer.respond(.handshake(handshake), to: handshakeRequest)
+        _ = try await negotiation.value
+
+        for _ in 0..<64 {
+            let applications = Task { try await client.listApplications() }
+            let focusedWindow = Task { try await client.getFocusedWindow() }
+            let first = try await peer.nextRequest()
+            let second = try await peer.nextRequest()
+            let firstRequest = try first.decode()
+            let secondRequest = try second.decode()
+
+            #expect(Set([firstRequest.operation, secondRequest.operation]) == [
+                .getFocusedWindow,
+                .listApplications,
+            ])
+            try await peer.respond(
+                Self.concurrentReadResponse(secondRequest, application: application),
+                to: second)
+            try await peer.respond(
+                Self.concurrentReadResponse(firstRequest, application: application),
+                to: first)
+
+            #expect(try await applications.value == [application])
+            #expect(try await focusedWindow.value == nil)
+        }
+
+        #expect(await peer.acceptedConnectionCount == 129)
+        await peer.stop()
+    }
+
+    @Test
     func `initial negotiation reentrancy refuses an unreceipted request`() async throws {
         let root = Self.temporaryRoot("initial-negotiation")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -892,16 +943,27 @@ extension PeekabooBridgeClientConcurrencyTests {
             #expect(currentRenewalPayload.protocolVersion == PeekabooBridgeConstants.protocolVersion)
             #expect(currentRenewalPayload.replacingOperationSessionID == predecessor.attestation.sessionID)
             try await peer.respond(
-                .error(.init(code: .versionMismatch, message: "Protocol 1.30 is unavailable")),
+                .error(.init(code: .versionMismatch, message: "Current protocol is unavailable")),
                 to: currentRenewalRequest)
 
-            let previousRenewalRequest = try await peer.nextRequest()
-            let previousRenewalPayload = try Self.requireHandshake(previousRenewalRequest)
-            #expect(previousRenewalPayload.protocolVersion == PeekabooBridgeConstants.attestedOperationReceiptVersion)
-            #expect(previousRenewalPayload.replacingOperationSessionID == predecessor.attestation.sessionID)
-            try await peer.respond(
-                .error(.init(code: .versionMismatch, message: "Protocol 1.29 is unavailable")),
-                to: previousRenewalRequest)
+            for minor in stride(
+                from: PeekabooBridgeConstants.protocolVersion.minor - 1,
+                through: PeekabooBridgeConstants.attestedOperationReceiptVersion.minor,
+                by: -1)
+            {
+                let fallbackRenewalRequest = try await peer.nextRequest()
+                let fallbackRenewalPayload = try Self.requireHandshake(fallbackRenewalRequest)
+                let expectedVersion = PeekabooBridgeProtocolVersion(
+                    major: PeekabooBridgeConstants.protocolVersion.major,
+                    minor: minor)
+                #expect(fallbackRenewalPayload.protocolVersion == expectedVersion)
+                #expect(fallbackRenewalPayload.replacingOperationSessionID == predecessor.attestation.sessionID)
+                try await peer.respond(
+                    .error(.init(
+                        code: .versionMismatch,
+                        message: "Protocol \(expectedVersion.major).\(expectedVersion.minor) is unavailable")),
+                    to: fallbackRenewalRequest)
+            }
 
             let legacyRenewalRequest = try await peer.nextRequest()
             let legacyRenewalPayload = try Self.requireHandshake(legacyRenewalRequest)
@@ -951,7 +1013,10 @@ extension PeekabooBridgeClientConcurrencyTests {
                 return
             }
             #expect(await client.lastOperationReceipt() == nil)
-            #expect(await peer.acceptedConnectionCount == 6)
+            let automaticAttestedAttemptCount = PeekabooBridgeConstants.protocolVersion.minor -
+                PeekabooBridgeConstants.attestedOperationReceiptVersion.minor + 1
+            let expectedConnectionCount = 1 + automaticAttestedAttemptCount + 1 + 1 + 1
+            #expect(await peer.acceptedConnectionCount == expectedConnectionCount)
         } catch {
             await peer.stop()
             throw error
@@ -1410,6 +1475,20 @@ extension PeekabooBridgeClientConcurrencyTests {
             teamIdentifier: nil,
             processIdentifier: getpid(),
             hostname: nil)
+    }
+
+    private static func concurrentReadResponse(
+        _ request: PeekabooBridgeRequest,
+        application: ServiceApplicationInfo) -> PeekabooBridgeResponse
+    {
+        switch request {
+        case .listApplications: .applications([application])
+        case .getFocusedWindow: .window(nil)
+        default:
+            .error(.init(
+                code: .invalidRequest,
+                message: "Unexpected concurrent read request \(request.operation.rawValue)"))
+        }
     }
 
     private static func temporaryRoot(_ suffix: String) -> URL {
