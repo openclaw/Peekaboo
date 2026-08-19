@@ -246,6 +246,16 @@ function requireNoLifecycleViolation(outputPath) {
     `continuous process lifecycle guard observed PID ${result.event_pid} flags ${result.event_flags}`);
 }
 
+function pathIsAbsent(filePath) {
+  try {
+    fs.lstatSync(filePath);
+    return false;
+  } catch (error) {
+    requireCondition(error?.code === 'ENOENT', `cannot inspect output path ${filePath}`);
+    return true;
+  }
+}
+
 function validateSpec(value) {
   exactKeys(value, [
     'version', 'role', 'host_uuid', 'deployment_envelope_sha256', 'epoch',
@@ -273,7 +283,7 @@ function validateSpec(value) {
     && Array.isArray(value.roots) && value.roots.length > 0,
   'collector spec is malformed');
   requirePrivateDirectory(path.dirname(value.ready_path), 'collector readiness parent');
-  requireCondition(!fs.existsSync(value.ready_path), 'collector readiness output must be absent');
+  requireCondition(pathIsAbsent(value.ready_path), 'collector readiness output must be absent');
   const roots = value.roots.map((root, index) => {
     exactKeys(root, [
       'root_id', 'root_class', 'pid', 'start_identity', 'code_signature_hash',
@@ -307,7 +317,7 @@ function validateSpec(value) {
     const controlPaths = Object.values(acknowledgementControl);
     requireCondition(new Set([...controlPaths, value.ready_path]).size === controlPaths.length + 1,
       'collector readiness and acknowledgement control paths must be distinct');
-    requireCondition(controlPaths.every((filePath) => !fs.existsSync(filePath)),
+    requireCondition(controlPaths.every(pathIsAbsent),
       'Agent acknowledgement control paths must be absent');
   }
   return { ...value, roots, acknowledgement_control: acknowledgementControl };
@@ -350,7 +360,7 @@ function validateObservedRoots(identities, roots) {
 function publishReadinessNoReplace(filePath, value) {
   const parent = path.dirname(filePath);
   requirePrivateDirectory(parent, 'collector readiness parent');
-  requireCondition(!fs.existsSync(filePath), 'collector readiness output already exists');
+  requireCondition(pathIsAbsent(filePath), 'collector readiness output already exists');
   const stagedPath = path.join(
     parent,
     `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`,
@@ -375,7 +385,7 @@ function publishReadinessNoReplace(filePath, value) {
 export function collectProcessTree(specPath, monitorPath, outputPath) {
   const spec = validateSpec(readStableJSON(specPath, 'collector spec').value);
   requirePrivateDirectory(path.dirname(outputPath), 'collector final output parent');
-  requireCondition(!fs.existsSync(outputPath), 'collector final output must be absent');
+  requireCondition(pathIsAbsent(outputPath), 'collector final output must be absent');
   const reservedOutputPaths = [
     spec.ready_path,
     ...Object.values(spec.acknowledgement_control ?? {}),
@@ -688,7 +698,7 @@ export function collectProcessTree(specPath, monitorPath, outputPath) {
         && Number.isSafeInteger(authorization.value.authorized_at_milliseconds)
         && authorization.value.authorized_at_milliseconds >= readinessPublishedAt
         && authorization.value.authorized_at_milliseconds <= capturedAt
-        && !fs.existsSync(control.authorization_source_path),
+        && pathIsAbsent(control.authorization_source_path),
       'Agent acknowledgement was not published by the covered lifecycle guard');
       acknowledgementAuthorization = {
         acknowledgement_path: acknowledgement.path,

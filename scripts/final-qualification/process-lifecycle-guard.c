@@ -159,10 +159,11 @@ static bool authorization_requested(const char *path) {
     return true;
 }
 
-static void publish_authorization(
+static bool publish_authorization(
     const char *source,
     const char *destination,
-    const char *result_path
+    const char *result_path,
+    const char *stop_path
 ) {
     struct stat source_info;
     if (lstat(source, &source_info) != 0 || !S_ISREG(source_info.st_mode)
@@ -186,9 +187,11 @@ static void publish_authorization(
         fail("cannot write authorization result");
     }
     finish_file(descriptor, temporary, result_path);
+    if (stop_requested(stop_path)) return false;
     if (renamex_np(source, destination, RENAME_EXCL) != 0) {
         fail("cannot publish authorization exclusively");
     }
+    return true;
 }
 
 static int self_test(void) {
@@ -326,11 +329,12 @@ int main(int argc, char **argv) {
                 publish_result(output_path, pids, pid_count, started, false, original_parent, NOTE_EXIT);
                 return 3;
             }
-            publish_authorization(
+            authorization_published = publish_authorization(
                 authorization_source_path,
                 authorization_destination_path,
-                authorization_result_path);
-            authorization_published = true;
+                authorization_result_path,
+                stop_path);
+            if (!authorization_published) continue;
         }
         if (stopping) {
             publish_result(output_path, pids, pid_count, started, true, 0, 0);

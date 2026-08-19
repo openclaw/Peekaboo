@@ -85,6 +85,16 @@ function corroboratePublication(retained, publishedAt, label) {
   `${label} timestamp is not corroborated by its file`);
 }
 
+function pathIsAbsent(filePath) {
+  try {
+    fs.lstatSync(filePath);
+    return false;
+  } catch (error) {
+    requireCondition(error?.code === 'ENOENT', `cannot inspect release-gating path ${filePath}`);
+    return true;
+  }
+}
+
 function validateLiveLifecycleGuard(readiness, monitorPath) {
   const temporary = fs.mkdtempSync('/private/tmp/pbq-agent-ack-guard.');
   fs.chmodSync(temporary, 0o700);
@@ -191,7 +201,7 @@ export function validateCoordinationReceipt(retained, acknowledgementPath) {
     && value.publishedAt >= value.lockdownAcknowledgedAt,
   'Agent execution coordination receipt is malformed');
   requirePrivateDirectory(value.runRootPath, 'Agent execution run root');
-  requireCondition(!fs.existsSync(value.operationReceiptDirectoryPath),
+  requireCondition(pathIsAbsent(value.operationReceiptDirectoryPath),
     'Agent operation receipt directory exists before acknowledgement');
   requireCondition(Array.isArray(value.arguments) && value.arguments.length === 9
     && value.arguments.every((entry) => typeof entry === 'string' && !entry.includes('\0')),
@@ -497,7 +507,7 @@ export function publishAgentExecutionAcknowledgement(
     acknowledgedAt,
   };
   const control = readiness.acknowledgementControl;
-  requireCondition(Object.values(control).every((filePath) => !fs.existsSync(filePath)),
+  requireCondition(Object.values(control).every(pathIsAbsent),
     'Agent acknowledgement control paths must be absent before authorization');
   const staged = writePrivateExclusive(control.authorization_source_path, acknowledgement);
   const requestedAt = Date.now();
@@ -523,7 +533,7 @@ export function publishAgentExecutionAcknowledgement(
     && authorized.authorization.value.authorized_at_milliseconds >= requestedAt
     && authorized.acknowledgement.bytes.equals(staged.bytes)
     && authorized.acknowledgement.sha256 === staged.sha256
-    && !fs.existsSync(control.authorization_source_path),
+    && pathIsAbsent(control.authorization_source_path),
   'lifecycle guard published an invalid Agent acknowledgement');
   return {
     version: 1,
