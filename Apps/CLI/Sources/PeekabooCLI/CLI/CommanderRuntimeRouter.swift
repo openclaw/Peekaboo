@@ -172,6 +172,13 @@ enum CommanderRuntimeRouter {
         })
     }()
 
+    private static let runtimeFlagNames: Set<String> = {
+        let signature = CommandSignature().withPeekabooRuntimeFlags().flattened()
+        return Set(signature.flags.flatMap { flag in
+            flag.names.map(\.commandLineToken)
+        })
+    }()
+
     private static func runtimeOptionConsumesFollowingValue(_ token: String) -> Bool {
         !token.contains("=") && self.runtimeValueOptionNames.contains(token)
     }
@@ -186,6 +193,31 @@ enum CommanderRuntimeRouter {
                 guard index < tokens.count else { return false }
                 index += 1
             }
+        }
+        return true
+    }
+
+    /// Empty-input detection must not inherit root help/version's intentional tolerance for unknown options.
+    private static func containsOnlyRecognizedRuntimeOptions(_ tokens: [String]) -> Bool {
+        var index = 0
+        while index < tokens.count {
+            let token = tokens[index]
+            let components = token.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            let name = String(components[0])
+            if self.runtimeFlagNames.contains(name) {
+                guard components.count == 1 else { return false }
+                index += 1
+                continue
+            }
+            guard self.runtimeValueOptionNames.contains(name) else { return false }
+            if components.count == 2 {
+                guard !components[1].isEmpty else { return false }
+                index += 1
+                continue
+            }
+            index += 1
+            guard index < tokens.count, !tokens[index].hasPrefix("-") else { return false }
+            index += 1
         }
         return true
     }
@@ -206,13 +238,22 @@ enum CommanderRuntimeRouter {
         arguments: [String],
         descriptors: [CommanderCommandDescriptor]
     ) throws -> Bool {
-        guard arguments.count == 1 else { return false }
-        let token = arguments[0]
+        guard let token = arguments.first else { return false }
         guard let descriptor = descriptors.first(where: { $0.metadata.name == token }) else {
             return false
         }
         let description = descriptor.type.commandDescription
         guard description.showHelpOnEmptyInvocation else { return false }
+        let trailingArguments = Array(arguments.dropFirst())
+        if let emptyInvocationError = CommanderEmptyInvocationPolicy.error(for: descriptor) {
+            guard !trailingArguments.contains(where: Self.isHelpToken) else { return false }
+            guard self.containsOnlyRecognizedRuntimeOptions(trailingArguments) else { return false }
+            if !trailingArguments.contains(where: Self.isJSONOutputToken) {
+                self.printCommandHelp(descriptor, path: [token])
+            }
+            throw emptyInvocationError
+        }
+        guard trailingArguments.isEmpty else { return false }
         self.printCommandHelp(descriptor, path: [token])
         if !descriptor.metadata.subcommands.isEmpty {
             throw CommanderProgramError.missingSubcommand(command: token)
@@ -226,6 +267,10 @@ enum CommanderRuntimeRouter {
 
     private static func isVersionToken(_ token: String) -> Bool {
         token == "--version" || token == "-V"
+    }
+
+    private static func isJSONOutputToken(_ token: String) -> Bool {
+        token == "--json" || token == "-j" || token == "--json-output" || token == "--jsonOutput"
     }
 
     private static func printHelp(

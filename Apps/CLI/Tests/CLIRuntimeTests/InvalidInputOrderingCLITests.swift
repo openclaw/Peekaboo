@@ -5,11 +5,77 @@ import Testing
 
 @Suite(.serialized)
 struct InvalidInputOrderingCLITests {
+    struct MissingSemanticInputCase: Sendable {
+        let command: String
+
+        var errorMessage: String {
+            "Command 'peekaboo \(self.command)' requires command input; " +
+                "run 'peekaboo \(self.command) --help' for usage."
+        }
+    }
+
     struct JSONCase: Sendable {
         let arguments: [String]
         let code: String
         let message: String
         let hint: String?
+    }
+
+    @Test(arguments: [
+        MissingSemanticInputCase(command: "type"),
+        MissingSemanticInputCase(command: "press"),
+        MissingSemanticInputCase(command: "action"),
+        MissingSemanticInputCase(command: "set-value"),
+        MissingSemanticInputCase(command: "click"),
+    ])
+    func `missing semantic input is invalid usage before runtime discovery`(
+        _ testCase: MissingSemanticInputCase
+    ) async throws {
+        let human = try await TestChildProcess.runPeekaboo([testCase.command])
+
+        #expect(human.status == .exited(1))
+        #expect(human.standardOutput.contains("Usage\n  peekaboo \(testCase.command)"))
+        #expect(human.standardError == "Error: \(testCase.errorMessage)\n")
+
+        let json = try await TestChildProcess.runPeekaboo([testCase.command, "--json"])
+
+        #expect(json.status == .exited(1))
+        #expect(json.standardError.isEmpty)
+        let envelope = try Self.errorEnvelope(from: json.standardOutput)
+        #expect(envelope.code == "INVALID_ARGUMENT")
+        #expect(envelope.message == "Command 'peekaboo \(testCase.command)' requires command input.")
+        #expect(envelope.hint == "Run 'peekaboo \(testCase.command) --help' for usage.")
+        #expect(envelope.debugLogs.isEmpty)
+
+        let unavailableRuntime = try await TestChildProcess.runPeekaboo(
+            [testCase.command, "--bridge-socket", "/tmp/peekaboo-missing-semantic-input.sock"],
+            isolateFromRemoteHosts: false
+        )
+        #expect(unavailableRuntime.status == .exited(1))
+        #expect(unavailableRuntime.standardOutput.contains("Usage\n  peekaboo \(testCase.command)"))
+        #expect(unavailableRuntime.standardError == "Error: \(testCase.errorMessage)\n")
+    }
+
+    @Test(arguments: ["type", "press", "action", "set-value", "click"])
+    func `explicit help remains successful for semantic input commands`(command: String) async throws {
+        let result = try await TestChildProcess.runPeekaboo(
+            [command, "--bridge-socket", "/tmp/peekaboo-help-missing.sock", "--help"],
+            isolateFromRemoteHosts: false
+        )
+
+        #expect(result.status == .exited(0))
+        #expect(result.standardError.isEmpty)
+        #expect(result.standardOutput.contains("Usage\n  peekaboo \(command)"))
+    }
+
+    @Test(arguments: ["type", "press", "action", "set-value", "click"])
+    func `unknown options are not hidden by empty invocation help`(command: String) async throws {
+        let result = try await TestChildProcess.runPeekaboo([command, "--bogus"])
+
+        #expect(result.status == .exited(1))
+        #expect(result.standardOutput.isEmpty)
+        #expect(result.standardError.contains("Unknown option --bogus"))
+        #expect(!result.standardError.contains("requires command input"))
     }
 
     @Test(arguments: [

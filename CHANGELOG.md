@@ -7,6 +7,7 @@
 - Add a Git-blob-bound final qualification manifest that requires byte-identical local/Studio installations, candidate-bound CLI and monitor identities, both elevation receipts, guarded task-owned process trees, and freshly re-executed native-only policy scans.
 
 ### Fixed
+- Treat empty `type`, `press`, `action`, `set-value`, and `click` invocations as invalid usage in both human and JSON output while preserving explicit help as a successful no-runtime path.
 - Reuse the authenticated ScreenCaptureKit safety handshake during normal runtime-host selection, avoiding a duplicate signature and permission round trip while preserving fail-closed host validation.
 - Preserve exact application/window selector proofs through capture hardening and accept proofless exact-ID PID observations, while keeping fuzzy selectors and stable process/window receipt fields fail closed.
 - Keep CLI wall-clock timeouts bounded under sustained executor load by sharing one monotonic dispatch timer and canceling losing timer/work paths without releasing mutation barriers early.

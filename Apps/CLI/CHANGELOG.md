@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add Bridge protocol 1.31 one-request signed background Agent execution with authenticated CLI derivation, an irreversible earliest-entrypoint process limit, lifecycle-covered release acknowledgement, exact-leader reaping, canonical terminal receipt bundles, and nested exact-lane receipts.
 
 ### Fixed
+- Treat empty `type`, `press`, `action`, `set-value`, and `click` invocations as invalid usage in both human and JSON output while preserving explicit help as a successful no-runtime path.
 - Keep CLI wall-clock timeouts bounded under sustained executor load by sharing one monotonic dispatch timer and canceling losing timer/work paths without releasing mutation barriers early.
 - Pin foreground menu focus, clicks, and listing to one exact process/window generation across CLI and MCP, preserving focus outcomes when a later menu read fails.
 - Refuse fuzzy application selectors before app, menu, window, or background click mutations are pinned to a process, while preserving fuzzy read-only discovery.
