@@ -1635,7 +1635,11 @@ function validateExercisedCandidateBindings(
 ) {
   const during = deployment.trees.find((tree) => tree.role === 'local' && tree.epoch === 'during');
   const agentRoot = during?.roots.find((root) => root.rootClass === 'agent');
+  const requesterRoot = during?.roots.find((root) => root.rootClass === 'agent_requester');
   const sampledAgent = agentRoot ? during.byIdentity.get(agentRoot.identity)?.value : null;
+  const sampledRequester = requesterRoot
+    ? during.byIdentity.get(requesterRoot.identity)?.value
+    : null;
   requireCondition(sampledAgent
     && artifact.cli.sha256 === concurrent.agent.executable_sha256
     && artifact.cli.sha256 === sampledAgent.executable_sha256
@@ -1643,6 +1647,13 @@ function validateExercisedCandidateBindings(
     && artifact.cli.cdhash === sampledAgent.code_signature_hash
     && sampledAgent.executable_path === concurrent.agent.executable_path,
   `${label} exercised Agent CLI differs from the candidate/deployed executable`);
+  requireCondition(sampledRequester
+    && artifact.cli.sha256 === sampledRequester.executable_sha256
+    && artifact.cli.cdhash === sampledRequester.code_signature_hash
+    && concurrent.agent.requester.code_signature_hash === sampledRequester.code_signature_hash
+    && sampledRequester.executable_path === concurrent.agent.executable_path
+    && sampledRequester.executable_path === sampledAgent.executable_path,
+  `${label} Agent requester CLI differs from the candidate/deployed executable`);
   requireCondition(artifact.monitor.executable_sha256 === concurrent.monitor.executable_sha256
     && artifact.monitor.executable_sha256 === deployment.processTreeMonitor.retained.sha256
     && artifact.monitor.cdhash === concurrent.monitor.code_signature_hash

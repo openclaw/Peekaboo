@@ -4044,6 +4044,30 @@ test('qualification manifest closes every required evidence class and detects by
       ),
       /exercised Agent CLI differs from the candidate\/deployed executable/,
     );
+    const wrongRequesterBytesInput = structuredClone(inputValue);
+    const wrongRequesterBytesTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
+    const wrongRequesterRoot = wrongRequesterBytesTree.roots.find((entry) => (
+      entry.root_class === 'agent_requester'
+    ));
+    const wrongRequesterProcess = wrongRequesterBytesTree.processes.find((entry) => (
+      entry.pid === wrongRequesterRoot.pid
+        && entry.start_identity === wrongRequesterRoot.start_identity
+    ));
+    wrongRequesterProcess.executable_path = '/private/tmp/qualification/peekaboo-copy';
+    wrongRequesterProcess.executable_name = 'peekaboo-copy';
+    wrongRequesterProcess.executable_sha256 = '0'.repeat(64);
+    wrongRequesterBytesInput.deployment.process_trees[1] = writeSynchronizedProcessTree(
+      root,
+      'wrong-requester-bytes-process-tree',
+      wrongRequesterBytesTree,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'wrong-requester-bytes-input.json'), wrongRequesterBytesInput),
+        path.join(root, 'wrong-requester-bytes-manifest.json'),
+      ),
+      /Agent requester CLI differs from the candidate\/deployed executable/,
+    );
     const wrongMonitorTreeInput = structuredClone(inputValue);
     const wrongMonitorTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
     wrongMonitorTree.monitor_executable_sha256 = '0'.repeat(64);
