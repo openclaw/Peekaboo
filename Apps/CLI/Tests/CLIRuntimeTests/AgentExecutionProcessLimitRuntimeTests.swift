@@ -182,12 +182,13 @@ struct AgentExecutionProcessLimitRuntimeTests {
             return request.operation
         }
         let invalidationCount = operations.count(where: { $0 == .invalidateImplicitLatestSnapshot })
-        #expect(handshakeCount == 2, "Bridge requests: \(requestBodies)")
+        // SCK safety inspection and runtime selection retain one authenticated client/session.
+        #expect(handshakeCount == 1, "Bridge requests: \(requestBodies)")
         #expect((0...1).contains(invalidationCount), "Bridge requests: \(requestBodies)")
         #expect(operations.count(where: { $0 == .getFrontmostApplication }) == 2)
         #expect(operations.count(where: { $0 == .getFocusedWindow }) == 2)
         #expect(operations.count(where: { $0 == .listApplications }) == 3)
-        #expect(requests.count == 9 + invalidationCount, "Bridge requests: \(requestBodies)")
+        #expect(requests.count == 8 + invalidationCount, "Bridge requests: \(requestBodies)")
     }
 
     private static func response(for request: PeekabooBridgeRequest) -> PeekabooBridgeResponse {
