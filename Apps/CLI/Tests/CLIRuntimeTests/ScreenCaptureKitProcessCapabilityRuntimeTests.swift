@@ -26,7 +26,11 @@ struct ScreenCaptureKitProcessCapabilityRuntimeTests {
         try process.run()
         defer { Self.stop(process) }
 
-        let processStartIdentity = try await self.waitForProcessCapability(process, standardError: standardError)
+        let processStartIdentity = try await self.waitForProcessCapability(
+            process,
+            socketPath: socketPath,
+            standardError: standardError
+        )
         let conflicts = try ScreenCaptureKitOwnerLease.liveUncoordinatedProcesses(
             excluding: .current()
         )
@@ -43,8 +47,14 @@ struct ScreenCaptureKitProcessCapabilityRuntimeTests {
         try ScreenCaptureKitOwnerLease.removeStaleProcessCapabilityMarkers()
     }
 
-    private func waitForProcessCapability(_ process: Process, standardError: Pipe) async throws -> UInt64 {
-        for _ in 0..<100 {
+    private func waitForProcessCapability(
+        _ process: Process,
+        socketPath: String,
+        standardError: Pipe
+    ) async throws -> UInt64 {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while clock.now < deadline {
             guard process.isRunning else {
                 let details = String(
                     decoding: standardError.fileHandleForReading.readDataToEndOfFile(),
@@ -58,20 +68,24 @@ struct ScreenCaptureKitProcessCapabilityRuntimeTests {
                     processIdentifier: process.processIdentifier,
                     processStartIdentity: identity
                 )
-                if FileManager.default.fileExists(atPath: marker.path) {
+                if FileManager.default.fileExists(atPath: marker.path),
+                   FileManager.default.fileExists(atPath: socketPath),
+                   FileManager.default.fileExists(atPath: "\(socketPath).lock")
+                {
                     return identity
                 }
             }
-            try await Task.sleep(for: .milliseconds(10))
+            try await clock.sleep(for: .milliseconds(10))
         }
-        throw RuntimeError("Peekaboo marker fixture did not publish its process capability")
+        throw RuntimeError("Peekaboo marker fixture did not publish its process capability and Bridge readiness")
     }
 
     @discardableResult
     private static func stop(_ process: Process) -> Bool {
         guard process.isRunning else { return true }
         process.terminate()
-        for _ in 0..<100 where process.isRunning {
+        let gracefulDeadline = DispatchTime.now() + .seconds(5)
+        while process.isRunning, DispatchTime.now() < gracefulDeadline {
             usleep(10000)
         }
         let exitedAfterSIGTERM = !process.isRunning

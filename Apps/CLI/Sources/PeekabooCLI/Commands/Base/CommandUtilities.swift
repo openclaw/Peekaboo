@@ -7,6 +7,37 @@ import PeekabooFoundation
 
 // MARK: - Timeout Utilities
 
+private final nonisolated class CommandTimeoutTimer: @unchecked Sendable {
+    private let workItem: DispatchWorkItem
+
+    init(seconds: TimeInterval, action: @escaping @Sendable () -> Void) {
+        let workItem = DispatchWorkItem(block: action)
+        self.workItem = workItem
+        // Keep the deadline off the cooperative executor, and cancel the work item when another
+        // result wins so successful commands do not accumulate later timer-task wakeups.
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(
+            deadline: .now() + seconds,
+            execute: workItem
+        )
+    }
+
+    func cancel() {
+        self.workItem.cancel()
+    }
+}
+
+private func makeCommandTimeoutTimer(
+    seconds: TimeInterval,
+    race: TimeoutRace,
+    workTask: Task<Void, Never>,
+    error: @escaping @Sendable () -> any Error
+) -> CommandTimeoutTimer {
+    CommandTimeoutTimer(seconds: seconds) {
+        race.resume(with: Result<Bool, any Error>.failure(error()))
+        workTask.cancel()
+    }
+}
+
 /// Execute an async operation with a timeout
 func withTimeout<T: Sendable>(
     seconds: TimeInterval,
@@ -22,21 +53,16 @@ func withTimeout<T: Sendable>(
         }
     }
 
-    let timeoutTask = Task.detached {
-        do {
-            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-        } catch {
-            return
-        }
-        race.resume(with: Result<T, any Error>.failure(
-            CaptureError.captureFailure("Operation timed out after \(seconds) seconds")
-        ))
-        workTask.cancel()
-    }
+    let timeoutTimer = makeCommandTimeoutTimer(
+        seconds: seconds,
+        race: race,
+        workTask: workTask,
+        error: { CaptureError.captureFailure("Operation timed out after \(seconds) seconds") }
+    )
 
     defer {
         workTask.cancel()
-        timeoutTask.cancel()
+        timeoutTimer.cancel()
     }
     return try await withTaskCancellationHandler {
         try await withCheckedThrowingContinuation { continuation in
@@ -45,7 +71,7 @@ func withTimeout<T: Sendable>(
     } onCancel: {
         race.resume(with: Result<T, any Error>.failure(CancellationError()))
         workTask.cancel()
-        timeoutTask.cancel()
+        timeoutTimer.cancel()
     }
 }
 
@@ -142,19 +168,17 @@ func withCommandTimeout<T: Sendable>(
         }
     }
 
-    let timeoutTask = Task.detached {
-        do {
-            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-        } catch {
-            return
-        }
-        race.resume(with: Result<T, any Error>.failure(PeekabooError.timeout(
-            operation: operationName,
-            duration: seconds
-        )))
-        workTask.cancel()
-    }
+    let timeoutTimer = makeCommandTimeoutTimer(
+        seconds: seconds,
+        race: race,
+        workTask: workTask,
+        error: { PeekabooError.timeout(operation: operationName, duration: seconds) }
+    )
 
+    defer {
+        workTask.cancel()
+        timeoutTimer.cancel()
+    }
     return try await withTaskCancellationHandler {
         try await withCheckedThrowingContinuation { continuation in
             race.setContinuation(continuation)
@@ -162,7 +186,7 @@ func withCommandTimeout<T: Sendable>(
     } onCancel: {
         race.resume(with: Result<T, any Error>.failure(CancellationError()))
         workTask.cancel()
-        timeoutTask.cancel()
+        timeoutTimer.cancel()
     }
 }
 
@@ -203,17 +227,17 @@ func withMainActorCommandTimeout<T: Sendable>(
         race.resume(with: result)
     }
 
-    let timeoutTask = Task.detached {
-        do {
-            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-        } catch {
-            return
-        }
-        let error = timeoutError?() ?? PeekabooError.timeout(operation: operationName, duration: seconds)
-        race.resume(with: Result<T, any Error>.failure(error))
-        workTask.cancel()
-    }
+    let timeoutTimer = makeCommandTimeoutTimer(
+        seconds: seconds,
+        race: race,
+        workTask: workTask,
+        error: { timeoutError?() ?? PeekabooError.timeout(operation: operationName, duration: seconds) }
+    )
 
+    defer {
+        workTask.cancel()
+        timeoutTimer.cancel()
+    }
     return try await withTaskCancellationHandler {
         try await withCheckedThrowingContinuation { continuation in
             race.setContinuation(continuation)
@@ -221,7 +245,7 @@ func withMainActorCommandTimeout<T: Sendable>(
     } onCancel: {
         race.resume(with: Result<T, any Error>.failure(CancellationError()))
         workTask.cancel()
-        timeoutTask.cancel()
+        timeoutTimer.cancel()
     }
 }
 
