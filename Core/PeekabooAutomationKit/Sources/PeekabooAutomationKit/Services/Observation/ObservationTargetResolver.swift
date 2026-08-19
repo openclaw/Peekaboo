@@ -188,7 +188,10 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
                 else {
                     return resolved
                 }
-                return try self.resolveExactWindow(exactWindowID, for: app)
+                return try self.resolveExactWindow(
+                    exactWindowID,
+                    for: app,
+                    selectorResolutionProofs: resolved.selectorResolutionProofs)
             }
         }
 
@@ -302,7 +305,8 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
 
     private func resolveExactWindow(
         _ windowID: CGWindowID,
-        for app: ServiceApplicationInfo) throws -> ResolvedObservationTarget
+        for app: ServiceApplicationInfo,
+        selectorResolutionProofs: [SelectorResolutionProof]? = nil) throws -> ResolvedObservationTarget
     {
         guard let metadata = self.exactWindowMetadataProvider.metadata(for: windowID),
               let processStartIdentity = app.processStartIdentity,
@@ -315,7 +319,11 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
                 "window id \(windowID) owned by PID \(app.processIdentifier)")
         }
 
-        return Self.resolvedExactWindow(windowID, app: app, metadata: metadata)
+        return Self.resolvedExactWindow(
+            windowID,
+            app: app,
+            metadata: metadata,
+            selectorResolutionProofs: selectorResolutionProofs)
     }
 
     private func resolveExactWindowIfAvailable(
@@ -349,13 +357,19 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
     private static func resolvedExactWindow(
         _ windowID: CGWindowID,
         app: ServiceApplicationInfo,
-        metadata: ExactWindowObservationMetadata) -> ResolvedObservationTarget
+        metadata: ExactWindowObservationMetadata,
+        selectorResolutionProofs: [SelectorResolutionProof]? = nil) -> ResolvedObservationTarget
     {
         let window = WindowIdentity(
             windowID: Int(windowID),
             title: metadata.title,
             bounds: metadata.bounds,
             index: 0)
+        let windowIdentity = WindowMutationIdentity(
+            windowID: window.windowID,
+            ownerProcessIdentifier: metadata.ownerProcessIdentifier,
+            ownerProcessStartIdentity: metadata.ownerProcessStartIdentity,
+            capturedBounds: window.bounds)
         let context = WindowContext(
             applicationName: app.name,
             applicationBundleId: app.bundleIdentifier,
@@ -363,17 +377,17 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
             windowTitle: window.title,
             windowID: window.windowID,
             windowBounds: window.bounds,
-            windowMutationIdentity: WindowMutationIdentity(
-                windowID: window.windowID,
-                ownerProcessIdentifier: metadata.ownerProcessIdentifier,
-                ownerProcessStartIdentity: metadata.ownerProcessStartIdentity,
-                capturedBounds: window.bounds))
+            windowMutationIdentity: windowIdentity)
+        let proofs = selectorResolutionProofs ?? app.selectorResolutionProofs?.map {
+            $0.selecting(windowIdentity: windowIdentity)
+        }
         return ResolvedObservationTarget(
             kind: .windowID(windowID),
             app: ApplicationIdentity(app),
             window: window,
             bounds: window.bounds,
-            detectionContext: context)
+            detectionContext: context,
+            selectorResolutionProofs: proofs)
     }
 
     private func fallbackApplication(pid: Int32) async throws -> ServiceApplicationInfo? {

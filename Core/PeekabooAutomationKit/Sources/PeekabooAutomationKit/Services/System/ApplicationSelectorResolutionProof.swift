@@ -122,7 +122,12 @@ public struct SelectorResolutionProof: Sendable, Codable, Equatable {
         else {
             return "selected process identity"
         }
-        guard self.selectedWindowIdentity == windowIdentity else {
+        let windowIdentityMatches = switch (self.selectedWindowIdentity, windowIdentity) {
+        case (nil, nil): true
+        case let (selected?, current?): selected.hasSameStableReceipt(as: current)
+        default: false
+        }
+        guard windowIdentityMatches else {
             return "selected window identity"
         }
         if let windowIdentity,

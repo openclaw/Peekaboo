@@ -7,6 +7,7 @@
 - Add a Git-blob-bound final qualification manifest that requires byte-identical local/Studio installations, candidate-bound CLI and monitor identities, both elevation receipts, guarded task-owned process trees, and freshly re-executed native-only policy scans.
 
 ### Fixed
+- Preserve exact application/window selector proofs through capture hardening and accept proofless exact-ID PID observations, while keeping fuzzy selectors and stable process/window receipt fields fail closed.
 - Keep CLI wall-clock timeouts bounded under sustained executor load by sharing one monotonic dispatch timer and canceling losing timer/work paths without releasing mutation barriers early.
 - Make macOS release signing retry each validated Sparkle leaf independently before sealing the outer app, and pin the exact workspace package graph so Xcode cannot silently drift release dependencies.
 - Pin foreground menu focus, clicks, and listing to one exact process/window generation across CLI and MCP, preserving focus outcomes when a later menu read fails.

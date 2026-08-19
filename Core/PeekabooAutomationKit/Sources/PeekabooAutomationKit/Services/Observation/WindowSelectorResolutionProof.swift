@@ -174,7 +174,7 @@ extension SelectorResolutionProof {
         guard let processIdentity,
               self.selectedProcessIdentity == processIdentity,
               let selectedWindowIdentity = selectedWindow.mutationIdentity,
-              self.selectedWindowIdentity == selectedWindowIdentity,
+              self.selectedWindowIdentity?.hasSameStableReceipt(as: selectedWindowIdentity) == true,
               selectedWindowIdentity.processIdentity == processIdentity
         else {
             return "selected window identity"

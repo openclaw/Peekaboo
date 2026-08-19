@@ -189,6 +189,236 @@ struct PeekabooBridgeDesktopObservationBindingTests: DesktopObservationBindingFi
     }
 
     @Test
+    @MainActor
+    func `exact window ID proof cardinality is strict without requiring redundant window proof`() async throws {
+        let fixture = Self.windowResult(.init(
+            processIdentifier: 42,
+            generation: 1001,
+            bundleIdentifier: "dev.peekaboo.fixture",
+            applicationName: "Fixture",
+            windowID: 73,
+            title: "Document",
+            index: 2,
+            windowSelector: .id(73)))
+        let proofs = try #require(fixture.result.target.selectorResolutionProofs)
+        let applicationProof = try #require(proofs.first)
+        let windowProof = try #require(proofs.last)
+        let contradictoryWindowProof = SelectorResolutionProof(
+            scope: .window,
+            normalizedSelector: WindowSelectorResolutionProof.normalizedSelector(.id(74)),
+            matchKind: windowProof.matchKind,
+            matchPrecedence: windowProof.matchPrecedence,
+            selectedProcessIdentity: windowProof.selectedProcessIdentity,
+            selectedWindowIdentity: windowProof.selectedWindowIdentity,
+            candidateSetSHA256: windowProof.candidateSetSHA256,
+            candidateCount: windowProof.candidateCount,
+            winningCandidateCount: windowProof.winningCandidateCount,
+            hasWinningTie: windowProof.hasWinningTie)
+        let wrongIdentity = WindowMutationIdentity(
+            windowID: 74,
+            ownerProcessIdentifier: fixture.identity.ownerProcessIdentifier,
+            ownerProcessStartIdentity: fixture.identity.ownerProcessStartIdentity,
+            capturedBounds: fixture.identity.capturedBounds)
+        let wrongIdentityWindowProof = windowProof.selecting(windowIdentity: wrongIdentity)
+        let pidRequest = DesktopObservationRequest(
+            target: .pid(42, window: .id(73)),
+            detection: .init(mode: .none))
+        let appRequest = DesktopObservationRequest(
+            target: .app(identifier: "dev.peekaboo.fixture", window: .id(73)),
+            detection: .init(mode: .none))
+
+        for (proofs, expected) in [
+            ([], nil),
+            ([windowProof], nil),
+            ([applicationProof], "PID window selector proof order"),
+            ([windowProof, windowProof], "PID window selector proof order"),
+            ([windowProof, applicationProof], "PID window selector proof order"),
+            ([contradictoryWindowProof], "window normalized selector"),
+            ([wrongIdentityWindowProof], "window selected window identity"),
+        ] as [([SelectorResolutionProof], String?)] {
+            let result = Self.replacingSelectorResolutionProofs(fixture.result, with: proofs)
+            #expect(PeekabooBridgeSelectorResolutionBinding.observationMismatch(
+                request: pidRequest,
+                result: result,
+                requireProof: true) == expected)
+        }
+
+        for (proofs, expected) in [
+            ([], "missing application selector proof"),
+            ([applicationProof], nil),
+            ([applicationProof, windowProof], nil),
+            ([windowProof, applicationProof], "application selector proof order"),
+            ([applicationProof, contradictoryWindowProof], "window normalized selector"),
+            ([applicationProof, wrongIdentityWindowProof], "window selected window identity"),
+        ] as [([SelectorResolutionProof], String?)] {
+            let result = Self.replacingSelectorResolutionProofs(fixture.result, with: proofs)
+            #expect(PeekabooBridgeSelectorResolutionBinding.observationMismatch(
+                request: appRequest,
+                result: result,
+                requireProof: true) == expected)
+        }
+
+        let applicationOnly = Self.replacingSelectorResolutionProofs(
+            fixture.result,
+            with: [applicationProof])
+        #expect(PeekabooBridgeSelectorResolutionBinding.observationMismatch(
+            request: .init(
+                target: .app(identifier: "dev.peekaboo.fixture", window: .title("Document")),
+                detection: .init(mode: .none)),
+            result: applicationOnly,
+            requireProof: true) == "missing window selector proof")
+        #expect(PeekabooBridgeSelectorResolutionBinding.observationMismatch(
+            request: .init(target: .pid(42, window: .title("Document")), detection: .init(mode: .none)),
+            result: Self.replacingSelectorResolutionProofs(fixture.result, with: []),
+            requireProof: true) == "PID window selector proof order")
+
+        let prooflessPIDResult = Self.replacingSelectorResolutionProofs(fixture.result, with: [])
+        let prooflessPIDBundle = try await Self.makeBundle(
+            request: .desktopObservation(pidRequest),
+            response: .desktopObservation(prooflessPIDResult),
+            target: .window(fixture.identity))
+        try prooflessPIDBundle.validateIntegrity()
+    }
+
+    @Test
+    @MainActor
+    func `exact ID proofs tolerate mutable minimized state in live and offline validation`() async throws {
+        let fixture = Self.windowResult(.init(
+            processIdentifier: 42,
+            generation: 1001,
+            bundleIdentifier: "dev.peekaboo.fixture",
+            applicationName: "Fixture",
+            windowID: 73,
+            title: "Document",
+            index: 2,
+            windowSelector: .id(73)))
+        let proofIdentity = WindowMutationIdentity(
+            windowID: fixture.identity.windowID,
+            ownerProcessIdentifier: fixture.identity.ownerProcessIdentifier,
+            ownerProcessStartIdentity: fixture.identity.ownerProcessStartIdentity,
+            capturedBounds: fixture.identity.capturedBounds,
+            isMinimized: false)
+        let proofs = try #require(fixture.result.target.selectorResolutionProofs).map {
+            $0.selecting(windowIdentity: proofIdentity)
+        }
+        let result = Self.replacingSelectorResolutionProofs(fixture.result, with: proofs)
+        let applicationOnlyResult = try Self.replacingSelectorResolutionProofs(
+            fixture.result,
+            with: [#require(proofs.first)])
+        let request = DesktopObservationRequest(
+            target: .app(identifier: "dev.peekaboo.fixture", window: .id(73)),
+            detection: .init(mode: .none))
+
+        #expect(PeekabooBridgeDesktopObservationBinding.mismatch(
+            request: request,
+            result: result,
+            requireSelectorResolutionProof: true) == nil)
+        let handled = try await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(true) {
+            try await Self.server(provider: ObservationProvider(result: result)).handleAuthorized(
+                .desktopObservation(request),
+                peer: nil,
+                permissions: Self.permissions)
+        }
+        guard case .desktopObservation = handled.response else {
+            Issue.record("Expected an exact app/window observation response")
+            return
+        }
+        let bundle = try await Self.makeBundle(
+            request: .desktopObservation(request),
+            response: .desktopObservation(result),
+            target: .window(fixture.identity))
+        try bundle.validateIntegrity()
+
+        let authorityRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "peekaboo-exact-observation-\(UUID().uuidString)",
+            isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: authorityRoot) }
+        let authority = try PeekabooBridgeOperationReceiptAuthority(
+            socketPath: authorityRoot.appendingPathComponent("bridge.sock").path)
+        let session = try await OperationReceiptSessionFixture.make(authority: authority)
+        let wireRequest = PeekabooBridgeRequest.desktopObservation(request)
+        let attributionEvidence = PeekabooBridgeOperationTargetAttribution.evidence(
+            request: wireRequest,
+            response: .desktopObservation(applicationOnlyResult),
+            handledTarget: nil)
+        let attributed = try PeekabooBridgeOperationTargetAttribution.resolveEvidence(
+            request: wireRequest,
+            evidence: attributionEvidence)
+        #expect(attributed?.exactWindow?.identity.hasSameStableReceipt(as: fixture.identity) == true)
+        let payload = session.request(authority: authority, sequence: 0, request: wireRequest)
+        let strictServer = PeekabooBridgeServer(
+            services: StubServices(desktopObservation: ObservationProvider(result: applicationOnlyResult)),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [.desktopObservation],
+            permissionStatusEvaluator: { _ in Self.permissions },
+            windowOwnerProcessIdentifierProvider: { $0 == 73 ? 42 : nil },
+            windowBoundsProvider: { $0 == 73 ? fixture.identity.capturedBounds : nil },
+            processStartIdentityProvider: { $0 == 42 ? 1001 : nil })
+        let data = try await PeekabooBridgeRequestContext.$operationReceiptAuthority.withValue(authority) {
+            try await strictServer.handleAttestedOperation(
+                payload,
+                peer: session.peer)
+        }
+        guard case let .attestedOperation(attested) = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeResponse.self,
+            from: data)
+        else {
+            Issue.record("Expected an attested exact app/window observation response")
+            return
+        }
+        guard case .desktopObservation = attested.response else {
+            Issue.record("Expected a signed exact app/window observation response: \(attested.response)")
+            return
+        }
+        #expect(attested.receipt.payload.target == .window(fixture.identity))
+        let strictBundle = try OperationReceiptSessionFixture.bundle(
+            authority: authority,
+            sessionAttestation: session.attestation,
+            receipt: attested.receipt,
+            request: wireRequest,
+            response: attested.response)
+        try strictBundle.validateIntegrity()
+
+        let pidRequest = DesktopObservationRequest(
+            target: .pid(42, window: .id(73)),
+            detection: .init(mode: .none))
+        let pidWireRequest = PeekabooBridgeRequest.desktopObservation(pidRequest)
+        let prooflessPIDResult = Self.replacingSelectorResolutionProofs(fixture.result, with: [])
+        let pidPayload = session.request(authority: authority, sequence: 1, request: pidWireRequest)
+        let pidServer = PeekabooBridgeServer(
+            services: StubServices(desktopObservation: ObservationProvider(result: prooflessPIDResult)),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [.desktopObservation],
+            permissionStatusEvaluator: { _ in Self.permissions },
+            windowOwnerProcessIdentifierProvider: { $0 == 73 ? 42 : nil },
+            windowBoundsProvider: { $0 == 73 ? fixture.identity.capturedBounds : nil },
+            processStartIdentityProvider: { $0 == 42 ? 1001 : nil })
+        let pidData = try await PeekabooBridgeRequestContext.$operationReceiptAuthority.withValue(authority) {
+            try await pidServer.handleAttestedOperation(
+                pidPayload,
+                peer: session.peer)
+        }
+        guard case let .attestedOperation(pidAttested) = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeResponse.self,
+            from: pidData),
+            case .desktopObservation = pidAttested.response
+        else {
+            Issue.record("Expected a signed proofless PID/exact-window observation response")
+            return
+        }
+        #expect(pidAttested.receipt.payload.target == .window(fixture.identity))
+        let pidBundle = try OperationReceiptSessionFixture.bundle(
+            authority: authority,
+            sessionAttestation: session.attestation,
+            receipt: pidAttested.receipt,
+            request: pidWireRequest,
+            response: pidAttested.response)
+        try pidBundle.validateIntegrity()
+    }
+
+    @Test
     func `observation proof preserves prohibited helper fuzzy eligibility`() {
         let fixture = Self.windowResult(.init(
             processIdentifier: 42,
@@ -969,6 +1199,24 @@ struct PeekabooBridgeDesktopObservationBindingTests: DesktopObservationBindingFi
             timings: result.timings,
             diagnostics: result.diagnostics,
             captureContentDigest: result.captureContentDigest)
+    }
+
+    private static func replacingSelectorResolutionProofs(
+        _ result: DesktopObservationResult,
+        with proofs: [SelectorResolutionProof]) -> DesktopObservationResult
+    {
+        let target = result.target
+        return self.replacingTarget(
+            result,
+            with: ResolvedObservationTarget(
+                kind: target.kind,
+                app: target.app,
+                window: target.window,
+                bounds: target.bounds,
+                detectionContext: target.detectionContext,
+                captureScaleHint: target.captureScaleHint,
+                selectorResolutionProofs: proofs,
+                mutationTargetIdentity: target.mutationTargetIdentity))
     }
 
     private static func replacingCaptureMetadata(

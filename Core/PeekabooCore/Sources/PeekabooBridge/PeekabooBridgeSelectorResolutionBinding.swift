@@ -115,6 +115,7 @@ enum PeekabooBridgeSelectorResolutionBinding {
             selectorResolutionProofs: app.selectorResolutionProofs)
         let windowIdentity = result.target.detectionContext?.windowMutationIdentity ??
             result.capture.metadata.windowInfo?.mutationIdentity
+        let requiresWindowProof = requireProof && request.target.exactWindowID == nil
         let windowSelection: WindowSelection?
         switch request.target {
         case let .app(identifier, selection):
@@ -133,11 +134,19 @@ enum PeekabooBridgeSelectorResolutionBinding {
                 return "PID selector process"
             }
             if requireProof {
-                guard let proofs = result.target.selectorResolutionProofs,
-                      proofs.count == 1,
-                      proofs.first?.scope == .window
-                else {
-                    return "PID window selector proof order"
+                let proofs = result.target.selectorResolutionProofs ?? []
+                if requiresWindowProof {
+                    guard proofs.count == 1,
+                          proofs.first?.scope == .window
+                    else {
+                        return "PID window selector proof order"
+                    }
+                } else {
+                    guard proofs.count <= 1,
+                          proofs.allSatisfy({ $0.scope == .window })
+                    else {
+                        return "PID window selector proof order"
+                    }
                 }
             }
             windowSelection = selection
@@ -161,7 +170,7 @@ enum PeekabooBridgeSelectorResolutionBinding {
             application: application,
             window: serviceWindow,
             proofs: result.target.selectorResolutionProofs,
-            requireProof: requireProof)
+            requireProof: requiresWindowProof)
     }
 
     static func dialogMismatch(

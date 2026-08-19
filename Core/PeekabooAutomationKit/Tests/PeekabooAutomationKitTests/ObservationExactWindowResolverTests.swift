@@ -73,6 +73,29 @@ final class ObservationExactWindowResolverTests: XCTestCase {
         XCTAssertEqual(resolved.kind, .windowID(42))
         XCTAssertEqual(resolved.window?.windowID, 42)
         XCTAssertEqual(resolved.detectionContext?.applicationBundleId, "com.example.fixture")
+        XCTAssertTrue(resolved.selectorResolutionProofs?.isEmpty ?? true)
+        XCTAssertEqual(service.listWindowsCalls, 0)
+    }
+
+    func testAppExactIDPreservesApplicationProofOnExactTarget() async throws {
+        let app = Self.app(pid: 123)
+        let service = ExactWindowApplicationService(app: app, windows: [])
+        let resolver = ObservationTargetResolver(
+            applications: service,
+            exactWindowMetadataProvider: TestExactWindowMetadataProvider { windowID in
+                Self.metadata(windowID: windowID, ownerPID: 123)
+            })
+
+        let resolved = try await resolver.resolve(
+            .app(identifier: "com.example.fixture", window: .id(42)),
+            snapshot: DesktopStateSnapshot(runningApplications: [ApplicationIdentity(app)]))
+
+        let proof = try XCTUnwrap(resolved.selectorResolutionProofs?.first)
+        let exactIdentity = try XCTUnwrap(resolved.detectionContext?.windowMutationIdentity)
+        XCTAssertEqual(resolved.selectorResolutionProofs?.count, 1)
+        XCTAssertEqual(proof.scope, .application)
+        XCTAssertEqual(proof.normalizedSelector, "com.example.fixture")
+        XCTAssertTrue(proof.selectedWindowIdentity?.hasSameStableReceipt(as: exactIdentity) == true)
         XCTAssertEqual(service.listWindowsCalls, 0)
     }
 
@@ -149,6 +172,31 @@ final class ObservationExactWindowResolverTests: XCTestCase {
             snapshot: DesktopStateSnapshot(runningApplications: [ApplicationIdentity(app)]))
 
         XCTAssertEqual(resolved.window?.windowID, 42)
+        let proof = try XCTUnwrap(resolved.selectorResolutionProofs?.first)
+        let exactIdentity = try XCTUnwrap(resolved.detectionContext?.windowMutationIdentity)
+        XCTAssertEqual(resolved.selectorResolutionProofs?.count, 1)
+        XCTAssertEqual(proof.scope, .window)
+        XCTAssertEqual(proof.normalizedSelector, WindowSelectorResolutionProof.normalizedSelector(.automatic))
+        XCTAssertTrue(proof.selectedWindowIdentity?.hasSameStableReceipt(as: exactIdentity) == true)
+
+        let appResolved = try await resolver.resolve(
+            .app(identifier: "com.example.fixture", window: .automatic),
+            snapshot: DesktopStateSnapshot(runningApplications: [ApplicationIdentity(app)]))
+        let appProofs = try XCTUnwrap(appResolved.selectorResolutionProofs)
+        XCTAssertEqual(appProofs.map(\.scope), [.application, .window])
+        XCTAssertTrue(appProofs.allSatisfy {
+            $0.selectedWindowIdentity?.hasSameStableReceipt(as: exactIdentity) == true
+        })
+
+        let titleResolved = try await resolver.resolve(
+            .pid(123, window: .title("Editor")),
+            snapshot: DesktopStateSnapshot(runningApplications: [ApplicationIdentity(app)]))
+        let titleProof = try XCTUnwrap(titleResolved.selectorResolutionProofs?.last)
+        XCTAssertEqual(titleProof.scope, .window)
+        XCTAssertEqual(
+            titleProof.normalizedSelector,
+            WindowSelectorResolutionProof.normalizedSelector(.title("Editor")))
+        XCTAssertTrue(titleProof.selectedWindowIdentity?.hasSameStableReceipt(as: exactIdentity) == true)
         XCTAssertEqual(service.listWindowsCalls, 0)
     }
 
