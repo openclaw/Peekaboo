@@ -146,6 +146,51 @@ static bool stop_requested(const char *path) {
     return true;
 }
 
+static bool authorization_requested(const char *path) {
+    struct stat info;
+    if (lstat(path, &info) != 0) {
+        if (errno == ENOENT) return false;
+        fail("cannot inspect authorization request");
+    }
+    if (!S_ISREG(info.st_mode) || info.st_uid != geteuid() || (info.st_mode & 0077) != 0
+        || info.st_nlink != 1) {
+        fail("authorization request is not one owner-private regular file");
+    }
+    return true;
+}
+
+static void publish_authorization(
+    const char *source,
+    const char *destination,
+    const char *result_path
+) {
+    struct stat source_info;
+    if (lstat(source, &source_info) != 0 || !S_ISREG(source_info.st_mode)
+        || source_info.st_uid != geteuid() || (source_info.st_mode & 0077) != 0
+        || source_info.st_nlink != 1) {
+        fail("staged authorization is not one owner-private regular file");
+    }
+    struct stat destination_info;
+    if (lstat(destination, &destination_info) == 0 || errno != ENOENT) {
+        fail("authorization destination already exists or is inaccessible");
+    }
+    uint64_t authorized_at = wall_milliseconds();
+    char temporary[PATH_MAX];
+    int descriptor = open_temporary(result_path, temporary);
+    if (dprintf(
+            descriptor,
+            "{\n  \"version\": 1,\n  \"guard_pid\": %d,\n"
+            "  \"authorized_at_milliseconds\": %llu\n}\n",
+            getpid(),
+            (unsigned long long)authorized_at) < 0) {
+        fail("cannot write authorization result");
+    }
+    finish_file(descriptor, temporary, result_path);
+    if (renamex_np(source, destination, RENAME_EXCL) != 0) {
+        fail("cannot publish authorization exclusively");
+    }
+}
+
 static int self_test(void) {
     int queue = kqueue();
     if (queue < 0) fail("self-test kqueue failed");
@@ -172,6 +217,10 @@ int main(int argc, char **argv) {
     const char *ready_path = NULL;
     const char *stop_path = NULL;
     const char *output_path = NULL;
+    const char *authorization_request_path = NULL;
+    const char *authorization_source_path = NULL;
+    const char *authorization_destination_path = NULL;
+    const char *authorization_result_path = NULL;
     pid_t pids[MAX_WATCHED_PIDS];
     size_t pid_count = 0;
     for (int index = 1; index < argc; index++) {
@@ -183,11 +232,26 @@ int main(int argc, char **argv) {
             if (strcmp(argv[index], "--ready") == 0) ready_path = argv[++index];
             else if (strcmp(argv[index], "--stop") == 0) stop_path = argv[++index];
             else if (strcmp(argv[index], "--output") == 0) output_path = argv[++index];
+            else if (strcmp(argv[index], "--authorization-request") == 0) {
+                authorization_request_path = argv[++index];
+            } else if (strcmp(argv[index], "--authorization-source") == 0) {
+                authorization_source_path = argv[++index];
+            } else if (strcmp(argv[index], "--authorization-destination") == 0) {
+                authorization_destination_path = argv[++index];
+            } else if (strcmp(argv[index], "--authorization-result") == 0) {
+                authorization_result_path = argv[++index];
+            }
             else fail("unknown option");
         }
     }
     if (!ready_path || !stop_path || !output_path || pid_count == 0) {
         fail("closed lifecycle request is incomplete");
+    }
+    bool authorization_enabled = authorization_request_path && authorization_source_path
+        && authorization_destination_path && authorization_result_path;
+    if (!authorization_enabled && (authorization_request_path || authorization_source_path
+        || authorization_destination_path || authorization_result_path)) {
+        fail("authorization publication request is incomplete");
     }
     for (size_t left = 0; left < pid_count; left++) {
         for (size_t right = left + 1; right < pid_count; right++) {
@@ -215,6 +279,7 @@ int main(int argc, char **argv) {
     free(changes);
     uint64_t started = wall_milliseconds();
     publish_ready(ready_path, getpid(), started);
+    bool authorization_published = false;
     while (true) {
         if (getppid() != original_parent) {
             publish_result(output_path, pids, pid_count, started, false, original_parent, NOTE_EXIT);
@@ -239,6 +304,33 @@ int main(int argc, char **argv) {
                 (pid_t)event.ident,
                 event.fflags);
             return 3;
+        }
+        if (!stopping && authorization_enabled && !authorization_published
+            && authorization_requested(authorization_request_path)) {
+            struct timespec immediate = { .tv_sec = 0, .tv_nsec = 0 };
+            count = kevent(queue, NULL, 0, &event, 1, &immediate);
+            if (count < 0 && errno == EINTR) continue;
+            if (count < 0) fail("authorization lifecycle drain failed");
+            if (count == 1) {
+                publish_result(
+                    output_path,
+                    pids,
+                    pid_count,
+                    started,
+                    false,
+                    (pid_t)event.ident,
+                    event.fflags);
+                return 3;
+            }
+            if (getppid() != original_parent) {
+                publish_result(output_path, pids, pid_count, started, false, original_parent, NOTE_EXIT);
+                return 3;
+            }
+            publish_authorization(
+                authorization_source_path,
+                authorization_destination_path,
+                authorization_result_path);
+            authorization_published = true;
         }
         if (stopping) {
             publish_result(output_path, pids, pid_count, started, true, 0, 0);

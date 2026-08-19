@@ -28,25 +28,14 @@ const COMMON_ENVIRONMENT_KEYS = [
   'HOME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'LOGNAME', 'SSL_CERT_DIR', 'SSL_CERT_FILE',
   'TMPDIR', 'TZ', 'USER',
 ];
-const AGENT_CREDENTIAL_ENVIRONMENT_KEYS = [
-  'ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GROK_API_KEY',
-  'MINIMAX_API_KEY', 'MOONSHOT_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY',
-  'XAI_API_KEY',
-];
 
-function closedEnvironment(fix) {
+function closedEnvironment() {
   const environment = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' };
-  const allowedKeys = fix.spec.kind === 'agent'
-    ? [...COMMON_ENVIRONMENT_KEYS, ...AGENT_CREDENTIAL_ENVIRONMENT_KEYS]
-    : COMMON_ENVIRONMENT_KEYS;
-  for (const key of allowedKeys) {
+  for (const key of COMMON_ENVIRONMENT_KEYS) {
     const value = process.env[key];
     if (value === undefined) continue;
     requireCondition(!value.includes('\0'), `environment ${key} contains NUL`);
     environment[key] = value;
-  }
-  if (fix.spec.kind === 'agent') {
-    environment.PEEKABOO_OPERATION_RECEIPT_DIRECTORY = fix.spec.context.receipt_directory;
   }
   const keys = Object.keys(environment).sort();
   return {
@@ -60,22 +49,6 @@ function requireAbsentPrivateOutput(filePath, label) {
   requireCondition(path.isAbsolute(filePath), `${label} must be absolute`);
   requirePrivateDirectory(path.dirname(filePath), `${label} parent`);
   requireCondition(!fs.existsSync(filePath), `${label} must be absent`);
-}
-
-function validateAgent(spec, plan) {
-  exactKeys(spec.context, ['task_path', 'receipt_directory', 'bridge_socket'], 'launch context');
-  requireCondition(spec.executable === plan.peekaboo_executable, 'Agent executable differs from the live plan');
-  requireCondition(spec.context.bridge_socket === plan.bridge?.socket_path, 'Agent Bridge socket differs from the live plan');
-  requirePrivateDirectory(spec.context.receipt_directory, 'Agent receipt directory', { empty: true });
-  const task = readStableFile(spec.context.task_path, 'Agent task');
-  const taskText = task.bytes.toString('utf8').replace(/\n$/, '');
-  const expectedArguments = [
-    'agent', 'run', taskText, '--no-cache', '--max-steps', '40',
-    '--bridge-socket', spec.context.bridge_socket, '--json',
-  ];
-  requireCondition(taskText.length > 0 && JSON.stringify(spec.arguments) === JSON.stringify(expectedArguments),
-    'Agent argv must exactly equal the closed background-only launch order');
-  return { task, taskText };
 }
 
 function validateCoordinator(spec) {
@@ -101,7 +74,7 @@ function validateSpec(specPath) {
     'pid_path', 'start_ack_path', 'invocation_receipt_path', 'exit_receipt_path',
     'stdout_path', 'stderr_path', 'start_timeout_seconds', 'run_timeout_seconds', 'context',
   ], 'managed launch input');
-  requireCondition(spec.version === 1 && ['agent', 'coordinator'].includes(spec.kind),
+  requireCondition(spec.version === 1 && spec.kind === 'coordinator',
     'managed launch kind/version is invalid');
   requireCondition(Array.isArray(spec.arguments) && spec.arguments.length > 0
     && spec.arguments.every((entry) => typeof entry === 'string' && !entry.includes('\0')),
@@ -123,7 +96,7 @@ function validateSpec(specPath) {
   const monitor = requireStableExecutable(plan.monitor_executable, 'signed monitor executable', {
     allowRootOwner: true,
   });
-  const details = spec.kind === 'agent' ? validateAgent(spec, plan) : validateCoordinator(spec, plan);
+  const details = validateCoordinator(spec);
   const outputs = [
     ['identity_handshake_path', spec.identity_handshake_path],
     ['pid_path', spec.pid_path],
@@ -203,10 +176,6 @@ function stageRetainedFile(retained, destination, label) {
 }
 
 function prepareExecution(fix, guardian) {
-  if (fix.spec.kind === 'agent') {
-    fix.execution = { arguments: structuredClone(fix.spec.arguments) };
-    return;
-  }
   const sourceStagePath = path.join(
     path.dirname(fix.details.source.path),
     `.${path.basename(fix.details.source.path)}.${process.pid}.${randomUUID()}.pbq-stage.mjs`,
@@ -301,10 +270,10 @@ function cleanupAuthenticatedChild(guardian, identity) {
   'generation-safe managed cleanup result is invalid');
 }
 
-function invocationReceipt(fix, identity, spawnedAt, environment) {
-  const common = {
+function invocationReceipt(fix, identity, environment) {
+  return {
     version: 1,
-    kind: fix.spec.kind,
+    kind: 'coordinator',
     pid: identity.pid,
     start_identity: identity.start_identity,
     executable_path: fix.executable.path,
@@ -323,21 +292,6 @@ function invocationReceipt(fix, identity, spawnedAt, environment) {
     environment_keys: environment.keys,
     environment_sha256: environment.sha256,
     captured_at_milliseconds: Date.now(),
-  };
-  if (fix.spec.kind === 'agent') {
-    return {
-      ...common,
-      task_path: fix.details.task.path,
-      task_sha256: fix.details.task.sha256,
-      receipt_directory: fix.spec.context.receipt_directory,
-      bridge_socket: fix.spec.context.bridge_socket,
-      background_only: true,
-      allow_foreground: false,
-      shell_available: false,
-    };
-  }
-  return {
-    ...common,
     coordinator_source_path: fix.details.source.path,
     coordinator_source_sha256: fix.details.source.sha256,
     execution_source_sha256: fix.execution.source_sha256,
@@ -368,7 +322,7 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
     cleanupGuardian(guardian);
     throw error;
   }
-  const environment = closedEnvironment(fix);
+  const environment = closedEnvironment();
   const helper = spawn(guardian.binary, helperArguments(fix, guardian), {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: environment.values,
@@ -476,7 +430,7 @@ export async function runManagedLaunch(specPath, testHooks = {}) {
       'suspended child PID file differs from guardian protocol');
     stopStdout = startTail(fix.spec.stdout_path, process.stdout);
     stopStderr = startTail(fix.spec.stderr_path, process.stderr);
-    const invocation = invocationReceipt(fix, identity, launch.startedAt, environment);
+    const invocation = invocationReceipt(fix, identity, environment);
     const invocationPublished = publishPrivateAtomicNoReplace(
       fix.spec.invocation_receipt_path,
       invocation,

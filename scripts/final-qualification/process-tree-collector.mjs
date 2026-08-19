@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,9 +10,11 @@ import { fileURLToPath } from 'node:url';
 import {
   exactKeys,
   parseOptions,
+  positiveDecimal,
   readStableFile,
   readStableJSON,
   requireCondition,
+  requirePrivateDirectory,
   requireStableExecutable,
   sha256,
   writePrivateExclusive,
@@ -19,7 +22,9 @@ import {
 
 const HOST_ROLES = ['local', 'studio'];
 const EPOCHS = ['before', 'during', 'after'];
-const ROOT_CLASSES = ['agent', 'bridge', 'coordinator', 'elevation', 'fixture', 'integrated_cu'];
+const ROOT_CLASSES = [
+  'agent', 'agent_requester', 'bridge', 'coordinator', 'elevation', 'fixture', 'integrated_cu',
+];
 const HOST_UUID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/;
 const HEX40 = /^[0-9a-f]{40}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -245,7 +250,7 @@ function validateSpec(value) {
   exactKeys(value, [
     'version', 'role', 'host_uuid', 'deployment_envelope_sha256', 'epoch',
     'observation_milliseconds', 'sample_interval_milliseconds',
-    'maximum_sample_gap_milliseconds', 'roots',
+    'maximum_sample_gap_milliseconds', 'ready_path', 'acknowledgement_path', 'roots',
   ], 'collector spec');
   requireCondition(value.version === 1 && HOST_ROLES.includes(value.role)
     && HOST_UUID.test(value.host_uuid) && HEX64.test(value.deployment_envelope_sha256)
@@ -258,8 +263,17 @@ function validateSpec(value) {
     && Number.isSafeInteger(value.maximum_sample_gap_milliseconds)
     && value.maximum_sample_gap_milliseconds >= value.sample_interval_milliseconds
     && value.maximum_sample_gap_milliseconds <= 10_000
+    && typeof value.ready_path === 'string' && path.isAbsolute(value.ready_path)
+    && !value.ready_path.includes('\0')
+    && (value.acknowledgement_path === null || (
+      typeof value.acknowledgement_path === 'string'
+        && path.isAbsolute(value.acknowledgement_path)
+        && !value.acknowledgement_path.includes('\0')
+    ))
     && Array.isArray(value.roots) && value.roots.length > 0,
   'collector spec is malformed');
+  requirePrivateDirectory(path.dirname(value.ready_path), 'collector readiness parent');
+  requireCondition(!fs.existsSync(value.ready_path), 'collector readiness output must be absent');
   const roots = value.roots.map((root, index) => {
     exactKeys(root, [
       'root_id', 'root_class', 'pid', 'start_identity', 'code_signature_hash',
@@ -272,18 +286,102 @@ function validateSpec(value) {
   });
   requireCondition(new Set(roots.map((root) => root.root_id)).size === roots.length,
     'collector spec repeats a root ID');
+  requireCondition(new Set(roots.map((root) => `${root.pid}:${root.start_identity}`)).size
+    === roots.length, 'collector spec repeats a root process generation');
   requireCondition(roots.every((root, index) => index === 0
     || roots[index - 1].root_id < root.root_id), 'collector spec roots are not canonical');
-  return { ...value, roots };
+  const requiresAcknowledgement = value.role === 'local' && value.epoch === 'during';
+  requireCondition((value.acknowledgement_path !== null) === requiresAcknowledgement,
+    'only the local/during collector requires an Agent acknowledgement path');
+  let acknowledgementControl = null;
+  if (value.acknowledgement_path !== null) {
+    const parent = path.dirname(value.acknowledgement_path);
+    requirePrivateDirectory(parent, 'Agent acknowledgement parent');
+    const basename = path.basename(value.acknowledgement_path);
+    acknowledgementControl = {
+      acknowledgement_path: value.acknowledgement_path,
+      authorization_source_path: path.join(parent, `.${basename}.lifecycle-source`),
+      authorization_request_path: path.join(parent, `.${basename}.lifecycle-request`),
+      authorization_result_path: path.join(parent, `.${basename}.lifecycle-result`),
+    };
+    const controlPaths = Object.values(acknowledgementControl);
+    requireCondition(new Set([...controlPaths, value.ready_path]).size === controlPaths.length + 1,
+      'collector readiness and acknowledgement control paths must be distinct');
+    requireCondition(controlPaths.every((filePath) => !fs.existsSync(filePath)),
+      'Agent acknowledgement control paths must be absent');
+  }
+  return { ...value, roots, acknowledgement_control: acknowledgementControl };
+}
+
+function processRecords(identities, parents, roots) {
+  const rootByPID = new Map(roots.map((root) => [root.pid, root]));
+  const processes = [...identities.keys()].sort((left, right) => left - right).map((pid) => {
+    const process = identities.get(pid);
+    const parentPID = parents.get(pid);
+    const parent = identities.get(parentPID);
+    return {
+      pid: process.pid,
+      start_identity: process.start_identity,
+      parent_pid: rootByPID.has(pid) ? null : parentPID,
+      parent_start_identity: rootByPID.has(pid) ? null : parent?.start_identity ?? null,
+      executable_path: process.executable_path,
+      executable_name: process.executable_name,
+      executable_sha256: process.executable_sha256,
+      code_signature_hash: process.code_signature_hash,
+      signing_identifier: process.signing_identifier,
+      team_id: process.team_id,
+    };
+  });
+  requireCondition(processes.every((process) => process.parent_pid === null
+    || process.parent_start_identity !== null), 'a task descendant parent escaped the collected tree');
+  return processes;
+}
+
+function validateObservedRoots(identities, roots) {
+  for (const root of roots) {
+    const observed = identities.get(root.pid);
+    requireCondition(observed
+      && observed.start_identity === root.start_identity
+      && observed.code_signature_hash === root.code_signature_hash,
+    `task root ${root.root_id} generation or code identity changed`);
+  }
+}
+
+function publishReadinessNoReplace(filePath, value) {
+  const parent = path.dirname(filePath);
+  requirePrivateDirectory(parent, 'collector readiness parent');
+  requireCondition(!fs.existsSync(filePath), 'collector readiness output already exists');
+  const stagedPath = path.join(
+    parent,
+    `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`,
+  );
+  writePrivateExclusive(stagedPath, value);
+  const staged = readStableFile(stagedPath, 'staged collector readiness');
+  try {
+    fs.linkSync(stagedPath, filePath);
+    fs.unlinkSync(stagedPath);
+    const published = readStableFile(filePath, 'collector readiness');
+    requireCondition(published.bytes.equals(staged.bytes)
+      && published.info.dev === staged.info.dev
+      && published.info.ino === staged.info.ino,
+    'collector readiness publication changed the staged bytes');
+    return published;
+  } catch (error) {
+    try { fs.unlinkSync(stagedPath); } catch {}
+    throw error;
+  }
 }
 
 export function collectProcessTree(specPath, monitorPath, outputPath) {
   const spec = validateSpec(readStableJSON(specPath, 'collector spec').value);
+  requireCondition(spec.ready_path !== outputPath,
+    'collector readiness and final output paths must be distinct');
   const monitor = requireStableExecutable(monitorPath, 'signed process monitor', {
     allowRootOwner: true,
   });
   const monitorSigning = signingMetadata(monitor.path);
   const collectorBytes = fs.readFileSync(fileURLToPath(import.meta.url));
+  const collectorSHA256 = sha256(collectorBytes);
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'pbq-process-tree.'));
   fs.chmodSync(temporary, 0o700);
   let lifecycleChild = null;
@@ -313,12 +411,23 @@ export function collectProcessTree(specPath, monitorPath, outputPath) {
       ).sha256 === lifecycleGuard.binary_sha256,
       'compiled process lifecycle guard changed before spawn',
     );
-    lifecycleChild = spawn(lifecycleGuard.binary, [
+    const lifecycleArguments = [
       '--ready', lifecycleReadyPath,
       '--stop', lifecycleStopPath,
       '--output', lifecycleOutputPath,
       ...lifecycleWatchedPIDs.flatMap((pid) => ['--pid', String(pid)]),
-    ], { stdio: ['ignore', 'ignore', lifecycleStderr] });
+    ];
+    if (spec.acknowledgement_control !== null) {
+      lifecycleArguments.push(
+        '--authorization-request', spec.acknowledgement_control.authorization_request_path,
+        '--authorization-source', spec.acknowledgement_control.authorization_source_path,
+        '--authorization-destination', spec.acknowledgement_control.acknowledgement_path,
+        '--authorization-result', spec.acknowledgement_control.authorization_result_path,
+      );
+    }
+    lifecycleChild = spawn(lifecycleGuard.binary, lifecycleArguments, {
+      stdio: ['ignore', 'ignore', lifecycleStderr],
+    });
     fs.closeSync(lifecycleStderr);
     lifecycleChild.on('error', () => {});
     requireCondition(Number.isSafeInteger(lifecycleChild.pid) && lifecycleChild.pid > 0,
@@ -335,6 +444,30 @@ export function collectProcessTree(specPath, monitorPath, outputPath) {
       && Number.isSafeInteger(lifecycleReady.started_at_milliseconds)
       && lifecycleReady.started_at_milliseconds > 0,
     'process lifecycle readiness is malformed');
+    const lifecycleIdentity = monitorJSON(
+      monitor.path,
+      'process-identity',
+      lifecycleChild.pid,
+      temporary,
+      'lifecycle-readiness',
+    );
+    const lifecycleExecutable = monitorJSON(
+      monitor.path,
+      'process-executable',
+      lifecycleChild.pid,
+      temporary,
+      'lifecycle-readiness',
+    );
+    exactKeys(lifecycleIdentity, ['pid', 'startIdentity'], 'process lifecycle identity');
+    exactKeys(lifecycleExecutable, ['pid', 'startIdentity', 'path', 'sha256'],
+      'process lifecycle executable');
+    requireCondition(lifecycleIdentity.pid === lifecycleChild.pid
+      && positiveDecimal(lifecycleIdentity.startIdentity)
+      && lifecycleExecutable.pid === lifecycleChild.pid
+      && lifecycleExecutable.startIdentity === lifecycleIdentity.startIdentity
+      && lifecycleExecutable.path === lifecycleGuard.binary
+      && lifecycleExecutable.sha256 === lifecycleGuard.binary_sha256,
+    'process lifecycle guard identity differs from its compiled executable');
     const readyTable = processTable();
     requireCondition(JSON.stringify(descendantPIDs(readyTable, rootPIDs))
       === JSON.stringify(lifecycleWatchedPIDs),
@@ -351,6 +484,8 @@ export function collectProcessTree(specPath, monitorPath, outputPath) {
     let previousSampleCompletedMonotonic = null;
     let nextSampleTargetMonotonic = null;
     let observedMaximumSampleGap = 0;
+    let readinessPublished = null;
+    let readinessPublishedAt = null;
     do {
       requireNoLifecycleViolation(lifecycleOutputPath);
       const sampleStartedAt = Date.now();
@@ -410,6 +545,49 @@ export function collectProcessTree(specPath, monitorPath, outputPath) {
         parents.set(pid, table.get(pid));
       }
       requireNoLifecycleViolation(lifecycleOutputPath);
+      if (readinessPublished === null) {
+        validateObservedRoots(identities, spec.roots);
+        const observedProcesses = processRecords(identities, parents, spec.roots);
+        requireCondition(JSON.stringify(observedProcesses.map((process) => process.pid))
+          === JSON.stringify(lifecycleWatchedPIDs),
+        'initial authenticated process sample differs from lifecycle coverage');
+        const readyMonitor = requireStableExecutable(
+          monitor.path,
+          'readiness signed process monitor',
+          { allowRootOwner: true },
+        );
+        const readyMonitorSigning = signingMetadata(readyMonitor.path);
+        requireCondition(readyMonitor.sha256 === monitor.sha256
+          && readyMonitorSigning.codeSignatureHash === monitorSigning.codeSignatureHash,
+        'signed process monitor changed before collector readiness');
+        const publishedAt = Date.now();
+        readinessPublishedAt = publishedAt;
+        readinessPublished = publishReadinessNoReplace(spec.ready_path, {
+          version: 1,
+          role: spec.role,
+          host_uuid: spec.host_uuid,
+          deployment_envelope_sha256: spec.deployment_envelope_sha256,
+          epoch: spec.epoch,
+          collector_sha256: collectorSHA256,
+          monitor_executable_path: monitor.path,
+          monitor_executable_sha256: monitor.sha256,
+          monitor_code_signature_hash: monitorSigning.codeSignatureHash,
+          lifecycle_guard_sha256: lifecycleGuard.source_sha256,
+          lifecycle_guard_binary_sha256: lifecycleGuard.binary_sha256,
+          lifecycle_guard_executable_path: lifecycleGuard.binary,
+          lifecycle_guard_pid: lifecycleChild.pid,
+          lifecycle_guard_start_identity: lifecycleIdentity.startIdentity,
+          lifecycle_result_path: lifecycleOutputPath,
+          lifecycle_started_at_milliseconds: lifecycleReady.started_at_milliseconds,
+          coverage_started_at_milliseconds: coverageStartedAt,
+          published_at_milliseconds: publishedAt,
+          lifecycle_watched_pids: lifecycleWatchedPIDs,
+          roots: spec.roots,
+          observed_processes: observedProcesses,
+          acknowledgement_control: spec.acknowledgement_control,
+          complete: true,
+        });
+      }
       sampleCount += 1;
       const finalSampleEligible = isFinalProcessTableSample(
         sampleCount,
@@ -472,32 +650,8 @@ export function collectProcessTree(specPath, monitorPath, outputPath) {
       && lifecycleResult.event_count === 0
       && lifecycleResult.event_pid === null && lifecycleResult.event_flags === null,
     'continuous process lifecycle result is invalid');
-    const rootByPID = new Map(spec.roots.map((root) => [root.pid, root]));
-    for (const root of spec.roots) {
-      const observed = identities.get(root.pid);
-      requireCondition(observed.start_identity === root.start_identity
-        && observed.code_signature_hash === root.code_signature_hash,
-      `task root ${root.root_id} generation or code identity changed`);
-    }
-    const processes = [...identities.keys()].sort((left, right) => left - right).map((pid) => {
-      const process = identities.get(pid);
-      const parentPID = parents.get(pid);
-      const parent = identities.get(parentPID);
-      return {
-        pid: process.pid,
-        start_identity: process.start_identity,
-        parent_pid: rootByPID.has(pid) ? null : parentPID,
-        parent_start_identity: rootByPID.has(pid) ? null : parent?.start_identity ?? null,
-        executable_path: process.executable_path,
-        executable_name: process.executable_name,
-        executable_sha256: process.executable_sha256,
-        code_signature_hash: process.code_signature_hash,
-        signing_identifier: process.signing_identifier,
-        team_id: process.team_id,
-      };
-    });
-    requireCondition(processes.every((process) => process.parent_pid === null
-      || process.parent_start_identity !== null), 'a task descendant parent escaped the collected tree');
+    validateObservedRoots(identities, spec.roots);
+    const processes = processRecords(identities, parents, spec.roots);
     const finalMonitor = requireStableExecutable(monitor.path, 'final signed process monitor', {
       allowRootOwner: true,
     });
@@ -505,8 +659,43 @@ export function collectProcessTree(specPath, monitorPath, outputPath) {
     requireCondition(finalMonitor.sha256 === monitor.sha256
       && finalMonitorSigning.codeSignatureHash === monitorSigning.codeSignatureHash,
     'signed process monitor changed during collection');
+    let acknowledgementAuthorization = null;
+    if (spec.acknowledgement_control !== null) {
+      const control = spec.acknowledgement_control;
+      const acknowledgement = readStableFile(
+        control.acknowledgement_path,
+        'guard-published Agent acknowledgement',
+      );
+      const request = readStableFile(
+        control.authorization_request_path,
+        'Agent acknowledgement authorization request',
+      );
+      const authorization = readStableJSON(
+        control.authorization_result_path,
+        'Agent acknowledgement authorization result',
+      );
+      exactKeys(authorization.value, [
+        'version', 'guard_pid', 'authorized_at_milliseconds',
+      ], 'Agent acknowledgement authorization result');
+      requireCondition(authorization.value.version === 1
+        && authorization.value.guard_pid === lifecycleChild.pid
+        && Number.isSafeInteger(authorization.value.authorized_at_milliseconds)
+        && authorization.value.authorized_at_milliseconds >= readinessPublishedAt
+        && authorization.value.authorized_at_milliseconds <= capturedAt
+        && !fs.existsSync(control.authorization_source_path),
+      'Agent acknowledgement was not published by the covered lifecycle guard');
+      acknowledgementAuthorization = {
+        acknowledgement_path: acknowledgement.path,
+        acknowledgement_sha256: acknowledgement.sha256,
+        authorization_request_path: request.path,
+        authorization_request_sha256: request.sha256,
+        authorization_result_path: authorization.path,
+        authorization_result_sha256: authorization.sha256,
+        authorized_at_milliseconds: authorization.value.authorized_at_milliseconds,
+      };
+    }
     return writePrivateExclusive(outputPath, {
-      version: 3,
+      version: 4,
       role: spec.role,
       host_uuid: spec.host_uuid,
       deployment_envelope_sha256: spec.deployment_envelope_sha256,
@@ -528,7 +717,11 @@ export function collectProcessTree(specPath, monitorPath, outputPath) {
       lifecycle_completed_at_milliseconds: lifecycleResult.completed_at_milliseconds,
       lifecycle_watched_pids: lifecycleWatchedPIDs,
       lifecycle_event_count: lifecycleResult.event_count,
-      collector_sha256: sha256(collectorBytes),
+      collector_sha256: collectorSHA256,
+      readiness_path: readinessPublished.path,
+      readiness_sha256: readinessPublished.sha256,
+      readiness_published_at_milliseconds: readinessPublishedAt,
+      acknowledgement_authorization: acknowledgementAuthorization,
       monitor_executable_path: monitor.path,
       monitor_executable_sha256: monitor.sha256,
       monitor_code_signature_hash: monitorSigning.codeSignatureHash,
