@@ -83,6 +83,11 @@ extension AgentCommand {
     func requireAgentCredentials(
         selectedModel: LanguageModel
     ) throws {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["PEEKABOO_AGENT_EXECUTION_TEST_PROVIDER"] == "permissions-v1" {
+            return
+        }
+        #endif
         if self.isLocalModel(selectedModel) {
             return
         }

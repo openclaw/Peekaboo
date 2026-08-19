@@ -182,7 +182,7 @@ private struct TraceRunnerStub: PeekabooBridgeAgentExecutionRunning {
         let processIdentity = PeekabooBridgeOperationProcessIdentity(
             processIdentifier: 42424,
             processStartIdentity: 989_898,
-            codeSignatureHash: String(repeating: "a", count: 40))
+            codeSignatureHash: peerHash)
         let process = PeekabooBridgeAgentExecutionProcessIdentity(
             processIdentity: processIdentity,
             executablePath: "/usr/local/bin/peekaboo",
@@ -195,6 +195,7 @@ private struct TraceRunnerStub: PeekabooBridgeAgentExecutionRunning {
         let argumentsSHA = try Self.sha256(Self.canonical(arguments))
         let environmentKeys = [
             "PATH", "PEEKABOO_AGENT_EXECUTION_GATE_CHALLENGE", "PEEKABOO_AGENT_EXECUTION_GATE_FD",
+            "PEEKABOO_AGENT_EXECUTION_LOCKDOWN_FD", "PEEKABOO_AGENT_EXECUTION_PROCESS_LIMIT",
             "PEEKABOO_OPERATION_RECEIPT_DIRECTORY",
         ]
         let environmentSHA = String(repeating: "c", count: 64)
@@ -216,10 +217,12 @@ private struct TraceRunnerStub: PeekabooBridgeAgentExecutionRunning {
             backgroundOnly: true,
             allowForeground: false,
             shellAvailable: false,
-            environmentPolicyVersion: 1,
+            processCreationLimit: 0,
+            environmentPolicyVersion: 2,
             environmentKeys: environmentKeys,
             environmentSHA256: environmentSHA,
             spawnedAt: 1000,
+            lockdownAcknowledgedAt: 1050,
             publishedAt: 1100)
         let receiptBytes = try Self.canonical(receipt)
         let acknowledgement = PeekabooBridgeAgentExecutionAcknowledgement(
@@ -255,7 +258,8 @@ private struct TraceRunnerStub: PeekabooBridgeAgentExecutionRunning {
             backgroundOnly: true,
             allowForeground: false,
             shellAvailable: false,
-            environmentPolicyVersion: 1,
+            processCreationLimit: 0,
+            environmentPolicyVersion: 2,
             environmentKeys: environmentKeys,
             environmentSHA256: environmentSHA,
             stdout: .init(bytes: stdout),
@@ -272,10 +276,11 @@ private struct TraceRunnerStub: PeekabooBridgeAgentExecutionRunning {
             exitCode: 0,
             terminationSignal: nil,
             spawnedAt: 1000,
+            lockdownAcknowledgedAt: 1050,
             coordinationReceiptPublishedAt: 1100,
             acknowledgedAt: 1200,
             releasedAt: 1300,
-            terminatedAt: 1400)
+            terminalObservationEndedAt: 1400)
     }
 
     private static func canonical(_ value: some Encodable) throws -> Data {

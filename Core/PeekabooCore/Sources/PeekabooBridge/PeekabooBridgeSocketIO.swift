@@ -87,8 +87,7 @@ enum PeekabooBridgeSocketIO {
         let processIdentifier = audit_token_to_pid(token)
         let processIdentifierVersion = audit_token_to_pidversion(token)
         guard size == MemoryLayout<audit_token_t>.size,
-              processIdentifier > 0,
-              processIdentifierVersion > 0
+              processIdentifier > 0
         else {
             throw POSIXError(.EPROTO)
         }

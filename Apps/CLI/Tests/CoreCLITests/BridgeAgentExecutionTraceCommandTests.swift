@@ -117,20 +117,28 @@ struct BridgeAgentExecutionTraceCommandTests {
     }
 
     @Test
-    func `Configured release gate consumes its private environment`() throws {
+    func `Invalid configured release gate consumes its private environment`() throws {
         let challenge = String(repeating: "c", count: 64)
         let gate = try Self.gatePipe(bytes: Data(challenge.utf8))
         setenv(AgentExecutionReleaseGate.descriptorEnvironmentKey, String(gate.read), 1)
         setenv(AgentExecutionReleaseGate.challengeEnvironmentKey, challenge, 1)
+        setenv(AgentExecutionReleaseGate.lockdownDescriptorEnvironmentKey, String(gate.write), 1)
+        setenv(AgentExecutionReleaseGate.processCreationLimitEnvironmentKey, "1", 1)
         defer {
             unsetenv(AgentExecutionReleaseGate.descriptorEnvironmentKey)
             unsetenv(AgentExecutionReleaseGate.challengeEnvironmentKey)
+            unsetenv(AgentExecutionReleaseGate.lockdownDescriptorEnvironmentKey)
+            unsetenv(AgentExecutionReleaseGate.processCreationLimitEnvironmentKey)
         }
 
-        try AgentExecutionReleaseGate.waitIfConfigured()
+        #expect(throws: (any Error).self) {
+            try AgentExecutionReleaseGate.waitIfConfigured()
+        }
 
         #expect(getenv(AgentExecutionReleaseGate.descriptorEnvironmentKey) == nil)
         #expect(getenv(AgentExecutionReleaseGate.challengeEnvironmentKey) == nil)
+        #expect(getenv(AgentExecutionReleaseGate.lockdownDescriptorEnvironmentKey) == nil)
+        #expect(getenv(AgentExecutionReleaseGate.processCreationLimitEnvironmentKey) == nil)
 
         setenv(AgentExecutionReleaseGate.challengeEnvironmentKey, challenge, 1)
         #expect(throws: (any Error).self) {

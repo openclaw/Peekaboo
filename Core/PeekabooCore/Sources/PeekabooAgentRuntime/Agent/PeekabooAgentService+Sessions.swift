@@ -53,7 +53,17 @@ extension PeekabooAgentService {
             ModelMessage.user(task),
         ]
         let configuration = TachikomaConfiguration.resolve(.current)
+        #if DEBUG
+        let provider: any ModelProvider = if ProcessInfo.processInfo.environment[
+            "PEEKABOO_AGENT_EXECUTION_TEST_PROVIDER",
+        ] == "permissions-v1" {
+            AgentProcessLimitProbeProvider()
+        } else {
+            try configuration.makeProvider(for: model)
+        }
+        #else
         let provider = try configuration.makeProvider(for: model)
+        #endif
         let modelIdentity = self.persistedModelIdentity(for: model, provider: provider)
 
         let session = AgentSession(

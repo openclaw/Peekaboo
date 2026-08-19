@@ -93,6 +93,20 @@ struct MonitorAttestationTests {
         #expect(identity.process.startIdentity == "42")
         #expect(identity.process.codeSignatureHash == String(repeating: "ab", count: 20))
 
+        for processIdentifierVersion in [Int32.zero, Int32.min, -1] {
+            var bitPatternToken = token
+            withUnsafeMutableBytes(of: &bitPatternToken) { bytes in
+                bytes.bindMemory(to: UInt32.self)[7] = UInt32(bitPattern: processIdentifierVersion)
+            }
+            let bitPatternIdentity = try CertificationAttestationPeerIdentityResolver.resolve(
+                descriptor: descriptors[0],
+                auditTokenProvider: { _ in bitPatternToken },
+                processStartIdentityProvider: { _ in 42 },
+                codeSignatureHashProvider: { _ in hash }
+            )
+            #expect(bitPatternIdentity.processIdentifierVersion == processIdentifierVersion)
+        }
+
         var starts: [UInt64] = [42, 43]
         #expect(throws: CertificationControllerError.self) {
             try CertificationAttestationPeerIdentityResolver.resolve(

@@ -724,7 +724,7 @@ struct PeekabooBridgeOperationSessionAuthenticationTests {
             fd: descriptors[0],
             codeSignatureHashProvider: { _ in nil })
         #expect(unsigned.processIdentifier == getpid())
-        #expect(unsigned.processIdentifierVersion > 0)
+        #expect(unsigned.processIdentifierVersion == unsigned.auditIdentity?.processIdentifierVersion)
         #expect(unsigned.effectiveUserIdentifier == geteuid())
         #expect(unsigned.processStartIdentity > 0)
         #expect(unsigned.codeSignatureHash == nil)

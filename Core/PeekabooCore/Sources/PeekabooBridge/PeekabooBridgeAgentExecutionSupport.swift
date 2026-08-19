@@ -143,6 +143,7 @@ struct PeekabooBridgeAgentExecutionEnvironment: Sendable {
     static func make(
         operationReceiptDirectoryPath: String,
         releaseGateDescriptor: Int32,
+        lockdownReadinessDescriptor: Int32,
         releaseChallenge: String) throws -> Self
     {
         let commonKeys = [
@@ -167,9 +168,11 @@ struct PeekabooBridgeAgentExecutionEnvironment: Sendable {
         values["PEEKABOO_OPERATION_RECEIPT_DIRECTORY"] = operationReceiptDirectoryPath
         values["PEEKABOO_AGENT_EXECUTION_GATE_FD"] = String(releaseGateDescriptor)
         values["PEEKABOO_AGENT_EXECUTION_GATE_CHALLENGE"] = releaseChallenge
+        values["PEEKABOO_AGENT_EXECUTION_LOCKDOWN_FD"] = String(lockdownReadinessDescriptor)
+        values["PEEKABOO_AGENT_EXECUTION_PROCESS_LIMIT"] = "0"
         let keys = values.keys.sorted()
         return try Self(
-            policyVersion: 1,
+            policyVersion: 2,
             values: values,
             keys: keys,
             sha256: PeekabooBridgeAgentExecutionCoding.sha256Canonical(values))
@@ -182,8 +185,13 @@ final class PeekabooBridgeAgentExecutionReleaseGate: @unchecked Sendable {
     let readDescriptor: Int32
     let writeDescriptor: Int32
     let childDescriptor: Int32
+    let readinessReadDescriptor: Int32
+    let readinessWriteDescriptor: Int32
+    let childReadinessDescriptor: Int32
     private let lock = NSLock()
     private var parentReadClosed = false
+    private var parentReadinessWriteClosed = false
+    private var readinessReadClosed = false
     private var writeClosed = false
 
     init(excludingDescriptors: [Int32]) throws {
@@ -191,16 +199,25 @@ final class PeekabooBridgeAgentExecutionReleaseGate: @unchecked Sendable {
         guard pipe(&descriptors) == 0 else {
             throw PeekabooBridgeAgentExecutionPreReleaseError.spawnFailed(String(cString: strerror(errno)))
         }
-        self.readDescriptor = descriptors[0]
-        self.writeDescriptor = descriptors[1]
-        let excluded = Set(excludingDescriptors + descriptors)
-        guard let childDescriptor = (198...253).map(Int32.init).first(where: { !excluded.contains($0) }) else {
+        var readinessDescriptors = [Int32](repeating: -1, count: 2)
+        guard pipe(&readinessDescriptors) == 0 else {
             close(descriptors[0])
             close(descriptors[1])
+            throw PeekabooBridgeAgentExecutionPreReleaseError.spawnFailed(String(cString: strerror(errno)))
+        }
+        self.readDescriptor = descriptors[0]
+        self.writeDescriptor = descriptors[1]
+        self.readinessReadDescriptor = readinessDescriptors[0]
+        self.readinessWriteDescriptor = readinessDescriptors[1]
+        let excluded = Set(excludingDescriptors + descriptors + readinessDescriptors)
+        let available = (198...253).map(Int32.init).filter { !excluded.contains($0) }
+        guard available.count >= 2 else {
+            (descriptors + readinessDescriptors).forEach { close($0) }
             throw PeekabooBridgeAgentExecutionPreReleaseError.spawnFailed("no release-gate descriptor available")
         }
-        self.childDescriptor = childDescriptor
-        for descriptor in descriptors {
+        self.childDescriptor = available[0]
+        self.childReadinessDescriptor = available[1]
+        for descriptor in descriptors + readinessDescriptors {
             let flags = fcntl(descriptor, F_GETFD)
             guard flags >= 0, fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) == 0 else {
                 self.closeAll()
@@ -213,6 +230,71 @@ final class PeekabooBridgeAgentExecutionReleaseGate: @unchecked Sendable {
             throw PeekabooBridgeAgentExecutionPreReleaseError.spawnFailed(
                 "cannot suppress release-gate SIGPIPE")
         }
+        let readinessFlags = fcntl(self.readinessReadDescriptor, F_GETFL)
+        guard readinessFlags >= 0,
+              fcntl(self.readinessReadDescriptor, F_SETFL, readinessFlags | O_NONBLOCK) == 0
+        else {
+            self.closeAll()
+            throw PeekabooBridgeAgentExecutionPreReleaseError.spawnFailed(
+                "cannot configure lockdown readiness")
+        }
+    }
+
+    func closeParentReadinessWrite() {
+        self.lock.lock()
+        guard !self.parentReadinessWriteClosed else {
+            self.lock.unlock()
+            return
+        }
+        self.parentReadinessWriteClosed = true
+        self.lock.unlock()
+        close(self.readinessWriteDescriptor)
+    }
+
+    func waitForLockdown(challenge: String, deadline: ContinuousClock.Instant) async throws {
+        var bytes = Data()
+        while ContinuousClock.now < deadline {
+            var buffer = [UInt8](repeating: 0, count: 128)
+            let count = buffer.withUnsafeMutableBytes {
+                Darwin.read(self.readinessReadDescriptor, $0.baseAddress, $0.count)
+            }
+            if count > 0 {
+                bytes.append(contentsOf: buffer.prefix(count))
+                guard bytes.count <= 64 else {
+                    throw PeekabooBridgeAgentExecutionPreReleaseError.invalidAcknowledgement(
+                        "Agent child lockdown readiness contained trailing bytes")
+                }
+                continue
+            }
+            if count == 0 {
+                self.closeReadinessRead()
+                guard bytes.elementsEqual(challenge.utf8) else {
+                    throw PeekabooBridgeAgentExecutionPreReleaseError.invalidAcknowledgement(
+                        "Agent child did not attest process creation lockdown")
+                }
+                return
+            }
+            if errno == EINTR {
+                continue
+            }
+            guard errno == EAGAIN || errno == EWOULDBLOCK else {
+                throw PeekabooBridgeAgentExecutionPreReleaseError.invalidAcknowledgement(
+                    "Agent child lockdown readiness read failed")
+            }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        throw PeekabooBridgeAgentExecutionPreReleaseError.acknowledgementTimedOut
+    }
+
+    private func closeReadinessRead() {
+        self.lock.lock()
+        guard !self.readinessReadClosed else {
+            self.lock.unlock()
+            return
+        }
+        self.readinessReadClosed = true
+        self.lock.unlock()
+        close(self.readinessReadDescriptor)
     }
 
     func closeParentRead() {
@@ -262,8 +344,12 @@ final class PeekabooBridgeAgentExecutionReleaseGate: @unchecked Sendable {
     func closeAll() {
         self.lock.lock()
         let closeRead = !self.parentReadClosed
+        let closeReadinessWrite = !self.parentReadinessWriteClosed
+        let closeReadinessRead = !self.readinessReadClosed
         let closeWrite = !self.writeClosed
         self.parentReadClosed = true
+        self.parentReadinessWriteClosed = true
+        self.readinessReadClosed = true
         self.writeClosed = true
         self.lock.unlock()
         if closeRead {
@@ -271,6 +357,12 @@ final class PeekabooBridgeAgentExecutionReleaseGate: @unchecked Sendable {
         }
         if closeWrite {
             close(self.writeDescriptor)
+        }
+        if closeReadinessWrite {
+            close(self.readinessWriteDescriptor)
+        }
+        if closeReadinessRead {
+            close(self.readinessReadDescriptor)
         }
     }
 }
@@ -564,6 +656,12 @@ enum PeekabooBridgeAgentExecutionSpawn {
                 releaseGate.readDescriptor,
                 releaseGate.childDescriptor),
             "inherit release gate")
+        try self.check(
+            posix_spawn_file_actions_adddup2(
+                &actions,
+                releaseGate.readinessWriteDescriptor,
+                releaseGate.childReadinessDescriptor),
+            "inherit lockdown readiness")
         for descriptor in [pipes.stdoutRead, pipes.stderrRead, pipes.stdoutWrite, pipes.stderrWrite] {
             if descriptor != STDOUT_FILENO, descriptor != STDERR_FILENO {
                 try self.check(posix_spawn_file_actions_addclose(&actions, descriptor), "close child pipe")
@@ -572,18 +670,25 @@ enum PeekabooBridgeAgentExecutionSpawn {
         try self.check(
             posix_spawn_file_actions_addclose(&actions, releaseGate.writeDescriptor),
             "close child release writer")
+        try self.check(
+            posix_spawn_file_actions_addclose(&actions, releaseGate.readinessReadDescriptor),
+            "close child lockdown reader")
         if releaseGate.readDescriptor != releaseGate.childDescriptor {
             try self.check(
                 posix_spawn_file_actions_addclose(&actions, releaseGate.readDescriptor),
                 "close child release source")
         }
+        if releaseGate.readinessWriteDescriptor != releaseGate.childReadinessDescriptor {
+            try self.check(
+                posix_spawn_file_actions_addclose(&actions, releaseGate.readinessWriteDescriptor),
+                "close child lockdown source")
+        }
 
         var attributes: posix_spawnattr_t?
         try self.check(posix_spawnattr_init(&attributes), "initialize spawn attributes")
         defer { posix_spawnattr_destroy(&attributes) }
-        let flags = Int16(POSIX_SPAWN_START_SUSPENDED | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETPGROUP)
+        let flags = Int16(POSIX_SPAWN_START_SUSPENDED | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSID)
         try self.check(posix_spawnattr_setflags(&attributes, flags), "set suspended spawn flags")
-        try self.check(posix_spawnattr_setpgroup(&attributes, 0), "create child process group")
 
         var argv = self.cStrings([executablePath] + arguments)
         defer { self.free(argv) }
@@ -599,6 +704,7 @@ enum PeekabooBridgeAgentExecutionSpawn {
         }
         pipes.closeParentWrites()
         releaseGate.closeParentRead()
+        releaseGate.closeParentReadinessWrite()
         try self.check(result, "launch authenticated CLI")
         guard processIdentifier > 0 else {
             throw PeekabooBridgeAgentExecutionPreReleaseError.spawnFailed("spawn returned no child PID")
@@ -747,19 +853,64 @@ struct PeekabooBridgeAgentExecutionTerminal: Sendable {
     let disposition: PeekabooBridgeAgentExecutionProcessDisposition
     let exitCode: Int32?
     let terminationSignal: Int32?
-    let terminatedAt: Int64
+    let terminalObservationEndedAt: Int64
+}
+
+struct PeekabooBridgeAgentExecutionProcessCustody: Equatable, Sendable {
+    let processIdentity: PeekabooBridgeOperationProcessIdentity
+    let processIdentifierVersion: Int32
 }
 
 enum PeekabooBridgeAgentExecutionProcessWait {
+    static func captureProcessCustody(
+        processIdentity: PeekabooBridgeOperationProcessIdentity) throws
+        -> PeekabooBridgeAgentExecutionProcessCustody
+    {
+        let processIdentifier = processIdentity.processIdentifier
+        guard let token = self.auditToken(
+            processIdentifier: processIdentifier,
+            expectedProcessStartIdentity: processIdentity.processStartIdentity),
+            audit_token_to_pid(token) == processIdentifier
+        else {
+            throw PeekabooBridgeAgentExecutionPreReleaseError.executableIdentityChanged
+        }
+        return .init(
+            processIdentity: processIdentity,
+            processIdentifierVersion: audit_token_to_pidversion(token))
+    }
+
     static func killSuspendedAndReap(_ processIdentifier: pid_t) {
-        _ = Darwin.kill(-processIdentifier, SIGKILL)
         _ = Darwin.kill(processIdentifier, SIGKILL)
-        var waitStatus: Int32 = 0
-        while Darwin.waitpid(processIdentifier, &waitStatus, 0) < 0, errno == EINTR {}
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(500))
+        while ContinuousClock.now < deadline {
+            var waitStatus: Int32 = 0
+            let result = Darwin.waitpid(processIdentifier, &waitStatus, WNOHANG)
+            if result == processIdentifier || (result < 0 && errno == ECHILD) {
+                return
+            }
+            if result < 0, errno != EINTR {
+                break
+            }
+            usleep(1000)
+        }
+        self.exactReaperQueue.async {
+            var backoff: useconds_t = 1000
+            while true {
+                _ = Darwin.kill(processIdentifier, SIGKILL)
+                var waitStatus: Int32 = 0
+                let result = Darwin.waitpid(processIdentifier, &waitStatus, WNOHANG)
+                if result == processIdentifier || (result < 0 && errno == ECHILD) {
+                    return
+                }
+                usleep(backoff)
+                backoff = min(backoff * 2, 100_000)
+            }
+        }
     }
 
     static func wait(
         _ processIdentifier: pid_t,
+        processCustody: PeekabooBridgeAgentExecutionProcessCustody,
         timeoutMilliseconds: Int,
         pipeControl: PeekabooBridgeAgentExecutionPipeControl,
         terminationGraceMilliseconds: Int) async -> PeekabooBridgeAgentExecutionTerminal
@@ -774,9 +925,13 @@ enum PeekabooBridgeAgentExecutionProcessWait {
                 // competing exit. Cancellation and timeout still lose to a completed child.
                 let overflowed = pipeControl.didOverflow
                 let forced: PeekabooBridgeAgentExecutionProcessDisposition? = overflowed ? .outputOverflow : nil
-                return self.killGroupAndReapObserved(processIdentifier, forced: forced)
+                return self.reapObserved(
+                    processIdentifier,
+                    processCustody: processCustody,
+                    forced: forced)
             case .failed:
-                return self.terminateAfterWaitFailure(processIdentifier)
+                return self.terminateAfterWaitFailure(
+                    processCustody: processCustody)
             case .running:
                 break
             }
@@ -793,6 +948,7 @@ enum PeekabooBridgeAgentExecutionProcessWait {
             if let forced {
                 return await self.terminateAndReap(
                     processIdentifier,
+                    processCustody: processCustody,
                     disposition: forced,
                     graceMilliseconds: terminationGraceMilliseconds)
             }
@@ -801,6 +957,7 @@ enum PeekabooBridgeAgentExecutionProcessWait {
             } catch {
                 return await self.terminateAndReap(
                     processIdentifier,
+                    processCustody: processCustody,
                     disposition: .cancelled,
                     graceMilliseconds: terminationGraceMilliseconds)
             }
@@ -809,46 +966,103 @@ enum PeekabooBridgeAgentExecutionProcessWait {
 
     private static func terminateAndReap(
         _ processIdentifier: pid_t,
+        processCustody: PeekabooBridgeAgentExecutionProcessCustody,
         disposition: PeekabooBridgeAgentExecutionProcessDisposition,
         graceMilliseconds: Int) async -> PeekabooBridgeAgentExecutionTerminal
     {
-        _ = Darwin.kill(-processIdentifier, SIGTERM)
+        _ = Darwin.kill(processIdentifier, SIGTERM)
         let graceDeadline = ContinuousClock.now.advanced(by: .milliseconds(graceMilliseconds))
         while ContinuousClock.now < graceDeadline {
             switch self.observeExitWithoutReaping(processIdentifier) {
             case .exited:
-                return self.killGroupAndReapObserved(processIdentifier, forced: disposition)
+                return self.reapObserved(
+                    processIdentifier,
+                    processCustody: processCustody,
+                    forced: disposition)
             case .failed:
-                return self.terminateAfterWaitFailure(processIdentifier)
+                return self.terminateAfterWaitFailure(
+                    processCustody: processCustody)
             case .running:
                 break
             }
             await self.uncancellableDelay(milliseconds: 10)
         }
-        _ = Darwin.kill(-processIdentifier, SIGKILL)
         _ = Darwin.kill(processIdentifier, SIGKILL)
-        var waitStatus: Int32 = 0
-        while true {
-            let result = Darwin.waitpid(processIdentifier, &waitStatus, 0)
-            if result == processIdentifier {
-                return self.terminal(status: waitStatus, forced: disposition)
+        let killDeadline = ContinuousClock.now.advanced(by: .milliseconds(500))
+        while ContinuousClock.now < killDeadline {
+            _ = Darwin.kill(processIdentifier, SIGKILL)
+            switch self.observeExitWithoutReaping(processIdentifier) {
+            case .exited:
+                return self.reapObserved(
+                    processIdentifier,
+                    processCustody: processCustody,
+                    forced: disposition)
+            case .failed:
+                return self.terminateAfterWaitFailure(
+                    processCustody: processCustody)
+            case .running:
+                await self.uncancellableDelay(milliseconds: 1)
             }
-            if result < 0, errno == EINTR {
-                continue
-            }
-            return .init(
-                disposition: .waitFailed,
-                exitCode: nil,
-                terminationSignal: nil,
-                terminatedAt: PeekabooBridgeAgentExecutionCoding.nowMilliseconds())
         }
+        return self.terminateAfterWaitFailure(processCustody: processCustody)
     }
 
     #if DEBUG
     static func terminateAfterWaitFailureForTesting(
-        _ processIdentifier: pid_t) -> PeekabooBridgeAgentExecutionTerminal
+        processCustody: PeekabooBridgeAgentExecutionProcessCustody) -> PeekabooBridgeAgentExecutionTerminal
     {
-        self.terminateAfterWaitFailure(processIdentifier)
+        self.terminateAfterWaitFailure(processCustody: processCustody)
+    }
+
+    static func waitFailureSignalsReusedPIDForTesting(
+        _ processIdentifier: pid_t,
+        processIdentifierVersion: Int32,
+        observedProcessIdentifierVersion: Int32) -> Bool
+    {
+        var signaled = false
+        let custody = PeekabooBridgeAgentExecutionProcessCustody(
+            processIdentity: .init(
+                processIdentifier: processIdentifier,
+                processStartIdentity: 100,
+                codeSignatureHash: String(repeating: "a", count: 40)),
+            processIdentifierVersion: processIdentifierVersion)
+        _ = self.terminateAfterWaitFailure(
+            processCustody: custody,
+            signal: { token, _ in
+                if audit_token_to_pidversion(token.pointee) == observedProcessIdentifierVersion {
+                    signaled = true
+                    return 0
+                }
+                return -1
+            },
+            reacquireExitedAnchor: { _ in false },
+            reap: { _, _, _ in -1 })
+        return signaled
+    }
+
+    static func waitFailureUsesAuditTokenForTesting(
+        _ processIdentifier: pid_t,
+        expectedProcessStartIdentity: UInt64,
+        processIdentifierVersion: Int32) -> Bool
+    {
+        var deliveredExactToken = false
+        let custody = PeekabooBridgeAgentExecutionProcessCustody(
+            processIdentity: .init(
+                processIdentifier: processIdentifier,
+                processStartIdentity: expectedProcessStartIdentity,
+                codeSignatureHash: String(repeating: "a", count: 40)),
+            processIdentifierVersion: processIdentifierVersion)
+        _ = self.terminateAfterWaitFailure(
+            processCustody: custody,
+            signal: { token, signal in
+                deliveredExactToken = audit_token_to_pid(token.pointee) == processIdentifier &&
+                    audit_token_to_pidversion(token.pointee) == processIdentifierVersion &&
+                    signal == SIGKILL
+                return 0
+            },
+            reacquireExitedAnchor: { _ in false },
+            reap: { _, _, _ in -1 })
+        return deliveredExactToken
     }
     #endif
 
@@ -876,13 +1090,11 @@ enum PeekabooBridgeAgentExecutionProcessWait {
         }
     }
 
-    private static func killGroupAndReapObserved(
+    private static func reapObserved(
         _ processIdentifier: pid_t,
+        processCustody _: PeekabooBridgeAgentExecutionProcessCustody,
         forced: PeekabooBridgeAgentExecutionProcessDisposition?) -> PeekabooBridgeAgentExecutionTerminal
     {
-        // The unreaped leader keeps its PGID from being recycled while this signal terminates
-        // every descendant that remained in the execution's process group.
-        _ = Darwin.kill(-processIdentifier, SIGKILL)
         var waitStatus: Int32 = 0
         while true {
             let result = Darwin.waitpid(processIdentifier, &waitStatus, 0)
@@ -896,34 +1108,178 @@ enum PeekabooBridgeAgentExecutionProcessWait {
                 disposition: .waitFailed,
                 exitCode: nil,
                 terminationSignal: nil,
-                terminatedAt: PeekabooBridgeAgentExecutionCoding.nowMilliseconds())
+                terminalObservationEndedAt: PeekabooBridgeAgentExecutionCoding.nowMilliseconds())
         }
     }
 
     private static func terminateAfterWaitFailure(
-        _ processIdentifier: pid_t) -> PeekabooBridgeAgentExecutionTerminal
+        processCustody: PeekabooBridgeAgentExecutionProcessCustody,
+        signal: (UnsafeMutablePointer<audit_token_t>, Int32) -> Int32 = {
+            proc_signal_with_audittoken($0, $1)
+        },
+        reacquireExitedAnchor: (pid_t) -> Bool = {
+            PeekabooBridgeAgentExecutionProcessWait.waitForExitedAnchor($0)
+        },
+        reap: (pid_t, UnsafeMutablePointer<Int32>, Int32) -> pid_t = { Darwin.waitpid($0, $1, $2) })
+        -> PeekabooBridgeAgentExecutionTerminal
     {
-        // `waitid` failure cannot authorize an optimistic terminal result. Kill both the owned
-        // group and exact leader, then make one bounded-by-SIGKILL reap attempt before reporting
-        // that the kernel wait evidence itself failed.
-        _ = Darwin.kill(-processIdentifier, SIGKILL)
-        _ = Darwin.kill(processIdentifier, SIGKILL)
+        // Once waitid loses the WNOWAIT anchor, a raw numeric PID may already have been recycled.
+        // Only the audit-token-bound signal may target the exact generation. Reaping remains
+        // forbidden unless the same leader is reacquired as an unreaped WNOWAIT child.
+        let processIdentifier = processCustody.processIdentity.processIdentifier
+        var token = self.auditToken(processCustody)
+        guard signal(&token, SIGKILL) == 0 else {
+            return .init(
+                disposition: .waitFailed,
+                exitCode: nil,
+                terminationSignal: nil,
+                terminalObservationEndedAt: PeekabooBridgeAgentExecutionCoding.nowMilliseconds())
+        }
+        guard reacquireExitedAnchor(processIdentifier) else {
+            self.retainExactReap(processCustody)
+            return .init(
+                disposition: .waitFailed,
+                exitCode: nil,
+                terminationSignal: nil,
+                terminalObservationEndedAt: PeekabooBridgeAgentExecutionCoding.nowMilliseconds())
+        }
         var waitStatus: Int32 = 0
         while true {
-            let result = Darwin.waitpid(processIdentifier, &waitStatus, 0)
+            let result = reap(processIdentifier, &waitStatus, 0)
             if result == processIdentifier {
                 break
             }
             if result < 0, errno == EINTR {
                 continue
             }
+            self.retainExactReap(processCustody)
             break
         }
         return .init(
             disposition: .waitFailed,
             exitCode: nil,
             terminationSignal: nil,
-            terminatedAt: PeekabooBridgeAgentExecutionCoding.nowMilliseconds())
+            terminalObservationEndedAt: PeekabooBridgeAgentExecutionCoding.nowMilliseconds())
+    }
+
+    private static let exactReaperQueue = DispatchQueue(
+        label: "boo.peekaboo.agent-execution-exact-reaper",
+        qos: .userInitiated,
+        attributes: .concurrent)
+
+    private static func retainExactReap(_ processCustody: PeekabooBridgeAgentExecutionProcessCustody) {
+        self.exactReaperQueue.async {
+            let processIdentifier = processCustody.processIdentity.processIdentifier
+            var backoff: useconds_t = 1000
+            while true {
+                switch self.observeExitWithoutReaping(processIdentifier) {
+                case .exited:
+                    guard let token = self.auditToken(
+                        processIdentifier: processIdentifier,
+                        expectedProcessStartIdentity: processCustody.processIdentity.processStartIdentity),
+                        audit_token_to_pidversion(token) == processCustody.processIdentifierVersion
+                    else { return }
+                    var waitStatus: Int32 = 0
+                    let result = Darwin.waitpid(processIdentifier, &waitStatus, WNOHANG)
+                    if result == processIdentifier || (result < 0 && errno == ECHILD) {
+                        return
+                    }
+                case .running:
+                    guard let observed = self.auditToken(
+                        processIdentifier: processIdentifier,
+                        expectedProcessStartIdentity: processCustody.processIdentity.processStartIdentity),
+                        audit_token_to_pidversion(observed) == processCustody.processIdentifierVersion
+                    else { return }
+                    var token = self.auditToken(processCustody)
+                    _ = proc_signal_with_audittoken(&token, SIGKILL)
+                case .failed:
+                    guard let observed = self.auditToken(
+                        processIdentifier: processIdentifier,
+                        expectedProcessStartIdentity: processCustody.processIdentity.processStartIdentity),
+                        audit_token_to_pidversion(observed) == processCustody.processIdentifierVersion
+                    else { return }
+                    var token = self.auditToken(processCustody)
+                    _ = proc_signal_with_audittoken(&token, SIGKILL)
+                }
+                usleep(backoff)
+                backoff = min(backoff * 2, 100_000)
+            }
+        }
+    }
+
+    private struct UniqueProcessIdentity {
+        var executableUUID: (UInt64, UInt64) = (0, 0)
+        var uniqueIdentifier: UInt64 = 0
+        var parentUniqueIdentifier: UInt64 = 0
+        var processIdentifierVersion: Int32 = 0
+        var originalParentProcessIdentifierVersion: Int32 = 0
+        var reserved2: UInt64 = 0
+        var reserved3: UInt64 = 0
+    }
+
+    private static func auditToken(
+        processIdentifier: pid_t,
+        expectedProcessStartIdentity: UInt64) -> audit_token_t?
+    {
+        let uniqueSize = Int32(MemoryLayout<UniqueProcessIdentity>.stride)
+        guard uniqueSize == 56 else { return nil }
+        var first = UniqueProcessIdentity()
+        var second = UniqueProcessIdentity()
+        var bsd = proc_bsdinfo()
+        let bsdSize = Int32(MemoryLayout<proc_bsdinfo>.stride)
+        guard proc_pidinfo(processIdentifier, 17, 0, &first, uniqueSize) == uniqueSize,
+              proc_pidinfo(processIdentifier, PROC_PIDTBSDINFO, 0, &bsd, bsdSize) == bsdSize,
+              proc_pidinfo(processIdentifier, 17, 0, &second, uniqueSize) == uniqueSize,
+              first.processIdentifierVersion == second.processIdentifierVersion,
+              first.uniqueIdentifier == second.uniqueIdentifier,
+              bsd.pbi_pid == UInt32(bitPattern: processIdentifier)
+        else { return nil }
+        let observedStartIdentity = UInt64(bsd.pbi_start_tvsec) * 1_000_000 + UInt64(bsd.pbi_start_tvusec)
+        guard observedStartIdentity == expectedProcessStartIdentity else { return nil }
+
+        var token = audit_token_t()
+        withUnsafeMutableBytes(of: &token) { bytes in
+            let values = bytes.bindMemory(to: UInt32.self)
+            values[5] = UInt32(bitPattern: processIdentifier)
+            values[7] = UInt32(bitPattern: first.processIdentifierVersion)
+        }
+        guard audit_token_to_pid(token) == processIdentifier,
+              audit_token_to_pidversion(token) == first.processIdentifierVersion
+        else { return nil }
+        return token
+    }
+
+    private static func waitForExitedAnchor(
+        _ processIdentifier: pid_t,
+        maximumScans: Int = 500,
+        observe: (pid_t) -> ExitObservation = {
+            PeekabooBridgeAgentExecutionProcessWait.observeExitWithoutReaping($0)
+        },
+        pause: () -> Void = { usleep(1000) }) -> Bool
+    {
+        for _ in 0..<maximumScans {
+            switch observe(processIdentifier) {
+            case .exited:
+                return true
+            case .running:
+                pause()
+            case .failed:
+                return false
+            }
+        }
+        return false
+    }
+
+    private static func auditToken(
+        _ processCustody: PeekabooBridgeAgentExecutionProcessCustody) -> audit_token_t
+    {
+        var token = audit_token_t()
+        withUnsafeMutableBytes(of: &token) { bytes in
+            let values = bytes.bindMemory(to: UInt32.self)
+            values[5] = UInt32(bitPattern: processCustody.processIdentity.processIdentifier)
+            values[7] = UInt32(bitPattern: processCustody.processIdentifierVersion)
+        }
+        return token
     }
 
     private static func terminal(
@@ -936,20 +1292,20 @@ enum PeekabooBridgeAgentExecutionProcessWait {
                 disposition: forced ?? .exited,
                 exitCode: (status >> 8) & 0xFF,
                 terminationSignal: nil,
-                terminatedAt: PeekabooBridgeAgentExecutionCoding.nowMilliseconds())
+                terminalObservationEndedAt: PeekabooBridgeAgentExecutionCoding.nowMilliseconds())
         }
         if signal != 0x7F {
             return .init(
                 disposition: forced ?? .signaled,
                 exitCode: nil,
                 terminationSignal: signal,
-                terminatedAt: PeekabooBridgeAgentExecutionCoding.nowMilliseconds())
+                terminalObservationEndedAt: PeekabooBridgeAgentExecutionCoding.nowMilliseconds())
         }
         return .init(
             disposition: .waitFailed,
             exitCode: nil,
             terminationSignal: nil,
-            terminatedAt: PeekabooBridgeAgentExecutionCoding.nowMilliseconds())
+            terminalObservationEndedAt: PeekabooBridgeAgentExecutionCoding.nowMilliseconds())
     }
 
     private static func uncancellableDelay(milliseconds: Int) async {

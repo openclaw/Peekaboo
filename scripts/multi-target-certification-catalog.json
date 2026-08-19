@@ -58,7 +58,7 @@
       {"path": "Apps/CLI/Sources/PeekabooCertificationController/HeldPointerPlan.swift", "sha256": "4b3d47a79e160edc9e190cb9c95e38b3f9ffe972b2dfb027cb2f15ec5d624310"},
       {"path": "Apps/CLI/Sources/PeekabooCertificationController/HeldPointerRunner.swift", "sha256": "2f42bb4346e9b3d9b9ac7e3462611993c2120fc0908af8099519fc79a05397da"},
       {"path": "Apps/CLI/Sources/PeekabooCertificationController/LiveCertificationBridge.swift", "sha256": "e917930691b696a2228e263971fef31a189d39eae920315e6f34423748c3807b"},
-      {"path": "Apps/CLI/Sources/PeekabooCertificationController/LocalPIDAttestation.swift", "sha256": "6c02a8e525d95be83b5a05d5bf22455724af467141925228a16414636f4c9677"},
+      {"path": "Apps/CLI/Sources/PeekabooCertificationController/LocalPIDAttestation.swift", "sha256": "cfd0c9c9da937b3abc05a79a6c84c58954c88c88eb0b4fbd270ea6b474b5db31"},
       {"path": "Apps/CLI/Sources/PeekabooCertificationController/MonitorAttestationRunner.swift", "sha256": "1c5e6d6a0968e2acca14398d0b838a32522dcde43c8a6eaee256b0a164595068"},
       {"path": "Apps/CLI/Sources/PeekabooCertificationController/ObserveOnlyRunner.swift", "sha256": "0dc67e661f1dd5cb783db5084f77684c2dfb7ade65862228f330262596abcac0"},
       {"path": "Apps/CLI/Sources/PeekabooCertificationController/ObserverPlan.swift", "sha256": "47ef7214b0b6e9892ad4cd3aa1bad9f76f922799395cc9cc569b169e4103b224"},

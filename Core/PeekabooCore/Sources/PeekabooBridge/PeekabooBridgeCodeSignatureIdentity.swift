@@ -171,8 +171,7 @@ enum PeekabooBridgeCodeSignatureIdentity {
         guard audit_token_to_pid(auditIdentity.token) == auditIdentity.processIdentifier,
               audit_token_to_pidversion(auditIdentity.token) == auditIdentity.processIdentifierVersion,
               audit_token_to_euid(auditIdentity.token) == auditIdentity.effectiveUserIdentifier,
-              auditIdentity.processIdentifier > 0,
-              auditIdentity.processIdentifierVersion > 0
+              auditIdentity.processIdentifier > 0
         else {
             return nil
         }

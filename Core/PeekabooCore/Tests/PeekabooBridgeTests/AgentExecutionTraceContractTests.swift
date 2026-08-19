@@ -79,6 +79,15 @@ struct AgentExecutionTraceContractTests {
     }
 
     @Test
+    func `Canonical response rejects child CDHash substitution`() throws {
+        let substitutedChildIdentity = try Self.fixture(
+            childCodeSignatureHash: String(repeating: "a", count: 40))
+        #expect(throws: PeekabooBridgeAgentExecutionResponseValidationError.self) {
+            try substitutedChildIdentity.response.validate(request: substitutedChildIdentity.request)
+        }
+    }
+
+    @Test
     func `Task response and acknowledgement substitution fail closed`() throws {
         let fixture = try Self.fixture()
         let differentRequest = PeekabooBridgeAgentExecutionTraceRequest(
@@ -165,6 +174,7 @@ struct AgentExecutionTraceContractTests {
         let wait = Task {
             await PeekabooBridgeAgentExecutionProcessWait.wait(
                 execution.pid,
+                processCustody: execution.processCustody,
                 timeoutMilliseconds: 30000,
                 pipeControl: execution.control,
                 terminationGraceMilliseconds: 50)
@@ -186,6 +196,7 @@ struct AgentExecutionTraceContractTests {
         #expect(Darwin.kill(execution.pid, SIGCONT) == 0)
         let terminal = await PeekabooBridgeAgentExecutionProcessWait.wait(
             execution.pid,
+            processCustody: execution.processCustody,
             timeoutMilliseconds: 30,
             pipeControl: execution.control,
             terminationGraceMilliseconds: 50)
@@ -213,7 +224,9 @@ struct AgentExecutionTraceContractTests {
             environment: ["PATH": "/usr/bin:/bin"],
             pipes: pipes,
             releaseGate: gate)
-        let execution = Self.capture(pid: pid, pipes: pipes)
+        let execution = try Self.capture(pid: pid, pipes: pipes)
+        #expect(getpgid(pid) == pid)
+        #expect(getsid(pid) == pid)
         #expect(Darwin.kill(pid, SIGCONT) == 0)
         try await Task.sleep(for: .milliseconds(100))
         #expect(!FileManager.default.fileExists(atPath: marker.path))
@@ -221,6 +234,7 @@ struct AgentExecutionTraceContractTests {
         try gate.release(challenge: challenge)
         let terminal = await PeekabooBridgeAgentExecutionProcessWait.wait(
             pid,
+            processCustody: execution.processCustody,
             timeoutMilliseconds: 2000,
             pipeControl: execution.control,
             terminationGraceMilliseconds: 50)
@@ -230,6 +244,46 @@ struct AgentExecutionTraceContractTests {
         #expect(terminal.exitCode == 0)
         #expect(FileManager.default.fileExists(atPath: marker.path))
         Self.expectReaped(pid)
+    }
+
+    @Test
+    func `Lockdown readiness requires the exact challenge and EOF`() async throws {
+        let challenge = String(repeating: "f", count: 64)
+        let successPipes = try PeekabooBridgeAgentExecutionPipes()
+        let success = try Self.releaseGate(for: successPipes)
+        defer { success.closeAll(); successPipes.closeAll() }
+        let challengeBytes = Data(challenge.utf8)
+        #expect(challengeBytes.withUnsafeBytes {
+            Darwin.write(success.readinessWriteDescriptor, $0.baseAddress, $0.count)
+        } == 64)
+        success.closeParentReadinessWrite()
+        try await success.waitForLockdown(
+            challenge: challenge,
+            deadline: ContinuousClock.now.advanced(by: .seconds(1)))
+
+        let missingPipes = try PeekabooBridgeAgentExecutionPipes()
+        let missing = try Self.releaseGate(for: missingPipes)
+        defer { missing.closeAll(); missingPipes.closeAll() }
+        missing.closeParentReadinessWrite()
+        await #expect(throws: PeekabooBridgeAgentExecutionPreReleaseError.self) {
+            try await missing.waitForLockdown(
+                challenge: challenge,
+                deadline: ContinuousClock.now.advanced(by: .seconds(1)))
+        }
+
+        let trailingPipes = try PeekabooBridgeAgentExecutionPipes()
+        let trailing = try Self.releaseGate(for: trailingPipes)
+        defer { trailing.closeAll(); trailingPipes.closeAll() }
+        let invalid = Data((challenge + "x").utf8)
+        #expect(invalid.withUnsafeBytes {
+            Darwin.write(trailing.readinessWriteDescriptor, $0.baseAddress, $0.count)
+        } == 65)
+        trailing.closeParentReadinessWrite()
+        await #expect(throws: PeekabooBridgeAgentExecutionPreReleaseError.self) {
+            try await trailing.waitForLockdown(
+                challenge: challenge,
+                deadline: ContinuousClock.now.advanced(by: .seconds(1)))
+        }
     }
 
     @Test
@@ -243,7 +297,7 @@ struct AgentExecutionTraceContractTests {
             environment: ["PATH": "/usr/bin:/bin"],
             pipes: pipes,
             releaseGate: gate)
-        let execution = Self.capture(pid: pid, pipes: pipes)
+        let execution = try Self.capture(pid: pid, pipes: pipes)
         #expect(Darwin.kill(pid, SIGCONT) == 0)
         try await Self.waitUntilExitedWithoutReaping(pid)
         #expect(throws: PeekabooBridgeAgentExecutionPreReleaseError.self) {
@@ -252,6 +306,7 @@ struct AgentExecutionTraceContractTests {
 
         let terminal = await PeekabooBridgeAgentExecutionProcessWait.wait(
             pid,
+            processCustody: execution.processCustody,
             timeoutMilliseconds: 1000,
             pipeControl: execution.control,
             terminationGraceMilliseconds: 50)
@@ -265,10 +320,37 @@ struct AgentExecutionTraceContractTests {
         let execution = try Self.spawnSuspended(executable: "/bin/sleep", arguments: ["30"])
         #expect(Darwin.kill(execution.pid, SIGCONT) == 0)
         let terminal = PeekabooBridgeAgentExecutionProcessWait
-            .terminateAfterWaitFailureForTesting(execution.pid)
+            .terminateAfterWaitFailureForTesting(
+                processCustody: execution.processCustody)
         _ = await Self.finish(execution)
         #expect(terminal.disposition == .waitFailed)
         Self.expectReaped(execution.pid)
+    }
+
+    @Test
+    func `Actual ECHILD never signals an unanchored numeric process group`() async throws {
+        let execution = try Self.spawnSuspended(executable: "/usr/bin/true", arguments: [])
+        #expect(Darwin.kill(execution.pid, SIGCONT) == 0)
+        var waitStatus: Int32 = 0
+        while Darwin.waitpid(execution.pid, &waitStatus, 0) < 0, errno == EINTR {}
+
+        let terminal = PeekabooBridgeAgentExecutionProcessWait
+            .terminateAfterWaitFailureForTesting(
+                processCustody: execution.processCustody)
+        _ = await Self.finish(execution)
+
+        #expect(terminal.disposition == .waitFailed)
+        Self.expectReaped(execution.pid)
+        #expect(!PeekabooBridgeAgentExecutionProcessWait.waitFailureSignalsReusedPIDForTesting(
+            4242,
+            processIdentifierVersion: 77,
+            observedProcessIdentifierVersion: 78))
+        for processIdentifierVersion in [Int32.zero, Int32.min, -1, 77] {
+            #expect(PeekabooBridgeAgentExecutionProcessWait.waitFailureUsesAuditTokenForTesting(
+                4242,
+                expectedProcessStartIdentity: 100,
+                processIdentifierVersion: processIdentifierVersion))
+        }
     }
 
     @Test
@@ -279,6 +361,7 @@ struct AgentExecutionTraceContractTests {
 
         let terminal = await PeekabooBridgeAgentExecutionProcessWait.wait(
             execution.pid,
+            processCustody: execution.processCustody,
             timeoutMilliseconds: 0,
             pipeControl: execution.control,
             terminationGraceMilliseconds: 50)
@@ -290,80 +373,12 @@ struct AgentExecutionTraceContractTests {
     }
 
     @Test
-    func `Forced termination kills descendants after the leader exits`() async throws {
-        let pidFile = FileManager.default.temporaryDirectory
-            .appendingPathComponent("peekaboo-agent-descendant-\(UUID().uuidString).pid")
-        defer { try? FileManager.default.removeItem(at: pidFile) }
-        let script = """
-        trap 'exit 0' TERM
-        /bin/sh -c 'trap "" TERM; exec /bin/sleep 30' &
-        echo $! > '\(pidFile.path)'
-        while :; do /bin/sleep 1; done
-        """
-        let execution = try Self.spawnSuspended(executable: "/bin/sh", arguments: ["-c", script])
-        #expect(Darwin.kill(execution.pid, SIGCONT) == 0)
-        let descendant = try await Self.readProcessIdentifier(from: pidFile)
-
-        let terminal = await PeekabooBridgeAgentExecutionProcessWait.wait(
-            execution.pid,
-            timeoutMilliseconds: 0,
-            pipeControl: execution.control,
-            terminationGraceMilliseconds: 250)
-        _ = await Self.finish(execution)
-
-        #expect(terminal.disposition == .timedOut)
-        try await Self.waitUntilMissing(descendant)
-        Self.expectReaped(execution.pid)
-    }
-
-    @Test
-    func `Daemonized native code is outside the exact shell-disabled Agent contract`() async throws {
-        let pidFile = FileManager.default.temporaryDirectory
-            .appendingPathComponent("peekaboo-agent-setsid-\(UUID().uuidString).pid")
-        defer { try? FileManager.default.removeItem(at: pidFile) }
-        let python = """
-        import os, time
-        os.setsid()
-        os.close(1)
-        os.close(2)
-        with open('\(pidFile.path)', 'w') as stream:
-            stream.write(str(os.getpid()))
-            stream.flush()
-        time.sleep(30)
-        """
-        let script = """
-        /usr/bin/python3 -c "\(python.replacingOccurrences(of: "\"", with: "\\\""))" &
-        while [ ! -s '\(pidFile.path)' ]; do /bin/sleep 0.01; done
-        """
-        let execution = try Self.spawnSuspended(executable: "/bin/sh", arguments: ["-c", script])
-        #expect(Darwin.kill(execution.pid, SIGCONT) == 0)
-        let detachedPID = try await Self.readProcessIdentifier(from: pidFile)
-
-        let terminal = await PeekabooBridgeAgentExecutionProcessWait.wait(
-            execution.pid,
-            timeoutMilliseconds: 2000,
-            pipeControl: execution.control,
-            terminationGraceMilliseconds: 50)
-        _ = await Self.finish(execution)
-
-        #expect(terminal.disposition == .exited)
-        // macOS process groups are not cgroups: arbitrary native code can call setsid. The
-        // production contract prevents prompt-level access to this path by fixing the exact
-        // signed CLI/argv and omitting Shell; do not broaden the PGID cleanup claim.
-        #expect(Darwin.kill(detachedPID, 0) == 0)
-        let fixture = try Self.fixture()
-        #expect(!fixture.response.shellAvailable)
-        _ = Darwin.kill(detachedPID, SIGKILL)
-        try await Self.waitUntilMissing(detachedPID)
-        Self.expectReaped(execution.pid)
-    }
-
-    @Test
     func `Large output is bounded while both anonymous pipes drain`() async throws {
         let execution = try Self.spawnSuspended(executable: "/usr/bin/yes", arguments: ["trace"])
         #expect(Darwin.kill(execution.pid, SIGCONT) == 0)
         let terminal = await PeekabooBridgeAgentExecutionProcessWait.wait(
             execution.pid,
+            processCustody: execution.processCustody,
             timeoutMilliseconds: 5000,
             pipeControl: execution.control,
             terminationGraceMilliseconds: 50)
@@ -371,32 +386,6 @@ struct AgentExecutionTraceContractTests {
         #expect(terminal.disposition == .outputOverflow)
         #expect(captures.stdout.bytes.count + captures.stderr.bytes.count <= 256 * 1024)
         #expect(captures.stdout.truncated || captures.stderr.truncated)
-        Self.expectReaped(execution.pid)
-    }
-
-    @Test
-    func `Output overflow kills descendants after SIGPIPE reaps the leader`() async throws {
-        let pidFile = FileManager.default.temporaryDirectory
-            .appendingPathComponent("peekaboo-agent-overflow-descendant-\(UUID().uuidString).pid")
-        defer { try? FileManager.default.removeItem(at: pidFile) }
-        let script = """
-        /bin/sh -c 'trap "" TERM PIPE; exec >/dev/null 2>&1; exec /bin/sleep 30' &
-        echo $! > '\(pidFile.path)'
-        exec /usr/bin/yes trace
-        """
-        let execution = try Self.spawnSuspended(executable: "/bin/sh", arguments: ["-c", script])
-        #expect(Darwin.kill(execution.pid, SIGCONT) == 0)
-        let descendant = try await Self.readProcessIdentifier(from: pidFile)
-
-        let terminal = await PeekabooBridgeAgentExecutionProcessWait.wait(
-            execution.pid,
-            timeoutMilliseconds: 5000,
-            pipeControl: execution.control,
-            terminationGraceMilliseconds: 50)
-        _ = await Self.finish(execution)
-
-        #expect(terminal.disposition == .outputOverflow)
-        try await Self.waitUntilMissing(descendant)
         Self.expectReaped(execution.pid)
     }
 
@@ -449,16 +438,18 @@ struct AgentExecutionTraceContractTests {
             runTimeoutMilliseconds: 900_000)
     }
 
-    private static func fixture() throws -> (
+    private static func fixture(
+        childCodeSignatureHash: String? = nil) throws -> (
         request: PeekabooBridgeAgentExecutionTraceRequest,
         response: PeekabooBridgeAgentExecutionTraceResponse)
     {
         let request = self.request()
         let socket = "/private/tmp/peekaboo-agent-trace-contract.sock"
+        let peerCodeSignatureHash = String(repeating: "c", count: 40)
         let processIdentity = PeekabooBridgeOperationProcessIdentity(
             processIdentifier: 4242,
             processStartIdentity: 987_654,
-            codeSignatureHash: String(repeating: "a", count: 40))
+            codeSignatureHash: childCodeSignatureHash ?? peerCodeSignatureHash)
         let process = PeekabooBridgeAgentExecutionProcessIdentity(
             processIdentity: processIdentity,
             executablePath: "/usr/local/bin/peekaboo",
@@ -466,7 +457,7 @@ struct AgentExecutionTraceContractTests {
         let peer = PeekabooBridgeOperationProcessIdentity(
             processIdentifier: 4241,
             processStartIdentity: 987_000,
-            codeSignatureHash: String(repeating: "c", count: 40))
+            codeSignatureHash: peerCodeSignatureHash)
         let taskSHA256 = self.sha256(Data(request.task.utf8))
         let arguments = [
             "agent", "run", request.task, "--no-cache", "--max-steps", String(request.maxSteps),
@@ -475,6 +466,7 @@ struct AgentExecutionTraceContractTests {
         let argumentsSHA256 = try self.sha256(self.canonical(arguments))
         let environmentKeys = [
             "PATH", "PEEKABOO_AGENT_EXECUTION_GATE_CHALLENGE", "PEEKABOO_AGENT_EXECUTION_GATE_FD",
+            "PEEKABOO_AGENT_EXECUTION_LOCKDOWN_FD", "PEEKABOO_AGENT_EXECUTION_PROCESS_LIMIT",
             "PEEKABOO_OPERATION_RECEIPT_DIRECTORY",
         ]
         let environmentSHA256 = String(repeating: "d", count: 64)
@@ -496,10 +488,12 @@ struct AgentExecutionTraceContractTests {
             backgroundOnly: true,
             allowForeground: false,
             shellAvailable: false,
-            environmentPolicyVersion: 1,
+            processCreationLimit: 0,
+            environmentPolicyVersion: 2,
             environmentKeys: environmentKeys,
             environmentSHA256: environmentSHA256,
             spawnedAt: 1000,
+            lockdownAcknowledgedAt: 1050,
             publishedAt: 1100)
         let receiptBytes = try self.canonical(receipt)
         let acknowledgement = PeekabooBridgeAgentExecutionAcknowledgement(
@@ -539,7 +533,8 @@ struct AgentExecutionTraceContractTests {
             backgroundOnly: true,
             allowForeground: false,
             shellAvailable: false,
-            environmentPolicyVersion: 1,
+            processCreationLimit: 0,
+            environmentPolicyVersion: 2,
             environmentKeys: environmentKeys,
             environmentSHA256: environmentSHA256,
             stdout: .init(bytes: stdout),
@@ -556,10 +551,11 @@ struct AgentExecutionTraceContractTests {
             exitCode: 0,
             terminationSignal: nil,
             spawnedAt: 1000,
+            lockdownAcknowledgedAt: 1050,
             coordinationReceiptPublishedAt: 1100,
             acknowledgedAt: 1200,
             releasedAt: 1300,
-            terminatedAt: 1400)
+            terminalObservationEndedAt: 1400)
         return (request, response)
     }
 
@@ -588,6 +584,7 @@ struct AgentExecutionTraceContractTests {
             backgroundOnly: value.backgroundOnly,
             allowForeground: value.allowForeground,
             shellAvailable: value.shellAvailable,
+            processCreationLimit: value.processCreationLimit,
             environmentPolicyVersion: value.environmentPolicyVersion,
             environmentKeys: environmentKeys ?? value.environmentKeys,
             environmentSHA256: value.environmentSHA256,
@@ -601,14 +598,16 @@ struct AgentExecutionTraceContractTests {
             exitCode: value.exitCode,
             terminationSignal: value.terminationSignal,
             spawnedAt: value.spawnedAt,
+            lockdownAcknowledgedAt: value.lockdownAcknowledgedAt,
             coordinationReceiptPublishedAt: value.coordinationReceiptPublishedAt,
             acknowledgedAt: value.acknowledgedAt,
             releasedAt: value.releasedAt,
-            terminatedAt: value.terminatedAt)
+            terminalObservationEndedAt: value.terminalObservationEndedAt)
     }
 
     private struct SuspendedExecution: Sendable {
         let pid: pid_t
+        let processCustody: PeekabooBridgeAgentExecutionProcessCustody
         let control: PeekabooBridgeAgentExecutionPipeControl
         let stdout: Task<PeekabooBridgeAgentExecutionPipeCapture, Never>
         let stderr: Task<PeekabooBridgeAgentExecutionPipeCapture, Never>
@@ -627,13 +626,20 @@ struct AgentExecutionTraceContractTests {
             pipes: pipes,
             releaseGate: gate)
         gate.closeAll()
-        return Self.capture(pid: pid, pipes: pipes)
+        return try Self.capture(pid: pid, pipes: pipes)
     }
 
     private static func capture(
         pid: pid_t,
-        pipes: PeekabooBridgeAgentExecutionPipes) -> SuspendedExecution
+        pipes: PeekabooBridgeAgentExecutionPipes) throws -> SuspendedExecution
     {
+        let executable = try PeekabooBridgeAgentExecutionExecutable.captureProcessForTesting(pid)
+        let processIdentity = PeekabooBridgeOperationProcessIdentity(
+            processIdentifier: pid,
+            processStartIdentity: executable.processStartIdentity,
+            codeSignatureHash: executable.codeSignatureHash)
+        let processCustody = try PeekabooBridgeAgentExecutionProcessWait.captureProcessCustody(
+            processIdentity: processIdentity)
         let control = PeekabooBridgeAgentExecutionPipeControl(maximumCombinedBytes: 256 * 1024)
         let stdout = Task.detached {
             PeekabooBridgeAgentExecutionPipeReader.read(pipes.stdoutRead, control: control)
@@ -641,7 +647,12 @@ struct AgentExecutionTraceContractTests {
         let stderr = Task.detached {
             PeekabooBridgeAgentExecutionPipeReader.read(pipes.stderrRead, control: control)
         }
-        return .init(pid: pid, control: control, stdout: stdout, stderr: stderr)
+        return .init(
+            pid: pid,
+            processCustody: processCustody,
+            control: control,
+            stdout: stdout,
+            stderr: stderr)
     }
 
     private static func releaseGate(

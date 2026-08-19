@@ -236,7 +236,6 @@ enum CertificationAttestationPeerIdentityResolver {
         let processIdentifierVersion = audit_token_to_pidversion(token)
         let effectiveUserIdentifier = audit_token_to_euid(token)
         guard processIdentifier > 0,
-              processIdentifierVersion > 0,
               effectiveUserIdentifier == geteuid(),
               let startIdentityBefore = processStartIdentityProvider(processIdentifier),
               startIdentityBefore > 0,
@@ -285,7 +284,7 @@ enum CertificationAttestationPeerIdentityResolver {
 
     static func codeSignatureHash(auditToken: audit_token_t) -> Data? {
         let processIdentifier = audit_token_to_pid(auditToken)
-        guard processIdentifier > 0, audit_token_to_pidversion(auditToken) > 0 else { return nil }
+        guard processIdentifier > 0 else { return nil }
         var token = auditToken
         var hash = [UInt8](repeating: 0, count: 20)
         let result = hash.withUnsafeMutableBytes { bytes in
@@ -353,8 +352,7 @@ enum CertificationUnixSocket {
         var length = socklen_t(MemoryLayout<audit_token_t>.size)
         guard getsockopt(descriptor, SOL_LOCAL, LOCAL_PEERTOKEN, &token, &length) == 0,
               length == MemoryLayout<audit_token_t>.size,
-              audit_token_to_pid(token) > 0,
-              audit_token_to_pidversion(token) > 0
+              audit_token_to_pid(token) > 0
         else { throw self.transportError("read Unix peer audit token") }
         return token
     }

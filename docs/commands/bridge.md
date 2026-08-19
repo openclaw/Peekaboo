@@ -85,11 +85,16 @@ read_when:
 - Protocol 1.31 advertises `agentExecutionTrace` for one long Bridge request that launches and reaps an authenticated
   Peekaboo CLI peer as a fixed background-only `agent run --no-cache --bridge-socket <serving-host> --json` child. The
   host accepts no executable, shell, AppleScript, JXA, arbitrary argv, or environment input. It binds suspended-child
-  identity revalidation, an earliest-entrypoint anonymous-pipe release gate, owner-private challenge/acknowledgement
-  coordination, bounded stdout/stderr, and terminal `waitid`/`waitpid` evidence into a signed v1 response. `SIGCONT`
-  alone cannot authorize Agent code. Normal exit, cancellation, timeout, overflow, and wait failure kill the original
-  PGID before reaping; this is not a cgroup and does not claim to contain arbitrary native code that deliberately
-  changes PGID or delegates externally. The fixed background Agent exposes no Shell tool. The outer request takes no
+  identity revalidation, fresh `SETSID` session, earliest-entrypoint lockdown/readiness and release pipes,
+  owner-private challenge/acknowledgement coordination, bounded stdout/stderr, and terminal `waitid`/`waitpid`
+  evidence into a signed v1 response. Before readiness, the untainted non-root CLI locks both soft and hard
+  `RLIMIT_NPROC` to zero; the signed response commits that exact policy. `SIGCONT` alone cannot authorize Agent code.
+  The child cannot `fork`, `vfork`, or use ordinary `posix_spawn`, so normal exit, cancellation, timeout, and overflow
+  own and reap one exact WNOWAIT leader. An unexpected lost wait anchor permits only PID-version/audit-token-bound
+  direct signaling and requires the exact WNOWAIT child again before reap, never a raw unverified PID. Threads,
+  provider networking, and nested Bridge sockets remain available, but the fixed background Agent exposes no Shell
+  tool; future child-spawning tools require a new protocol policy or separate broker. External app, launchd, XPC, and
+  nested-tool effects remain outside process rollback. The outer request takes no
   desktop lane, while nested Agent tools take their own exact lanes and signed receipts. Missing protocol/capability
   support refuses before launch, and response loss after release is retry-unsafe. The qualification CLI adapter is
   intentionally hidden from help and completions and emits the canonical signed receipt bundle; it is not a public

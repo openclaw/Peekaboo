@@ -236,26 +236,31 @@ bounded coordination inputs. It never accepts an executable path, shell command,
 or environment overrides. The child invocation is fixed to background-only `agent run --no-cache --bridge-socket
 <serving-host> --json`; there is no foreground-authority flag, session resume, or cache write.
 
-The host creates bounded anonymous stdout and stderr pipes plus an anonymous release pipe whose write end remains
-exclusive to the host under normal process isolation. It spawns with `START_SUSPENDED`, maps only the release reader
-into the child, and revalidates the exact PID, process generation, CDHash, executable SHA-256, and canonical path
-against the authenticated peer. The CLI's earliest entry-point instruction removes the private gate variables and
-blocks on that pipe before command routing. A stray or same-user `SIGCONT` can therefore only reach the blocked read;
-the full signed 64-hex challenge plus EOF is the release authority. The host publishes the owner-private coordination
-file, verifies the no-replace acknowledgement and identities, sends `SIGCONT`, then writes that challenge. Any earlier
-mismatch or partial/failed write closes the gate and refuses before Agent code can run.
+The host creates bounded anonymous stdout and stderr pipes plus separate anonymous lockdown-readiness and release
+pipes. It spawns the exact CLI with `START_SUSPENDED | SETSID`, then sends `SIGCONT` only to enter the CLI's trusted
+earliest gate. Before command routing, that gate requires an untainted non-root process with equal real and effective
+UIDs, irreversibly lowers both soft and hard `RLIMIT_NPROC` to zero, verifies the readback, removes the private gate
+variables, and writes the exact challenge plus EOF to the lockdown pipe. The host requires that readiness before it
+publishes the owner-private coordination file. Only after the connected client acknowledges the locked-down child and
+all identities are revalidated does the host write the challenge plus EOF to the release pipe. A stray same-user
+`SIGCONT` can therefore start only the fail-closed gate; it cannot authorize Agent command routing.
 
-The host observes leader exit with `waitid(..., WNOWAIT)`, kills the still-owned process group, and only then reaps the
-leader with `waitpid`, avoiding both zombies and process-group-ID reuse. Cancellation, timeout, overflow, and wait
-failure use the same fail-closed group cleanup. This is deterministic for the exact leader and descendants that remain
-in its PGID; it is not a macOS process sandbox or cgroup. A process that can execute arbitrary native code could call
-`setsid`, change process group, or delegate work to launchd/XPC. Protocol 1.31 removes that prompt-level path by fixing
-the signed CLI/argv/environment, forcing background-only authority, and omitting the Shell tool, but it does not claim
-to roll back external app/tool effects or contain a compromised signed CLI.
+Hard `RLIMIT_NPROC = 0` is inherited and cannot be raised by the non-root child. It denies `fork`, `vfork`, and ordinary
+`posix_spawn`, while threads, files, provider networking, and nested Bridge sockets remain available. The fresh session
+therefore contains one process for its entire lifetime; the fixed background Agent also exposes no Shell tool. The host
+observes that exact leader with `waitid(..., WNOWAIT)` and reaps it with `waitpid`; cancellation, timeout, and output
+overflow signal only the leader. If the kernel wait anchor is unexpectedly lost, cleanup never signals an unverified
+numeric PID: it uses the retained PID-version audit token for a generation-bound signal and reaps only after the exact
+WNOWAIT child is reacquired. A future Agent tool that needs child processes requires a new protocol policy or a separate
+broker; it must not weaken this launch contract.
+
+The process limit is not rollback for effects already accepted by external apps, launchd, XPC services, or nested
+Bridge tools, and it is not a containment claim for a compromised signed CLI. Those effects remain governed by their
+own exact target, receipt, permission, and retry semantics.
 
 The signed terminal v1 response commits the exact request, process identity, fixed argv, task and closed-environment
 commitments, coordination and acknowledgement bytes plus hashes, complete bounded stdout/stderr bytes plus hashes and
-sizes, exit status or terminating signal, and launch/release/termination timestamps. Its canonical
+sizes, exit status or terminating signal, and launch/lockdown/release/terminal-observation timestamps. Its canonical
 `responseSHA256` binds those fields into the protocol 1.29 receipt chain. The hidden qualification adapter writes the
 canonical `PeekabooBridgeOperationReceiptBundle` itself, not a newly encoded semantic response, so its exact canonical
 request/response bytes and listener/session signatures remain independently checkable. The connected listener

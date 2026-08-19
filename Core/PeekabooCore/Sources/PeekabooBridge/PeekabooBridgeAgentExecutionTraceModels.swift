@@ -68,10 +68,13 @@ public struct PeekabooBridgeAgentExecutionCoordinationReceipt: Codable, Equatabl
     public let backgroundOnly: Bool
     public let allowForeground: Bool
     public let shellAvailable: Bool
+    /// Both soft and hard Darwin `RLIMIT_NPROC`; readiness is required before `publishedAt`.
+    public let processCreationLimit: Int
     public let environmentPolicyVersion: Int
     public let environmentKeys: [String]
     public let environmentSHA256: String
     public let spawnedAt: Int64
+    public let lockdownAcknowledgedAt: Int64
     public let publishedAt: Int64
 
     public init(
@@ -93,10 +96,12 @@ public struct PeekabooBridgeAgentExecutionCoordinationReceipt: Codable, Equatabl
         backgroundOnly: Bool,
         allowForeground: Bool,
         shellAvailable: Bool,
+        processCreationLimit: Int,
         environmentPolicyVersion: Int,
         environmentKeys: [String],
         environmentSHA256: String,
         spawnedAt: Int64,
+        lockdownAcknowledgedAt: Int64,
         publishedAt: Int64)
     {
         self.version = version
@@ -117,10 +122,12 @@ public struct PeekabooBridgeAgentExecutionCoordinationReceipt: Codable, Equatabl
         self.backgroundOnly = backgroundOnly
         self.allowForeground = allowForeground
         self.shellAvailable = shellAvailable
+        self.processCreationLimit = processCreationLimit
         self.environmentPolicyVersion = environmentPolicyVersion
         self.environmentKeys = environmentKeys
         self.environmentSHA256 = environmentSHA256
         self.spawnedAt = spawnedAt
+        self.lockdownAcknowledgedAt = lockdownAcknowledgedAt
         self.publishedAt = publishedAt
     }
 }
@@ -220,6 +227,8 @@ public struct PeekabooBridgeAgentExecutionTraceResponse: Codable, Equatable, Sen
     public let backgroundOnly: Bool
     public let allowForeground: Bool
     public let shellAvailable: Bool
+    /// Both soft and hard Darwin `RLIMIT_NPROC`, attested before coordination publication.
+    public let processCreationLimit: Int
     public let environmentPolicyVersion: Int
     public let environmentKeys: [String]
     public let environmentSHA256: String
@@ -233,10 +242,12 @@ public struct PeekabooBridgeAgentExecutionTraceResponse: Codable, Equatable, Sen
     public let exitCode: Int32?
     public let terminationSignal: Int32?
     public let spawnedAt: Int64
+    public let lockdownAcknowledgedAt: Int64
     public let coordinationReceiptPublishedAt: Int64
     public let acknowledgedAt: Int64
     public let releasedAt: Int64
-    public let terminatedAt: Int64
+    /// End of bounded terminal observation; `waitFailed` does not claim process termination.
+    public let terminalObservationEndedAt: Int64
 
     public init(
         version: Int = 1,
@@ -256,6 +267,7 @@ public struct PeekabooBridgeAgentExecutionTraceResponse: Codable, Equatable, Sen
         backgroundOnly: Bool,
         allowForeground: Bool,
         shellAvailable: Bool,
+        processCreationLimit: Int,
         environmentPolicyVersion: Int,
         environmentKeys: [String],
         environmentSHA256: String,
@@ -269,10 +281,11 @@ public struct PeekabooBridgeAgentExecutionTraceResponse: Codable, Equatable, Sen
         exitCode: Int32?,
         terminationSignal: Int32?,
         spawnedAt: Int64,
+        lockdownAcknowledgedAt: Int64,
         coordinationReceiptPublishedAt: Int64,
         acknowledgedAt: Int64,
         releasedAt: Int64,
-        terminatedAt: Int64)
+        terminalObservationEndedAt: Int64)
     {
         self.version = version
         self.process = process
@@ -291,6 +304,7 @@ public struct PeekabooBridgeAgentExecutionTraceResponse: Codable, Equatable, Sen
         self.backgroundOnly = backgroundOnly
         self.allowForeground = allowForeground
         self.shellAvailable = shellAvailable
+        self.processCreationLimit = processCreationLimit
         self.environmentPolicyVersion = environmentPolicyVersion
         self.environmentKeys = environmentKeys
         self.environmentSHA256 = environmentSHA256
@@ -304,10 +318,11 @@ public struct PeekabooBridgeAgentExecutionTraceResponse: Codable, Equatable, Sen
         self.exitCode = exitCode
         self.terminationSignal = terminationSignal
         self.spawnedAt = spawnedAt
+        self.lockdownAcknowledgedAt = lockdownAcknowledgedAt
         self.coordinationReceiptPublishedAt = coordinationReceiptPublishedAt
         self.acknowledgedAt = acknowledgedAt
         self.releasedAt = releasedAt
-        self.terminatedAt = terminatedAt
+        self.terminalObservationEndedAt = terminalObservationEndedAt
     }
 
     /// Re-derives every caller-visible commitment from the request and retained bytes.
@@ -344,7 +359,8 @@ public struct PeekabooBridgeAgentExecutionTraceResponse: Codable, Equatable, Sen
                   self.backgroundOnly,
                   !self.allowForeground,
                   !self.shellAvailable,
-                  self.environmentPolicyVersion == 1,
+                  self.processCreationLimit == 0,
+                  self.environmentPolicyVersion == 2,
                   self.environmentKeys == self.environmentKeys.sorted(),
                   Set(self.environmentKeys).count == self.environmentKeys.count,
                   Set(self.environmentKeys).isSubset(of: Self.allowedEnvironmentKeys),
@@ -352,6 +368,8 @@ public struct PeekabooBridgeAgentExecutionTraceResponse: Codable, Equatable, Sen
                   self.environmentKeys.contains("PEEKABOO_OPERATION_RECEIPT_DIRECTORY"),
                   self.environmentKeys.contains("PEEKABOO_AGENT_EXECUTION_GATE_FD"),
                   self.environmentKeys.contains("PEEKABOO_AGENT_EXECUTION_GATE_CHALLENGE"),
+                  self.environmentKeys.contains("PEEKABOO_AGENT_EXECUTION_LOCKDOWN_FD"),
+                  self.environmentKeys.contains("PEEKABOO_AGENT_EXECUTION_PROCESS_LIMIT"),
                   self.process.processIdentity.processIdentifier > 0,
                   self.process.processIdentity.processStartIdentity > 0,
                   self.requestingPeer.processIdentifier > 0,
@@ -359,6 +377,7 @@ public struct PeekabooBridgeAgentExecutionTraceResponse: Codable, Equatable, Sen
                   self.process.processIdentity.processIdentifier != self.requestingPeer.processIdentifier,
                   Self.isCDHash(self.process.processIdentity.codeSignatureHash),
                   Self.isCDHash(self.requestingPeer.codeSignatureHash),
+                  self.process.processIdentity.codeSignatureHash == self.requestingPeer.codeSignatureHash,
                   self.bridgeSocketPath.first == "/",
                   self.process.executablePath.first == "/",
                   Self.isSHA256(self.process.executableSHA256),
@@ -375,10 +394,11 @@ public struct PeekabooBridgeAgentExecutionTraceResponse: Codable, Equatable, Sen
                   self.acknowledgement.readErrorCode == nil,
                   self.stdout.byteCount + self.stderr.byteCount <= 16 * 1024 * 1024,
                   self.spawnedAt > 0,
-                  self.spawnedAt <= self.coordinationReceiptPublishedAt,
+                  self.spawnedAt <= self.lockdownAcknowledgedAt,
+                  self.lockdownAcknowledgedAt <= self.coordinationReceiptPublishedAt,
                   self.coordinationReceiptPublishedAt <= self.acknowledgedAt,
                   self.acknowledgedAt <= self.releasedAt,
-                  self.releasedAt <= self.terminatedAt
+                  self.releasedAt <= self.terminalObservationEndedAt
         else {
             throw PeekabooBridgeAgentExecutionResponseValidationError.inconsistentTerminalEvidence
         }
@@ -412,10 +432,12 @@ public struct PeekabooBridgeAgentExecutionTraceResponse: Codable, Equatable, Sen
               receipt.backgroundOnly == self.backgroundOnly,
               receipt.allowForeground == self.allowForeground,
               receipt.shellAvailable == self.shellAvailable,
+              receipt.processCreationLimit == self.processCreationLimit,
               receipt.environmentPolicyVersion == self.environmentPolicyVersion,
               receipt.environmentKeys == self.environmentKeys,
               receipt.environmentSHA256 == self.environmentSHA256,
               receipt.spawnedAt == self.spawnedAt,
+              receipt.lockdownAcknowledgedAt == self.lockdownAcknowledgedAt,
               receipt.publishedAt == self.coordinationReceiptPublishedAt,
               acknowledgement.version == 1,
               acknowledgement.challenge == receipt.challenge,
@@ -487,7 +509,8 @@ public struct PeekabooBridgeAgentExecutionTraceResponse: Codable, Equatable, Sen
         "TMPDIR", "TZ", "USER", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
         "GROK_API_KEY", "MINIMAX_API_KEY", "MOONSHOT_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
         "XAI_API_KEY", "PEEKABOO_OPERATION_RECEIPT_DIRECTORY", "PEEKABOO_AGENT_EXECUTION_GATE_FD",
-        "PEEKABOO_AGENT_EXECUTION_GATE_CHALLENGE",
+        "PEEKABOO_AGENT_EXECUTION_GATE_CHALLENGE", "PEEKABOO_AGENT_EXECUTION_LOCKDOWN_FD",
+        "PEEKABOO_AGENT_EXECUTION_PROCESS_LIMIT",
     ]
 }
 
@@ -505,7 +528,7 @@ public enum PeekabooBridgeAgentExecutionResponseValidationError: Error, Localize
     }
 }
 
-/// Errors before SIGCONT are distinguishable from terminal child results.
+/// Errors before the release challenge and Agent command routing are distinguishable from terminal child results.
 public enum PeekabooBridgeAgentExecutionPreReleaseError: Error, LocalizedError, Sendable {
     case invalidRequest(String)
     case unauthenticatedPeer

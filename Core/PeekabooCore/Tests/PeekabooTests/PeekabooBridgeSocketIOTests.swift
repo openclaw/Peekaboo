@@ -16,7 +16,7 @@ struct PeekabooBridgeSocketIOTests {
         for descriptor in [sockets.reader, sockets.writer] {
             let identity = try PeekabooBridgeSocketIO.peerAuditIdentity(fd: descriptor)
             #expect(identity.processIdentifier == getpid())
-            #expect(identity.processIdentifierVersion > 0)
+            #expect(identity.processIdentifierVersion == audit_token_to_pidversion(identity.token))
             #expect(identity.effectiveUserIdentifier == geteuid())
             #expect(identity.tokenData.count == MemoryLayout<audit_token_t>.size)
             #expect(PeekabooBridgeCodeSignatureIdentity.codeSignatureHash(auditIdentity: identity) ==

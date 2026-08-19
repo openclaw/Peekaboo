@@ -80,6 +80,7 @@ var targets: [Target] = [
         name: "CoreCLITests",
         dependencies: [
             "PeekabooCLI",
+            .product(name: "PeekabooAutomationKit", package: "PeekabooAutomationKit"),
             .product(name: "PeekabooBridgeTestSupport", package: "PeekabooCore"),
             .product(name: "PeekabooAutomationKitTestSupport", package: "PeekabooAutomationKit"),
             .product(name: "PeekabooFoundation", package: "PeekabooFoundation"),

@@ -79,6 +79,7 @@ struct PeekabooBridgeLiveAgentExecutionRunner: PeekabooBridgeAgentExecutionRunni
             environment = try PeekabooBridgeAgentExecutionEnvironment.make(
                 operationReceiptDirectoryPath: paths.operationReceiptDirectory.path,
                 releaseGateDescriptor: releaseGate.childDescriptor,
+                lockdownReadinessDescriptor: releaseGate.childReadinessDescriptor,
                 releaseChallenge: challenge)
         } catch {
             pipes.closeAll()
@@ -117,6 +118,8 @@ struct PeekabooBridgeLiveAgentExecutionRunner: PeekabooBridgeAgentExecutionRunni
         let coordinationBytes: Data
         let acknowledgementBytes: Data
         let process: PeekabooBridgeAgentExecutionProcessIdentity
+        let processCustody: PeekabooBridgeAgentExecutionProcessCustody
+        let lockdownAcknowledgedAt: Int64
         let receiptPublishedAt: Int64
         let acknowledgedAt: Int64
         let releasedAt: Int64
@@ -131,6 +134,16 @@ struct PeekabooBridgeLiveAgentExecutionRunner: PeekabooBridgeAgentExecutionRunni
                     codeSignatureHash: child.codeSignatureHash),
                 executablePath: child.path,
                 executableSHA256: child.sha256)
+            processCustody = try PeekabooBridgeAgentExecutionProcessWait.captureProcessCustody(
+                processIdentity: process.processIdentity)
+            guard Darwin.kill(processIdentifier, SIGCONT) == 0 else {
+                throw PeekabooBridgeAgentExecutionPreReleaseError.releaseFailed(errno)
+            }
+            try await releaseGate.waitForLockdown(challenge: challenge, deadline: startDeadline)
+            lockdownAcknowledgedAt = PeekabooBridgeAgentExecutionCoding.nowMilliseconds()
+            _ = try PeekabooBridgeAgentExecutionExecutable.captureChild(
+                processIdentifier,
+                expected: executable)
             receiptPublishedAt = PeekabooBridgeAgentExecutionCoding.nowMilliseconds()
             let receipt = PeekabooBridgeAgentExecutionCoordinationReceipt(
                 challenge: challenge,
@@ -150,10 +163,12 @@ struct PeekabooBridgeLiveAgentExecutionRunner: PeekabooBridgeAgentExecutionRunni
                 backgroundOnly: true,
                 allowForeground: false,
                 shellAvailable: false,
+                processCreationLimit: 0,
                 environmentPolicyVersion: environment.policyVersion,
                 environmentKeys: environment.keys,
                 environmentSHA256: environment.sha256,
                 spawnedAt: spawnedAt,
+                lockdownAcknowledgedAt: lockdownAcknowledgedAt,
                 publishedAt: receiptPublishedAt)
             coordinationBytes = try PeekabooBridgeAgentExecutionCoding.canonicalData(receipt)
             do {
@@ -193,9 +208,6 @@ struct PeekabooBridgeLiveAgentExecutionRunner: PeekabooBridgeAgentExecutionRunni
             guard ContinuousClock.now < startDeadline else {
                 throw PeekabooBridgeAgentExecutionPreReleaseError.acknowledgementTimedOut
             }
-            guard Darwin.kill(processIdentifier, SIGCONT) == 0 else {
-                throw PeekabooBridgeAgentExecutionPreReleaseError.releaseFailed(errno)
-            }
             try releaseGate.release(challenge: challenge)
             releasedAt = PeekabooBridgeAgentExecutionCoding.nowMilliseconds()
         } catch {
@@ -215,6 +227,7 @@ struct PeekabooBridgeLiveAgentExecutionRunner: PeekabooBridgeAgentExecutionRunni
 
         let terminal = await PeekabooBridgeAgentExecutionProcessWait.wait(
             processIdentifier,
+            processCustody: processCustody,
             timeoutMilliseconds: request.runTimeoutMilliseconds,
             pipeControl: pipeControl,
             terminationGraceMilliseconds: Self.terminationGraceMilliseconds)
@@ -252,6 +265,7 @@ struct PeekabooBridgeLiveAgentExecutionRunner: PeekabooBridgeAgentExecutionRunni
             backgroundOnly: true,
             allowForeground: false,
             shellAvailable: false,
+            processCreationLimit: 0,
             environmentPolicyVersion: environment.policyVersion,
             environmentKeys: environment.keys,
             environmentSHA256: environment.sha256,
@@ -265,10 +279,11 @@ struct PeekabooBridgeLiveAgentExecutionRunner: PeekabooBridgeAgentExecutionRunni
             exitCode: terminal.exitCode,
             terminationSignal: terminal.terminationSignal,
             spawnedAt: spawnedAt,
+            lockdownAcknowledgedAt: lockdownAcknowledgedAt,
             coordinationReceiptPublishedAt: receiptPublishedAt,
             acknowledgedAt: acknowledgedAt,
             releasedAt: releasedAt,
-            terminatedAt: terminal.terminatedAt)
+            terminalObservationEndedAt: terminal.terminalObservationEndedAt)
     }
 
     private static func finishPipeDrain(control: PeekabooBridgeAgentExecutionPipeControl) async {
