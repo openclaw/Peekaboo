@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Add Bridge protocol 1.31 one-request signed background Agent execution with authenticated CLI derivation, an anonymous earliest-entrypoint release gate, fail-closed process-group reaping, canonical terminal receipt bundles, and nested exact-lane receipts.
+- Add Bridge protocol 1.31 one-request signed background Agent execution with authenticated CLI derivation, an irreversible earliest-entrypoint process limit, lifecycle-covered release acknowledgement, exact-leader reaping, canonical terminal receipt bundles, and nested exact-lane receipts.
 
 ### Fixed
 - Pin foreground menu focus, clicks, and listing to one exact process/window generation across CLI and MCP, preserving focus outcomes when a later menu read fails.

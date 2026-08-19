@@ -11,11 +11,14 @@ import {
 import {
   HEX40,
   HEX64,
+  authenticateAgentExecutionTerminalBundle,
   authenticateLiveBridgeBundle,
   authenticatedBridgeReceiptIdentity,
   controlledFixtureBindings,
   corroboratedObservationTime,
   exactKeys,
+  isAgentMutatingToolName,
+  normalizedAgentToolName,
   parseOptions,
   positiveDecimal,
   positiveInteger,
@@ -31,18 +34,10 @@ import {
   sha256,
   validateEmitter,
   validateControlledFixtureSummary,
+  validateAgentExecutionTrace,
   validateTarget,
   writePrivateExclusive,
 } from './lib.mjs';
-
-const MUTATING_TOOLS = new Set([
-  'action', 'app', 'click', 'dialog', 'dock', 'drag', 'menu', 'move', 'paste', 'press',
-  'scroll', 'set_value', 'space', 'type', 'window',
-]);
-
-function normalizedToolName(value) {
-  return typeof value === 'string' ? value.trim().replaceAll('-', '_').toLowerCase() : '';
-}
 
 function verifiedCodeSignatureHash(executablePath, label) {
   const verify = spawnSync('/usr/bin/codesign', ['--verify', '--strict', executablePath], {
@@ -58,18 +53,6 @@ function verifiedCodeSignatureHash(executablePath, label) {
   requireCondition(!display.error && display.status === 0 && matches.length === 1,
     `${label} has no exact CDHash`);
   return matches[0];
-}
-
-function processIdentity(filePath, label) {
-  const retained = readStableJSON(filePath, label);
-  exactKeys(retained.value, ['pid', 'startIdentity'], label);
-  requireCondition(positiveInteger(retained.value.pid) && positiveDecimal(retained.value.startIdentity), `${label} is malformed`);
-  return {
-    pid: retained.value.pid,
-    start_identity: retained.value.startIdentity,
-    mtime_milliseconds: Number(retained.info.mtimeNs / 1_000_000n),
-    sha256: retained.sha256,
-  };
 }
 
 function exitReceipt(filePath, expectedProcess) {
@@ -152,60 +135,6 @@ function operationInterval(runRoot, nonce, monitorID) {
   return { retained, evidence, start, complete };
 }
 
-function recursivelyRejectForeground(value, label = 'trace arguments') {
-  if (Array.isArray(value)) {
-    value.forEach((entry) => recursivelyRejectForeground(entry, label));
-    return;
-  }
-  if (!value || typeof value !== 'object') return;
-  for (const [key, entry] of Object.entries(value)) {
-    const normalized = key.trim().replaceAll('-', '_').toLowerCase();
-    requireCondition(!(normalized === 'foreground' && entry === true), `${label} requested foreground=true`);
-    requireCondition(!(['mode', 'delivery_mode', 'capture_focus'].includes(normalized)
-      && typeof entry === 'string' && entry.toLowerCase() === 'foreground'), `${label} requested foreground mode`);
-    recursivelyRejectForeground(entry, label);
-  }
-}
-
-function traceReceipt(filePath) {
-  const retained = readStableJSON(filePath, 'Agent JSON result');
-  const root = retained.value;
-  requireCondition(root.success === true && root.result && typeof root.result === 'object', 'Agent JSON result did not succeed');
-  const trace = root.result.executionTrace;
-  exactKeys(trace, ['entries', 'totalCallCount', 'truncated'], 'Agent executionTrace');
-  requireCondition(Array.isArray(trace.entries) && trace.entries.length > 0, 'Agent execution trace is empty');
-  requireCondition(trace.truncated === false && trace.totalCallCount === trace.entries.length, 'Agent execution trace is incomplete');
-  const ids = new Set();
-  const entriesByID = new Map();
-  const entryIndexByID = new Map();
-  const dispatchedCallIDs = new Set();
-  for (const [index, entry] of trace.entries.entries()) {
-    const keys = Object.keys(entry).sort();
-    const required = ['arguments', 'disposition', 'id', 'isError', 'name', 'result'];
-    requireCondition(required.every((key) => keys.includes(key))
-      && keys.every((key) => [...required, 'mutationDispatch', 'actionOutcome'].includes(key)),
-    `Agent trace entry ${index} keys are not closed`);
-    requireCondition(typeof entry.id === 'string' && entry.id.length > 0 && !ids.has(entry.id), `Agent trace entry ${index} ID is invalid`);
-    ids.add(entry.id);
-    entriesByID.set(entry.id, entry);
-    entryIndexByID.set(entry.id, index);
-    const name = normalizedToolName(entry.name);
-    requireCondition(name && name !== 'shell', 'Agent trace contains Shell');
-    recursivelyRejectForeground(entry.arguments, `Agent trace entry ${entry.id}`);
-    requireCondition(entry.mutationDispatch !== 'possibly_dispatched', `Agent trace entry ${entry.id} is possibly dispatched`);
-    if (entry.mutationDispatch === 'dispatched') dispatchedCallIDs.add(entry.id);
-    requireCondition(entry.actionOutcome?.delivery_mode !== 'foreground', `Agent trace entry ${entry.id} used foreground delivery`);
-    if (MUTATING_TOOLS.has(name)) {
-      requireCondition(entry.disposition === 'executed/succeeded' && entry.isError === false, `Agent mutation ${entry.id} did not succeed`);
-      requireCondition(entry.mutationDispatch === 'dispatched', `Agent mutation ${entry.id} was not definitely dispatched`);
-      requireCondition(entry.actionOutcome?.delivery_mode === 'background', `Agent mutation ${entry.id} lacks background outcome authority`);
-    } else {
-      requireCondition(entry.disposition === 'executed/succeeded' && entry.isError === false, `Agent observation ${entry.id} did not succeed`);
-    }
-  }
-  return { retained, root, trace, entriesByID, entryIndexByID, dispatchedCallIDs };
-}
-
 function semanticReadback(filePath, expectedTarget, expectedPhase, operation, label) {
   const retained = readStableJSON(filePath, label);
   const value = retained.value;
@@ -277,7 +206,7 @@ function signedBundle(filePath, validatorPath, operation, label, authentication)
     && report.validator_id === 'peekaboo-bridge-receipt-validate-v1'
     && report.trust_source === 'authenticated_live_listener'
     && report.minimum_protocol_version === '1.29'
-    && report.host_protocol_version === '1.30'
+    && report.host_protocol_version === '1.31'
     && HEX40.test(report.host_source_commit ?? '')
     && report.terminal_receipt_attested === true
     && report.retention_basis === 'exported_bundle'
@@ -310,7 +239,15 @@ function expectedBridgeOperation(family) {
   }[family] ?? null;
 }
 
-function agentBundleCorpus(entries, receiptDirectory, expectedAgent, expectedHost, authentication) {
+function agentBundleCorpus(
+  entries,
+  receiptDirectory,
+  expectedAgent,
+  expectedHost,
+  expectedListenerInstanceID,
+  lifetime,
+  authentication,
+) {
   requireCondition(Array.isArray(entries) && entries.length >= 4,
     'Agent bundle corpus must contain every signed bundle');
   const files = fs.readdirSync(receiptDirectory, { withFileTypes: true });
@@ -349,8 +286,11 @@ function agentBundleCorpus(entries, receiptDirectory, expectedAgent, expectedHos
       && signed.report.host_source_commit === expectedHost.source_commit,
     `Agent bundle ${index} was validated against another Bridge host/build`);
     requireCondition(typeof signed.report.listener_instance_id === 'string'
-      && signed.report.listener_instance_id.length > 0,
-    `Agent bundle ${index} has no live listener identity`);
+      && signed.report.listener_instance_id === expectedListenerInstanceID,
+    `Agent bundle ${index} belongs to another live listener`);
+    requireCondition(signed.payload.startedAtUnixMilliseconds >= lifetime.released_at_milliseconds
+      && signed.payload.completedAtUnixMilliseconds <= lifetime.terminal_observation_ended_at_milliseconds,
+    `Agent bundle ${index} falls outside the signed Agent lifetime`);
     listenerIDs.add(signed.report.listener_instance_id);
     return signed;
   });
@@ -427,9 +367,9 @@ function agentReadbacks(filePath, agent, trace, operation, plan, corpus) {
         `Agent readback ${target.label}.${kind} bundle is reused`);
       usedBundlePaths.add(action.bundle_path);
       const entry = trace.entriesByID.get(action.trace_call_id);
-      requireCondition(action.family === normalizedToolName(action.family)
-        && MUTATING_TOOLS.has(action.family), `Agent readback ${target.label}.${kind} family is invalid`);
-      requireCondition(entry && normalizedToolName(entry.name) === action.family,
+      requireCondition(action.family === normalizedAgentToolName(action.family)
+        && isAgentMutatingToolName(action.family), `Agent readback ${target.label}.${kind} family is invalid`);
+      requireCondition(entry && normalizedAgentToolName(entry.name) === action.family,
         `Agent readback ${target.label}.${kind} does not match its trace family`);
       requireCondition(entry.arguments?.pid === target.target.pid
         && entry.arguments?.window_id === target.target.window_id,
@@ -542,14 +482,8 @@ const COMMON_LAUNCH_ENVIRONMENT_KEYS = [
   'HOME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'LOGNAME', 'PATH', 'SSL_CERT_DIR',
   'SSL_CERT_FILE', 'TMPDIR', 'TZ', 'USER',
 ];
-const AGENT_LAUNCH_ENVIRONMENT_KEYS = [
-  ...COMMON_LAUNCH_ENVIRONMENT_KEYS,
-  'ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GROK_API_KEY',
-  'MINIMAX_API_KEY', 'MOONSHOT_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY',
-  'PEEKABOO_OPERATION_RECEIPT_DIRECTORY', 'XAI_API_KEY',
-];
 
-function validateLaunchEnvironment(value, kind) {
+function validateCoordinatorLaunchEnvironment(value) {
   requireCondition(value.environment_policy_version === 1
     && Array.isArray(value.environment_keys) && value.environment_keys.length > 0
     && value.environment_keys.every((key) => typeof key === 'string' && key.length > 0)
@@ -557,78 +491,11 @@ function validateLaunchEnvironment(value, kind) {
     && value.environment_keys.every((key, index) => index === 0
       || value.environment_keys[index - 1] < key)
     && HEX64.test(value.environment_sha256 ?? ''),
-  `${kind} invocation environment receipt is malformed`);
-  const allowlist = kind === 'Agent'
-    ? AGENT_LAUNCH_ENVIRONMENT_KEYS : COMMON_LAUNCH_ENVIRONMENT_KEYS;
-  requireCondition(value.environment_keys.every((key) => allowlist.includes(key))
+  'coordinator invocation environment receipt is malformed');
+  requireCondition(value.environment_keys.every((key) => COMMON_LAUNCH_ENVIRONMENT_KEYS.includes(key))
     && value.environment_keys.includes('PATH')
     && !value.environment_keys.some((key) => key === 'NODE_OPTIONS' || key.startsWith('DYLD_')),
-  `${kind} invocation environment exceeds the closed allowlist`);
-  if (kind === 'Agent') {
-    requireCondition(value.environment_keys.includes('PEEKABOO_OPERATION_RECEIPT_DIRECTORY'),
-      'Agent invocation environment omits its receipt directory');
-  }
-}
-
-function agentInvocation(filePath, agent, plan, planReceipt, lifetime) {
-  const retained = readStableJSON(filePath, 'Agent invocation receipt');
-  const value = retained.value;
-  exactKeys(value, [
-    'version', 'kind', 'pid', 'start_identity', 'executable_path', 'executable_sha256',
-    'arguments', 'plan_path', 'plan_sha256', 'monitor_executable_path',
-    'monitor_executable_sha256', 'monitor_code_signature_hash',
-    'identity_handshake_path', 'identity_handshake_sha256',
-    'stdout_path', 'stderr_path', 'environment_policy_version', 'environment_keys',
-    'environment_sha256', 'captured_at_milliseconds', 'task_path', 'task_sha256',
-    'receipt_directory', 'bridge_socket', 'background_only', 'allow_foreground', 'shell_available',
-  ], 'Agent invocation receipt');
-  requireCondition(value.version === 1 && value.kind === 'agent'
-    && sameJSON({ pid: value.pid, start_identity: value.start_identity }, agent),
-  'Agent invocation receipt belongs to another process generation');
-  requireCondition(value.background_only === true && value.allow_foreground === false
-    && value.shell_available === false, 'Agent invocation policy is not background-only without Shell');
-  requireCondition(value.executable_path === plan.peekaboo_executable, 'Agent invocation executable differs from the live plan');
-  const executable = requireStableExecutable(value.executable_path, 'Agent invocation executable', {
-    allowRootOwner: true,
-  });
-  requireCondition(value.executable_sha256 === executable.sha256, 'Agent invocation executable bytes changed');
-  const codeSignatureHash = verifiedCodeSignatureHash(value.executable_path, 'Agent invocation executable');
-  requireCondition(value.bridge_socket === plan.bridge.socket_path,
-    'Agent invocation Bridge socket differs from the live plan');
-  requireCondition(value.plan_path === planReceipt.path && value.plan_sha256 === planReceipt.sha256,
-    'Agent invocation plan bytes differ from validation');
-  requireCondition(value.monitor_executable_path === plan.monitor_executable,
-    'Agent invocation monitor executable differs from the live plan');
-  const monitor = requireStableExecutable(value.monitor_executable_path, 'Agent invocation monitor', {
-    allowRootOwner: true,
-  });
-  requireCondition(value.monitor_executable_sha256 === monitor.sha256,
-    'Agent invocation monitor bytes changed');
-  requireCondition(value.monitor_code_signature_hash === plan.monitor.code_signature_hash,
-    'Agent invocation monitor CDHash differs from the plan');
-  const handshake = readStableJSON(value.identity_handshake_path, 'Agent invocation identity handshake');
-  exactKeys(handshake.value, ['pid', 'startIdentity'], 'Agent invocation identity handshake');
-  requireCondition(handshake.sha256 === value.identity_handshake_sha256
-    && handshake.value.pid === agent.pid && handshake.value.startIdentity === agent.start_identity,
-  'Agent invocation identity handshake differs from its process');
-  const task = readStableFile(value.task_path, 'Agent task');
-  requireCondition(task.sha256 === value.task_sha256 && HEX64.test(value.task_sha256 ?? ''), 'Agent task bytes changed');
-  const taskText = task.bytes.toString('utf8').replace(/\n$/, '');
-  const expectedArguments = [
-    'agent', 'run', taskText, '--no-cache', '--max-steps', '40',
-    '--bridge-socket', value.bridge_socket, '--json',
-  ];
-  requireCondition(taskText.length > 0 && sameJSON(value.arguments, expectedArguments),
-    'Agent invocation argv is not the exact closed background-only order');
-  requirePrivateDirectory(value.receipt_directory, 'Agent receipt export directory');
-  readStableFile(value.stdout_path, 'Agent stdout');
-  readStableFile(value.stderr_path, 'Agent stderr');
-  requireCondition(positiveInteger(value.captured_at_milliseconds)
-    && value.captured_at_milliseconds >= lifetime.started_at_milliseconds
-    && value.captured_at_milliseconds <= lifetime.completed_at_milliseconds,
-  'Agent invocation receipt falls outside the Agent lifetime');
-  validateLaunchEnvironment(value, 'Agent');
-  return { retained, value, code_signature_hash: codeSignatureHash };
+  'coordinator invocation environment exceeds the closed allowlist');
 }
 
 function coordinatorInvocation(filePath, coordinator, plan, planReceipt, eventsPath, lifetime) {
@@ -691,8 +558,33 @@ function coordinatorInvocation(filePath, coordinator, plan, planReceipt, eventsP
     && value.captured_at_milliseconds >= lifetime.started_at_milliseconds
     && value.captured_at_milliseconds <= lifetime.completed_at_milliseconds,
   'coordinator invocation receipt falls outside its lifetime');
-  validateLaunchEnvironment(value, 'coordinator');
+  validateCoordinatorLaunchEnvironment(value);
   return { retained, value, code_signature_hash: codeSignatureHash };
+}
+
+export function validateCoordinatorExecutionEvidence({
+  plan,
+  planReceipt,
+  invocationPath,
+  eventsPath,
+  exitPath,
+}) {
+  const events = coordinatorEvents(eventsPath);
+  const exit = exitReceipt(exitPath, 'coordinator');
+  requireCondition(exit.started_at_milliseconds
+    <= Number(events.retained.info.mtimeNs / 1_000_000n)
+    && exit.completed_at_milliseconds
+      >= Number(events.retained.info.mtimeNs / 1_000_000n),
+  'coordinator exit interval does not contain its JSONL evidence');
+  const invocation = coordinatorInvocation(
+    invocationPath,
+    { pid: exit.pid, start_identity: exit.start_identity },
+    plan,
+    planReceipt,
+    eventsPath,
+    exit,
+  );
+  return { events, exit, invocation };
 }
 
 function integratedReadback(filePath, phase, expected) {
@@ -728,17 +620,15 @@ function integratedReadback(filePath, phase, expected) {
   return { retained, value, observation };
 }
 
-export function validateConcurrentRun(specPath, outputPath, {
+export function validateConcurrentRunSpec(spec, outputPath, {
   authenticateBundle = authenticateLiveBridgeBundle,
 } = {}) {
-  const spec = readStableJSON(specPath, 'concurrent validation input').value;
   exactKeys(spec, [
-    'version', 'plan', 'coordinator_invocation', 'coordinator_events', 'coordinator_exit', 'agent_result',
-    'agent_exit', 'agent_invocation', 'agent_identity', 'agent_bundles', 'agent_readbacks',
-    'integrated_cu',
+    'version', 'plan', 'coordinator_invocation', 'coordinator_events', 'coordinator_exit',
+    'agent_task', 'agent_run_root', 'agent_execution_bundle',
+    'agent_execution_validator_report', 'agent_bundles', 'agent_readbacks', 'integrated_cu',
   ], 'concurrent validation input');
   requireCondition(spec.version === 1, 'concurrent validation input version is not 1');
-  exactKeys(spec.agent_identity, ['launch', 'perform', 'restore'], 'agent_identity');
   exactKeys(spec.integrated_cu, [
     'emitter', 'perform_readback', 'restore_readback',
   ], 'integrated_cu');
@@ -750,19 +640,18 @@ export function validateConcurrentRun(specPath, outputPath, {
     && plan.observer?.target, 'live-v4 plan lacks closed controller/observer targets');
   validateTarget(plan.monitor.foreground_target, 'plan foreground target');
   validateTarget(plan.monitor.sentinel, 'plan sentinel');
-  const events = coordinatorEvents(spec.coordinator_events);
-  const coordinatorExit = exitReceipt(spec.coordinator_exit, 'coordinator');
-  requireCondition(coordinatorExit.started_at_milliseconds <= Number(events.retained.info.mtimeNs / 1_000_000n)
-    && coordinatorExit.completed_at_milliseconds >= Number(events.retained.info.mtimeNs / 1_000_000n),
-  'coordinator exit interval does not contain its JSONL evidence');
-  const coordinatorLaunch = coordinatorInvocation(
-    spec.coordinator_invocation,
-    { pid: coordinatorExit.pid, start_identity: coordinatorExit.start_identity },
+  const coordinatorAuthority = validateCoordinatorExecutionEvidence({
     plan,
-    retainedPlan,
-    spec.coordinator_events,
-    coordinatorExit,
-  );
+    planReceipt: retainedPlan,
+    invocationPath: spec.coordinator_invocation,
+    eventsPath: spec.coordinator_events,
+    exitPath: spec.coordinator_exit,
+  });
+  const {
+    events,
+    exit: coordinatorExit,
+    invocation: coordinatorLaunch,
+  } = coordinatorAuthority;
   const summary = readStableJSON(events.completed.summary_path, 'final certification summary');
   requireCondition(summary.bytes.length === events.completed.summary_size
     && summary.sha256 === events.completed.summary_sha256,
@@ -784,45 +673,53 @@ export function validateConcurrentRun(specPath, outputPath, {
   requireCondition(operation.start < events.perform.deadline_milliseconds, 'perform deadline precedes operations-start');
   requireCondition(operation.complete < events.restore.deadline_milliseconds, 'restore deadline precedes operations-complete');
 
-  const agentExit = exitReceipt(spec.agent_exit, 'agent');
-  const agentIdentities = Object.fromEntries(Object.entries(spec.agent_identity).map(([phase, receipt]) => (
-    [phase, processIdentity(receipt, `Agent ${phase} identity`)]
-  )));
-  const expectedAgent = { pid: agentExit.pid, start_identity: agentExit.start_identity };
-  for (const [phase, identity] of Object.entries(agentIdentities)) {
-    requireCondition(sameJSON({ pid: identity.pid, start_identity: identity.start_identity }, expectedAgent), `Agent ${phase} identity changed generation`);
-    requireCondition(identity.mtime_milliseconds >= agentExit.started_at_milliseconds
-      && identity.mtime_milliseconds <= agentExit.completed_at_milliseconds,
-    `Agent ${phase} identity receipt falls outside the Agent lifetime`);
-  }
-  requireCondition(agentExit.started_at_milliseconds <= operation.start
-    && agentExit.completed_at_milliseconds >= operation.complete,
-  'Agent lifetime does not cover the complete live-v4 operation interval');
-  requireCondition(agentIdentities.perform.mtime_milliseconds <= events.perform.deadline_milliseconds
-    && agentIdentities.restore.mtime_milliseconds <= events.restore.deadline_milliseconds,
-  'Agent phase identity receipt missed an external window deadline');
-  requireCondition(agentIdentities.perform.mtime_milliseconds >= operation.start
-    && agentIdentities.perform.mtime_milliseconds <= operation.complete,
-  'Agent perform identity receipt falls outside live-v4 operations');
-  requireCondition(agentIdentities.launch.mtime_milliseconds <= operation.start,
-    'Agent launch identity receipt does not precede live-v4 operations');
-  requireCondition(agentIdentities.restore.mtime_milliseconds >= operation.complete,
-    'Agent restore identity receipt precedes operations-complete');
-  const invocation = agentInvocation(
-    spec.agent_invocation,
-    expectedAgent,
-    plan,
-    retainedPlan,
-    agentExit,
-  );
-  requireCondition(spec.agent_identity.launch === invocation.value.identity_handshake_path
-    && agentIdentities.launch.sha256 === invocation.value.identity_handshake_sha256,
-  'Agent launch process receipt is not the managed-launcher identity handshake');
   requireCondition(Array.isArray(plan.bridge.trusted_host_team_ids)
     && plan.bridge.trusted_host_team_ids.length > 0
     && plan.bridge.trusted_host_team_ids.every((teamID) => /^[A-Z0-9]{10}$/.test(teamID))
     && new Set(plan.bridge.trusted_host_team_ids).size === plan.bridge.trusted_host_team_ids.length,
   'live-v4 plan Bridge trust policy is invalid');
+  requirePrivateDirectory(spec.agent_run_root, 'Agent execution run root');
+  const agentTask = readStableFile(spec.agent_task, 'Agent task');
+  const taskText = agentTask.bytes.toString('utf8').replace(/\n$/, '');
+  requireCondition(taskText.length > 0 && !taskText.includes('\0')
+    && Buffer.from(`${taskText}\n`, 'utf8').equals(agentTask.bytes),
+  'Agent task must contain exact UTF-8 task text plus one terminal newline');
+  const agentExecutable = requireStableExecutable(plan.peekaboo_executable, 'Agent executable', {
+    allowRootOwner: true,
+  });
+  const expectedAgentRequest = {
+    task: taskText,
+    maxSteps: 40,
+    runRootPath: spec.agent_run_root,
+    coordinationReceiptPath: path.join(spec.agent_run_root, 'agent-execution-coordination.json'),
+    acknowledgementPath: path.join(spec.agent_run_root, 'agent-execution-ack.json'),
+    startTimeoutMilliseconds: 30_000,
+    runTimeoutMilliseconds: 900_000,
+  };
+  const terminal = authenticateAgentExecutionTerminalBundle({
+    bundlePath: spec.agent_execution_bundle,
+    validatorReportPath: spec.agent_execution_validator_report,
+    executablePath: agentExecutable.path,
+    expectedExecutableSHA256: agentExecutable.sha256,
+    socketPath: plan.bridge.socket_path,
+    trustedHostTeamIDs: plan.bridge.trusted_host_team_ids,
+    expectedHost: plan.bridge.expected_host,
+    expectedRequest: expectedAgentRequest,
+    authenticateBundle,
+  });
+  const expectedAgent = {
+    pid: terminal.child.processIdentifier,
+    start_identity: terminal.child.processStartIdentity,
+    code_signature_hash: terminal.child.codeSignatureHash,
+  };
+  const requestingPeer = {
+    pid: terminal.requester.processIdentifier,
+    start_identity: terminal.requester.processStartIdentity,
+    code_signature_hash: terminal.requester.codeSignatureHash,
+  };
+  requireCondition(terminal.response.releasedAt <= operation.start
+    && terminal.response.terminalObservationEndedAt >= operation.complete,
+  'signed Agent lifetime does not cover the complete live-v4 operation interval');
 
   requireCondition(typeof spec.integrated_cu.emitter === 'string', 'integrated-CU emitter calibration path is invalid');
   const emitterCalibration = readCalibrationEmitter(
@@ -862,16 +759,21 @@ export function validateConcurrentRun(specPath, outputPath, {
   requireCondition(restoreReadback.value.observed_at_milliseconds >= operation.complete,
     'integrated-CU restore readback precedes operations-complete');
 
-  const trace = traceReceipt(spec.agent_result);
+  const trace = validateAgentExecutionTrace(terminal.stdoutRoot);
   const corpus = agentBundleCorpus(
     spec.agent_bundles,
-    invocation.value.receipt_directory,
-    { ...expectedAgent, code_signature_hash: invocation.code_signature_hash },
+    terminal.response.operationReceiptDirectoryPath,
+    expectedAgent,
     plan.bridge.expected_host,
+    terminal.identity.listener_instance_id,
+    {
+      released_at_milliseconds: terminal.response.releasedAt,
+      terminal_observation_ended_at_milliseconds: terminal.response.terminalObservationEndedAt,
+    },
     {
       authenticateBundle,
-      executable_path: invocation.value.executable_path,
-      executable_sha256: invocation.value.executable_sha256,
+      executable_path: agentExecutable.path,
+      executable_sha256: agentExecutable.sha256,
       bridge_socket: plan.bridge.socket_path,
       trusted_host_team_ids: plan.bridge.trusted_host_team_ids,
       expected_host: plan.bridge.expected_host,
@@ -911,18 +813,28 @@ export function validateConcurrentRun(specPath, outputPath, {
       monitor_evidence_sha256: operation.retained.sha256,
     },
     agent: {
-      pid: agentExit.pid,
-      start_identity: agentExit.start_identity,
-      executable_path: invocation.value.executable_path,
-      executable_sha256: invocation.value.executable_sha256,
-      code_signature_hash: invocation.code_signature_hash,
-      exit_code: agentExit.exit_code,
-      exit_receipt_sha256: agentExit.sha256,
-      process_receipt_sha256: Object.fromEntries(Object.entries(agentIdentities).map(
-        ([phase, identity]) => [phase, identity.sha256],
-      )),
-      invocation_sha256: invocation.retained.sha256,
-      result_sha256: trace.retained.sha256,
+      pid: expectedAgent.pid,
+      start_identity: expectedAgent.start_identity,
+      code_signature_hash: expectedAgent.code_signature_hash,
+      requester: requestingPeer,
+      run_root: terminal.response.runRootPath,
+      acknowledgement_path: terminal.response.acknowledgementPath,
+      executable_path: terminal.process.executablePath,
+      executable_sha256: terminal.process.executableSHA256,
+      terminal_bundle_sha256: terminal.bundle.sha256,
+      terminal_validator_report_sha256: terminal.validator.sha256,
+      listener_instance_id: terminal.identity.listener_instance_id,
+      process_disposition: terminal.response.processDisposition,
+      output_disposition: terminal.response.outputDisposition,
+      stdout_sha256: terminal.stdout.value.sha256,
+      stderr_sha256: terminal.stderr.value.sha256,
+      coordination_receipt_sha256: terminal.coordinationReceipt.value.sha256,
+      acknowledgement_sha256: terminal.acknowledgement.value.sha256,
+      spawned_at_milliseconds: terminal.response.spawnedAt,
+      coordination_published_at_milliseconds: terminal.response.coordinationReceiptPublishedAt,
+      acknowledged_at_milliseconds: terminal.response.acknowledgedAt,
+      released_at_milliseconds: terminal.response.releasedAt,
+      terminal_observation_ended_at_milliseconds: terminal.response.terminalObservationEndedAt,
       readbacks_sha256: readbacks.retained.sha256,
       controlled_fixture_targets: readbacks.controlled_fixture_targets,
       mutation_families: readbacks.mutation_families,
@@ -939,9 +851,9 @@ export function validateConcurrentRun(specPath, outputPath, {
       },
     },
     monitor: {
-      executable_path: invocation.value.monitor_executable_path,
-      executable_sha256: invocation.value.monitor_executable_sha256,
-      code_signature_hash: invocation.value.monitor_code_signature_hash,
+      executable_path: coordinatorLaunch.value.monitor_executable_path,
+      executable_sha256: coordinatorLaunch.value.monitor_executable_sha256,
+      code_signature_hash: coordinatorLaunch.value.monitor_code_signature_hash,
     },
     integrated_cu: {
       emitter,
@@ -950,21 +862,26 @@ export function validateConcurrentRun(specPath, outputPath, {
       restore_readback_sha256: restoreReadback.retained.sha256,
     },
     overlap: {
-      agent_started_at_milliseconds: agentExit.started_at_milliseconds,
+      agent_started_at_milliseconds: terminal.response.spawnedAt,
       operations_started_at_milliseconds: operation.start,
       operations_completed_at_milliseconds: operation.complete,
-      agent_completed_at_milliseconds: agentExit.completed_at_milliseconds,
+      agent_completed_at_milliseconds: terminal.response.terminalObservationEndedAt,
       agent_covers_operation_interval: true,
     },
     externally_supplied_authority: [
-      'coordinator and Agent exit receipts because their JSON outputs omit process exit status',
-      'Agent phase process receipts because Agent JSON omits PID and process-start identity',
+      'coordinator invocation and exit receipts because its JSONL output omits process authority',
+      'listener-signed Agent terminal bundle for exact requester/child, policy, output, release, and exit authority',
       'Agent readback evidence because executionTrace redacts values and does not link calls to signed receipt files',
       'integrated-CU emitter and semantic readbacks because integrated Computer Use emits no closed PID-generation-Team-CDHash receipt',
     ],
   };
   const written = writePrivateExclusive(outputPath, report);
   return { report, output_sha256: written.sha256 };
+}
+
+export function validateConcurrentRun(specPath, outputPath, options = {}) {
+  const spec = readStableJSON(specPath, 'concurrent validation input').value;
+  return validateConcurrentRunSpec(spec, outputPath, options);
 }
 
 function invokedAsScript() {

@@ -9,23 +9,32 @@ import {
   validateSuccessfulCertificationSummary,
 } from '../finalize-multi-target-certification.mjs';
 import {
+  validateConcurrentRunSpec,
+  validateCoordinatorExecutionEvidence,
+} from './validate-concurrent-run.mjs';
+import {
   aggregateSHA256,
+  authenticateAgentExecutionTerminalBundle,
   authenticateLiveBridgeBundle,
   authenticatedBridgeReceiptIdentity,
   controlledFixtureBindings,
   corroboratedObservationTime,
   exactKeys,
   fileReceipt,
+  isAgentMutatingToolName,
+  normalizedAgentToolName,
   parseOptions,
   readStableJSON,
   readStableJSONLines,
   readStableFile,
   requireCondition,
+  requirePrivateDirectory,
   requireStableExecutable,
   requireUniqueAuthenticatedBridgeReceipts,
   sameJSON,
   sha256,
   validateControlledFixtureSummary,
+  validateAgentExecutionTrace,
   writePrivateExclusive,
 } from './lib.mjs';
 
@@ -42,6 +51,7 @@ const QUALIFICATION_TOOL_FILES = [
   'scripts/final-qualification/project-live-bindings.mjs',
   'scripts/final-qualification/process-lifecycle-guard.c',
   'scripts/final-qualification/process-tree-collector.mjs',
+  'scripts/final-qualification/publish-agent-execution-acknowledgement.mjs',
   'scripts/final-qualification/publish-coordinator-marker.mjs',
   'scripts/final-qualification/qualification-manifest.mjs',
   'scripts/final-qualification/validate-concurrent-run.mjs',
@@ -397,11 +407,15 @@ function semanticElevationInstallReceipt(filePath, label, installed) {
 const DEPLOYMENT_HOST_ROLES = ['local', 'studio'];
 const PROCESS_TREE_EPOCHS = ['before', 'during', 'after'];
 const INSTALLED_ARTIFACTS = ['openclaw_app', 'peekaboo_app', 'peekaboo_cli'];
-const PROCESS_ROOT_CLASSES = ['agent', 'bridge', 'coordinator', 'elevation', 'fixture', 'integrated_cu'];
+const PROCESS_ROOT_CLASSES = [
+  'agent', 'agent_requester', 'bridge', 'coordinator', 'elevation', 'fixture', 'integrated_cu',
+];
 const REQUIRED_ROOT_CLASSES = {
   local: {
     before: ['bridge', 'elevation', 'integrated_cu'],
-    during: ['agent', 'bridge', 'coordinator', 'elevation', 'fixture', 'integrated_cu'],
+    during: [
+      'agent', 'agent_requester', 'bridge', 'coordinator', 'elevation', 'fixture', 'integrated_cu',
+    ],
     after: ['bridge', 'elevation', 'integrated_cu'],
   },
   studio: {
@@ -415,6 +429,16 @@ const SOURCE_COMMIT = /^[0-9a-f]{40}$/;
 const CODE_SIGNATURE_HASH = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const TEAM = /^[A-Z0-9]{10}$/;
+function expectedAgentBridgeOperation(family) {
+  return {
+    set_value: 'setValue',
+    action: 'performAction',
+    click: 'exactWindowTargetedClick',
+    type: 'exactWindowTargetedTypeActions',
+    paste: 'exactWindowTargetedTypeActions',
+    press: 'exactWindowTargetedHotkey',
+  }[family] ?? null;
+}
 
 function safeRelativePath(value, label) {
   requireCondition(typeof value === 'string' && value.length > 0 && !path.isAbsolute(value)
@@ -579,6 +603,16 @@ function forbiddenProcessMarker(process) {
   return null;
 }
 
+function pathIsAbsent(filePath) {
+  try {
+    fs.lstatSync(filePath);
+    return false;
+  } catch (error) {
+    requireCondition(error?.code === 'ENOENT', `cannot inspect path ${filePath}`);
+    return true;
+  }
+}
+
 function semanticProcessTree(filePath, label) {
   const retained = readStableJSON(filePath, label, { maximumBytes: 256 * 1024 * 1024 });
   const value = retained.value;
@@ -592,11 +626,12 @@ function semanticProcessTree(filePath, label) {
     'lifecycle_guard_sha256', 'lifecycle_guard_binary_sha256',
     'lifecycle_started_at_milliseconds',
     'lifecycle_completed_at_milliseconds', 'lifecycle_watched_pids',
-    'lifecycle_event_count', 'collector_sha256', 'complete',
+    'lifecycle_event_count', 'collector_sha256', 'readiness_path', 'readiness_sha256',
+    'readiness_published_at_milliseconds', 'acknowledgement_authorization', 'complete',
     'monitor_executable_path', 'monitor_executable_sha256', 'monitor_code_signature_hash',
     'roots', 'processes',
   ], label);
-  requireCondition(value.version === 3 && DEPLOYMENT_HOST_ROLES.includes(value.role)
+  requireCondition(value.version === 4 && DEPLOYMENT_HOST_ROLES.includes(value.role)
     && HOST_UUID.test(value.host_uuid) && SHA256.test(value.deployment_envelope_sha256)
     && PROCESS_TREE_EPOCHS.includes(value.epoch) && value.scope === 'task_owned_descendants'
     && Number.isSafeInteger(value.requested_observation_milliseconds)
@@ -640,6 +675,10 @@ function semanticProcessTree(filePath, label) {
       || value.lifecycle_watched_pids[index - 1] < pid)
     && value.lifecycle_event_count === 0
     && SHA256.test(value.collector_sha256)
+    && typeof value.readiness_path === 'string' && path.isAbsolute(value.readiness_path)
+    && SHA256.test(value.readiness_sha256)
+    && Number.isSafeInteger(value.readiness_published_at_milliseconds)
+    && value.readiness_published_at_milliseconds >= value.coverage_started_at_milliseconds
     && typeof value.monitor_executable_path === 'string'
     && path.isAbsolute(value.monitor_executable_path)
     && SHA256.test(value.monitor_executable_sha256)
@@ -648,6 +687,96 @@ function semanticProcessTree(filePath, label) {
     && Array.isArray(value.roots) && value.roots.length > 0
     && Array.isArray(value.processes) && value.processes.length > 0,
   `${label} is malformed`);
+  const readiness = readStableJSON(value.readiness_path, `${label}.readiness`);
+  exactKeys(readiness.value, [
+    'version', 'role', 'host_uuid', 'deployment_envelope_sha256', 'epoch',
+    'collector_sha256', 'monitor_executable_path', 'monitor_executable_sha256',
+    'monitor_code_signature_hash', 'lifecycle_guard_sha256',
+    'lifecycle_guard_binary_sha256', 'lifecycle_guard_executable_path',
+    'lifecycle_guard_pid', 'lifecycle_guard_start_identity', 'lifecycle_result_path',
+    'lifecycle_started_at_milliseconds', 'coverage_started_at_milliseconds',
+    'published_at_milliseconds', 'lifecycle_watched_pids', 'roots',
+    'observed_processes', 'acknowledgement_control', 'complete',
+  ], `${label}.readiness`);
+  requireCondition(readiness.sha256 === value.readiness_sha256
+    && readiness.value.version === 1
+    && readiness.value.role === value.role
+    && readiness.value.host_uuid === value.host_uuid
+    && readiness.value.deployment_envelope_sha256 === value.deployment_envelope_sha256
+    && readiness.value.epoch === value.epoch
+    && readiness.value.collector_sha256 === value.collector_sha256
+    && readiness.value.coverage_started_at_milliseconds
+      === value.coverage_started_at_milliseconds
+    && readiness.value.published_at_milliseconds
+      === value.readiness_published_at_milliseconds
+    && readiness.value.monitor_executable_path === value.monitor_executable_path
+    && readiness.value.monitor_executable_sha256 === value.monitor_executable_sha256
+    && readiness.value.monitor_code_signature_hash === value.monitor_code_signature_hash
+    && readiness.value.lifecycle_guard_sha256 === value.lifecycle_guard_sha256
+    && readiness.value.lifecycle_guard_binary_sha256 === value.lifecycle_guard_binary_sha256
+    && typeof readiness.value.lifecycle_guard_executable_path === 'string'
+    && path.isAbsolute(readiness.value.lifecycle_guard_executable_path)
+    && Number.isSafeInteger(readiness.value.lifecycle_guard_pid)
+    && readiness.value.lifecycle_guard_pid > 0
+    && typeof readiness.value.lifecycle_guard_start_identity === 'string'
+    && /^[1-9][0-9]*$/.test(readiness.value.lifecycle_guard_start_identity)
+    && typeof readiness.value.lifecycle_result_path === 'string'
+    && path.isAbsolute(readiness.value.lifecycle_result_path)
+    && readiness.value.lifecycle_started_at_milliseconds
+      === value.lifecycle_started_at_milliseconds
+    && sameJSON(readiness.value.roots, value.roots)
+    && sameJSON(readiness.value.lifecycle_watched_pids, value.lifecycle_watched_pids)
+    && sameJSON(readiness.value.observed_processes, value.processes)
+    && readiness.value.complete === true,
+  `${label} readiness differs from the final covered process tree`);
+  const requiresAcknowledgement = value.role === 'local' && value.epoch === 'during';
+  if (requiresAcknowledgement) {
+    const authorization = value.acknowledgement_authorization;
+    exactKeys(authorization, [
+      'acknowledgement_path', 'acknowledgement_sha256', 'authorization_request_path',
+      'authorization_request_sha256', 'authorization_result_path',
+      'authorization_result_sha256', 'authorized_at_milliseconds',
+    ], `${label}.acknowledgement_authorization`);
+    const control = readiness.value.acknowledgement_control;
+    exactKeys(control, [
+      'acknowledgement_path', 'authorization_source_path', 'authorization_request_path',
+      'authorization_result_path',
+    ], `${label}.readiness.acknowledgement_control`);
+    const acknowledgementParent = path.dirname(authorization.acknowledgement_path);
+    const acknowledgementBasename = path.basename(authorization.acknowledgement_path);
+    const expectedControl = {
+      acknowledgement_path: authorization.acknowledgement_path,
+      authorization_source_path: path.join(
+        acknowledgementParent,
+        `.${acknowledgementBasename}.lifecycle-source`,
+      ),
+      authorization_request_path: path.join(
+        acknowledgementParent,
+        `.${acknowledgementBasename}.lifecycle-request`,
+      ),
+      authorization_result_path: path.join(
+        acknowledgementParent,
+        `.${acknowledgementBasename}.lifecycle-result`,
+      ),
+    };
+    requireCondition(SHA256.test(authorization.acknowledgement_sha256)
+      && SHA256.test(authorization.authorization_request_sha256)
+      && SHA256.test(authorization.authorization_result_sha256)
+      && Number.isSafeInteger(authorization.authorized_at_milliseconds)
+      && authorization.authorized_at_milliseconds >= value.readiness_published_at_milliseconds
+      && readiness.value.acknowledgement_control?.acknowledgement_path
+        === authorization.acknowledgement_path
+      && readiness.value.acknowledgement_control?.authorization_request_path
+        === authorization.authorization_request_path
+      && readiness.value.acknowledgement_control?.authorization_result_path
+        === authorization.authorization_result_path
+      && sameJSON(control, expectedControl),
+    `${label} acknowledgement lacks exact lifecycle-guard authorization`);
+  } else {
+    requireCondition(value.acknowledgement_authorization === null
+      && readiness.value.acknowledgement_control === null,
+    `${label} unexpected acknowledgement authority exists outside local/during coverage`);
+  }
   const roots = value.roots.map((root, index) => processRoot(root, `${label}.roots[${index}]`));
   requireCondition(new Set(roots.map((root) => root.rootID)).size === roots.length,
     `${label} repeats a root ID`);
@@ -702,6 +831,10 @@ function semanticProcessTree(filePath, label) {
     finalSampleStartedAtMilliseconds: value.final_sample_started_at_milliseconds,
     coverageCompletedAtMilliseconds: value.coverage_completed_at_milliseconds,
     capturedAtMilliseconds: value.captured_at_milliseconds,
+    readinessPublishedAtMilliseconds: value.readiness_published_at_milliseconds,
+    acknowledgementAuthorization: value.acknowledgement_authorization,
+    readiness,
+    lifecycleStartedAtMilliseconds: value.lifecycle_started_at_milliseconds,
     collectorSHA256: value.collector_sha256,
     lifecycleGuardSHA256: value.lifecycle_guard_sha256,
     lifecycleGuardBinarySHA256: value.lifecycle_guard_binary_sha256,
@@ -1173,6 +1306,22 @@ function semanticConcurrentValidation(filePath) {
   exactKeys(value.monitor, [
     'executable_path', 'executable_sha256', 'code_signature_hash',
   ], 'Agent/CU concurrent validation report monitor');
+  exactKeys(value.agent, [
+    'pid', 'start_identity', 'code_signature_hash', 'requester', 'run_root',
+    'acknowledgement_path', 'executable_path',
+    'executable_sha256', 'terminal_bundle_sha256', 'terminal_validator_report_sha256',
+    'listener_instance_id', 'process_disposition', 'output_disposition', 'stdout_sha256',
+    'stderr_sha256', 'coordination_receipt_sha256', 'acknowledgement_sha256',
+    'spawned_at_milliseconds', 'coordination_published_at_milliseconds',
+    'acknowledged_at_milliseconds', 'released_at_milliseconds',
+    'terminal_observation_ended_at_milliseconds', 'readbacks_sha256',
+    'controlled_fixture_targets', 'mutation_families', 'mapped_call_ids',
+    'signed_bundle_count', 'signed_bundles', 'semantic_readbacks', 'trace_entry_count',
+    'progress_interleaving',
+  ], 'Agent/CU concurrent validation report agent');
+  exactKeys(value.agent.requester, [
+    'pid', 'start_identity', 'code_signature_hash',
+  ], 'Agent/CU concurrent validation report requester');
   const actionIntervals = value.agent?.progress_interleaving?.action_intervals;
   exactKeys(value.agent?.progress_interleaving, [
     'integrated_cu_perform_at_milliseconds',
@@ -1217,11 +1366,40 @@ function semanticConcurrentValidation(filePath) {
     && CODE_SIGNATURE_HASH.test(value.coordinator?.code_signature_hash ?? '')
     && value.coordinator?.completed_event === 'completed'
     && value.coordinator?.certification_eligible === true
-    && value.agent?.exit_code === 0
+    && value.agent?.process_disposition === 'exited'
+    && value.agent?.output_disposition === 'validated_execution_trace'
+    && Number.isSafeInteger(value.agent?.pid) && value.agent.pid > 0
+    && typeof value.agent?.start_identity === 'string'
+    && CODE_SIGNATURE_HASH.test(value.agent?.code_signature_hash ?? '')
+    && Number.isSafeInteger(value.agent.requester.pid) && value.agent.requester.pid > 0
+    && value.agent.requester.pid !== value.agent.pid
+    && typeof value.agent.requester.start_identity === 'string'
+    && CODE_SIGNATURE_HASH.test(value.agent.requester.code_signature_hash ?? '')
+    && value.agent.requester.code_signature_hash === value.agent.code_signature_hash
+    && typeof value.agent.run_root === 'string' && path.isAbsolute(value.agent.run_root)
+    && typeof value.agent.acknowledgement_path === 'string'
+    && path.dirname(value.agent.acknowledgement_path) === value.agent.run_root
     && typeof value.agent?.executable_path === 'string'
     && path.isAbsolute(value.agent.executable_path)
     && SHA256.test(value.agent?.executable_sha256 ?? '')
-    && CODE_SIGNATURE_HASH.test(value.agent?.code_signature_hash ?? '')
+    && SHA256.test(value.agent.terminal_bundle_sha256)
+    && SHA256.test(value.agent.terminal_validator_report_sha256)
+    && typeof value.agent.listener_instance_id === 'string'
+    && SHA256.test(value.agent.stdout_sha256) && SHA256.test(value.agent.stderr_sha256)
+    && SHA256.test(value.agent.coordination_receipt_sha256)
+    && SHA256.test(value.agent.acknowledgement_sha256)
+    && Number.isSafeInteger(value.agent.spawned_at_milliseconds)
+    && Number.isSafeInteger(value.agent.coordination_published_at_milliseconds)
+    && Number.isSafeInteger(value.agent.acknowledged_at_milliseconds)
+    && Number.isSafeInteger(value.agent.released_at_milliseconds)
+    && Number.isSafeInteger(value.agent.terminal_observation_ended_at_milliseconds)
+    && value.agent.spawned_at_milliseconds
+      <= value.agent.coordination_published_at_milliseconds
+    && value.agent.coordination_published_at_milliseconds
+      <= value.agent.acknowledged_at_milliseconds
+    && value.agent.acknowledged_at_milliseconds <= value.agent.released_at_milliseconds
+    && value.agent.released_at_milliseconds
+      <= value.agent.terminal_observation_ended_at_milliseconds
     && typeof value.monitor.executable_path === 'string'
     && path.isAbsolute(value.monitor.executable_path)
     && SHA256.test(value.monitor.executable_sha256)
@@ -1255,12 +1433,29 @@ function semanticConcurrentValidation(filePath) {
     && Number.isSafeInteger(overlap?.operations_started_at_milliseconds)
     && Number.isSafeInteger(overlap?.operations_completed_at_milliseconds)
     && Number.isSafeInteger(overlap?.agent_completed_at_milliseconds)
+    && overlap.agent_started_at_milliseconds === value.agent.spawned_at_milliseconds
+    && overlap.agent_completed_at_milliseconds
+      === value.agent.terminal_observation_ended_at_milliseconds
     && overlap.agent_started_at_milliseconds <= overlap.operations_started_at_milliseconds
     && overlap.operations_started_at_milliseconds < overlap.operations_completed_at_milliseconds
     && overlap.operations_completed_at_milliseconds <= overlap.agent_completed_at_milliseconds
     && overlap.agent_covers_operation_interval === true,
   'Agent/CU concurrent validation report is not semantically complete');
   return { retained, value, receipt: { path: retained.path, size: retained.bytes.length, sha256: retained.sha256 } };
+}
+
+function revalidateConcurrentEvidence(spec, retainedReport, authenticateBundle, label) {
+  const temporary = fs.mkdtempSync('/private/tmp/peekaboo-concurrent-revalidation.');
+  fs.chmodSync(temporary, 0o700);
+  try {
+    const outputPath = path.join(temporary, 'concurrent-validation-report.json');
+    const regenerated = validateConcurrentRunSpec(spec, outputPath, { authenticateBundle });
+    requireCondition(sameJSON(regenerated.report, retainedReport),
+      `${label} differs from fresh concurrent evidence validation`);
+    return regenerated.report;
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
 }
 
 function validateLocalDuringConcurrentBinding(deployment, concurrent, plan, label) {
@@ -1270,16 +1465,47 @@ function validateLocalDuringConcurrentBinding(deployment, concurrent, plan, labe
   requireCondition(candidates.length === 1, `${label} lacks one local/during process tree`);
   const during = candidates[0];
   requireCondition(
-    during.coverageStartedAtMilliseconds <= concurrent.overlap.operations_started_at_milliseconds
+    during.coverageStartedAtMilliseconds <= concurrent.agent.released_at_milliseconds
       && during.finalSampleStartedAtMilliseconds
         >= concurrent.overlap.operations_completed_at_milliseconds,
     `${label} local/during process coverage does not bracket the concurrent operation interval`,
   );
+  const releaseCoverage = {
+    coordination_published_at_milliseconds:
+      concurrent.agent.coordination_published_at_milliseconds,
+    lifecycle_started_at_milliseconds: during.lifecycleStartedAtMilliseconds,
+    coverage_started_at_milliseconds: during.coverageStartedAtMilliseconds,
+    readiness_published_at_milliseconds: during.readinessPublishedAtMilliseconds,
+    acknowledgement_authorized_at_milliseconds:
+      during.acknowledgementAuthorization.authorized_at_milliseconds,
+    acknowledged_at_milliseconds: concurrent.agent.acknowledged_at_milliseconds,
+    released_at_milliseconds: concurrent.agent.released_at_milliseconds,
+    covered_acknowledgement_sha256:
+      during.acknowledgementAuthorization.acknowledgement_sha256,
+    signed_acknowledgement_sha256: concurrent.agent.acknowledgement_sha256,
+  };
+  requireCondition(concurrent.agent.coordination_published_at_milliseconds
+    <= during.lifecycleStartedAtMilliseconds
+    && during.lifecycleStartedAtMilliseconds <= during.coverageStartedAtMilliseconds
+    && during.coverageStartedAtMilliseconds <= during.readinessPublishedAtMilliseconds
+    && during.readinessPublishedAtMilliseconds
+      < during.acknowledgementAuthorization.authorized_at_milliseconds
+    && during.acknowledgementAuthorization.authorized_at_milliseconds
+      <= concurrent.agent.acknowledged_at_milliseconds
+    && concurrent.agent.acknowledged_at_milliseconds <= concurrent.agent.released_at_milliseconds
+    && during.acknowledgementAuthorization.acknowledgement_sha256
+      === concurrent.agent.acknowledgement_sha256,
+  `${label} local/during coverage did not authorize the signed Agent release: ${JSON.stringify(releaseCoverage)}`);
   const expected = {
     agent: {
       pid: concurrent.agent.pid,
       startIdentity: concurrent.agent.start_identity,
       codeSignatureHash: concurrent.agent.code_signature_hash,
+    },
+    agent_requester: {
+      pid: concurrent.agent.requester.pid,
+      startIdentity: concurrent.agent.requester.start_identity,
+      codeSignatureHash: concurrent.agent.requester.code_signature_hash,
     },
     coordinator: {
       pid: concurrent.coordinator.pid,
@@ -1318,11 +1544,93 @@ function validateLocalDuringConcurrentBinding(deployment, concurrent, plan, labe
   )), `${label} local/during fixture roots omit a controlled Agent target generation`);
 }
 
+function validateLocalDuringAuthorizationArtifacts(deployment, concurrent, terminal, label) {
+  const during = deployment.trees.find((tree) => (
+    tree.role === 'local' && tree.epoch === 'during'
+  ));
+  requireCondition(during?.readiness && during.acknowledgementAuthorization,
+    `${label} lacks local/during release authorization`);
+  const readiness = during.readiness;
+  const authorization = during.acknowledgementAuthorization;
+  const control = readiness.value.acknowledgement_control;
+  const canonicalAcknowledgementPath = path.join(
+    concurrent.agent.run_root,
+    'agent-execution-ack.json',
+  );
+  requireCondition(authorization.acknowledgement_path === canonicalAcknowledgementPath
+    && concurrent.agent.acknowledgement_path === canonicalAcknowledgementPath
+    && control.acknowledgement_path === canonicalAcknowledgementPath
+    && pathIsAbsent(control.authorization_source_path),
+  `${label} lifecycle guard did not publish at the signed acknowledgement path`);
+
+  const acknowledgement = readStableFile(
+    authorization.acknowledgement_path,
+    `${label} guard-published Agent acknowledgement`,
+  );
+  const request = readStableJSON(
+    authorization.authorization_request_path,
+    `${label} Agent acknowledgement authorization request`,
+  );
+  const result = readStableJSON(
+    authorization.authorization_result_path,
+    `${label} Agent acknowledgement authorization result`,
+  );
+  exactKeys(request.value, [
+    'version', 'guard_pid', 'acknowledgement_path', 'acknowledgement_sha256',
+    'readiness_sha256', 'requested_at_milliseconds',
+  ], `${label} Agent acknowledgement authorization request`);
+  exactKeys(result.value, [
+    'version', 'guard_pid', 'authorized_at_milliseconds',
+  ], `${label} Agent acknowledgement authorization result`);
+  let acknowledgementValue;
+  try {
+    acknowledgementValue = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(
+      acknowledgement.bytes,
+    ));
+  } catch (error) {
+    throw new TypeError(`${label} Agent acknowledgement is not exact UTF-8 JSON: ${error.message}`);
+  }
+  exactKeys(acknowledgementValue, [
+    'version', 'challenge', 'coordinationReceiptSHA256', 'requestingPeer', 'process',
+    'taskSHA256', 'argumentsSHA256', 'environmentSHA256', 'acknowledgedAt',
+  ], `${label} guard-published Agent acknowledgement`);
+  requireCondition(acknowledgement.sha256 === authorization.acknowledgement_sha256
+    && acknowledgement.sha256 === concurrent.agent.acknowledgement_sha256
+    && request.sha256 === authorization.authorization_request_sha256
+    && result.sha256 === authorization.authorization_result_sha256
+    && request.value.version === 1
+    && request.value.guard_pid === readiness.value.lifecycle_guard_pid
+    && request.value.acknowledgement_path === acknowledgement.path
+    && request.value.acknowledgement_sha256 === acknowledgement.sha256
+    && request.value.readiness_sha256 === readiness.sha256
+    && Number.isSafeInteger(request.value.requested_at_milliseconds)
+    && request.value.requested_at_milliseconds > during.readinessPublishedAtMilliseconds
+    && result.value.version === 1
+    && result.value.guard_pid === request.value.guard_pid
+    && Number.isSafeInteger(result.value.authorized_at_milliseconds)
+    && result.value.authorized_at_milliseconds >= request.value.requested_at_milliseconds
+    && result.value.authorized_at_milliseconds === authorization.authorized_at_milliseconds
+    && result.value.authorized_at_milliseconds <= concurrent.agent.acknowledged_at_milliseconds
+    && acknowledgementValue.version === 1
+    && SHA256.test(acknowledgementValue.challenge)
+    && acknowledgementValue.coordinationReceiptSHA256
+      === terminal.coordinationReceipt.value.sha256
+    && sameJSON(acknowledgementValue.requestingPeer, terminal.response.requestingPeer)
+    && sameJSON(acknowledgementValue.process, terminal.response.process)
+    && acknowledgementValue.taskSHA256 === terminal.response.taskSHA256
+    && acknowledgementValue.argumentsSHA256 === terminal.response.argumentsSHA256
+    && acknowledgementValue.environmentSHA256 === terminal.response.environmentSHA256
+    && Number.isSafeInteger(acknowledgementValue.acknowledgedAt)
+    && acknowledgementValue.acknowledgedAt > during.readinessPublishedAtMilliseconds
+    && acknowledgementValue.acknowledgedAt <= request.value.requested_at_milliseconds
+    && acknowledgementValue.acknowledgedAt <= terminal.response.acknowledgedAt,
+  `${label} lifecycle-guard authorization artifacts are invalid or changed`);
+}
+
 function validateExercisedCandidateBindings(
   artifact,
   deployment,
   concurrent,
-  agentInvocation,
   label,
 ) {
   const during = deployment.trees.find((tree) => tree.role === 'local' && tree.epoch === 'during');
@@ -1330,20 +1638,15 @@ function validateExercisedCandidateBindings(
   const sampledAgent = agentRoot ? during.byIdentity.get(agentRoot.identity)?.value : null;
   requireCondition(sampledAgent
     && artifact.cli.sha256 === concurrent.agent.executable_sha256
-    && artifact.cli.sha256 === agentInvocation.executable_sha256
     && artifact.cli.sha256 === sampledAgent.executable_sha256
     && artifact.cli.cdhash === concurrent.agent.code_signature_hash
     && artifact.cli.cdhash === sampledAgent.code_signature_hash
-    && agentInvocation.executable_path === concurrent.agent.executable_path
     && sampledAgent.executable_path === concurrent.agent.executable_path,
   `${label} exercised Agent CLI differs from the candidate/deployed executable`);
   requireCondition(artifact.monitor.executable_sha256 === concurrent.monitor.executable_sha256
-    && artifact.monitor.executable_sha256 === agentInvocation.monitor_executable_sha256
     && artifact.monitor.executable_sha256 === deployment.processTreeMonitor.retained.sha256
     && artifact.monitor.cdhash === concurrent.monitor.code_signature_hash
-    && artifact.monitor.cdhash === agentInvocation.monitor_code_signature_hash
     && artifact.monitor.cdhash === deployment.processTreeMonitor.codeSignatureHash
-    && concurrent.monitor.executable_path === agentInvocation.monitor_executable_path
     && concurrent.monitor.executable_path === deployment.processTreeMonitor.retained.path,
   `${label} exercised process monitor differs from the candidate-bound executable`);
 }
@@ -1388,7 +1691,7 @@ function semanticValidatorPair(bundlePath, validatorPath, label, {
     && report.validator_id === 'peekaboo-bridge-receipt-validate-v1'
     && report.trust_source === 'authenticated_live_listener'
     && report.minimum_protocol_version === '1.29'
-    && report.host_protocol_version === '1.30'
+    && report.host_protocol_version === '1.31'
     && /^[0-9a-f]{40}$/.test(report.host_source_commit ?? '')
     && report.terminal_receipt_attested === true
     && report.retention_basis === 'exported_bundle'
@@ -1425,7 +1728,28 @@ function semanticValidatorPair(bundlePath, validatorPath, label, {
   return { bundle, validator, payload, report, identity };
 }
 
-function agentBundleAuthentication(plan, invocation, authenticateBundle, label) {
+function retainedAgentTaskAndRequest(taskPath, runRootPath, label) {
+  const task = readStableFile(taskPath, `${label} task`);
+  const taskText = task.bytes.toString('utf8').replace(/\n$/, '');
+  requireCondition(taskText.length > 0 && !taskText.includes('\0')
+    && Buffer.from(`${taskText}\n`, 'utf8').equals(task.bytes),
+  `${label} task must contain exact UTF-8 text plus one terminal newline`);
+  requirePrivateDirectory(runRootPath, `${label} run root`);
+  return {
+    task,
+    request: {
+      task: taskText,
+      maxSteps: 40,
+      runRootPath,
+      coordinationReceiptPath: path.join(runRootPath, 'agent-execution-coordination.json'),
+      acknowledgementPath: path.join(runRootPath, 'agent-execution-ack.json'),
+      startTimeoutMilliseconds: 30_000,
+      runTimeoutMilliseconds: 900_000,
+    },
+  };
+}
+
+function agentBundleAuthentication(plan, terminal, authenticateBundle, label) {
   requireCondition(typeof authenticateBundle === 'function'
     && plan?.bridge && typeof plan.bridge.socket_path === 'string'
     && path.isAbsolute(plan.bridge.socket_path)
@@ -1435,19 +1759,70 @@ function agentBundleAuthentication(plan, invocation, authenticateBundle, label) 
     && new Set(plan.bridge.trusted_host_team_ids).size
       === plan.bridge.trusted_host_team_ids.length,
   `${label} Bridge validation policy is malformed`);
-  requireCondition(path.isAbsolute(invocation?.executable_path)
-    && /^[0-9a-f]{64}$/.test(invocation.executable_sha256 ?? '')
-    && invocation.executable_path === plan.peekaboo_executable
-    && invocation.bridge_socket === plan.bridge.socket_path,
+  requireCondition(path.isAbsolute(terminal?.process?.executablePath)
+    && /^[0-9a-f]{64}$/.test(terminal.process.executableSHA256 ?? '')
+    && terminal.process.executablePath === plan.peekaboo_executable
+    && terminal.response?.bridgeSocketPath === plan.bridge.socket_path,
   `${label} Agent validator executable/socket differs from the live plan`);
   return {
     authenticateBundle,
-    executable_path: invocation.executable_path,
-    executable_sha256: invocation.executable_sha256,
+    executable_path: terminal.process.executablePath,
+    executable_sha256: terminal.process.executableSHA256,
     bridge_socket: plan.bridge.socket_path,
     trusted_host_team_ids: plan.bridge.trusted_host_team_ids,
     expected_host: plan.bridge.expected_host,
   };
+}
+
+function validateTerminalConcurrentBinding(terminal, concurrent, label) {
+  requireCondition(terminal.bundle.sha256 === concurrent.agent.terminal_bundle_sha256
+    && terminal.validator.sha256 === concurrent.agent.terminal_validator_report_sha256
+    && terminal.identity.listener_instance_id === concurrent.agent.listener_instance_id
+    && terminal.child.processIdentifier === concurrent.agent.pid
+    && terminal.child.processStartIdentity === concurrent.agent.start_identity
+    && terminal.child.codeSignatureHash === concurrent.agent.code_signature_hash
+    && terminal.requester.processIdentifier === concurrent.agent.requester.pid
+    && terminal.requester.processStartIdentity === concurrent.agent.requester.start_identity
+    && terminal.requester.codeSignatureHash === concurrent.agent.requester.code_signature_hash
+    && terminal.process.executablePath === concurrent.agent.executable_path
+    && terminal.process.executableSHA256 === concurrent.agent.executable_sha256
+    && terminal.response.runRootPath === concurrent.agent.run_root
+    && terminal.response.acknowledgementPath === concurrent.agent.acknowledgement_path
+    && terminal.response.processDisposition === concurrent.agent.process_disposition
+    && terminal.response.outputDisposition === concurrent.agent.output_disposition
+    && terminal.stdout.value.sha256 === concurrent.agent.stdout_sha256
+    && terminal.stderr.value.sha256 === concurrent.agent.stderr_sha256
+    && terminal.coordinationReceipt.value.sha256
+      === concurrent.agent.coordination_receipt_sha256
+    && terminal.acknowledgement.value.sha256 === concurrent.agent.acknowledgement_sha256
+    && terminal.response.spawnedAt === concurrent.agent.spawned_at_milliseconds
+    && terminal.response.coordinationReceiptPublishedAt
+      === concurrent.agent.coordination_published_at_milliseconds
+    && terminal.response.acknowledgedAt === concurrent.agent.acknowledged_at_milliseconds
+    && terminal.response.releasedAt === concurrent.agent.released_at_milliseconds
+    && terminal.response.terminalObservationEndedAt
+      === concurrent.agent.terminal_observation_ended_at_milliseconds
+    && terminal.trace.entries.length === concurrent.agent.trace_entry_count,
+  `${label} differs from concurrent validation`);
+}
+
+function validateCoordinatorConcurrentBinding(authority, concurrent, planReceipt, label) {
+  const { events, exit, invocation } = authority;
+  requireCondition(exit.pid === concurrent.coordinator.pid
+    && exit.start_identity === concurrent.coordinator.start_identity
+    && exit.exit_code === concurrent.coordinator.exit_code
+    && exit.sha256 === concurrent.coordinator.exit_receipt_sha256
+    && invocation.retained.sha256 === concurrent.coordinator.invocation_sha256
+    && invocation.code_signature_hash === concurrent.coordinator.code_signature_hash
+    && invocation.value.monitor_executable_path === concurrent.monitor.executable_path
+    && invocation.value.monitor_executable_sha256 === concurrent.monitor.executable_sha256
+    && invocation.value.monitor_code_signature_hash === concurrent.monitor.code_signature_hash
+    && planReceipt.sha256 === concurrent.coordinator.plan_sha256
+    && events.retained.sha256 === concurrent.coordinator.events_sha256
+    && events.completed.summary_sha256 === concurrent.coordinator.summary_sha256
+    && events.completed.certification_eligible === concurrent.coordinator.certification_eligible
+    && concurrent.coordinator.completed_event === 'completed',
+  `${label} differs from concurrent validation`);
 }
 
 function validateConcurrentInterleavingBinding(
@@ -1456,6 +1831,7 @@ function validateConcurrentInterleavingBinding(
   bundlePairs,
   performReadbackPath,
   controlledFixtureTargets,
+  terminal,
   label,
 ) {
   const readbacks = readStableJSON(agentReadbacksPath, `${label} Agent readback map`).value;
@@ -1466,10 +1842,21 @@ function validateConcurrentInterleavingBinding(
     concurrent.agent.controlled_fixture_targets,
     controlledFixtureTargets,
   ), `${label} controlled fixture targets differ from the live-v4 plan`);
+  const terminalTrace = validateAgentExecutionTrace(
+    terminal?.stdoutRoot,
+    `${label} signed terminal`,
+  );
+  requireCondition(terminalTrace.trace.entries.length === concurrent.agent.trace_entry_count,
+  `${label} signed terminal trace differs from concurrent validation`);
+  const traceByID = terminalTrace.entriesByID;
+  const dispatchedTraceIDs = [...terminalTrace.dispatchedCallIDs].sort();
+  requireCondition(sameJSON(dispatchedTraceIDs, [...concurrent.agent.mapped_call_ids].sort()),
+    `${label} signed terminal trace does not contain exactly the mapped dispatched calls`);
   const pairsByBundlePath = new Map(bundlePairs.map((pair) => [pair.bundle.path, pair]));
   requireCondition(pairsByBundlePath.size === bundlePairs.length,
     `${label} Agent bundle paths are not unique`);
   const actionIntervals = [];
+  const primaryMutationFamilies = new Set();
   for (const [targetIndex, target] of readbacks.targets.entries()) {
     exactKeys(target, [
       'label', 'target', 'baseline_readback_path', 'mutation', 'restoration',
@@ -1498,6 +1885,18 @@ function validateConcurrentInterleavingBinding(
       const pair = pairsByBundlePath.get(action.bundle_path);
       requireCondition(pair && pair.validator.path === action.validator_report_path,
         `${label} Agent target ${targetIndex}.${kind} is absent from the bound corpus`);
+      const traceEntry = traceByID.get(action.trace_call_id);
+      const traceFamily = normalizedAgentToolName(traceEntry?.name);
+      requireCondition(isAgentMutatingToolName(traceFamily)
+        && traceFamily === action.family
+        && traceEntry.arguments?.pid === expectedTarget.pid
+        && traceEntry.arguments?.window_id === expectedTarget.window_id
+        && traceEntry.disposition === 'executed/succeeded'
+        && traceEntry.isError === false
+        && traceEntry.mutationDispatch === 'dispatched'
+        && traceEntry.actionOutcome?.delivery_mode === 'background'
+        && expectedAgentBridgeOperation(action.family) === pair.payload.operation,
+      `${label} Agent target ${targetIndex}.${kind} differs from its signed terminal trace`);
       requireCondition(pair.report.target_attested === true
         && pair.report.outcome_attested === true
         && pair.payload.outcome?.delivery_mode === 'background'
@@ -1530,6 +1929,7 @@ function validateConcurrentInterleavingBinding(
       requireCondition(completedAt < readback.observed_at_milliseconds,
         `${label} Agent target ${targetIndex}.${kind} readback does not strictly follow dispatch completion`);
       actionEvidence[kind] = { startedAt, completedAt, readback };
+      actionEvidence[kind].traceIndex = terminalTrace.entryIndexByID.get(traceEntry.id);
     }
     requireCondition(
       baseline.observed_at_milliseconds < actionEvidence.mutation.startedAt
@@ -1539,7 +1939,17 @@ function validateConcurrentInterleavingBinding(
     );
     requireCondition(actionEvidence.mutation.completedAt < actionEvidence.restoration.startedAt,
       `${label} Agent target ${targetIndex} restoration dispatch predates mutation completion`);
+    requireCondition(actionEvidence.mutation.traceIndex < actionEvidence.restoration.traceIndex,
+      `${label} signed terminal trace restores before it mutates`);
+    primaryMutationFamilies.add(target.mutation.family);
+    if (target.label === 'target-b') {
+      requireCondition(target.restoration.family !== target.mutation.family,
+        `${label} target-b restoration did not use a different mutation family`);
+    }
   }
+  requireCondition(primaryMutationFamilies.size >= 2
+    && sameJSON([...primaryMutationFamilies].sort(), concurrent.agent.mutation_families),
+  `${label} mutation families differ from the signed terminal trace/readback map`);
   const retainedPerform = readStableJSON(
     performReadbackPath,
     `${label} integrated-CU perform readback`,
@@ -2048,7 +2458,8 @@ function projectInput(input, authenticateBundle) {
     'coordinator_events', 'coordinator_exit', 'certification_summary', 'monitor_evidence',
   ], 'live_v4');
   exactKeys(input.agent_cu, [
-    'task', 'agent_result', 'agent_exit', 'agent_invocation', 'agent_process_receipts', 'agent_readbacks',
+    'task', 'run_root', 'agent_execution_bundle', 'agent_execution_validator_report',
+    'agent_readbacks',
     'signed_bundles', 'live_validator_reports', 'semantic_readbacks',
     'integrated_cu_emitter_receipt', 'perform_readback', 'restore_readback', 'validation_report',
   ], 'agent_cu');
@@ -2096,6 +2507,27 @@ function projectInput(input, authenticateBundle) {
       < cycle.binding.started_at_milliseconds), 'matrix cycle intervals overlap or are not ordered');
   const concurrentValidation = semanticConcurrentValidation(input.agent_cu.validation_report);
   const concurrentValue = concurrentValidation.value;
+  revalidateConcurrentEvidence({
+    version: 1,
+    plan: input.live_v4.plan,
+    coordinator_invocation: input.live_v4.coordinator_invocation,
+    coordinator_events: input.live_v4.coordinator_events,
+    coordinator_exit: input.live_v4.coordinator_exit,
+    agent_task: input.agent_cu.task,
+    agent_run_root: input.agent_cu.run_root,
+    agent_execution_bundle: input.agent_cu.agent_execution_bundle,
+    agent_execution_validator_report: input.agent_cu.agent_execution_validator_report,
+    agent_bundles: input.agent_cu.signed_bundles.map((bundlePath, index) => ({
+      bundle_path: bundlePath,
+      validator_report_path: input.agent_cu.live_validator_reports[index],
+    })),
+    agent_readbacks: input.agent_cu.agent_readbacks,
+    integrated_cu: {
+      emitter: input.agent_cu.integrated_cu_emitter_receipt,
+      perform_readback: input.agent_cu.perform_readback,
+      restore_readback: input.agent_cu.restore_readback,
+    },
+  }, concurrentValue, authenticateBundle, 'concurrent validation report');
   const boundCertificationSummary = readStableJSON(
     input.live_v4.certification_summary,
     'bound certification summary',
@@ -2134,10 +2566,24 @@ function projectInput(input, authenticateBundle) {
     boundLive.certification_summary,
     'bound live-v4',
   );
-  const boundPlanValue = readStableJSON(
+  const boundPlanReceipt = readStableJSON(
     boundLive.plan.path,
     'bound live-v4 plan semantics',
-  ).value;
+  );
+  const boundPlanValue = boundPlanReceipt.value;
+  const coordinatorAuthority = validateCoordinatorExecutionEvidence({
+    plan: boundPlanValue,
+    planReceipt: boundPlanReceipt,
+    invocationPath: input.live_v4.coordinator_invocation,
+    eventsPath: input.live_v4.coordinator_events,
+    exitPath: input.live_v4.coordinator_exit,
+  });
+  validateCoordinatorConcurrentBinding(
+    coordinatorAuthority,
+    concurrentValue,
+    boundPlanReceipt,
+    'coordinator execution evidence',
+  );
   validateLocalDuringConcurrentBinding(
     deployment,
     concurrentValue,
@@ -2154,10 +2600,7 @@ function projectInput(input, authenticateBundle) {
     adjunctBinding.fixtureBinding,
     'bound final certification summary',
   );
-  const coordinatorInvocation = readStableJSON(
-    input.live_v4.coordinator_invocation,
-    'bound coordinator invocation semantics',
-  ).value;
+  const coordinatorInvocation = coordinatorAuthority.invocation.value;
   const boundCoordinatorHandshake = fileReceipt(
     input.live_v4.coordinator_identity_handshake,
     'bound coordinator identity handshake',
@@ -2167,13 +2610,16 @@ function projectInput(input, authenticateBundle) {
     && coordinatorInvocation.identity_handshake_sha256 === boundCoordinatorHandshake.sha256,
   'coordinator identity handshake differs from its invocation');
   const boundAgent = {
-    invocation: boundReceipt(
-      input.agent_cu.agent_invocation,
-      concurrentValue.agent.invocation_sha256,
-      'bound Agent invocation',
+    terminal_bundle: boundReceipt(
+      input.agent_cu.agent_execution_bundle,
+      concurrentValue.agent.terminal_bundle_sha256,
+      'bound Agent terminal bundle',
     ),
-    result: boundReceipt(input.agent_cu.agent_result, concurrentValue.agent.result_sha256, 'bound Agent result'),
-    exit: boundReceipt(input.agent_cu.agent_exit, concurrentValue.agent.exit_receipt_sha256, 'bound Agent exit'),
+    terminal_validator: boundReceipt(
+      input.agent_cu.agent_execution_validator_report,
+      concurrentValue.agent.terminal_validator_report_sha256,
+      'bound Agent terminal validator',
+    ),
     readbacks: boundReceipt(
       input.agent_cu.agent_readbacks,
       concurrentValue.agent.readbacks_sha256,
@@ -2195,37 +2641,50 @@ function projectInput(input, authenticateBundle) {
       'bound integrated-CU restore readback',
     ),
   };
-  const agentInvocation = readStableJSON(
-    input.agent_cu.agent_invocation,
-    'bound Agent invocation semantics',
-  ).value;
+  const agentTask = retainedAgentTaskAndRequest(
+    input.agent_cu.task,
+    input.agent_cu.run_root,
+    'bound Agent',
+  );
+  const agentExecutable = requireStableExecutable(
+    boundPlanValue.peekaboo_executable,
+    'bound Agent executable',
+    { allowRootOwner: true },
+  );
+  const terminal = authenticateAgentExecutionTerminalBundle({
+    bundlePath: input.agent_cu.agent_execution_bundle,
+    validatorReportPath: input.agent_cu.agent_execution_validator_report,
+    executablePath: agentExecutable.path,
+    expectedExecutableSHA256: agentExecutable.sha256,
+    socketPath: boundPlanValue.bridge.socket_path,
+    trustedHostTeamIDs: boundPlanValue.bridge.trusted_host_team_ids,
+    expectedHost: boundPlanValue.bridge.expected_host,
+    expectedRequest: agentTask.request,
+    authenticateBundle,
+    label: 'Agent manifest terminal bundle',
+  });
   const authentication = agentBundleAuthentication(
     boundPlanValue,
-    agentInvocation,
+    terminal,
     authenticateBundle,
     'Agent manifest',
   );
-  const boundAgentTask = fileReceipt(input.agent_cu.task, 'bound Agent task');
-  requireCondition(agentInvocation.task_path === input.agent_cu.task
-    && agentInvocation.task_sha256 === boundAgentTask.sha256,
-  'Agent task differs from its invocation');
+  const boundAgentTask = {
+    path: agentTask.task.path,
+    size: agentTask.task.bytes.length,
+    sha256: agentTask.task.sha256,
+  };
+  validateTerminalConcurrentBinding(
+    terminal,
+    concurrentValue,
+    'Agent terminal bundle',
+  );
   validateExercisedCandidateBindings(
     artifacts.peekaboo,
     deployment,
     concurrentValue,
-    agentInvocation,
     'qualification',
   );
-  const processPhases = ['launch', 'perform', 'restore'];
-  requireCondition(input.agent_cu.agent_process_receipts.length === processPhases.length,
-    'Agent process receipt ordering is incomplete');
-  const boundAgentProcessReceipts = input.agent_cu.agent_process_receipts.map((filePath, index) => (
-    boundReceipt(
-      filePath,
-      concurrentValue.agent.process_receipt_sha256[processPhases[index]],
-      `bound Agent ${processPhases[index]} process receipt`,
-    )
-  ));
   requireCondition(Array.isArray(input.agent_cu.signed_bundles)
     && input.agent_cu.signed_bundles.length >= 4
     && Array.isArray(input.agent_cu.live_validator_reports)
@@ -2242,6 +2701,14 @@ function projectInput(input, authenticateBundle) {
       `Agent manifest bundle ${index}`,
       { authentication },
     );
+    requireCondition(pair.payload.client.processIdentifier === terminal.child.processIdentifier
+      && pair.payload.client.processStartIdentity === terminal.child.processStartIdentity
+      && pair.payload.client.codeSignatureHash === terminal.child.codeSignatureHash
+      && pair.identity.listener_instance_id === terminal.identity.listener_instance_id
+      && pair.payload.startedAtUnixMilliseconds >= terminal.response.releasedAt
+      && pair.payload.completedAtUnixMilliseconds
+        <= terminal.response.terminalObservationEndedAt,
+    `Agent manifest bundle ${index} differs from the signed child/listener/lifetime`);
     semanticBundlePairs.push(pair);
     bundleReceipts.push({ path: pair.bundle.path, size: pair.bundle.bytes.length, sha256: pair.bundle.sha256 });
     validatorReceipts.push({
@@ -2272,6 +2739,7 @@ function projectInput(input, authenticateBundle) {
     semanticBundlePairs,
     input.agent_cu.perform_readback,
     adjunctBinding.controlledFixtureTargets,
+    terminal,
     'Agent manifest',
   );
   requireCondition(Array.isArray(input.agent_cu.semantic_readbacks)
@@ -2317,6 +2785,12 @@ function projectInput(input, authenticateBundle) {
     artifacts.peekaboo,
     'deployment',
   );
+  validateLocalDuringAuthorizationArtifacts(
+    deployment,
+    concurrentValue,
+    terminal,
+    'deployment',
+  );
   return {
     artifact_manifest: artifacts.evidence,
     deployment: deployment.evidence,
@@ -2341,10 +2815,9 @@ function projectInput(input, authenticateBundle) {
     matrix_cycles: matrixCycles.map(({ binding: _binding, ...cycle }) => cycle),
     agent_cu: {
       task: boundAgentTask,
-      agent_result: boundAgent.result,
-      agent_exit: boundAgent.exit,
-      agent_invocation: boundAgent.invocation,
-      agent_process_receipts: boundAgentProcessReceipts,
+      run_root: input.agent_cu.run_root,
+      agent_execution_bundle: boundAgent.terminal_bundle,
+      agent_execution_validator_report: boundAgent.terminal_validator,
       agent_readbacks: boundAgent.readbacks,
       controlled_fixture_targets: structuredClone(adjunctBinding.controlledFixtureTargets),
       signed_bundles: bundleReceipts,
@@ -2435,7 +2908,7 @@ function validateEvidenceShape(evidence, visitReceipt) {
     visitReceipt(cycle.crash_inventory, `evidence.matrix_cycles[${index}].crash_inventory`);
   });
   exactKeys(evidence.agent_cu, [
-    'task', 'agent_result', 'agent_exit', 'agent_invocation', 'agent_process_receipts', 'agent_readbacks',
+    'task', 'run_root', 'agent_execution_bundle', 'agent_execution_validator_report', 'agent_readbacks',
     'controlled_fixture_targets', 'signed_bundles', 'live_validator_reports', 'semantic_readbacks',
     'integrated_cu_emitter_receipt', 'perform_readback', 'restore_readback', 'validation_report',
   ], 'evidence.agent_cu');
@@ -2451,16 +2924,14 @@ function validateEvidenceShape(evidence, visitReceipt) {
     `evidence.agent_cu.controlled_fixture_targets[${index}] is not canonical`);
     exactTarget(binding.target, `evidence.agent_cu.controlled_fixture_targets[${index}].target`);
   });
+  requireCondition(typeof evidence.agent_cu.run_root === 'string'
+    && path.isAbsolute(evidence.agent_cu.run_root),
+  'qualification evidence Agent run root is invalid');
   for (const key of [
-    'task', 'agent_result', 'agent_exit', 'agent_invocation', 'agent_readbacks', 'integrated_cu_emitter_receipt',
+    'task', 'agent_execution_bundle', 'agent_execution_validator_report', 'agent_readbacks',
+    'integrated_cu_emitter_receipt',
     'perform_readback', 'restore_readback', 'validation_report',
   ]) visitReceipt(evidence.agent_cu[key], `evidence.agent_cu.${key}`);
-  requireCondition(Array.isArray(evidence.agent_cu.agent_process_receipts)
-    && evidence.agent_cu.agent_process_receipts.length === 3,
-  'qualification evidence must contain three Agent process receipts');
-  evidence.agent_cu.agent_process_receipts.forEach((receipt, index) => (
-    visitReceipt(receipt, `evidence.agent_cu.agent_process_receipts[${index}]`)
-  ));
   requireCondition(Array.isArray(evidence.agent_cu.signed_bundles)
     && evidence.agent_cu.signed_bundles.length >= 4
     && Array.isArray(evidence.agent_cu.live_validator_reports)
@@ -2599,6 +3070,27 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
   'verified matrix cycle intervals overlap or are not ordered');
   const concurrent = semanticConcurrentValidation(evidence.agent_cu.validation_report.path);
   const concurrentValue = concurrent.value;
+  revalidateConcurrentEvidence({
+    version: 1,
+    plan: evidence.live_v4.plan.path,
+    coordinator_invocation: evidence.live_v4.coordinator_invocation.path,
+    coordinator_events: evidence.live_v4.coordinator_events.path,
+    coordinator_exit: evidence.live_v4.coordinator_exit.path,
+    agent_task: evidence.agent_cu.task.path,
+    agent_run_root: evidence.agent_cu.run_root,
+    agent_execution_bundle: evidence.agent_cu.agent_execution_bundle.path,
+    agent_execution_validator_report: evidence.agent_cu.agent_execution_validator_report.path,
+    agent_bundles: evidence.agent_cu.signed_bundles.map((bundle, index) => ({
+      bundle_path: bundle.path,
+      validator_report_path: evidence.agent_cu.live_validator_reports[index].path,
+    })),
+    agent_readbacks: evidence.agent_cu.agent_readbacks.path,
+    integrated_cu: {
+      emitter: evidence.agent_cu.integrated_cu_emitter_receipt.path,
+      perform_readback: evidence.agent_cu.perform_readback.path,
+      restore_readback: evidence.agent_cu.restore_readback.path,
+    },
+  }, concurrentValue, authenticateBundle, 'verified concurrent validation report');
   for (const [receipt, expected, label] of [
     [evidence.live_v4.plan, concurrentValue.coordinator.plan_sha256, 'verified live-v4 plan'],
     [evidence.live_v4.coordinator_invocation, concurrentValue.coordinator.invocation_sha256, 'verified coordinator invocation'],
@@ -2606,9 +3098,11 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
     [evidence.live_v4.coordinator_exit, concurrentValue.coordinator.exit_receipt_sha256, 'verified coordinator exit'],
     [evidence.live_v4.certification_summary, concurrentValue.coordinator.summary_sha256, 'verified certification summary'],
     [evidence.live_v4.monitor_evidence, concurrentValue.coordinator.monitor_evidence_sha256, 'verified monitor evidence'],
-    [evidence.agent_cu.agent_invocation, concurrentValue.agent.invocation_sha256, 'verified Agent invocation'],
-    [evidence.agent_cu.agent_result, concurrentValue.agent.result_sha256, 'verified Agent result'],
-    [evidence.agent_cu.agent_exit, concurrentValue.agent.exit_receipt_sha256, 'verified Agent exit'],
+    [evidence.agent_cu.agent_execution_bundle, concurrentValue.agent.terminal_bundle_sha256,
+      'verified Agent terminal bundle'],
+    [evidence.agent_cu.agent_execution_validator_report,
+      concurrentValue.agent.terminal_validator_report_sha256,
+      'verified Agent terminal validator'],
     [evidence.agent_cu.agent_readbacks, concurrentValue.agent.readbacks_sha256, 'verified Agent readbacks'],
     [evidence.agent_cu.integrated_cu_emitter_receipt, concurrentValue.integrated_cu.calibration_sha256, 'verified CU emitter'],
     [evidence.agent_cu.perform_readback, concurrentValue.integrated_cu.perform_readback_sha256, 'verified CU perform'],
@@ -2629,15 +3123,29 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
     evidence.live_v4.certification_summary,
     'verified live-v4',
   );
-  const verifiedPlanValue = readStableJSON(
+  const verifiedPlanReceipt = readStableJSON(
     evidence.live_v4.plan.path,
     'verified live-v4 plan semantics',
-  ).value;
+  );
+  const verifiedPlanValue = verifiedPlanReceipt.value;
   requireCondition(sameJSON(evidence.live_v4.certification_summary, {
     path: verifiedCertificationSummary.path,
     size: verifiedCertificationSummary.bytes.length,
     sha256: verifiedCertificationSummary.sha256,
   }), 'verified final certification summary changed after manifest generation');
+  const coordinatorAuthority = validateCoordinatorExecutionEvidence({
+    plan: verifiedPlanValue,
+    planReceipt: verifiedPlanReceipt,
+    invocationPath: evidence.live_v4.coordinator_invocation.path,
+    eventsPath: evidence.live_v4.coordinator_events.path,
+    exitPath: evidence.live_v4.coordinator_exit.path,
+  });
+  validateCoordinatorConcurrentBinding(
+    coordinatorAuthority,
+    concurrentValue,
+    verifiedPlanReceipt,
+    'verified coordinator execution evidence',
+  );
   validateLocalDuringConcurrentBinding(
     deployment,
     concurrentValue,
@@ -2654,38 +3162,55 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
     adjunctBinding.fixtureBinding,
     'verified final certification summary',
   );
-  const phases = ['launch', 'perform', 'restore'];
-  evidence.agent_cu.agent_process_receipts.forEach((receipt, index) => {
-    requireCondition(receipt.sha256 === concurrentValue.agent.process_receipt_sha256[phases[index]],
-      `verified Agent ${phases[index]} process receipt differs from concurrent validation`);
-  });
-  const coordinatorInvocation = readStableJSON(
-    evidence.live_v4.coordinator_invocation.path,
-    'verified coordinator invocation semantics',
-  ).value;
+  const coordinatorInvocation = coordinatorAuthority.invocation.value;
   requireCondition(coordinatorInvocation.identity_handshake_path
     === evidence.live_v4.coordinator_identity_handshake.path
     && coordinatorInvocation.identity_handshake_sha256
       === evidence.live_v4.coordinator_identity_handshake.sha256,
   'verified coordinator identity handshake differs from its invocation');
-  const agentInvocation = readStableJSON(
-    evidence.agent_cu.agent_invocation.path,
-    'verified Agent invocation semantics',
-  ).value;
+  const verifiedAgentTask = retainedAgentTaskAndRequest(
+    evidence.agent_cu.task.path,
+    evidence.agent_cu.run_root,
+    'verified Agent',
+  );
+  const verifiedAgentExecutable = requireStableExecutable(
+    verifiedPlanValue.peekaboo_executable,
+    'verified Agent executable',
+    { allowRootOwner: true },
+  );
+  const terminal = authenticateAgentExecutionTerminalBundle({
+    bundlePath: evidence.agent_cu.agent_execution_bundle.path,
+    validatorReportPath: evidence.agent_cu.agent_execution_validator_report.path,
+    executablePath: verifiedAgentExecutable.path,
+    expectedExecutableSHA256: verifiedAgentExecutable.sha256,
+    socketPath: verifiedPlanValue.bridge.socket_path,
+    trustedHostTeamIDs: verifiedPlanValue.bridge.trusted_host_team_ids,
+    expectedHost: verifiedPlanValue.bridge.expected_host,
+    expectedRequest: verifiedAgentTask.request,
+    authenticateBundle,
+    label: 'verified Agent terminal bundle',
+  });
+  validateTerminalConcurrentBinding(
+    terminal,
+    concurrentValue,
+    'verified Agent terminal bundle',
+  );
+  validateLocalDuringAuthorizationArtifacts(
+    deployment,
+    concurrentValue,
+    terminal,
+    'verified deployment',
+  );
   const authentication = agentBundleAuthentication(
     verifiedPlanValue,
-    agentInvocation,
+    terminal,
     authenticateBundle,
     'verified Agent manifest',
   );
-  requireCondition(agentInvocation.task_path === evidence.agent_cu.task.path
-    && agentInvocation.task_sha256 === evidence.agent_cu.task.sha256,
-  'verified Agent task differs from its invocation');
   validateExercisedCandidateBindings(
     artifacts.peekaboo,
     deployment,
     concurrentValue,
-    agentInvocation,
     'verified qualification',
   );
   const verifiedBundlePairs = [];
@@ -2697,6 +3222,14 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
       `verified Agent bundle ${index}`,
       { authentication },
     );
+    requireCondition(pair.payload.client.processIdentifier === terminal.child.processIdentifier
+      && pair.payload.client.processStartIdentity === terminal.child.processStartIdentity
+      && pair.payload.client.codeSignatureHash === terminal.child.codeSignatureHash
+      && pair.identity.listener_instance_id === terminal.identity.listener_instance_id
+      && pair.payload.startedAtUnixMilliseconds >= terminal.response.releasedAt
+      && pair.payload.completedAtUnixMilliseconds
+        <= terminal.response.terminalObservationEndedAt,
+    `verified Agent bundle ${index} differs from the signed child/listener/lifetime`);
     verifiedBundlePairs.push(pair);
     return {
       bundle_path: pair.bundle.path,
@@ -2725,6 +3258,7 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
     verifiedBundlePairs,
     evidence.agent_cu.perform_readback.path,
     adjunctBinding.controlledFixtureTargets,
+    terminal,
     'verified Agent manifest',
   );
   const semanticReadbacks = evidence.agent_cu.semantic_readbacks.map((receipt, index) => (

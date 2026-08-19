@@ -22,7 +22,7 @@ const UUID_V8 = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 const UINT64_MAX = 0xffff_ffff_ffff_ffffn;
 const REQUEST_ID_DOMAIN = Buffer.from('peekaboo.bridge.operation-request.v1\0', 'utf8');
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
-const BUILTIN_CATALOG_SHA256 = '1109a2fe51485802c446502da1cec33565b341a2a94403839a0ec0ed2b021e74';
+const BUILTIN_CATALOG_SHA256 = '5fc91ee5006e58003aeffd9a3e4991d7c2d405e83f828aebd7c4a09fc0512a8d';
 const BUILTIN_DIGEST_SPEC_SHA256 = '6d80d6264a4d3b80c69cee0c68ce3b5c2fd801e8483bb4bbddd4402d87066a33';
 const CLI_VERSION = '2';
 const LIVE_CERTIFICATION_AUTHORITY = Symbol('peekaboo-live-certification-authority');
@@ -2032,7 +2032,7 @@ function validFirstPartyVerdict(value, slot, manifestRow, contract) {
     && value.validator_id === 'peekaboo-bridge-receipt-validate-v1'
     && value.trust_source === 'authenticated_live_listener'
     && value.minimum_protocol_version === '1.29'
-    && value.host_protocol_version === '1.30'
+    && value.host_protocol_version === '1.31'
     && value.request_id === slot.request_id
     && value.session_id === slot.session.id
     && value.session_sequence === slot.session.sequence
@@ -2933,7 +2933,7 @@ export function validateSuccessfulCertificationSummary(summary, label = 'certifi
         || row.verdict.validator_id !== 'peekaboo-bridge-receipt-validate-v1'
         || row.verdict.trust_source !== 'authenticated_live_listener'
         || row.verdict.minimum_protocol_version !== '1.29'
-        || row.verdict.host_protocol_version !== '1.30'
+        || row.verdict.host_protocol_version !== '1.31'
         || row.verdict.terminal_receipt_attested !== true
         || row.verdict.target_attested !== true
         || typeof row.verdict.outcome_attested !== 'boolean'

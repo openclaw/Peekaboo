@@ -111,7 +111,7 @@ function bridgeReceipt(filePath, catalog) {
   requireCondition(['gui', 'daemon'].includes(handshake?.hostKind), `${label} host kind is invalid`);
   exactKeys(handshake?.negotiatedVersion, ['major', 'minor'], `${label} negotiatedVersion`);
   requireCondition(handshake.negotiatedVersion.major === 1
-    && handshake.negotiatedVersion.minor === 30, `${label} must be protocol 1.30`);
+    && handshake.negotiatedVersion.minor === 31, `${label} must be protocol 1.31`);
   requireCondition(identity && positiveInteger(identity.processIdentifier), `${label} host PID is invalid`);
   const start = identity.processStartIdentityDecimal;
   requireCondition(positiveDecimal(start), `${label} host generation is not lossless decimal`);

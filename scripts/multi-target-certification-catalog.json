@@ -75,7 +75,7 @@
     "finalizer": {
       "path": "scripts/finalize-multi-target-certification.mjs",
       "projection": "normalize-builtin-catalog-sha256-to-zero-v1",
-      "projected_sha256": "46bdaf1a1e50368151d934132f0c3fcc93f1cfdda33624ae8752686b3b8da0ac"
+      "projected_sha256": "58d448ef5eed06c2806f0a8b0b237d9f1e0c002f8a890ba1f019dcd5446e37bf"
     }
   },
   "monitor_contract": {

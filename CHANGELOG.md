@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Added
-- Add Bridge protocol 1.31 one-request signed background Agent execution with authenticated CLI derivation, an irreversible no-child-process gate, exact-leader reaping, canonical terminal receipt bundles, and nested exact-lane receipts.
+- Add Bridge protocol 1.31 one-request signed background Agent execution with authenticated CLI derivation, an irreversible no-child-process gate, lifecycle-covered release acknowledgement, exact-leader reaping, canonical terminal receipt bundles, and nested exact-lane receipts.
 
 ### Fixed
 - Pin foreground menu focus, clicks, and listing to one exact process/window generation across CLI and MCP, preserving focus outcomes when a later menu read fails.

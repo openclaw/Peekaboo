@@ -53,6 +53,7 @@ const qualificationSourceFiles = [
   'scripts/final-qualification/project-live-bindings.mjs',
   'scripts/final-qualification/process-lifecycle-guard.c',
   'scripts/final-qualification/process-tree-collector.mjs',
+  'scripts/final-qualification/publish-agent-execution-acknowledgement.mjs',
   'scripts/final-qualification/publish-coordinator-marker.mjs',
   'scripts/final-qualification/qualification-manifest.mjs',
   'scripts/final-qualification/validate-concurrent-run.mjs',
@@ -135,7 +136,12 @@ function fixtureAuthenticatedBundle({ bundlePath, expectedHost }) {
       code_signature_hash: payload.client.codeSignatureHash,
     },
     host_source_commit: expectedHost.source_commit,
-    host_protocol_version: '1.30',
+    host_protocol_version: '1.31',
+    ...(payload.listenerPublicKeySHA256 === undefined ? {} : {
+      listener_public_key_sha256: payload.listenerPublicKeySHA256,
+      request_sha256: payload.requestSHA256,
+      response_sha256: payload.responseSHA256,
+    }),
     bundle_sha256: sha256(bytes),
     terminal_receipt_attested: true,
     target_attested: payload.target !== null,
@@ -255,7 +261,7 @@ function certificationSummaryFixture(monitorEvidence, planControllers) {
       validator_id: 'peekaboo-bridge-receipt-validate-v1',
       trust_source: 'authenticated_live_listener',
       minimum_protocol_version: '1.29',
-      host_protocol_version: '1.30',
+      host_protocol_version: '1.31',
       request_id: row.requestID,
       session_id: row.sessionID,
       session_sequence: '0',
@@ -417,11 +423,12 @@ function taskProcessTree(root, role, hostUUID, epoch, {
 } = {}) {
   const requiredClasses = role === 'local'
     ? (epoch === 'during'
-      ? ['agent', 'bridge', 'coordinator', 'elevation', 'fixture', 'integrated_cu']
+      ? ['agent', 'agent_requester', 'bridge', 'coordinator', 'elevation', 'fixture', 'integrated_cu']
       : ['bridge', 'elevation', 'integrated_cu'])
     : (epoch === 'during' ? ['bridge', 'elevation', 'fixture'] : ['bridge', 'elevation']);
   const classPID = {
     agent: 710,
+    agent_requester: 711,
     bridge: role === 'local' ? 720 : 820,
     coordinator: 730,
     elevation: role === 'local' ? 740 : 840,
@@ -430,6 +437,7 @@ function taskProcessTree(root, role, hostUUID, epoch, {
   };
   const executableNames = {
     agent: 'peekaboo',
+    agent_requester: 'peekaboo',
     bridge: 'Peekaboo',
     coordinator: 'peekaboo-certification-controller',
     elevation: 'OpenClaw',
@@ -437,7 +445,8 @@ function taskProcessTree(root, role, hostUUID, epoch, {
     integrated_cu: 'SkyComputerUseService',
   };
   const classCodeHash = {
-    agent: '1', bridge: '2', coordinator: '3', elevation: '4', fixture: '5', integrated_cu: '6',
+    agent: '1', agent_requester: '1', bridge: '2', coordinator: '3', elevation: '4',
+    fixture: '5', integrated_cu: '6',
   };
   const roots = requiredClasses.map((rootClass) => {
     const binding = processBindings[rootClass] ?? {};
@@ -467,7 +476,9 @@ function taskProcessTree(root, role, hostUUID, epoch, {
       team_id: TEAM,
     };
   });
-  const parent = roots[0];
+  const parent = roots.find((root) => root.root_class === 'coordinator')
+    ?? roots.find((root) => root.root_class === 'fixture')
+    ?? roots[0];
   const childPID = role === 'local' ? 799 : 899;
   const childName = !forbiddenRoot && forbiddenName ? forbiddenName : 'qualification-worker';
   processes.push({
@@ -490,8 +501,102 @@ function taskProcessTree(root, role, hostUUID, epoch, {
   const finalSampleStartedAt = coverage?.final_sample_started_at_milliseconds
     ?? coverageCompletedAt - 1;
   const capturedAt = coverage?.captured_at_milliseconds ?? coverageCompletedAt + 1;
-  return writeJSON(path.join(root, `${role}-${epoch}-${forbiddenName ?? (orphan ? 'orphan' : 'tree')}.json`), {
-    version: 3,
+  const lifecycleStartedAt = coverageStartedAt - 10;
+  const readinessPublishedAt = coverageStartedAt + 1;
+  const treeVariant = forbiddenName ?? (orphan ? 'orphan' : 'tree');
+  const readyPath = path.join(root, `${role}-${epoch}-${treeVariant}-readiness.json`);
+  const requiresAcknowledgement = role === 'local' && epoch === 'during';
+  let acknowledgementControl = null;
+  let acknowledgementAuthorization = null;
+  if (requiresAcknowledgement) {
+    const acknowledgementPath = coverage?.acknowledgement_path ?? writeJSON(
+      path.join(root, `${role}-${epoch}-${treeVariant}-agent-ack.json`),
+      { version: 1, acknowledged: true },
+    );
+    const acknowledgementParent = path.dirname(acknowledgementPath);
+    const acknowledgementBasename = path.basename(acknowledgementPath);
+    acknowledgementControl = {
+      acknowledgement_path: acknowledgementPath,
+      authorization_source_path: path.join(
+        acknowledgementParent,
+        `.${acknowledgementBasename}.lifecycle-source`,
+      ),
+      authorization_request_path: path.join(
+        acknowledgementParent,
+        `.${acknowledgementBasename}.lifecycle-request`,
+      ),
+      authorization_result_path: path.join(
+        acknowledgementParent,
+        `.${acknowledgementBasename}.lifecycle-result`,
+      ),
+    };
+  }
+  const readiness = writeJSON(readyPath, {
+    version: 1,
+    role,
+    host_uuid: hostUUID,
+    deployment_envelope_sha256: '8'.repeat(64),
+    epoch,
+    collector_sha256: collectorSHA256,
+    monitor_executable_path: monitorExecutable,
+    monitor_executable_sha256: sha256(fs.readFileSync(monitorExecutable)),
+    monitor_code_signature_hash: codeSignatureHash(monitorExecutable),
+    lifecycle_guard_sha256: lifecycleGuardSHA256,
+    lifecycle_guard_binary_sha256: lifecycleGuardBinarySHA256,
+    lifecycle_guard_executable_path: path.join(root, `${role}-${epoch}-${treeVariant}-guard`),
+    lifecycle_guard_pid: 999,
+    lifecycle_guard_start_identity: '999001',
+    lifecycle_result_path: path.join(root, `${role}-${epoch}-${treeVariant}-guard-result.json`),
+    lifecycle_started_at_milliseconds: lifecycleStartedAt,
+    coverage_started_at_milliseconds: coverageStartedAt,
+    published_at_milliseconds: readinessPublishedAt,
+    lifecycle_watched_pids: processes.map((process) => process.pid),
+    roots,
+    observed_processes: processes,
+    acknowledgement_control: acknowledgementControl,
+    complete: true,
+  });
+  if (requiresAcknowledgement) {
+    const acknowledgementSHA256 = sha256(fs.readFileSync(
+      acknowledgementControl.acknowledgement_path,
+    ));
+    const acknowledgementValue = JSON.parse(fs.readFileSync(
+      acknowledgementControl.acknowledgement_path,
+    ));
+    const requestedAt = Math.max(
+      readinessPublishedAt + 1,
+      acknowledgementValue.acknowledgedAt ?? 0,
+    );
+    const authorizedAt = requestedAt;
+    writeJSON(acknowledgementControl.authorization_request_path, {
+      version: 1,
+      guard_pid: 999,
+      acknowledgement_path: acknowledgementControl.acknowledgement_path,
+      acknowledgement_sha256: acknowledgementSHA256,
+      readiness_sha256: sha256(fs.readFileSync(readiness)),
+      requested_at_milliseconds: requestedAt,
+    });
+    writeJSON(acknowledgementControl.authorization_result_path, {
+      version: 1,
+      guard_pid: 999,
+      authorized_at_milliseconds: authorizedAt,
+    });
+    acknowledgementAuthorization = {
+      acknowledgement_path: acknowledgementControl.acknowledgement_path,
+      acknowledgement_sha256: acknowledgementSHA256,
+      authorization_request_path: acknowledgementControl.authorization_request_path,
+      authorization_request_sha256: sha256(fs.readFileSync(
+        acknowledgementControl.authorization_request_path,
+      )),
+      authorization_result_path: acknowledgementControl.authorization_result_path,
+      authorization_result_sha256: sha256(fs.readFileSync(
+        acknowledgementControl.authorization_result_path,
+      )),
+      authorized_at_milliseconds: authorizedAt,
+    };
+  }
+  return writeJSON(path.join(root, `${role}-${epoch}-${treeVariant}.json`), {
+    version: 4,
     role,
     host_uuid: hostUUID,
     deployment_envelope_sha256: '8'.repeat(64),
@@ -509,11 +614,15 @@ function taskProcessTree(root, role, hostUUID, epoch, {
     continuous_lifecycle_observation: true,
     lifecycle_guard_sha256: lifecycleGuardSHA256,
     lifecycle_guard_binary_sha256: lifecycleGuardBinarySHA256,
-    lifecycle_started_at_milliseconds: coverageStartedAt - 10,
+    lifecycle_started_at_milliseconds: lifecycleStartedAt,
     lifecycle_completed_at_milliseconds: capturedAt + 10,
     lifecycle_watched_pids: processes.map((process) => process.pid),
     lifecycle_event_count: 0,
     collector_sha256: collectorSHA256,
+    readiness_path: readiness,
+    readiness_sha256: sha256(fs.readFileSync(readiness)),
+    readiness_published_at_milliseconds: readinessPublishedAt,
+    acknowledgement_authorization: acknowledgementAuthorization,
     monitor_executable_path: monitorExecutable,
     monitor_executable_sha256: sha256(fs.readFileSync(monitorExecutable)),
     monitor_code_signature_hash: codeSignatureHash(monitorExecutable),
@@ -521,6 +630,95 @@ function taskProcessTree(root, role, hostUUID, epoch, {
     roots,
     processes,
   });
+}
+
+function synchronizeProcessTreeAuthorization(tree) {
+  const authorization = tree.acknowledgement_authorization;
+  if (authorization === null) return;
+  const readinessSHA256 = sha256(fs.readFileSync(tree.readiness_path));
+  const acknowledgementValue = JSON.parse(fs.readFileSync(authorization.acknowledgement_path));
+  const requestedAt = Math.max(
+    tree.readiness_published_at_milliseconds + 1,
+    acknowledgementValue.acknowledgedAt ?? 0,
+  );
+  const authorizedAt = Math.max(authorization.authorized_at_milliseconds, requestedAt);
+  const acknowledgementSHA256 = sha256(fs.readFileSync(authorization.acknowledgement_path));
+  writeJSON(authorization.authorization_request_path, {
+    version: 1,
+    guard_pid: JSON.parse(fs.readFileSync(tree.readiness_path)).lifecycle_guard_pid,
+    acknowledgement_path: authorization.acknowledgement_path,
+    acknowledgement_sha256: acknowledgementSHA256,
+    readiness_sha256: readinessSHA256,
+    requested_at_milliseconds: requestedAt,
+  });
+  writeJSON(authorization.authorization_result_path, {
+    version: 1,
+    guard_pid: JSON.parse(fs.readFileSync(tree.readiness_path)).lifecycle_guard_pid,
+    authorized_at_milliseconds: authorizedAt,
+  });
+  authorization.acknowledgement_sha256 = acknowledgementSHA256;
+  authorization.authorization_request_sha256 = sha256(fs.readFileSync(
+    authorization.authorization_request_path,
+  ));
+  authorization.authorization_result_sha256 = sha256(fs.readFileSync(
+    authorization.authorization_result_path,
+  ));
+  authorization.authorized_at_milliseconds = authorizedAt;
+}
+
+function writeSynchronizedProcessTree(root, name, tree) {
+  const readiness = JSON.parse(fs.readFileSync(tree.readiness_path));
+  readiness.role = tree.role;
+  readiness.host_uuid = tree.host_uuid;
+  readiness.deployment_envelope_sha256 = tree.deployment_envelope_sha256;
+  readiness.epoch = tree.epoch;
+  readiness.collector_sha256 = tree.collector_sha256;
+  readiness.monitor_executable_path = tree.monitor_executable_path;
+  readiness.monitor_executable_sha256 = tree.monitor_executable_sha256;
+  readiness.monitor_code_signature_hash = tree.monitor_code_signature_hash;
+  readiness.lifecycle_guard_sha256 = tree.lifecycle_guard_sha256;
+  readiness.lifecycle_guard_binary_sha256 = tree.lifecycle_guard_binary_sha256;
+  readiness.lifecycle_started_at_milliseconds = tree.lifecycle_started_at_milliseconds;
+  readiness.coverage_started_at_milliseconds = tree.coverage_started_at_milliseconds;
+  readiness.published_at_milliseconds = tree.readiness_published_at_milliseconds;
+  readiness.lifecycle_watched_pids = structuredClone(tree.lifecycle_watched_pids);
+  readiness.roots = structuredClone(tree.roots);
+  readiness.observed_processes = structuredClone(tree.processes);
+  if (tree.acknowledgement_authorization !== null) {
+    const authorizationRoot = privateDirectory(root, `${name}-authorization`);
+    const acknowledgementPath = writeFile(
+      path.join(authorizationRoot, 'agent-execution-ack.json'),
+      fs.readFileSync(tree.acknowledgement_authorization.acknowledgement_path),
+      0o600,
+    );
+    const acknowledgementBasename = path.basename(acknowledgementPath);
+    const control = {
+      acknowledgement_path: acknowledgementPath,
+      authorization_source_path: path.join(
+        authorizationRoot,
+        `.${acknowledgementBasename}.lifecycle-source`,
+      ),
+      authorization_request_path: path.join(
+        authorizationRoot,
+        `.${acknowledgementBasename}.lifecycle-request`,
+      ),
+      authorization_result_path: path.join(
+        authorizationRoot,
+        `.${acknowledgementBasename}.lifecycle-result`,
+      ),
+    };
+    readiness.acknowledgement_control = control;
+    tree.acknowledgement_authorization.acknowledgement_path = control.acknowledgement_path;
+    tree.acknowledgement_authorization.authorization_request_path
+      = control.authorization_request_path;
+    tree.acknowledgement_authorization.authorization_result_path
+      = control.authorization_result_path;
+  }
+  const readinessPath = writeJSON(path.join(root, `${name}-readiness.json`), readiness);
+  tree.readiness_path = readinessPath;
+  tree.readiness_sha256 = sha256(fs.readFileSync(readinessPath));
+  synchronizeProcessTreeAuthorization(tree);
+  return writeJSON(path.join(root, `${name}.json`), tree);
 }
 
 function artifactFixture(root, executablePath = '/usr/bin/true', monitorPath = '/usr/bin/true') {
@@ -710,6 +908,13 @@ function deploymentFixture(
       executable_sha256: concurrentReport.agent.executable_sha256,
       code_signature_hash: concurrentReport.agent.code_signature_hash,
     },
+    agent_requester: {
+      pid: concurrentReport.agent.requester.pid,
+      start_identity: concurrentReport.agent.requester.start_identity,
+      executable_path: concurrentReport.agent.executable_path,
+      executable_sha256: concurrentReport.agent.executable_sha256,
+      code_signature_hash: concurrentReport.agent.requester.code_signature_hash,
+    },
     bridge: {
       pid: plan.bridge.expected_host.process_identifier,
       start_identity: plan.bridge.expected_host.process_start_identity_decimal,
@@ -746,9 +951,10 @@ function deploymentFixture(
       captured_at_milliseconds: concurrentReport.overlap.operations_started_at_milliseconds - 499,
     },
     during: {
-      started_at_milliseconds: concurrentReport.overlap.operations_started_at_milliseconds - 100,
+      started_at_milliseconds: concurrentReport.agent.released_at_milliseconds - 30,
       completed_at_milliseconds: concurrentReport.overlap.operations_completed_at_milliseconds + 100,
       captured_at_milliseconds: concurrentReport.overlap.operations_completed_at_milliseconds + 101,
+      acknowledgement_path: concurrentReport.agent.acknowledgement_path,
     },
     after: {
       started_at_milliseconds: concurrentReport.overlap.operations_completed_at_milliseconds + 200,
@@ -803,9 +1009,26 @@ function deploymentFixture(
     pid: secondControlled.pid,
     start_identity: secondControlled.start_identity,
   });
-  localDuringTree.roots.sort((left, right) => left.root_id.localeCompare(right.root_id));
+  localDuringTree.roots.sort((left, right) => (left.root_id < right.root_id ? -1 : 1));
   localDuringTree.processes.sort((left, right) => left.pid - right.pid);
   localDuringTree.lifecycle_watched_pids = localDuringTree.processes.map((entry) => entry.pid);
+  const localDuringReadiness = JSON.parse(fs.readFileSync(localDuringTree.readiness_path));
+  localDuringReadiness.roots = structuredClone(localDuringTree.roots);
+  localDuringReadiness.lifecycle_watched_pids = [...localDuringTree.lifecycle_watched_pids];
+  localDuringReadiness.observed_processes = structuredClone(localDuringTree.processes);
+  writeJSON(localDuringTree.readiness_path, localDuringReadiness);
+  localDuringTree.readiness_sha256 = sha256(fs.readFileSync(localDuringTree.readiness_path));
+  const localDuringAuthorizationRequest = JSON.parse(fs.readFileSync(
+    localDuringTree.acknowledgement_authorization.authorization_request_path,
+  ));
+  localDuringAuthorizationRequest.readiness_sha256 = localDuringTree.readiness_sha256;
+  writeJSON(
+    localDuringTree.acknowledgement_authorization.authorization_request_path,
+    localDuringAuthorizationRequest,
+  );
+  localDuringTree.acknowledgement_authorization.authorization_request_sha256 = sha256(
+    fs.readFileSync(localDuringTree.acknowledgement_authorization.authorization_request_path),
+  );
   writeJSON(processTrees[1], localDuringTree);
   const policyScanner = path.join(toolRoot, 'executable-policy-scanner.mjs');
   const policyReports = [
@@ -931,7 +1154,7 @@ function projectionFixture(root) {
         source: 'remote',
         socketPath: path.join(root, 'bridge.sock'),
         handshake: {
-          negotiatedVersion: { major: 1, minor: 30 },
+          negotiatedVersion: { major: 1, minor: 31 },
           hostKind: 'gui',
           hostIdentity: {
             processIdentifier: 200,
@@ -1317,7 +1540,7 @@ function managedLaunchSpec(root, kind, planPath, executablePath, arguments_, con
   };
 }
 
-test('managed launcher suspends Agent/coordinator until signed-monitor identity and records actual exits', async () => {
+test('managed launcher suspends the coordinator until signed-monitor identity and records actual exits', async () => {
   const root = fs.mkdtempSync('/private/tmp/pbq-tools-launcher-');
   fs.chmodSync(root, 0o700);
   const priorCWD = process.cwd();
@@ -1331,7 +1554,7 @@ test('managed launcher suspends Agent/coordinator until signed-monitor identity 
       0o400,
     );
     process.env.NODE_OPTIONS = `--require=${injectionSource}`;
-    const childMarker = path.join(root, 'agent-child-ran');
+    const childMarker = path.join(root, 'coordinator-child-ran');
     const monitorSource = writeFile(path.join(root, 'process-identity.c'), [
       '#include <fcntl.h>',
       '#include <libproc.h>',
@@ -1364,109 +1587,19 @@ test('managed launcher suspends Agent/coordinator until signed-monitor identity 
       'cc', '-std=c11', '-Wall', '-Wextra', '-Werror', monitorSource, '-o', monitor, '-lproc',
     ], { encoding: 'utf8' });
     assert.equal(monitorBuild.status, 0, monitorBuild.stderr);
-    const agentExecutable = writeFile(path.join(root, 'agent-fixture'), [
-      '#!/usr/bin/perl',
-      'use strict;',
-      `open(my $fh, ">", "${childMarker}") or die $!;`,
-      'print $fh "ran\\n";',
-      'close($fh);',
-      '',
-    ].join('\n'), 0o500);
     const bridgeSocket = path.join(root, 'bridge.sock');
     const planPath = writeJSON(path.join(root, 'plan.json'), {
       version: 1,
-      peekaboo_executable: agentExecutable,
+      peekaboo_executable: '/usr/bin/true',
       monitor_executable: monitor,
       bridge: { socket_path: bridgeSocket },
       monitor: { code_signature_hash: codeSignatureHash(monitor) },
       fixture_value: 'retained-plan',
     });
-    const taskText = 'Use only exact background targets.';
-    const taskPath = writeFile(path.join(root, 'task.txt'), `${taskText}\n`, 0o400);
-    const receipts = privateDirectory(root, 'receipts');
-    const agentSpec = managedLaunchSpec(
-      root,
-      'agent',
-      planPath,
-      agentExecutable,
-      ['agent', 'run', taskText, '--no-cache', '--max-steps', '40', '--bridge-socket', bridgeSocket, '--json'],
-      { task_path: taskPath, receipt_directory: receipts, bridge_socket: bridgeSocket },
-      'agent',
-    );
-    const agentSpecPath = writeJSON(path.join(root, 'agent-spec.json'), agentSpec);
-    const agentRun = await runManagedLaunch(agentSpecPath);
-    assert.equal(agentRun.exit_code, 0);
-    assert.equal(agentRun.signal, null);
-    const agentInvocation = JSON.parse(fs.readFileSync(agentSpec.invocation_receipt_path));
-    const agentExit = JSON.parse(fs.readFileSync(agentSpec.exit_receipt_path));
-    assert.equal(agentInvocation.kind, 'agent');
-    assert.equal(agentInvocation.background_only, true);
-    assert.equal(agentInvocation.allow_foreground, false);
-    assert.equal(agentInvocation.environment_policy_version, 1);
-    assert.equal(agentInvocation.environment_keys.includes('NODE_OPTIONS'), false);
-    assert.match(agentInvocation.environment_sha256, /^[0-9a-f]{64}$/);
-    assert.equal(agentInvocation.pid, agentExit.pid);
-    assert.equal(agentInvocation.start_identity, agentExit.start_identity);
-    assert.equal(fs.readFileSync(childMarker, 'utf8'), 'ran\n');
-    assert.equal(fs.statSync(agentSpec.invocation_receipt_path).mode & 0o777, 0o600);
-    assert.equal(fs.statSync(agentSpec.exit_receipt_path).mode & 0o777, 0o600);
-    fs.unlinkSync(childMarker);
-
-    const forgedReceipts = privateDirectory(root, 'forged-receipts');
-    const forgedSpec = managedLaunchSpec(
-      root,
-      'agent',
-      planPath,
-      agentExecutable,
-      ['agent', 'run', taskText, '--no-cache', '--max-steps', '40', '--bridge-socket', bridgeSocket, '--json'],
-      { task_path: taskPath, receipt_directory: forgedReceipts, bridge_socket: bridgeSocket },
-      'forged-ack',
-    );
-    await assert.rejects(
-      runManagedLaunch(
-        writeJSON(path.join(root, 'forged-ack-spec.json'), forgedSpec),
-        {
-          beforeAcknowledgement: ({ childPID }) => writeJSON(
-            forgedSpec.start_ack_path,
-            {
-              version: 1,
-              pid: childPID,
-              start_identity: '1',
-              phase: 'start',
-              invocation_sha256: '0'.repeat(64),
-            },
-          ),
-        },
-      ),
-      /already exists/,
-    );
-    assert.equal(fs.existsSync(childMarker), false);
-    const forgedPID = JSON.parse(fs.readFileSync(forgedSpec.pid_path)).pid;
-    assert.throws(() => process.kill(forgedPID, 0), /ESRCH/);
-    assert.equal(fs.existsSync(forgedSpec.exit_receipt_path), false);
-
-    const audioReceipts = privateDirectory(root, 'audio-receipts');
-    const audioSpec = managedLaunchSpec(
-      root,
-      'agent',
-      planPath,
-      agentExecutable,
-      [
-        'agent', 'run', taskText, '--no-cache', '--max-steps', '40',
-        '--bridge-socket', bridgeSocket, '--json', '--audio',
-      ],
-      { task_path: taskPath, receipt_directory: audioReceipts, bridge_socket: bridgeSocket },
-      'audio',
-    );
-    await assert.rejects(
-      runManagedLaunch(writeJSON(path.join(root, 'audio-spec.json'), audioSpec)),
-      /exactly equal the closed background-only launch order/,
-    );
-    assert.equal(fs.existsSync(audioSpec.pid_path), false);
-
     const coordinatorSource = writeFile(path.join(root, 'coordinator.mjs'), [
       'import fs from "node:fs";',
       'const plan = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));',
+      `fs.writeFileSync(${JSON.stringify(childMarker)}, "ran\\n");`,
       'process.stdout.write(`retained-source:${plan.fixture_value}\\n`);',
       '',
     ].join('\n'), 0o400);
@@ -1509,6 +1642,23 @@ test('managed launcher suspends Agent/coordinator until signed-monitor identity 
     assert.equal(coordinatorInvocation.execution_plan_sha256, sha256(retainedPlan));
     assert.equal(coordinatorInvocation.environment_keys.includes('NODE_OPTIONS'), false);
     assert.equal(fs.existsSync(injectionMarker), false);
+    assert.equal(fs.readFileSync(childMarker, 'utf8'), 'ran\n');
+    fs.unlinkSync(childMarker);
+
+    const rejectedAgentSpec = managedLaunchSpec(
+      root,
+      'agent',
+      planPath,
+      process.execPath,
+      [coordinatorSource, '--plan', planPath],
+      { coordinator_source_path: coordinatorSource },
+      'rejected-agent',
+    );
+    await assert.rejects(
+      runManagedLaunch(writeJSON(path.join(root, 'rejected-agent-spec.json'), rejectedAgentSpec)),
+      /managed launch kind\/version is invalid/,
+    );
+    assert.equal(fs.existsSync(rejectedAgentSpec.pid_path), false);
 
     const timeoutSource = writeFile(
       path.join(root, 'timeout-coordinator.mjs'),
@@ -1581,19 +1731,18 @@ test('managed launcher suspends Agent/coordinator until signed-monitor identity 
 
     const noHandshakePlan = writeJSON(path.join(root, 'no-handshake-plan.json'), {
       version: 1,
-      peekaboo_executable: agentExecutable,
+      peekaboo_executable: '/usr/bin/true',
       monitor_executable: '/usr/bin/true',
       bridge: { socket_path: bridgeSocket },
       monitor: { code_signature_hash: codeSignatureHash('/usr/bin/true') },
     });
-    const failedReceipts = privateDirectory(root, 'failed-receipts');
     const failedSpec = managedLaunchSpec(
       root,
-      'agent',
+      'coordinator',
       noHandshakePlan,
-      agentExecutable,
-      ['agent', 'run', taskText, '--no-cache', '--max-steps', '40', '--bridge-socket', bridgeSocket, '--json'],
-      { task_path: taskPath, receipt_directory: failedReceipts, bridge_socket: bridgeSocket },
+      process.execPath,
+      [coordinatorSource, '--plan', noHandshakePlan],
+      { coordinator_source_path: coordinatorSource },
       'failed',
     );
     await assert.rejects(
@@ -1836,6 +1985,16 @@ function actionOutcome() {
   };
 }
 
+function agentExecutionOutcome() {
+  return {
+    state: 'dispatched_unverified', effect: 'unverifiable', route: 'bridge',
+    delivery_mechanism: 'native_framework', delivery_mode: 'background',
+    evidence: 'delivery_accepted', dispatch_state: 'dispatched', dispatched_unit_count: 1,
+    retry_safety: 'unsafe', escalation: 'observe_before_retry', mutation_dispatched: true,
+    retry_safe: false, requires_fresh_observation: true,
+  };
+}
+
 function heldPointerClientID(executionNonce) {
   const digest = Buffer.from(sha256(Buffer.concat([
     Buffer.from('peekaboo.held-pointer-certification.client.v1\0', 'utf8'),
@@ -1929,7 +2088,7 @@ function signedBundleFixture(root, name, operation, targetValue, startedAt, comp
         code_signature_hash: client.code_signature_hash,
       },
       host_source_commit: sourceCommit,
-      host_protocol_version: '1.30',
+      host_protocol_version: '1.31',
       bundle_sha256: sha256(fs.readFileSync(bundle)),
       terminal_receipt_attested: true,
       target_attested: !targetAbsent,
@@ -1938,6 +2097,165 @@ function signedBundleFixture(root, name, operation, targetValue, startedAt, comp
     },
   });
   return { bundle, validator, payload };
+}
+
+function agentTerminalBundleFixture(root, {
+  executablePath,
+  bridgeSocket,
+  runRoot,
+  task,
+  trace,
+  spawnedAt,
+  releasedAt,
+  completedAt,
+  child,
+  requester,
+  host,
+}) {
+  const request = {
+    task,
+    maxSteps: 40,
+    runRootPath: runRoot,
+    coordinationReceiptPath: path.join(runRoot, 'agent-execution-coordination.json'),
+    acknowledgementPath: path.join(runRoot, 'agent-execution-ack.json'),
+    startTimeoutMilliseconds: 30_000,
+    runTimeoutMilliseconds: 900_000,
+  };
+  const arguments_ = [
+    'agent', 'run', task, '--no-cache', '--max-steps', '40',
+    '--bridge-socket', bridgeSocket, '--json',
+  ];
+  const stdoutRoot = {
+    success: true,
+    result: { content: 'complete', executionTrace: trace },
+  };
+  const stdoutBytes = canonicalBytes(stdoutRoot);
+  const evidence = (bytes) => ({
+    bytes: bytes.toString('base64'),
+    sha256: sha256(bytes),
+    byteCount: bytes.length,
+    truncated: false,
+    readErrorCode: null,
+  });
+  const coordinationBytes = canonicalBytes({ version: 1, fixture: 'coordination' });
+  const processIdentity = {
+    processIdentifier: child.pid,
+    processStartIdentity: child.start_identity,
+    codeSignatureHash: child.code_signature_hash,
+  };
+  const processReceipt = {
+    processIdentity,
+    executablePath,
+    executableSHA256: sha256(fs.readFileSync(executablePath)),
+  };
+  const requestingPeer = {
+    processIdentifier: requester.pid,
+    processStartIdentity: requester.start_identity,
+    codeSignatureHash: requester.code_signature_hash,
+  };
+  const taskSHA256 = sha256(Buffer.from(task, 'utf8'));
+  const argumentsSHA256 = sha256(canonicalBytes(arguments_));
+  const environmentSHA256 = 'e'.repeat(64);
+  const acknowledgementBytes = canonicalBytes({
+    version: 1,
+    challenge: 'c'.repeat(64),
+    coordinationReceiptSHA256: sha256(coordinationBytes),
+    requestingPeer,
+    process: processReceipt,
+    taskSHA256,
+    argumentsSHA256,
+    environmentSHA256,
+    acknowledgedAt: releasedAt - 1,
+  });
+  writeFile(request.coordinationReceiptPath, coordinationBytes);
+  writeFile(request.acknowledgementPath, acknowledgementBytes);
+  const response = {
+    version: 1,
+    process: processReceipt,
+    requestingPeer,
+    bridgeSocketPath: bridgeSocket,
+    runRootPath: runRoot,
+    coordinationReceiptPath: request.coordinationReceiptPath,
+    acknowledgementPath: request.acknowledgementPath,
+    operationReceiptDirectoryPath: path.join(runRoot, 'agent-operation-receipts'),
+    taskSHA256,
+    maxSteps: 40,
+    startTimeoutMilliseconds: 30_000,
+    runTimeoutMilliseconds: 900_000,
+    arguments: arguments_,
+    argumentsSHA256,
+    backgroundOnly: true,
+    allowForeground: false,
+    shellAvailable: false,
+    processCreationLimit: 0,
+    environmentPolicyVersion: 3,
+    environmentKeys: [
+      'PATH', 'PEEKABOO_AGENT_EXECUTION_GATE_CHALLENGE',
+      'PEEKABOO_AGENT_EXECUTION_GATE_FD', 'PEEKABOO_AGENT_EXECUTION_LOCKDOWN_FD',
+      'PEEKABOO_AGENT_EXECUTION_PROCESS_LIMIT', 'PEEKABOO_OPERATION_RECEIPT_DIRECTORY',
+    ],
+    environmentSHA256,
+    stdout: evidence(stdoutBytes),
+    stderr: evidence(Buffer.alloc(0)),
+    coordinationReceipt: evidence(coordinationBytes),
+    acknowledgement: evidence(acknowledgementBytes),
+    processDisposition: 'exited',
+    outputDisposition: 'validated_execution_trace',
+    executionTrace: trace,
+    exitCode: 0,
+    terminationSignal: null,
+    spawnedAt,
+    lockdownAcknowledgedAt: spawnedAt + 1,
+    coordinationReceiptPublishedAt: releasedAt - 50,
+    acknowledgedAt: releasedAt - 1,
+    releasedAt,
+    terminalObservationEndedAt: completedAt,
+  };
+  const outcome = agentExecutionOutcome();
+  const canonicalRequest = canonicalBytes({
+    projectedAction: { _0: { request: { agentExecutionTrace: { _0: request } } } },
+  });
+  const canonicalResponse = canonicalBytes({
+    projectedAction: { _0: { outcome, response: { agentExecutionTrace: { _0: response } } } },
+  });
+  const requestOrdinal = fixtureRequestCounter++;
+  const requestID = `00000000-0000-4000-8000-${String(requestOrdinal).padStart(12, '0')}`;
+  const listenerPublicKeySHA256 = 'f'.repeat(64);
+  const payload = {
+    schemaVersion: 1,
+    requestID,
+    sessionID: SESSION_ID,
+    operation: 'agentExecutionTrace',
+    listenerInstanceID: UUID,
+    clientInstanceID: UUID,
+    sessionSequence: String(requestOrdinal),
+    listenerPublicKeySHA256,
+    requestSHA256: sha256(canonicalRequest),
+    responseSHA256: sha256(canonicalResponse),
+    client: {
+      processIdentifier: requester.pid,
+      processStartIdentity: requester.start_identity,
+      codeSignatureHash: requester.code_signature_hash,
+    },
+    startedAtUnixMilliseconds: spawnedAt - 1,
+    completedAtUnixMilliseconds: completedAt + 1,
+    target: {
+      kind: 'process',
+      processIdentifier: child.pid,
+      processStartIdentity: child.start_identity,
+    },
+    outcome,
+  };
+  const bundle = writeJSON(path.join(root, 'agent-terminal-bundle.json'), {
+    canonicalRequest: canonicalRequest.toString('base64'),
+    canonicalResponse: canonicalResponse.toString('base64'),
+    receipt: { payload },
+  });
+  const validator = writeJSON(path.join(root, 'agent-terminal-validator.json'), {
+    success: true,
+    data: fixtureAuthenticatedBundle({ bundlePath: bundle, expectedHost: host }),
+  });
+  return { bundle, validator, request, response, payload, stdoutRoot };
 }
 
 function semanticReadbackFixture(root, name, targetValue, phase, value, observedAt) {
@@ -2092,70 +2410,17 @@ function concurrentFixture(root, {
     execution_plan_sha256: sha256(fs.readFileSync(plan)),
     execution_staged: true,
   });
-  const agentExit = writeJSON(path.join(root, 'agent-exit.json'), {
-    version: 1, process: 'agent', pid: 901, start_identity: '901001',
-    started_at_milliseconds: now - 4000, completed_at_milliseconds: now + 1000,
-    exit_code: 0, signal: null,
-  });
   const taskText = 'Operate only through Peekaboo background tools on two exact controlled windows.';
   const taskPath = writeFile(path.join(root, 'agent-task.txt'), `${taskText}\n`, 0o400);
-  const agentReceipts = privateDirectory(root, 'agent-receipts');
-  const invocationHandshake = writeJSON(path.join(root, 'agent-invocation-handshake.json'), {
-    pid: 901, startIdentity: '901001',
-  });
-  const invocationStdout = writeFile(path.join(root, 'agent-invocation.stdout'), '');
-  const invocationStderr = writeFile(path.join(root, 'agent-invocation.stderr'), '');
-  const agentInvocation = writeJSON(path.join(root, 'agent-invocation.json'), {
-    version: 1,
-    kind: 'agent',
-    pid: 901,
-    start_identity: '901001',
-    executable_path: agentExecutable,
-    executable_sha256: sha256(fs.readFileSync(agentExecutable)),
-    arguments: [
-      'agent', 'run', taskText, '--no-cache', '--max-steps', '40',
-      '--bridge-socket', bridgeSocket, '--json',
-    ],
-    plan_path: plan,
-    plan_sha256: sha256(fs.readFileSync(plan)),
-    monitor_executable_path: '/usr/bin/true',
-    monitor_executable_sha256: sha256(fs.readFileSync('/usr/bin/true')),
-    monitor_code_signature_hash: monitorCodeSignatureHash,
-    identity_handshake_path: invocationHandshake,
-    identity_handshake_sha256: sha256(fs.readFileSync(invocationHandshake)),
-    stdout_path: invocationStdout,
-    stderr_path: invocationStderr,
-    ...launchEnvironment('agent', agentReceipts),
-    task_path: taskPath,
-    task_sha256: sha256(fs.readFileSync(taskPath)),
-    receipt_directory: agentReceipts,
-    bridge_socket: bridgeSocket,
-    background_only: true,
-    allow_foreground: false,
-    shell_available: false,
-    captured_at_milliseconds: now - 3500,
-  });
-  const agentIdentity = {
-    launch: invocationHandshake,
-    perform: processReceipt(root, 'agent-perform', 901, '901001'),
-    restore: processReceipt(root, 'agent-restore', 901, '901001'),
-  };
-  fs.utimesSync(agentIdentity.launch, new Date(now - 3900), new Date(now - 3900));
-  fs.utimesSync(agentIdentity.perform, new Date(operationsStart + 10), new Date(operationsStart + 10));
-  fs.utimesSync(agentIdentity.restore, new Date(operationsComplete + 100), new Date(operationsComplete + 100));
+  const agentRunRoot = privateDirectory(root, 'agent-run-root');
+  const agentReceipts = privateDirectory(agentRunRoot, 'agent-operation-receipts');
   const entries = [
     traceEntry('a-mutate', 'set_value', 301, 401),
     traceEntry('a-restore', 'set_value', 301, 401),
     traceEntry('b-mutate', 'paste', 302, 402),
     traceEntry('b-restore', 'type', 302, 402),
   ];
-  const agentResult = writeJSON(path.join(root, 'agent-result.json'), {
-    success: true,
-    result: {
-      content: 'complete',
-      executionTrace: { entries, totalCallCount: entries.length, truncated: false },
-    },
-  });
+  const agentTrace = { entries, totalCallCount: entries.length, truncated: false };
   const targetA = { pid: 301, start_identity: '301001', window_id: 401 };
   const targetB = { pid: 302, start_identity: '302001', window_id: 402 };
   const agentClient = {
@@ -2163,6 +2428,24 @@ function concurrentFixture(root, {
     start_identity: '901001',
     code_signature_hash: codeSignatureHash(agentExecutable),
   };
+  const agentRequester = {
+    pid: 899,
+    start_identity: '899001',
+    code_signature_hash: agentClient.code_signature_hash,
+  };
+  const terminal = agentTerminalBundleFixture(root, {
+    executablePath: agentExecutable,
+    bridgeSocket,
+    runRoot: agentRunRoot,
+    task: taskText,
+    trace: agentTrace,
+    spawnedAt: now - 4000,
+    releasedAt: operationsStart - 100,
+    completedAt: now + 1000,
+    child: agentClient,
+    requester: agentRequester,
+    host: planValue.bridge.expected_host,
+  });
   const baselineA = semanticReadbackFixture(root, 'a-baseline', targetA, 'baseline', 'alpha', operationsStart + 50);
   const mutationA = semanticReadbackFixture(root, 'a-mutate', targetA, 'mutated', 'alpha!', operationsStart + 250);
   const restorationA = semanticReadbackFixture(root, 'a-restore', targetA, 'restored', 'alpha', operationsStart + 450);
@@ -2260,15 +2543,17 @@ function concurrentFixture(root, {
   const spec = {
     version: 1, plan, coordinator_invocation: coordinatorInvocation,
     coordinator_events: eventPath, coordinator_exit: coordinatorExit,
-    agent_result: agentResult, agent_exit: agentExit, agent_invocation: agentInvocation,
-    agent_identity: agentIdentity,
+    agent_task: taskPath,
+    agent_run_root: agentRunRoot,
+    agent_execution_bundle: terminal.bundle,
+    agent_execution_validator_report: terminal.validator,
     agent_bundles: agentBundles,
     agent_readbacks: agentReadbacks,
     integrated_cu: { emitter: emitterSpec, perform_readback: performReadback, restore_readback: restoreReadback },
   };
   return {
     spec,
-    agentResult,
+    terminal,
     summary,
     monitorEvidence,
     semanticReadbacks: [baselineA, mutationA, restorationA, baselineB, mutationB, restorationB],
@@ -2291,6 +2576,30 @@ function mutateFixtureBundle(spec, entry, mutate) {
   mutate(bundle.receipt.payload);
   writeJSON(entry.bundle_path, bundle);
   refreshFixtureBundleValidator(spec, entry);
+}
+
+function mutateAgentTerminalBundle(spec, mutate) {
+  const bundle = JSON.parse(fs.readFileSync(spec.agent_execution_bundle));
+  const responseWire = JSON.parse(Buffer.from(bundle.canonicalResponse, 'base64'));
+  const response = responseWire.projectedAction._0.response.agentExecutionTrace._0;
+  const stdoutRoot = JSON.parse(Buffer.from(response.stdout.bytes, 'base64'));
+  mutate({ response, stdoutRoot, payload: bundle.receipt.payload, responseWire });
+  const stdoutBytes = canonicalBytes(stdoutRoot);
+  response.stdout.bytes = stdoutBytes.toString('base64');
+  response.stdout.sha256 = sha256(stdoutBytes);
+  response.stdout.byteCount = stdoutBytes.length;
+  response.executionTrace = structuredClone(stdoutRoot.result.executionTrace);
+  const responseBytes = canonicalBytes(responseWire);
+  bundle.canonicalResponse = responseBytes.toString('base64');
+  bundle.receipt.payload.responseSHA256 = sha256(responseBytes);
+  writeJSON(spec.agent_execution_bundle, bundle);
+  const plan = JSON.parse(fs.readFileSync(spec.plan));
+  const validator = JSON.parse(fs.readFileSync(spec.agent_execution_validator_report));
+  validator.data = fixtureAuthenticatedBundle({
+    bundlePath: spec.agent_execution_bundle,
+    expectedHost: plan.bridge.expected_host,
+  });
+  writeJSON(spec.agent_execution_validator_report, validator);
 }
 
 function resealAgentTarget(fixture, targetIndex, replacement) {
@@ -2325,18 +2634,18 @@ function resealAgentTarget(fixture, targetIndex, replacement) {
     writeJSON(action.validator_report_path, validator);
   }
 
-  const agentResult = JSON.parse(fs.readFileSync(fixture.spec.agent_result));
   const traceCallIDs = new Set([
     targetEntry.mutation.trace_call_id,
     targetEntry.restoration.trace_call_id,
   ]);
-  for (const entry of agentResult.result.executionTrace.entries) {
-    if (traceCallIDs.has(entry.id)) {
-      entry.arguments.pid = replacement.pid;
-      entry.arguments.window_id = replacement.window_id;
+  mutateAgentTerminalBundle(fixture.spec, ({ stdoutRoot }) => {
+    for (const entry of stdoutRoot.result.executionTrace.entries) {
+      if (traceCallIDs.has(entry.id)) {
+        entry.arguments.pid = replacement.pid;
+        entry.arguments.window_id = replacement.window_id;
+      }
     }
-  }
-  writeJSON(fixture.spec.agent_result, agentResult);
+  });
   writeJSON(fixture.spec.agent_readbacks, readbackMap);
 }
 
@@ -2415,22 +2724,25 @@ test('post-run validator requires zero exits, exact Agent generation, background
       new Date(JSON.parse(mutationABytes).observed_at_milliseconds),
     );
 
-    const originalResult = fs.readFileSync(fix.agentResult);
-    const bad = JSON.parse(originalResult);
-    bad.result.executionTrace.entries[0].actionOutcome.delivery_mode = 'foreground';
-    writeJSON(fix.agentResult, bad);
+    const originalTerminalBundle = fs.readFileSync(fix.spec.agent_execution_bundle);
+    const originalTerminalValidator = fs.readFileSync(fix.spec.agent_execution_validator_report);
+    mutateAgentTerminalBundle(fix.spec, ({ stdoutRoot }) => {
+      stdoutRoot.result.executionTrace.entries[0].actionOutcome.delivery_mode = 'foreground';
+    });
     assert.throws(() => validateConcurrentRun(specPath, path.join(root, 'bad-report.json')), /foreground delivery/);
-    writeFile(fix.agentResult, originalResult);
+    writeFile(fix.spec.agent_execution_bundle, originalTerminalBundle);
+    writeFile(fix.spec.agent_execution_validator_report, originalTerminalValidator);
 
-    const extra = JSON.parse(originalResult);
-    extra.result.executionTrace.entries.push(traceEntry('extra-mutation', 'click', 303, 403));
-    extra.result.executionTrace.totalCallCount += 1;
-    writeJSON(fix.agentResult, extra);
+    mutateAgentTerminalBundle(fix.spec, ({ stdoutRoot }) => {
+      stdoutRoot.result.executionTrace.entries.push(traceEntry('extra-mutation', 'click', 303, 403));
+      stdoutRoot.result.executionTrace.totalCallCount += 1;
+    });
     assert.throws(
       () => validateConcurrentRun(specPath, path.join(root, 'extra-report.json')),
       /exactly the four mapped dispatched mutation call IDs/,
     );
-    writeFile(fix.agentResult, originalResult);
+    writeFile(fix.spec.agent_execution_bundle, originalTerminalBundle);
+    writeFile(fix.spec.agent_execution_validator_report, originalTerminalValidator);
 
     const lateReadback = JSON.parse(fs.readFileSync(fix.semanticReadbacks[1]));
     lateReadback.observed_at_milliseconds = result.report.overlap.operations_started_at_milliseconds - 1;
@@ -2490,7 +2802,7 @@ test('post-run validator requires zero exits, exact Agent generation, background
     writeFile(foreignBundlePath, originalBundle);
     writeFile(foreignValidatorPath, originalValidator);
 
-    const receiptDirectory = JSON.parse(fs.readFileSync(fix.spec.agent_invocation)).receipt_directory;
+    const receiptDirectory = path.join(fix.spec.agent_run_root, 'agent-operation-receipts');
     writeJSON(path.join(receiptDirectory, 'unlisted.json'), { unexpected: true });
     assert.throws(
       () => validateConcurrentRun(specPath, path.join(root, 'unlisted-report.json')),
@@ -2699,7 +3011,7 @@ test('post-run validator requires one closed successful certification summary', 
     updateCoordinatorSummaryCommitment(fix.spec.coordinator_events, fix.summary);
     assert.throws(
       () => validateConcurrentRun(specPath, path.join(root, 'foreign-catalog-summary-report.json')),
-      /not one successful live certification core/,
+      /coordinator exit interval does not contain its JSONL evidence|not one successful live certification core/,
     );
 
     const mixedSlotSummary = JSON.parse(originalSummary);
@@ -3244,7 +3556,6 @@ test('qualification manifest closes every required evidence class and detects by
     const liveEvents = fs.readFileSync(concurrent.spec.coordinator_events, 'utf8')
       .trim().split('\n').map(JSON.parse);
     const completion = liveEvents.at(-1);
-    const agentInvocation = JSON.parse(fs.readFileSync(concurrent.spec.agent_invocation));
     const qualificationToolsAggregate = JSON.parse(fs.readFileSync(toolsManifest)).aggregate_sha256;
     const artifact = artifactFixture(root);
     const concurrentValue = JSON.parse(fs.readFileSync(concurrentReport));
@@ -3319,11 +3630,10 @@ test('qualification manifest closes every required evidence class and detects by
       },
       matrix_cycles: matrix,
       agent_cu: {
-        task: agentInvocation.task_path,
-        agent_result: concurrent.spec.agent_result,
-        agent_exit: concurrent.spec.agent_exit,
-        agent_invocation: concurrent.spec.agent_invocation,
-        agent_process_receipts: Object.values(concurrent.spec.agent_identity),
+        task: concurrent.spec.agent_task,
+        run_root: concurrent.spec.agent_run_root,
+        agent_execution_bundle: concurrent.spec.agent_execution_bundle,
+        agent_execution_validator_report: concurrent.spec.agent_execution_validator_report,
         agent_readbacks: concurrent.spec.agent_readbacks,
         signed_bundles: concurrent.agentBundles.map((entry) => entry.bundle_path),
         live_validator_reports: concurrent.agentBundles.map((entry) => entry.validator_report_path),
@@ -3493,7 +3803,7 @@ test('qualification manifest closes every required evidence class and detects by
         writeJSON(path.join(root, 'forged-controlled-target-input.json'), forgedSummaryInput),
         path.join(root, 'forged-controlled-target-manifest.json'),
       ),
-      /bound final certification summary target-a target differs from the live-v4 plan/,
+      /completion summary path is not canonical|final certification summary target-a target differs/,
     );
     for (const [artifactDrift, mutateArtifact, expectedError] of [
       [
@@ -3678,8 +3988,9 @@ test('qualification manifest closes every required evidence class and detects by
     missingRootTree.lifecycle_watched_pids = missingRootTree.lifecycle_watched_pids.filter(
       (pid) => !fixturePIDs.has(pid),
     );
-    missingRootInput.deployment.process_trees[1] = writeJSON(
-      path.join(root, 'missing-root-process-tree.json'),
+    missingRootInput.deployment.process_trees[1] = writeSynchronizedProcessTree(
+      root,
+      'missing-root-process-tree',
       missingRootTree,
     );
     assert.throws(
@@ -3700,8 +4011,9 @@ test('qualification manifest closes every required evidence class and detects by
     ));
     wrongFixtureRoot.start_identity = '301999';
     wrongFixtureProcess.start_identity = '301999';
-    wrongFixtureGenerationInput.deployment.process_trees[1] = writeJSON(
-      path.join(root, 'wrong-fixture-generation-process-tree.json'),
+    wrongFixtureGenerationInput.deployment.process_trees[1] = writeSynchronizedProcessTree(
+      root,
+      'wrong-fixture-generation-process-tree',
       wrongFixtureGenerationTree,
     );
     assert.throws(
@@ -3720,8 +4032,9 @@ test('qualification manifest closes every required evidence class and detects by
     wrongAgentBytesTree.processes.find((entry) => (
       entry.pid === wrongAgentRoot.pid && entry.start_identity === wrongAgentRoot.start_identity
     )).executable_sha256 = '0'.repeat(64);
-    wrongAgentBytesInput.deployment.process_trees[1] = writeJSON(
-      path.join(root, 'wrong-agent-bytes-process-tree.json'),
+    wrongAgentBytesInput.deployment.process_trees[1] = writeSynchronizedProcessTree(
+      root,
+      'wrong-agent-bytes-process-tree',
       wrongAgentBytesTree,
     );
     assert.throws(
@@ -3734,8 +4047,9 @@ test('qualification manifest closes every required evidence class and detects by
     const wrongMonitorTreeInput = structuredClone(inputValue);
     const wrongMonitorTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
     wrongMonitorTree.monitor_executable_sha256 = '0'.repeat(64);
-    wrongMonitorTreeInput.deployment.process_trees[1] = writeJSON(
-      path.join(root, 'wrong-monitor-process-tree.json'),
+    wrongMonitorTreeInput.deployment.process_trees[1] = writeSynchronizedProcessTree(
+      root,
+      'wrong-monitor-process-tree',
       wrongMonitorTree,
     );
     assert.throws(
@@ -3748,8 +4062,9 @@ test('qualification manifest closes every required evidence class and detects by
     const wrongCollectorInput = structuredClone(inputValue);
     const wrongCollectorTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
     wrongCollectorTree.collector_sha256 = '0'.repeat(64);
-    wrongCollectorInput.deployment.process_trees[1] = writeJSON(
-      path.join(root, 'wrong-collector-process-tree.json'),
+    wrongCollectorInput.deployment.process_trees[1] = writeSynchronizedProcessTree(
+      root,
+      'wrong-collector-process-tree',
       wrongCollectorTree,
     );
     assert.throws(
@@ -3762,8 +4077,9 @@ test('qualification manifest closes every required evidence class and detects by
     const wrongLifecycleGuardInput = structuredClone(inputValue);
     const wrongLifecycleGuardTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
     wrongLifecycleGuardTree.lifecycle_guard_sha256 = '0'.repeat(64);
-    wrongLifecycleGuardInput.deployment.process_trees[1] = writeJSON(
-      path.join(root, 'wrong-lifecycle-guard-process-tree.json'),
+    wrongLifecycleGuardInput.deployment.process_trees[1] = writeSynchronizedProcessTree(
+      root,
+      'wrong-lifecycle-guard-process-tree',
       wrongLifecycleGuardTree,
     );
     assert.throws(
@@ -3783,7 +4099,7 @@ test('qualification manifest closes every required evidence class and detects by
     substitutedMonitorInput.deployment.process_trees = deployment.processTrees.map((treePath, index) => {
       const tree = JSON.parse(fs.readFileSync(treePath));
       tree.monitor_executable_path = substitutedMonitor;
-      return writeJSON(path.join(root, `substituted-monitor-tree-${index}.json`), tree);
+      return writeSynchronizedProcessTree(root, `substituted-monitor-tree-${index}`, tree);
     });
     assert.throws(
       () => generateManifest(
@@ -3809,7 +4125,7 @@ test('qualification manifest closes every required evidence class and detects by
       const tree = JSON.parse(fs.readFileSync(treePath));
       tree.collector_sha256 = sha256(fs.readFileSync(substitutedCollector));
       tree.lifecycle_guard_sha256 = sha256(fs.readFileSync(substitutedGuard));
-      return writeJSON(path.join(root, `substituted-tool-tree-${index}.json`), tree);
+      return writeSynchronizedProcessTree(root, `substituted-tool-tree-${index}`, tree);
     });
     assert.throws(
       () => generateManifest(
@@ -3842,8 +4158,9 @@ test('qualification manifest closes every required evidence class and detects by
     const driftedProcess = generationDriftTree.processes.find((entry) => entry.pid === driftedRoot.pid);
     driftedRoot.start_identity = `${BigInt(driftedRoot.start_identity) + 1n}`;
     driftedProcess.start_identity = driftedRoot.start_identity;
-    generationDriftInput.deployment.process_trees[1] = writeJSON(
-      path.join(root, 'generation-drift-process-tree.json'),
+    generationDriftInput.deployment.process_trees[1] = writeSynchronizedProcessTree(
+      root,
+      'generation-drift-process-tree',
       generationDriftTree,
     );
     assert.throws(
@@ -3858,8 +4175,9 @@ test('qualification manifest closes every required evidence class and detects by
     const duplicateProcess = structuredClone(duplicatePIDTree.processes.at(-1));
     duplicateProcess.start_identity = `${BigInt(duplicateProcess.start_identity) + 1n}`;
     duplicatePIDTree.processes.push(duplicateProcess);
-    duplicatePIDInput.deployment.process_trees[1] = writeJSON(
-      path.join(root, 'duplicate-pid-process-tree.json'),
+    duplicatePIDInput.deployment.process_trees[1] = writeSynchronizedProcessTree(
+      root,
+      'duplicate-pid-process-tree',
       duplicatePIDTree,
     );
     assert.throws(
@@ -3870,7 +4188,7 @@ test('qualification manifest closes every required evidence class and detects by
       /PID reuse in one epoch/,
     );
     for (const [substitutionIndex, rootClass] of [
-      'agent', 'coordinator', 'bridge', 'integrated_cu',
+      'agent', 'agent_requester', 'coordinator', 'bridge', 'integrated_cu',
     ].entries()) {
       const substitutionInput = structuredClone(inputValue);
       const treeIndexes = ['bridge', 'integrated_cu'].includes(rootClass) ? [0, 1, 2] : [1];
@@ -3902,8 +4220,9 @@ test('qualification manifest closes every required evidence class and detects by
           .map((pid) => (pid === priorPID ? rootEntry.pid : pid))
           .sort((left, right) => left - right);
         substitutionTree.processes.sort((left, right) => left.pid - right.pid);
-        substitutionInput.deployment.process_trees[treeIndex] = writeJSON(
-          path.join(root, `substituted-${rootClass}-process-tree-${treeIndex}.json`),
+        substitutionInput.deployment.process_trees[treeIndex] = writeSynchronizedProcessTree(
+          root,
+          `substituted-${rootClass}-process-tree-${treeIndex}`,
           substitutionTree,
         );
       }
@@ -3916,16 +4235,20 @@ test('qualification manifest closes every required evidence class and detects by
       );
     }
     const resealedInvocationInput = structuredClone(inputValue);
-    const resealedInvocation = JSON.parse(fs.readFileSync(concurrent.spec.agent_invocation));
-    resealedInvocation.executable_sha256 = '0'.repeat(64);
-    resealedInvocationInput.agent_cu.agent_invocation = writeJSON(
-      path.join(root, 'resealed-agent-invocation.json'),
-      resealedInvocation,
+    const retainedTerminalBundle = fs.readFileSync(concurrent.spec.agent_execution_bundle);
+    const retainedTerminalValidator = fs.readFileSync(
+      concurrent.spec.agent_execution_validator_report,
     );
+    mutateAgentTerminalBundle(concurrent.spec, ({ response }) => {
+      response.process.executableSHA256 = '0'.repeat(64);
+    });
     const resealedConcurrent = structuredClone(concurrentValue);
-    resealedConcurrent.agent.executable_sha256 = resealedInvocation.executable_sha256;
-    resealedConcurrent.agent.invocation_sha256 = sha256(
-      fs.readFileSync(resealedInvocationInput.agent_cu.agent_invocation),
+    resealedConcurrent.agent.executable_sha256 = '0'.repeat(64);
+    resealedConcurrent.agent.terminal_bundle_sha256 = sha256(
+      fs.readFileSync(concurrent.spec.agent_execution_bundle),
+    );
+    resealedConcurrent.agent.terminal_validator_report_sha256 = sha256(
+      fs.readFileSync(concurrent.spec.agent_execution_validator_report),
     );
     resealedInvocationInput.agent_cu.validation_report = writeJSON(
       path.join(root, 'resealed-concurrent-report.json'),
@@ -3936,14 +4259,315 @@ test('qualification manifest closes every required evidence class and detects by
         writeJSON(path.join(root, 'resealed-agent-invocation-input.json'), resealedInvocationInput),
         path.join(root, 'resealed-agent-invocation-manifest.json'),
       ),
-      /exercised Agent CLI differs from the candidate\/deployed executable/,
+      /child\/requester executable identity is inconsistent/,
+    );
+    writeFile(concurrent.spec.agent_execution_bundle, retainedTerminalBundle);
+    writeFile(concurrent.spec.agent_execution_validator_report, retainedTerminalValidator);
+    const requesterSubstitutionInput = structuredClone(inputValue);
+    const requesterSubstitutionConcurrent = structuredClone(concurrentValue);
+    requesterSubstitutionConcurrent.agent.requester.pid += 20_000;
+    requesterSubstitutionConcurrent.agent.requester.start_identity
+      = `${requesterSubstitutionConcurrent.agent.requester.pid}001`;
+    requesterSubstitutionInput.agent_cu.validation_report = writeJSON(
+      path.join(root, 'requester-substitution-concurrent.json'),
+      requesterSubstitutionConcurrent,
+    );
+    const requesterSubstitutionTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
+    const requesterRoot = requesterSubstitutionTree.roots.find((entry) => (
+      entry.root_class === 'agent_requester'
+    ));
+    const requesterProcess = requesterSubstitutionTree.processes.find((entry) => (
+      entry.pid === requesterRoot.pid && entry.start_identity === requesterRoot.start_identity
+    ));
+    const priorRequesterPID = requesterRoot.pid;
+    requesterRoot.pid = requesterSubstitutionConcurrent.agent.requester.pid;
+    requesterRoot.start_identity = requesterSubstitutionConcurrent.agent.requester.start_identity;
+    requesterProcess.pid = requesterRoot.pid;
+    requesterProcess.start_identity = requesterRoot.start_identity;
+    requesterSubstitutionTree.lifecycle_watched_pids
+      = requesterSubstitutionTree.lifecycle_watched_pids.map((pid) => (
+        pid === priorRequesterPID ? requesterRoot.pid : pid
+      )).sort((left, right) => left - right);
+    requesterSubstitutionTree.processes.sort((left, right) => left.pid - right.pid);
+    requesterSubstitutionInput.deployment.process_trees[1] = writeSynchronizedProcessTree(
+      root,
+      'requester-substitution-process-tree',
+      requesterSubstitutionTree,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'requester-substitution-input.json'), requesterSubstitutionInput),
+        path.join(root, 'requester-substitution-manifest.json'),
+      ),
+      /concurrent validation report differs from fresh concurrent evidence validation/,
+    );
+    const acknowledgementPathInput = structuredClone(inputValue);
+    const acknowledgementPathConcurrent = structuredClone(concurrentValue);
+    acknowledgementPathConcurrent.agent.acknowledgement_path = path.join(
+      acknowledgementPathConcurrent.agent.run_root,
+      'substituted-agent-execution-ack.json',
+    );
+    acknowledgementPathInput.agent_cu.validation_report = writeJSON(
+      path.join(root, 'acknowledgement-path-concurrent.json'),
+      acknowledgementPathConcurrent,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'acknowledgement-path-input.json'), acknowledgementPathInput),
+        path.join(root, 'acknowledgement-path-manifest.json'),
+      ),
+      /concurrent validation report differs from fresh concurrent evidence validation/,
+    );
+    const terminalTimingInput = structuredClone(inputValue);
+    const terminalTimingConcurrent = structuredClone(concurrentValue);
+    terminalTimingConcurrent.agent.released_at_milliseconds += 1;
+    terminalTimingInput.agent_cu.validation_report = writeJSON(
+      path.join(root, 'terminal-timing-concurrent.json'),
+      terminalTimingConcurrent,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'terminal-timing-input.json'), terminalTimingInput),
+        path.join(root, 'terminal-timing-manifest.json'),
+      ),
+      /concurrent validation report differs from fresh concurrent evidence validation/,
+    );
+    for (const [phase, readbackPath] of [
+      ['perform', concurrent.spec.integrated_cu.perform_readback],
+      ['restore', concurrent.spec.integrated_cu.restore_readback],
+    ]) {
+      const failedReadbackInput = structuredClone(inputValue);
+      const failedReadbackValue = JSON.parse(fs.readFileSync(readbackPath));
+      failedReadbackValue.passed = false;
+      const failedReadbackPath = writeJSON(
+        path.join(root, `failed-${phase}-integrated-readback.json`),
+        failedReadbackValue,
+      );
+      failedReadbackInput.agent_cu[`${phase}_readback`] = failedReadbackPath;
+      const failedReadbackConcurrent = structuredClone(concurrentValue);
+      failedReadbackConcurrent.integrated_cu[`${phase}_readback_sha256`]
+        = sha256(fs.readFileSync(failedReadbackPath));
+      failedReadbackInput.agent_cu.validation_report = writeJSON(
+        path.join(root, `failed-${phase}-integrated-concurrent.json`),
+        failedReadbackConcurrent,
+      );
+      assert.throws(
+        () => generateManifest(
+          writeJSON(path.join(root, `failed-${phase}-integrated-input.json`), failedReadbackInput),
+          path.join(root, `failed-${phase}-integrated-manifest.json`),
+        ),
+        new RegExp(`integrated-CU ${phase} readback did not pass`),
+      );
+    }
+    const overlapDriftInput = structuredClone(inputValue);
+    const overlapDriftConcurrent = structuredClone(concurrentValue);
+    overlapDriftConcurrent.overlap.operations_started_at_milliseconds += 1;
+    overlapDriftInput.agent_cu.validation_report = writeJSON(
+      path.join(root, 'overlap-drift-concurrent.json'),
+      overlapDriftConcurrent,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'overlap-drift-input.json'), overlapDriftInput),
+        path.join(root, 'overlap-drift-manifest.json'),
+      ),
+      /concurrent validation report differs from fresh concurrent evidence validation/,
+    );
+    const traceRemapInput = structuredClone(inputValue);
+    const traceRemapReadbacks = JSON.parse(fs.readFileSync(concurrent.spec.agent_readbacks));
+    const originalTraceCallID = traceRemapReadbacks.targets[0].mutation.trace_call_id;
+    const replacementTraceCallID = 'resealed-unrelated-trace-call';
+    traceRemapReadbacks.targets[0].mutation.trace_call_id = replacementTraceCallID;
+    const traceRemapReadbacksPath = writeJSON(
+      path.join(root, 'trace-remap-readbacks.json'),
+      traceRemapReadbacks,
+    );
+    traceRemapInput.agent_cu.agent_readbacks = traceRemapReadbacksPath;
+    const traceRemapConcurrent = structuredClone(concurrentValue);
+    traceRemapConcurrent.agent.readbacks_sha256 = sha256(fs.readFileSync(traceRemapReadbacksPath));
+    traceRemapConcurrent.agent.mapped_call_ids = traceRemapConcurrent.agent.mapped_call_ids
+      .map((callID) => (callID === originalTraceCallID ? replacementTraceCallID : callID))
+      .sort();
+    for (const interval of traceRemapConcurrent.agent.progress_interleaving.action_intervals) {
+      if (interval.trace_call_id === originalTraceCallID) {
+        interval.trace_call_id = replacementTraceCallID;
+      }
+    }
+    traceRemapInput.agent_cu.validation_report = writeJSON(
+      path.join(root, 'trace-remap-concurrent.json'),
+      traceRemapConcurrent,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'trace-remap-input.json'), traceRemapInput),
+        path.join(root, 'trace-remap-manifest.json'),
+      ),
+      /does not match its trace family|signed terminal trace does not contain exactly the mapped dispatched calls/,
+    );
+    const traceTargetDriftInput = structuredClone(inputValue);
+    mutateAgentTerminalBundle(concurrent.spec, ({ stdoutRoot }) => {
+      stdoutRoot.result.executionTrace.entries[0].arguments.pid += 1;
+    });
+    const traceTargetDriftBundle = JSON.parse(fs.readFileSync(
+      concurrent.spec.agent_execution_bundle,
+    ));
+    const traceTargetDriftResponse = JSON.parse(Buffer.from(
+      traceTargetDriftBundle.canonicalResponse,
+      'base64',
+    )).projectedAction._0.response.agentExecutionTrace._0;
+    const traceTargetDriftConcurrent = structuredClone(concurrentValue);
+    traceTargetDriftConcurrent.agent.terminal_bundle_sha256 = sha256(fs.readFileSync(
+      concurrent.spec.agent_execution_bundle,
+    ));
+    traceTargetDriftConcurrent.agent.terminal_validator_report_sha256 = sha256(fs.readFileSync(
+      concurrent.spec.agent_execution_validator_report,
+    ));
+    traceTargetDriftConcurrent.agent.stdout_sha256 = traceTargetDriftResponse.stdout.sha256;
+    traceTargetDriftInput.agent_cu.validation_report = writeJSON(
+      path.join(root, 'trace-target-drift-concurrent.json'),
+      traceTargetDriftConcurrent,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'trace-target-drift-input.json'), traceTargetDriftInput),
+        path.join(root, 'trace-target-drift-manifest.json'),
+      ),
+      /trace lacks the exact PID\/window|differs from its signed terminal trace/,
+    );
+    writeFile(concurrent.spec.agent_execution_bundle, retainedTerminalBundle);
+    writeFile(concurrent.spec.agent_execution_validator_report, retainedTerminalValidator);
+    const extraShellInput = structuredClone(inputValue);
+    mutateAgentTerminalBundle(concurrent.spec, ({ stdoutRoot }) => {
+      stdoutRoot.result.executionTrace.entries.push({
+        id: 'extra-failed-shell-observation',
+        name: 'shell',
+        arguments: {},
+        result: { success: false },
+        isError: true,
+        disposition: 'executed/failed',
+      });
+      stdoutRoot.result.executionTrace.totalCallCount += 1;
+    });
+    const extraShellBundle = JSON.parse(fs.readFileSync(concurrent.spec.agent_execution_bundle));
+    const extraShellResponseWire = JSON.parse(Buffer.from(
+      extraShellBundle.canonicalResponse,
+      'base64',
+    ));
+    const extraShellResponse = extraShellResponseWire.projectedAction._0.response
+      .agentExecutionTrace._0;
+    const extraShellConcurrent = structuredClone(concurrentValue);
+    extraShellConcurrent.agent.terminal_bundle_sha256 = sha256(fs.readFileSync(
+      concurrent.spec.agent_execution_bundle,
+    ));
+    extraShellConcurrent.agent.terminal_validator_report_sha256 = sha256(fs.readFileSync(
+      concurrent.spec.agent_execution_validator_report,
+    ));
+    extraShellConcurrent.agent.stdout_sha256 = extraShellResponse.stdout.sha256;
+    extraShellConcurrent.agent.trace_entry_count += 1;
+    extraShellInput.agent_cu.validation_report = writeJSON(
+      path.join(root, 'extra-shell-concurrent.json'),
+      extraShellConcurrent,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'extra-shell-input.json'), extraShellInput),
+        path.join(root, 'extra-shell-manifest.json'),
+      ),
+      /trace contains Shell/,
+    );
+    writeFile(concurrent.spec.agent_execution_bundle, retainedTerminalBundle);
+    writeFile(concurrent.spec.agent_execution_validator_report, retainedTerminalValidator);
+    const completedOnlyInput = structuredClone(inputValue);
+    const completedOnlyEvents = fs.readFileSync(
+      concurrent.spec.coordinator_events,
+      'utf8',
+    ).trim().split('\n').map(JSON.parse).at(-1);
+    const completedOnlyEventsPath = writeFile(
+      path.join(root, 'completed-only-events.jsonl'),
+      `${JSON.stringify(completedOnlyEvents)}\n`,
+    );
+    const completedOnlyConcurrent = structuredClone(concurrentValue);
+    completedOnlyConcurrent.coordinator.events_sha256 = sha256(fs.readFileSync(
+      completedOnlyEventsPath,
+    ));
+    completedOnlyInput.live_v4.coordinator_events = completedOnlyEventsPath;
+    completedOnlyInput.agent_cu.validation_report = writeJSON(
+      path.join(root, 'completed-only-concurrent.json'),
+      completedOnlyConcurrent,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(path.join(root, 'completed-only-input.json'), completedOnlyInput),
+        path.join(root, 'completed-only-manifest.json'),
+      ),
+      /exactly four lifecycle events/,
+    );
+    const nonzeroCoordinatorExitInput = structuredClone(inputValue);
+    const nonzeroCoordinatorExit = JSON.parse(fs.readFileSync(concurrent.spec.coordinator_exit));
+    nonzeroCoordinatorExit.exit_code = 1;
+    const nonzeroCoordinatorExitPath = writeJSON(
+      path.join(root, 'nonzero-coordinator-exit.json'),
+      nonzeroCoordinatorExit,
+    );
+    const nonzeroCoordinatorExitConcurrent = structuredClone(concurrentValue);
+    nonzeroCoordinatorExitConcurrent.coordinator.exit_receipt_sha256 = sha256(fs.readFileSync(
+      nonzeroCoordinatorExitPath,
+    ));
+    nonzeroCoordinatorExitInput.live_v4.coordinator_exit = nonzeroCoordinatorExitPath;
+    nonzeroCoordinatorExitInput.agent_cu.validation_report = writeJSON(
+      path.join(root, 'nonzero-coordinator-exit-concurrent.json'),
+      nonzeroCoordinatorExitConcurrent,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(
+          path.join(root, 'nonzero-coordinator-exit-input.json'),
+          nonzeroCoordinatorExitInput,
+        ),
+        path.join(root, 'nonzero-coordinator-exit-manifest.json'),
+      ),
+      /does not prove zero exit/,
+    );
+    const coordinatorInvocationDriftInput = structuredClone(inputValue);
+    const coordinatorInvocationDrift = JSON.parse(fs.readFileSync(
+      concurrent.spec.coordinator_invocation,
+    ));
+    coordinatorInvocationDrift.pid += 1;
+    const coordinatorInvocationDriftPath = writeJSON(
+      path.join(root, 'coordinator-invocation-drift.json'),
+      coordinatorInvocationDrift,
+    );
+    const coordinatorInvocationDriftConcurrent = structuredClone(concurrentValue);
+    coordinatorInvocationDriftConcurrent.coordinator.invocation_sha256 = sha256(fs.readFileSync(
+      coordinatorInvocationDriftPath,
+    ));
+    coordinatorInvocationDriftInput.live_v4.coordinator_invocation
+      = coordinatorInvocationDriftPath;
+    coordinatorInvocationDriftInput.agent_cu.validation_report = writeJSON(
+      path.join(root, 'coordinator-invocation-drift-concurrent.json'),
+      coordinatorInvocationDriftConcurrent,
+    );
+    assert.throws(
+      () => generateManifest(
+        writeJSON(
+          path.join(root, 'coordinator-invocation-drift-input.json'),
+          coordinatorInvocationDriftInput,
+        ),
+        path.join(root, 'coordinator-invocation-drift-manifest.json'),
+      ),
+      /coordinator invocation belongs to another process generation/,
     );
     const lateCoverageInput = structuredClone(inputValue);
     const lateCoverageTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
     lateCoverageTree.coverage_started_at_milliseconds
-      = concurrentValue.overlap.operations_started_at_milliseconds + 1;
-    lateCoverageInput.deployment.process_trees[1] = writeJSON(
-      path.join(root, 'late-coverage-process-tree.json'),
+      = concurrentValue.agent.released_at_milliseconds + 1;
+    lateCoverageTree.readiness_published_at_milliseconds
+      = lateCoverageTree.coverage_started_at_milliseconds + 1;
+    lateCoverageTree.acknowledgement_authorization.authorized_at_milliseconds
+      = lateCoverageTree.readiness_published_at_milliseconds;
+    lateCoverageInput.deployment.process_trees[1] = writeSynchronizedProcessTree(
+      root,
+      'late-coverage-process-tree',
       lateCoverageTree,
     );
     assert.throws(
@@ -4119,8 +4743,9 @@ test('qualification manifest closes every required evidence class and detects by
         && entry.start_identity === elevationRoot.start_identity);
       elevationRoot.code_signature_hash = '0'.repeat(40);
       elevationProcess.code_signature_hash = elevationRoot.code_signature_hash;
-      wrongElevationRootInput.deployment.process_trees[treeIndex] = writeJSON(
-        path.join(root, `wrong-elevation-root-tree-${treeIndex}.json`),
+      wrongElevationRootInput.deployment.process_trees[treeIndex] = writeSynchronizedProcessTree(
+        root,
+        `wrong-elevation-root-tree-${treeIndex}`,
         tree,
       );
     }
@@ -4389,7 +5014,7 @@ test('qualification manifest closes every required evidence class and detects by
         writeJSON(path.join(root, 'cross-run-input.json'), crossRunInput),
         path.join(root, 'cross-run-manifest.json'),
       ),
-      /differs from concurrent validation/,
+      /execution staging differs from its retained source\/plan bytes|differs from concurrent validation/,
     );
     const fabricatedInterleavingInput = structuredClone(inputValue);
     const fabricatedInterleaving = JSON.parse(fs.readFileSync(concurrentReport));
@@ -4407,7 +5032,7 @@ test('qualification manifest closes every required evidence class and detects by
         ),
         path.join(root, 'fabricated-interleaving-manifest.json'),
       ),
-      /progress interleaving differs from the bound bundles\/readback/,
+      /concurrent validation report differs from fresh concurrent evidence validation|progress interleaving differs from the bound bundles\/readback/,
     );
     const badPointerInput = structuredClone(inputValue);
     badPointerInput.adjuncts.held_pointer.controller_results = [writeJSON(
@@ -4468,7 +5093,7 @@ test('qualification manifest closes every required evidence class and detects by
         writeJSON(path.join(root, 'forged-agent-validator-input.json'), inputValue),
         path.join(root, 'forged-agent-validator-manifest.json'),
       ),
-      /retained validator differs from authenticated live validation/,
+      /retained validator(?: report)? differs from authenticated live validation/,
     );
     writeFile(agentValidatorPath, agentValidatorBytes);
 
@@ -4605,6 +5230,9 @@ test('qualification manifest closes every required evidence class and detects by
       ),
       /targetless held-pointer operation claimed a target/,
     );
+    const restoredLocalDuringTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
+    synchronizeProcessTreeAuthorization(restoredLocalDuringTree);
+    writeJSON(deployment.processTrees[1], restoredLocalDuringTree);
     const input = writeJSON(path.join(root, 'manifest-input.json'), inputValue);
     const output = path.join(root, 'qualification-manifest.json');
     generateManifest(input, output);
@@ -4612,6 +5240,41 @@ test('qualification manifest closes every required evidence class and detects by
     assert.equal(verified.version, 2);
     assert.equal(verified.valid, true);
     assert.equal(verified.adjuncts_are_live_v4_slots, false);
+    const retainedLocalDuringTree = JSON.parse(fs.readFileSync(deployment.processTrees[1]));
+    const retainedAuthorization = retainedLocalDuringTree.acknowledgement_authorization;
+    const retainedAuthorizationRequest = fs.readFileSync(
+      retainedAuthorization.authorization_request_path,
+    );
+    const retainedAuthorizationResult = fs.readFileSync(
+      retainedAuthorization.authorization_result_path,
+    );
+    const retainedAcknowledgement = fs.readFileSync(retainedAuthorization.acknowledgement_path);
+    const changedAuthorizationResult = JSON.parse(retainedAuthorizationResult);
+    changedAuthorizationResult.authorized_at_milliseconds += 1;
+    writeJSON(retainedAuthorization.authorization_result_path, changedAuthorizationResult);
+    assert.throws(
+      () => verifyManifest(output),
+      /authorization artifacts are invalid or changed/,
+    );
+    writeFile(retainedAuthorization.authorization_result_path, retainedAuthorizationResult, 0o600);
+    const removedAuthorizationRequest = `${retainedAuthorization.authorization_request_path}.removed`;
+    fs.renameSync(retainedAuthorization.authorization_request_path, removedAuthorizationRequest);
+    assert.throws(() => verifyManifest(output), /ENOENT|no such file/i);
+    fs.renameSync(removedAuthorizationRequest, retainedAuthorization.authorization_request_path);
+    writeJSON(retainedAuthorization.acknowledgement_path, {
+      version: 1,
+      challenge: '0'.repeat(64),
+    });
+    assert.throws(
+      () => verifyManifest(output),
+      /acknowledgement keys are not closed|authorization artifacts are invalid or changed/,
+    );
+    writeFile(retainedAuthorization.acknowledgement_path, retainedAcknowledgement, 0o600);
+    assert.equal(verifyManifest(output).valid, true);
+    assert.equal(
+      sha256(fs.readFileSync(retainedAuthorization.authorization_request_path)),
+      sha256(retainedAuthorizationRequest),
+    );
     const generatedManifest = JSON.parse(fs.readFileSync(output));
     assert.equal(generatedManifest.version, 2);
     assert.equal(generatedManifest.evidence.deployment.installed_inventories.length, 2);
@@ -4699,10 +5362,21 @@ test('qualification manifest closes every required evidence class and detects by
     );
     assert.throws(
       () => verifyManifest(resealedSummaryPath),
-      /not one successful live certification core/,
+      /coordinator exit interval does not contain its JSONL evidence|not one successful live certification core/,
     );
     writeFile(concurrent.summary, originalSummaryBytes);
     writeFile(concurrent.spec.coordinator_events, originalCoordinatorEventBytes);
+    const retainedCoordinatorExitValue = JSON.parse(fs.readFileSync(
+      concurrent.spec.coordinator_exit,
+    ));
+    const restoredCoordinatorEventTime = new Date(
+      retainedCoordinatorExitValue.completed_at_milliseconds - 1,
+    );
+    fs.utimesSync(
+      concurrent.spec.coordinator_events,
+      restoredCoordinatorEventTime,
+      restoredCoordinatorEventTime,
+    );
 
     const resealedInterleavingManifest = structuredClone(generatedManifest);
     const resealedInterleavingReportValue = JSON.parse(fs.readFileSync(concurrentReport));
@@ -4728,7 +5402,7 @@ test('qualification manifest closes every required evidence class and detects by
     );
     assert.throws(
       () => verifyManifest(resealedInterleavingPath),
-      /progress interleaving differs from the bound bundles\/readback/,
+      /verified concurrent validation report differs from fresh concurrent evidence validation|progress interleaving differs from the bound bundles\/readback/,
     );
 
     const resealedMtimeManifest = structuredClone(generatedManifest);
@@ -4755,7 +5429,7 @@ test('qualification manifest closes every required evidence class and detects by
     );
     assert.throws(
       () => verifyManifest(resealedMtimePath),
-      /progress interleaving differs from the bound bundles\/readback/,
+      /verified concurrent validation report differs from fresh concurrent evidence validation|progress interleaving differs from the bound bundles\/readback/,
     );
 
     const resealedForeignAdjunctManifest = structuredClone(generatedManifest);

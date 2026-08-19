@@ -52,6 +52,85 @@ export function sameJSON(left, right) {
   }
 }
 
+const AGENT_MUTATING_TOOL_NAMES = new Set([
+  'action', 'app', 'click', 'dialog', 'dock', 'drag', 'menu', 'move', 'paste', 'press',
+  'scroll', 'set_value', 'space', 'type', 'window',
+]);
+
+export function normalizedAgentToolName(value) {
+  return typeof value === 'string'
+    ? value.trim().replaceAll('-', '_').toLowerCase()
+    : '';
+}
+
+export function isAgentMutatingToolName(value) {
+  return AGENT_MUTATING_TOOL_NAMES.has(normalizedAgentToolName(value));
+}
+
+function rejectAgentForegroundArguments(value, label) {
+  if (Array.isArray(value)) {
+    value.forEach((entry) => rejectAgentForegroundArguments(entry, label));
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const [key, entry] of Object.entries(value)) {
+    const normalized = key.trim().replaceAll('-', '_').toLowerCase();
+    requireCondition(!(normalized === 'foreground' && entry === true),
+      `${label} requested foreground=true`);
+    requireCondition(!(['mode', 'delivery_mode', 'capture_focus'].includes(normalized)
+      && typeof entry === 'string' && entry.toLowerCase() === 'foreground'),
+    `${label} requested foreground mode`);
+    rejectAgentForegroundArguments(entry, label);
+  }
+}
+
+export function validateAgentExecutionTrace(root, label = 'Agent JSON result') {
+  requireCondition(root?.success === true && isPlainObject(root.result),
+    `${label} did not succeed`);
+  const trace = root.result.executionTrace;
+  exactKeys(trace, ['entries', 'totalCallCount', 'truncated'], `${label} executionTrace`);
+  requireCondition(Array.isArray(trace.entries) && trace.entries.length > 0,
+    `${label} execution trace is empty`);
+  requireCondition(trace.truncated === false && trace.totalCallCount === trace.entries.length,
+    `${label} execution trace is incomplete`);
+  const ids = new Set();
+  const entriesByID = new Map();
+  const entryIndexByID = new Map();
+  const dispatchedCallIDs = new Set();
+  for (const [index, entry] of trace.entries.entries()) {
+    const keys = Object.keys(entry).sort();
+    const required = ['arguments', 'disposition', 'id', 'isError', 'name', 'result'];
+    requireCondition(required.every((key) => keys.includes(key))
+      && keys.every((key) => [...required, 'mutationDispatch', 'actionOutcome'].includes(key)),
+    `${label} trace entry ${index} keys are not closed`);
+    requireCondition(typeof entry.id === 'string' && entry.id.length > 0 && !ids.has(entry.id),
+      `${label} trace entry ${index} ID is invalid`);
+    ids.add(entry.id);
+    entriesByID.set(entry.id, entry);
+    entryIndexByID.set(entry.id, index);
+    const name = normalizedAgentToolName(entry.name);
+    requireCondition(name && name !== 'shell', `${label} trace contains Shell`);
+    rejectAgentForegroundArguments(entry.arguments, `${label} trace entry ${entry.id}`);
+    requireCondition(entry.mutationDispatch !== 'possibly_dispatched',
+      `${label} trace entry ${entry.id} is possibly dispatched`);
+    if (entry.mutationDispatch === 'dispatched') dispatchedCallIDs.add(entry.id);
+    requireCondition(entry.actionOutcome?.delivery_mode !== 'foreground',
+      `${label} trace entry ${entry.id} used foreground delivery`);
+    if (isAgentMutatingToolName(name)) {
+      requireCondition(entry.disposition === 'executed/succeeded' && entry.isError === false,
+        `${label} mutation ${entry.id} did not succeed`);
+      requireCondition(entry.mutationDispatch === 'dispatched',
+        `${label} mutation ${entry.id} was not definitely dispatched`);
+      requireCondition(entry.actionOutcome?.delivery_mode === 'background',
+        `${label} mutation ${entry.id} lacks background outcome authority`);
+    } else {
+      requireCondition(entry.disposition === 'executed/succeeded' && entry.isError === false,
+        `${label} observation ${entry.id} did not succeed`);
+    }
+  }
+  return { root, trace, entriesByID, entryIndexByID, dispatchedCallIDs };
+}
+
 export function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }

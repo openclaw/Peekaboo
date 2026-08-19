@@ -1,6 +1,6 @@
 # Peekaboo final qualification tools
 
-These source-owned tools close the final physical qualification handshakes. They do not install, sign, launch a GUI app, change TCC, synthesize input, stop an unrelated process, or publish anything. The managed-launch guardian can terminate and reap only the exact child it created. The only tool that observes live input is the explicitly invoked native emitter calibrator; its event tap is passive (`listenOnly`) and excludes mouse-move and button/key-up events. The process-tree collector only reads native process ancestry and signed identities for caller-supplied task roots. Its native kqueue guard continuously refuses fork, exec, or exit lifecycle activity from those exact roots and their initially observed descendants while coverage is active; it never scans, stops, or adopts unrelated ambient services.
+These source-owned tools close the final physical qualification handshakes. They do not install, sign, launch a GUI app, change TCC, synthesize input, stop an unrelated process, or publish anything. The managed-launch guardian can terminate and reap only the exact child it created. The only tool that observes live input is the explicitly invoked native emitter calibrator; its event tap is passive (`listenOnly`) and excludes mouse-move and button/key-up events. The process-tree collector only reads native process ancestry and signed identities for caller-supplied task roots. Its native kqueue guard continuously observes and fails on fork, exec, or exit lifecycle activity from those exact roots and their initially observed descendants while coverage is active; it never scans, stops, or adopts unrelated ambient services.
 
 All JSON inputs and outputs must be absolute, canonical, current-user-owned regular files under mode-0700 directories. Raw/private inputs must be mode 0600 (0400 is also accepted), non-symlink, non-hardlinked, bounded, and stable across the read. Outputs must not exist. Executables may be readable by others but may not be group/other-writable.
 
@@ -10,6 +10,7 @@ All JSON inputs and outputs must be absolute, canonical, current-user-owned regu
 TOOLS="$(git rev-parse --show-toplevel)/scripts/final-qualification"
 node --check "$TOOLS/project-live-bindings.mjs"
 node --check "$TOOLS/publish-coordinator-marker.mjs"
+node --check "$TOOLS/publish-agent-execution-acknowledgement.mjs"
 node --check "$TOOLS/managed-launcher.mjs"
 node --check "$TOOLS/validate-concurrent-run.mjs"
 node --check "$TOOLS/qualification-manifest.mjs"
@@ -140,7 +141,7 @@ node "$EVIDENCE_ROOT/peekaboo-live-v4-plan-constructor.mjs" \
   --output "$EVIDENCE_ROOT/live-v4-plan.json"
 ```
 
-The projector derives controller click points from exact window centers, obtains Bridge Team trust from the source catalog, and takes the monitor CDHash from raw `codesign -dvvv` output with an Apple Root CA chain. It rejects a second eligible window, target/emitter reuse, semantic-frame mismatch, unsafe paths, noncanonical DiagnosticReports, protocol other than 1.30, or any identity drift.
+The projector derives controller click points from exact window centers, obtains Bridge Team trust from the source catalog, and takes the monitor CDHash from raw `codesign -dvvv` output with an Apple Root CA chain. It rejects a second eligible window, target/emitter reuse, semantic-frame mismatch, unsafe paths, noncanonical DiagnosticReports, a status handshake other than protocol 1.31, or any identity drift. The live-v4 controller still deliberately opens its separate exact protocol-1.30 session for the cataloged click and held-pointer contracts.
 
 ## 3. Publish coordinator markers after readback
 
@@ -176,70 +177,59 @@ node "$TOOLS/publish-coordinator-marker.mjs" \
 
 The tool accepts only the coordinator's exact phase-dependent window schema, canonical sibling marker path, matching nonce/monitor/target/sentinel, a passing before-deadline readback, and an absent output. It publishes complete bytes through the retained `atomic-publish-no-replace.swift` helper using Darwin `renameatx_np(RENAME_EXCL)`; a pre-existing marker cannot be overwritten.
 
-## 4. Launch Agent and coordinator with exact process/exit authority
+## 4. Launch the coordinator and authorize one Bridge-owned Agent terminal request
 
-`managed-launcher.mjs` never invokes a shell and never detaches. It compiles the retained `managed-launch-suspended.c` guardian into a fresh private temporary directory, uses `posix_spawn(POSIX_SPAWN_START_SUSPENDED)` for the exact executable/argv, and streams the child's already-private stdout/stderr files to the launcher's corresponding streams. The guardian installs its parent-loss/termination handlers and ignores SIGPIPE before spawn, so every post-spawn failure—including a closed launcher status pipe—remains responsible for its exact owned child. Before release the launcher runs the plan's exact signed monitor as `process-identity --pid ... --output ...`, requires the monitor's live CDHash to match the plan, atomically publishes the invocation receipt and start acknowledgement, then sends the exact PID/start-generation/invocation digest over the guardian's private control pipe. The guardian remeasures the suspended generation, exact-reads the canonical acknowledgement, and echoes the complete authority before `SIGCONT`; a path-presence race cannot release the child. The guardian remains the child's owner through bounded wait/TERM/KILL, and a run deadline is terminal failure even if a `SIGTERM` handler exits zero.
-
-The Agent launch spec is closed:
-
-```json
-{
-  "version": 1,
-  "kind": "agent",
-  "plan_path": "/private/.../live-v4-plan.json",
-  "executable": "/private/.../peekaboo",
-  "arguments": ["agent", "run", "EXACT TASK TEXT", "--no-cache", "--max-steps", "40", "--bridge-socket", "/Users/.../bridge.sock", "--json"],
-  "identity_handshake_path": "/private/.../agent-launch-process.json",
-  "pid_path": "/private/.../agent-pid.json",
-  "start_ack_path": "/private/.../agent-start.json",
-  "invocation_receipt_path": "/private/.../agent-invocation.json",
-  "exit_receipt_path": "/private/.../agent-exit.json",
-  "stdout_path": "/private/.../agent-result.json",
-  "stderr_path": "/private/.../agent-stderr.log",
-  "start_timeout_seconds": 30,
-  "run_timeout_seconds": 900,
-  "context": {
-    "task_path": "/private/.../agent-task.txt",
-    "receipt_directory": "/private/.../agent-receipts",
-    "bridge_socket": "/Users/.../bridge.sock"
-  }
-}
-```
-
-The task argument must byte-match the retained task file after its one terminal newline is removed. The nine arguments and their order are exact; audio, resume/cache, foreground, model, quiet, or any other additional flag is rejected. The receipt directory must be a new empty mode-0700 directory. Launch in managed PTY session A:
-
-```bash
-node "$TOOLS/managed-launcher.mjs" --spec "$EVIDENCE_ROOT/agent-launch-spec.json"
-```
-
-The coordinator spec has the same top-level keys, changes `kind` to `coordinator`, uses the exact current Node executable, and has exactly `arguments:[COORDINATOR_SOURCE,"--plan",LIVE_PLAN]` plus `context:{"coordinator_source_path":COORDINATOR_SOURCE}`. The launcher executes owner-read-only retained copies: the source is staged beside the original so relative imports and repository binding remain unchanged, while the plan is staged inside the guardian's private directory. The invocation receipt records both executed digests and `execution_staged:true`. Its `stdout_path` is the authoritative `live-v4-events.jsonl` consumed by the operator while the launcher remains attached:
+`managed-launcher.mjs` is coordinator-only. It never invokes a shell or detaches, and it rejects `kind:"agent"`. It compiles the retained `managed-launch-suspended.c` guardian in a fresh private directory, stages owner-read-only copies of the coordinator source and plan, authenticates the exact signed monitor while the child is suspended, and releases only the measured PID/generation and invocation digest. The guardian owns that coordinator through bounded wait/TERM/KILL. Its closed spec uses `kind:"coordinator"`, the exact current Node executable, exactly `arguments:[COORDINATOR_SOURCE,"--plan",LIVE_PLAN]`, and `context:{"coordinator_source_path":COORDINATOR_SOURCE}`. The invocation receipt binds the executed source and plan digests with `execution_staged:true`; the exit receipt supplies zero-exit authority; and `stdout_path` is the authoritative `live-v4-events.jsonl`:
 
 ```bash
 node "$TOOLS/managed-launcher.mjs" --spec "$EVIDENCE_ROOT/coordinator-launch-spec.json"
 ```
 
-Both runs create closed invocation and exit receipts atomically. Their launch environments are rebuilt from a small kind-specific allowlist, bind the sorted key list and canonical digest, and exclude `NODE_OPTIONS` plus every `DYLD_*` variable. An absent, malformed, wrong-PID, or stale monitor identity handshake prevents `SIGCONT`; the guardian kills and reaps the still-suspended child, and no invocation/exit authority is minted.
-
-The Agent launch spec's `identity_handshake_path` is the signed-monitor launch receipt. At the coordinator's `perform` and `restore` external windows, capture two more receipts from the same exact monitor before handling each phase:
+The Agent has no separate launcher, invocation receipt, process receipt, or exit receipt. Protocol 1.31 makes the entire Agent lifetime one authenticated Bridge request. Retain the exact task as UTF-8 plus one terminal newline, create a canonical owner-owned mode-0700 run root, and start the hidden qualification adapter in a second attached PTY. Its stdout is the canonical signed terminal bundle:
 
 ```bash
-MONITOR="$(jq -er '.monitor_executable' "$LIVE_PLAN")"
-AGENT_PID="$(jq -er '.pid' "$EVIDENCE_ROOT/agent-pid.json")"
+umask 077
+AGENT_RUN_ROOT="$EVIDENCE_ROOT/agent-execution"
+mkdir -m 700 "$AGENT_RUN_ROOT"
 
-# Launch receipt is written automatically while the Agent is still suspended:
-jq -e --argjson pid "$AGENT_PID" '.pid == $pid and (.startIdentity | type) == "string"' \
-  "$EVIDENCE_ROOT/agent-launch-process.json"
-
-# Run on receipt of external-foreground-window phase=perform:
-"$MONITOR" process-identity --pid "$AGENT_PID" \
-  --output "$EVIDENCE_ROOT/agent-perform-process.json"
-
-# Run on receipt of external-foreground-window phase=restore, before its marker:
-"$MONITOR" process-identity --pid "$AGENT_PID" \
-  --output "$EVIDENCE_ROOT/agent-restore-process.json"
+"$PEEKABOO_BIN" bridge _agent-execution-trace \
+  --task "$AGENT_TASK_TEXT" \
+  --run-root "$AGENT_RUN_ROOT" \
+  --bridge-socket "$BRIDGE_SOCKET" \
+  --max-steps 40 \
+  --start-timeout-seconds 30 \
+  --run-timeout-seconds 900 \
+  > "$EVIDENCE_ROOT/agent-terminal-bundle.json"
 ```
 
-All three must report the same decimal process generation. The concurrent input orders them exactly as launch, perform, restore.
+The host derives the executable from the authenticated CLI requester and accepts no executable path, arbitrary argv, caller-selected environment, Shell, AppleScript, JXA, or foreground authority. It starts the exact fixed `agent run TASK --no-cache --max-steps 40 --bridge-socket SOCKET --json` child in a fresh session, enters the earliest CLI gate, irreversibly sets both `RLIMIT_NPROC` limits to zero, and publishes `agent-execution-coordination.json`. The child remains blocked on the anonymous release pipe; `SIGCONT` alone cannot route the command.
+
+After coordination appears, construct the local/during process-tree spec from its exact signed requester and child identities plus the coordinator, Bridge, elevation helper, both controlled fixtures, and integrated-CU emitter. Set `ready_path` to an absent private path and `acknowledgement_path` to the coordination receipt's canonical `agent-execution-ack.json`. Start the collector in a third attached PTY:
+
+```bash
+node "$TOOLS/process-tree-collector.mjs" \
+  --spec "$EVIDENCE_ROOT/local-during-process-spec.json" \
+  --monitor "$MONITOR_BIN" \
+  --output "$EVIDENCE_ROOT/local-during-process-tree.json"
+```
+
+The collector starts the native lifecycle guard before its first authenticated sample and atomically publishes readiness only after requester, Agent, and every other declared root are continuously covered. Authorize release through the source-owned helper; it validates the coordination bytes, live signed identities, canonical control paths, collector/guard/monitor sources, and the initial process inventory. It stages the acknowledgement, but the still-active lifecycle guard alone may publish it after draining pending events:
+
+```bash
+node "$TOOLS/publish-agent-execution-acknowledgement.mjs" \
+  --coordination "$AGENT_RUN_ROOT/agent-execution-coordination.json" \
+  --readiness "$EVIDENCE_ROOT/local-during-process-ready.json" \
+  --output "$AGENT_RUN_ROOT/agent-execution-ack.json"
+```
+
+A fork, exec, or exit observed before authorization, stale readiness, a pre-existing control path, or stop-before-authorization prevents acknowledgement. After guard publication, the host atomically installs the fresh nested receipt directory and releases the Agent. Keep the collector active across the complete concurrent operation interval: any later lifecycle event, root drift, or executable drift fails the final process-tree receipt even though release has already occurred. A successful Bridge terminal response follows `waitid(..., WNOWAIT)` with exact `waitpid`; on wait-anchor failure, signed failure may return while exact-generation reaper custody continues asynchronously. Cancellation, timeout, and overflow remain attached to the same leader. Once the command completes, validate its bundle against the same live listener and retain the minimized report:
+
+```bash
+"$PEEKABOO_BIN" bridge receipt validate \
+  --bundle "$EVIDENCE_ROOT/agent-terminal-bundle.json" \
+  --bridge-socket "$BRIDGE_SOCKET" \
+  --json > "$EVIDENCE_ROOT/agent-terminal-validator.json"
+```
 
 ## 5. Validate the completed concurrent run
 
@@ -252,16 +242,12 @@ All three must report the same decimal process generation. The concurrent input 
   "coordinator_invocation": "/private/.../coordinator-invocation.json",
   "coordinator_events": "/private/.../live-v4-events.jsonl",
   "coordinator_exit": "/private/.../coordinator-exit.json",
-  "agent_result": "/private/.../agent-result.json",
-  "agent_exit": "/private/.../agent-exit.json",
-  "agent_invocation": "/private/.../agent-invocation.json",
-  "agent_identity": {
-    "launch": "/private/.../agent-launch-process.json",
-    "perform": "/private/.../agent-perform-process.json",
-    "restore": "/private/.../agent-restore-process.json"
-  },
+  "agent_task": "/private/.../agent-task.txt",
+  "agent_run_root": "/private/.../agent-execution",
+  "agent_execution_bundle": "/private/.../agent-terminal-bundle.json",
+  "agent_execution_validator_report": "/private/.../agent-terminal-validator.json",
   "agent_bundles": [
-    {"bundle_path": "/private/.../agent-receipts/REQUEST.json", "validator_report_path": "/private/.../agent-validators/REQUEST.json"}
+    {"bundle_path": "/private/.../agent-execution/agent-operation-receipts/REQUEST.json", "validator_report_path": "/private/.../agent-validators/REQUEST.json"}
   ],
   "agent_readbacks": "/private/.../agent-readbacks.json",
   "integrated_cu": {
@@ -272,15 +258,7 @@ All three must report the same decimal process generation. The concurrent input 
 }
 ```
 
-Each exit receipt is written by the managed launcher after `wait` and has exactly:
-
-```json
-{"version":1,"process":"agent","pid":901,"start_identity":"901001","started_at_milliseconds":1,"completed_at_milliseconds":2,"exit_code":0,"signal":null}
-```
-
-Use `process:"coordinator"` for the coordinator. The launcher records `exit_code:null` plus the numeric signal for signal termination; successful qualification requires code 0 and a null signal.
-
-The managed launcher also writes `agent-invocation.json`, binding the exact executable/argv, plan, signed monitor bytes, native identity handshake, task, receipt directory, Bridge socket, stdout/stderr, and immutable background-only/no-foreground/no-Shell policy. The validator requires the complete ordered argv to equal the nine-item array in the spec exactly. The analogous coordinator receipt binds the exact Node executable, source file, plan, monitor handshake, and event-stream stdout.
+The coordinator launcher still writes the only standalone invocation and exit receipts. Successful qualification requires its exit code 0 with no signal. The Agent's outer protocol-1.31 terminal bundle replaces every legacy Agent launcher artifact. Live authentication must prove the connected listener, requester, child PID/generation/CDHash, fixed nine-argument background-only invocation, task/run-root/socket commitments, closed environment policy, `processCreationLimit:0`, exact coordination and acknowledgement bytes, and complete bounded stdout/stderr. A successful terminal response must be `processDisposition:"exited"`, exit code 0, no signal, `outputDisposition:"validated_execution_trace"`, and carry an untruncated execution trace identical to the trace decoded from stdout. Any cleanup, wait-anchor, output, or protocol failure is terminal and cannot be resealed by caller-authored JSON. Manifest validation later proves that the lifecycle guard published those exact signed acknowledgement bytes.
 
 `agent-readbacks.json` contains exactly two ordered targets (`target-a`, `target-b`). Each identity must equal the same-ID controlled target already projected into the live-v4 plan for `controller-a` or `controller-b`; an unrelated, swapped, recycled-generation, or different-window claim fails even when every Agent trace, bundle, validator, and readback is consistently resealed. The source-owned final certification summary must independently carry the matching same-ID `target_sha256` over the full exact-window target, and the local/during process tree must contain both PID generations as candidate Playground fixture roots. Each readback entry has exact `{pid,start_identity,window_id}`, `baseline_readback_path`, and `mutation`/`restoration` objects with `{trace_call_id,family,readback_path,bundle_path,validator_report_path}`. Each referenced semantic readback is closed `{version,target,phase,value,observed_at_milliseconds,passed}` with phases `baseline`, `mutated`, or `restored`; hashes are derived from those actual bytes and values, never accepted as caller claims. The baseline observation must strictly precede mutation dispatch, mutation observation must strictly follow mutation completion and precede restoration dispatch, and the restoration observation must strictly follow restoration completion; zero-duration dispatch receipts fail. Every bundle is revalidated by the exact source-bound Peekaboo executable against the exact authenticated live Bridge socket and host policy; the retained validator JSON must equal that fresh result but is never itself a trust anchor. Each signed bundle must carry the Agent PID/start generation as its client, match the trace/readback PID/window and operation family, prove a definite background dispatch, and fall wholly inside `operations-start..operations-complete`. Bundle SHA-256 values, authenticated listener/request identities, and authenticated listener/session/sequence claims are corpus-unique, so copied or hard-linked files cannot provide a second receipt or remap one receipt to another trace call. The receipt-directory inventory and `agent_bundles` list must be identical, including observation bundles; any unlisted or unmapped dispatched bundle fails.
 
@@ -292,7 +270,7 @@ node "$TOOLS/validate-concurrent-run.mjs" \
   --output "$EVIDENCE_ROOT/agent-cu-validation-report.json"
 ```
 
-Success requires the exact four-event coordinator lifecycle ending in eligible `completed` with the summary's exact size and SHA-256, a closed version-2 certification summary whose structural, foreground-postcondition, slot, first-party, and offline sub-gates all passed with no failures, explicit zero exits, one unchanged Agent PID/generation at launch/perform/restore, exactly four mapped and signed background mutations with no extra dispatch, six in-window semantic readbacks on the two authenticated, physically disjoint controlled fixtures, an untruncated trace with no Shell/foreground/skipped/failed/possibly-dispatched call, the calibrated emitter, both integrated-CU readbacks, and an Agent lifetime covering the entire authoritative `operations-start` through `operations-complete` monitor interval. At least one signed Agent mutation must complete strictly before the integrated-CU perform readback and at least one must start strictly afterward; shared process lifetime or equal boundary timestamps are not accepted as concurrent progress. The integrated-CU perform timestamp must be within two seconds of the retained readback file mtime, and both values form the authenticated interleaving pivot. Manifest generation and verification independently rederive that pivot, the Agent action intervals, closed summary success and event commitment, controlled-fixture ownership, readback/dispatch order, and fresh live bundle authentication instead of trusting the concurrent report or caller-authored validator JSON.
+Success requires the exact four-event coordinator lifecycle ending in eligible `completed` with the summary's exact size and SHA-256, a closed version-2 certification summary whose structural, foreground-postcondition, slot, first-party, and offline sub-gates all passed with no failures, coordinator zero exit, one authenticated protocol-1.31 Agent terminal success, exactly four mapped and signed background mutations with no extra dispatch, six in-window semantic readbacks on the two authenticated, physically disjoint controlled fixtures, an untruncated trace with no Shell/foreground/skipped/failed/possibly-dispatched call, the calibrated emitter, both integrated-CU readbacks, and a signed Agent lifetime covering the entire authoritative `operations-start` through `operations-complete` monitor interval. The terminal bundle's inner coordination and acknowledgement child/requester identities must equal the outer receipt. At least one signed Agent mutation must complete strictly before the integrated-CU perform readback and at least one must start strictly afterward; shared process lifetime or equal boundary timestamps are not accepted as concurrent progress. The integrated-CU perform timestamp must be within two seconds of the retained readback file mtime, and both values form the authenticated interleaving pivot. Manifest generation and verification independently rederive that pivot, bind the terminal identities and acknowledgement to the local/during readiness roots and guard authorization, and recheck the Agent action intervals, closed summary success and event commitment, controlled-fixture ownership, readback/dispatch order, and fresh live bundle authentication instead of trusting the concurrent report or caller-authored validator JSON.
 
 ## 6. Generate and verify the final qualification manifest
 
@@ -309,7 +287,7 @@ chmod 400 "$EVIDENCE_ROOT/qualification-tools-source.json"
 
 The source manifest accepts only the repository's exact clean `HEAD`. Every listed byte is compared with its tracked Git blob before creation and on every verification; a 40-hex label, dirty or untracked file, skip-worktree substitution, stale commit, or later `HEAD` change fails closed. The canonical list includes the final-qualification tools, deterministic policy scanner, monitor source, and monitor catalog.
 
-The manifest input is version 2 and has exact top-level keys `version`, `artifact_manifest`, `deployment`, `tooling`, `live_v4`, `matrix_cycles`, `agent_cu`, `adjuncts`, and `restoration_cleanup`. `artifact_manifest` names a version-2 cross-artifact binding that carries the deployment envelope, both source commits, qualification-tools aggregate, and exact `{path,sha256}` references to the immutable Peekaboo artifact manifest and authenticated OpenClaw elevation-artifact receipt. Qualification requires the candidate CLI SHA-256 and CDHash to equal the exact exercised Agent invocation and local/during process sample, with the same SHA-256 installed on both hosts. Its candidate monitor source/hash/CDHash must likewise equal the reviewed Git blob, live plan and invocation, every process-tree collection, and the executable retained in final evidence. The candidate app CDHash equals every persistent Bridge root, and the candidate Playground CDHash equals each controlled fixture root. `tooling` contains exact paths for `qualification_tools_manifest`, `plan_constructor`, and `crash_scanner`. The input also requires the live plan plus coordinator identity handshake/invocation/exit/summary/monitor evidence; five ordered matrix objects (`certificate`, `crash_inventory`); the Agent task/result/invocation/exit/process/readback map, every signed bundle and live-validator report, and exactly six semantic readback files; integrated-CU evidence; one middle-click bundle/report/readback/restoration; one held-key bundle/report/readback/restoration; and the held-pointer controller result, six bundles/reports, two exact target-generation receipts, PID-scoped readback, restoration, and crash comparison. The generated manifest adds the two canonical Agent `controlled_fixture_targets` as a derived value, then verification recomputes them from the retained plan, authenticated final summary, process roots, bundles, and readbacks. Every referenced path is globally unique.
+The manifest input is version 2 and has exact top-level keys `version`, `artifact_manifest`, `deployment`, `tooling`, `live_v4`, `matrix_cycles`, `agent_cu`, `adjuncts`, and `restoration_cleanup`. `artifact_manifest` names a version-2 cross-artifact binding that carries the deployment envelope, both source commits, qualification-tools aggregate, and exact `{path,sha256}` references to the immutable Peekaboo artifact manifest and authenticated OpenClaw elevation-artifact receipt. Qualification requires the candidate CLI SHA-256 and CDHash to equal the protocol-1.31 terminal bundle's exact Agent child and local/during process sample; the requester must carry the same authenticated CDHash, and the candidate SHA-256 must be installed on both hosts. Its candidate monitor source/hash/CDHash must likewise equal the reviewed Git blob, live plan and coordinator invocation, every process-tree collection, and the executable retained in final evidence. The candidate app CDHash equals every persistent Bridge root, and the candidate Playground CDHash equals each controlled fixture root. `tooling` contains exact paths for `qualification_tools_manifest`, `plan_constructor`, and `crash_scanner`. The input also requires the live plan plus coordinator identity handshake/invocation/exit/summary/monitor evidence; five ordered matrix objects (`certificate`, `crash_inventory`); the Agent task, run root, terminal bundle, live terminal-validator report, readback map, every nested signed bundle/live-validator report, and exactly six semantic readback files; integrated-CU evidence; one middle-click bundle/report/readback/restoration; one held-key bundle/report/readback/restoration; and the held-pointer controller result, six bundles/reports, two exact target-generation receipts, PID-scoped readback, restoration, and crash comparison. The generated manifest adds the two canonical Agent `controlled_fixture_targets` as a derived value, then verification recomputes them from the retained plan, authenticated final summary, process roots, bundles, and readbacks. Every referenced path is globally unique.
 
 `deployment` is closed and ordered:
 
@@ -339,11 +317,13 @@ node "$TOOLS/process-tree-collector.mjs" \
   --output "$EVIDENCE_ROOT/local-during.json"
 ```
 
-Collector specs add bounded `observation_milliseconds`, `sample_interval_milliseconds`, and `maximum_sample_gap_milliseconds` to closed task roots with `{root_id,root_class,pid,start_identity,code_signature_hash}`. Before coverage begins, the collector authenticates and hashes the exact signed monitor, compiles the reviewed lifecycle source from retained bytes under a closed toolchain environment, verifies the exact executable before and after use, and registers that native kqueue guard for every exact root and initially observed descendant. The source path/hash must be the exact entry in the reviewed qualification-tools manifest; any fork, exec, or exit event fails qualification even when the child would start and exit between table samples. The collector also polls throughout the interval, independently re-hashes the canonical executable selected by the monitor, retains descendants observed by any sample, and revalidates PID generation, parent, executable bytes/path, signing identity, Team ID, and CDHash on every sample; PID reuse, reparenting, monitor replacement, and in-place executable replacement fail. Coverage completes at the actual final process-table sample at or after the requested deadline, never at the later end of serial identity enrichment, and any observed table-sampling gap above the declared bound fails. Version-3 snapshots carry `complete:true`, continuous-lifecycle success/source/binary/timing, coverage start/end, sample count, declared/observed maximum gap, collector SHA-256, exact monitor path/SHA-256/CDHash, host/envelope identity, exact epoch, and every root/descendant with PID/start/CDHash, executable hash/signing identity, and parent PID/start. Required roots are local `bridge,elevation,integrated_cu` before/after plus `agent,coordinator,fixture` during; Studio requires `bridge,elevation` before/after plus its controlled `fixture` during representative cells. Persistent root generations/CDHashes and non-overlapping epoch coverage must remain stable and ordered. The local during coverage must bracket the authoritative concurrent operation interval, its Agent/coordinator/Bridge/integrated-CU roots must exactly match the bound concurrent report and plan, and its candidate Playground fixture roots must contain both controlled Agent PID generations. Missing edges, lifecycle events, cycles, PID reuse, ambiguous roots, or incomplete capture fail.
+Collector specs add bounded `observation_milliseconds`, `sample_interval_milliseconds`, `maximum_sample_gap_milliseconds`, an absent `ready_path`, and `acknowledgement_path` (non-null only for local/during) to closed task roots with `{root_id,root_class,pid,start_identity,code_signature_hash}`. Before coverage begins, the collector authenticates and hashes the exact signed monitor, compiles the reviewed lifecycle source from retained bytes under a closed toolchain environment, verifies the exact executable before and after use, and registers that native kqueue guard for every exact root and initially observed descendant. The source path/hash must be the exact entry in the reviewed qualification-tools manifest; any fork, exec, or exit event fails qualification even when the child would start and exit between table samples. The collector also polls throughout the interval, independently re-hashes the canonical executable selected by the monitor, retains descendants observed by any sample, and revalidates PID generation, parent, executable bytes/path, signing identity, Team ID, and CDHash on every sample; PID reuse, reparenting, monitor replacement, and in-place executable replacement fail. Coverage completes at the actual final process-table sample at or after the requested deadline, never at the later end of serial identity enrichment, and any observed table-sampling gap above the declared bound fails.
+
+Version-4 snapshots carry `complete:true`, continuous-lifecycle success/source/binary/timing, coverage start/end, sample count, declared/observed maximum gap, collector SHA-256, exact monitor path/SHA-256/CDHash, host/envelope identity, exact epoch, the hash-bound readiness path/publication time, and every root/descendant with PID/start/CDHash, executable hash/signing identity, and parent PID/start. Local/during additionally binds the guard-published acknowledgement plus exact authorization request/result hashes and time; all other epochs require null acknowledgement authority. Required roots are local `bridge,elevation,integrated_cu` before/after plus `agent_requester,agent,bridge,coordinator,elevation,fixture,integrated_cu` during; Studio requires `bridge,elevation` before/after plus its controlled `fixture` during representative cells. The requester and Agent roots must equal both the outer terminal receipt and its signed coordination/acknowledgement contents. Persistent root generations/CDHashes and non-overlapping epoch coverage must remain stable and ordered. The local during coverage must begin before Agent release and its final process-table sample must follow the authoritative concurrent operation interval while its Agent/coordinator/Bridge/integrated-CU roots match the bound concurrent report and plan; its candidate Playground fixture roots must contain both controlled Agent PID generations. Missing edges, lifecycle events, cycles, PID reuse, ambiguous roots, stale readiness, unauthorized acknowledgement, or incomplete capture fail.
 
 The process policy is deliberately scoped to those task-owned trees. It rejects forbidden roots or descendants including `cua-driver`, `osascript`, AppleScript/JXA/OSA interpreters, Lume, Parallels, VMware, VirtualBox, UTM, Tart, `vfkit`, QEMU, VNC, Screen Sharing, and remote-desktop helpers. It never uses ambient process presence as failure evidence and never kills a service. Because a process tree cannot prove that a native executable contains no in-process AppleScript/JXA/OSA path, both host-specific executable/script policy reports are separately mandatory. Generate them with the reviewed `executable-policy-scanner.mjs` and a mode-0600 spec containing `version:1`, the exact installed-inventory path, and canonical `artifact_roots` for `openclaw_app`, `peekaboo_app`, and `peekaboo_cli`. The scanner re-hashes every installed file and symlink, derives every classification and rule result itself, and treats all thin or fat Mach-O byte orders as executable/loadable native code even when a dylib or framework binary has no execute bit. It rejects forbidden markers and writes a closed version-2 report. Manifest generation and final verification execute that exact Git-bound scanner again on the bound inventory/roots and require byte-equivalent classifications, counts, coverage, and zero findings; a forged clean report or benign subset is rejected.
 
-Each matrix certificate is version 2 and binds its ordinal cycle, unique execution nonce, local hardware UUID, exact Peekaboo/Bridge source commit, deployment-envelope SHA-256, installed-inventory aggregate, immutable Peekaboo artifact-manifest SHA-256, start/end interval, and passing 42/42 catalog result. Its version-2 zero-delta crash comparison carries the same cycle/nonce/host/source/candidate identity and brackets that interval. All five nonces must be distinct and the cycle intervals strictly ordered without overlap. The concurrent report must itself be passed with eligible completed/zero exits, four mapped calls, six semantic readbacks, matching bundle count, and true Agent/CU progress interleaving. Every overlapping plan/event/summary/monitor/invocation/exit/result/readback/emitter hash is compared back to that same concurrent report, preventing run-A/run-B evidence mixing.
+Each matrix certificate is version 2 and binds its ordinal cycle, unique execution nonce, local hardware UUID, exact Peekaboo/Bridge source commit, deployment-envelope SHA-256, installed-inventory aggregate, immutable Peekaboo artifact-manifest SHA-256, start/end interval, and passing 42/42 catalog result. Its version-2 zero-delta crash comparison carries the same cycle/nonce/host/source/candidate identity and brackets that interval. All five nonces must be distinct and the cycle intervals strictly ordered without overlap. The concurrent report must itself be passed with eligible completed/zero exits, four mapped calls, six semantic readbacks, matching bundle count, and true Agent/CU progress interleaving. Every overlapping plan/event/summary/monitor/coordinator-invocation/exit/Agent-terminal-bundle/terminal-validator/readback/emitter hash is compared back to that same concurrent report, preventing run-A/run-B evidence mixing.
 
 Adjunct semantic files are executable contracts, not opaque attachments. Every adjunct validator must name the candidate source commit and the live-v4 plan's exact Bridge PID, generation, and CDHash; every adjunct target must be one of the plan's two exact controlled fixture targets. The held-pointer controller additionally repeats the plan's host kind and exact candidate source in both its build and handshake. Generation and read-only verification independently rederive these bindings from the retained live-v4 plan and deployment evidence:
 
@@ -375,6 +355,6 @@ The generated version-2 manifest hashes every file, including both authenticated
 ## Current product-output gaps that remain explicit hard boundaries
 
 - Coordinator stdout has the lifecycle and eligible completion but not process identity, invocation, exit status, or operation-fence timestamps. The managed launcher supplies identity/invocation/exit authority; the validator reads fence times from coordinator-owned `monitor/monitor-evidence.json`.
-- Agent JSON has the authoritative execution trace but not its PID/start identity, wall-clock lifetime, exit status, launch argv/policy, value content, or linkage from a trace call to a signed receipt/readback file. The managed-launcher invocation/exit receipts, three native process receipts, and the closed Agent readback map are therefore mandatory.
+- Agent stdout has the authoritative execution trace but not value content or linkage from a trace call to a nested signed receipt/readback file. The outer protocol-1.31 terminal bundle supplies exact requester/child identity, fixed argv/policy, coordination, acknowledgement bytes, complete stdout/stderr, lifetime, and terminal exit authority; the local/during version-4 process receipt separately proves lifecycle-guard publication. The closed Agent readback map remains mandatory for semantic values and trace-to-receipt linkage.
 - Integrated Computer Use has no machine-readable emitter PID/generation/Team/CDHash or closed semantic readback receipt. The passive native calibrator and the two owner readback files supply those facts. If event-tap permission is unavailable or source identity is ambiguous, qualification stops.
 - A `window list` plus process receipt does not itself emit the observer's exact focused semantic element and baseline in the coordinator schema. The fresh semantic readback must be projected once into the closed `observer_semantic` receipt; a missing/ambiguous identifier/title or frame outside the exact window is rejected.
