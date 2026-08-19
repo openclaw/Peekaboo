@@ -1,6 +1,7 @@
 import Commander
 import Darwin
 import Foundation
+import PeekabooBridge
 import Testing
 @testable import PeekabooCLI
 
@@ -91,6 +92,33 @@ struct BridgeAgentExecutionTraceCommandTests {
 
         command.startTimeoutSeconds = 30
         command.runRoot = "relative/run-root"
+        #expect(throws: ValidationError.self) { try command.validatedRequest() }
+    }
+
+    @Test
+    @MainActor
+    func `Task byte ceiling is the canonical Bridge policy boundary`() throws {
+        let runRoot = try Self.makePrivateRunRoot()
+        defer { try? FileManager.default.removeItem(at: runRoot) }
+        var command = BridgeCommand.AgentExecutionTraceSubcommand()
+        command.runRoot = runRoot.path
+        command.task = String(
+            repeating: "x",
+            count: PeekabooBridgeAgentExecutionPolicy.maximumTaskBytes
+        )
+
+        #expect(try command.validatedRequest().task.utf8.count ==
+            PeekabooBridgeAgentExecutionPolicy.maximumTaskBytes)
+        command.task.append("x")
+        #expect(throws: ValidationError.self) { try command.validatedRequest() }
+
+        command.task = String(
+            repeating: "é",
+            count: PeekabooBridgeAgentExecutionPolicy.maximumTaskBytes / 2
+        )
+        #expect(try command.validatedRequest().task.utf8.count ==
+            PeekabooBridgeAgentExecutionPolicy.maximumTaskBytes)
+        command.task.append("é")
         #expect(throws: ValidationError.self) { try command.validatedRequest() }
     }
 

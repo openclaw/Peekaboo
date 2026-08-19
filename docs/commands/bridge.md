@@ -87,7 +87,13 @@ read_when:
   host accepts no executable, shell, AppleScript, JXA, arbitrary argv, or environment input. It binds suspended-child
   identity revalidation, fresh `SETSID` session, earliest-entrypoint lockdown/readiness and release pipes,
   owner-private challenge/acknowledgement coordination, bounded stdout/stderr, and terminal `waitid`/`waitpid`
-  evidence into a signed v1 response. Before readiness, the untainted non-root CLI locks both soft and hard
+  evidence into a signed v1 response. Task UTF-8 is capped at 256 KiB, and a 512 KiB aggregate argv/environment
+  preflight leaves half of macOS's 1 MiB `ARG_MAX` for runtime overhead. The closed provider environment preserves
+  canonical `X_AI_API_KEY` plus the `XAI_API_KEY` and `GROK_API_KEY` aliases. Preparation locks the exact owner-private
+  run-root descriptor without creating the nested receipt directory. Only after a valid acknowledgement does the host
+  bind a fresh staging directory by descriptor and inode and atomically publish it at the canonical receipt path
+  immediately before release; replacement, nonempty, symlink, and publish-race state is retained and refused. Before
+  readiness, the untainted non-root CLI locks both soft and hard
   `RLIMIT_NPROC` to zero; the signed response commits that exact policy. `SIGCONT` alone cannot authorize Agent code.
   The child cannot `fork`, `vfork`, or use ordinary `posix_spawn`, so normal exit, cancellation, timeout, and overflow
   own and reap one exact WNOWAIT leader. An unexpected lost wait anchor permits only PID-version/audit-token-bound

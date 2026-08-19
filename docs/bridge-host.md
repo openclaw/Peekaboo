@@ -233,7 +233,11 @@ Protocol `1.31` adds the capability-gated `agentExecutionTrace` operation for on
 execution. It is a single Bridge request from launch through terminal reap, not a prepare/start or other two-call
 lifecycle. The host derives the executable from the exact authenticated Peekaboo CLI peer and accepts only the task and
 bounded coordination inputs. It never accepts an executable path, shell command, AppleScript, JXA, arbitrary arguments,
-or environment overrides. The child invocation is fixed to background-only `agent run --no-cache --bridge-socket
+or environment overrides. Because the task is carried in `argv`, its UTF-8 encoding is limited to 256 KiB and the host
+also caps the complete argument, environment, terminator, and pointer payload at 512 KiB before `posix_spawn`; this
+retains half of macOS's 1 MiB `ARG_MAX` as headroom instead of exposing a late `E2BIG`. The closed provider environment
+accepts canonical `X_AI_API_KEY` as well as the `XAI_API_KEY` and `GROK_API_KEY` aliases. The child invocation is fixed
+to background-only `agent run --no-cache --bridge-socket
 <serving-host> --json`; there is no foreground-authority flag, session resume, or cache write.
 
 The host creates bounded anonymous stdout and stderr pipes plus separate anonymous lockdown-readiness and release
@@ -242,7 +246,13 @@ earliest gate. Before command routing, that gate requires an untainted non-root 
 UIDs, irreversibly lowers both soft and hard `RLIMIT_NPROC` to zero, verifies the readback, removes the private gate
 variables, and writes the exact challenge plus EOF to the lockdown pipe. The host requires that readiness before it
 publishes the owner-private coordination file. Only after the connected client acknowledges the locked-down child and
-all identities are revalidated does the host write the challenge plus EOF to the release pipe. A stray same-user
+all identities are revalidated does the host provision the nested operation-receipt directory. Preparation retains a
+nonblocking exclusive lock on the exact owner-private run-root descriptor but creates no directory, so any refusal
+before coordination publication leaves the same root retryable without deleting caller-visible state. After a valid
+acknowledgement, the host creates an unguessable staging directory, binds its descriptor and inode, and atomically
+publishes it at the canonical receipt path immediately before release. A replacement, nonempty entry, symlink, or
+publish race is preserved and refused rather than removed. The host then writes the challenge plus EOF to the release
+pipe. A stray same-user
 `SIGCONT` can therefore start only the fail-closed gate; it cannot authorize Agent command routing.
 
 Hard `RLIMIT_NPROC = 0` is inherited and cannot be raised by the non-root child. It denies `fork`, `vfork`, and ordinary

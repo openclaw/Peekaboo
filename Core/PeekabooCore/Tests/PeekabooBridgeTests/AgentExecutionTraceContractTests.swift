@@ -49,6 +49,270 @@ struct AgentExecutionTraceContractTests {
     }
 
     @Test
+    func `Canonical task ceiling agrees across Bridge model and real spawn`() throws {
+        let maximumTask = String(
+            repeating: "x",
+            count: PeekabooBridgeAgentExecutionPolicy.maximumTaskBytes)
+        let runRoot = try Self.makePrivateRunRoot()
+        defer { try? FileManager.default.removeItem(at: runRoot) }
+
+        let maximumRequest = Self.request(task: maximumTask, runRootPath: runRoot.path)
+        var paths: PeekabooBridgeAgentExecutionPaths? = try PeekabooBridgeAgentExecutionPaths.validateAndPrepare(
+            maximumRequest)
+        #expect(!FileManager.default.fileExists(atPath: paths?.operationReceiptDirectory.path ?? ""))
+        paths = nil
+        let maximumFixture = try Self.fixture(task: maximumTask, runRootPath: runRoot.path)
+        try maximumFixture.response.validate(request: maximumFixture.request)
+
+        let oversizedTask = maximumTask + "x"
+        let oversizedRequest = Self.request(task: oversizedTask, runRootPath: runRoot.path)
+        #expect(throws: PeekabooBridgeAgentExecutionPreReleaseError.self) {
+            _ = try PeekabooBridgeAgentExecutionPaths.validateAndPrepare(oversizedRequest)
+        }
+        let oversizedFixture = try Self.fixture(task: oversizedTask)
+        #expect(throws: PeekabooBridgeAgentExecutionResponseValidationError.self) {
+            try oversizedFixture.response.validate(request: oversizedFixture.request)
+        }
+
+        // Exercise the accepted task boundary with a substantial closed environment through
+        // Darwin's actual posix_spawn path. This must remain well below E2BIG.
+        let arguments = PeekabooBridgeAgentExecutionCoding.arguments(
+            task: maximumTask,
+            maxSteps: maximumRequest.maxSteps,
+            socketPath: "/private/tmp/peekaboo-agent-task-limit.sock")
+        let pipes = try PeekabooBridgeAgentExecutionPipes()
+        let gate = try Self.releaseGate(for: pipes)
+        defer {
+            gate.closeAll()
+            pipes.closeAll()
+        }
+        let processIdentifier = try PeekabooBridgeAgentExecutionSpawn.spawnSuspended(
+            executablePath: "/usr/bin/true",
+            arguments: arguments,
+            environment: [
+                "PATH": "/usr/bin:/bin",
+                "X_AI_API_KEY": String(repeating: "k", count: 128 * 1024),
+            ],
+            pipes: pipes,
+            releaseGate: gate)
+        gate.closeAll()
+        PeekabooBridgeAgentExecutionProcessWait.killSuspendedAndReap(processIdentifier)
+        pipes.closeAll()
+        Self.expectReaped(processIdentifier)
+
+        try Self.expectLaunchPreflightRejection(
+            arguments: arguments,
+            environment: [
+                "PATH": "/usr/bin:/bin",
+                "X_AI_API_KEY": String(
+                    repeating: "k",
+                    count: PeekabooBridgeAgentExecutionPolicy.maximumArgumentEnvironmentBytes),
+            ])
+        try Self.expectLaunchPreflightRejection(
+            arguments: ["visible\0hidden"],
+            environment: ["PATH": "/usr/bin:/bin"])
+        try Self.expectLaunchPreflightRejection(
+            arguments: Array(
+                repeating: "",
+                count: PeekabooBridgeAgentExecutionPolicy.maximumArgumentEnvironmentBytes /
+                    MemoryLayout<UnsafePointer<CChar>?>.stride),
+            environment: ["PATH": "/usr/bin:/bin"])
+    }
+
+    @Test
+    func `Preparation locks exact run root without creating receipts and releases for retry`() throws {
+        let runRoot = try Self.makePrivateRunRoot()
+        defer { try? FileManager.default.removeItem(at: runRoot) }
+        let request = Self.request(runRootPath: runRoot.path)
+
+        try Self.expectExclusivePreparationThenReturn(request)
+        let retry = try PeekabooBridgeAgentExecutionPaths.validateAndPrepare(request)
+        #expect(!FileManager.default.fileExists(atPath: retry.operationReceiptDirectory.path))
+    }
+
+    @Test
+    func `Acknowledged attempt provisions and revalidates exact receipt directory late`() throws {
+        let runRoot = try Self.makePrivateRunRoot()
+        defer { try? FileManager.default.removeItem(at: runRoot) }
+        let paths = try PeekabooBridgeAgentExecutionPaths.validateAndPrepare(
+            Self.request(runRootPath: runRoot.path))
+
+        #expect(!FileManager.default.fileExists(atPath: paths.operationReceiptDirectory.path))
+        #expect(throws: PeekabooBridgeAgentExecutionPreReleaseError.self) {
+            try paths.provisionOperationReceiptDirectoryBeforeRelease()
+        }
+        #expect(!FileManager.default.fileExists(atPath: paths.operationReceiptDirectory.path))
+
+        try Self.publishCoordinationArtifacts(for: paths)
+        try paths.provisionOperationReceiptDirectoryBeforeRelease()
+        try paths.revalidateBeforeRelease()
+        var info = stat()
+        #expect(lstat(paths.operationReceiptDirectory.path, &info) == 0)
+        #expect((info.st_mode & S_IFMT) == S_IFDIR)
+        #expect((info.st_mode & 0o777) == 0o700)
+        #expect(info.st_uid == geteuid())
+    }
+
+    @Test
+    func `Late provision refuses replacement nonempty symlink and publish race without deletion`() throws {
+        let replacementRoot = try Self.makePrivateRunRoot()
+        defer { try? FileManager.default.removeItem(at: replacementRoot) }
+        let replacement = try PeekabooBridgeAgentExecutionPaths.validateAndPrepare(
+            Self.request(runRootPath: replacementRoot.path))
+        try Self.publishCoordinationArtifacts(for: replacement)
+        try FileManager.default.createDirectory(
+            at: replacement.operationReceiptDirectory,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700])
+        #expect(throws: PeekabooBridgeAgentExecutionPreReleaseError.self) {
+            try replacement.provisionOperationReceiptDirectoryBeforeRelease()
+        }
+        #expect(FileManager.default.fileExists(atPath: replacement.operationReceiptDirectory.path))
+
+        let nonemptyRoot = try Self.makePrivateRunRoot()
+        defer { try? FileManager.default.removeItem(at: nonemptyRoot) }
+        let nonempty = try PeekabooBridgeAgentExecutionPaths.validateAndPrepare(
+            Self.request(runRootPath: nonemptyRoot.path))
+        try Self.publishCoordinationArtifacts(for: nonempty)
+        try FileManager.default.createDirectory(
+            at: nonempty.operationReceiptDirectory,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700])
+        let retained = nonempty.operationReceiptDirectory.appendingPathComponent("retained.json")
+        try Data("retained".utf8).write(to: retained)
+        #expect(throws: PeekabooBridgeAgentExecutionPreReleaseError.self) {
+            try nonempty.provisionOperationReceiptDirectoryBeforeRelease()
+        }
+        #expect(FileManager.default.fileExists(atPath: retained.path))
+
+        let symlinkRoot = try Self.makePrivateRunRoot()
+        defer { try? FileManager.default.removeItem(at: symlinkRoot) }
+        let symlink = try PeekabooBridgeAgentExecutionPaths.validateAndPrepare(
+            Self.request(runRootPath: symlinkRoot.path))
+        try Self.publishCoordinationArtifacts(for: symlink)
+        let symlinkTarget = symlinkRoot.appendingPathComponent("foreign-target", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: symlinkTarget,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700])
+        try FileManager.default.createSymbolicLink(
+            at: symlink.operationReceiptDirectory,
+            withDestinationURL: symlinkTarget)
+        #expect(throws: PeekabooBridgeAgentExecutionPreReleaseError.self) {
+            try symlink.provisionOperationReceiptDirectoryBeforeRelease()
+        }
+        #expect(try FileManager.default.destinationOfSymbolicLink(
+            atPath: symlink.operationReceiptDirectory.path) == symlinkTarget.path)
+
+        let racedRoot = try Self.makePrivateRunRoot()
+        defer { try? FileManager.default.removeItem(at: racedRoot) }
+        let raced = try PeekabooBridgeAgentExecutionPaths.validateAndPrepare(
+            Self.request(runRootPath: racedRoot.path))
+        try Self.publishCoordinationArtifacts(for: raced)
+        #expect(throws: PeekabooBridgeAgentExecutionPreReleaseError.self) {
+            try raced.provisionOperationReceiptDirectoryBeforeRelease { _ in
+                try FileManager.default.createDirectory(
+                    at: raced.operationReceiptDirectory,
+                    withIntermediateDirectories: false,
+                    attributes: [.posixPermissions: 0o700])
+            }
+        }
+        #expect(FileManager.default.fileExists(atPath: raced.operationReceiptDirectory.path))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: racedRoot.path)
+            .contains(where: { $0.hasPrefix(".agent-operation-receipts.") && $0.hasSuffix(".staging") }))
+
+        let stagingSubstitutionRoot = try Self.makePrivateRunRoot()
+        defer { try? FileManager.default.removeItem(at: stagingSubstitutionRoot) }
+        let stagingSubstitution = try PeekabooBridgeAgentExecutionPaths.validateAndPrepare(
+            Self.request(runRootPath: stagingSubstitutionRoot.path))
+        try Self.publishCoordinationArtifacts(for: stagingSubstitution)
+        #expect(throws: PeekabooBridgeAgentExecutionPreReleaseError.self) {
+            try stagingSubstitution.provisionOperationReceiptDirectoryBeforeRelease { stagingBasename in
+                let staging = stagingSubstitutionRoot.appendingPathComponent(stagingBasename, isDirectory: true)
+                try FileManager.default.removeItem(at: staging)
+                try FileManager.default.createDirectory(
+                    at: staging,
+                    withIntermediateDirectories: false,
+                    attributes: [.posixPermissions: 0o700])
+                try Data("foreign-staging".utf8).write(
+                    to: staging.appendingPathComponent("foreign-staging.json"))
+            }
+        }
+        #expect(FileManager.default.fileExists(
+            atPath: stagingSubstitution.operationReceiptDirectory
+                .appendingPathComponent("foreign-staging.json").path))
+
+        let substitutedRoot = try Self.makePrivateRunRoot()
+        defer { try? FileManager.default.removeItem(at: substitutedRoot) }
+        let substituted = try PeekabooBridgeAgentExecutionPaths.validateAndPrepare(
+            Self.request(runRootPath: substitutedRoot.path))
+        try Self.publishCoordinationArtifacts(for: substituted)
+        try substituted.provisionOperationReceiptDirectoryBeforeRelease()
+        try FileManager.default.removeItem(at: substituted.operationReceiptDirectory)
+        try FileManager.default.createDirectory(
+            at: substituted.operationReceiptDirectory,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700])
+        let foreign = substituted.operationReceiptDirectory.appendingPathComponent("foreign.json")
+        try Data("foreign".utf8).write(to: foreign)
+        #expect(throws: PeekabooBridgeAgentExecutionPreReleaseError.self) {
+            try substituted.revalidateBeforeRelease()
+        }
+        #expect(FileManager.default.fileExists(atPath: foreign.path))
+    }
+
+    @Test
+    func `Closed environment preserves canonical and alias Grok keys in signed policy`() throws {
+        let environment = try PeekabooBridgeAgentExecutionEnvironment.make(
+            operationReceiptDirectoryPath: "/private/tmp/agent-operation-receipts",
+            releaseGateDescriptor: 198,
+            lockdownReadinessDescriptor: 199,
+            releaseChallenge: String(repeating: "a", count: 64),
+            source: [
+                "X_AI_API_KEY": "canonical-placeholder",
+                "XAI_API_KEY": "xai-alias-placeholder",
+                "GROK_API_KEY": "grok-alias-placeholder",
+            ])
+
+        #expect(environment.policyVersion == 3)
+        #expect(environment.values["X_AI_API_KEY"] == "canonical-placeholder")
+        #expect(environment.values["XAI_API_KEY"] == "xai-alias-placeholder")
+        #expect(environment.values["GROK_API_KEY"] == "grok-alias-placeholder")
+        #expect(environment.keys.contains("X_AI_API_KEY"))
+        #expect(environment.keys.contains("XAI_API_KEY"))
+        #expect(environment.keys.contains("GROK_API_KEY"))
+
+        let fixture = try Self.fixture()
+        try fixture.response.validate(request: fixture.request)
+        #expect(fixture.response.environmentPolicyVersion == environment.policyVersion)
+        #expect(fixture.response.environmentKeys.contains("X_AI_API_KEY"))
+    }
+
+    @Test
+    func `CString allocation failure cannot truncate mandatory closed environment`() throws {
+        let strings = [
+            "PATH=/usr/bin:/bin",
+            "PEEKABOO_AGENT_EXECUTION_GATE_FD=198",
+            "PEEKABOO_AGENT_EXECUTION_PROCESS_LIMIT=0",
+        ]
+        var duplicated: [String] = []
+        #expect(throws: PeekabooBridgeAgentExecutionPreReleaseError.self) {
+            _ = try PeekabooBridgeAgentExecutionCStringVector.make(strings) { string in
+                duplicated.append(string)
+                guard string != "PEEKABOO_AGENT_EXECUTION_GATE_FD=198" else { return nil }
+                return strdup(string)
+            }
+        }
+        #expect(duplicated == Array(strings.prefix(2)))
+
+        let complete = try PeekabooBridgeAgentExecutionCStringVector.make(strings)
+        defer { PeekabooBridgeAgentExecutionCStringVector.free(complete) }
+        #expect(complete.count == strings.count + 1)
+        #expect(complete.dropLast().allSatisfy { $0 != nil })
+        #expect(complete[complete.count - 1] == nil)
+    }
+
+    @Test
     func `Terminal response rederives exact request coordination output and exit commitments`() throws {
         let fixture = try Self.fixture()
         try fixture.response.validate(request: fixture.request)
@@ -426,24 +690,29 @@ struct AgentExecutionTraceContractTests {
         }
     }
 
-    private static func request() -> PeekabooBridgeAgentExecutionTraceRequest {
-        let root = "/private/tmp/peekaboo-agent-trace-contract"
-        return .init(
-            task: "Inspect two exact background windows",
+    private static func request(
+        task: String = "Inspect two exact background windows",
+        runRootPath: String = "/private/tmp/peekaboo-agent-trace-contract")
+        -> PeekabooBridgeAgentExecutionTraceRequest
+    {
+        .init(
+            task: task,
             maxSteps: 40,
-            runRootPath: root,
-            coordinationReceiptPath: root + "/agent-execution-coordination.json",
-            acknowledgementPath: root + "/agent-execution-ack.json",
+            runRootPath: runRootPath,
+            coordinationReceiptPath: runRootPath + "/agent-execution-coordination.json",
+            acknowledgementPath: runRootPath + "/agent-execution-ack.json",
             startTimeoutMilliseconds: 30000,
             runTimeoutMilliseconds: 900_000)
     }
 
     private static func fixture(
-        childCodeSignatureHash: String? = nil) throws -> (
+        childCodeSignatureHash: String? = nil,
+        task: String = "Inspect two exact background windows",
+        runRootPath: String = "/private/tmp/peekaboo-agent-trace-contract") throws -> (
         request: PeekabooBridgeAgentExecutionTraceRequest,
         response: PeekabooBridgeAgentExecutionTraceResponse)
     {
-        let request = self.request()
+        let request = self.request(task: task, runRootPath: runRootPath)
         let socket = "/private/tmp/peekaboo-agent-trace-contract.sock"
         let peerCodeSignatureHash = String(repeating: "c", count: 40)
         let processIdentity = PeekabooBridgeOperationProcessIdentity(
@@ -465,9 +734,10 @@ struct AgentExecutionTraceContractTests {
         ]
         let argumentsSHA256 = try self.sha256(self.canonical(arguments))
         let environmentKeys = [
-            "PATH", "PEEKABOO_AGENT_EXECUTION_GATE_CHALLENGE", "PEEKABOO_AGENT_EXECUTION_GATE_FD",
+            "GROK_API_KEY", "PATH", "PEEKABOO_AGENT_EXECUTION_GATE_CHALLENGE",
+            "PEEKABOO_AGENT_EXECUTION_GATE_FD",
             "PEEKABOO_AGENT_EXECUTION_LOCKDOWN_FD", "PEEKABOO_AGENT_EXECUTION_PROCESS_LIMIT",
-            "PEEKABOO_OPERATION_RECEIPT_DIRECTORY",
+            "PEEKABOO_OPERATION_RECEIPT_DIRECTORY", "XAI_API_KEY", "X_AI_API_KEY",
         ]
         let environmentSHA256 = String(repeating: "d", count: 64)
         let receipt = PeekabooBridgeAgentExecutionCoordinationReceipt(
@@ -489,7 +759,7 @@ struct AgentExecutionTraceContractTests {
             allowForeground: false,
             shellAvailable: false,
             processCreationLimit: 0,
-            environmentPolicyVersion: 2,
+            environmentPolicyVersion: 3,
             environmentKeys: environmentKeys,
             environmentSHA256: environmentSHA256,
             spawnedAt: 1000,
@@ -534,7 +804,7 @@ struct AgentExecutionTraceContractTests {
             allowForeground: false,
             shellAvailable: false,
             processCreationLimit: 0,
-            environmentPolicyVersion: 2,
+            environmentPolicyVersion: 3,
             environmentKeys: environmentKeys,
             environmentSHA256: environmentSHA256,
             stdout: .init(bytes: stdout),
@@ -627,6 +897,65 @@ struct AgentExecutionTraceContractTests {
             releaseGate: gate)
         gate.closeAll()
         return try Self.capture(pid: pid, pipes: pipes)
+    }
+
+    private static func makePrivateRunRoot() throws -> URL {
+        let url = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
+            .appendingPathComponent("peekaboo-agent-trace-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: url,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700])
+        return url
+    }
+
+    private static func publishCoordinationArtifacts(for paths: PeekabooBridgeAgentExecutionPaths) throws {
+        try PeekabooBridgePrivateReceiptArchive.writeAtomically(
+            Data("coordination".utf8),
+            to: paths.coordinationReceipt)
+        try PeekabooBridgePrivateReceiptArchive.writeAtomically(
+            Data("acknowledgement".utf8),
+            to: paths.acknowledgement)
+    }
+
+    private static func expectExclusivePreparationThenReturn(
+        _ request: PeekabooBridgeAgentExecutionTraceRequest) throws
+    {
+        let firstAttempt = try PeekabooBridgeAgentExecutionPaths.validateAndPrepare(request)
+        #expect(!FileManager.default.fileExists(atPath: firstAttempt.operationReceiptDirectory.path))
+        #expect(throws: PeekabooBridgeAgentExecutionPreReleaseError.self) {
+            _ = try PeekabooBridgeAgentExecutionPaths.validateAndPrepare(request)
+        }
+        firstAttempt.releaseRunRootCustodyForTesting()
+        withExtendedLifetime(firstAttempt) {}
+    }
+
+    private static func expectLaunchPreflightRejection(
+        arguments: [String],
+        environment: [String: String]) throws
+    {
+        let pipes = try PeekabooBridgeAgentExecutionPipes()
+        let gate = try self.releaseGate(for: pipes)
+        defer {
+            gate.closeAll()
+            pipes.closeAll()
+        }
+        do {
+            let processIdentifier = try PeekabooBridgeAgentExecutionSpawn.spawnSuspended(
+                executablePath: "/usr/bin/true",
+                arguments: arguments,
+                environment: environment,
+                pipes: pipes,
+                releaseGate: gate)
+            PeekabooBridgeAgentExecutionProcessWait.killSuspendedAndReap(processIdentifier)
+            Issue.record("Expected aggregate launch payload preflight to reject before posix_spawn")
+        } catch let error as PeekabooBridgeAgentExecutionPreReleaseError {
+            guard case .invalidRequest = error else {
+                Issue.record("Expected invalidRequest instead of a late spawn failure, got \(error)")
+                return
+            }
+            #expect(!error.localizedDescription.contains("Argument list too long"))
+        }
     }
 
     private static func capture(

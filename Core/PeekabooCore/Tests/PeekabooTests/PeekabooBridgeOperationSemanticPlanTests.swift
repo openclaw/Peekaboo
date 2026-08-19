@@ -27,7 +27,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
 
         // This count is intentionally reviewed whenever the wire enum grows. The exhaustive
         // policy switches also make a missing classification a compile error.
-        #expect(operations.count == 108)
+        #expect(operations.count == 109)
 
         func partition<Value: Equatable>(_ values: [Value], by keyPath: KeyPath<Semantics.OperationPolicy, Value>) {
             let groups = values.map { expected in
@@ -49,6 +49,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
         partition(
             [
                 .familyOnly,
+                .agentExecutionTrace,
                 .noSuccessResponse,
                 .typeActions,
                 .setValue,

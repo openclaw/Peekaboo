@@ -191,7 +191,6 @@ struct PeekabooBridgeLiveAgentExecutionRunner: PeekabooBridgeAgentExecutionRunni
                 receiptBytes: coordinationBytes)
             acknowledgedAt = PeekabooBridgeAgentExecutionCoding.nowMilliseconds()
 
-            try paths.revalidateBeforeRelease()
             guard try PeekabooBridgeAgentExecutionAcknowledgementReader.stableRead(paths.coordinationReceipt) ==
                 coordinationBytes,
                 try PeekabooBridgeAgentExecutionAcknowledgementReader.stableRead(paths.acknowledgement) ==
@@ -204,6 +203,24 @@ struct PeekabooBridgeLiveAgentExecutionRunner: PeekabooBridgeAgentExecutionRunni
             _ = try PeekabooBridgeAgentExecutionExecutable.captureChild(
                 processIdentifier,
                 expected: executable)
+            try Task.checkCancellation()
+            guard ContinuousClock.now < startDeadline else {
+                throw PeekabooBridgeAgentExecutionPreReleaseError.acknowledgementTimedOut
+            }
+            try paths.provisionOperationReceiptDirectoryBeforeRelease()
+            try PeekabooBridgeAgentExecutionExecutable.revalidatePeer(peer, expected: executable)
+            _ = try PeekabooBridgeAgentExecutionExecutable.captureChild(
+                processIdentifier,
+                expected: executable)
+            guard try PeekabooBridgeAgentExecutionAcknowledgementReader.stableRead(paths.coordinationReceipt) ==
+                coordinationBytes,
+                try PeekabooBridgeAgentExecutionAcknowledgementReader.stableRead(paths.acknowledgement) ==
+                acknowledgementBytes
+            else {
+                throw PeekabooBridgeAgentExecutionPreReleaseError.invalidAcknowledgement(
+                    "coordination files changed before release")
+            }
+            try paths.revalidateBeforeRelease()
             try Task.checkCancellation()
             guard ContinuousClock.now < startDeadline else {
                 throw PeekabooBridgeAgentExecutionPreReleaseError.acknowledgementTimedOut

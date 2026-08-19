@@ -13,17 +13,51 @@ struct PeekabooBridgeAgentExecutionPaths: Sendable {
         let inode: ino_t
     }
 
+    private final class DirectoryCustody: @unchecked Sendable {
+        var runRootDescriptor: Int32
+        let runRootIdentity: Identity
+        let lock = NSLock()
+        var operationReceiptDirectoryDescriptor: Int32?
+        var operationReceiptDirectoryIdentity: Identity?
+
+        init(
+            runRootDescriptor: Int32,
+            runRootIdentity: Identity)
+        {
+            self.runRootDescriptor = runRootDescriptor
+            self.runRootIdentity = runRootIdentity
+        }
+
+        deinit {
+            self.release()
+        }
+
+        func release() {
+            self.lock.withLock {
+                if let operationReceiptDirectoryDescriptor = self.operationReceiptDirectoryDescriptor {
+                    close(operationReceiptDirectoryDescriptor)
+                    self.operationReceiptDirectoryDescriptor = nil
+                    self.operationReceiptDirectoryIdentity = nil
+                }
+                if self.runRootDescriptor >= 0 {
+                    _ = flock(self.runRootDescriptor, LOCK_UN)
+                    close(self.runRootDescriptor)
+                    self.runRootDescriptor = -1
+                }
+            }
+        }
+    }
+
     let runRoot: URL
     let coordinationReceipt: URL
     let acknowledgement: URL
     let operationReceiptDirectory: URL
-    private let runRootIdentity: Identity
-    private let operationReceiptDirectoryIdentity: Identity
+    private let directoryCustody: DirectoryCustody
 
     static func validateAndPrepare(_ request: PeekabooBridgeAgentExecutionTraceRequest) throws -> Self {
         guard !request.task.isEmpty,
               request.task.first != "-",
-              request.task.utf8.count <= 1024 * 1024,
+              request.task.utf8.count <= PeekabooBridgeAgentExecutionPolicy.maximumTaskBytes,
               !request.task.utf8.contains(0),
               (1...100).contains(request.maxSteps),
               (1...120_000).contains(request.startTimeoutMilliseconds),
@@ -50,10 +84,33 @@ struct PeekabooBridgeAgentExecutionPaths: Sendable {
               acknowledgement.deletingLastPathComponent().path == runRoot.path,
               coordinationReceipt.lastPathComponent == PeekabooBridgeAgentExecutionCoding.coordinationBasename,
               acknowledgement.lastPathComponent == PeekabooBridgeAgentExecutionCoding.acknowledgementBasename,
-              coordinationReceipt.path != acknowledgement.path,
-              Self.isExactPrivateDirectory(runRoot.path),
-              Self.isAbsent(coordinationReceipt.path),
-              Self.isAbsent(acknowledgement.path)
+              coordinationReceipt.path != acknowledgement.path
+        else {
+            throw PeekabooBridgeAgentExecutionPreReleaseError.unsafeRunRoot(request.runRootPath)
+        }
+
+        let runRootDescriptor = open(runRoot.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+        guard runRootDescriptor >= 0 else {
+            throw PeekabooBridgeAgentExecutionPreReleaseError.unsafeRunRoot(runRoot.path)
+        }
+        var descriptorTransferred = false
+        defer {
+            if !descriptorTransferred {
+                close(runRootDescriptor)
+            }
+        }
+        guard flock(runRootDescriptor, LOCK_EX | LOCK_NB) == 0,
+              let runRootIdentity = Self.privateDirectoryIdentity(descriptor: runRootDescriptor),
+              Self.privateDirectoryIdentity(runRoot.path) == runRootIdentity,
+              Self.isAbsent(
+                  at: runRootDescriptor,
+                  basename: PeekabooBridgeAgentExecutionCoding.coordinationBasename),
+              Self.isAbsent(
+                  at: runRootDescriptor,
+                  basename: PeekabooBridgeAgentExecutionCoding.acknowledgementBasename),
+              Self.isAbsent(
+                  at: runRootDescriptor,
+                  basename: PeekabooBridgeAgentExecutionCoding.operationReceiptDirectoryBasename)
         else {
             throw PeekabooBridgeAgentExecutionPreReleaseError.unsafeRunRoot(request.runRootPath)
         }
@@ -61,36 +118,128 @@ struct PeekabooBridgeAgentExecutionPaths: Sendable {
         let operationReceiptDirectory = runRoot.appendingPathComponent(
             PeekabooBridgeAgentExecutionCoding.operationReceiptDirectoryBasename,
             isDirectory: true)
-        guard mkdir(operationReceiptDirectory.path, S_IRWXU) == 0 else {
-            throw PeekabooBridgeAgentExecutionPreReleaseError.unsafeRunRoot(operationReceiptDirectory.path)
-        }
-        guard Self.isExactPrivateDirectory(operationReceiptDirectory.path)
-        else {
-            throw PeekabooBridgeAgentExecutionPreReleaseError.unsafeRunRoot(operationReceiptDirectory.path)
-        }
-        Self.fsyncDirectory(runRoot.path)
-        guard let runRootIdentity = Self.privateDirectoryIdentity(runRoot.path),
-              let operationReceiptDirectoryIdentity = Self.privateDirectoryIdentity(operationReceiptDirectory.path)
-        else {
-            throw PeekabooBridgeAgentExecutionPreReleaseError.unsafeRunRoot(runRoot.path)
-        }
+        let directoryCustody = DirectoryCustody(
+            runRootDescriptor: runRootDescriptor,
+            runRootIdentity: runRootIdentity)
+        descriptorTransferred = true
         return Self(
             runRoot: runRoot,
             coordinationReceipt: coordinationReceipt,
             acknowledgement: acknowledgement,
             operationReceiptDirectory: operationReceiptDirectory,
-            runRootIdentity: runRootIdentity,
-            operationReceiptDirectoryIdentity: operationReceiptDirectoryIdentity)
+            directoryCustody: directoryCustody)
+    }
+
+    /// The child carries this future path while blocked in its trusted earliest-entry gate. Create
+    /// it only after the connected client has acknowledged the coordination receipt.
+    func provisionOperationReceiptDirectoryBeforeRelease(
+        beforePublishForTesting: ((String) throws -> Void)? = nil) throws
+    {
+        try self.directoryCustody.lock.withLock {
+            guard self.directoryCustody.operationReceiptDirectoryDescriptor == nil,
+                  self.directoryCustody.operationReceiptDirectoryIdentity == nil,
+                  self.revalidateRunRootLocked(),
+                  Self.isExactPrivateRegularFile(
+                      at: self.directoryCustody.runRootDescriptor,
+                      basename: PeekabooBridgeAgentExecutionCoding.coordinationBasename),
+                  Self.isExactPrivateRegularFile(
+                      at: self.directoryCustody.runRootDescriptor,
+                      basename: PeekabooBridgeAgentExecutionCoding.acknowledgementBasename),
+                  Self.isAbsent(
+                      at: self.directoryCustody.runRootDescriptor,
+                      basename: PeekabooBridgeAgentExecutionCoding.operationReceiptDirectoryBasename)
+            else {
+                throw PeekabooBridgeAgentExecutionPreReleaseError.unsafeRunRoot(self.runRoot.path)
+            }
+
+            // Coordination and acknowledgement are already published here, so this run root is
+            // intentionally not retryable. Preserve any later directory or conflict as evidence.
+            let stagingChallenge = try PeekabooBridgeAgentExecutionCoding.randomChallenge()
+            let stagingBasename = ".agent-operation-receipts.\(stagingChallenge).staging"
+            guard mkdirat(
+                self.directoryCustody.runRootDescriptor,
+                stagingBasename,
+                S_IRWXU) == 0
+            else {
+                throw PeekabooBridgeAgentExecutionPreReleaseError.unsafeRunRoot(
+                    self.operationReceiptDirectory.path)
+            }
+            let descriptor = openat(
+                self.directoryCustody.runRootDescriptor,
+                stagingBasename,
+                O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+            guard descriptor >= 0 else {
+                throw PeekabooBridgeAgentExecutionPreReleaseError.unsafeRunRoot(
+                    self.operationReceiptDirectory.path)
+            }
+            do {
+                guard let identity = Self.privateDirectoryIdentity(descriptor: descriptor),
+                      Self.privateDirectoryIdentity(
+                          at: self.directoryCustody.runRootDescriptor,
+                          basename: stagingBasename) == identity,
+                      self.revalidateRunRootLocked()
+                else {
+                    throw PeekabooBridgeAgentExecutionPreReleaseError.unsafeRunRoot(
+                        self.operationReceiptDirectory.path)
+                }
+                try beforePublishForTesting?(stagingBasename)
+                guard renameatx_np(
+                    self.directoryCustody.runRootDescriptor,
+                    stagingBasename,
+                    self.directoryCustody.runRootDescriptor,
+                    PeekabooBridgeAgentExecutionCoding.operationReceiptDirectoryBasename,
+                    UInt32(RENAME_EXCL)) == 0,
+                    Self.privateDirectoryIdentity(
+                        at: self.directoryCustody.runRootDescriptor,
+                        basename: PeekabooBridgeAgentExecutionCoding.operationReceiptDirectoryBasename) == identity,
+                    self.revalidateRunRootLocked(),
+                    fsync(self.directoryCustody.runRootDescriptor) == 0
+                else {
+                    throw PeekabooBridgeAgentExecutionPreReleaseError.unsafeRunRoot(
+                        self.operationReceiptDirectory.path)
+                }
+                self.directoryCustody.operationReceiptDirectoryDescriptor = descriptor
+                self.directoryCustody.operationReceiptDirectoryIdentity = identity
+            } catch {
+                close(descriptor)
+                throw error
+            }
+        }
     }
 
     func revalidateBeforeRelease() throws {
-        guard Self.canonicalPath(self.runRoot.path) == self.runRoot.path,
-              Self.privateDirectoryIdentity(self.runRoot.path) == self.runRootIdentity,
-              Self.privateDirectoryIdentity(self.operationReceiptDirectory.path) ==
-              self.operationReceiptDirectoryIdentity
-        else {
-            throw PeekabooBridgeAgentExecutionPreReleaseError.unsafeRunRoot(self.runRoot.path)
+        try self.directoryCustody.lock.withLock {
+            guard self.revalidateRunRootLocked(),
+                  let descriptor = self.directoryCustody.operationReceiptDirectoryDescriptor,
+                  let identity = self.directoryCustody.operationReceiptDirectoryIdentity,
+                  Self.privateDirectoryIdentity(descriptor: descriptor) == identity,
+                  Self.privateDirectoryIdentity(
+                      at: self.directoryCustody.runRootDescriptor,
+                      basename: PeekabooBridgeAgentExecutionCoding.operationReceiptDirectoryBasename) == identity,
+                  Self.isExactPrivateRegularFile(
+                      at: self.directoryCustody.runRootDescriptor,
+                      basename: PeekabooBridgeAgentExecutionCoding.coordinationBasename),
+                  Self.isExactPrivateRegularFile(
+                      at: self.directoryCustody.runRootDescriptor,
+                      basename: PeekabooBridgeAgentExecutionCoding.acknowledgementBasename)
+            else {
+                throw PeekabooBridgeAgentExecutionPreReleaseError.unsafeRunRoot(self.runRoot.path)
+            }
         }
+    }
+
+    #if DEBUG
+    func releaseRunRootCustodyForTesting() {
+        self.directoryCustody.release()
+    }
+    #endif
+
+    private func revalidateRunRootLocked() -> Bool {
+        flock(self.directoryCustody.runRootDescriptor, LOCK_EX | LOCK_NB) == 0 &&
+            Self.canonicalPath(self.runRoot.path) == self.runRoot.path &&
+            Self.privateDirectoryIdentity(self.runRoot.path) == self.directoryCustody.runRootIdentity &&
+            Self.privateDirectoryIdentity(descriptor: self.directoryCustody.runRootDescriptor) ==
+            self.directoryCustody.runRootIdentity
     }
 
     private static func canonicalPath(_ path: String) -> String? {
@@ -99,14 +248,28 @@ struct PeekabooBridgeAgentExecutionPaths: Sendable {
         return self.string(fromNullTerminated: buffer)
     }
 
-    private static func isExactPrivateDirectory(_ path: String) -> Bool {
-        self.privateDirectoryIdentity(path) != nil
-    }
-
     private static func privateDirectoryIdentity(_ path: String) -> Identity? {
         var info = stat()
-        guard lstat(path, &info) == 0,
-              (info.st_mode & S_IFMT) == S_IFDIR,
+        guard lstat(path, &info) == 0 else { return nil }
+        return self.privateDirectoryIdentity(info)
+    }
+
+    private static func privateDirectoryIdentity(descriptor: Int32) -> Identity? {
+        var info = stat()
+        guard descriptor >= 0, fstat(descriptor, &info) == 0 else { return nil }
+        return self.privateDirectoryIdentity(info)
+    }
+
+    private static func privateDirectoryIdentity(at descriptor: Int32, basename: String) -> Identity? {
+        var info = stat()
+        guard descriptor >= 0,
+              fstatat(descriptor, basename, &info, AT_SYMLINK_NOFOLLOW) == 0
+        else { return nil }
+        return self.privateDirectoryIdentity(info)
+    }
+
+    private static func privateDirectoryIdentity(_ info: stat) -> Identity? {
+        guard (info.st_mode & S_IFMT) == S_IFDIR,
               info.st_uid == geteuid(),
               info.st_nlink >= 1,
               (info.st_mode & 0o777) == 0o700
@@ -114,19 +277,24 @@ struct PeekabooBridgeAgentExecutionPaths: Sendable {
         return Identity(device: info.st_dev, inode: info.st_ino)
     }
 
-    private static func isAbsent(_ path: String) -> Bool {
+    private static func isAbsent(at descriptor: Int32, basename: String) -> Bool {
         var info = stat()
-        if lstat(path, &info) == 0 {
+        if fstatat(descriptor, basename, &info, AT_SYMLINK_NOFOLLOW) == 0 {
             return false
         }
         return errno == ENOENT
     }
 
-    private static func fsyncDirectory(_ path: String) {
-        let descriptor = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
-        guard descriptor >= 0 else { return }
-        _ = fsync(descriptor)
-        close(descriptor)
+    private static func isExactPrivateRegularFile(at descriptor: Int32, basename: String) -> Bool {
+        var info = stat()
+        guard descriptor >= 0,
+              fstatat(descriptor, basename, &info, AT_SYMLINK_NOFOLLOW) == 0,
+              (info.st_mode & S_IFMT) == S_IFREG,
+              info.st_uid == geteuid(),
+              info.st_nlink == 1,
+              (info.st_mode & 0o777) == 0o600
+        else { return false }
+        return true
     }
 
     private static func string(fromNullTerminated buffer: [CChar]) -> String? {
@@ -144,7 +312,8 @@ struct PeekabooBridgeAgentExecutionEnvironment: Sendable {
         operationReceiptDirectoryPath: String,
         releaseGateDescriptor: Int32,
         lockdownReadinessDescriptor: Int32,
-        releaseChallenge: String) throws -> Self
+        releaseChallenge: String,
+        source: [String: String] = ProcessInfo.processInfo.environment) throws -> Self
     {
         let commonKeys = [
             "HOME", "LANG", "LC_ALL", "LC_CTYPE", "LOGNAME", "SSL_CERT_DIR", "SSL_CERT_FILE",
@@ -153,9 +322,8 @@ struct PeekabooBridgeAgentExecutionEnvironment: Sendable {
         let providerKeys = [
             "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GROK_API_KEY",
             "MINIMAX_API_KEY", "MOONSHOT_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
-            "XAI_API_KEY",
+            "X_AI_API_KEY", "XAI_API_KEY",
         ]
-        let source = ProcessInfo.processInfo.environment
         var values = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
         for key in commonKeys + providerKeys {
             guard let value = source[key] else { continue }
@@ -172,7 +340,7 @@ struct PeekabooBridgeAgentExecutionEnvironment: Sendable {
         values["PEEKABOO_AGENT_EXECUTION_PROCESS_LIMIT"] = "0"
         let keys = values.keys.sorted()
         return try Self(
-            policyVersion: 2,
+            policyVersion: 3,
             values: values,
             keys: keys,
             sha256: PeekabooBridgeAgentExecutionCoding.sha256Canonical(values))
@@ -566,6 +734,31 @@ enum PeekabooBridgeAgentExecutionCoding {
 
 // MARK: - Spawn, pipes, and terminal wait
 
+enum PeekabooBridgeAgentExecutionCStringVector {
+    static func make(
+        _ strings: [String],
+        duplicate: (String) -> UnsafeMutablePointer<CChar>? = { strdup($0) }) throws
+        -> [UnsafeMutablePointer<CChar>?]
+    {
+        var pointers: [UnsafeMutablePointer<CChar>?] = []
+        pointers.reserveCapacity(strings.count + 1)
+        for string in strings {
+            guard let pointer = duplicate(string) else {
+                self.free(pointers)
+                throw PeekabooBridgeAgentExecutionPreReleaseError.spawnFailed(
+                    "allocate launch arguments: \(String(cString: strerror(ENOMEM)))")
+            }
+            pointers.append(pointer)
+        }
+        pointers.append(nil)
+        return pointers
+    }
+
+    static func free(_ pointers: [UnsafeMutablePointer<CChar>?]) {
+        pointers.forEach { Darwin.free($0) }
+    }
+}
+
 final class PeekabooBridgeAgentExecutionPipes: @unchecked Sendable {
     let stdoutRead: Int32
     let stdoutWrite: Int32
@@ -638,6 +831,12 @@ enum PeekabooBridgeAgentExecutionSpawn {
         pipes: PeekabooBridgeAgentExecutionPipes,
         releaseGate: PeekabooBridgeAgentExecutionReleaseGate) throws -> pid_t
     {
+        let argumentStrings = [executablePath] + arguments
+        let environmentStrings = environment.keys.sorted().compactMap { key in
+            environment[key].map { "\(key)=\($0)" }
+        }
+        try self.validateLaunchPayload(arguments: argumentStrings, environment: environmentStrings)
+
         var actions: posix_spawn_file_actions_t?
         try self.check(posix_spawn_file_actions_init(&actions), "initialize file actions")
         defer { posix_spawn_file_actions_destroy(&actions) }
@@ -690,13 +889,10 @@ enum PeekabooBridgeAgentExecutionSpawn {
         let flags = Int16(POSIX_SPAWN_START_SUSPENDED | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSID)
         try self.check(posix_spawnattr_setflags(&attributes, flags), "set suspended spawn flags")
 
-        var argv = self.cStrings([executablePath] + arguments)
-        defer { self.free(argv) }
-        let environmentStrings = environment.keys.sorted().compactMap { key in
-            environment[key].map { "\(key)=\($0)" }
-        }
-        var envp = self.cStrings(environmentStrings)
-        defer { self.free(envp) }
+        var argv = try PeekabooBridgeAgentExecutionCStringVector.make(argumentStrings)
+        defer { PeekabooBridgeAgentExecutionCStringVector.free(argv) }
+        var envp = try PeekabooBridgeAgentExecutionCStringVector.make(environmentStrings)
+        defer { PeekabooBridgeAgentExecutionCStringVector.free(envp) }
 
         var processIdentifier: pid_t = 0
         let result = executablePath.withCString {
@@ -712,14 +908,34 @@ enum PeekabooBridgeAgentExecutionSpawn {
         return processIdentifier
     }
 
-    private static func cStrings(_ strings: [String]) -> [UnsafeMutablePointer<CChar>?] {
-        var pointers = strings.map { strdup($0) }
-        pointers.append(nil)
-        return pointers
-    }
+    private static func validateLaunchPayload(arguments: [String], environment: [String]) throws {
+        let strings = arguments + environment
+        guard strings.allSatisfy({ !$0.utf8.contains(0) }) else {
+            throw PeekabooBridgeAgentExecutionPreReleaseError.invalidRequest(
+                "Agent launch arguments and environment must be NUL-free")
+        }
 
-    private static func free(_ pointers: [UnsafeMutablePointer<CChar>?]) {
-        pointers.forEach { Darwin.free($0) }
+        let pointerCount = arguments.count + 1 + environment.count + 1
+        let (pointerBytes, pointerOverflow) = pointerCount.multipliedReportingOverflow(
+            by: MemoryLayout<UnsafePointer<CChar>?>.stride)
+        guard !pointerOverflow else {
+            throw PeekabooBridgeAgentExecutionPreReleaseError.invalidRequest(
+                "Agent launch arguments and environment are too large")
+        }
+        var totalBytes = pointerBytes
+        for string in strings {
+            let (terminatedBytes, terminatorOverflow) = string.utf8.count.addingReportingOverflow(1)
+            let (nextTotal, totalOverflow) = totalBytes.addingReportingOverflow(terminatedBytes)
+            guard !terminatorOverflow, !totalOverflow else {
+                throw PeekabooBridgeAgentExecutionPreReleaseError.invalidRequest(
+                    "Agent launch arguments and environment are too large")
+            }
+            totalBytes = nextTotal
+        }
+        guard totalBytes <= PeekabooBridgeAgentExecutionPolicy.maximumArgumentEnvironmentBytes else {
+            throw PeekabooBridgeAgentExecutionPreReleaseError.invalidRequest(
+                "Agent launch arguments and environment exceed the 512 KiB preflight budget")
+        }
     }
 
     private static func check(_ code: Int32, _ operation: String) throws {

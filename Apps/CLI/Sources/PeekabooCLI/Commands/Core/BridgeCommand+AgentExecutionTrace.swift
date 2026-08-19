@@ -17,7 +17,7 @@ extension BridgeCommand {
 
         static let coordinationReceiptBasename = "agent-execution-coordination.json"
         static let acknowledgementBasename = "agent-execution-ack.json"
-        static let maximumTaskBytes = 1024 * 1024
+        static let maximumTaskBytes = PeekabooBridgeAgentExecutionPolicy.maximumTaskBytes
         static let maximumStepsRange = 1...100
         static let startTimeoutMillisecondsRange = 1...120_000
         static let runTimeoutMillisecondsRange = 1...7_200_000
@@ -99,7 +99,8 @@ extension BridgeCommand {
                   self.task.first != "-"
             else {
                 throw ValidationError(
-                    "--task must be nonempty, NUL-free, at most 1 MiB, and must not begin with '-'"
+                    "--task must be nonempty, NUL-free, at most \(Self.maximumTaskBytes / 1024) KiB, " +
+                        "and must not begin with '-'"
                 )
             }
             guard Self.maximumStepsRange.contains(self.maxSteps) else {

@@ -2,6 +2,16 @@ import Foundation
 
 // MARK: - Protocol 1.31 wire contract
 
+public enum PeekabooBridgeAgentExecutionPolicy {
+    /// The task is transported in `argv`. Keep it to one quarter of macOS's 1 MiB `ARG_MAX` so
+    /// fixed arguments, the closed environment, pointer tables, and kernel bookkeeping retain
+    /// substantial headroom.
+    public static let maximumTaskBytes = 256 * 1024
+
+    /// A second aggregate gate protects against unexpectedly large allowlisted environment values.
+    static let maximumArgumentEnvironmentBytes = 512 * 1024
+}
+
 /// One long-running, background-only Agent execution owned by the Bridge host.
 public struct PeekabooBridgeAgentExecutionTraceRequest: Codable, Equatable, Sendable {
     public let task: String
@@ -330,7 +340,7 @@ public struct PeekabooBridgeAgentExecutionTraceResponse: Codable, Equatable, Sen
         guard self.version == 1,
               !request.task.isEmpty,
               request.task.first != "-",
-              request.task.utf8.count <= 1024 * 1024,
+              request.task.utf8.count <= PeekabooBridgeAgentExecutionPolicy.maximumTaskBytes,
               !request.task.utf8.contains(0),
               (1...120_000).contains(request.startTimeoutMilliseconds),
               (1...7_200_000).contains(request.runTimeoutMilliseconds),
@@ -360,7 +370,7 @@ public struct PeekabooBridgeAgentExecutionTraceResponse: Codable, Equatable, Sen
                   !self.allowForeground,
                   !self.shellAvailable,
                   self.processCreationLimit == 0,
-                  self.environmentPolicyVersion == 2,
+                  self.environmentPolicyVersion == 3,
                   self.environmentKeys == self.environmentKeys.sorted(),
                   Set(self.environmentKeys).count == self.environmentKeys.count,
                   Set(self.environmentKeys).isSubset(of: Self.allowedEnvironmentKeys),
@@ -508,7 +518,8 @@ public struct PeekabooBridgeAgentExecutionTraceResponse: Codable, Equatable, Sen
         "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "LOGNAME", "SSL_CERT_DIR", "SSL_CERT_FILE",
         "TMPDIR", "TZ", "USER", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
         "GROK_API_KEY", "MINIMAX_API_KEY", "MOONSHOT_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
-        "XAI_API_KEY", "PEEKABOO_OPERATION_RECEIPT_DIRECTORY", "PEEKABOO_AGENT_EXECUTION_GATE_FD",
+        "X_AI_API_KEY", "XAI_API_KEY", "PEEKABOO_OPERATION_RECEIPT_DIRECTORY",
+        "PEEKABOO_AGENT_EXECUTION_GATE_FD",
         "PEEKABOO_AGENT_EXECUTION_GATE_CHALLENGE", "PEEKABOO_AGENT_EXECUTION_LOCKDOWN_FD",
         "PEEKABOO_AGENT_EXECUTION_PROCESS_LIMIT",
     ]
