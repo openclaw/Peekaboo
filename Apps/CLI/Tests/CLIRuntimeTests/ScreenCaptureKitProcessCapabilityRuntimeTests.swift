@@ -70,8 +70,7 @@ struct ScreenCaptureKitProcessCapabilityRuntimeTests {
                 )
                 if FileManager.default.fileExists(atPath: marker.path),
                    FileManager.default.fileExists(atPath: socketPath),
-                   FileManager.default.fileExists(atPath: "\(socketPath).lock")
-                {
+                   FileManager.default.fileExists(atPath: "\(socketPath).lock") {
                     return identity
                 }
             }
