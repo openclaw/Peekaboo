@@ -56,6 +56,37 @@ export function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+const CANONICAL_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+export function strictBase64Bytes(value, label, { maximumBytes = 256 * 1024 * 1024 } = {}) {
+  requireCondition(typeof value === 'string'
+    && Number.isSafeInteger(maximumBytes) && maximumBytes >= 0
+    && value.length <= Math.ceil(maximumBytes / 3) * 4
+    && CANONICAL_BASE64.test(value),
+  `${label} is not bounded canonical base64`);
+  const bytes = Buffer.from(value, 'base64');
+  requireCondition(bytes.length <= maximumBytes && bytes.toString('base64') === value,
+    `${label} is not bounded canonical base64`);
+  return bytes;
+}
+
+export function decodeCanonicalBase64JSON(
+  value,
+  label,
+  { maximumBytes = 64 * 1024 * 1024 } = {},
+) {
+  const bytes = strictBase64Bytes(value, label, { maximumBytes });
+  let decoded;
+  try {
+    decoded = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  } catch (error) {
+    throw new QualificationError(`${label} is not canonical JSON: ${error.message}`);
+  }
+  requireCondition(isPlainObject(decoded) && canonicalBytes(decoded).equals(bytes),
+    `${label} is not one canonical JSON object`);
+  return { bytes, value: decoded, sha256: sha256(bytes) };
+}
+
 export const HEX40 = /^[0-9a-f]{40}$/;
 export const HEX64 = /^[0-9a-f]{64}$/;
 export const TEAM_ID = /^[A-Z0-9]{10}$/;
@@ -310,6 +341,347 @@ export function authenticateLiveBridgeBundle({
     && envelope.data.host_source_commit === expectedHost.source_commit,
   `${label} authenticated validator reached another Bridge host/build`);
   return envelope.data;
+}
+
+const AGENT_EXECUTION_ENVIRONMENT_KEYS = new Set([
+  'PATH', 'HOME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'LOGNAME', 'SSL_CERT_DIR',
+  'SSL_CERT_FILE', 'TMPDIR', 'TZ', 'USER', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY',
+  'GOOGLE_API_KEY', 'GROK_API_KEY', 'MINIMAX_API_KEY', 'MOONSHOT_API_KEY',
+  'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'X_AI_API_KEY', 'XAI_API_KEY',
+  'PEEKABOO_OPERATION_RECEIPT_DIRECTORY', 'PEEKABOO_AGENT_EXECUTION_GATE_FD',
+  'PEEKABOO_AGENT_EXECUTION_GATE_CHALLENGE', 'PEEKABOO_AGENT_EXECUTION_LOCKDOWN_FD',
+  'PEEKABOO_AGENT_EXECUTION_PROCESS_LIMIT',
+]);
+
+const AGENT_EXECUTION_MANDATORY_ENVIRONMENT_KEYS = [
+  'PATH', 'PEEKABOO_OPERATION_RECEIPT_DIRECTORY', 'PEEKABOO_AGENT_EXECUTION_GATE_FD',
+  'PEEKABOO_AGENT_EXECUTION_GATE_CHALLENGE', 'PEEKABOO_AGENT_EXECUTION_LOCKDOWN_FD',
+  'PEEKABOO_AGENT_EXECUTION_PROCESS_LIMIT',
+];
+
+const AGENT_EXECUTION_REQUEST_KEYS = [
+  'task', 'maxSteps', 'runRootPath', 'coordinationReceiptPath', 'acknowledgementPath',
+  'startTimeoutMilliseconds', 'runTimeoutMilliseconds',
+];
+
+const AGENT_EXECUTION_OUTCOME = {
+  state: 'dispatched_unverified',
+  effect: 'unverifiable',
+  route: 'bridge',
+  delivery_mechanism: 'native_framework',
+  delivery_mode: 'background',
+  evidence: 'delivery_accepted',
+  dispatch_state: 'dispatched',
+  dispatched_unit_count: 1,
+  retry_safety: 'unsafe',
+  escalation: 'observe_before_retry',
+  mutation_dispatched: true,
+  retry_safe: false,
+  requires_fresh_observation: true,
+};
+
+function canonicalPositiveUInt64(value) {
+  return positiveDecimal(value);
+}
+
+function bridgeProcessIdentity(value, label) {
+  requireCondition(isPlainObject(value)
+    && positiveInteger(value.processIdentifier)
+    && canonicalPositiveUInt64(value.processStartIdentity)
+    && HEX40.test(value.codeSignatureHash ?? ''),
+  `${label} is malformed`);
+  return value;
+}
+
+function agentExecutionByteEvidence(value, label, { maximumBytes = 16 * 1024 * 1024 } = {}) {
+  requireCondition(isPlainObject(value)
+    && Number.isSafeInteger(value.byteCount) && value.byteCount >= 0
+    && HEX64.test(value.sha256 ?? '')
+    && typeof value.truncated === 'boolean'
+    && (value.readErrorCode === undefined || value.readErrorCode === null
+      || Number.isSafeInteger(value.readErrorCode)),
+  `${label} is malformed`);
+  const bytes = strictBase64Bytes(value.bytes, `${label}.bytes`, { maximumBytes });
+  requireCondition(value.byteCount === bytes.length && value.sha256 === sha256(bytes),
+    `${label} byte commitment is invalid`);
+  return { value, bytes };
+}
+
+function projectedAgentExecutionRequest(decoded, label) {
+  exactKeys(decoded, ['projectedAction'], label);
+  exactKeys(decoded.projectedAction, ['_0'], `${label}.projectedAction`);
+  const projection = decoded.projectedAction._0;
+  exactKeys(projection, ['request'], `${label}.projectedAction._0`);
+  exactKeys(projection.request, ['agentExecutionTrace'], `${label} semantic request`);
+  exactKeys(projection.request.agentExecutionTrace, ['_0'], `${label} Agent request case`);
+  const request = projection.request.agentExecutionTrace._0;
+  exactKeys(request, AGENT_EXECUTION_REQUEST_KEYS, `${label} Agent request`);
+  return request;
+}
+
+function projectedAgentExecutionResponse(decoded, label) {
+  exactKeys(decoded, ['projectedAction'], label);
+  exactKeys(decoded.projectedAction, ['_0'], `${label}.projectedAction`);
+  const projection = decoded.projectedAction._0;
+  exactKeys(projection, ['outcome', 'response'], `${label}.projectedAction._0`);
+  exactKeys(projection.response, ['agentExecutionTrace'], `${label} semantic response`);
+  exactKeys(projection.response.agentExecutionTrace, ['_0'], `${label} Agent response case`);
+  return { outcome: projection.outcome, response: projection.response.agentExecutionTrace._0 };
+}
+
+function validateAgentExecutionRequest(request, expectedRequest, socketPath, label) {
+  exactKeys(expectedRequest, AGENT_EXECUTION_REQUEST_KEYS, `${label} expected request`);
+  requireCondition(typeof request.task === 'string' && request.task.length > 0
+    && !request.task.startsWith('-') && !request.task.includes('\0')
+    && Buffer.byteLength(request.task, 'utf8') <= 256 * 1024
+    && Number.isSafeInteger(request.maxSteps) && request.maxSteps >= 1 && request.maxSteps <= 100
+    && Number.isSafeInteger(request.startTimeoutMilliseconds)
+    && request.startTimeoutMilliseconds >= 1 && request.startTimeoutMilliseconds <= 120_000
+    && Number.isSafeInteger(request.runTimeoutMilliseconds)
+    && request.runTimeoutMilliseconds >= 1 && request.runTimeoutMilliseconds <= 7_200_000,
+  `${label} Agent request is malformed`);
+  for (const [key, basename] of [
+    ['coordinationReceiptPath', 'agent-execution-coordination.json'],
+    ['acknowledgementPath', 'agent-execution-ack.json'],
+  ]) {
+    absolutePath(request[key], `${label} ${key}`);
+    requireCondition(path.dirname(request[key]) === request.runRootPath
+      && path.basename(request[key]) === basename,
+    `${label} ${key} is not the canonical run-root path`);
+  }
+  absolutePath(request.runRootPath, `${label} run root`);
+  absolutePath(socketPath, `${label} Bridge socket`);
+  requireCondition(sameJSON(request, expectedRequest),
+    `${label} signed Agent request differs from the expected invocation`);
+}
+
+function validateAgentExecutionResponse(response, request, {
+  executablePath,
+  expectedExecutableSHA256,
+  socketPath,
+  payload,
+  report,
+  label,
+}) {
+  requireCondition(isPlainObject(response) && response.version === 1,
+    `${label} terminal response is malformed`);
+  const process = response.process;
+  requireCondition(isPlainObject(process), `${label} child process is malformed`);
+  const child = bridgeProcessIdentity(process.processIdentity, `${label} child process identity`);
+  const requester = bridgeProcessIdentity(response.requestingPeer, `${label} requesting peer`);
+  requireCondition(child.processIdentifier !== requester.processIdentifier
+    && child.codeSignatureHash === requester.codeSignatureHash
+    && process.executablePath === executablePath
+    && process.executableSHA256 === expectedExecutableSHA256,
+  `${label} child/requester executable identity is inconsistent`);
+  requireCondition(report.client?.pid === requester.processIdentifier
+    && report.client?.start_identity === requester.processStartIdentity
+    && report.client?.code_signature_hash === requester.codeSignatureHash
+    && payload.client.processIdentifier === requester.processIdentifier
+    && payload.client.processStartIdentity === requester.processStartIdentity
+    && payload.client.codeSignatureHash === requester.codeSignatureHash,
+  `${label} signed requester differs from the authenticated client`);
+
+  const target = payload.target;
+  exactKeys(target, ['kind', 'processIdentifier', 'processStartIdentity'],
+    `${label} signed child target`);
+  requireCondition(target.kind === 'process'
+    && target.processIdentifier === child.processIdentifier
+    && target.processStartIdentity === child.processStartIdentity,
+  `${label} signed child target differs from the terminal process`);
+
+  const expectedReceiptDirectory = path.join(request.runRootPath, 'agent-operation-receipts');
+  const expectedArguments = [
+    'agent', 'run', request.task, '--no-cache', '--max-steps', String(request.maxSteps),
+    '--bridge-socket', socketPath, '--json',
+  ];
+  requireCondition(response.bridgeSocketPath === socketPath
+    && response.runRootPath === request.runRootPath
+    && response.coordinationReceiptPath === request.coordinationReceiptPath
+    && response.acknowledgementPath === request.acknowledgementPath
+    && response.operationReceiptDirectoryPath === expectedReceiptDirectory
+    && response.taskSHA256 === sha256(Buffer.from(request.task, 'utf8'))
+    && response.maxSteps === request.maxSteps
+    && response.startTimeoutMilliseconds === request.startTimeoutMilliseconds
+    && response.runTimeoutMilliseconds === request.runTimeoutMilliseconds
+    && sameJSON(response.arguments, expectedArguments)
+    && response.argumentsSHA256 === sha256(canonicalBytes(expectedArguments))
+    && response.backgroundOnly === true
+    && response.allowForeground === false
+    && response.shellAvailable === false
+    && response.processCreationLimit === 0,
+  `${label} terminal response differs from its exact request or background policy`);
+
+  const environmentKeys = response.environmentKeys;
+  requireCondition(response.environmentPolicyVersion === 3
+    && Array.isArray(environmentKeys) && environmentKeys.length > 0
+    && environmentKeys.every((key) => typeof key === 'string'
+      && AGENT_EXECUTION_ENVIRONMENT_KEYS.has(key))
+    && environmentKeys.every((key, index) => index === 0 || environmentKeys[index - 1] < key)
+    && new Set(environmentKeys).size === environmentKeys.length
+    && AGENT_EXECUTION_MANDATORY_ENVIRONMENT_KEYS.every((key) => environmentKeys.includes(key))
+    && HEX64.test(response.environmentSHA256 ?? ''),
+  `${label} closed Agent environment policy is malformed`);
+
+  const stdout = agentExecutionByteEvidence(response.stdout, `${label} stdout`);
+  const stderr = agentExecutionByteEvidence(response.stderr, `${label} stderr`);
+  const coordinationReceipt = agentExecutionByteEvidence(
+    response.coordinationReceipt,
+    `${label} coordination receipt`,
+  );
+  const acknowledgement = agentExecutionByteEvidence(
+    response.acknowledgement,
+    `${label} acknowledgement`,
+  );
+  requireCondition(stdout.bytes.length + stderr.bytes.length <= 16 * 1024 * 1024
+    && stdout.value.truncated === false && stdout.value.readErrorCode == null
+    && stderr.value.truncated === false && stderr.value.readErrorCode == null
+    && coordinationReceipt.value.truncated === false
+    && coordinationReceipt.value.readErrorCode == null
+    && acknowledgement.value.truncated === false && acknowledgement.value.readErrorCode == null,
+  `${label} retained output or coordination evidence is incomplete`);
+
+  const times = [
+    response.spawnedAt,
+    response.lockdownAcknowledgedAt,
+    response.coordinationReceiptPublishedAt,
+    response.acknowledgedAt,
+    response.releasedAt,
+    response.terminalObservationEndedAt,
+  ];
+  requireCondition(times.every(positiveInteger)
+    && times.every((value, index) => index === 0 || times[index - 1] <= value)
+    && positiveInteger(payload.startedAtUnixMilliseconds)
+    && positiveInteger(payload.completedAtUnixMilliseconds)
+    && payload.startedAtUnixMilliseconds <= response.spawnedAt
+    && payload.completedAtUnixMilliseconds >= response.terminalObservationEndedAt,
+  `${label} signed Agent lifecycle is incomplete or contradictory`);
+
+  requireCondition(response.processDisposition === 'exited'
+    && response.exitCode === 0 && response.terminationSignal == null
+    && response.outputDisposition === 'validated_execution_trace',
+  `${label} Agent did not produce one successful zero-exit terminal result`);
+
+  let stdoutRoot;
+  try {
+    stdoutRoot = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(stdout.bytes));
+  } catch (error) {
+    throw new QualificationError(`${label} retained Agent stdout is not one JSON value: ${error.message}`);
+  }
+  requireCondition(isPlainObject(stdoutRoot) && stdoutRoot.success === true
+    && isPlainObject(stdoutRoot.result),
+  `${label} retained Agent stdout did not report success`);
+  const trace = stdoutRoot.result.executionTrace;
+  exactKeys(trace, ['entries', 'totalCallCount', 'truncated'], `${label} execution trace`);
+  requireCondition(Array.isArray(trace.entries) && trace.entries.length > 0
+    && trace.truncated === false && trace.totalCallCount === trace.entries.length
+    && sameJSON(response.executionTrace, trace),
+  `${label} signed execution trace is incomplete or not derived from stdout`);
+  return {
+    process,
+    child,
+    requester,
+    stdout,
+    stderr,
+    coordinationReceipt,
+    acknowledgement,
+    stdoutRoot,
+    trace,
+  };
+}
+
+export function authenticateAgentExecutionTerminalBundle({
+  bundlePath,
+  validatorReportPath,
+  executablePath,
+  expectedExecutableSHA256,
+  socketPath,
+  trustedHostTeamIDs,
+  expectedHost,
+  expectedRequest,
+  label = 'Agent execution terminal bundle',
+  authenticateBundle = authenticateLiveBridgeBundle,
+}) {
+  const bundle = readStableJSON(bundlePath, label, {
+    maximumBytes: 256 * 1024 * 1024,
+    requireSingleLink: false,
+  });
+  const validator = readStableJSON(validatorReportPath, `${label} live validator`);
+  exactKeys(validator.value, ['success', 'data'], `${label} live validator`);
+  requireCondition(validator.value.success === true && isPlainObject(validator.value.data),
+    `${label} retained live validator did not succeed`);
+  const report = authenticateBundle({
+    executablePath,
+    expectedExecutableSHA256,
+    socketPath,
+    trustedHostTeamIDs,
+    expectedHost,
+    bundlePath: bundle.path,
+    label,
+  });
+  requireCondition(sameJSON(validator.value.data, report),
+    `${label} retained validator differs from authenticated live validation`);
+
+  const payload = bundle.value?.receipt?.payload;
+  requireCondition(isPlainObject(payload) && payload.schemaVersion === 1
+    && payload.operation === 'agentExecutionTrace'
+    && isPlainObject(payload.client)
+    && HEX64.test(payload.listenerPublicKeySHA256 ?? ''),
+  `${label} signed operation payload is malformed`);
+  const identity = authenticatedBridgeReceiptIdentity(payload, report, label);
+  const request = decodeCanonicalBase64JSON(
+    bundle.value.canonicalRequest,
+    `${label} canonical request`,
+  );
+  const response = decodeCanonicalBase64JSON(
+    bundle.value.canonicalResponse,
+    `${label} canonical response`,
+  );
+  requireCondition(report?.valid === true
+    && report.validator_id === 'peekaboo-bridge-receipt-validate-v1'
+    && report.trust_source === 'authenticated_live_listener'
+    && report.minimum_protocol_version === '1.29'
+    && report.host_protocol_version === '1.31'
+    && report.terminal_receipt_attested === true
+    && report.target_attested === true
+    && report.outcome_attested === true
+    && report.retention_basis === 'exported_bundle'
+    && report.bundle_sha256 === bundle.sha256
+    && report.operation === payload.operation
+    && report.listener_public_key_sha256 === payload.listenerPublicKeySHA256
+    && report.request_sha256 === payload.requestSHA256
+    && report.request_sha256 === request.sha256
+    && report.response_sha256 === payload.responseSHA256
+    && report.response_sha256 === response.sha256,
+  `${label} validator is not bound to one protocol-1.31 terminal bundle`);
+
+  const semanticRequest = projectedAgentExecutionRequest(request.value, `${label} request`);
+  validateAgentExecutionRequest(semanticRequest, expectedRequest, socketPath, label);
+  const semanticResponse = projectedAgentExecutionResponse(response.value, `${label} response`);
+  requireCondition(sameJSON(semanticResponse.outcome, AGENT_EXECUTION_OUTCOME)
+    && sameJSON(payload.outcome, AGENT_EXECUTION_OUTCOME),
+  `${label} lacks the canonical background external-process outcome`);
+  const terminal = validateAgentExecutionResponse(semanticResponse.response, semanticRequest, {
+    executablePath,
+    expectedExecutableSHA256,
+    socketPath,
+    payload,
+    report,
+    label,
+  });
+  return {
+    bundle,
+    validator,
+    report,
+    payload,
+    identity,
+    canonicalRequest: request,
+    canonicalResponse: response,
+    request: semanticRequest,
+    response: semanticResponse.response,
+    outcome: semanticResponse.outcome,
+    ...terminal,
+  };
 }
 
 export function writePrivateExclusive(filePath, value) {
