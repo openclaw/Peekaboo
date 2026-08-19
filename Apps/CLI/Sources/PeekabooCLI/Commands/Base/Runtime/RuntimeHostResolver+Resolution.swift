@@ -91,6 +91,29 @@ extension RuntimeHostResolver {
         let reusableDaemonStatus: PeekabooDaemonStatus?
     }
 
+    enum RemoteCandidateRejection: Equatable {
+        case protocolVersionMismatch
+        case hostKindMismatch
+        case missingPermissions(Set<PeekabooBridgePermissionKind>)
+        case requirementsNotMet
+        case reusableDaemonUnavailable
+        case historicalDaemonInvalid
+        case reusableDaemonIdentityUnavailable
+    }
+
+    struct RemoteCandidateEvaluation {
+        let validation: RemoteCandidateValidation?
+        let rejection: RemoteCandidateRejection?
+
+        static func accepted(_ validation: RemoteCandidateValidation) -> Self {
+            Self(validation: validation, rejection: nil)
+        }
+
+        static func rejected(_ rejection: RemoteCandidateRejection) -> Self {
+            Self(validation: nil, rejection: rejection)
+        }
+    }
+
     enum InitialRoutingDecision: Equatable {
         case local(snapshotInvalidationRemoteSocketPaths: [String])
         case remote
@@ -106,5 +129,63 @@ extension RuntimeHostResolver {
         let requiredHostFailure: String?
         var captureEngineSafetyOverride: CaptureEnginePreference?
         var toolCapturePreflightRefusal: MCPToolCapturePreflightRefusal?
+    }
+}
+
+extension RuntimeHostResolver {
+    static func evaluateRemoteCandidate(
+        _ candidate: ImplicitRemoteCandidate,
+        handshake: PeekabooBridgeHandshakeResponse,
+        options: CommandRuntimeOptions,
+        requiredProtocolVersion: PeekabooBridgeProtocolVersion? = nil,
+        fetchReusableDaemonStatus: (String) async -> PeekabooDaemonStatus? = { socketPath in
+            await DaemonControlClient(socketPath: socketPath).fetchReusableDaemonStatus()
+        }
+    ) async -> RemoteCandidateEvaluation {
+        guard requiredProtocolVersion == nil || handshake.negotiatedVersion == requiredProtocolVersion else {
+            return .rejected(.protocolVersionMismatch)
+        }
+        guard candidate.requiredHostKind == nil || handshake.hostKind == candidate.requiredHostKind else {
+            return .rejected(.hostKindMismatch)
+        }
+        let missingPermissions = BridgeCapabilityPolicy.explicitlyMissingRemotePermissions(
+            for: handshake,
+            options: options
+        )
+        guard missingPermissions.isEmpty else {
+            return .rejected(.missingPermissions(missingPermissions))
+        }
+        guard BridgeCapabilityPolicy.supportsRemoteRequirements(for: handshake, options: options) else {
+            return .rejected(.requirementsNotMet)
+        }
+
+        let requiresReusableHost = candidate.requireReusableDaemon ||
+            options.requiresApplicationRelaunch ||
+            options.requiresSurvivingApplicationHost
+        let reusableDaemonStatus: PeekabooDaemonStatus? = if requiresReusableHost {
+            await fetchReusableDaemonStatus(candidate.socketPath)
+        } else {
+            nil
+        }
+        guard !requiresReusableHost || reusableDaemonStatus != nil else {
+            return .rejected(.reusableDaemonUnavailable)
+        }
+
+        if candidate.requiresValidatedHistoricalDaemon {
+            guard let reusableDaemonStatus,
+                  DaemonControlResolver.isValidatedHistoricalTarget(
+                      status: reusableDaemonStatus,
+                      socketPath: candidate.socketPath
+                  ),
+                  DaemonControlPlanner.supportsCurrentDaemon(reusableDaemonStatus)
+            else {
+                return .rejected(.historicalDaemonInvalid)
+            }
+        }
+        if options.requiresApplicationRelaunch || options.requiresSurvivingApplicationHost,
+           reusableDaemonStatus?.pid == nil {
+            return .rejected(.reusableDaemonIdentityUnavailable)
+        }
+        return .accepted(RemoteCandidateValidation(reusableDaemonStatus: reusableDaemonStatus))
     }
 }

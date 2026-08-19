@@ -9,6 +9,18 @@ struct BridgeStatusReport: Codable {
     let candidates: [BridgeCandidateReport]
     let client: BridgeClientReport
 
+    var localFallbackWarningLines: [String] {
+        guard !self.remoteSkipped, self.selected.source == .local else { return [] }
+        let rejectionLines = self.candidates.compactMap { candidate -> String? in
+            guard candidate.selectionEligible, let rejection = candidate.rejection else { return nil }
+            return "- \(candidate.socketPath) — \(rejection.code): \(rejection.message)"
+        }
+        guard !rejectionLines.isEmpty else { return [] }
+        return [
+            "Warning: eligible remote Bridge hosts were rejected; using local (in-process) fallback.",
+        ] + rejectionLines
+    }
+
     /// Every candidate summary prints `perm: SR=… AX=… ES=…`, so a denial is visible but its remedy
     /// is not: the grant belongs to the host app behind that socket, never the CLI or terminal. One hint
     /// per denied candidate — a single first-match hint leaves the other probed hosts unexplained.
@@ -52,6 +64,39 @@ struct BridgeClientReport: Codable {
 struct BridgeCandidateReport: Codable {
     let socketPath: String
     let result: BridgeCandidateResult
+    let selectionEligible: Bool
+    let rejection: BridgeCandidateRejectionReport?
+
+    private enum CodingKeys: String, CodingKey {
+        case socketPath
+        case result
+    }
+
+    init(
+        socketPath: String,
+        result: BridgeCandidateResult,
+        selectionEligible: Bool = false,
+        rejection: BridgeCandidateRejectionReport? = nil
+    ) {
+        self.socketPath = socketPath
+        self.result = result
+        self.selectionEligible = selectionEligible
+        self.rejection = rejection
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.socketPath = try container.decode(String.self, forKey: .socketPath)
+        self.result = try container.decode(BridgeCandidateResult.self, forKey: .result)
+        self.selectionEligible = false
+        self.rejection = nil
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.socketPath, forKey: .socketPath)
+        try container.encode(self.result, forKey: .result)
+    }
 
     var hostKind: String? {
         if case let .success(handshake) = self.result {
@@ -193,6 +238,60 @@ struct BridgeCandidateErrorReport: Codable, Sendable {
             return "\(code): \(self.message)"
         }
         return self.message
+    }
+}
+
+struct BridgeCandidateRejectionReport {
+    let code: String
+    let message: String
+
+    static func bridgeFailure(_ failure: BridgeCandidateErrorReport) -> Self? {
+        guard failure.kind == "bridge", let code = failure.code else { return nil }
+        return Self(code: code, message: failure.message)
+    }
+
+    static func runtime(
+        _ rejection: RuntimeHostResolver.RemoteCandidateRejection,
+        handshake: PeekabooBridgeHandshakeResponse
+    ) -> Self {
+        switch rejection {
+        case .protocolVersionMismatch:
+            return Self(
+                code: "protocolVersionMismatch",
+                message: "Host protocol does not match the required Bridge version."
+            )
+        case .hostKindMismatch:
+            return Self(
+                code: "hostKindMismatch",
+                message: "Host kind \(handshake.hostKind.rawValue) does not match this candidate role."
+            )
+        case let .missingPermissions(permissions):
+            let names = BridgeCapabilityPolicy.missingPermissionNames(permissions)
+            return Self(
+                code: "missingPermissions",
+                message: "Host is missing required \(names.joined(separator: ", "))."
+            )
+        case .requirementsNotMet:
+            return Self(
+                code: "requirementsNotMet",
+                message: "Host does not support the Bridge capabilities required by this command."
+            )
+        case .reusableDaemonUnavailable:
+            return Self(
+                code: "reusableDaemonUnavailable",
+                message: "Host did not prove it is a reusable Peekaboo daemon."
+            )
+        case .historicalDaemonInvalid:
+            return Self(
+                code: "historicalDaemonInvalid",
+                message: "Historical daemon identity or compatibility validation failed."
+            )
+        case .reusableDaemonIdentityUnavailable:
+            return Self(
+                code: "reusableDaemonIdentityUnavailable",
+                message: "Reusable daemon did not provide the required process identity."
+            )
+        }
     }
 }
 

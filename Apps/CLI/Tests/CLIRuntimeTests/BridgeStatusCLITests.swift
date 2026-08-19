@@ -9,6 +9,77 @@ import Testing
 
 struct BridgeStatusCLITests {
     @Test
+    func `implicit unauthorized daemon rejection warns before verbose diagnostics`() async throws {
+        guard TestChildProcess.canLocatePeekabooBinary() else {
+            Issue.record("Build peekaboo before running CLI runtime tests.")
+            return
+        }
+
+        let refusal = PeekabooBridgeResponse.error(.init(
+            code: .unauthorizedClient,
+            message: "Team TEST is not authorized"
+        ))
+        let peer = try ScriptedBridgePeer(responses: [refusal, refusal])
+        let result = try await TestChildProcess.runPeekaboo(
+            ["bridge", "status"],
+            environment: [
+                "PEEKABOO_BRIDGE_SOCKET": "",
+                "PEEKABOO_DAEMON_SOCKET": peer.socketPath,
+            ],
+            isolateFromRemoteHosts: false
+        )
+        await peer.waitUntilFinished()
+
+        #expect(result.status == .exited(0))
+        #expect(result.standardError.isEmpty)
+        #expect(result.standardOutput.contains("Selected: local (in-process)"))
+        #expect(result.standardOutput.contains("eligible remote Bridge hosts were rejected"))
+        #expect(result.standardOutput.contains(peer.socketPath))
+        #expect(result.standardOutput.contains("unauthorizedClient"))
+        #expect(!result.standardOutput.contains("Candidates:"))
+    }
+
+    @Test
+    func `implicit unauthorized rejection JSON preserves the established report`() async throws {
+        guard TestChildProcess.canLocatePeekabooBinary() else {
+            Issue.record("Build peekaboo before running CLI runtime tests.")
+            return
+        }
+
+        let refusal = PeekabooBridgeResponse.error(.init(
+            code: .unauthorizedClient,
+            message: "Team TEST is not authorized"
+        ))
+        let peer = try ScriptedBridgePeer(responses: [refusal, refusal])
+        let result = try await TestChildProcess.runPeekaboo(
+            ["bridge", "status", "--json"],
+            environment: [
+                "PEEKABOO_BRIDGE_SOCKET": "",
+                "PEEKABOO_DAEMON_SOCKET": peer.socketPath,
+            ],
+            isolateFromRemoteHosts: false
+        )
+        await peer.waitUntilFinished()
+
+        #expect(result.status == .exited(0))
+        #expect(result.standardError.isEmpty)
+        let object = try JSONSerialization.jsonObject(with: Data(result.standardOutput.utf8))
+        let envelope = try #require(object as? [String: Any])
+        let data = try #require(envelope["data"] as? [String: Any])
+        let selected = try #require(data["selected"] as? [String: Any])
+        let candidates = try #require(data["candidates"] as? [[String: Any]])
+        let candidate = try #require(candidates.first)
+        #expect(selected["source"] as? String == "local")
+        #expect(Set(data.keys) == ["remoteSkipped", "selected", "candidates", "client"])
+        #expect(Set(candidate.keys) == ["socketPath", "result"])
+        #expect(candidate["socketPath"] as? String == peer.socketPath)
+        #expect(candidate["selectionEligible"] == nil)
+        #expect(candidate["rejection"] == nil)
+        #expect(data["fallback"] == nil)
+        #expect(data["diagnostics"] == nil)
+    }
+
+    @Test
     func `Middle and triple clicks require complete negotiated stateless support`() throws {
         for flag in ["middle", "triple"] {
             let options = try CommanderCLIBinder.makeRuntimeOptions(
@@ -200,6 +271,8 @@ struct BridgeStatusCLITests {
         #expect((error["message"] as? String)?.contains(socketPath) == true)
         #expect((error["hint"] as? String)?.contains("--no-remote") == true)
         #expect(!result.standardOutput.contains(#""source" : "local""#))
+        #expect(!result.standardOutput.contains("remoteCandidatesRejected"))
+        #expect(!result.standardOutput.contains(#""fallback""#))
     }
 
     @Test

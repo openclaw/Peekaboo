@@ -9,6 +9,7 @@
 ### Fixed
 - Treat empty `type`, `press`, `action`, `set-value`, and `click` invocations as invalid usage in both human and JSON output while preserving explicit help as a successful no-runtime path.
 - Expose requested foreground access and effective background/foreground UI authority in deterministic Agent dry-run human and JSON output without invoking models, tools, or sessions.
+- Warn when implicit Bridge hosts reject the CLI before local fallback while preserving the established `bridge status --json` schema.
 - Reuse the authenticated ScreenCaptureKit safety handshake during normal runtime-host selection, avoiding a duplicate signature and permission round trip while preserving fail-closed host validation.
 - Preserve exact application/window selector proofs through capture hardening and accept proofless exact-ID PID observations, while keeping fuzzy selectors and stable process/window receipt fields fail closed.
 - Keep CLI wall-clock timeouts bounded under sustained executor load by sharing one monotonic dispatch timer and canceling losing timer/work paths without releasing mutation barriers early.

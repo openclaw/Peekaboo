@@ -27,6 +27,7 @@ read_when:
   runtime. Pass `--no-remote` explicitly when caller-local execution is intended.
 - Status probes run concurrently and give each candidate one second to complete its read-only diagnostic handshake. A `timeout` entry means that host missed the diagnostic deadline; other candidates are still reported and normal runtime selection order is unchanged.
 - Hosts validate callers by code signature TeamID. If the host rejects the client (`unauthorizedClient`), install a signed Peekaboo CLI build or enable the debug-only escape hatch on the host.
+- If every selection-eligible implicit host is rejected, normal human output warns before the CLI reports local fallback. Structured output keeps the established full status-report schema for compatibility.
 - If `bridge status` reports `internalError` / “Bridge host returned no response”, the probed host likely closed the socket without replying (older host builds). Hosts built from `main` after 2025-12-18 return a structured `unauthorizedClient` error instead, which is much easier to debug.
 - If a candidate reports `perm: SR=N`, grant Screen Recording to that host app. For capture-only subprocesses whose caller already has Screen Recording, bypass Bridge with `--no-remote --capture-engine cg`.
 - Structured status includes optional `hostIdentity` and `hostCapabilities` from current hosts.
@@ -124,7 +125,7 @@ read_when:
 
 ## Examples
 ```bash
-# Human-readable status (selected host only)
+# Human-readable status (selected host plus any local-fallback rejection warning)
 peekaboo bridge status
 
 # Full probe results + structured output for agents

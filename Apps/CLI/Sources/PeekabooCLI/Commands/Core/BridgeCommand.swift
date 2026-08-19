@@ -100,6 +100,14 @@ extension BridgeCommand {
                 return
             }
 
+            let fallbackWarningLines = report.localFallbackWarningLines
+            if !fallbackWarningLines.isEmpty {
+                print("")
+                for line in fallbackWarningLines {
+                    print(line)
+                }
+            }
+
             guard self.verbose else {
                 if report.selected.source == .local {
                     print("")

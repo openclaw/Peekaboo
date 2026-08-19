@@ -73,6 +73,8 @@ struct BridgeDiagnostics {
 
         for probeResult in probeResults {
             let socketPath = probeResult.socketPath
+            let candidatePath = NSString(string: socketPath).standardizingPath
+            let runtimeCandidate = runtimeCandidateByPath[candidatePath]
             switch probeResult.outcome {
             case let .success(handshake):
                 let report = BridgeHandshakeReport(from: handshake)
@@ -80,20 +82,26 @@ struct BridgeDiagnostics {
                     "Bridge status: handshake OK \(handshake.hostKind.rawValue) via \(socketPath)",
                     category: "Bridge"
                 )
-                results.append(.init(socketPath: socketPath, result: .success(report)))
-
-                let candidatePath = NSString(string: socketPath).standardizingPath
+                var rejection: BridgeCandidateRejectionReport?
                 if selected == nil,
-                   let runtimeCandidate = runtimeCandidateByPath[candidatePath] {
-                    let validation = await RuntimeHostResolver.validateRemoteCandidate(
+                   let runtimeCandidate {
+                    let evaluation = await RuntimeHostResolver.evaluateRemoteCandidate(
                         runtimeCandidate,
                         handshake: handshake,
                         options: effectiveOptions
                     )
-                    if validation != nil {
+                    if evaluation.validation != nil {
                         selected = .remote(socketPath: socketPath, handshake: report)
+                    } else if let reason = evaluation.rejection {
+                        rejection = .runtime(reason, handshake: handshake)
                     }
                 }
+                results.append(.init(
+                    socketPath: socketPath,
+                    result: .success(report),
+                    selectionEligible: runtimeCandidate != nil,
+                    rejection: rejection
+                ))
             case let .failure(error):
                 if let errorCode = error.code {
                     self.logger.debug(
@@ -106,7 +114,12 @@ struct BridgeDiagnostics {
                         category: "Bridge"
                     )
                 }
-                results.append(.init(socketPath: socketPath, result: .failure(error)))
+                results.append(.init(
+                    socketPath: socketPath,
+                    result: .failure(error),
+                    selectionEligible: runtimeCandidate != nil,
+                    rejection: runtimeCandidate == nil ? nil : .bridgeFailure(error)
+                ))
             }
         }
 

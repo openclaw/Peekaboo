@@ -9,7 +9,9 @@ struct BridgeStatusReportHintTests {
     private func candidate(
         socketPath: String,
         hostKind: PeekabooBridgeHostKind,
-        permissions: PermissionsStatus
+        permissions: PermissionsStatus,
+        selectionEligible: Bool = false,
+        rejection: BridgeCandidateRejectionReport? = nil
     ) -> BridgeCandidateReport {
         let handshake = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 1),
@@ -20,15 +22,20 @@ struct BridgeStatusReportHintTests {
         )
         return BridgeCandidateReport(
             socketPath: socketPath,
-            result: .success(BridgeHandshakeReport(from: handshake))
+            result: .success(BridgeHandshakeReport(from: handshake)),
+            selectionEligible: selectionEligible,
+            rejection: rejection
         )
     }
 
-    private func report(candidates: [BridgeCandidateReport]) -> BridgeStatusReport {
+    private func report(
+        selected: BridgeSelectionReport = .local(),
+        candidates: [BridgeCandidateReport]
+    ) -> BridgeStatusReport {
         BridgeStatusReport(
             remoteSkipped: false,
             remoteSkipReason: nil,
-            selected: .local(),
+            selected: selected,
             candidates: candidates,
             client: BridgeClientReport(identity: PeekabooBridgeClientIdentity(
                 bundleIdentifier: nil,
@@ -132,6 +139,185 @@ struct BridgeStatusReportHintTests {
         #expect(hint.contains("allowed TeamID"))
         #expect(hint.contains("intended signed client"))
         #expect(hint.contains("DEBUG host only"))
+    }
+
+    @Test
+    func `unauthorized implicit GUI rejection is visible without verbose diagnostics`() throws {
+        let socketPath = "/tmp/gui.sock"
+        let failure = BridgeCandidateErrorReport.bridgeEnvelope(PeekabooBridgeErrorEnvelope(
+            code: .unauthorizedClient,
+            message: "Team TEST is not authorized"
+        ))
+        let rejection = try #require(BridgeCandidateRejectionReport.bridgeFailure(failure))
+        let status = self.report(candidates: [BridgeCandidateReport(
+            socketPath: socketPath,
+            result: .failure(failure),
+            selectionEligible: true,
+            rejection: rejection
+        )])
+
+        #expect(status.localFallbackWarningLines.count == 2)
+        #expect(status.localFallbackWarningLines[0].contains("using local (in-process) fallback"))
+        #expect(status.localFallbackWarningLines[1].contains(socketPath))
+        #expect(status.localFallbackWarningLines[1].contains("unauthorizedClient"))
+
+        let object = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(status)) as? [String: Any]
+        )
+        let candidates = try #require(object["candidates"] as? [[String: Any]])
+        let candidate = try #require(candidates.first)
+        #expect(Set(object.keys) == ["remoteSkipped", "selected", "candidates", "client"])
+        #expect(Set(candidate.keys) == ["socketPath", "result"])
+        #expect(candidate["selectionEligible"] == nil)
+        #expect(candidate["rejection"] == nil)
+        #expect(object["fallback"] == nil)
+    }
+
+    @Test
+    func `permission and capability rejections retain the resolver decision`() async throws {
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/gui.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: .gui,
+            requiresValidatedHistoricalDaemon: false
+        )
+        var options = CommandRuntimeOptions()
+        options.requiresElementActions = true
+
+        let missingPermissionHandshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            supportedOperations: [.setValue, .performAction],
+            permissions: PermissionsStatus(
+                screenRecording: true,
+                accessibility: false,
+                appleScript: false,
+                postEvent: true
+            )
+        )
+        let permissionEvaluation = await RuntimeHostResolver.evaluateRemoteCandidate(
+            candidate,
+            handshake: missingPermissionHandshake,
+            options: options
+        )
+        #expect(permissionEvaluation.validation == nil)
+        #expect(permissionEvaluation.rejection == .missingPermissions([.accessibility]))
+        let permissionRejection = try #require(permissionEvaluation.rejection)
+        let permissionReport = BridgeCandidateRejectionReport.runtime(
+            permissionRejection,
+            handshake: missingPermissionHandshake
+        )
+        #expect(permissionReport.code == "missingPermissions")
+        #expect(permissionReport.message.contains("Accessibility"))
+
+        let missingCapabilityHandshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            supportedOperations: [],
+            permissions: PermissionsStatus(
+                screenRecording: true,
+                accessibility: true,
+                appleScript: false,
+                postEvent: true
+            )
+        )
+        let capabilityEvaluation = await RuntimeHostResolver.evaluateRemoteCandidate(
+            candidate,
+            handshake: missingCapabilityHandshake,
+            options: options
+        )
+        #expect(capabilityEvaluation.validation == nil)
+        #expect(capabilityEvaluation.rejection == .requirementsNotMet)
+        let capabilityRejection = try #require(capabilityEvaluation.rejection)
+        let capabilityReport = BridgeCandidateRejectionReport.runtime(
+            capabilityRejection,
+            handshake: missingCapabilityHandshake
+        )
+        #expect(capabilityReport.code == "requirementsNotMet")
+    }
+
+    @Test
+    func `successful implicit GUI selection has no fallback warning`() async {
+        let socketPath = "/tmp/gui.sock"
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: socketPath,
+            requireReusableDaemon: false,
+            requiredHostKind: .gui,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let handshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: "4.2.0",
+            supportedOperations: [.permissionsStatus]
+        )
+        let evaluation = await RuntimeHostResolver.evaluateRemoteCandidate(
+            candidate,
+            handshake: handshake,
+            options: CommandRuntimeOptions()
+        )
+        #expect(evaluation.validation != nil)
+        #expect(evaluation.rejection == nil)
+
+        let handshakeReport = BridgeHandshakeReport(from: handshake)
+        let status = self.report(
+            selected: .remote(socketPath: socketPath, handshake: handshakeReport),
+            candidates: [BridgeCandidateReport(
+                socketPath: socketPath,
+                result: .success(handshakeReport),
+                selectionEligible: true
+            )]
+        )
+        #expect(status.localFallbackWarningLines.isEmpty)
+        #expect(status.selected.source == .remote)
+        #expect(status.selected.socketPath == socketPath)
+    }
+
+    @Test
+    func `JSON encoding preserves the established full status report`() throws {
+        let socketPath = "/tmp/gui.sock"
+        let handshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: "4.2.0",
+            supportedOperations: PeekabooBridgeOperation.allCases,
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.backgroundBridgeHost,
+                PeekabooBridgeHostCapability.attestedOperationReceipts,
+            ]
+        )
+        let handshakeReport = BridgeHandshakeReport(from: handshake)
+        let status = self.report(
+            selected: .remote(socketPath: socketPath, handshake: handshakeReport),
+            candidates: [BridgeCandidateReport(
+                socketPath: socketPath,
+                result: .success(handshakeReport),
+                selectionEligible: true
+            )]
+        )
+
+        let data = try JSONEncoder().encode(status)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let selected = try #require(object["selected"] as? [String: Any])
+        let selectedHandshake = try #require(selected["handshake"] as? [String: Any])
+        let candidates = try #require(object["candidates"] as? [[String: Any]])
+        let encodedCandidate = try #require(candidates.first)
+        let candidateResult = try #require(encodedCandidate["result"] as? [String: Any])
+        let success = try #require(candidateResult["success"] as? [String: Any])
+        let candidateHandshake = try #require(success["_0"] as? [String: Any])
+
+        #expect(Set(object.keys) == ["remoteSkipped", "selected", "candidates", "client"])
+        #expect(Set(encodedCandidate.keys) == ["socketPath", "result"])
+        #expect(selectedHandshake["supportedOperations"] is [String])
+        #expect(candidateHandshake["supportedOperations"] is [String])
+        #expect(selectedHandshake["permissionTags"] is [String: Any])
+        #expect(candidateHandshake["permissionTags"] is [String: Any])
+        #expect(object["fallback"] == nil)
+        #expect(object["diagnostics"] == nil)
+
+        let decoded = try JSONDecoder().decode(BridgeStatusReport.self, from: data)
+        #expect(decoded.candidates.first?.selectionEligible == false)
+        #expect(decoded.candidates.first?.rejection == nil)
     }
 
     @Test

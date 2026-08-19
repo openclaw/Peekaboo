@@ -745,42 +745,13 @@ enum RuntimeHostResolver {
             await DaemonControlClient(socketPath: socketPath).fetchReusableDaemonStatus()
         }
     ) async -> RemoteCandidateValidation? {
-        guard requiredProtocolVersion == nil || handshake.negotiatedVersion == requiredProtocolVersion else {
-            return nil
-        }
-        guard candidate.requiredHostKind == nil || handshake.hostKind == candidate.requiredHostKind else {
-            return nil
-        }
-        guard BridgeCapabilityPolicy.supportsRemoteRequirements(for: handshake, options: options) else {
-            return nil
-        }
-
-        let requiresReusableHost = candidate.requireReusableDaemon ||
-            options.requiresApplicationRelaunch ||
-            options.requiresSurvivingApplicationHost
-        let reusableDaemonStatus: PeekabooDaemonStatus? = if requiresReusableHost {
-            await fetchReusableDaemonStatus(candidate.socketPath)
-        } else {
-            nil
-        }
-        guard !requiresReusableHost || reusableDaemonStatus != nil else { return nil }
-
-        if candidate.requiresValidatedHistoricalDaemon {
-            guard let reusableDaemonStatus,
-                  DaemonControlResolver.isValidatedHistoricalTarget(
-                      status: reusableDaemonStatus,
-                      socketPath: candidate.socketPath
-                  ),
-                  DaemonControlPlanner.supportsCurrentDaemon(reusableDaemonStatus)
-            else {
-                return nil
-            }
-        }
-        if options.requiresApplicationRelaunch || options.requiresSurvivingApplicationHost,
-           reusableDaemonStatus?.pid == nil {
-            return nil
-        }
-        return RemoteCandidateValidation(reusableDaemonStatus: reusableDaemonStatus)
+        await self.evaluateRemoteCandidate(
+            candidate,
+            handshake: handshake,
+            options: options,
+            requiredProtocolVersion: requiredProtocolVersion,
+            fetchReusableDaemonStatus: fetchReusableDaemonStatus
+        ).validation
     }
 
     static func remoteServices(
