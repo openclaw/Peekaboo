@@ -1789,6 +1789,34 @@ private struct WatchState {
     private var cursorMovementObserved = false
     private var foregroundActivityByRevision = [UInt64: ForegroundActivitySummary]()
 
+    init(
+        baseline: SystemSample,
+        interactiveBaseline: InteractiveBaseline,
+        executionNonce: String,
+        monitorInstanceID: String,
+        historyCommitmentSHA256: String,
+        allowClipboardMutation: Bool,
+        physicalInputObservational: Bool,
+        cursorObservational: Bool,
+        projection: InvariantProjection,
+        outputPath: String,
+        contaminationOutputPath: String,
+        evidenceLedger: MonitorPublicationLedger?)
+    {
+        self.baseline = baseline
+        self.interactiveBaseline = interactiveBaseline
+        self.executionNonce = executionNonce
+        self.monitorInstanceID = monitorInstanceID
+        self.historyCommitmentSHA256 = historyCommitmentSHA256
+        self.allowClipboardMutation = allowClipboardMutation
+        self.physicalInputObservational = physicalInputObservational
+        self.cursorObservational = cursorObservational
+        self.projection = projection
+        self.outputPath = outputPath
+        self.contaminationOutputPath = contaminationOutputPath
+        self.evidenceLedger = evidenceLedger
+    }
+
     mutating func observe(
         current: SystemSample,
         phase: String,

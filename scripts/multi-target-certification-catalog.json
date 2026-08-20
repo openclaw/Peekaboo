@@ -41,7 +41,7 @@
   },
   "monitor_source": {
     "commit": "4a9b3405f542e00b408a5b03f50a8616094648ff",
-    "probe_sha256": "ede864a138f9f292f0ee0287708aff252e7aed0ed4c9c991265f4645aea8e1b1"
+    "probe_sha256": "2a8052cc9d6e442552e7c0b1092b0bfd482b5595ac95b76c92be80e4f57926ae"
   },
   "current_build_source": {
     "kind": "peekaboo-current-build-source",
