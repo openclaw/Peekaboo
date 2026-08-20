@@ -55,6 +55,7 @@ public actor PeekabooBridgeClient {
     var statelessClickVariantPayloadsEnabled = false
     var statelessClickVariantsEnabled = false
     var agentExecutionTraceEnabled = false
+    var processGenerationObservationEnabled = false
     var operationAttestation: PeekabooBridgeListenerAttestation?
     var latestVerifiedOperationReceipt: PeekabooBridgeOperationReceipt?
     var latestVerifiedOperationReceiptBundle: PeekabooBridgeOperationReceiptBundle?
@@ -442,6 +443,7 @@ public actor PeekabooBridgeClient {
         self.statelessClickVariantPayloadsEnabled = false
         self.statelessClickVariantsEnabled = false
         self.agentExecutionTraceEnabled = false
+        self.processGenerationObservationEnabled = false
     }
 
     /// Creates or joins one successor-session handshake using the most recent successful public inputs.
@@ -872,6 +874,7 @@ public actor PeekabooBridgeClient {
             handshake.negotiatedVersion >= PeekabooBridgeConstants.statelessClickVariantVersion,
             statelessClickVariantsEnabled: Self.supportsStatelessClickVariants(handshake),
             agentExecutionTraceEnabled: Self.supportsAgentExecutionTrace(handshake),
+            processGenerationObservationEnabled: Self.supportsProcessGenerationObservation(handshake),
             listenerAttestation: listenerAttestation,
             listenerLiveIdentity: listenerLiveIdentity,
             sessionAttestation: sessionAttestation,
@@ -891,6 +894,14 @@ public actor PeekabooBridgeClient {
             handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.agentExecutionTrace) == true &&
             handshake.supportedOperations.contains(.agentExecutionTrace) &&
             (handshake.enabledOperations?.contains(.agentExecutionTrace) ?? true)
+    }
+
+    private static func supportsProcessGenerationObservation(_ handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeConstants.processGenerationObservationVersion &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.processGenerationObservation) == true &&
+            handshake.supportedOperations.contains(.observeProcessGeneration) &&
+            (handshake.enabledOperations?.contains(.observeProcessGeneration) ?? true)
     }
 
     private func installHandshakeCandidate(
@@ -936,6 +947,7 @@ public actor PeekabooBridgeClient {
         self.statelessClickVariantPayloadsEnabled = candidate.statelessClickVariantPayloadsEnabled
         self.statelessClickVariantsEnabled = candidate.statelessClickVariantsEnabled
         self.agentExecutionTraceEnabled = candidate.agentExecutionTraceEnabled
+        self.processGenerationObservationEnabled = candidate.processGenerationObservationEnabled
         self.operationAttestation = candidate.listenerAttestation
         self.installReceiptlessAuthenticatedHost(candidate.receiptlessAuthenticatedHost)
         if let listenerAttestation = candidate.listenerAttestation,
@@ -1221,6 +1233,7 @@ private struct PeekabooBridgeClientHandshakeCandidate: Sendable {
     let statelessClickVariantPayloadsEnabled: Bool
     let statelessClickVariantsEnabled: Bool
     let agentExecutionTraceEnabled: Bool
+    let processGenerationObservationEnabled: Bool
     let listenerAttestation: PeekabooBridgeListenerAttestation?
     let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity?
     let sessionAttestation: PeekabooBridgeOperationSessionAttestation?

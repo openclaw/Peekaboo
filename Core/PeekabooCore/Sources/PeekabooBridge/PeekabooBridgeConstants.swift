@@ -65,7 +65,11 @@ public enum PeekabooBridgeConstants {
     }
 
     /// Current protocol version supported by this build.
-    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 31)
+    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 32)
+
+    /// First protocol with a receipt-required, host-derived exact process-generation observation.
+    public static let processGenerationObservationVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 32)
 
     /// First protocol whose Bridge can launch the exact authenticated CLI peer as a suspended
     /// background Agent and return one listener-signed terminal execution trace.

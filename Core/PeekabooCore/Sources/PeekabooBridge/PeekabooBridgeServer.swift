@@ -82,6 +82,7 @@ public final class PeekabooBridgeServer {
     let windowBoundsProvider: @Sendable (CGWindowID) -> CGRect?
     let maximizedVisibleWorkAreaProvider: @MainActor @Sendable (CGRect) -> CGRect?
     let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
+    let processPresenceProvider: @Sendable (pid_t) -> Bool?
     let desktopMutationWatermarkStore: DesktopMutationWatermarkStore?
     let desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator
     let automationActivityObserver: (@Sendable (pid_t) -> Void)?
@@ -122,6 +123,7 @@ public final class PeekabooBridgeServer {
         maximizedVisibleWorkAreaProvider: (@MainActor @Sendable (CGRect) -> CGRect?)? = nil,
         processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? =
             SystemIdentityResolver.processStartIdentity,
+        processPresenceProvider: (@Sendable (pid_t) -> Bool?)? = nil,
         encoder: JSONEncoder = .peekabooBridgeEncoder(),
         decoder: JSONDecoder = .peekabooBridgeDecoder())
     {
@@ -175,6 +177,13 @@ public final class PeekabooBridgeServer {
         } else {
             resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.agentExecutionTrace)
         }
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.processGenerationObservationVersion,
+           self.allowedOperations.contains(.observeProcessGeneration)
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.processGenerationObservation)
+        } else {
+            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.processGenerationObservation)
+        }
         if self.allowedOperations.contains(.launchApplicationWithOptions),
            services.applications.supportsSafeBackgroundApplicationLaunchNoOp
         {
@@ -203,6 +212,7 @@ public final class PeekabooBridgeServer {
             WindowMutationGeometryPostcondition.currentMaximizedVisibleWorkArea(for: bounds)
         }
         self.processStartIdentityProvider = processStartIdentityProvider
+        self.processPresenceProvider = processPresenceProvider ?? { Self.observeProcessPresence($0) }
         let resolvedPostEventAccessEvaluator = postEventAccessEvaluator ?? { [services] in
             services.permissions.checkPostEventPermission()
         }
@@ -827,6 +837,14 @@ public final class PeekabooBridgeServer {
             throw PeekabooBridgeErrorEnvelope(
                 code: .operationNotSupported,
                 message: "Operation \(op.rawValue) is not supported by this host")
+        }
+        if op == .observeProcessGeneration {
+            try self.requireCertificationCaller(peer)
+            guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "Process-generation observation requires a signed Bridge operation receipt")
+            }
         }
         if let minimumVersion = request.minimumNegotiatedProtocolVersion {
             let session = PeekabooBridgeRequestContext.negotiatedSessionCapabilities

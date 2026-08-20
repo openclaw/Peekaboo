@@ -83,6 +83,7 @@ enum PeekabooBridgeOperationResultSemantics {
         case menuStructure
         case ok
         case permissionsStatus
+        case processGenerationObservation
         case preparedDialogAction
         case rect
         case snapshotID
@@ -125,6 +126,7 @@ enum PeekabooBridgeOperationResultSemantics {
                  (.menuStructure, .menuStructure),
                  (.ok, .ok),
                  (.permissionsStatus, .permissionsStatus),
+                 (.processGenerationObservation, .processGenerationObservation),
                  (.preparedDialogAction, .preparedDialogAction),
                  (.rect, .rect),
                  (.snapshotID, .snapshotId),
@@ -253,6 +255,7 @@ enum PeekabooBridgeOperationResultSemantics {
     enum TypedResponseRule: Equatable, Sendable {
         case none
         case agentExecutionTrace(PeekabooBridgeAgentExecutionTraceRequest)
+        case processGenerationObservation(PeekabooBridgeProcessGenerationObservationRequest)
         case typeActions(TypeActionResultRule)
         case setValue(target: String, value: String)
         case performAction(target: String, actionName: String)
@@ -266,6 +269,12 @@ enum PeekabooBridgeOperationResultSemantics {
             switch binding {
             case .agentExecutionTrace:
                 if case .agentExecutionTrace = self {
+                    true
+                } else {
+                    false
+                }
+            case .processGenerationObservation:
+                if case .processGenerationObservation = self {
                     true
                 } else {
                     false
@@ -344,6 +353,7 @@ enum PeekabooBridgeOperationResultSemantics {
         /// The response family is the complete typed contract; no request field is echoed by the result.
         case familyOnly
         case agentExecutionTrace
+        case processGenerationObservation
         /// This operation intentionally has no successful response family.
         case noSuccessResponse
         case typeActions
@@ -426,6 +436,10 @@ enum PeekabooBridgeOperationResultSemantics {
                 return
             case let (.agentExecutionTrace(request), .agentExecutionTrace(result)):
                 try result.validate(request: request)
+            case (.processGenerationObservation, .error):
+                return
+            case let (.processGenerationObservation(request), .processGenerationObservation(result)):
+                try result.validate(request: request)
             case (.setValue, .error):
                 // A canonical failure has no success payload to bind. Its outcome, target receipt,
                 // and dispatch count are validated by the failure and receipt contracts instead.
@@ -467,7 +481,8 @@ enum PeekabooBridgeOperationResultSemantics {
                     throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                         "perform-action response request semantics")
                 }
-            case (.agentExecutionTrace, _), (.typeActions, _), (.setValue, _), (.performAction, _):
+            case (.agentExecutionTrace, _), (.processGenerationObservation, _),
+                 (.typeActions, _), (.setValue, _), (.performAction, _):
                 throw PeekabooBridgeOperationReceiptError.receiptMismatch("bound typed response family")
             }
         }
@@ -597,6 +612,7 @@ extension PeekabooBridgeOperationResultSemantics {
             .service
         case .permissionsStatus,
              .agentExecutionTrace,
+             .observeProcessGeneration,
              .createExactWindowHeldPointerOwner,
              .requestPostEventPermission,
              .daemonStatus,
@@ -677,6 +693,7 @@ extension PeekabooBridgeOperationResultSemantics {
             .globalExclusive
         case .permissionsStatus,
              .agentExecutionTrace,
+             .observeProcessGeneration,
              .requestPostEventPermission,
              .daemonStatus,
              .daemonStop,
@@ -776,6 +793,7 @@ extension PeekabooBridgeOperationResultSemantics {
             .required
         case .permissionsStatus,
              .agentExecutionTrace,
+             .observeProcessGeneration,
              .requestPostEventPermission,
              .daemonStatus,
              .daemonStop,
@@ -883,6 +901,8 @@ extension PeekabooBridgeOperationResultSemantics {
         switch operation {
         case .agentExecutionTrace:
             .agentExecutionTrace
+        case .observeProcessGeneration:
+            .processGenerationObservation
         case .typeActions, .targetedTypeActions, .exactWindowTargetedTypeActions:
             .typeActions
         case .setValue:
@@ -1137,6 +1157,7 @@ extension PeekabooBridgeOperationResultSemantics {
             .init(completion: .requestDependent(mutatesDesktop: false), targetPolicy: .requestDependent)
         case .permissionsStatus,
              .createExactWindowHeldPointerOwner,
+             .observeProcessGeneration,
              .daemonStatus,
              .daemonStop,
              .browserStatus,
@@ -1541,6 +1562,8 @@ extension PeekabooBridgeOperationResultSemantics {
         switch request {
         case let .agentExecutionTrace(payload):
             .agentExecutionTrace(payload)
+        case let .observeProcessGeneration(payload):
+            .processGenerationObservation(payload)
         case let .typeActions(payload):
             .typeActions(.init(actions: payload.actions))
         case let .targetedTypeActions(payload):
@@ -1742,7 +1765,7 @@ extension PeekabooBridgeOperationResultSemantics {
             return [.dispatchedUnverified]
         case .browserConnect:
             return [.confirmedNoChange, .dispatchedUnverified]
-        case .permissionsStatus, .createExactWindowHeldPointerOwner,
+        case .permissionsStatus, .observeProcessGeneration, .createExactWindowHeldPointerOwner,
              .daemonStatus, .daemonStop, .browserStatus,
              .browserDisconnect,
              .getFocusedElement, .waitForElement, .listWindows, .getFocusedWindow,
@@ -1791,6 +1814,7 @@ extension PeekabooBridgeOperationResultSemantics {
         switch operation {
         case .permissionsStatus: [.permissionsStatus]
         case .agentExecutionTrace: [.agentExecutionTrace]
+        case .observeProcessGeneration: [.processGenerationObservation]
         case .requestPostEventPermission: [.bool]
         case .daemonStatus: [.daemonStatus]
         case .daemonStop: [.bool]
@@ -2612,11 +2636,5 @@ extension PeekabooBridgeOperationResultSemantics {
         case .operationUnsupported:
             "Use a host that supports this operation."
         }
-    }
-}
-
-extension PeekabooBridgeOperation {
-    var mutatesDesktop: Bool {
-        PeekabooBridgeOperationResultSemantics.contract(for: self).completion.mutatesDesktop
     }
 }

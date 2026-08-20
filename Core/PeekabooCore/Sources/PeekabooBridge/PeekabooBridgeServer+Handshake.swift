@@ -72,6 +72,10 @@ extension PeekabooBridgeServer {
             usesAttestedOperationReceipts: supportsAttestedOperationReceipts)
         var advertisedOps = compatibleOperations.advertised.sorted { $0.rawValue < $1.rawValue }
         var enabledOps = compatibleOperations.enabled
+        if (try? self.requireCertificationCaller(peer)) == nil {
+            advertisedOps.removeAll { $0 == .observeProcessGeneration }
+            enabledOps.remove(.observeProcessGeneration)
+        }
         if negotiated >= PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion,
            !supportsAttestedOperationReceipts
         {
@@ -154,6 +158,13 @@ extension PeekabooBridgeServer {
             !enabledOps.contains(.agentExecutionTrace)
         {
             advertisedCapabilities.remove(PeekabooBridgeHostCapability.agentExecutionTrace)
+        }
+        if !supportsAttestedOperationReceipts ||
+            negotiated < PeekabooBridgeConstants.processGenerationObservationVersion ||
+            !advertisedOps.contains(.observeProcessGeneration) ||
+            !enabledOps.contains(.observeProcessGeneration)
+        {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.processGenerationObservation)
         }
         if supportsAttestedOperationReceipts {
             advertisedCapabilities.insert(PeekabooBridgeHostCapability.attestedOperationReceipts)
@@ -262,6 +273,9 @@ extension PeekabooBridgeServer {
         usesAttestedOperationReceipts: Bool) -> Set<PeekabooBridgeOperation>
     {
         var compatible = PeekabooBridgeOperation.compatible(operations, with: negotiated)
+        if !usesAttestedOperationReceipts {
+            compatible.remove(.observeProcessGeneration)
+        }
         if usesAttestedOperationReceipts,
            !self.services.dialogs.supportsBackgroundExactDialogInput
         {

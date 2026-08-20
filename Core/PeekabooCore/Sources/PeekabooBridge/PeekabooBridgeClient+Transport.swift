@@ -190,6 +190,14 @@ extension PeekabooBridgeClient {
     }
 
     private func requireNegotiatedInputCapabilities(for request: PeekabooBridgeRequest) throws {
+        if request.unwrappedOperationRequest.operation == .observeProcessGeneration,
+           !self.processGenerationObservationEnabled
+        {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge protocol 1.32 signed process-generation observation is unavailable",
+                details: "The host must advertise and enable observeProcessGeneration before use.")
+        }
         if request.unwrappedOperationRequest.operation == .agentExecutionTrace,
            !self.agentExecutionTraceEnabled
         {

@@ -1127,6 +1127,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
         case (.familyOnly, _, _),
              (.noSuccessResponse, _, _),
              (.agentExecutionTrace, _, _),
+             (.processGenerationObservation, .observeProcessGeneration, .processGenerationObservation),
              (.typeActions, _, _),
              (.setValue, _, _),
              (.performAction, _, _),

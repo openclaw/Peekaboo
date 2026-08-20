@@ -34,6 +34,8 @@ extension PeekabooBridgeRequest {
         switch self.unwrappedOperationRequest.operation {
         case .agentExecutionTrace:
             return PeekabooBridgeConstants.agentExecutionTraceVersion
+        case .observeProcessGeneration:
+            return PeekabooBridgeConstants.processGenerationObservationVersion
         case .createExactWindowHeldPointerOwner,
              .beginExactWindowHeldPointer,
              .releaseExactWindowHeldPointer,

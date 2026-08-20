@@ -16,6 +16,12 @@ extension PeekabooBridgeServer {
                 response: self.handleCoreRequest(request, peer: peer, permissions: permissions))
         case .agentExecutionTrace:
             return try await self.handleAgentExecutionTraceRequest(request, peer: peer)
+        case .observeProcessGeneration:
+            guard case let .observeProcessGeneration(payload) = request else {
+                throw Self.invalidRequest(for: request)
+            }
+            return try .init(response: .processGenerationObservation(
+                self.handleProcessGenerationObservation(payload)))
         case .requestPostEventPermission:
             return self.handlePostEventPermissionRequest()
         case .browserStatus, .browserDisconnect:

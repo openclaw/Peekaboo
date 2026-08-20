@@ -36,7 +36,7 @@ struct PeekabooBridgeAgentExecutionTraceTransportTests {
 
         let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
         let handshake = try await client.handshake(client: Self.clientIdentity)
-        #expect(handshake.negotiatedVersion == PeekabooBridgeConstants.agentExecutionTraceVersion)
+        #expect(handshake.negotiatedVersion == PeekabooBridgeConstants.protocolVersion)
         #expect(handshake.supportedOperations.contains(.agentExecutionTrace))
         #expect(handshake.enabledOperations?.contains(.agentExecutionTrace) == true)
         #expect(handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.agentExecutionTrace) == true)

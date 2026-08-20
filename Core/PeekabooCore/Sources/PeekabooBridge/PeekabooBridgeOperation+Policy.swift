@@ -1,6 +1,10 @@
 import Foundation
 
 extension PeekabooBridgeOperation {
+    var mutatesDesktop: Bool {
+        PeekabooBridgeOperationResultSemantics.contract(for: self).completion.mutatesDesktop
+    }
+
     /// Whether Peekaboo's concrete native service retains desktop-lane ownership through its dispatch leaf.
     ///
     /// Bridge routing consults this policy together with the service provider's ownership claim. Keeping the
@@ -47,6 +51,7 @@ extension PeekabooBridgeOperation {
             [.accessibility]
         case ._appleScriptProbe,
              .agentExecutionTrace,
+             .observeProcessGeneration,
              .createExactWindowHeldPointerOwner,
              .releaseExactWindowHeldPointer,
              .revokeExactWindowHeldPointer,
@@ -97,6 +102,7 @@ extension PeekabooBridgeOperation {
         .daemonStatus,
         .daemonStop,
         .agentExecutionTrace,
+        .observeProcessGeneration,
         .browserStatus,
         .browserConnect,
         .browserDisconnect,

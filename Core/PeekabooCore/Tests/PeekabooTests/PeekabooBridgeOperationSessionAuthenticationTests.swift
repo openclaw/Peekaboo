@@ -297,21 +297,21 @@ struct PeekabooBridgeOperationSessionAuthenticationTests {
                 to: currentRequest)
             let previousRequest = try await peer.nextRequest()
             guard case let .handshake(previousPayload) = try previousRequest.decode() else {
-                Issue.record("Expected trusted protocol 1.29 fallback request")
+                Issue.record("Expected trusted protocol 1.31 fallback request")
                 await peer.stop()
                 return
             }
-            #expect(previousPayload.protocolVersion == .init(major: 1, minor: 29))
+            #expect(previousPayload.protocolVersion == .init(major: 1, minor: 31))
             try await peer.respond(
-                .error(.init(code: .versionMismatch, message: "Protocol 1.29 unavailable")),
+                .error(.init(code: .versionMismatch, message: "Protocol 1.31 unavailable")),
                 to: previousRequest)
             let legacyRequest = try await peer.nextRequest()
             guard case let .handshake(legacyPayload) = try legacyRequest.decode() else {
-                Issue.record("Expected trusted protocol 1.28 fallback request")
+                Issue.record("Expected trusted protocol 1.30 fallback request")
                 await peer.stop()
                 return
             }
-            #expect(legacyPayload.protocolVersion == .init(major: 1, minor: 28))
+            #expect(legacyPayload.protocolVersion == .init(major: 1, minor: 30))
             try await peer.respond(.handshake(Self.legacyHandshake()), to: legacyRequest)
             let response = try await handshake.value
             #expect(response.negotiatedVersion == .init(major: 1, minor: 28))

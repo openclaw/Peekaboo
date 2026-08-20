@@ -212,7 +212,7 @@ struct PeekabooBridgeTargetedClickTests {
         defer { Task { await currentHost.stop() } }
         let currentClient = TrustedBridgeClientFixture.make(socketPath: currentSocket, requestTimeoutSec: 2)
         let handshake = try await currentClient.handshake(client: Self.clientIdentity)
-        #expect(handshake.negotiatedVersion == PeekabooBridgeConstants.statelessClickVariantVersion)
+        #expect(handshake.negotiatedVersion == PeekabooBridgeConstants.protocolVersion)
         #expect(handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.statelessClickVariants) == false)
 
         _ = try await currentClient.clickWithOutcome(
