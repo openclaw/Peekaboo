@@ -677,14 +677,14 @@ struct PeekabooBridgeAgentExecutionExecutable: Equatable, Sendable {
         guard processIdentifier > 0,
               let generationBefore = SystemIdentityResolver.processStartIdentity(processIdentifier),
               expectedGeneration == nil || expectedGeneration == generationBefore,
-              let pathBefore = self.processPath(processIdentifier),
+              let pathBefore = self.canonicalProcessPath(processIdentifier),
               let digest = try? self.stableExecutableSHA256(pathBefore),
               let liveCDHash = PeekabooBridgeCodeSignatureIdentity.codeSignatureHash(
                   processIdentifier: processIdentifier,
                   expectedProcessStartIdentity: generationBefore),
               liveCDHash == expectedCDHash,
               PeekabooBridgeCodeSignatureIdentity.codeSignatureHash(executablePath: pathBefore) == expectedCDHash,
-              let pathAfter = self.processPath(processIdentifier),
+              let pathAfter = self.canonicalProcessPath(processIdentifier),
               pathAfter == pathBefore,
               SystemIdentityResolver.processStartIdentity(processIdentifier) == generationBefore
         else {
@@ -698,17 +698,24 @@ struct PeekabooBridgeAgentExecutionExecutable: Equatable, Sendable {
             codeSignatureHash: liveCDHash)
     }
 
-    private static func processPath(_ processIdentifier: pid_t) -> String? {
+    static func canonicalProcessPath(_ processIdentifier: pid_t) -> String? {
         var buffer = [CChar](repeating: 0, count: Int(PATH_MAX) * 4)
         let length = proc_pidpath(processIdentifier, &buffer, UInt32(buffer.count))
         guard length > 0 else { return nil }
         guard let path = self.string(fromNullTerminated: buffer) else { return nil }
+        return self.canonicalPath(path)
+    }
+
+    static func canonicalPath(_ path: String) -> String? {
         var resolved = [CChar](repeating: 0, count: Int(PATH_MAX))
-        guard path.withCString({ realpath($0, &resolved) }) != nil else { return nil }
+        let result = resolved.withUnsafeMutableBufferPointer { buffer in
+            path.withCString { realpath($0, buffer.baseAddress) }
+        }
+        guard result != nil else { return nil }
         return self.string(fromNullTerminated: resolved)
     }
 
-    private static func stableExecutableSHA256(_ path: String) throws -> String {
+    static func stableExecutableSHA256(_ path: String) throws -> String {
         let descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
         guard descriptor >= 0 else { throw POSIXError(.EACCES) }
         defer { close(descriptor) }

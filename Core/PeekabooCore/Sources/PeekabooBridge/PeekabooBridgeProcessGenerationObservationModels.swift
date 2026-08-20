@@ -196,7 +196,7 @@ public struct PeekabooBridgeProcessGenerationObservationResponse: Codable, Equat
     }
 }
 
-private enum PeekabooBridgeClosedPayload {
+enum PeekabooBridgeClosedPayload {
     private struct AnyKey: CodingKey {
         let stringValue: String
         let intValue: Int?
@@ -214,7 +214,8 @@ private enum PeekabooBridgeClosedPayload {
 
     static func requireExactKeys<Keys: CodingKey & CaseIterable>(
         _ keys: Keys.Type,
-        from decoder: any Decoder) throws
+        from decoder: any Decoder,
+        description: String = "Bridge payload") throws
     where Keys.AllCases: Collection {
         let container = try decoder.container(keyedBy: AnyKey.self)
         let actual = Set(container.allKeys.map(\.stringValue))
@@ -222,7 +223,21 @@ private enum PeekabooBridgeClosedPayload {
         guard actual == expected else {
             throw DecodingError.dataCorrupted(.init(
                 codingPath: decoder.codingPath,
-                debugDescription: "Process-generation observation payload keys are not closed"))
+                debugDescription: "\(description) keys are not closed"))
+        }
+    }
+
+    static func requireExactKeys(
+        _ expected: Set<String>,
+        from decoder: any Decoder,
+        description: String) throws
+    {
+        let container = try decoder.container(keyedBy: AnyKey.self)
+        let actual = Set(container.allKeys.map(\.stringValue))
+        guard actual == expected else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "\(description) keys are not closed"))
         }
     }
 }

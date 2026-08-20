@@ -207,6 +207,14 @@ extension PeekabooBridgeClient {
                 message: "Bridge protocol 1.32 signed process-generation observation is unavailable",
                 details: "The host must advertise and enable observeProcessGeneration before use.")
         }
+        if request.unwrappedOperationRequest.operation == .certificationProducerAttestation,
+           !self.certificationProducerAttestationEnabled
+        {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge protocol 1.32 certification producer attestation is unavailable",
+                details: "The host must advertise and enable certificationProducerAttestation before use.")
+        }
         if request.unwrappedOperationRequest.operation == .agentExecutionTrace,
            !self.agentExecutionTraceEnabled
         {

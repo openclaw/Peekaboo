@@ -53,7 +53,7 @@ extension PeekabooBridgeServer {
         else {
             throw PeekabooBridgeErrorEnvelope(
                 code: .unauthorizedClient,
-                message: "Process-generation observation requires the authenticated Foundation-signed Peekaboo CLI")
+                message: "Certification operations require the authenticated Foundation-signed Peekaboo CLI")
         }
     }
 

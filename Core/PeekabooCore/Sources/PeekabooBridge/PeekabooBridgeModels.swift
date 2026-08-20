@@ -42,6 +42,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case daemonStop
     case agentExecutionTrace
     case observeProcessGeneration
+    case certificationProducerAttestation
     // Browser MCP
     case browserStatus
     case browserConnect
@@ -262,6 +263,9 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
         if version < PeekabooBridgeConstants.processGenerationObservationVersion {
             compatible.remove(.observeProcessGeneration)
         }
+        if version < PeekabooBridgeConstants.certificationProducerAttestationVersion {
+            compatible.remove(.certificationProducerAttestation)
+        }
         return compatible
     }
     // swiftlint:enable cyclomatic_complexity
@@ -371,6 +375,7 @@ public enum PeekabooBridgeHostCapability {
     public static let statelessClickVariants = "statelessClickVariants"
     public static let agentExecutionTrace = "agentExecutionTrace"
     public static let processGenerationObservation = "processGenerationObservation"
+    public static let certificationProducerAttestation = "certificationProducerAttestation"
     public static let setValueResultTargetBinding = "setValueResultTargetBinding"
 }
 

@@ -36,6 +36,8 @@ extension PeekabooBridgeRequest {
             return PeekabooBridgeConstants.agentExecutionTraceVersion
         case .observeProcessGeneration:
             return PeekabooBridgeConstants.processGenerationObservationVersion
+        case .certificationProducerAttestation:
+            return PeekabooBridgeConstants.certificationProducerAttestationVersion
         case .createExactWindowHeldPointerOwner,
              .beginExactWindowHeldPointer,
              .releaseExactWindowHeldPointer,

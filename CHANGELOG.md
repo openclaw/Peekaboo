@@ -5,6 +5,7 @@
 ### Fixed
 - Fail closed instead of generating or accepting a release-qualification manifest until final-cycle liveness witnesses have a cryptographic trust anchor.
 - Add receipt-required Bridge protocol 1.32 observation of exact process generations for signed liveness and absence evidence.
+- Bind certification crash, monitor, and foreground semantic evidence to exact authenticated producers and listener-signed Bridge receipts.
 - Bind signed `set-value` results to the opaque requested element and refuse older Bridge hosts before dispatch.
 - Preserve verified process-generation receipts for background AX-only reads when an app has no actionable WindowServer window, while keeping window mutations exact-window-only.
 - Keep verified non-modal SwiftUI windows eligible for exact background mutation, retain fail-closed file-dialog classification, and recognize `inspect_ui` as fresh Agent perception.

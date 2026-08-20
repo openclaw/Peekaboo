@@ -422,6 +422,13 @@ public struct PeekabooBridgeOperationReceiptBundle: Codable, Equatable, Sendable
             payload,
             request: request,
             response: response)
+        if case let .certificationProducerAttestation(certificationRequest) = request,
+           case let .certificationProducerAttestation(certificationResponse) = response
+        {
+            try certificationResponse.validate(
+                request: certificationRequest,
+                listenerAttestation: self.operationAttestation)
+        }
     }
 
     /// Exact deterministic bytes accepted by `bridge receipt validate` and offline verifiers.
@@ -1128,6 +1135,10 @@ enum PeekabooBridgeOperationReceiptSemantics {
              (.noSuccessResponse, _, _),
              (.agentExecutionTrace, _, _),
              (.processGenerationObservation, .observeProcessGeneration, .processGenerationObservation),
+             (
+                 .certificationProducerAttestation,
+                 .certificationProducerAttestation,
+                 .certificationProducerAttestation),
              (.typeActions, _, _),
              (.setValue, _, _),
              (.performAction, _, _),

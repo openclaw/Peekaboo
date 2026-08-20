@@ -13,6 +13,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case daemonStopIf(PeekabooBridgeDaemonStopRequest)
     case agentExecutionTrace(PeekabooBridgeAgentExecutionTraceRequest)
     case observeProcessGeneration(PeekabooBridgeProcessGenerationObservationRequest)
+    case certificationProducerAttestation(PeekabooBridgeCertificationProducerAttestationRequest)
     case browserStatus(PeekabooBridgeBrowserChannelRequest)
     case browserConnect(PeekabooBridgeBrowserChannelRequest)
     case browserDisconnect
@@ -133,6 +134,7 @@ extension PeekabooBridgeRequest {
         case .daemonStopIf: .daemonStop
         case .agentExecutionTrace: .agentExecutionTrace
         case .observeProcessGeneration: .observeProcessGeneration
+        case .certificationProducerAttestation: .certificationProducerAttestation
         case .browserStatus: .browserStatus
         case .browserConnect: .browserConnect
         case .browserDisconnect: .browserDisconnect
@@ -250,6 +252,7 @@ public enum PeekabooBridgeResponse: Codable, Sendable {
     case daemonStatus(PeekabooDaemonStatus)
     case agentExecutionTrace(PeekabooBridgeAgentExecutionTraceResponse)
     case processGenerationObservation(PeekabooBridgeProcessGenerationObservationResponse)
+    case certificationProducerAttestation(PeekabooBridgeCertificationProducerAttestationResponse)
     case browserStatus(PeekabooBridgeBrowserStatus)
     case browserToolResponse(PeekabooBridgeBrowserToolResponse)
     case capture(CaptureResult)

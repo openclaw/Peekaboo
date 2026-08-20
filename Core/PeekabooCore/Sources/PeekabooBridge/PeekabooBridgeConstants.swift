@@ -71,6 +71,10 @@ public enum PeekabooBridgeConstants {
     public static let processGenerationObservationVersion =
         PeekabooBridgeProtocolVersion(major: 1, minor: 32)
 
+    /// First protocol with receipt-bound, host-authenticated certification producer evidence.
+    public static let certificationProducerAttestationVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 32)
+
     /// First protocol whose set-value result preserves the exact opaque request target so its
     /// signed response can be bound to the request without post-dispatch ambiguity.
     public static let setValueResultTargetBindingVersion =

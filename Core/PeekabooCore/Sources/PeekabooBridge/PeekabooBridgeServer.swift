@@ -184,6 +184,13 @@ public final class PeekabooBridgeServer {
         } else {
             resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.processGenerationObservation)
         }
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.certificationProducerAttestationVersion,
+           self.allowedOperations.contains(.certificationProducerAttestation)
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.certificationProducerAttestation)
+        } else {
+            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.certificationProducerAttestation)
+        }
         if self.allowedOperations.contains(.launchApplicationWithOptions),
            services.applications.supportsSafeBackgroundApplicationLaunchNoOp
         {
@@ -838,12 +845,12 @@ public final class PeekabooBridgeServer {
                 code: .operationNotSupported,
                 message: "Operation \(op.rawValue) is not supported by this host")
         }
-        if op == .observeProcessGeneration {
+        if op == .observeProcessGeneration || op == .certificationProducerAttestation {
             try self.requireCertificationCaller(peer)
             guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics else {
                 throw PeekabooBridgeErrorEnvelope(
                     code: .operationNotSupported,
-                    message: "Process-generation observation requires a signed Bridge operation receipt")
+                    message: "Certification operations require a signed Bridge operation receipt")
             }
         }
         if let minimumVersion = request.minimumNegotiatedProtocolVersion {
@@ -994,6 +1001,9 @@ private func protocolHostCapabilities(
     }
     if supportedVersions.upperBound >= PeekabooBridgeConstants.setValueResultTargetBindingVersion {
         capabilities.insert(PeekabooBridgeHostCapability.setValueResultTargetBinding)
+    }
+    if supportedVersions.upperBound >= PeekabooBridgeConstants.certificationProducerAttestationVersion {
+        capabilities.insert(PeekabooBridgeHostCapability.certificationProducerAttestation)
     }
     return capabilities
 }

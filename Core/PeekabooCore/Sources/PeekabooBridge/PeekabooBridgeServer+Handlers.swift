@@ -22,6 +22,12 @@ extension PeekabooBridgeServer {
             }
             return try .init(response: .processGenerationObservation(
                 self.handleProcessGenerationObservation(payload)))
+        case .certificationProducerAttestation:
+            guard case let .certificationProducerAttestation(payload) = request else {
+                throw Self.invalidRequest(for: request)
+            }
+            return try await .init(response: .certificationProducerAttestation(
+                self.handleCertificationProducerAttestation(payload)))
         case .requestPostEventPermission:
             return self.handlePostEventPermissionRequest()
         case .browserStatus, .browserDisconnect:
