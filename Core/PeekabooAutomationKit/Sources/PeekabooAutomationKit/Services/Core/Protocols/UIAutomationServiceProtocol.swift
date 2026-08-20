@@ -678,6 +678,14 @@ extension TargetedClickServiceProtocol {
 /// Optional capability for automation services that can invoke accessibility actions directly.
 @MainActor
 public protocol ElementActionAutomationServiceProtocol: UIAutomationServiceProtocol {
+    var supportsSetValueResultTargetBinding: Bool { get }
+
     func setValue(target: String, value: UIElementValue, snapshotId: String?) async throws -> ElementActionResult
     func performAction(target: String, actionName: String, snapshotId: String?) async throws -> ElementActionResult
+}
+
+extension ElementActionAutomationServiceProtocol {
+    public var supportsSetValueResultTargetBinding: Bool {
+        false
+    }
 }

@@ -992,5 +992,8 @@ private func protocolHostCapabilities(
     if supportedVersions.upperBound >= PeekabooBridgeConstants.statelessClickVariantVersion {
         capabilities.insert(PeekabooBridgeHostCapability.statelessClickVariants)
     }
+    if supportedVersions.upperBound >= PeekabooBridgeConstants.setValueResultTargetBindingVersion {
+        capabilities.insert(PeekabooBridgeHostCapability.setValueResultTargetBinding)
+    }
     return capabilities
 }

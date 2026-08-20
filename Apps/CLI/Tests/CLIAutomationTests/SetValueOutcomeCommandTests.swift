@@ -68,6 +68,46 @@ struct SetValueOutcomeCommandTests {
         #expect(try await snapshots.getDetectionResult(snapshotId: snapshotID) != nil)
     }
 
+    @Test
+    func `Bridge result binding refusal stays retry safe and preserves the snapshot`() async throws {
+        let automation = OutcomeStubAutomationService()
+        let snapshots = StubSnapshotManager()
+        let services = TestServicesFactory.makePeekabooServices(
+            snapshots: snapshots,
+            automation: automation
+        )
+        let snapshotID = try await ActionOutcomeCommandTests.storeExactWindowElementSnapshot(in: snapshots)
+        automation.uiAutomationOutcomeScript.appendFailure(
+            DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "This Bridge host cannot return a verifiable set-value result.",
+                hint: "Update and relaunch Peekaboo before retrying set-value."
+            ),
+            for: .setValue
+        )
+
+        let result = try await InProcessCommandRunner.run([
+            "set-value", "updated", "--on", "elem_3", "--snapshot", snapshotID,
+            "--json", "--no-remote",
+        ], services: services)
+        let object = try Self.jsonObject(result.stdout)
+        let outcome = try #require(object["outcome"] as? [String: Any])
+        let error = try #require(object["error"] as? [String: Any])
+
+        #expect(result.exitStatus == 1)
+        #expect(outcome["state"] as? String == "refused")
+        #expect(outcome["route"] as? String == "bridge")
+        #expect(outcome["dispatch_state"] as? String == "none")
+        #expect(outcome["refusal_reason"] as? String == "runtime_incompatible")
+        #expect(outcome["retry_safe"] as? Bool == true)
+        #expect(outcome["requires_fresh_observation"] as? Bool == false)
+        #expect(error["retry_safe"] as? Bool == true)
+        #expect(error["mutation_dispatched"] as? Bool == false)
+        #expect(automation.uiAutomationOutcomeScript.callCount(for: .setValue) == 1)
+        #expect(try await snapshots.getDetectionResult(snapshotId: snapshotID) != nil)
+    }
+
     private static func jsonObject(_ output: String) throws -> [String: Any] {
         try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
     }

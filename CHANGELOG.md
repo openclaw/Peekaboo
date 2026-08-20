@@ -5,6 +5,7 @@
 ### Fixed
 - Fail closed instead of generating or accepting a release-qualification manifest until final-cycle liveness witnesses have a cryptographic trust anchor.
 - Add receipt-required Bridge protocol 1.32 observation of exact process generations for signed liveness and absence evidence.
+- Bind signed `set-value` results to the opaque requested element and refuse older Bridge hosts before dispatch.
 
 ## [4.2.2] - 2026-08-20
 

@@ -8,6 +8,10 @@ private typealias ResolvedElementMutationTarget = (
     windowContext: WindowContext?)
 
 extension UIAutomationService: ElementActionAutomationServiceProtocol {
+    public var supportsSetValueResultTargetBinding: Bool {
+        true
+    }
+
     public func setValue(
         target: String,
         value: UIElementValue,
@@ -85,13 +89,13 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             try await self.desktopOperationExecutor.executeWithTargetIdentity(plan)
         }
         let result = execution.payload
-        guard let resolved, let newValue else {
+        guard resolved != nil, let newValue else {
             throw PeekabooError.operationError(message: "Element value result was not captured")
         }
 
         return UIAutomationActionResult(
             payload: ElementActionResult(
-                target: resolved.description,
+                target: target,
                 actionName: result.actionName,
                 anchorPoint: result.anchorPoint,
                 oldValue: oldValue,

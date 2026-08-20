@@ -1049,6 +1049,41 @@ extension MCPDesktopActionOutcomeProjectionTests {
 
     @Test
     @MainActor
+    func `set value maps a Bridge result binding refusal without invalidating its snapshot`() async throws {
+        let automation = StubAutomationService()
+        automation.uiAutomationOutcomeScript.appendFailure(
+            DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "This Bridge host cannot return a verifiable set-value result.",
+                hint: "Update and relaunch Peekaboo before retrying set-value."),
+            for: .setValue)
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        await context.uiSnapshots.removeOwner()
+        let snapshot = await context.uiSnapshots.createSnapshot()
+        let snapshotID = await snapshot.id
+
+        let response = try await SetValueTool(context: context).execute(arguments: ToolArguments(raw: [
+            "on": "T1",
+            "value": "hello",
+            "snapshot": snapshotID,
+        ]))
+
+        #expect(response.isError)
+        try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(
+            .refused(route: .bridge, reason: .runtimeIncompatible),
+            in: response)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["route"] == .string("bridge"))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(meta["requires_fresh_observation"] == .bool(false))
+        #expect(meta["invalidated_snapshot"] == nil)
+        #expect(await context.uiSnapshots.getSnapshot(id: snapshotID) != nil)
+    }
+
+    @Test
+    @MainActor
     func `mutation tool validation emits canonical predispatch refusals`() async throws {
         let automation = MockAutomationService(accessibilityGranted: true)
         let context = await MCPToolTestHelpers.makeContext(automation: automation)

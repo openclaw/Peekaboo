@@ -166,6 +166,14 @@ extension PeekabooBridgeServer {
         {
             advertisedCapabilities.remove(PeekabooBridgeHostCapability.processGenerationObservation)
         }
+        if !supportsAttestedOperationReceipts ||
+            negotiated < PeekabooBridgeConstants.setValueResultTargetBindingVersion ||
+            (self.services.automation as? any ElementActionAutomationServiceProtocol)?
+            .supportsSetValueResultTargetBinding != true ||
+            !advertisedOps.contains(.setValue)
+        {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.setValueResultTargetBinding)
+        }
         if supportsAttestedOperationReceipts {
             advertisedCapabilities.insert(PeekabooBridgeHostCapability.attestedOperationReceipts)
         }

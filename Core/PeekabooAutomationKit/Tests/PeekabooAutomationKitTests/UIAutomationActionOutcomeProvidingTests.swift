@@ -192,6 +192,7 @@ struct UIAutomationActionOutcomeProvidingTests {
 
         #expect(result.outcome == expected)
         #expect(result.payload == legacy)
+        #expect(result.payload.target == "E1")
         #expect(result.payload.oldValue == "old")
         #expect(result.payload.newValue == "new")
         #expect(result.targetIdentity?.exactWindow != nil)

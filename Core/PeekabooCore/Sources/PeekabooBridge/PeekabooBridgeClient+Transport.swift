@@ -190,6 +190,15 @@ extension PeekabooBridgeClient {
     }
 
     private func requireNegotiatedInputCapabilities(for request: PeekabooBridgeRequest) throws {
+        if request.unwrappedOperationRequest.operation == .setValue,
+           !self.setValueResultTargetBindingEnabled
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "This Bridge host cannot return a verifiable set-value result.",
+                hint: "Update and relaunch Peekaboo before retrying set-value.")
+        }
         if request.unwrappedOperationRequest.operation == .observeProcessGeneration,
            !self.processGenerationObservationEnabled
         {

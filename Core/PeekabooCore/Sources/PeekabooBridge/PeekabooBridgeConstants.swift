@@ -71,6 +71,11 @@ public enum PeekabooBridgeConstants {
     public static let processGenerationObservationVersion =
         PeekabooBridgeProtocolVersion(major: 1, minor: 32)
 
+    /// First protocol whose set-value result preserves the exact opaque request target so its
+    /// signed response can be bound to the request without post-dispatch ambiguity.
+    public static let setValueResultTargetBindingVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 32)
+
     /// First protocol whose Bridge can launch the exact authenticated CLI peer as a suspended
     /// background Agent and return one listener-signed terminal execution trace.
     public static let agentExecutionTraceVersion =

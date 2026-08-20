@@ -371,6 +371,7 @@ public enum PeekabooBridgeHostCapability {
     public static let statelessClickVariants = "statelessClickVariants"
     public static let agentExecutionTrace = "agentExecutionTrace"
     public static let processGenerationObservation = "processGenerationObservation"
+    public static let setValueResultTargetBinding = "setValueResultTargetBinding"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {

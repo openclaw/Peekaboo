@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.2.3] - Unreleased
 
+### Fixed
+- Bind signed `set-value` results to the opaque requested element and refuse older Bridge hosts before dispatch.
+
 ## [4.2.2] - 2026-08-20
 
 ### Highlights
