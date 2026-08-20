@@ -62,6 +62,30 @@ struct CertificationMonitorSealPayloadTests {
     }
 
     @Test
+    func `Recomputed seal cannot authorize an unrelated restoration digest`() throws {
+        let payload = try Self.payload(tamper: .restorationDigest)
+        do {
+            try payload.validate(context: Self.validationContext())
+            Issue.record("Expected restoration digest refusal")
+        } catch let error as PeekabooBridgeOperationReceiptError {
+            #expect(error == .receiptMismatch("certification monitor seal restoration summary"))
+        }
+    }
+
+    @Test
+    func `Monitor process cannot own the sentinel or foreground target`() throws {
+        for tamper in [Tamper.monitorSentinel, .monitorForegroundTarget] {
+            let payload = try Self.payload(tamper: tamper)
+            do {
+                try payload.validate(context: Self.validationContext())
+                Issue.record("Expected monitor-owned target refusal")
+            } catch let error as PeekabooBridgeOperationReceiptError {
+                #expect(error == .receiptMismatch("certification monitor seal distinct monitor actors"))
+            }
+        }
+    }
+
+    @Test
     func `Closed monitor evidence decoder rejects embedded path authority`() throws {
         let payload = try Self.payload()
         let encoder = JSONEncoder.peekabooBridgeEncoder()
@@ -80,7 +104,10 @@ struct CertificationMonitorSealPayloadTests {
     private enum Tamper {
         case none
         case activitySource
+        case monitorForegroundTarget
+        case monitorSentinel
         case producerSource
+        case restorationDigest
     }
 
     private static let executionNonce = String(repeating: "a", count: 64)
@@ -122,17 +149,36 @@ struct CertificationMonitorSealPayloadTests {
             producerExecutableSHA256: self.producerExecutableSHA256,
             monitorSourceSHA256: String(repeating: "e", count: 64),
             coordinatorSourceSHA256: String(repeating: "f", count: 64))
+        let monitorOwnedSentinel = PeekabooBridgeCertificationMonitorSealPayload.WindowTarget(
+            processIdentifier: self.monitorProcess.processIdentifier,
+            processStartIdentity: self.monitorProcess.processStartIdentity,
+            windowID: self.sentinel.windowID,
+            bounds: self.sentinel.bounds,
+            isMinimized: false)
+        let monitorOwnedForegroundTarget = PeekabooBridgeCertificationMonitorSealPayload.WindowTarget(
+            processIdentifier: self.monitorProcess.processIdentifier,
+            processStartIdentity: self.monitorProcess.processStartIdentity,
+            windowID: self.foregroundTarget.windowID,
+            bounds: self.foregroundTarget.bounds,
+            isMinimized: false)
+        let sentinel = tamper == .monitorSentinel ? monitorOwnedSentinel : self.sentinel
+        let foregroundTarget = tamper == .monitorForegroundTarget
+            ? monitorOwnedForegroundTarget
+            : self.foregroundTarget
         let sample = PeekabooBridgeCertificationMonitorSealPayload.MonitorSample(
             frontmostProcessIdentifier: self.sentinel.processIdentifier,
             frontmostWindowID: self.sentinel.windowID,
             clipboardChangeCount: 5,
             clipboardDigest: String(repeating: "6", count: 64))
+        let expectedForegroundPostconditionSHA256 = self.foregroundPlan().expectedValueSHA256
         let restoration = try PeekabooBridgeCertificationMonitorSealPayload.RestorationSummary(
             backgroundFinalBoundsSlotIDs: [
                 "controller-a-final-bounds",
                 "controller-b-final-bounds",
             ],
-            foregroundPostconditionSHA256: String(repeating: "7", count: 64),
+            foregroundPostconditionSHA256: tamper == .restorationDigest
+                ? String(repeating: "7", count: 64)
+                : expectedForegroundPostconditionSHA256,
             sentinelSampleSHA256: PeekabooBridgeCertificationMonitorSealPayload
                 .derivedMonitorSampleSHA256(for: sample),
             foregroundRestored: true,
@@ -140,6 +186,8 @@ struct CertificationMonitorSealPayloadTests {
 
         let placeholder = Self.evidence(
             source: source,
+            sentinel: sentinel,
+            foregroundTarget: foregroundTarget,
             sample: sample,
             restoration: restoration,
             fences: Self.fences(
@@ -152,6 +200,8 @@ struct CertificationMonitorSealPayloadTests {
             .derivedBaselineCommitmentSHA256(for: placeholder)
         let historySeed = Self.evidence(
             source: source,
+            sentinel: sentinel,
+            foregroundTarget: foregroundTarget,
             sample: sample,
             restoration: restoration,
             fences: Self.fences(
@@ -164,6 +214,8 @@ struct CertificationMonitorSealPayloadTests {
             .derivedHistoryCommitmentSHA256(for: historySeed)
         let evidence = Self.evidence(
             source: source,
+            sentinel: sentinel,
+            foregroundTarget: foregroundTarget,
             sample: sample,
             restoration: restoration,
             fences: Self.fences(
@@ -184,6 +236,8 @@ struct CertificationMonitorSealPayloadTests {
 
     private static func evidence(
         source: PeekabooBridgeCertificationMonitorSealPayload.Source,
+        sentinel: PeekabooBridgeCertificationMonitorSealPayload.WindowTarget,
+        foregroundTarget: PeekabooBridgeCertificationMonitorSealPayload.WindowTarget,
         sample: PeekabooBridgeCertificationMonitorSealPayload.MonitorSample,
         restoration: PeekabooBridgeCertificationMonitorSealPayload.RestorationSummary,
         fences: [PeekabooBridgeCertificationMonitorSealPayload.Fence],
@@ -195,9 +249,9 @@ struct CertificationMonitorSealPayloadTests {
             monitorInstanceID: self.monitorInstanceID,
             source: source,
             monitorProcess: self.monitorProcess,
-            sentinel: self.sentinel,
+            sentinel: sentinel,
             foregroundController: self.foregroundController,
-            foregroundTarget: self.foregroundTarget,
+            foregroundTarget: foregroundTarget,
             producerSets: self.producerSets(),
             fences: fences,
             baselineSample: sample,

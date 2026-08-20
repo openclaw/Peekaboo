@@ -153,6 +153,11 @@ struct CertificationProducerAttestationContractTests {
         let payload = Self.crashPayload()
         try payload.validate(context: Self.validationContext())
 
+        #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+            try payload.validate(context: Self.validationContext(
+                executionNonce: String(repeating: "e", count: 64)))
+        }
+
         let invalid = PeekabooBridgeCertificationCrashInventoryPairPayload(
             captureID: payload.captureID,
             source: payload.source,
@@ -203,13 +208,14 @@ struct CertificationProducerAttestationContractTests {
 
     private static func request(
         kind: PeekabooBridgeCertificationProducerAttestationKind = .crashInventoryPair,
+        executionNonce: String = Self.executionNonce,
         producerSocketPath: String = "/private/tmp/certification-producer.sock",
         timeoutMilliseconds: Int = 1000,
         maximumResponseBytes: Int = 1024 * 1024) -> PeekabooBridgeCertificationProducerAttestationRequest
     {
         .init(
             kind: kind,
-            executionNonce: self.executionNonce,
+            executionNonce: executionNonce,
             monitorInstanceID: self.monitorInstanceID,
             producerSocketPath: producerSocketPath,
             expectedProducer: .init(
@@ -236,7 +242,7 @@ struct CertificationProducerAttestationContractTests {
             sha256: String(repeating: "2", count: 64))
         let added = includeAddedEntry ? [second] : []
         return .init(
-            captureID: "matrix",
+            captureID: self.executionNonce,
             source: .init(
                 sourceCommit: self.sourceCommit,
                 executableSHA256: self.executableSHA256,
@@ -270,9 +276,11 @@ struct CertificationProducerAttestationContractTests {
                 removed: []))
     }
 
-    private static func validationContext() -> PeekabooBridgeCertificationPayloadValidationContext {
+    private static func validationContext(
+        executionNonce: String = Self.executionNonce) -> PeekabooBridgeCertificationPayloadValidationContext
+    {
         .init(
-            request: self.request(),
+            request: self.request(executionNonce: executionNonce),
             producer: .init(
                 processIdentifier: 42,
                 processIdentifierVersion: 1,

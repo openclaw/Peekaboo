@@ -255,6 +255,7 @@ public struct PeekabooBridgeCertificationCrashInventoryPairPayload: Codable, Equ
     func validate(context: PeekabooBridgeCertificationPayloadValidationContext) throws {
         let source = self.source
         guard self.schemaVersion == 4,
+              self.captureID == context.request.executionNonce,
               PeekabooBridgeCertificationValidation.isSafeIdentifier(self.captureID, maximumBytes: 64),
               source.sourceCommit == context.producer.sourceCommit,
               source.executableSHA256 == context.producer.executableSHA256,

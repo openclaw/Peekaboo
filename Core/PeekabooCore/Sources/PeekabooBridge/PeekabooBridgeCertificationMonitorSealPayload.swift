@@ -1185,6 +1185,8 @@ extension PeekabooBridgeCertificationMonitorSealPayload {
         try Self.validateTarget(evidence.sentinel)
         try Self.validateTarget(evidence.foregroundTarget)
         guard evidence.foregroundController.processIdentifier != evidence.monitorProcess.processIdentifier,
+              !Self.sameGeneration(evidence.monitorProcess, evidence.sentinel),
+              !Self.sameGeneration(evidence.monitorProcess, evidence.foregroundTarget),
               !Self.sameGeneration(evidence.foregroundController, evidence.foregroundTarget),
               !Self.sameGeneration(evidence.foregroundController, evidence.sentinel),
               !Self.sameGeneration(evidence.foregroundTarget, evidence.sentinel)
@@ -1488,6 +1490,7 @@ extension PeekabooBridgeCertificationMonitorSealPayload {
               PeekabooBridgeCertificationValidation.isLowerHex(
                   restoration.foregroundPostconditionSHA256,
                   count: 64),
+              restoration.foregroundPostconditionSHA256 == evidence.foregroundPlan.expectedValueSHA256,
               PeekabooBridgeCertificationValidation.isLowerHex(restoration.sentinelSampleSHA256, count: 64),
               try restoration.sentinelSampleSHA256 ==
               (Self.aggregateSHA256(domain: "monitor-sample", value: evidence.finalSample))
