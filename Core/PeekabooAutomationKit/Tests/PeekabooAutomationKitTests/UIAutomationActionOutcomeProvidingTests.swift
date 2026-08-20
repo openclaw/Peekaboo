@@ -152,7 +152,11 @@ struct UIAutomationActionOutcomeProvidingTests {
         let result = try await service.scrollWithOutcome(request)
         try await service.scroll(request)
 
-        #expect(result.outcome == Self.foregroundOutcome)
+        let expected = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        #expect(result.outcome == expected)
         #expect(synthetic.scrollCount == 2)
     }
 
