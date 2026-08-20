@@ -68,6 +68,8 @@ struct PeekabooBridgeTypedResultReceiptBindingTests {
         let resolvedContext = Self.resolvedTreeContext(fixture: fixture)
         let response = PeekabooBridgeResponse.elementDetection(
             Self.detection(snapshotID: "resolved-tree", context: resolvedContext))
+        let bundlePath = "/Applications/Fixture.app"
+        let executablePath = bundlePath + "/Contents/MacOS/fixture"
         let validSelectors = [
             WindowContext(windowID: fixture.windowIdentity.windowID),
             WindowContext(
@@ -76,7 +78,10 @@ struct PeekabooBridgeTypedResultReceiptBindingTests {
             WindowContext(
                 applicationName: "Fixt",
                 windowID: fixture.windowIdentity.windowID),
-            WindowContext(windowTitle: "doc", windowID: fixture.windowIdentity.windowID),
+            WindowContext(applicationName: bundlePath, windowID: fixture.windowIdentity.windowID),
+            WindowContext(applicationName: executablePath, windowID: fixture.windowIdentity.windowID),
+            WindowContext(windowTitle: "dOcUmEnT", windowID: fixture.windowIdentity.windowID),
+            WindowContext(windowTitle: "cume", windowID: fixture.windowIdentity.windowID),
             WindowContext(
                 applicationBundleId: "dev.peekaboo.fixture",
                 windowID: fixture.windowIdentity.windowID),
@@ -116,6 +121,12 @@ struct PeekabooBridgeTypedResultReceiptBindingTests {
             capturedBounds: fixture.windowIdentity.capturedBounds)
         let contradictorySelectors = [
             WindowContext(applicationName: "Other", windowID: fixture.windowIdentity.windowID),
+            WindowContext(
+                applicationName: "/Applications/Other.app",
+                windowID: fixture.windowIdentity.windowID),
+            WindowContext(
+                applicationName: "/Applications/Fixture.app/Contents/MacOS/other",
+                windowID: fixture.windowIdentity.windowID),
             WindowContext(applicationBundleId: "dev.peekaboo.other", windowID: fixture.windowIdentity.windowID),
             WindowContext(
                 applicationProcessId: fixture.windowIdentity.ownerProcessIdentifier + 1,
@@ -506,6 +517,8 @@ struct PeekabooBridgeTypedResultReceiptBindingTests {
         WindowContext(
             applicationName: "Fixture",
             applicationBundleId: "dev.peekaboo.fixture",
+            applicationBundlePath: "/Applications/Fixture.app",
+            applicationExecutablePath: "/Applications/Fixture.app/Contents/MacOS/fixture",
             applicationProcessId: fixture.windowIdentity.ownerProcessIdentifier,
             windowTitle: "Document",
             windowID: fixture.windowIdentity.windowID,

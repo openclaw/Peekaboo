@@ -9,6 +9,8 @@ enum PeekabooBridgeWindowContextBinding {
         guard let actual else { return false }
         return actual.applicationName == requested.applicationName &&
             actual.applicationBundleId == requested.applicationBundleId &&
+            actual.applicationBundlePath == requested.applicationBundlePath &&
+            actual.applicationExecutablePath == requested.applicationExecutablePath &&
             actual.applicationProcessId == requested.applicationProcessId &&
             actual.windowTitle == requested.windowTitle &&
             actual.windowID == requested.windowID &&
@@ -26,6 +28,8 @@ enum PeekabooBridgeWindowContextBinding {
         guard let requested else { return actual == nil }
         guard let actual else { return false }
         return self.applicationSelector(in: requested, matches: actual) &&
+            self.satisfies(requested.applicationBundlePath, with: actual.applicationBundlePath) &&
+            self.satisfies(requested.applicationExecutablePath, with: actual.applicationExecutablePath) &&
             self.satisfies(requested.applicationProcessId, with: actual.applicationProcessId) &&
             self.windowTitle(actual.windowTitle, matches: requested.windowTitle) &&
             self.satisfies(requested.windowID, with: actual.windowID) &&
@@ -80,6 +84,8 @@ enum PeekabooBridgeWindowContextBinding {
                 processIdentifier: processIdentifier,
                 bundleIdentifier: actual.applicationBundleId,
                 name: name,
+                bundlePath: actual.applicationBundlePath,
+                executablePath: actual.applicationExecutablePath,
                 allowsFuzzyMatching: true,
                 isRegularApplication: true),
             identifier: identifier)

@@ -198,6 +198,12 @@ public nonisolated struct WindowContext: Sendable, Codable {
     /// Bundle identifier (preferred for disambiguating same-named apps)
     public let applicationBundleId: String?
 
+    /// Canonical bundle path of the resolved application.
+    public let applicationBundlePath: String?
+
+    /// Canonical executable path of the resolved application.
+    public let applicationExecutablePath: String?
+
     /// Process identifier (most precise when available)
     public let applicationProcessId: Int32?
 
@@ -235,6 +241,8 @@ public nonisolated struct WindowContext: Sendable, Codable {
     public init(
         applicationName: String? = nil,
         applicationBundleId: String? = nil,
+        applicationBundlePath: String? = nil,
+        applicationExecutablePath: String? = nil,
         applicationProcessId: Int32? = nil,
         windowTitle: String? = nil,
         windowID: Int? = nil,
@@ -249,6 +257,8 @@ public nonisolated struct WindowContext: Sendable, Codable {
     {
         self.applicationName = applicationName
         self.applicationBundleId = applicationBundleId
+        self.applicationBundlePath = applicationBundlePath
+        self.applicationExecutablePath = applicationExecutablePath
         self.applicationProcessId = applicationProcessId
         self.windowTitle = windowTitle
         self.windowID = windowID
@@ -265,6 +275,8 @@ public nonisolated struct WindowContext: Sendable, Codable {
     public init(
         applicationName: String? = nil,
         applicationBundleId: String? = nil,
+        applicationBundlePath: String? = nil,
+        applicationExecutablePath: String? = nil,
         applicationProcessId: Int32? = nil,
         windowTitle: String? = nil,
         windowID: Int? = nil,
@@ -279,6 +291,8 @@ public nonisolated struct WindowContext: Sendable, Codable {
         self.init(
             applicationName: applicationName,
             applicationBundleId: applicationBundleId,
+            applicationBundlePath: applicationBundlePath,
+            applicationExecutablePath: applicationExecutablePath,
             applicationProcessId: applicationProcessId,
             windowTitle: windowTitle,
             windowID: windowID,
