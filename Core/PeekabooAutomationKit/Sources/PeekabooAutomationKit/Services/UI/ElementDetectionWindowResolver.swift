@@ -8,6 +8,20 @@ import PeekabooFoundation
 /// Resolves the application and AX window that should provide detection elements.
 @MainActor
 struct ElementDetectionWindowResolver {
+    enum ApplicationIdentifierSource: String, Equatable, Sendable {
+        case bundlePath = "bundle path"
+        case executablePath = "executable path"
+        case bundleIdentifier = "bundle ID"
+        case applicationName = "application selector"
+    }
+
+    enum ApplicationResolutionAuthority: Equatable, Sendable {
+        case processIdentifier(pid_t)
+        case exactWindow(Int)
+        case identifier(String, source: ApplicationIdentifierSource)
+        case frontmost
+    }
+
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "ElementDetectionWindowResolver")
     private let applicationService: ApplicationService
     private let windowIdentityService = WindowIdentityService()
@@ -29,7 +43,8 @@ struct ElementDetectionWindowResolver {
 
     func resolveApplication(windowContext: WindowContext?) async throws -> NSRunningApplication {
         let runningApplication: NSRunningApplication
-        if let pid = windowContext?.applicationProcessId {
+        switch Self.applicationResolutionAuthority(for: windowContext) {
+        case let .processIdentifier(pid):
             if let runningApp = NSRunningApplication(processIdentifier: pid) {
                 self.logger.debug("Resolved application via PID: \(pid)")
                 runningApplication = runningApp
@@ -37,23 +52,7 @@ struct ElementDetectionWindowResolver {
                 self.logger.error("Could not resolve NSRunningApplication for PID: \(pid)")
                 throw PeekabooError.appNotFound("PID:\(pid)")
             }
-        } else if let bundleId = windowContext?.applicationBundleId {
-            runningApplication = try await self.resolveRunningApplication(
-                identifier: bundleId,
-                source: "bundle ID")
-        } else if let appName = windowContext?.applicationName {
-            runningApplication = try await self.resolveRunningApplication(
-                identifier: appName,
-                source: "application selector")
-        } else if let bundlePath = windowContext?.applicationBundlePath {
-            runningApplication = try await self.resolveRunningApplication(
-                identifier: bundlePath,
-                source: "bundle path")
-        } else if let executablePath = windowContext?.applicationExecutablePath {
-            runningApplication = try await self.resolveRunningApplication(
-                identifier: executablePath,
-                source: "executable path")
-        } else if let windowID = windowContext?.windowID {
+        case let .exactWindow(windowID):
             guard let processIdentifier = Self.stableExactWindowOwner(
                 windowID: windowID,
                 receipt: windowContext?.windowMutationIdentity,
@@ -65,7 +64,11 @@ struct ElementDetectionWindowResolver {
             }
             self.logger.debug("Resolved application via exact window \(windowID), PID: \(processIdentifier)")
             runningApplication = runningApp
-        } else {
+        case let .identifier(identifier, source):
+            runningApplication = try await self.resolveRunningApplication(
+                identifier: identifier,
+                source: source.rawValue)
+        case .frontmost:
             guard let frontmost = NSWorkspace.shared.frontmostApplication else {
                 self.logger.error("No frontmost application")
                 throw PeekabooError.operationError(message: "No frontmost application")
@@ -85,6 +88,31 @@ struct ElementDetectionWindowResolver {
             throw PeekabooError.invalidInput(field: "windowContext", reason: mismatch)
         }
         return runningApplication
+    }
+
+    nonisolated static func applicationResolutionAuthority(
+        for context: WindowContext?) -> ApplicationResolutionAuthority
+    {
+        guard let context else { return .frontmost }
+        if let processIdentifier = context.applicationProcessId {
+            return .processIdentifier(processIdentifier)
+        }
+        if let windowID = context.windowID {
+            return .exactWindow(windowID)
+        }
+        if let bundlePath = context.applicationBundlePath {
+            return .identifier(bundlePath, source: .bundlePath)
+        }
+        if let executablePath = context.applicationExecutablePath {
+            return .identifier(executablePath, source: .executablePath)
+        }
+        if let bundleIdentifier = context.applicationBundleId {
+            return .identifier(bundleIdentifier, source: .bundleIdentifier)
+        }
+        if let applicationName = context.applicationName {
+            return .identifier(applicationName, source: .applicationName)
+        }
+        return .frontmost
     }
 
     private func resolveRunningApplication(identifier: String, source: String) async throws -> NSRunningApplication {

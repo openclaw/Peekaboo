@@ -78,6 +78,44 @@ final class ElementDetectionReadOnlyWindowSelectionTests: XCTestCase {
         }
     }
 
+    func testApplicationResolutionAuthorityPrefersUniquePathsOverBroadSelectors() {
+        let bundlePathContext = WindowContext(
+            applicationName: "Fixt",
+            applicationBundleId: "dev.peekaboo.fixture",
+            applicationBundlePath: Self.bundlePath)
+        XCTAssertEqual(
+            ElementDetectionWindowResolver.applicationResolutionAuthority(for: bundlePathContext),
+            .identifier(Self.bundlePath, source: .bundlePath))
+        XCTAssertNil(ElementDetectionWindowResolver.applicationConstraintMismatch(
+            candidate: Self.applicationCandidate,
+            context: bundlePathContext))
+
+        let executablePathContext = WindowContext(
+            applicationName: "Fixt",
+            applicationBundleId: "dev.peekaboo.fixture",
+            applicationExecutablePath: Self.executablePath)
+        XCTAssertEqual(
+            ElementDetectionWindowResolver.applicationResolutionAuthority(for: executablePathContext),
+            .identifier(Self.executablePath, source: .executablePath))
+        XCTAssertNil(ElementDetectionWindowResolver.applicationConstraintMismatch(
+            candidate: Self.applicationCandidate,
+            context: executablePathContext))
+    }
+
+    func testApplicationResolutionAuthorityPrefersExactWindowOverAmbiguousBroadSelector() {
+        let context = WindowContext(
+            applicationName: "Fixt",
+            applicationBundleId: "dev.peekaboo.fixture",
+            windowID: 73)
+
+        XCTAssertEqual(
+            ElementDetectionWindowResolver.applicationResolutionAuthority(for: context),
+            .exactWindow(73))
+        XCTAssertNil(ElementDetectionWindowResolver.applicationConstraintMismatch(
+            candidate: Self.applicationCandidate,
+            context: context))
+    }
+
     @MainActor
     func testPathOnlySelectorsResolveTheirNonFrontmostApplication() async throws {
         let target = try Self.uniqueNonFrontmostApplication()
