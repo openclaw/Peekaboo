@@ -180,7 +180,7 @@ struct AgentToolMCPBridgeTests {
         #expect(traceEntry.mutationDispatch == .possiblyDispatched)
         #expect(traceEntry.result?.objectValue?["mutation_dispatched"] == nil)
         #expect(traceEntry.result?.objectValue?["mutation_dispatch"]?.stringValue == "possibly_dispatched")
-        #expect(traceEntry.result?.objectValue?["retry_safe"] == nil)
+        #expect(traceEntry.result?.objectValue?["retry_safe"]?.boolValue == false)
     }
 
     @Test

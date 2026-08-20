@@ -84,7 +84,7 @@ struct AgentExecutionTraceTests {
         #expect(trace.entries[1].mutationDispatch == .possiblyDispatched)
         #expect(trace.entries[1].result?.objectValue?["mutation_dispatched"] == nil)
         #expect(trace.entries[1].result?.objectValue?["mutation_dispatch"]?.stringValue == "possibly_dispatched")
-        #expect(trace.entries[1].result?.objectValue?["retry_safe"] == nil)
+        #expect(trace.entries[1].result?.objectValue?["retry_safe"]?.boolValue == false)
         #expect(trace.entries[2].result?.objectValue?["skipped"]?.boolValue == true)
         #expect(trace.entries[2].result?.objectValue?["mutation_dispatched"]?.boolValue == false)
         #expect(trace.entries[2].mutationDispatch == .notDispatched)
@@ -92,6 +92,7 @@ struct AgentExecutionTraceTests {
         #expect(trace.entries[4].result?.objectValue?["mutation_dispatched"]?.boolValue == false)
         #expect(trace.entries[6].mutationDispatch == .possiblyDispatched)
         #expect(trace.entries[6].result?.objectValue?["mutation_dispatched"] == nil)
+        #expect(trace.entries[6].result?.objectValue?["retry_safe"]?.boolValue == false)
         #expect(!trace.truncated)
         #expect(trace.totalCallCount == 7)
     }

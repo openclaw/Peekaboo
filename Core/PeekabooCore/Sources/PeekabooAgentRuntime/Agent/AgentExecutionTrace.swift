@@ -354,6 +354,9 @@ private enum AgentExecutionTraceSanitizer {
                 object["retry_safe"] = AnyAgentToolValue(bool: actionOutcome.retrySafe)
             }
         }
+        if mutationDispatch == .possiblyDispatched {
+            object["retry_safe"] = AnyAgentToolValue(bool: false)
+        }
         if let mutationDispatch {
             object["mutation_dispatch"] = AnyAgentToolValue(string: mutationDispatch.rawValue)
         }

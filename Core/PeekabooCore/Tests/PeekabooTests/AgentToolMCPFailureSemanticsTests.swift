@@ -115,7 +115,7 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(AgentToolResultSemantics.actionOutcome(from: conflict) == nil)
         #expect(conflictEntry.disposition == .executedFailed)
         #expect(conflictEntry.mutationDispatch == .possiblyDispatched)
-        #expect(conflictEntry.result?.objectValue?["retry_safe"] == nil)
+        #expect(conflictEntry.result?.objectValue?["retry_safe"]?.boolValue == false)
         #expect(!AgentToolResultSemantics.isFailure(identical))
         #expect(AgentToolResultSemantics.actionOutcome(from: identical) == confirmed.projection)
 
@@ -128,7 +128,7 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(malformedEntry.mutationDispatch == .possiblyDispatched)
         #expect(malformedSummary["mutation_dispatched"] == nil)
         #expect(malformedSummary["requires_fresh_observation"] == nil)
-        #expect(malformedSummary["retry_safe"] == nil)
+        #expect(malformedSummary["retry_safe"]?.boolValue == false)
     }
 
     @Test
@@ -188,7 +188,7 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(entry.mutationDispatch == .possiblyDispatched)
         #expect(summary["mutation_dispatched"]?.boolValue == true)
         #expect(summary["requires_fresh_observation"]?.boolValue == true)
-        #expect(summary["retry_safe"] == nil)
+        #expect(summary["retry_safe"]?.boolValue == false)
         #expect(summary["success"] == nil)
     }
 
@@ -250,7 +250,7 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(entry.mutationDispatch == .possiblyDispatched)
         #expect(summary["mutation_dispatched"] == nil)
         #expect(summary["requires_fresh_observation"] == nil)
-        #expect(summary["retry_safe"] == nil)
+        #expect(summary["retry_safe"]?.boolValue == false)
     }
 
     @Test
@@ -382,7 +382,7 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(disputedCanonicalSkipEntry.actionOutcome == nil)
         #expect(disputedCanonicalSkipEntry.result?.objectValue?["skipped"] == nil)
         #expect(disputedCanonicalSkipEntry.result?.objectValue?["mutation_dispatched"] == nil)
-        #expect(disputedCanonicalSkipEntry.result?.objectValue?["retry_safe"] == nil)
+        #expect(disputedCanonicalSkipEntry.result?.objectValue?["retry_safe"]?.boolValue == false)
     }
 
     @Test
@@ -405,7 +405,11 @@ struct AgentToolMCPFailureSemanticsTests {
             #expect(claims.boolean(key) == .invalid, "Expected conflict for \(key)")
             #expect(AgentToolResultSemantics.isFailure(result))
             #expect(entry.disposition == .executedFailed)
-            #expect(summary[key] == nil, "Trace published disputed \(key)")
+            if key == "retry_safe" {
+                #expect(summary[key]?.boolValue == false, "Trace did not project conservative retry safety")
+            } else {
+                #expect(summary[key] == nil, "Trace published disputed \(key)")
+            }
             #expect(entry.mutationDispatch == .possiblyDispatched)
             if key == "skipped" {
                 #expect(entry.disposition != .skippedBeforeDispatch)
@@ -456,7 +460,7 @@ struct AgentToolMCPFailureSemanticsTests {
         let coupledEntry = try #require(
             Self.execution(call: call, result: coupledConflict).executionTrace().entries.first)
         #expect(coupledEntry.mutationDispatch == .possiblyDispatched)
-        #expect(coupledEntry.result?.objectValue?["retry_safe"] == nil)
+        #expect(coupledEntry.result?.objectValue?["retry_safe"]?.boolValue == false)
     }
 
     @Test
@@ -671,7 +675,7 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(mutatingEntry.mutationDispatch == .possiblyDispatched)
         #expect(summary["mutation_dispatched"] == nil)
         #expect(summary["requires_fresh_observation"] == nil)
-        #expect(summary["retry_safe"] == nil)
+        #expect(summary["retry_safe"]?.boolValue == false)
         #expect(summary["success"] == nil)
         #expect(summary["mutation_dispatch"]?.stringValue == "possibly_dispatched")
     }
