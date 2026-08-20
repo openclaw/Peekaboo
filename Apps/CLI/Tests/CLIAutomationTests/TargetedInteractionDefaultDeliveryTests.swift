@@ -299,8 +299,17 @@ struct TargetedInteractionDefaultDeliveryTests {
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )
+        let window = AutomationTestFixtures.window(
+            windowID: 42,
+            bounds: bounds,
+            processIdentity: ApplicationProcessIdentity(
+                processIdentifier: processIdentifier,
+                processStartIdentity: processStartIdentity
+            )
+        )
         let context = TestServicesFactory.makeAutomationTestContext(
-            applications: StubApplicationService(applications: [application])
+            applications: StubApplicationService(applications: [application]),
+            windows: StubWindowService(windowsByApp: ["TextEdit": [window]])
         )
         let malformedReceipts: [(windowID: Int, capturedBounds: CGRect?)] = [
             (42, nil),

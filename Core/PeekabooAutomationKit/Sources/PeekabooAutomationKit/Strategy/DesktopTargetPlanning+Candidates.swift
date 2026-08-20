@@ -18,6 +18,7 @@ public enum DesktopTargetPlanningError: LocalizedError, Equatable, Sendable {
     case conflictingWindowEntries(windowID: Int)
     case missingWindowIdentity(windowID: Int)
     case incompleteWindowIdentity(windowID: Int)
+    case underScopedMutationAuthority(windowID: Int)
     case windowOwnerMismatch(windowID: Int, expected: ApplicationProcessIdentity)
     case staleWindow(expected: WindowMutationIdentity)
     case incompleteWindowInventory(selector: String, warnings: [String])
@@ -69,6 +70,8 @@ public enum DesktopTargetPlanningError: LocalizedError, Equatable, Sendable {
             "Window \(windowID) did not include a process-generation mutation receipt."
         case let .incompleteWindowIdentity(windowID):
             "Window \(windowID) did not include complete ID, owner-generation, and bounds evidence."
+        case let .underScopedMutationAuthority(windowID):
+            "Exact-window receipt \(windowID) was paired with application-only mutation authority."
         case let .windowOwnerMismatch(windowID, expected):
             "Window \(windowID) is not owned by selected application PID \(expected.processIdentifier) " +
                 "and its exact process generation."

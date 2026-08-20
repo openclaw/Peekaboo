@@ -294,8 +294,8 @@ struct DesktopTargetPlanningTests {
             applicationName: "Editor",
             windowID: 42)
         let planner = self.backgroundKeyboardPlanner(
-            application: fixture.application,
-            windowInventory: .complete([]))
+            applications: [fixture.application],
+            windowInventory: .complete([fixture.window]))
 
         let plan = try await planner.plan(
             selector: InteractionTargetSelector(),
@@ -303,7 +303,29 @@ struct DesktopTargetPlanningTests {
 
         #expect(plan.target == fixture.windowTargetIdentity.target)
         #expect(plan.application.processIdentity == fixture.processIdentity)
-        #expect(plan.window == nil)
+        #expect(plan.window?.identity == fixture.windowIdentity)
+    }
+
+    @MainActor
+    @Test
+    func `background keyboard planner rejects a selector from another snapshot owner`() async throws {
+        let snapshot = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 7),
+            applicationName: "Editor",
+            windowID: 42)
+        let selected = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 43, processStartIdentity: 8),
+            applicationName: "Other Editor",
+            windowID: 43)
+        let planner = self.backgroundKeyboardPlanner(
+            applications: [snapshot.application, selected.application],
+            windowInventory: .complete([selected.window]))
+
+        await #expect(throws: DesktopTargetIdentityError.contradictoryProcessIdentifier) {
+            _ = try await planner.plan(
+                selector: InteractionTargetSelector(applicationIdentifier: "Other Editor"),
+                snapshotExactWindow: snapshot.windowTargetIdentity.exactWindow)
+        }
     }
 
     @MainActor
@@ -313,7 +335,7 @@ struct DesktopTargetPlanningTests {
             applicationName: "Editor",
             windowID: 42)
         let planner = self.backgroundKeyboardPlanner(
-            application: fixture.application,
+            applications: [fixture.application],
             windowInventory: .complete([fixture.window]))
 
         let plan = try await planner.plan(
@@ -330,7 +352,7 @@ struct DesktopTargetPlanningTests {
             applicationName: "Editor",
             windowID: 42)
         let planner = self.backgroundKeyboardPlanner(
-            application: fixture.application,
+            applications: [fixture.application],
             windowInventory: .partial([fixture.window], warnings: ["AX enumeration timed out"]))
 
         await #expect(throws: DesktopTargetPlanningError.incompleteWindowInventory(
@@ -344,13 +366,27 @@ struct DesktopTargetPlanningTests {
 
     @MainActor
     private func backgroundKeyboardPlanner(
-        application: ServiceApplicationInfo,
+        applications: [ServiceApplicationInfo],
         windowInventory: DesktopTargetPlanning.Inventory<ServiceWindowInfo>)
         -> DesktopTargetPlanning.BackgroundKeyboardTargetPlanner
     {
         let applicationPlanner = DesktopTargetPlanning.ApplicationMutationPlanner(
-            inventoryProvider: { .complete([application]) },
-            exactIdentifierProvider: { _ in application })
+            inventoryProvider: { .complete(applications) },
+            exactIdentifierProvider: { identifier in
+                let normalized = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+                let pid = normalized.uppercased().hasPrefix("PID:")
+                    ? Int32(normalized.dropFirst(4))
+                    : nil
+                let matches = applications.filter { application in
+                    pid.map { application.processIdentifier == $0 } == true ||
+                        application.bundleIdentifier?.caseInsensitiveCompare(normalized) == .orderedSame ||
+                        application.name.caseInsensitiveCompare(normalized) == .orderedSame
+                }
+                guard matches.count == 1, let application = matches.first else {
+                    throw PeekabooError.appNotFound(identifier)
+                }
+                return application
+            })
         let windowProvider: DesktopTargetPlanning.WindowMutationPlanner.WindowInventoryProvider = { _ in
             windowInventory
         }

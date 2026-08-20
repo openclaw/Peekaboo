@@ -10,6 +10,21 @@ public struct LinkedSnapshotTargetFixture: Sendable {
     public let automationSnapshot: UIAutomationSnapshot
     public let detectionResult: ElementDetectionResult
     public let coordinateContext: CaptureCoordinateContext
+
+    public var receiptPlan: SnapshotTargetReceiptPlan {
+        get throws {
+            try SnapshotTargetReceiptPlanner.assemble(
+                snapshotID: self.snapshotID,
+                automationSnapshot: self.automationSnapshot,
+                detectionResult: self.detectionResult)
+        }
+    }
+
+    public var targetIdentity: DesktopTargetIdentity {
+        get throws {
+            try self.receiptPlan.receipt.requireIdentity()
+        }
+    }
 }
 
 extension AutomationTestFixtures {

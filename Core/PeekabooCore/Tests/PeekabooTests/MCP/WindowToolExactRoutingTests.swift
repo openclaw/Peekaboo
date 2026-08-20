@@ -327,6 +327,49 @@ struct WindowToolExactRoutingTests {
         #expect(meta["retry_safe"] == .bool(true))
     }
 
+    @Test(arguments: [924, 925])
+    @MainActor
+    func `background focus rejects post-authorization same-process window or bounds replacement`(
+        replacementWindowID: Int) async throws
+    {
+        let replacementBounds = if replacementWindowID == 924 {
+            CGRect(x: 140, y: 120, width: 800, height: 600)
+        } else {
+            CGRect(x: 100, y: 100, width: 800, height: 600)
+        }
+        let service = ExactRoutingWindowService()
+        service.replacementWindowStartingAtListCall = (
+            2,
+            ServiceWindowInfo(
+                windowID: replacementWindowID,
+                title: "Replacement",
+                bounds: replacementBounds,
+                mutationIdentity: .init(
+                    windowID: replacementWindowID,
+                    ownerProcessIdentifier: 42,
+                    ownerProcessStartIdentity: 7,
+                    capturedBounds: replacementBounds)))
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: Self.fixtureApplications(),
+            windows: service,
+            executionPolicy: .backgroundOnly)
+
+        let response = try await context.execute(
+            tool: WindowTool(context: context),
+            arguments: ToolArguments(raw: [
+                "action": "focus",
+                "app": "PID:42",
+                "window_id": 924,
+            ]))
+
+        #expect(response.isError)
+        #expect(service.focusTargets.isEmpty)
+        #expect(service.receivedIdentities.isEmpty)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["retry_safe"] == .bool(true))
+    }
+
     @Test
     @MainActor
     func `close pins a broad selector to the listed exact window`() async throws {
@@ -447,9 +490,8 @@ struct WindowToolExactRoutingTests {
         let context = await MCPToolTestHelpers.makeContext(
             windows: service,
             executionPolicy: .backgroundOnly)
-        let plan = try AuthorizedDesktopTargetPlan(
-            targetIdentity: Self.authorizedFocusTarget(),
-            selectedWindow: Self.authorizedFocusWindow())
+        let plan = try await makeAuthorizedDesktopTargetPlan(
+            targetIdentity: Self.authorizedFocusTarget())
 
         let response = try await AuthorizedDesktopTargetPlan.$current.withValue(plan) {
             try await WindowTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -465,58 +507,6 @@ struct WindowToolExactRoutingTests {
             CGRect(x: 100, y: 100, width: 800, height: 600),
         ])
         #expect(service.listTargets.isEmpty)
-    }
-
-    @Test(arguments: [924, 925])
-    @MainActor
-    func `focus rejects post-authorization same-process window or bounds replacement before dispatch`(
-        replacementWindowID: Int) async throws
-    {
-        let replacementBounds = if replacementWindowID == 924 {
-            CGRect(x: 140, y: 120, width: 800, height: 600)
-        } else {
-            CGRect(x: 100, y: 100, width: 800, height: 600)
-        }
-        let service = ExactRoutingWindowService()
-        service.replacementWindowStartingAtListCall = (
-            1,
-            ServiceWindowInfo(
-                windowID: replacementWindowID,
-                title: "Replacement",
-                bounds: replacementBounds,
-                mutationIdentity: .init(
-                    windowID: replacementWindowID,
-                    ownerProcessIdentifier: 42,
-                    ownerProcessStartIdentity: 7,
-                    capturedBounds: replacementBounds)))
-        let context = await MCPToolTestHelpers.makeContext(
-            windows: service,
-            executionPolicy: .backgroundOnly)
-        let plan = try AuthorizedDesktopTargetPlan(
-            targetIdentity: Self.authorizedFocusTarget(),
-            selectedWindow: ServiceWindowInfo(
-                windowID: replacementWindowID,
-                title: "Replacement",
-                bounds: replacementBounds,
-                mutationIdentity: .init(
-                    windowID: replacementWindowID,
-                    ownerProcessIdentifier: 42,
-                    ownerProcessStartIdentity: 7,
-                    capturedBounds: replacementBounds)))
-
-        let response = try await AuthorizedDesktopTargetPlan.$current.withValue(plan) {
-            try await WindowTool(context: context).execute(arguments: ToolArguments(raw: [
-                "action": "focus",
-                "app": "Safari",
-            ]))
-        }
-
-        #expect(response.isError)
-        #expect(service.focusTargets.isEmpty)
-        #expect(service.receivedIdentities.isEmpty)
-        let meta = try #require(response.meta?.objectValue)
-        #expect(meta["mutation_dispatched"] == .bool(false))
-        #expect(meta["retry_safe"] == .bool(true))
     }
 
     @Test(arguments: [

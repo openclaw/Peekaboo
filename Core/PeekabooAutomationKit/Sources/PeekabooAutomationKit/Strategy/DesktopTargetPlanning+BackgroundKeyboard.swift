@@ -100,19 +100,22 @@ extension DesktopTargetPlanning {
                 throw BackgroundKeyboardTargetPlanningError.targetRequired
             }
 
-            var currentAuthority: MutationAuthorityPlan = if let selectedAuthority {
-                selectedAuthority
+            // The resolved identity already includes the selector authority. Replanning below only upgrades
+            // matching application authority to the exact snapshot window; it cannot change the selected owner.
+            let boundAuthority: ReceiptBoundMutationAuthorityPlan = if let selectedAuthority,
+                                                                       selectedAuthority.window != nil ||
+                                                                       resolvedIdentity.exactWindow == nil
+            {
+                try self.authorities.bind(identity: resolvedIdentity, authority: selectedAuthority)
             } else {
-                try await self.authorities.plan(
-                    selector: InteractionTargetSelector(
-                        processIdentifier: Int(resolvedIdentity.processIdentity.processIdentifier)),
-                    expectedProcessIdentity: resolvedIdentity.processIdentity)
+                try await self.authorities.bind(identity: resolvedIdentity)
             }
-            currentAuthority = try await self.authorities.revalidate(currentAuthority)
+            var currentBoundAuthority = try await self.authorities.revalidate(boundAuthority)
+            var currentAuthority = currentBoundAuthority.authority
             var currentApplication = currentAuthority.application
             try Self.requireBackgroundInputEligibility(currentApplication)
 
-            if let exactWindow = resolvedIdentity.exactWindow {
+            if let exactWindow = currentBoundAuthority.targetIdentity.exactWindow {
                 let process = try UIAutomationTarget.Process(
                     processIdentifier: currentApplication.processIdentity.processIdentifier,
                     identity: currentApplication.processIdentity)
@@ -149,7 +152,8 @@ extension DesktopTargetPlanning {
 
             // Window enumeration can race process exit/relaunch. Revalidate after the catalog read
             // before returning authority to a caller that will dispatch keyboard input.
-            currentAuthority = try await self.authorities.revalidate(currentAuthority)
+            currentBoundAuthority = try await self.authorities.revalidate(currentBoundAuthority)
+            currentAuthority = currentBoundAuthority.authority
             currentApplication = currentAuthority.application
             try Self.requireBackgroundInputEligibility(currentApplication)
             let process = try UIAutomationTarget.Process(

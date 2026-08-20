@@ -22,18 +22,12 @@ extension MCPToolContext {
         toolName: String) async throws -> ToolResponse?
     {
         guard let plan = authorization.targetPlan else { return nil }
-        guard let authority = plan.mutationAuthority else {
-            return self.executionPolicy.unresolvedTargetRejection(
-                toolName: toolName,
-                detail: "the selected target has no shared mutation authority")
-        }
         let planner = DesktopTargetPlanning.MutationAuthorityPlanner(
             applications: self.applications,
             windows: self.windows)
         do {
-            let current = try await planner.revalidate(authority)
-            _ = try plan.targetIdentity.coalescing(current.targetIdentity)
-            let application = current.application.application
+            let current = try await planner.revalidate(plan.mutationAuthority)
+            let application = current.authority.application.application
             return self.executionPolicy.systemSurfaceRejection(
                 toolName: toolName,
                 applicationBundleIdentifier: application.bundleIdentifier,
@@ -71,24 +65,19 @@ extension MCPToolContext {
             detectionResult: detectionResult,
             additionalEvidence: [.init(target: mirroredIdentity)],
             applicationName: mirroredReceipt.applicationName).receipt.requireIdentity()
-        let authority = try await self.sharedMutationAuthority(for: identity)
-        return try AuthorizedDesktopTargetPlan(mutationAuthority: authority)
+        let authority = try await self.receiptBoundMutationAuthority(for: identity)
+        return AuthorizedDesktopTargetPlan(mutationAuthority: authority)
     }
 
     @MainActor
-    func sharedMutationAuthority(
-        for identity: DesktopTargetIdentity) async throws -> DesktopTargetPlanning.MutationAuthorityPlan
+    func receiptBoundMutationAuthority(
+        for identity: DesktopTargetIdentity) async throws
+        -> DesktopTargetPlanning.ReceiptBoundMutationAuthorityPlan
     {
         let planner = DesktopTargetPlanning.MutationAuthorityPlanner(
             applications: self.applications,
             windows: self.windows)
-        let authority = try await planner.plan(
-            selector: InteractionTargetSelector(
-                processIdentifier: Int(identity.processIdentity.processIdentifier),
-                windowID: identity.exactWindow?.identity.windowID),
-            expectedProcessIdentity: identity.processIdentity)
-        _ = try identity.coalescing(authority.targetIdentity)
-        return authority
+        return try await planner.bind(identity: identity)
     }
 
     struct BackgroundApplicationTargetSchema {
@@ -171,10 +160,11 @@ extension MCPToolContext {
         pinned["window_id"] = windowPlan.identity.windowID
         pinned.removeValue(forKey: selector.keys.title)
         pinned.removeValue(forKey: selector.keys.index)
-        return try BackgroundTargetAuthorization(
+        let boundAuthority = try planner.bind(authority: authority)
+        return BackgroundTargetAuthorization(
             arguments: ToolArguments(raw: pinned),
             rejection: nil,
-            targetPlan: AuthorizedDesktopTargetPlan(mutationAuthority: authority))
+            targetPlan: AuthorizedDesktopTargetPlan(mutationAuthority: boundAuthority))
     }
 
     private static func backgroundExactWindowSelector(
@@ -305,20 +295,20 @@ extension MCPToolContext {
 
     @MainActor
     func resolveApplicationAuthorities(
-        _ identifiers: [String]) async throws -> [DesktopTargetPlanning.MutationAuthorityPlan]
+        _ identifiers: [String]) async throws -> [DesktopTargetPlanning.ReceiptBoundMutationAuthorityPlan]
     {
         let planner = DesktopTargetPlanning.MutationAuthorityPlanner(
             applications: self.applications,
             windows: self.windows)
         do {
-            var resolved: [DesktopTargetPlanning.MutationAuthorityPlan] = []
+            var resolved: [DesktopTargetPlanning.ReceiptBoundMutationAuthorityPlan] = []
             var expectedIdentity: ApplicationProcessIdentity?
             for identifier in identifiers {
                 let authority = try await planner.plan(
                     selector: InteractionTargetSelector(applicationIdentifier: identifier),
                     expectedProcessIdentity: expectedIdentity)
                 expectedIdentity = authority.application.processIdentity
-                resolved.append(authority)
+                try resolved.append(planner.bind(authority: authority))
             }
             return resolved
         } catch is CancellationError {

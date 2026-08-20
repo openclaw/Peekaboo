@@ -668,7 +668,7 @@ public struct MCPToolContext: @unchecked Sendable {
                     "the mutation has no explicit application or exact-window owner")
             }
             let authorities = try await self.resolveApplicationAuthorities(identifiers)
-            let applications = authorities.map(\.application.application)
+            let applications = authorities.map(\.authority.application.application)
             let processIdentity = try Self.validatedProcessIdentity(
                 applications: applications,
                 windowProcessIdentities: windowProcessIdentities)
@@ -690,10 +690,10 @@ public struct MCPToolContext: @unchecked Sendable {
             }
             let targetPlan: AuthorizedDesktopTargetPlan
             if windowTargetIdentities.isEmpty, let authority = authorities.first {
-                targetPlan = try AuthorizedDesktopTargetPlan(mutationAuthority: authority)
+                targetPlan = AuthorizedDesktopTargetPlan(mutationAuthority: authority)
             } else {
-                let authority = try await self.sharedMutationAuthority(for: authorizedTarget)
-                targetPlan = try AuthorizedDesktopTargetPlan(mutationAuthority: authority)
+                let authority = try await self.receiptBoundMutationAuthority(for: authorizedTarget)
+                targetPlan = AuthorizedDesktopTargetPlan(mutationAuthority: authority)
             }
             return BackgroundTargetAuthorization(
                 arguments: Self.argumentsPinnedToProcess(

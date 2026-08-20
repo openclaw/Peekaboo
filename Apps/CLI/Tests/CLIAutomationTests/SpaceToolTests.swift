@@ -1,6 +1,8 @@
 import CoreGraphics
 import Foundation
 import MCP
+import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
@@ -304,6 +306,7 @@ struct SpaceToolExecutionHostTests {
     }
 
     @Test
+    @MainActor
     func `background Space move refuses a leaf window from a different authorized generation`() async throws {
         let testContext = self.makeTestContext(processGeneration: 222)
         let context = self.makeToolContext(
@@ -317,9 +320,20 @@ struct SpaceToolExecutionHostTests {
             processIdentifier: 999,
             processStartIdentity: 111
         ))
+        let planner = MutationAuthorityCatalogScript(
+            applications: [AutomationTestFixtures.application(
+                processIdentifier: 999,
+                processStartIdentity: 111,
+                name: "Authorized"
+            )],
+            windowInventories: []
+        ).planner()
+        let authorizedPlan = try await AuthorizedDesktopTargetPlan(
+            mutationAuthority: planner.bind(identity: authorizedTarget)
+        )
 
         let response = try await AuthorizedDesktopTargetPlan.$current.withValue(
-            AuthorizedDesktopTargetPlan(targetIdentity: authorizedTarget)
+            authorizedPlan
         ) {
             try await tool.execute(arguments: self.makeArguments([
                 "action": .string("move-window"),

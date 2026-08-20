@@ -39,10 +39,7 @@ struct SnapshotTargetReceiptPlannerTests {
     func `planner merges linked sources and preserves coordinate authority`() throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
 
-        let plan = try SnapshotTargetReceiptPlanner.assemble(
-            snapshotID: fixture.snapshotID,
-            automationSnapshot: fixture.automationSnapshot,
-            detectionResult: fixture.detectionResult)
+        let plan = try fixture.receiptPlan
         let identity = try plan.receipt.requireIdentity()
         let authority = try plan.receipt.requireCoordinateAuthority()
 

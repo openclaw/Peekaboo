@@ -27,10 +27,7 @@ struct AutomationKitTestSupportTests {
                 DesktopTargetEvidenceAdapter.evidence(context: fixture.desktopTarget.windowContext))
         #expect(fixture.detectionResult.metadata.captureCoordinateContext == fixture.coordinateContext)
 
-        let authority = try SnapshotTargetReceiptPlanner.assemble(
-            snapshotID: fixture.snapshotID,
-            automationSnapshot: fixture.automationSnapshot,
-            detectionResult: fixture.detectionResult).receipt.requireCoordinateAuthority()
+        let authority = try fixture.receiptPlan.receipt.requireCoordinateAuthority()
         #expect(authority.target.identity == fixture.desktopTarget.windowIdentity)
     }
 

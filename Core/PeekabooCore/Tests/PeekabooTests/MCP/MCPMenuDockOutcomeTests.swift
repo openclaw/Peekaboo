@@ -83,7 +83,7 @@ struct MCPMenuDockOutcomeTests {
             menu: menu,
             applications: applications,
             executionPolicy: .backgroundOnly)
-        let authority = try AuthorizedDesktopTargetPlan(
+        let authority = try await makeAuthorizedDesktopTargetPlan(
             targetIdentity: DesktopTargetIdentity(processIdentity: authorizedIdentity))
 
         let response = try await AuthorizedDesktopTargetPlan.$current.withValue(authority) {
@@ -113,7 +113,7 @@ struct MCPMenuDockOutcomeTests {
             windows: windows,
             applications: applications,
             executionPolicy: .backgroundOnly)
-        let authority = try AuthorizedDesktopTargetPlan(
+        let authority = try await makeAuthorizedDesktopTargetPlan(
             targetIdentity: DesktopTargetIdentity(processIdentity: ApplicationProcessIdentity(
                 processIdentifier: 43,
                 processStartIdentity: 8)))
@@ -148,15 +148,10 @@ struct MCPMenuDockOutcomeTests {
             windows: windows,
             executionPolicy: .backgroundOnly)
         let bounds = try #require(windows.identity.capturedBounds)
-        let authority = try AuthorizedDesktopTargetPlan(
+        let authority = try await makeAuthorizedDesktopTargetPlan(
             targetIdentity: DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
                 identity: windows.identity,
-                bounds: bounds)),
-            selectedWindow: ServiceWindowInfo(
-                windowID: windows.identity.windowID,
-                title: "Fixture",
-                bounds: bounds,
-                mutationIdentity: windows.identity))
+                bounds: bounds)))
 
         let response = try await AuthorizedDesktopTargetPlan.$current.withValue(authority) {
             try await MenuTool(context: context).execute(arguments: ToolArguments(raw: [
