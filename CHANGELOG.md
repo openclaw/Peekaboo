@@ -14,6 +14,7 @@
 - Report `retry_safe: false` whenever an Agent trace cannot prove whether a mutation dispatched.
 - Replace arbitrary provider-authored Agent trace field names with deterministic ordinal placeholders at every argument nesting level.
 - Treat an exact missing-window readback after `window close` as confirmed closure instead of a retry-unsafe failure.
+- Refuse capture before permission or backend dispatch when the macOS GUI session is locked, while explaining that `screen list` can still report connected displays.
 
 ## [4.2.2] - 2026-08-20
 

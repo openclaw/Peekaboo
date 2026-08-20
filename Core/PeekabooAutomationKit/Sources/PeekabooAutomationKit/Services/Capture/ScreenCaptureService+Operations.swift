@@ -65,6 +65,12 @@ extension ScreenCaptureService {
         return try await ScreenCaptureKitCaptureGate.withExclusiveCaptureOperation(
             operationName: operation.metricName)
         {
+            if self.screenLockProbe() == true {
+                throw OperationError.captureFailed(
+                    reason: "Screen capture is unavailable while the macOS GUI session is locked. " +
+                        "`screen list` can still report connected displays; unlock the active user session and retry.")
+            }
+
             // Permission probing may call ScreenCaptureKit on CLI builds where
             // CGPreflightScreenCaptureAccess is unreliable; keep that probe in
             // the same cross-process transaction as the capture itself.

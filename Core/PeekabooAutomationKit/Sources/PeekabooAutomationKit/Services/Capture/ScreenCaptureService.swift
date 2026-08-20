@@ -49,6 +49,7 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
             -> any ModernScreenCaptureOperating
         let makeLegacyOperator: @MainActor @Sendable (CategoryLogger)
             -> any LegacyScreenCaptureOperating
+        let screenLockProbe: @MainActor @Sendable () -> Bool?
         public init(
             feedbackClient: any AutomationFeedbackClient,
             permissionEvaluator: any ScreenRecordingPermissionEvaluating,
@@ -58,7 +59,8 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
             makeModernOperator: @escaping @MainActor @Sendable (CategoryLogger, any AutomationFeedbackClient)
                 -> any ModernScreenCaptureOperating,
             makeLegacyOperator: @escaping @MainActor @Sendable (CategoryLogger)
-                -> any LegacyScreenCaptureOperating)
+                -> any LegacyScreenCaptureOperating,
+            screenLockProbe: @escaping @MainActor @Sendable () -> Bool? = { nil })
         {
             self.feedbackClient = feedbackClient
             self.permissionEvaluator = permissionEvaluator
@@ -67,6 +69,7 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
             self.makeFrameSource = makeFrameSource
             self.makeModernOperator = makeModernOperator
             self.makeLegacyOperator = makeLegacyOperator
+            self.screenLockProbe = screenLockProbe
         }
 
         @MainActor
@@ -94,7 +97,8 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
                 },
                 makeLegacyOperator: { logger in
                     LegacyScreenCaptureOperator(logger: logger)
-                })
+                },
+                screenLockProbe: DesktopSessionLockState.currentScreenIsLocked)
         }
     }
 
@@ -105,6 +109,7 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
     let applicationResolver: any ApplicationResolving
     let modernOperator: any ModernScreenCaptureOperating
     let legacyOperator: any LegacyScreenCaptureOperating
+    let screenLockProbe: @MainActor @Sendable () -> Bool?
     @TaskLocal static var captureEnginePreference: CaptureEnginePreference = .auto
 
     public convenience init(
@@ -125,6 +130,7 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
         self.applicationResolver = dependencies.applicationResolver
         self.modernOperator = dependencies.makeModernOperator(self.logger, self.feedbackClient)
         self.legacyOperator = dependencies.makeLegacyOperator(self.logger)
+        self.screenLockProbe = dependencies.screenLockProbe
 
         // Only connect to visualizer if we're not running inside the Mac app
         // The Mac app provides the visualizer service, not consumes it

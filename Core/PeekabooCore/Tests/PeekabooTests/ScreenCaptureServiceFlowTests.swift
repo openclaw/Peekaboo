@@ -202,6 +202,68 @@ struct ScreenCaptureServiceFlowTests {
         }
     }
 
+    @Test(arguments: [CaptureEnginePreference.auto, .modern, .legacy])
+    func `locked GUI session refuses capture before permission or backend dispatch`(
+        engine: CaptureEnginePreference) async throws
+    {
+        let fixtures = self.makeFixtures()
+        let permission = CountingPermissionEvaluator()
+        let modernOperator = FixtureCaptureOperator(fixtures: fixtures)
+        let legacyOperator = FixtureCaptureOperator(fixtures: fixtures)
+        let dependencies = ScreenCaptureService.Dependencies(
+            feedbackClient: StubAutomationFeedbackClient(),
+            permissionEvaluator: permission,
+            fallbackRunner: ScreenCaptureFallbackRunner(apis: [.legacy, .modern]),
+            applicationResolver: FixtureResolver(fixtures: fixtures),
+            makeFrameSource: { _ in NoOpCaptureFrameSource() },
+            makeModernOperator: { _, _ in modernOperator },
+            makeLegacyOperator: { _ in legacyOperator },
+            screenLockProbe: { true })
+        let service = ScreenCaptureService(
+            loggingService: MockLoggingService(),
+            dependencies: dependencies)
+
+        let error = await #expect(throws: PeekabooError.self) {
+            _ = try await service.withCaptureEngine(engine) {
+                try await service.captureScreen(displayIndex: 0)
+            }
+        }
+
+        guard case let .captureFailed(reason) = error else {
+            Issue.record("Expected captureFailed, got \(String(describing: error))")
+            return
+        }
+        #expect(reason.contains("macOS GUI session is locked"))
+        #expect(reason.contains("screen list"))
+        #expect(permission.callCount == 0)
+        #expect(modernOperator.captureScreenAttempts == 0)
+        #expect(legacyOperator.captureScreenAttempts == 0)
+    }
+
+    @Test
+    func `unknown GUI lock state falls through to normal capture checks`() async throws {
+        let fixtures = self.makeFixtures()
+        let permission = CountingPermissionEvaluator()
+        let modernOperator = FixtureCaptureOperator(fixtures: fixtures)
+        let dependencies = ScreenCaptureService.Dependencies(
+            feedbackClient: StubAutomationFeedbackClient(),
+            permissionEvaluator: permission,
+            fallbackRunner: ScreenCaptureFallbackRunner(apis: [.modern]),
+            applicationResolver: FixtureResolver(fixtures: fixtures),
+            makeFrameSource: { _ in NoOpCaptureFrameSource() },
+            makeModernOperator: { _, _ in modernOperator },
+            makeLegacyOperator: { _ in modernOperator },
+            screenLockProbe: { nil })
+        let service = ScreenCaptureService(
+            loggingService: MockLoggingService(),
+            dependencies: dependencies)
+
+        _ = try await service.captureScreen(displayIndex: 0)
+
+        #expect(permission.callCount == 1)
+        #expect(modernOperator.captureScreenAttempts == 1)
+    }
+
     @Test
     func `captureArea returns area metadata`() async throws {
         let fixtures = self.makeFixtures()
@@ -453,6 +515,7 @@ private struct FixtureResolver: ApplicationResolving {
 private final class FixtureCaptureOperator: ModernScreenCaptureOperating, LegacyScreenCaptureOperating,
 @unchecked Sendable {
     private let fixtures: ScreenCaptureService.TestFixtures
+    private(set) var captureScreenAttempts = 0
     private(set) var captureWindowIDAttempts = 0
     private(set) var visualizerModes: [CaptureVisualizerMode] = []
 
@@ -466,6 +529,7 @@ private final class FixtureCaptureOperator: ModernScreenCaptureOperating, Legacy
         visualizerMode: CaptureVisualizerMode,
         scale: CaptureScalePreference) async throws -> CaptureResult
     {
+        self.captureScreenAttempts += 1
         self.visualizerModes.append(visualizerMode)
         let display = try fixtures.display(at: displayIndex)
         let scaleFactor = scale == .native ? display.scaleFactor : 1.0

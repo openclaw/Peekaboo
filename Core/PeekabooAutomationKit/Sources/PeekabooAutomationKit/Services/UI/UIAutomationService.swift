@@ -254,7 +254,8 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
             applicationResolver: baseCaptureDeps.applicationResolver,
             makeFrameSource: baseCaptureDeps.makeFrameSource,
             makeModernOperator: baseCaptureDeps.makeModernOperator,
-            makeLegacyOperator: baseCaptureDeps.makeLegacyOperator)
+            makeLegacyOperator: baseCaptureDeps.makeLegacyOperator,
+            screenLockProbe: baseCaptureDeps.screenLockProbe)
         self.screenCaptureService = ScreenCaptureService(loggingService: logger, dependencies: captureDeps)
 
         // Connect to visual feedback if available.
