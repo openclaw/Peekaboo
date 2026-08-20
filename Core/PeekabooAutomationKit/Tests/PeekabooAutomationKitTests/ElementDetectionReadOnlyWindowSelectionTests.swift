@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import XCTest
 @testable import PeekabooAutomationKit
@@ -74,6 +75,49 @@ final class ElementDetectionReadOnlyWindowSelectionTests: XCTestCase {
             XCTAssertNotNil(ElementDetectionWindowResolver.applicationConstraintMismatch(
                 candidate: Self.applicationCandidate,
                 context: context))
+        }
+    }
+
+    @MainActor
+    func testPathOnlySelectorsResolveTheirNonFrontmostApplication() async throws {
+        let target = try Self.uniqueNonFrontmostApplication()
+        let bundlePath = try XCTUnwrap(target.bundleURL?.standardizedFileURL.path)
+        let executablePath = try XCTUnwrap(target.executableURL?.standardizedFileURL.path)
+        let applicationService = ApplicationService()
+        let bundleMatch = try await applicationService.findApplication(identifier: bundlePath)
+        let executableMatch = try await applicationService.findApplication(identifier: executablePath)
+        XCTAssertEqual(bundleMatch.processIdentifier, target.processIdentifier)
+        XCTAssertEqual(executableMatch.processIdentifier, target.processIdentifier)
+        let refreshed = try XCTUnwrap(NSRunningApplication(processIdentifier: target.processIdentifier))
+        XCTAssertEqual(
+            refreshed.bundleURL?.standardizedFileURL.path,
+            bundlePath,
+            "original=\(bundlePath) refreshed=\(refreshed.bundleURL?.standardizedFileURL.path ?? "nil")")
+        let resolver = ElementDetectionWindowResolver(applicationService: applicationService)
+
+        for context in [
+            WindowContext(applicationBundlePath: bundlePath),
+            WindowContext(applicationExecutablePath: executablePath),
+        ] {
+            let resolved = try await resolver.resolveApplication(windowContext: context)
+            XCTAssertEqual(resolved.processIdentifier, target.processIdentifier)
+        }
+    }
+
+    @MainActor
+    func testPathResolutionRejectsContradictoryDualPathBeforeObservation() async throws {
+        let target = try Self.uniqueNonFrontmostApplication()
+        let bundlePath = try XCTUnwrap(target.bundleURL?.standardizedFileURL.path)
+        let resolver = ElementDetectionWindowResolver(applicationService: ApplicationService())
+        let context = WindowContext(
+            applicationBundlePath: bundlePath,
+            applicationExecutablePath: bundlePath + "/Contents/MacOS/not-the-target")
+
+        do {
+            _ = try await resolver.resolveApplication(windowContext: context)
+            XCTFail("Contradictory explicit paths must fail before observation")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("applicationExecutablePath contradicts"))
         }
     }
 
@@ -227,6 +271,26 @@ final class ElementDetectionReadOnlyWindowSelectionTests: XCTestCase {
         executablePath: executablePath,
         allowsFuzzyMatching: true,
         isRegularApplication: true)
+
+    @MainActor
+    private static func uniqueNonFrontmostApplication() throws -> NSRunningApplication {
+        let frontmostProcessIdentifier = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let running = NSWorkspace.shared.runningApplications.filter { !$0.isTerminated }
+        guard let target = running.first(where: { application in
+            guard application.processIdentifier != frontmostProcessIdentifier,
+                  let bundlePath = application.bundleURL?.standardizedFileURL.path,
+                  let executablePath = application.executableURL?.standardizedFileURL.path
+            else { return false }
+            return running.count(where: {
+                $0.bundleURL?.standardizedFileURL.path == bundlePath
+            }) == 1 && running.count(where: {
+                $0.executableURL?.standardizedFileURL.path == executablePath
+            }) == 1
+        }) else {
+            throw XCTSkip("No unique non-frontmost application is available for path-only resolution")
+        }
+        return target
+    }
 
     private static func detectProjection(requested: WindowContext) -> ElementDetectionService
     .ResolvedApplicationIdentity {

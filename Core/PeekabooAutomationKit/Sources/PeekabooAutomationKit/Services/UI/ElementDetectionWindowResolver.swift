@@ -38,29 +38,21 @@ struct ElementDetectionWindowResolver {
                 throw PeekabooError.appNotFound("PID:\(pid)")
             }
         } else if let bundleId = windowContext?.applicationBundleId {
-            self.logger.debug("Looking for application via bundle ID: \(bundleId)")
-
-            let appInfo = try await self.applicationService.findApplication(identifier: bundleId)
-
-            guard let runningApp = NSRunningApplication(processIdentifier: appInfo.processIdentifier) else {
-                self.logger.error("Could not get NSRunningApplication for PID: \(appInfo.processIdentifier)")
-                throw PeekabooError.appNotFound(bundleId)
-            }
-
-            self.logger.debug("Resolved application: \(runningApp.localizedName ?? "unknown")")
-            runningApplication = runningApp
+            runningApplication = try await self.resolveRunningApplication(
+                identifier: bundleId,
+                source: "bundle ID")
         } else if let appName = windowContext?.applicationName {
-            self.logger.debug("Looking for application via ApplicationService: \(appName)")
-
-            let appInfo = try await self.applicationService.findApplication(identifier: appName)
-
-            guard let runningApp = NSRunningApplication(processIdentifier: appInfo.processIdentifier) else {
-                self.logger.error("Could not get NSRunningApplication for PID: \(appInfo.processIdentifier)")
-                throw PeekabooError.appNotFound(appName)
-            }
-
-            self.logger.debug("Resolved application: \(runningApp.localizedName ?? "unknown")")
-            runningApplication = runningApp
+            runningApplication = try await self.resolveRunningApplication(
+                identifier: appName,
+                source: "application selector")
+        } else if let bundlePath = windowContext?.applicationBundlePath {
+            runningApplication = try await self.resolveRunningApplication(
+                identifier: bundlePath,
+                source: "bundle path")
+        } else if let executablePath = windowContext?.applicationExecutablePath {
+            runningApplication = try await self.resolveRunningApplication(
+                identifier: executablePath,
+                source: "executable path")
         } else if let windowID = windowContext?.windowID {
             guard let processIdentifier = Self.stableExactWindowOwner(
                 windowID: windowID,
@@ -92,6 +84,17 @@ struct ElementDetectionWindowResolver {
         if let mismatch = Self.applicationConstraintMismatch(candidate: candidate, context: windowContext) {
             throw PeekabooError.invalidInput(field: "windowContext", reason: mismatch)
         }
+        return runningApplication
+    }
+
+    private func resolveRunningApplication(identifier: String, source: String) async throws -> NSRunningApplication {
+        self.logger.debug("Looking for application via \(source): \(identifier)")
+        let appInfo = try await self.applicationService.findApplication(identifier: identifier)
+        guard let runningApplication = NSRunningApplication(processIdentifier: appInfo.processIdentifier) else {
+            self.logger.error("Could not get NSRunningApplication for PID: \(appInfo.processIdentifier)")
+            throw PeekabooError.appNotFound(identifier)
+        }
+        self.logger.debug("Resolved application: \(runningApplication.localizedName ?? "unknown")")
         return runningApplication
     }
 
