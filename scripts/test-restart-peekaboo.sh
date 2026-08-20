@@ -149,6 +149,7 @@ run_restart() {
     DIST_APP_BUNDLE="${case_dir}/dist/Peekaboo.app" \
     PEEKABOO_APPLICATIONS_DIR="${case_dir}/Applications" \
     PEEKABOO_BUILD_SCRIPT="${case_dir}/bin/build-app" \
+    PEEKABOO_SIGN_RELEASE_APP_SCRIPT="${case_dir}/bin/sign-release-app" \
     PEEKABOO_CODESIGN_BIN="${case_dir}/bin/codesign" \
     PEEKABOO_DITTO_BIN="${case_dir}/bin/ditto" \
     PEEKABOO_FILE_BIN="${case_dir}/bin/file" \
@@ -227,9 +228,9 @@ cat >"${TEMPLATE_BIN}/build-app" <<'EOF'
 set -euo pipefail
 state_dir="$(cd "$(dirname "$0")/.." && pwd)"
 bundle="${DERIVED_DATA_PATH}/Build/Products/${CONFIGURATION}/${APP_NAME}.app"
-[[ "${DEBUG_CODE_SIGN_IDENTITY:-}" == "${PEEKABOO_APP_SIGN_IDENTITY:-}" ]] || exit 81
-[[ "${DEBUG_DEVELOPMENT_TEAM:-}" == "${PEEKABOO_APP_EXPECTED_TEAM_ID:-}" ]] || exit 82
+[[ "${PEEKABOO_BUILD_UNSIGNED:-}" == "1" ]] || exit 81
 printf '%s\n' 'build' >>"${state_dir}/events"
+printf '%s\n' 'build-unsigned' >>"${state_dir}/events"
 mkdir -p "${bundle}/Contents/MacOS"
 printf '%s\n' 'new' >"${bundle}/build-id"
 printf '%s\n' '2222222222222222222222222222222222222222' >"${bundle}/.cdhash"
@@ -321,6 +322,23 @@ if [[ -f "${state_dir}/nested-wrong-signer" ]]; then
 fi
 printf '#!/usr/bin/env bash\n' >"${bundle}/Contents/MacOS/Peekaboo"
 chmod +x "${bundle}/Contents/MacOS/Peekaboo"
+EOF
+
+cat >"${TEMPLATE_BIN}/sign-release-app" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+state_dir="$(cd "$(dirname "$0")/.." && pwd)"
+expected_bundle="${DERIVED_DATA_PATH}/Build/Products/${CONFIGURATION:-Release}/${APP_NAME:-Peekaboo}.app"
+[[ "$#" -eq 8 ]] || exit 82
+[[ "$1" == '--app' && "$2" == "${expected_bundle}" ]] || exit 83
+[[ "$3" == '--entitlements' && "$4" == "${PEEKABOO_APP_ENTITLEMENTS}" ]] || exit 84
+[[ "$5" == '--sign-identity' && "$6" == "${PEEKABOO_APP_SIGN_IDENTITY}" ]] || exit 85
+[[ "$7" == '--timestamp-url' && "$8" == 'http://timestamp.apple.com/ts01' ]] || exit 86
+if [[ -f "${state_dir}/fail-manual-sign" ]]; then
+  printf '%s\n' 'sign-failed' >>"${state_dir}/events"
+  exit 87
+fi
+printf '%s\n' 'sign' >>"${state_dir}/events"
 EOF
 
 cat >"${TEMPLATE_BIN}/codesign" <<'EOF'
@@ -813,6 +831,23 @@ fi
 
 env \
   PATH="${build_signing_dir}/bin:/usr/bin:/bin" \
+  PEEKABOO_TEST_XCODEBUILD_ARGS="${build_signing_dir}/unsigned-args" \
+  PEEKABOO_BUILD_UNSIGNED=1 \
+  CONFIGURATION=Release \
+  DERIVED_DATA_PATH="${build_signing_dir}/DerivedData" \
+  DEBUG_CODE_SIGN_IDENTITY='Developer ID Application: Test (TESTTEAM)' \
+  DEBUG_DEVELOPMENT_TEAM=TESTTEAM \
+  "${build_signing_source}/scripts/build-mac-debug.sh" >/dev/null
+grep -Fxq 'CODE_SIGNING_ALLOWED=NO' "${build_signing_dir}/unsigned-args" || \
+  fail 'explicit unsigned build did not disable Xcode signing'
+grep -Fxq 'CODE_SIGNING_REQUIRED=NO' "${build_signing_dir}/unsigned-args" || \
+  fail 'explicit unsigned build did not disable required Xcode signing'
+if grep -Eq '^(CODE_SIGN_STYLE|DEVELOPMENT_TEAM)=' "${build_signing_dir}/unsigned-args"; then
+  fail 'explicit unsigned build still requested Xcode identity or provisioning'
+fi
+
+env \
+  PATH="${build_signing_dir}/bin:/usr/bin:/bin" \
   PEEKABOO_TEST_XCODEBUILD_ARGS="${build_signing_dir}/development-args" \
   CONFIGURATION=Debug \
   DERIVED_DATA_PATH="${build_signing_dir}/DerivedData" \
@@ -1018,15 +1053,33 @@ printf '%s\n' "${success_target}" >"${success_dir}/running-path"
 run_restart "${success_dir}"
 assert_text "${success_target}/build-id" new
 grep -Fq 'configuration:Release' "${success_dir}/events" || fail 'deployment mode did not default to Release'
+grep -Fxq 'build-unsigned' "${success_dir}/events" || fail 'deployment mode did not request an unsigned build'
 assert_text "${success_dir}/open-log" "${success_target}|new"
 assert_text "${success_dir}/open-flags" -gj
 if grep -Fq '|old' "${success_dir}/open-log"; then
   fail 'success path launched the stale installed app'
 fi
 build_line="$(grep -n '^build$' "${success_dir}/events" | cut -d: -f1)"
+sign_line="$(grep -n '^sign$' "${success_dir}/events" | cut -d: -f1)"
 stop_line="$(grep -n '^stop$' "${success_dir}/events" | cut -d: -f1)"
 open_line="$(grep -n '^open:new$' "${success_dir}/events" | cut -d: -f1)"
-((build_line < stop_line && stop_line < open_line)) || fail 'build/stop/launch ordering was not preserved'
+((build_line < sign_line && sign_line < stop_line && stop_line < open_line)) || \
+  fail 'unsigned build/manual-sign/stop/launch ordering was not preserved'
+
+# A failed manual signature never reaches verification, install, or the running app.
+manual_sign_dir="$(new_case manual-sign-failure)"
+manual_sign_target="${manual_sign_dir}/Applications/Peekaboo.app"
+make_bundle "${manual_sign_target}" old
+printf '%s\n' "${manual_sign_target}" >"${manual_sign_dir}/running-path"
+touch "${manual_sign_dir}/fail-manual-sign"
+if run_restart "${manual_sign_dir}"; then
+  fail 'expected deployment manual signing failure'
+fi
+assert_text "${manual_sign_target}/build-id" old
+grep -Fxq 'sign-failed' "${manual_sign_dir}/events" || fail 'manual signing failure was not exercised'
+if grep -Eq '^(stop|open:)' "${manual_sign_dir}/events"; then
+  fail 'manual signing failure stopped or relaunched the previous app'
+fi
 
 # Explicit Debug remains available when it is assigned its own stable target.
 debug_dir="$(new_case explicit-debug-success)"
@@ -1210,7 +1263,7 @@ fi
 assert_text "${team_target}/build-id" old
 assert_text "${team_dir}/open-log" "${team_target}|old"
 
-# An ad-hoc build is refused; the installer never recursively re-signs nested code.
+# An ad-hoc result is refused if the explicit signing helper does not establish the expected identity.
 sign_dir="$(new_case adhoc-build-presign-refusal)"
 sign_target="${sign_dir}/Applications/Peekaboo.app"
 make_bundle "${sign_target}" old
@@ -1220,8 +1273,9 @@ if run_restart "${sign_dir}" PEEKABOO_APP_SIGN_IDENTITY='Developer ID Applicatio
   fail 'expected ad-hoc build to require a correctly signed rebuild'
 fi
 assert_text "${sign_target}/build-id" old
-if grep -Eq '^(sign|stop)$' "${sign_dir}/events"; then
-  fail 'ad-hoc build refusal re-signed or stopped the previous app'
+grep -Fxq 'sign' "${sign_dir}/events" || fail 'ad-hoc build did not pass through manual signing'
+if grep -q '^stop$' "${sign_dir}/events"; then
+  fail 'ad-hoc build refusal stopped the previous app'
 fi
 
 # Exact-artifact mode does not build or re-sign and reports one content digest through installation.
@@ -1285,7 +1339,7 @@ fi
 run_restart "${unstable_dir}" -- --allow-unstable-existing-identity
 assert_text "${unstable_target}/build-id" new
 
-# A same-team development build is also refused instead of losing nested entitlements during re-signing.
+# A remaining same-team development signature is refused after the explicit signing helper returns.
 resign_dir="$(new_case requirement-resign-refusal)"
 resign_target="${resign_dir}/Applications/Peekaboo.app"
 make_bundle "${resign_target}" old
@@ -1295,8 +1349,10 @@ if run_restart "${resign_dir}" PEEKABOO_APP_SIGN_IDENTITY='Developer ID Applicat
   fail 'expected development-signed build refusal'
 fi
 assert_text "${resign_target}/build-id" old
-if grep -Eq '^(sign|stop)$' "${resign_dir}/events"; then
-  fail 'development-signed build refusal re-signed or stopped the previous app'
+grep -Fxq 'sign' "${resign_dir}/events" || \
+  fail 'development-signed build did not pass through manual signing'
+if grep -q '^stop$' "${resign_dir}/events"; then
+  fail 'development-signed build refusal stopped the previous app'
 fi
 
 # A stable signature from another Developer ID is not accepted when the required signer is unavailable.

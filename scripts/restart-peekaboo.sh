@@ -55,6 +55,7 @@ APP_BUNDLE="${PEEKABOO_APP_BUNDLE:-}"
 DESTINATION="${DESTINATION:-platform=macOS,arch=arm64}"
 
 BUILD_SCRIPT="${PEEKABOO_BUILD_SCRIPT:-$ROOT_DIR/scripts/build-mac-debug.sh}"
+SIGN_RELEASE_APP_SCRIPT="${PEEKABOO_SIGN_RELEASE_APP_SCRIPT:-$ROOT_DIR/scripts/sign-release-app.sh}"
 CODESIGN_BIN="${PEEKABOO_CODESIGN_BIN:-/usr/bin/codesign}"
 DITTO_BIN="${PEEKABOO_DITTO_BIN:-/usr/bin/ditto}"
 FILE_BIN="${PEEKABOO_FILE_BIN:-/usr/bin/file}"
@@ -82,6 +83,8 @@ HEALTHCHECK_CLI="${PEEKABOO_HEALTHCHECK_CLI:-$(command -v peekaboo || true)}"
 HEALTHCHECK_CLI_BUNDLE_ID="${PEEKABOO_HEALTHCHECK_CLI_BUNDLE_ID:-boo.peekaboo.peekaboo}"
 BRIDGE_SOCKET="${PEEKABOO_APP_BRIDGE_SOCKET:-${HOME}/Library/Application Support/Peekaboo/bridge.sock}"
 SIGN_IDENTITY="${PEEKABOO_APP_SIGN_IDENTITY:-Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)}"
+APP_ENTITLEMENTS="${PEEKABOO_APP_ENTITLEMENTS:-$ROOT_DIR/Apps/Mac/Peekaboo/Peekaboo.entitlements}"
+CODESIGN_TIMESTAMP_URL="http://timestamp.apple.com/ts01"
 EXPECTED_TEAM_ID="${PEEKABOO_APP_EXPECTED_TEAM_ID:-FWJYW4S8P8}"
 if [[ "${CONFIGURATION}" == "Debug" ]]; then
   DEFAULT_BUNDLE_ID="boo.peekaboo.mac.debug"
@@ -540,9 +543,15 @@ build_app() {
     APP_NAME="${APP_NAME}" \
     DERIVED_DATA_PATH="${DERIVED_DATA_PATH}" \
     DESTINATION="${DESTINATION}" \
-    DEBUG_CODE_SIGN_IDENTITY="${SIGN_IDENTITY}" \
-    DEBUG_DEVELOPMENT_TEAM="${EXPECTED_TEAM_ID}" \
-    "${BUILD_SCRIPT}"
+    PEEKABOO_BUILD_UNSIGNED=1 \
+    "${BUILD_SCRIPT}" || return 1
+
+  log '==> Sign deployment app with the configured Developer ID identity'
+  "${SIGN_RELEASE_APP_SCRIPT}" \
+    --app "${BUILT_APP_BUNDLE}" \
+    --entitlements "${APP_ENTITLEMENTS}" \
+    --sign-identity "${SIGN_IDENTITY}" \
+    --timestamp-url "${CODESIGN_TIMESTAMP_URL}"
 }
 
 bundle_team_id() {

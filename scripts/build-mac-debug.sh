@@ -53,7 +53,7 @@ echo -e "${CYAN}Building ${SCHEME} macOS app (${CONFIGURATION})...${NC}"
 # signature keeps grants stable across rebuilds. Machines without a
 # development certificate (contributors, CI) fall back to unsigned builds.
 DEBUG_CODE_SIGN_IDENTITY="${DEBUG_CODE_SIGN_IDENTITY:-Apple Development}"
-if [ -z "${DEBUG_DEVELOPMENT_TEAM:-}" ]; then
+if [[ "${PEEKABOO_BUILD_UNSIGNED:-0}" != "1" && -z "${DEBUG_DEVELOPMENT_TEAM:-}" ]]; then
     dev_cert_name=$(security find-identity -v -p codesigning 2>/dev/null \
         | sed -n 's/.*"\('"$DEBUG_CODE_SIGN_IDENTITY"'[^"]*\)".*/\1/p' | head -n 1)
     if [ -n "$dev_cert_name" ]; then
@@ -65,7 +65,15 @@ if [ -z "${DEBUG_DEVELOPMENT_TEAM:-}" ]; then
     fi
 fi
 
-if [ -n "${DEBUG_DEVELOPMENT_TEAM:-}" ]; then
+if [[ "${PEEKABOO_BUILD_UNSIGNED:-0}" == "1" ]]; then
+    echo -e "${CYAN}Building unsigned for explicit post-build signing${NC}"
+    SIGNING_SETTINGS=(
+        CODE_SIGN_IDENTITY=""
+        CODE_SIGNING_REQUIRED=NO
+        CODE_SIGN_ENTITLEMENTS=""
+        CODE_SIGNING_ALLOWED=NO
+    )
+elif [ -n "${DEBUG_DEVELOPMENT_TEAM:-}" ]; then
     if [[ "$DEBUG_CODE_SIGN_IDENTITY" == "Developer ID Application:"* ]]; then
         BUILD_CODE_SIGN_STYLE=Manual
     else
