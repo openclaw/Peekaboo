@@ -162,12 +162,28 @@ struct PeekabooBridgeTypedResultReceiptBindingTests {
 
         let unconstrainedRequest = PeekabooBridgeRequest.inspectAccessibilityTree(.init(
             windowContext: WindowContext(windowID: fixture.windowIdentity.windowID)))
+        let hostConfiguredResponse = PeekabooBridgeResponse.elementDetection(Self.detection(
+            snapshotID: "host-configured-tree",
+            context: Self.resolvedTreeContext(
+                fixture: fixture,
+                traversalBudget: AXTraversalBudget(
+                    maxDepth: 7,
+                    maxElementCount: 321,
+                    maxChildrenPerNode: 45))))
+        let hostConfiguredBundle = try await Self.signedBundle(
+            fixture: fixture,
+            sequence: UInt64(validSelectors.count + contradictorySelectors.count),
+            request: unconstrainedRequest,
+            response: hostConfiguredResponse,
+            target: .window(fixture.windowIdentity))
+        try PeekabooBridgeOperationReceiptSemantics.validateReceiptCarriage(
+            hostConfiguredBundle.receipt.payload,
+            request: unconstrainedRequest,
+            response: hostConfiguredResponse)
+
         let hostileRefinements = [
             Self.resolvedTreeContext(fixture: fixture, shouldFocusWebContent: true),
             Self.resolvedTreeContext(fixture: fixture, includeMenuBarElements: false),
-            Self.resolvedTreeContext(
-                fixture: fixture,
-                traversalBudget: AXTraversalBudget(maxDepth: 1)),
             Self.resolvedTreeContext(fixture: fixture, requiresFreshAccessibilityTree: true),
             Self.resolvedTreeContext(fixture: fixture, accessibilityTimeoutSeconds: 3),
         ]
@@ -176,7 +192,7 @@ struct PeekabooBridgeTypedResultReceiptBindingTests {
                 Self.detection(snapshotID: "hostile-tree", context: context))
             let bundle = try await Self.signedBundle(
                 fixture: fixture,
-                sequence: UInt64(validSelectors.count + contradictorySelectors.count + offset),
+                sequence: UInt64(validSelectors.count + contradictorySelectors.count + 1 + offset),
                 request: unconstrainedRequest,
                 response: forgedResponse,
                 target: .window(fixture.windowIdentity))

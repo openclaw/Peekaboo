@@ -40,10 +40,7 @@ enum PeekabooBridgeWindowContextBinding {
                 requested.includeMenuBarElements,
                 with: actual.includeMenuBarElements,
                 defaultingTo: true) &&
-            self.satisfies(
-                requested.traversalBudget,
-                with: actual.traversalBudget,
-                defaultingTo: AXTraversalBudget()) &&
+            self.traversalBudget(actual.traversalBudget, matches: requested.traversalBudget) &&
             self.satisfies(
                 requested.requiresFreshAccessibilityTree,
                 with: actual.requiresFreshAccessibilityTree,
@@ -93,5 +90,16 @@ enum PeekabooBridgeWindowContextBinding {
         guard let actual else { return false }
         return actual.localizedCaseInsensitiveCompare(requested) == .orderedSame ||
             (!requested.isEmpty && actual.localizedCaseInsensitiveContains(requested))
+    }
+
+    private static func traversalBudget(_ actual: AXTraversalBudget?, matches requested: AXTraversalBudget?) -> Bool {
+        if let requested {
+            return actual == AXTraversalBudget(
+                maxDepth: max(0, requested.maxDepth),
+                maxElementCount: max(0, requested.maxElementCount),
+                maxChildrenPerNode: max(0, requested.maxChildrenPerNode))
+        }
+        guard let actual else { return true }
+        return actual.maxDepth > 0 && actual.maxElementCount > 0 && actual.maxChildrenPerNode > 0
     }
 }
