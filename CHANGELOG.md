@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Fail closed instead of generating or accepting a release-qualification manifest until final-cycle liveness witnesses have a cryptographic trust anchor.
 ## [4.2.2] - 2026-08-20
 
 ### Highlights

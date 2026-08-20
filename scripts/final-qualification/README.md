@@ -326,7 +326,13 @@ node "$TOOLS/validate-concurrent-run.mjs" \
 
 Success requires the exact four-event coordinator lifecycle ending in eligible `completed` with the summary's exact size and SHA-256, a closed version-2 certification summary whose structural, foreground-postcondition, slot, first-party, and offline sub-gates all passed with no failures, coordinator zero exit, one authenticated protocol-1.31 Agent terminal success, exactly four mapped and signed background mutations with no extra dispatch, six in-window semantic readbacks on the two authenticated, physically disjoint controlled fixtures, an untruncated trace with no Shell/foreground/skipped/failed/possibly-dispatched call, the calibrated emitter, both integrated-CU readbacks, and a signed Agent lifetime covering the entire authoritative `operations-start` through `operations-complete` monitor interval. The terminal bundle's inner coordination and acknowledgement child/requester identities must equal the outer receipt. At least one signed Agent mutation must complete strictly before the integrated-CU perform readback and at least one must start strictly afterward; shared process lifetime or equal boundary timestamps are not accepted as concurrent progress. The integrated-CU perform timestamp must be within two seconds of the retained readback file mtime, and both values form the authenticated interleaving pivot. Manifest generation and verification independently rederive that pivot, bind the terminal identities and acknowledgement to the local/during readiness roots and guard authorization, and recheck the Agent action intervals, closed summary success and event commitment, controlled-fixture ownership, readback/dispatch order, and fresh live bundle authentication instead of trusting the concurrent report or caller-authored validator JSON.
 
-## 6. Generate and verify the final qualification manifest
+## 6. Final qualification manifest is disabled pending a trust anchor
+
+Production `generate` and `verify` currently fail closed. The retained crash, monitor, Playground semantic,
+and process-exit witnesses do not yet have one cryptographic trust anchor that proves their live producer
+generations after capture. Hashing same-user evidence files is not sufficient release authority. The `tooling`
+action below remains available to freeze the reviewed source set; structural regression tests use the explicit
+non-release claim `structural-validation-only`.
 
 First create the immutable, self-verifying source manifest for the frozen qualification tools. The file order is part of the aggregate:
 
@@ -406,7 +412,12 @@ node "$TOOLS/qualification-manifest.mjs" verify \
   > /private/tmp/peekaboo-qualification-sealed-verification.json
 ```
 
-The generated version-2 manifest hashes every file, including both authenticated artifact manifests and their cross-binding, the qualification-tools file manifest, both installed inventories and elevation receipts, six process snapshots, collector, executable-policy reports/scanner, plan constructor, and crash scanner. It also carries the two derived same-ID Agent-to-controller controlled-fixture bindings. It binds a version-2 domain-separated aggregate and states both `qualification_claim:"release-qualification"` and `adjuncts_are_live_v4_slots:false`. Verification rehashes the tool source tree and re-runs installed-parity, artifact/source/tool/elevation binding, task-root/process-policy/coverage binding, cycle uniqueness, crash, concurrent/interleaving, signed-bundle, authenticated controlled-target summary, controller, process-generation, cross-run, readback, and restoration checks in addition to closed shape, unique paths, bytes, sizes, hashes, and aggregate.
+The two commands above intentionally exit nonzero until the signed final-cycle witness contract is implemented.
+They do not create or accept a `release-qualification` manifest.
+
+Structural version-2 test manifests still hash every file and rerun the complete evidence graph, but they carry
+`qualification_claim:"structural-validation-only"`. Production does not generate or accept that test claim as
+release authority.
 
 ## Current product-output gaps that remain explicit hard boundaries
 

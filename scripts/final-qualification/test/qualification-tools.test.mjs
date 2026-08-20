@@ -24,9 +24,11 @@ import {
   validatePlaygroundAlertLifecycle,
 } from '../playground-alert-lifecycle.mjs';
 import {
-  generateManifest as generateManifestProduction,
+  generateManifest as generateReleaseManifest,
+  generateStructuralManifestForTesting as generateManifestProduction,
   generateSourceManifest,
-  verifyManifest as verifyManifestProduction,
+  verifyManifest as verifyReleaseManifest,
+  verifyStructuralManifestForTesting as verifyManifestProduction,
   verifySourceManifest,
 } from '../qualification-manifest.mjs';
 import {
@@ -1238,6 +1240,37 @@ function projectionFixture(root) {
   };
   return { fixtureHome, spec, emitterExecutable };
 }
+
+test('release qualification generation and verification fail closed without a trust anchor', () => {
+  const root = fs.mkdtempSync('/private/tmp/pbq-release-disabled-');
+  fs.chmodSync(root, 0o700);
+  try {
+    const missingInput = path.join(root, 'missing-input.json');
+    const missingManifest = path.join(root, 'missing-manifest.json');
+    const output = path.join(root, 'release-manifest.json');
+    const refusal = /Release qualification is disabled until .* cryptographic trust anchor/;
+
+    assert.throws(() => generateReleaseManifest(missingInput, output), refusal);
+    assert.throws(() => verifyReleaseManifest(missingManifest), refusal);
+    assert.equal(fs.existsSync(output), false);
+
+    const helper = path.join(toolRoot, 'qualification-manifest.mjs');
+    const generate = spawnSync(process.execPath, [
+      helper, 'generate', '--input', missingInput, '--output', output,
+    ], { encoding: 'utf8' });
+    assert.notEqual(generate.status, 0);
+    assert.match(generate.stderr, refusal);
+    assert.equal(fs.existsSync(output), false);
+
+    const verify = spawnSync(process.execPath, [
+      helper, 'verify', '--manifest', missingManifest,
+    ], { encoding: 'utf8' });
+    assert.notEqual(verify.status, 0);
+    assert.match(verify.stderr, refusal);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('closed raw receipts project deterministic live-v4 bindings and reject ambiguity', () => {
   const root = fs.mkdtempSync('/private/tmp/pbq-tools-project-');

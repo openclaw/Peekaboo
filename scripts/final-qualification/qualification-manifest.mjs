@@ -3713,7 +3713,11 @@ function validateSemanticEvidence(evidence, authenticateBundle) {
   );
 }
 
-export function generateManifest(inputPath, outputPath, {
+const RELEASE_QUALIFICATION_DISABLED =
+  'Release qualification is disabled until final-cycle crash, monitor, semantic, and process-exit witnesses have a cryptographic trust anchor.';
+const STRUCTURAL_TEST_CLAIM = 'structural-validation-only';
+
+function generateManifestWithClaim(inputPath, outputPath, qualificationClaim, {
   authenticateBundle = authenticateLiveBridgeBundle,
 } = {}) {
   const input = readStableJSON(inputPath, 'qualification manifest input').value;
@@ -3726,7 +3730,7 @@ export function generateManifest(inputPath, outputPath, {
   });
   const manifest = {
     version: 2,
-    qualification_claim: 'release-qualification',
+    qualification_claim: qualificationClaim,
     adjuncts_are_live_v4_slots: false,
     evidence,
     evidence_aggregate_sha256: aggregateSHA256('evidence-manifest', evidence),
@@ -3735,7 +3739,7 @@ export function generateManifest(inputPath, outputPath, {
   return { manifest, manifest_sha256: written.sha256 };
 }
 
-export function verifyManifest(manifestPath, {
+function verifyManifestWithClaim(manifestPath, qualificationClaim, {
   authenticateBundle = authenticateLiveBridgeBundle,
 } = {}) {
   const retained = readStableJSON(manifestPath, 'qualification manifest');
@@ -3745,7 +3749,7 @@ export function verifyManifest(manifestPath, {
     'evidence_aggregate_sha256',
   ], 'qualification manifest');
   requireCondition(manifest.version === 2
-    && manifest.qualification_claim === 'release-qualification'
+    && manifest.qualification_claim === qualificationClaim
     && manifest.adjuncts_are_live_v4_slots === false,
   'qualification manifest claim metadata is invalid');
   const checkedPaths = new Set();
@@ -3784,6 +3788,24 @@ export function verifyManifest(manifestPath, {
     evidence_aggregate_sha256: manifest.evidence_aggregate_sha256,
     adjuncts_are_live_v4_slots: false,
   };
+}
+
+export function generateManifest() {
+  throw new TypeError(RELEASE_QUALIFICATION_DISABLED);
+}
+
+export function verifyManifest() {
+  throw new TypeError(RELEASE_QUALIFICATION_DISABLED);
+}
+
+// Structural regression tests keep exercising the complete evidence graph without
+// minting or accepting a release claim while the cryptographic trust anchor is absent.
+export function generateStructuralManifestForTesting(inputPath, outputPath, options = {}) {
+  return generateManifestWithClaim(inputPath, outputPath, STRUCTURAL_TEST_CLAIM, options);
+}
+
+export function verifyStructuralManifestForTesting(manifestPath, options = {}) {
+  return verifyManifestWithClaim(manifestPath, STRUCTURAL_TEST_CLAIM, options);
 }
 
 function invokedAsScript() {
