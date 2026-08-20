@@ -3,7 +3,8 @@ import Tachikoma
 @available(macOS 14.0, *)
 extension PeekabooAgentService {
     static let freshPerceptionTerminalRejection =
-        "Completion rejected: call `see` successfully before claiming the result of the last UI mutation."
+        "Completion rejected: call `inspect_ui` or `see` successfully before claiming the result of the last " +
+        "UI mutation."
 
     static let completionEvidenceTerminalRejectionPrefix = "Completion rejected: "
     static let invalidTurnBoundaryReason =

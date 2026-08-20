@@ -110,14 +110,14 @@ final class AgentTurnBoundary {
         case .initial:
             self.perceptionState = .required
             return .continueNextStep(
-                reason: "Stopped after \(normalizedName); call `see` before the next UI action.")
+                reason: "Stopped after \(normalizedName); call `inspect_ui` or `see` before the next UI action.")
         case .perceived:
             self.perceptionState = .required
             return .continueNextStep(
-                reason: "Stopped after \(normalizedName); call `see` again before the next UI action.")
+                reason: "Stopped after \(normalizedName); call `inspect_ui` or `see` again before the next UI action.")
         case .required:
             return .skipUntilPerception(
-                reason: "Skipped \(normalizedName); call `see` successfully before another UI action.")
+                reason: "Skipped \(normalizedName); call `inspect_ui` or `see` successfully before another UI action.")
         }
     }
 
@@ -137,7 +137,7 @@ final class AgentTurnBoundary {
 
         self.perceptionState = .required
         return .continueNextStep(
-            reason: "Stopped after \(normalizedName); call `see` before the next UI action.")
+            reason: "Stopped after \(normalizedName); call `inspect_ui` or `see` before the next UI action.")
     }
 
     func recordSuccessfulCompletion(

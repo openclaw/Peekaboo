@@ -270,8 +270,8 @@ struct AgentRuntimeBoundaryRegressionTests {
         #expect(provider.requestsContainingContinueBoundary == [false, true, true])
         #expect(provider.continueBoundaryReasons == [
             nil,
-            "Stopped after type; call `see` again before the next UI action.",
-            "Stopped after click; call `see` again before the next UI action.",
+            "Stopped after type; call `inspect_ui` or `see` again before the next UI action.",
+            "Stopped after click; call `inspect_ui` or `see` again before the next UI action.",
         ])
         #expect(await executions.snapshot() == ["see", "type", "see", "click", "done"])
         #expect(outcome.steps.count == 3)
@@ -343,7 +343,7 @@ struct AgentRuntimeBoundaryRegressionTests {
         #expect(outcome.steps.first?.toolResults.map(\.toolCallId) == ["type-1", "click-1"])
         #expect(outcome.steps.first?.toolResults.map(\.isError) == [false, true])
         #expect(provider.continueBoundaryReasons[1] ==
-            "Stopped after type; call `see` before the next UI action.")
+            "Stopped after type; call `inspect_ui` or `see` before the next UI action.")
         #expect(!outcome.reachedStepLimit)
     }
 

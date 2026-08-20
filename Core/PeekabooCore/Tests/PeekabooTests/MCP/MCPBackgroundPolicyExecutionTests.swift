@@ -197,6 +197,82 @@ struct MCPBackgroundPolicyExecutionTests {
     }
 
     @Test
+    func `exact non-dialog observation reaches set value while a modal snapshot stays fail closed`() async throws {
+        let bounds = CGRect(x: 100, y: 50, width: 1200, height: 800)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 333,
+            ownerProcessStartIdentity: 33,
+            capturedBounds: bounds)
+        let window = ServiceWindowInfo(
+            windowID: 42,
+            title: "Playground",
+            bounds: bounds,
+            index: 0,
+            mutationIdentity: identity)
+        let applications = await MainActor.run {
+            MockApplicationService(applications: [ServiceApplicationInfo(
+                processIdentifier: 333,
+                processStartIdentity: 33,
+                bundleIdentifier: "boo.peekaboo.playground.debug",
+                name: "Playground")])
+        }
+        let windowContext = WindowContext(
+            applicationName: "Playground",
+            applicationBundleId: "boo.peekaboo.playground.debug",
+            applicationProcessId: 333,
+            windowTitle: window.title,
+            windowID: window.windowID,
+            windowBounds: window.bounds,
+            windowMutationIdentity: identity)
+
+        for isDialog in [false, true] {
+            await Self.uiSnapshots.removeAllSnapshots()
+            let mirrored = await Self.uiSnapshots.createSnapshot()
+            let snapshotID = await mirrored.id
+            await mirrored.setTargetMetadata(from: windowContext)
+            let detection = ElementDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: "",
+                elements: DetectedElements(textFields: [DetectedElement(
+                    id: "elem_18",
+                    type: .textField,
+                    label: "Type here...",
+                    bounds: CGRect(x: 120, y: 100, width: 500, height: 24),
+                    isEnabled: true,
+                    attributes: ["identifier": "basic-text-field"])]),
+                metadata: DetectionMetadata(
+                    detectionTime: 0.01,
+                    elementCount: 1,
+                    method: "AXorcist",
+                    windowContext: windowContext,
+                    isDialog: isDialog))
+            let context = await MCPToolTestHelpers.makeContext(
+                applications: applications,
+                windows: PointerPolicyWindowService(window: window),
+                snapshots: InMemorySnapshotManager(detectionResult: detection),
+                snapshotOwner: Self.uiSnapshots.owner,
+                executionPolicy: .backgroundOnly)
+            let counter = BackgroundPolicyInvocationCounter()
+
+            let response = try await context.execute(
+                tool: BackgroundPolicyMutationProbe(name: "set_value", counter: counter),
+                arguments: ToolArguments(raw: [
+                    "on": "elem_18",
+                    "value": "updated",
+                    "snapshot": snapshotID,
+                ]))
+
+            #expect(response.isError == isDialog)
+            #expect(await counter.invocationCount == (isDialog ? 0 : 1))
+            if isDialog {
+                #expect(response.meta?.objectValue?["refusal_reason"] == .string("target_unavailable"))
+                #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+            }
+        }
+    }
+
+    @Test
     func `App tool lifecycle examples include required foreground consent`() async {
         let context = await MCPToolTestHelpers.makeContext(snapshotOwner: Self.uiSnapshots.owner)
         let description = AppTool(context: context).description
@@ -606,8 +682,11 @@ private struct BackgroundPolicyMutationProbe: MCPTool {
                 "button": SchemaBuilder.string(),
                 "bundleId": SchemaBuilder.string(),
                 "name": SchemaBuilder.string(),
+                "on": SchemaBuilder.string(),
                 "pid": SchemaBuilder.integer(),
+                "snapshot": SchemaBuilder.string(),
                 "text": SchemaBuilder.string(),
+                "value": SchemaBuilder.string(),
             ],
             required: [])
     }

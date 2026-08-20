@@ -51,7 +51,7 @@ struct AgentTurnBoundaryTranscriptTests {
         #expect(skippedJSON["skipped"] as? Bool == true)
         #expect((skippedJSON["reason"] as? String)?.contains("click") == true)
         #expect(service.turnBoundarySignal(from: step.toolResults) == .continueNextStep(
-            reason: "Stopped after click; call `see` again before the next UI action."))
+            reason: "Stopped after click; call `inspect_ui` or `see` again before the next UI action."))
         #expect(service.turnBoundaryStopReason(from: step.toolResults) == nil)
 
         let skippedBoundary = try #require(skippedJSON["turn_boundary"] as? [String: Any])
@@ -101,7 +101,7 @@ struct AgentTurnBoundaryTranscriptTests {
 
         #expect(step.toolResults.count == 2)
         #expect(service.turnBoundarySignal(from: step.toolResults) == .continueNextStep(
-            reason: "Stopped after browser; call `see` before the next UI action."))
+            reason: "Stopped after browser; call `inspect_ui` or `see` before the next UI action."))
         let skipped = try #require(try step.toolResults[1].result.toJSON() as? [String: Any])
         #expect(skipped["skipped"] as? Bool == true)
     }
@@ -147,7 +147,7 @@ struct AgentTurnBoundaryTranscriptTests {
 
         #expect(step.toolResults.count == 2)
         #expect(service.turnBoundarySignal(from: step.toolResults) == .continueNextStep(
-            reason: "Stopped after browser; call `see` before the next UI action."))
+            reason: "Stopped after browser; call `inspect_ui` or `see` before the next UI action."))
         #expect(step.toolResults[1].isError)
     }
 
@@ -172,7 +172,7 @@ struct AgentTurnBoundaryTranscriptTests {
         ])
 
         #expect(restored.record(toolName: "click") == .skipUntilPerception(
-            reason: "Skipped click; call `see` successfully before another UI action."))
+            reason: "Skipped click; call `inspect_ui` or `see` successfully before another UI action."))
     }
 
     @Test
@@ -221,7 +221,7 @@ struct AgentTurnBoundaryTranscriptTests {
 
         #expect(step.toolResults.count == 2)
         #expect(service.turnBoundarySignal(from: step.toolResults) == .continueNextStep(
-            reason: "Stopped after app; call `see` before the next UI action."))
+            reason: "Stopped after app; call `inspect_ui` or `see` before the next UI action."))
         #expect(step.toolResults[1].isError)
     }
 
@@ -248,7 +248,7 @@ struct AgentTurnBoundaryTranscriptTests {
         ])
 
         #expect(restored.record(toolName: "click") == .skipUntilPerception(
-            reason: "Skipped click; call `see` successfully before another UI action."))
+            reason: "Skipped click; call `inspect_ui` or `see` successfully before another UI action."))
     }
 
     @Test
@@ -355,7 +355,7 @@ struct AgentTurnBoundaryTranscriptTests {
             #expect(service.turnBoundarySignal(from: result) == .stopAgent(
                 reason: PeekabooAgentService.invalidTurnBoundaryReason))
             #expect(restored.record(toolName: "click") == .skipUntilPerception(
-                reason: "Skipped click; call `see` successfully before another UI action."))
+                reason: "Skipped click; call `inspect_ui` or `see` successfully before another UI action."))
         }
 
         let malformedSingleBoundaries: [(String, AnyAgentToolValue)] = [

@@ -257,7 +257,10 @@ enum DetachedAXObservationWorker {
         self.prepare(window, deadline: deadline)
         let title = self.stringAttribute(kAXTitleAttribute, of: window) ?? request.windowTitle ?? "Untitled"
         let bounds = self.frame(of: window)
+        let role = self.stringAttribute(kAXRoleAttribute, of: window) ?? ""
         let subrole = self.stringAttribute(kAXSubroleAttribute, of: window) ?? ""
+        let identifier = self.stringAttribute(kAXIdentifierAttribute, of: window) ?? ""
+        let isModal = self.boolAttribute(kAXModalAttribute, of: window)
         var state = TraversalState()
         self.process(
             window,
@@ -286,7 +289,13 @@ enum DetachedAXObservationWorker {
             windowID: AXWindowIDResolver.windowID(of: window).map(Int.init) ?? request.windowID,
             windowTitle: title,
             windowBounds: bounds,
-            isDialog: ["AXDialog", "AXSystemDialog", "AXSheet"].contains(subrole) || self.isFileDialogTitle(title),
+            isDialog: DialogElementClassifier.isObservationDialog(DialogElementEvidence(
+                role: role,
+                subrole: subrole,
+                roleDescription: "",
+                identifier: identifier,
+                title: title,
+                isModal: isModal)),
             truncationInfo: state.truncationInfo)
         try validateIdentity(request)
         return result

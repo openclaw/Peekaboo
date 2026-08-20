@@ -9,7 +9,6 @@ struct CachedDetachedAXObservationContext: Sendable {
     let windowID: Int?
     let windowTitle: String?
     let windowBounds: CGRect?
-    let isDialog: Bool
 }
 
 struct DetachedAXObservationOutcome: Sendable {
@@ -234,6 +233,7 @@ public final class ElementDetectionService {
                 self.axTreeCache.store(
                     detectedElements,
                     truncationInfo: collection.truncationInfo,
+                    isDialog: windowResolution.isDialog,
                     for: cacheKey)
             }
             usedCache = false
@@ -285,7 +285,7 @@ public final class ElementDetectionService {
                 windowID: cachedContext.windowID,
                 windowTitle: cachedContext.windowTitle,
                 windowBounds: cachedContext.windowBounds,
-                isDialog: cachedContext.isDialog,
+                isDialog: cached.isDialog ?? true,
                 truncationInfo: cached.truncationInfo,
                 usedCache: true)
         }
@@ -295,6 +295,7 @@ public final class ElementDetectionService {
             self.axTreeCache.store(
                 detachedResult.elements,
                 truncationInfo: detachedResult.truncationInfo,
+                isDialog: detachedResult.isDialog,
                 for: cacheKey)
         }
         return DetachedAXObservationOutcome(
@@ -379,8 +380,7 @@ public final class ElementDetectionService {
                 processStartIdentity: processStartIdentity,
                 windowID: context?.windowID,
                 windowTitle: context?.windowTitle,
-                windowBounds: context?.windowBounds,
-                isDialog: false))
+                windowBounds: context?.windowBounds))
         {
             if let expectedWindowGeneration = context?.windowMutationIdentity?.ownerProcessStartIdentity,
                expectedWindowGeneration != processStartIdentity

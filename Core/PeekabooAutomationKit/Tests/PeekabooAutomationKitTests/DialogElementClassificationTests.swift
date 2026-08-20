@@ -65,6 +65,42 @@ struct DialogElementClassificationTests {
         #expect(!DialogElementClassifier.isDialog(evidence))
     }
 
+    @Test
+    func `ordinary non-modal SwiftUI dialog-subrole window remains mutation eligible`() {
+        let ordinaryWindow = DialogElementEvidence(
+            role: "AXWindow",
+            subrole: "AXDialog",
+            roleDescription: "dialog",
+            identifier: "SwiftUI.WindowGroup-AppWindow-1",
+            title: "Playground",
+            isModal: false)
+        let modalWindow = DialogElementEvidence(
+            role: "AXWindow",
+            subrole: "AXDialog",
+            roleDescription: "dialog",
+            identifier: "",
+            title: "Confirmation",
+            isModal: true)
+        let unknownModality = DialogElementEvidence(
+            role: "AXWindow",
+            subrole: "AXDialog",
+            roleDescription: "dialog",
+            identifier: "",
+            title: "Confirmation")
+        let nonModalSheet = DialogElementEvidence(
+            role: "AXWindow",
+            subrole: "AXSheet",
+            roleDescription: "sheet",
+            identifier: "",
+            title: "Save",
+            isModal: false)
+
+        #expect(!DialogElementClassifier.isObservationDialog(ordinaryWindow))
+        #expect(DialogElementClassifier.isObservationDialog(modalWindow))
+        #expect(DialogElementClassifier.isObservationDialog(unknownModality))
+        #expect(DialogElementClassifier.isObservationDialog(nonModalSheet))
+    }
+
     @Test(arguments: [
         ("AXSheet", ""),
         ("AXDialog", ""),
@@ -156,6 +192,45 @@ struct DialogElementClassificationTests {
             roleDescription: "standard window",
             identifier: "",
             title: title)
+
+        #expect(DialogElementClassifier.isObservationDialog(evidence))
+    }
+
+    @Test(arguments: ["Open", "Save", "Export", "Import", "Save As Document"])
+    func `non-modal AXDialog shape never overrides exact file dialog titles`(title: String) {
+        let evidence = DialogElementEvidence(
+            role: "AXWindow",
+            subrole: "AXDialog",
+            roleDescription: "dialog",
+            identifier: "",
+            title: title,
+            isModal: false)
+
+        #expect(DialogElementClassifier.isObservationDialog(evidence))
+    }
+
+    @Test(arguments: ["NSOpenPanel", "NSSavePanel"])
+    func `non-modal localized file panels remain observation dialogs by identifier`(identifier: String) {
+        let evidence = DialogElementEvidence(
+            role: "AXWindow",
+            subrole: "AXDialog",
+            roleDescription: "dialog",
+            identifier: identifier,
+            title: "Öffnen",
+            isModal: false)
+
+        #expect(DialogElementClassifier.isObservationDialog(evidence))
+    }
+
+    @Test(arguments: ["", "NSDocumentController", "SwiftUI.WindowGroup"])
+    func `unproven non-modal AXDialog shapes remain observation dialogs`(identifier: String) {
+        let evidence = DialogElementEvidence(
+            role: "AXWindow",
+            subrole: "AXDialog",
+            roleDescription: "dialog",
+            identifier: identifier,
+            title: "Benutzerdefiniert",
+            isModal: false)
 
         #expect(DialogElementClassifier.isObservationDialog(evidence))
     }

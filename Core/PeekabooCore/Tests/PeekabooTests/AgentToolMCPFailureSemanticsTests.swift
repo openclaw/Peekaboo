@@ -627,7 +627,7 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(trace.disposition == .executedFailed)
         #expect(trace.actionOutcome == outcome.projection)
         #expect(context.turnBoundary.record(toolName: "click") == .continueNextStep(
-            reason: "Stopped after click; call `see` before the next UI action."))
+            reason: "Stopped after click; call `inspect_ui` or `see` before the next UI action."))
     }
 
     @Test
@@ -759,7 +759,7 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(summary["mutation_dispatched"]?.boolValue == false)
         #expect(summary["retry_safe"]?.boolValue == true)
         #expect(service.turnBoundarySignal(from: result) == .continueNextStep(
-            reason: "Stopped after click; call `see` before the next UI action."))
+            reason: "Stopped after click; call `inspect_ui` or `see` before the next UI action."))
     }
 
     @Test
@@ -789,7 +789,7 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(trace.disposition == .executedFailed)
         #expect(trace.isError == true)
         #expect(restored.record(toolName: "click") == .continueNextStep(
-            reason: "Stopped after click; call `see` before the next UI action."))
+            reason: "Stopped after click; call `inspect_ui` or `see` before the next UI action."))
     }
 
     @Test

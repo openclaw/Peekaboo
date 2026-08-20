@@ -174,8 +174,9 @@ public struct AgentSystemPrompt {
           Repeat the exact same target and predicates; only a later identical satisfied receipt clears the debt. An
           unrelated predicate on the same window cannot prove the committed postcondition.
         - Emit at most one desktop-mutating tool call in each model response. After that mutation succeeds, Peekaboo
-          ends the provider step and skips later mutations until a fresh successful `see`. You may batch read-only
-          observations, but send the next click, type, scroll, press, or other desktop mutation in a later response.
+          ends the provider step and skips later mutations until a fresh successful observation. Use `inspect_ui`
+          when AX-only state is enough, or `see` when pixels are required. You may batch read-only observations, but
+          send the next click, type, scroll, press, or other desktop mutation in a later response.
         - Prefer `verify_state` over fixed sleeps when waiting for exact window bounds or native element
           existence/value/enabled/selected state. It is observation-only and requires stable fresh AX samples.
           Its predicates are structured JSON objects, never prose strings or AX expressions; follow the tool's

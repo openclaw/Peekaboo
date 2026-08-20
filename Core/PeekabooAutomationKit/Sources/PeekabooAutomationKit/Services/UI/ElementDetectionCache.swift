@@ -32,10 +32,16 @@ import PeekabooFoundation
     public struct CachedElements: Sendable {
         public let elements: [DetectedElement]
         public let truncationInfo: DetectionTruncationInfo?
+        public let isDialog: Bool?
 
-        public init(elements: [DetectedElement], truncationInfo: DetectionTruncationInfo? = nil) {
+        public init(
+            elements: [DetectedElement],
+            truncationInfo: DetectionTruncationInfo? = nil,
+            isDialog: Bool? = nil)
+        {
             self.elements = elements
             self.truncationInfo = truncationInfo
+            self.isDialog = isDialog
         }
     }
 
@@ -89,7 +95,12 @@ import PeekabooFoundation
         return nil
     }
 
-    public func store(_ elements: [DetectedElement], truncationInfo: DetectionTruncationInfo? = nil, for key: Key) {
+    public func store(
+        _ elements: [DetectedElement],
+        truncationInfo: DetectionTruncationInfo? = nil,
+        isDialog: Bool? = nil,
+        for key: Key)
+    {
         if truncationInfo?.deadlineReached == true || truncationInfo?.incompleteAccessibilityRead == true {
             // A retry may use a longer timeout or the target may recover from a transient AX refusal.
             // Remove any older entry too: replaying stale completeness is less honest than recollecting.
@@ -98,7 +109,10 @@ import PeekabooFoundation
         }
         self.entries[key] = Entry(
             cachedAt: self.now(),
-            result: CachedElements(elements: elements, truncationInfo: truncationInfo))
+            result: CachedElements(
+                elements: elements,
+                truncationInfo: truncationInfo,
+                isDialog: isDialog))
     }
 
     public func removeAll() {

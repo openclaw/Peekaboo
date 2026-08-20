@@ -136,7 +136,8 @@ struct AgentRun50PolicyTests {
                 "action": AnyAgentToolValue(string: "launch"),
                 "name": AnyAgentToolValue(string: "TextEdit"),
                 "foreground": AnyAgentToolValue(bool: true),
-            ]) == .continueNextStep(reason: "Stopped after app; call `see` before the next UI action."))
+            ]) == .continueNextStep(
+            reason: "Stopped after app; call `inspect_ui` or `see` before the next UI action."))
 
         let backgroundMenuList = AgentTurnBoundary()
         #expect(backgroundMenuList.record(
@@ -153,6 +154,7 @@ struct AgentRun50PolicyTests {
                 "action": AnyAgentToolValue(string: "list"),
                 "app": AnyAgentToolValue(string: "TextEdit"),
                 "foreground": AnyAgentToolValue(bool: true),
-            ]) == .continueNextStep(reason: "Stopped after menu; call `see` before the next UI action."))
+            ]) == .continueNextStep(
+            reason: "Stopped after menu; call `inspect_ui` or `see` before the next UI action."))
     }
 }

@@ -132,7 +132,9 @@ struct AgentSystemPromptTests {
         let prompt = AgentSystemPrompt.generate()
 
         #expect(prompt.contains("at most one desktop-mutating tool call in each model response"))
-        #expect(prompt.contains("skips later mutations until a fresh successful `see`"))
+        #expect(prompt.contains("skips later mutations until a fresh successful observation"))
+        #expect(prompt.contains("Use `inspect_ui`"))
+        #expect(prompt.contains("or `see` when pixels are required"))
         #expect(prompt.contains("You may batch read-only"))
     }
 

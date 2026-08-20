@@ -153,12 +153,47 @@ struct ElementDetectionServiceDetachedObservationTests {
         #expect(state.requestBuildCount == 2)
     }
 
+    @Test
+    func `cached detached observation preserves the worker dialog verdict`() async throws {
+        let cache = ElementDetectionCache()
+        let cacheKey = try #require(cache.key(windowID: 42, processID: 123, allowWebFocus: false))
+        let state = RunnerState()
+        let service = ElementDetectionService(
+            snapshotManager: nil,
+            applicationService: nil,
+            axTreeCache: cache,
+            detachedAXObservationRunner: { request in
+                state.requests.append(request)
+                return Self.completeResult(request, isDialog: true)
+            })
+
+        let first = try await service.cachedOrRunDetachedAXObservation(
+            cacheKey: cacheKey,
+            invalidatedThrough: nil,
+            cachedContext: Self.cachedContext,
+            makeRequest: { state.makeRequest(timeoutSeconds: 20) })
+        #expect(!first.usedCache)
+        #expect(first.isDialog)
+
+        let second = try await service.cachedOrRunDetachedAXObservation(
+            cacheKey: cacheKey,
+            invalidatedThrough: nil,
+            cachedContext: Self.cachedContext,
+            makeRequest: {
+                Issue.record("A complete cached dialog result must not rerun the AX request")
+                return state.makeRequest(timeoutSeconds: 20)
+            })
+        #expect(second.usedCache)
+        #expect(second.isDialog)
+        #expect(state.requests.count == 1)
+        #expect(state.requestBuildCount == 1)
+    }
+
     private static let cachedContext = CachedDetachedAXObservationContext(
         processStartIdentity: 7,
         windowID: 42,
         windowTitle: "Cached fixture",
-        windowBounds: CGRect(x: 10, y: 20, width: 800, height: 600),
-        isDialog: false)
+        windowBounds: CGRect(x: 10, y: 20, width: 800, height: 600))
 
     private nonisolated static func resolutionFailure(
         _ request: DetachedAXObservationRequest,
@@ -207,7 +242,8 @@ struct ElementDetectionServiceDetachedObservationTests {
         attributes: [:])
 
     private nonisolated static func completeResult(
-        _ request: DetachedAXObservationRequest) -> DetachedAXObservationResult
+        _ request: DetachedAXObservationRequest,
+        isDialog: Bool = false) -> DetachedAXObservationResult
     {
         DetachedAXObservationResult(
             elements: [
@@ -224,7 +260,7 @@ struct ElementDetectionServiceDetachedObservationTests {
             windowID: request.windowID,
             windowTitle: "Injected fixture",
             windowBounds: request.expectedWindowBounds,
-            isDialog: false,
+            isDialog: isDialog,
             truncationInfo: nil)
     }
 }

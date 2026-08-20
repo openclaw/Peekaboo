@@ -28,9 +28,9 @@ struct AgentTurnBoundaryTests {
         let boundary = AgentTurnBoundary()
 
         #expect(boundary.record(toolName: "click") == .continueNextStep(
-            reason: "Stopped after click; call `see` before the next UI action."))
+            reason: "Stopped after click; call `inspect_ui` or `see` before the next UI action."))
         #expect(boundary.record(toolName: "type") == .skipUntilPerception(
-            reason: "Skipped type; call `see` successfully before another UI action."))
+            reason: "Skipped type; call `inspect_ui` or `see` successfully before another UI action."))
     }
 
     @Test
@@ -117,13 +117,13 @@ struct AgentTurnBoundaryTests {
         #expect(boundary.record(toolName: "see") == .continueTurn)
         boundary.recordSuccessfulCompletion(toolName: "see")
         #expect(boundary.record(toolName: "type") == .continueNextStep(
-            reason: "Stopped after type; call `see` again before the next UI action."))
+            reason: "Stopped after type; call `inspect_ui` or `see` again before the next UI action."))
         #expect(boundary.record(toolName: "click") == .skipUntilPerception(
-            reason: "Skipped click; call `see` successfully before another UI action."))
+            reason: "Skipped click; call `inspect_ui` or `see` successfully before another UI action."))
         #expect(boundary.record(toolName: "see") == .continueTurn)
         boundary.recordSuccessfulCompletion(toolName: "see")
         #expect(boundary.record(toolName: "click") == .continueNextStep(
-            reason: "Stopped after click; call `see` again before the next UI action."))
+            reason: "Stopped after click; call `inspect_ui` or `see` again before the next UI action."))
     }
 
     @Test
@@ -139,10 +139,10 @@ struct AgentTurnBoundaryTests {
         #expect(try boundary.recordResult(
             toolName: "browser",
             result: Self.canonicalResult(outcome)) == .continueNextStep(
-            reason: "Stopped after browser; call `see` before the next UI action."))
+            reason: "Stopped after browser; call `inspect_ui` or `see` before the next UI action."))
         #expect(boundary.requiresFreshPerception)
         #expect(boundary.record(toolName: "click") == .skipUntilPerception(
-            reason: "Skipped click; call `see` successfully before another UI action."))
+            reason: "Skipped click; call `inspect_ui` or `see` successfully before another UI action."))
     }
 
     @Test
@@ -159,7 +159,7 @@ struct AgentTurnBoundaryTests {
         #expect(try boundary.recordResult(
             toolName: "browser",
             result: Self.canonicalResult(outcome)) == .continueNextStep(
-            reason: "Stopped after browser; call `see` before the next UI action."))
+            reason: "Stopped after browser; call `inspect_ui` or `see` before the next UI action."))
         #expect(boundary.requiresFreshPerception)
     }
 
@@ -179,7 +179,7 @@ struct AgentTurnBoundaryTests {
             ])) == .continueTurn)
         #expect(!boundary.requiresFreshPerception)
         #expect(boundary.record(toolName: "click") == .continueNextStep(
-            reason: "Stopped after click; call `see` again before the next UI action."))
+            reason: "Stopped after click; call `inspect_ui` or `see` again before the next UI action."))
     }
 
     @Test
@@ -209,7 +209,7 @@ struct AgentTurnBoundaryTests {
             result: Self.canonicalResult(.confirmedNoChange(route: .bridge))) == .continueTurn)
         #expect(!noOpBoundary.requiresFreshPerception)
         #expect(noOpBoundary.record(toolName: "click") == .continueNextStep(
-            reason: "Stopped after click; call `see` before the next UI action."))
+            reason: "Stopped after click; call `inspect_ui` or `see` before the next UI action."))
 
         let dispatchedBoundary = AgentTurnBoundary()
         let indeterminate = DesktopActionOutcome.indeterminate(
@@ -222,7 +222,7 @@ struct AgentTurnBoundaryTests {
         #expect(try dispatchedBoundary.recordResult(
             toolName: "app",
             result: Self.canonicalResult(indeterminate)) == .continueNextStep(
-            reason: "Stopped after app; call `see` before the next UI action."))
+            reason: "Stopped after app; call `inspect_ui` or `see` before the next UI action."))
         #expect(dispatchedBoundary.requiresFreshPerception)
     }
 
@@ -246,11 +246,11 @@ struct AgentTurnBoundaryTests {
         #expect(boundary.record(toolName: "see") == .continueTurn)
         boundary.recordSuccessfulCompletion(toolName: "see")
         #expect(boundary.record(toolName: "type") == .continueNextStep(
-            reason: "Stopped after type; call `see` again before the next UI action."))
+            reason: "Stopped after type; call `inspect_ui` or `see` again before the next UI action."))
         #expect(boundary.record(toolName: "inspect_ui") == .continueTurn)
         boundary.recordSuccessfulCompletion(toolName: "inspect_ui")
         #expect(boundary.record(toolName: "click") == .continueNextStep(
-            reason: "Stopped after click; call `see` again before the next UI action."))
+            reason: "Stopped after click; call `inspect_ui` or `see` again before the next UI action."))
     }
 
     @Test
@@ -260,10 +260,10 @@ struct AgentTurnBoundaryTests {
         #expect(boundary.record(toolName: "see") == .continueTurn)
         boundary.recordSuccessfulCompletion(toolName: "see")
         #expect(boundary.record(toolName: "type") == .continueNextStep(
-            reason: "Stopped after type; call `see` again before the next UI action."))
+            reason: "Stopped after type; call `inspect_ui` or `see` again before the next UI action."))
         #expect(boundary.record(toolName: "see") == .continueTurn)
         #expect(boundary.record(toolName: "click") == .skipUntilPerception(
-            reason: "Skipped click; call `see` successfully before another UI action."))
+            reason: "Skipped click; call `inspect_ui` or `see` successfully before another UI action."))
     }
 
     @Test
@@ -282,7 +282,7 @@ struct AgentTurnBoundaryTests {
         #expect(boundary.record(toolName: "see", arguments: observationTarget) == .continueTurn)
         boundary.recordSuccessfulCompletion(toolName: "see", arguments: observationTarget)
         #expect(boundary.record(toolName: "type") == .continueNextStep(
-            reason: "Stopped after type; call `see` again before the next UI action."))
+            reason: "Stopped after type; call `inspect_ui` or `see` again before the next UI action."))
         #expect(boundary.record(toolName: "see", arguments: observationTarget) == .continueTurn)
         boundary.recordSuccessfulCompletion(
             toolName: "see",
@@ -516,7 +516,7 @@ struct AgentTurnBoundaryTests {
             ModelMessage(role: .tool, content: [.toolResult(successfulSee)]),
         ])
         #expect(missingMutationResult.record(toolName: "click") == .skipUntilPerception(
-            reason: "Skipped click; call `see` successfully before another UI action."))
+            reason: "Skipped click; call `inspect_ui` or `see` successfully before another UI action."))
 
         let orphanedBoundary = AgentToolResult.success(
             toolCallId: "orphaned-call",
@@ -531,7 +531,7 @@ struct AgentTurnBoundaryTests {
             ModelMessage(role: .tool, content: [.toolResult(orphanedBoundary)]),
         ])
         #expect(unmatchedResult.record(toolName: "type") == .skipUntilPerception(
-            reason: "Skipped type; call `see` successfully before another UI action."))
+            reason: "Skipped type; call `inspect_ui` or `see` successfully before another UI action."))
 
         let successfulType = AgentToolResult.success(
             toolCallId: typeCall.id,
@@ -548,7 +548,7 @@ struct AgentTurnBoundaryTests {
             ModelMessage(role: .tool, content: [.toolResult(successfulSee)]),
         ])
         #expect(duplicatePerception.record(toolName: "click") == .skipUntilPerception(
-            reason: "Skipped click; call `see` successfully before another UI action."))
+            reason: "Skipped click; call `inspect_ui` or `see` successfully before another UI action."))
     }
 
     @Test
@@ -586,7 +586,7 @@ struct AgentTurnBoundaryTests {
         ])
 
         #expect(boundary.record(toolName: "click") == .skipUntilPerception(
-            reason: "Skipped click; call `see` successfully before another UI action."))
+            reason: "Skipped click; call `inspect_ui` or `see` successfully before another UI action."))
     }
 
     @Test
@@ -607,7 +607,7 @@ struct AgentTurnBoundaryTests {
         ])
 
         #expect(boundary.record(toolName: "click") == .skipUntilPerception(
-            reason: "Skipped click; call `see` successfully before another UI action."))
+            reason: "Skipped click; call `inspect_ui` or `see` successfully before another UI action."))
     }
 
     private static func verificationResult(
