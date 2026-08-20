@@ -62,6 +62,136 @@ struct PeekabooBridgeTypedResultReceiptBindingTests {
     }
 
     @Test
+    func `signed tree inspection binds selector constraints while allowing response enrichment`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let resolvedContext = Self.resolvedTreeContext(fixture: fixture)
+        let response = PeekabooBridgeResponse.elementDetection(
+            Self.detection(snapshotID: "resolved-tree", context: resolvedContext))
+        let validSelectors = [
+            WindowContext(windowID: fixture.windowIdentity.windowID),
+            WindowContext(
+                applicationProcessId: fixture.windowIdentity.ownerProcessIdentifier,
+                windowID: fixture.windowIdentity.windowID),
+            WindowContext(
+                applicationName: "Fixt",
+                windowID: fixture.windowIdentity.windowID),
+            WindowContext(windowTitle: "doc", windowID: fixture.windowIdentity.windowID),
+            WindowContext(
+                applicationBundleId: "dev.peekaboo.fixture",
+                windowID: fixture.windowIdentity.windowID),
+            WindowContext(
+                applicationName: "Fixture",
+                applicationBundleId: "dev.peekaboo.fixture",
+                applicationProcessId: fixture.windowIdentity.ownerProcessIdentifier,
+                windowTitle: "Document",
+                windowID: fixture.windowIdentity.windowID,
+                windowBounds: fixture.windowIdentity.capturedBounds,
+                windowMutationIdentity: fixture.windowIdentity,
+                shouldFocusWebContent: false,
+                includeMenuBarElements: true,
+                traversalBudget: AXTraversalBudget(),
+                requiresFreshAccessibilityTree: false,
+                accessibilityTimeoutSeconds: 20),
+        ]
+        for (offset, selector) in validSelectors.enumerated() {
+            let request = PeekabooBridgeRequest.inspectAccessibilityTree(.init(windowContext: selector))
+            let bundle = try await Self.signedBundle(
+                fixture: fixture,
+                sequence: UInt64(offset),
+                request: request,
+                response: response,
+                target: .window(fixture.windowIdentity))
+            try PeekabooBridgeOperationReceiptSemantics.validateReceiptCarriage(
+                bundle.receipt.payload,
+                request: request,
+                response: response)
+            try bundle.validateIntegrity()
+        }
+
+        let wrongIdentity = WindowMutationIdentity(
+            windowID: fixture.windowIdentity.windowID,
+            ownerProcessIdentifier: fixture.windowIdentity.ownerProcessIdentifier,
+            ownerProcessStartIdentity: fixture.windowIdentity.ownerProcessStartIdentity + 1,
+            capturedBounds: fixture.windowIdentity.capturedBounds)
+        let contradictorySelectors = [
+            WindowContext(applicationName: "Other", windowID: fixture.windowIdentity.windowID),
+            WindowContext(applicationBundleId: "dev.peekaboo.other", windowID: fixture.windowIdentity.windowID),
+            WindowContext(
+                applicationProcessId: fixture.windowIdentity.ownerProcessIdentifier + 1,
+                windowID: fixture.windowIdentity.windowID),
+            WindowContext(windowTitle: "Other", windowID: fixture.windowIdentity.windowID),
+            WindowContext(windowID: fixture.windowIdentity.windowID + 1),
+            WindowContext(
+                windowID: fixture.windowIdentity.windowID,
+                windowBounds: CGRect(x: 1, y: 2, width: 3, height: 4)),
+            WindowContext(
+                windowID: fixture.windowIdentity.windowID,
+                windowMutationIdentity: wrongIdentity),
+            WindowContext(windowID: fixture.windowIdentity.windowID, includeMenuBarElements: false),
+            WindowContext(
+                windowID: fixture.windowIdentity.windowID,
+                traversalBudget: AXTraversalBudget(maxDepth: 1)),
+            WindowContext(
+                windowID: fixture.windowIdentity.windowID,
+                requiresFreshAccessibilityTree: true),
+            WindowContext(
+                windowID: fixture.windowIdentity.windowID,
+                accessibilityTimeoutSeconds: 3),
+        ]
+        for (offset, selector) in contradictorySelectors.enumerated() {
+            let request = PeekabooBridgeRequest.inspectAccessibilityTree(.init(windowContext: selector))
+            let bundle = try await Self.signedBundle(
+                fixture: fixture,
+                sequence: UInt64(validSelectors.count + offset),
+                request: request,
+                response: response,
+                target: .window(fixture.windowIdentity))
+            #expect(throws: PeekabooBridgeOperationReceiptError.receiptMismatch(
+                "element-detection response window context"))
+            {
+                try PeekabooBridgeOperationReceiptSemantics.validateReceiptCarriage(
+                    bundle.receipt.payload,
+                    request: request,
+                    response: response)
+            }
+            #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+                try bundle.validateIntegrity()
+            }
+        }
+
+        let unconstrainedRequest = PeekabooBridgeRequest.inspectAccessibilityTree(.init(
+            windowContext: WindowContext(windowID: fixture.windowIdentity.windowID)))
+        let hostileRefinements = [
+            Self.resolvedTreeContext(fixture: fixture, shouldFocusWebContent: true),
+            Self.resolvedTreeContext(fixture: fixture, includeMenuBarElements: false),
+            Self.resolvedTreeContext(
+                fixture: fixture,
+                traversalBudget: AXTraversalBudget(maxDepth: 1)),
+            Self.resolvedTreeContext(fixture: fixture, requiresFreshAccessibilityTree: true),
+            Self.resolvedTreeContext(fixture: fixture, accessibilityTimeoutSeconds: 3),
+        ]
+        for (offset, context) in hostileRefinements.enumerated() {
+            let forgedResponse = PeekabooBridgeResponse.elementDetection(
+                Self.detection(snapshotID: "hostile-tree", context: context))
+            let bundle = try await Self.signedBundle(
+                fixture: fixture,
+                sequence: UInt64(validSelectors.count + contradictorySelectors.count + offset),
+                request: unconstrainedRequest,
+                response: forgedResponse,
+                target: .window(fixture.windowIdentity))
+            #expect(throws: PeekabooBridgeOperationReceiptError.receiptMismatch(
+                "element-detection response window context"))
+            {
+                try PeekabooBridgeOperationReceiptSemantics.validateReceiptCarriage(
+                    bundle.receipt.payload,
+                    request: unconstrainedRequest,
+                    response: forgedResponse)
+            }
+        }
+    }
+
+    @Test
     func `forged keyed read responses fail live and offline`() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -347,6 +477,29 @@ struct PeekabooBridgeTypedResultReceiptBindingTests {
                 elementCount: 0,
                 method: "fixture",
                 windowContext: context))
+    }
+
+    private static func resolvedTreeContext(
+        fixture: Fixture,
+        shouldFocusWebContent: Bool? = false,
+        includeMenuBarElements: Bool? = true,
+        traversalBudget: AXTraversalBudget? = AXTraversalBudget(),
+        requiresFreshAccessibilityTree: Bool? = false,
+        accessibilityTimeoutSeconds: TimeInterval? = 20) -> WindowContext
+    {
+        WindowContext(
+            applicationName: "Fixture",
+            applicationBundleId: "dev.peekaboo.fixture",
+            applicationProcessId: fixture.windowIdentity.ownerProcessIdentifier,
+            windowTitle: "Document",
+            windowID: fixture.windowIdentity.windowID,
+            windowBounds: fixture.windowIdentity.capturedBounds,
+            windowMutationIdentity: fixture.windowIdentity,
+            shouldFocusWebContent: shouldFocusWebContent,
+            includeMenuBarElements: includeMenuBarElements,
+            traversalBudget: traversalBudget,
+            requiresFreshAccessibilityTree: requiresFreshAccessibilityTree ?? false,
+            accessibilityTimeoutSeconds: accessibilityTimeoutSeconds)
     }
 
     private static func application(selector: String) -> ServiceApplicationInfo {

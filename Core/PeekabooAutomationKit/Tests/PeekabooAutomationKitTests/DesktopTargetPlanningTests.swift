@@ -156,6 +156,15 @@ struct DesktopTargetPlanningTests {
         #expect(try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([]) == nil)
     }
 
+    @Test(arguments: [Int32.zero, -1])
+    func `process fragments reject invalid identifiers before missing generation`(_ processIdentifier: Int32) {
+        #expect(throws: DesktopTargetIdentityError.invalidProcessIdentifier) {
+            _ = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
+                .init(processIdentifier: processIdentifier),
+            ])
+        }
+    }
+
     @Test
     func `zero process generation is rejected`() {
         #expect(throws: DesktopTargetIdentityError.missingProcessGeneration) {

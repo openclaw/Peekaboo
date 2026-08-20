@@ -2294,6 +2294,52 @@ extension PeekabooBridgeOperationReceiptTests {
             request: inspectRequest,
             response: .elementDetection(detection)).target == .window(identity))
 
+        let selectorOnlyContexts = [
+            WindowContext(windowID: identity.windowID),
+            WindowContext(
+                applicationProcessId: identity.ownerProcessIdentifier,
+                windowID: identity.windowID),
+            WindowContext(
+                applicationBundleId: "dev.peekaboo.fixture",
+                windowID: identity.windowID),
+        ]
+        for selectorContext in selectorOnlyContexts {
+            let selectorRequest = PeekabooBridgeRequest.inspectAccessibilityTree(.init(
+                windowContext: selectorContext))
+            #expect(try PeekabooBridgeOperationTargetAttribution.resolveRequest(selectorRequest) == nil)
+            #expect(try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+                request: selectorRequest,
+                response: .elementDetection(detection)).target == .window(identity))
+        }
+
+        let invalidProcessRequest = PeekabooBridgeRequest.inspectAccessibilityTree(.init(
+            windowContext: WindowContext(
+                applicationProcessId: 0,
+                windowID: identity.windowID)))
+        #expect(throws: DesktopTargetIdentityError.invalidProcessIdentifier) {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveRequest(invalidProcessRequest)
+        }
+
+        let wrongProcessRequest = PeekabooBridgeRequest.inspectAccessibilityTree(.init(
+            windowContext: WindowContext(
+                applicationProcessId: identity.ownerProcessIdentifier + 1,
+                windowID: identity.windowID)))
+        #expect(throws: DesktopTargetIdentityError.contradictoryProcessIdentifier) {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+                request: wrongProcessRequest,
+                response: .elementDetection(detection))
+        }
+
+        let wrongWindowRequest = PeekabooBridgeRequest.inspectAccessibilityTree(.init(
+            windowContext: WindowContext(
+                applicationProcessId: identity.ownerProcessIdentifier,
+                windowID: identity.windowID + 1)))
+        #expect(throws: DesktopTargetIdentityError.contradictoryWindowIdentifier) {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+                request: wrongWindowRequest,
+                response: .elementDetection(detection))
+        }
+
         try Self.expectWindowMutationAttributionFailures(
             identity: identity,
             incompleteIdentity: incompleteIdentity,

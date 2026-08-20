@@ -311,6 +311,9 @@ public enum DesktopTargetPlanning {
                     fragment.processIdentity != nil || fragment.windowID != nil || fragment.windowIdentity != nil ||
                     fragment.windowBounds != nil || fragment.focusedElement != nil
 
+                if let incomingProcessIdentifier = fragment.processIdentifier {
+                    try self.requireValidProcessIdentifier(incomingProcessIdentifier)
+                }
                 try self.merge(fragment.processIdentifier, into: &processIdentifier) {
                     .contradictoryProcessIdentifier
                 }
@@ -433,6 +436,12 @@ public enum DesktopTargetPlanning {
         private static func requireValidWindowIdentifier(_ windowID: Int) throws {
             guard windowID > 0, UInt32(exactly: windowID) != nil else {
                 throw DesktopTargetIdentityError.invalidWindowIdentifier
+            }
+        }
+
+        private static func requireValidProcessIdentifier(_ processIdentifier: Int32) throws {
+            guard processIdentifier > 0 else {
+                throw DesktopTargetIdentityError.invalidProcessIdentifier
             }
         }
 

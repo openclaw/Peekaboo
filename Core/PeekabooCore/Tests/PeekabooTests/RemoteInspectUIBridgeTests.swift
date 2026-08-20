@@ -97,6 +97,91 @@ struct RemoteInspectUIBridgeTests {
     }
 
     @Test
+    func `signed read only inspection resolves selector constraints from the response`() async throws {
+        let socketPath = "/tmp/peekaboo-bridge-read-only-inspect-\(UUID().uuidString).sock"
+        let bounds = CGRect(x: 50, y: 75, width: 900, height: 650)
+        let windowIdentity = WindowMutationIdentity(
+            windowID: 4242,
+            ownerProcessIdentifier: 5151,
+            ownerProcessStartIdentity: 6161,
+            capturedBounds: bounds)
+        let resolvedContext = WindowContext(
+            applicationName: "Fixture",
+            applicationBundleId: "dev.peekaboo.fixture",
+            applicationProcessId: windowIdentity.ownerProcessIdentifier,
+            windowTitle: "Main",
+            windowID: windowIdentity.windowID,
+            windowBounds: bounds,
+            windowMutationIdentity: windowIdentity)
+        let automation = await MainActor.run {
+            InspectUITestAutomationService(
+                accessibilityGranted: true,
+                detectionResult: ElementDetectionResult(
+                    snapshotId: "signed-read-only",
+                    screenshotPath: "",
+                    elements: DetectedElements(),
+                    metadata: DetectionMetadata(
+                        detectionTime: 0,
+                        elementCount: 0,
+                        method: "stub",
+                        windowContext: resolvedContext)))
+        }
+        let services = await MainActor.run { InspectUIBridgeServices(automation: automation) }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: services,
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                permissionStatusEvaluator: { _ in
+                    PermissionsStatus(
+                        screenRecording: false,
+                        accessibility: true,
+                        appleScript: false,
+                        postEvent: false)
+                })
+        }
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: PeekabooBridgeClientIdentity(
+            bundleIdentifier: "dev.peekaboo.remote-inspect-tests",
+            teamIdentifier: nil,
+            processIdentifier: getpid(),
+            hostname: nil))
+        let remote = await MainActor.run {
+            RemoteUIAutomationService(client: client, supportsInspectAccessibilityTree: true)
+        }
+        let selectorContexts = [
+            WindowContext(windowID: windowIdentity.windowID),
+            WindowContext(
+                applicationProcessId: windowIdentity.ownerProcessIdentifier,
+                windowID: windowIdentity.windowID),
+            WindowContext(
+                applicationBundleId: "dev.peekaboo.fixture",
+                windowID: windowIdentity.windowID),
+        ]
+
+        for selectorContext in selectorContexts {
+            let result = try await remote.inspectAccessibilityTreeActionResult(windowContext: selectorContext)
+            #expect(result.payload.snapshotId == "signed-read-only")
+            #expect(result.outcome == nil)
+            #expect(result.targetIdentity?.exactWindow?.identity == windowIdentity)
+            #expect(result.targetIdentity?.exactWindow?.bounds == bounds)
+            let receipt = try #require(await client.lastOperationReceipt())
+            #expect(receipt.payload.operation == .inspectAccessibilityTree)
+            #expect(receipt.payload.target == .window(windowIdentity))
+        }
+        await host.stop()
+    }
+
+    @Test
     func `remote web focus inspection preserves signed outcome and exact target`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-web-focus-\(UUID().uuidString).sock"
         let bounds = CGRect(x: 50, y: 75, width: 900, height: 650)

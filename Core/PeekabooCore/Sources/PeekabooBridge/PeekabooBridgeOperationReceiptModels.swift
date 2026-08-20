@@ -1059,13 +1059,15 @@ enum PeekabooBridgeOperationReceiptSemantics {
                 actual,
                 expectedSnapshotID: expected.snapshotId,
                 expectedWindowContext: expected.windowContext,
-                requiresSnapshotBinding: true)
+                requiresSnapshotBinding: true,
+                allowsResolvedWindowContext: false)
         case let (.elementDetection, .inspectAccessibilityTree(expected), .elementDetection(actual)):
             try self.validateElementDetection(
                 actual,
                 expectedSnapshotID: nil,
                 expectedWindowContext: expected.windowContext,
-                requiresSnapshotBinding: false)
+                requiresSnapshotBinding: false,
+                allowsResolvedWindowContext: true)
         case let (.desktopObservation, .desktopObservation(expected), .desktopObservation(actual)):
             if let mismatch = PeekabooBridgeDesktopObservationBinding.mismatch(
                 request: expected,
@@ -1163,7 +1165,8 @@ enum PeekabooBridgeOperationReceiptSemantics {
         _ result: ElementDetectionResult,
         expectedSnapshotID: String?,
         expectedWindowContext: WindowContext?,
-        requiresSnapshotBinding: Bool) throws
+        requiresSnapshotBinding: Bool,
+        allowsResolvedWindowContext: Bool) throws
     {
         if requiresSnapshotBinding {
             if let expectedSnapshotID {
@@ -1176,28 +1179,19 @@ enum PeekabooBridgeOperationReceiptSemantics {
                     "element-detection generated snapshot")
             }
         }
-        guard self.windowContext(result.metadata.windowContext, matches: expectedWindowContext) else {
+        let windowContextMatches = if allowsResolvedWindowContext {
+            PeekabooBridgeWindowContextBinding.refines(
+                result.metadata.windowContext,
+                requested: expectedWindowContext)
+        } else {
+            PeekabooBridgeWindowContextBinding.matches(
+                result.metadata.windowContext,
+                requested: expectedWindowContext)
+        }
+        guard windowContextMatches else {
             throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                 "element-detection response window context")
         }
-    }
-
-    private static func windowContext(_ actual: WindowContext?, matches expected: WindowContext?) -> Bool {
-        guard let expected else { return actual == nil }
-        guard let actual else { return false }
-        return actual.applicationName == expected.applicationName &&
-            actual.applicationBundleId == expected.applicationBundleId &&
-            actual.applicationProcessId == expected.applicationProcessId &&
-            actual.windowTitle == expected.windowTitle &&
-            actual.windowID == expected.windowID &&
-            actual.windowBounds == expected.windowBounds &&
-            actual.windowMutationIdentity == expected.windowMutationIdentity &&
-            actual.focusedElement == expected.focusedElement &&
-            actual.shouldFocusWebContent == expected.shouldFocusWebContent &&
-            actual.includeMenuBarElements == expected.includeMenuBarElements &&
-            actual.traversalBudget == expected.traversalBudget &&
-            actual.requiresFreshAccessibilityTree == expected.requiresFreshAccessibilityTree &&
-            actual.accessibilityTimeoutSeconds == expected.accessibilityTimeoutSeconds
     }
 
     private static func validateWaitResult(

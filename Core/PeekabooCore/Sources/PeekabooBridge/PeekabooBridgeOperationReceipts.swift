@@ -2131,8 +2131,17 @@ struct PeekabooBridgeResolvedOperationTarget: Sendable {
 
 enum PeekabooBridgeOperationTargetAttribution {
     static func resolveRequest(_ request: PeekabooBridgeRequest) throws -> DesktopTargetIdentity? {
-        let identity = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve(
-            request.operationTargetEvidence)
+        let targetPolicy = PeekabooBridgeOperationResultSemantics.contract(for: request).targetPolicy
+        let identity: DesktopTargetIdentity?
+        do {
+            identity = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve(
+                request.operationTargetEvidence)
+        } catch let error as DesktopTargetIdentityError {
+            guard targetPolicy == .responseResolved,
+                  error == .missingProcessGeneration || error == .incompleteExactWindow
+            else { throw error }
+            identity = nil
+        }
         if request.requiresStableOperationTarget, identity == nil {
             throw DesktopTargetIdentityError.incompleteExactWindow
         }
