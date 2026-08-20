@@ -487,7 +487,7 @@ public final class ElementDetectionService {
             accessibilityTimeoutSeconds: requested?.accessibilityTimeoutSeconds)
     }
 
-    private struct ResolvedApplicationIdentity {
+    struct ResolvedApplicationIdentity: Sendable {
         let name: String
         let bundleIdentifier: String?
         let bundlePath: String?
@@ -501,18 +501,29 @@ public final class ElementDetectionService {
     {
         let canonicalName = application.localizedName ?? application.bundleIdentifier ??
             "PID:\(application.processIdentifier)"
-        guard preservesRequestedIdentity else {
-            return ResolvedApplicationIdentity(
+        return self.projectedApplicationIdentity(
+            canonical: ResolvedApplicationIdentity(
                 name: canonicalName,
                 bundleIdentifier: application.bundleIdentifier,
                 bundlePath: application.bundleURL?.standardizedFileURL.path,
-                executablePath: application.executableURL?.standardizedFileURL.path)
+                executablePath: application.executableURL?.standardizedFileURL.path),
+            requested: requested,
+            preservesRequestedIdentity: preservesRequestedIdentity)
+    }
+
+    nonisolated static func projectedApplicationIdentity(
+        canonical: ResolvedApplicationIdentity,
+        requested: WindowContext?,
+        preservesRequestedIdentity: Bool) -> ResolvedApplicationIdentity
+    {
+        guard preservesRequestedIdentity else {
+            return canonical
         }
         return ResolvedApplicationIdentity(
-            name: requested?.applicationName ?? canonicalName,
-            bundleIdentifier: requested?.applicationBundleId ?? application.bundleIdentifier,
-            bundlePath: requested?.applicationBundlePath,
-            executablePath: requested?.applicationExecutablePath)
+            name: requested?.applicationName ?? canonical.name,
+            bundleIdentifier: requested?.applicationBundleId ?? canonical.bundleIdentifier,
+            bundlePath: requested?.applicationBundlePath == nil ? nil : canonical.bundlePath,
+            executablePath: requested?.applicationExecutablePath == nil ? nil : canonical.executablePath)
     }
 
     nonisolated struct ActionableWindowReceipt: Equatable {

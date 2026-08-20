@@ -3,6 +3,33 @@ import XCTest
 @testable import PeekabooAutomationKit
 
 final class ElementDetectionReadOnlyWindowSelectionTests: XCTestCase {
+    func testDetectProjectionOmitsUnrequestedResolvedPaths() {
+        let projected = Self.detectProjection(requested: WindowContext(applicationName: "Fixture"))
+
+        XCTAssertNil(projected.bundlePath)
+        XCTAssertNil(projected.executablePath)
+    }
+
+    func testDetectProjectionPublishesCanonicalPathsForMatchingExplicitConstraints() {
+        let projected = Self.detectProjection(requested: WindowContext(
+            applicationName: "Fixture",
+            applicationBundlePath: Self.bundlePath,
+            applicationExecutablePath: Self.executablePath))
+
+        XCTAssertEqual(projected.bundlePath, Self.bundlePath)
+        XCTAssertEqual(projected.executablePath, Self.executablePath)
+    }
+
+    func testDetectProjectionNeverCopiesContradictoryCallerPathsAsResolvedFacts() {
+        let projected = Self.detectProjection(requested: WindowContext(
+            applicationName: "Fixture",
+            applicationBundlePath: "/Applications/Other.app",
+            applicationExecutablePath: "/Applications/Other.app/Contents/MacOS/other"))
+
+        XCTAssertEqual(projected.bundlePath, Self.bundlePath)
+        XCTAssertEqual(projected.executablePath, Self.executablePath)
+    }
+
     func testRequestedTitleSelectsExactSiblingInsteadOfBestWindow() throws {
         let bestWindow = Self.window(
             id: 100,
@@ -141,6 +168,21 @@ final class ElementDetectionReadOnlyWindowSelectionTests: XCTestCase {
         { error in
             XCTAssertTrue(error.localizedDescription.contains("capture-time process-generation receipt"))
         }
+    }
+
+    private static let bundlePath = "/Applications/Fixture.app"
+    private static let executablePath = bundlePath + "/Contents/MacOS/fixture"
+
+    private static func detectProjection(requested: WindowContext) -> ElementDetectionService
+    .ResolvedApplicationIdentity {
+        ElementDetectionService.projectedApplicationIdentity(
+            canonical: .init(
+                name: "Fixture",
+                bundleIdentifier: "dev.peekaboo.fixture",
+                bundlePath: self.bundlePath,
+                executablePath: self.executablePath),
+            requested: requested,
+            preservesRequestedIdentity: true)
     }
 
     func testExactReadOnlyObservationCapturesActionableReceiptWhenCallerHasNone() throws {
