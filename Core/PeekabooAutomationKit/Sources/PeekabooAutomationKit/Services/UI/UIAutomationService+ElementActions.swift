@@ -97,7 +97,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             payload: ElementActionResult(
                 target: target,
                 actionName: result.actionName,
-                anchorPoint: result.anchorPoint,
+                anchorPoint: nil,
                 oldValue: oldValue,
                 newValue: newValue),
             outcome: result.outcome,

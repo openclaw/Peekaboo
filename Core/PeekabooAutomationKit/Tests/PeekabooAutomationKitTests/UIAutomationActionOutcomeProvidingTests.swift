@@ -174,10 +174,17 @@ struct UIAutomationActionOutcomeProvidingTests {
     }
 
     @Test
-    func `set value result preserves payload and exact outcome with legacy payload parity`() async throws {
+    func `set value result strips driver anchors and preserves receipt semantics with legacy parity`() async throws {
         let expected = Self.outcome(mechanism: .accessibilityValue, mode: .background)
-        let resultDriver = OutcomeActionInputDriver(outcome: expected, storedValue: "old")
-        let legacyDriver = OutcomeActionInputDriver(outcome: expected, storedValue: "old")
+        let driverAnchor = CGPoint(x: 17, y: 29)
+        let resultDriver = OutcomeActionInputDriver(
+            outcome: expected,
+            storedValue: "old",
+            setValueAnchorPoint: driverAnchor)
+        let legacyDriver = OutcomeActionInputDriver(
+            outcome: expected,
+            storedValue: "old",
+            setValueAnchorPoint: driverAnchor)
         let resultService = self.makeElementActionService(actionDriver: resultDriver)
         let legacyService = self.makeElementActionService(actionDriver: legacyDriver)
 
@@ -192,9 +199,12 @@ struct UIAutomationActionOutcomeProvidingTests {
 
         #expect(result.outcome == expected)
         #expect(result.payload == legacy)
-        #expect(result.payload.target == "E1")
-        #expect(result.payload.oldValue == "old")
-        #expect(result.payload.newValue == "new")
+        #expect(result.payload == ElementActionResult(
+            target: "E1",
+            actionName: "AXSetValue",
+            anchorPoint: nil,
+            oldValue: "old",
+            newValue: "new"))
         #expect(result.targetIdentity?.exactWindow != nil)
         #expect(resultDriver.setValueCount == 1)
         #expect(legacyDriver.setValueCount == 1)
@@ -573,10 +583,16 @@ private final class OutcomeActionInputDriver: ActionInputDriving {
     private(set) var setValueCount = 0
     private(set) var performActionCount = 0
     private(set) var storedValue: String?
+    private let setValueAnchorPoint: CGPoint?
 
-    init(outcome: DesktopActionOutcome, storedValue: String? = nil) {
+    init(
+        outcome: DesktopActionOutcome,
+        storedValue: String? = nil,
+        setValueAnchorPoint: CGPoint? = nil)
+    {
         self.outcome = outcome
         self.storedValue = storedValue
+        self.setValueAnchorPoint = setValueAnchorPoint
     }
 
     func tryClick(element _: AutomationElement) throws -> UIInputExecutionResult.Action {
@@ -617,7 +633,8 @@ private final class OutcomeActionInputDriver: ActionInputDriving {
         self.storedValue = value.displayString
         return UIInputExecutionResult.Action(
             outcome: self.outcome,
-            actionName: "AXSetValue")
+            actionName: "AXSetValue",
+            anchorPoint: self.setValueAnchorPoint)
     }
 
     func tryPerformAction(element _: AutomationElement, actionName: String) throws
