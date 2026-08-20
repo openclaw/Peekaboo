@@ -406,6 +406,12 @@ extension PeekabooBridgeCertificationMonitorSealPayload {
             self.active = try container.decode(Bool.self, forKey: .active)
             self.target = try container.decodeIfPresent(WindowTarget.self, forKey: .target)
         }
+
+        public func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(self.active, forKey: .active)
+            try container.encode(self.target, forKey: .target)
+        }
     }
 
     public struct ProducerSet: Codable, Equatable, Sendable {
@@ -788,6 +794,13 @@ extension PeekabooBridgeCertificationMonitorSealPayload {
             self.role = try container.decode(String.self, forKey: .role)
             self.identifier = try container.decodeIfPresent(String.self, forKey: .identifier)
             self.title = try container.decodeIfPresent(String.self, forKey: .title)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(self.role, forKey: .role)
+            try container.encode(self.identifier, forKey: .identifier)
+            try container.encode(self.title, forKey: .title)
         }
     }
 

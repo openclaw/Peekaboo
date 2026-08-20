@@ -11,6 +11,27 @@ struct CertificationMonitorSealPayloadTests {
     }
 
     @Test
+    func `Complete payload round trips explicit null authorization and semantic fields`() throws {
+        let payload = try Self.payload()
+        let data = try JSONEncoder.peekabooBridgeEncoder().encode(payload)
+        let decoded = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeCertificationMonitorSealPayload.self,
+            from: data)
+        #expect(decoded == payload)
+        try decoded.validate(context: Self.validationContext())
+
+        let root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let evidence = try #require(root["evidence"] as? [String: Any])
+        let producerSets = try #require(evidence["producerSets"] as? [String: Any])
+        let baseline = try #require(producerSets["baseline"] as? [String: Any])
+        let authorization = try #require(baseline["foreground"] as? [String: Any])
+        #expect(authorization["target"] is NSNull)
+        let plan = try #require(evidence["foregroundPlan"] as? [String: Any])
+        let semanticElement = try #require(plan["semanticElement"] as? [String: Any])
+        #expect(semanticElement["title"] is NSNull)
+    }
+
+    @Test
     func `Seal digest tampering fails closed`() throws {
         let payload = try Self.payload()
         let tampered = PeekabooBridgeCertificationMonitorSealPayload(
