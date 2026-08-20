@@ -24,6 +24,70 @@ struct PrivateArtifactsTests {
     }
 
     @Test
+    func `owner private reader rejects a file that grows after validation`() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        #expect(chmod(directory.path, S_IRWXU) == 0)
+        let artifact = directory.appendingPathComponent("growing.json")
+        try Data("1234".utf8).write(to: artifact)
+        #expect(chmod(artifact.path, S_IRUSR | S_IWUSR) == 0)
+
+        #expect(throws: CertificationControllerError.self) {
+            try CertificationPrivateArtifacts.readOwnerPrivateFile(
+                at: artifact,
+                maximumBytes: 4,
+                afterValidation: { _ in
+                    let writer = open(artifact.path, O_WRONLY | O_APPEND | O_CLOEXEC)
+                    guard writer >= 0 else {
+                        throw CertificationControllerError.unsafePrivatePath("Cannot open growth fixture.")
+                    }
+                    defer { close(writer) }
+                    let byte = Data("5".utf8)
+                    let written = byte.withUnsafeBytes { bytes in
+                        Darwin.write(writer, bytes.baseAddress, bytes.count)
+                    }
+                    guard written == byte.count else {
+                        throw CertificationControllerError.unsafePrivatePath("Cannot append growth fixture.")
+                    }
+                }
+            )
+        }
+    }
+
+    @Test
+    func `owner private reader rejects same size mutation after validation`() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        #expect(chmod(directory.path, S_IRWXU) == 0)
+        let artifact = directory.appendingPathComponent("mutated.json")
+        try Data("1234".utf8).write(to: artifact)
+        #expect(chmod(artifact.path, S_IRUSR | S_IWUSR) == 0)
+
+        #expect(throws: CertificationControllerError.self) {
+            try CertificationPrivateArtifacts.readOwnerPrivateFile(
+                at: artifact,
+                maximumBytes: 4,
+                afterValidation: { _ in
+                    let writer = open(artifact.path, O_WRONLY | O_CLOEXEC)
+                    guard writer >= 0 else {
+                        throw CertificationControllerError.unsafePrivatePath("Cannot open mutation fixture.")
+                    }
+                    defer { close(writer) }
+                    let replacement = Data("5678".utf8)
+                    let written = replacement.withUnsafeBytes { bytes in
+                        pwrite(writer, bytes.baseAddress, bytes.count, 0)
+                    }
+                    guard written == replacement.count else {
+                        throw CertificationControllerError.unsafePrivatePath("Cannot overwrite mutation fixture.")
+                    }
+                }
+            )
+        }
+    }
+
+    @Test
     func `receipt publication is owner-only and exclusive`() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)

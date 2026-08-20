@@ -6,6 +6,19 @@ enum CertificationPrivateArtifacts {
     static let maximumPlanBytes = 1024 * 1024
 
     static func readPlan(at url: URL) throws -> Data {
+        try self.readOwnerPrivateFile(at: url, maximumBytes: self.maximumPlanBytes)
+    }
+
+    static func readOwnerPrivateFile(
+        at url: URL,
+        maximumBytes: Int,
+        afterValidation: (Int32) throws -> Void = { _ in }
+    ) throws -> Data {
+        guard maximumBytes >= 0, maximumBytes < Int.max else {
+            throw CertificationControllerError.unsafePrivatePath(
+                "Controller artifact maximum size must be nonnegative."
+            )
+        }
         let descriptor = open(url.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
         guard descriptor >= 0 else {
             throw CertificationControllerError.unsafePrivatePath(
@@ -20,18 +33,47 @@ enum CertificationPrivateArtifacts {
               info.st_nlink == 1,
               info.st_mode & 0o077 == 0,
               info.st_size >= 0,
-              info.st_size <= Self.maximumPlanBytes
+              info.st_size <= maximumBytes
         else {
             throw CertificationControllerError.unsafePrivatePath(
-                "Controller plan must be an owner-private regular file no larger than 1 MiB."
+                "Controller artifact must be one bounded owner-private regular file."
             )
         }
-        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
-        do {
-            return try handle.readToEnd() ?? Data()
-        } catch {
-            throw CertificationControllerError.unsafePrivatePath("Cannot read controller plan: \(error).")
+        try afterValidation(descriptor)
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: min(64 * 1024, maximumBytes + 1))
+        while data.count <= maximumBytes {
+            let remaining = maximumBytes - data.count + 1
+            let count = buffer.withUnsafeMutableBytes { bytes in
+                Darwin.read(descriptor, bytes.baseAddress, min(bytes.count, remaining))
+            }
+            if count > 0 {
+                data.append(contentsOf: buffer.prefix(count))
+            } else if count == 0 {
+                break
+            } else if errno == EINTR {
+                continue
+            } else {
+                throw CertificationControllerError.unsafePrivatePath(
+                    "Cannot read controller artifact: \(Self.posixMessage())."
+                )
+            }
         }
+        var after = stat()
+        guard data.count <= maximumBytes,
+              fstat(descriptor, &after) == 0,
+              (after.st_mode & S_IFMT) == S_IFREG,
+              after.st_uid == info.st_uid,
+              after.st_nlink == info.st_nlink,
+              after.st_mode & 0o077 == 0,
+              CertificationControllerBuildIdentityResolver.sameFile(info, after),
+              after.st_size == data.count
+        else {
+            throw CertificationControllerError.unsafePrivatePath(
+                "Controller artifact changed or exceeded its bound while being read."
+            )
+        }
+        return data
     }
 
     static func prepare(for plan: CertificationControllerPlan) throws {
