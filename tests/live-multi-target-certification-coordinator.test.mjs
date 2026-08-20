@@ -274,7 +274,19 @@ const canonical = (value) => {
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
 };
 const write = (file, value) => {
-  fs.writeFileSync(file, JSON.stringify(canonical(value), null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+  const temporary = file + '.' + process.pid + '.' + randomUUID() + '.tmp';
+  const descriptor = fs.openSync(temporary, 'wx', 0o600);
+  try {
+    fs.writeFileSync(descriptor, JSON.stringify(canonical(value), null, 2) + '\n');
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  if (fs.existsSync(file)) {
+    fs.unlinkSync(temporary);
+    throw new Error('fake controller output already exists');
+  }
+  fs.renameSync(temporary, file);
   fs.chmodSync(file, 0o600);
 };
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
