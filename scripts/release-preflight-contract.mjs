@@ -280,6 +280,45 @@ export function validateChangelogContract({ changelogSource, version, requireDat
   return [];
 }
 
+export function validateNpmVersionAvailability({ packageName, version, registryOutput }) {
+  const retryCommand = `npm view ${packageName} versions --json`;
+  if (typeof registryOutput !== 'string' || registryOutput.trim().length === 0) {
+    return [
+      `Could not confirm ${packageName}@${version} availability: the npm registry query failed or returned no data. ` +
+      `Run '${retryCommand}' and verify registry connectivity or authentication before releasing.`
+    ];
+  }
+
+  let publishedVersions;
+  try {
+    const parsed = JSON.parse(registryOutput);
+    publishedVersions = typeof parsed === 'string' ? [parsed] : parsed;
+  } catch {
+    return [
+      `Could not confirm ${packageName}@${version} availability: the npm registry returned invalid JSON. ` +
+      `Run '${retryCommand}' and verify the registry response before releasing.`
+    ];
+  }
+
+  if (!Array.isArray(publishedVersions) || publishedVersions.some((entry) =>
+    typeof entry !== 'string' || entry.trim().length === 0
+  )) {
+    return [
+      `Could not confirm ${packageName}@${version} availability: the npm registry returned an invalid version list. ` +
+      `Run '${retryCommand}' and verify the registry response before releasing.`
+    ];
+  }
+
+  if (publishedVersions.includes(version)) {
+    return [
+      `Version ${version} is already published on npm!`,
+      'Please update the version in package.json before releasing.'
+    ];
+  }
+
+  return [];
+}
+
 function plistValue(source, key) {
   const escapedKey = escapeRegExp(key);
   return source.match(new RegExp(`<key>${escapedKey}</key>\\s*<string>([^<]+)</string>`))?.[1] ?? null;

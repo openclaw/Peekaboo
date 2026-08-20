@@ -1,25 +1,38 @@
-## [4.2.1] - 2026-08-17
+## [4.2.2] - 2026-08-20
 
 ### Highlights
 
-- **Background keyboard automation now fails closed on complete target evidence.** CLI and MCP type, paste, and press share one planner that refuses fuzzy applications, partial window catalogs, ambiguous matches, and stale process identities before dispatch.
-- **Protocol 1.30 makes inventory completeness and exact-target safety explicit.** New transport preserves complete-versus-partial application/window evidence while older hosts retain conservative protocol 1.29 compatibility.
-- **More precise input remains off the shared cursor.** Exact-window background middle and triple clicks gain generation-bound native event sequences, while embedders can own held-pointer lifecycles with signed cleanup receipts.
-- **Runtime evidence is independently verifiable.** Authenticated receipt validation and packaged digest commands let agents recompute certification evidence against the exact live Bridge that produced it.
-- **Long-lived automation recovers more reliably.** Held-input cleanup is bounded to its original process generation, AX permission observation avoids cancellation deadlocks, and Realtime tool execution preserves the first terminal result.
+- **Background automation is more capable and safer.** Exact-window middle and triple clicks never move focus or the cursor, while keyboard, menu, window, and app actions refuse ambiguous or incomplete targets.
+- **Previously invisible controls and windows work again.** Editable TextEdit document areas remain discoverable, and exact minimized or off-Space windows stay resolvable.
+- **Agent behavior is easier to understand and control.** Dry runs explain requested and effective foreground authority, and guidance accurately describes safe background typing, shortcuts, and dialog input.
+- **Long-running automation stays responsive and predictable.** AX observers, command deadlines, and VibeTunnel title helpers are bounded; input is never blindly replayed; Bridge handshakes are reused; SSH terminal input remains reliable; and deployment avoids Xcode provisioning stalls by building unsigned before manual signing.
 
 ### Added
-- Add Bridge protocol 1.30 planner inventory transport with explicit complete/partial evidence, while protocol 1.29 hosts keep legacy list bytes and conservative exact-target compatibility.
-- Add authenticated `peekaboo bridge receipt validate` for fail-closed, agent-readable verification of private protocol 1.29 bundles against the exact live listener that produced them.
-- Add an embedding-only protocol 1.30 exact-window held-pointer lifecycle with opaque owner/hold receipts, cross-call lane ownership, and generation-bound release on explicit completion, revocation, disconnect, or watchdog expiry.
-- Add capability-gated exact-window background middle/triple clicks with native center-button and 1/2/3 click-state sequences, signed target receipts, and fail-closed protocol 1.29 compatibility.
-- Add a packaged version-2 digest specification plus `digest` and `verify-digests` commands so operators can independently recompute every live certification root and leaf without source access.
-- Add a live-physical multi-target finalizer that binds exact protocol-1.30 background controllers, a source-owned epoch monitor, attributed foreground activity, restoration, crash evidence, and protocol-1.29 signed receipt validation into one fail-closed run.
+- Add exact-window background middle and triple clicks to CLI and MCP without activating the target or moving the cursor.
+- Show requested and effective foreground authority in `agent --dry-run` text and JSON without invoking models, tools, or sessions.
+- Add authenticated `peekaboo bridge receipt validate` with the live host's source commit and negotiated protocol metadata.
+- Add Bridge protocol 1.30 application and window inventories that distinguish complete from partial evidence while retaining conservative compatibility with older hosts.
+- Add an embedding-only exact-window held-pointer API with owner receipts and generation-safe cleanup.
+- Add a capability-gated protocol 1.31 Swift Bridge API for signed background-only Agent execution; its qualification CLI remains private and hidden.
 
 ### Fixed
-- Route CLI and MCP background keyboard delivery through one completeness-aware target planner, refusing fuzzy application selectors and partial window catalogs before type, paste, or press dispatch.
-- Keep exact background pointer routing and dialog postcondition checks correct for minimized and off-Space windows, while treating failed WindowServer catalog reads as unreadable instead of confirmed absence.
-- Bound held-pointer owner and terminal-replay retention in long-lived hosts, make idle-owner disconnect a signed no-change close, and prevent cancelled begins from returning an already-terminated hold receipt.
-- Release cancelled exact-window held hotkeys only to their original process generation, include cleanup events in typed unit counts, and never retarget cleanup to a recycled PID.
-- Make application and window inventories report omitted or identity-incomplete rows as partial, while keeping complete AX-only window listings usable without Screen Recording.
-- Update AXorcist and Tachikoma so Accessibility permission observation cancellation cannot deadlock the main queue or install timers after termination, while Realtime tool execution preserves the first completion/cancellation winner, keeps timeout returns bounded while owning delayed cleanup, preserves completed results during timer cancellation, and rejects invalid audio deadlines before dispatch. Thanks @SebTardif for AXorcist #46 and Tachikoma #68; follow-up fixes landed in AXorcist #48 and Tachikoma #69/#70.
+- Pin background type, paste, press, targeted clicks, and app, window, or menu mutations to one exact process and window generation; refuse fuzzy, ambiguous, stale, or incomplete targets before dispatch.
+- Keep TextEdit document fields and other editable controls discoverable when optional Accessibility attributes are unavailable.
+- Resolve exact minimized and off-Space windows without treating unreadable WindowServer catalogs as proof that a target is absent.
+- Preserve exact signed read-only selectors across application names, PIDs, bundle or executable paths, and window IDs or titles; reject contradictory evidence.
+- Report application and window inventory completeness honestly while keeping complete AX-only listings usable without Screen Recording.
+- Pin foreground menu listing and clicks to the exact process and window, preserving truthful focus outcomes.
+- Prevent duplicate scrolling and SwiftUI tab presses after accepted input; preserve exact dispatch counts and require fresh observation before retrying.
+- Return target-attributed, retry-unsafe outcomes when an accepted Accessibility `set-value` write cannot be verified.
+- Clean up cancelled held shortcuts and pointers only against their original process generation.
+- Return structured connection and discovery errors instead of crashing on malformed persisted custom-provider URLs. Thanks @SebTardif for #488.
+- Bound wedged VibeTunnel terminal-title helpers and fall back to ANSI title updates. Thanks @SebTardif for #489.
+- Explain actionable `set-value`/`set_value` recovery for unfocused background windows.
+- Align Agent, MCP, CLI, and documentation around snapshot-pinned background input, targeted dialog entry, and explicit foreground consent.
+- Bound AX observer registration and removal, and preserve Realtime completion, cancellation, and timeout outcomes. Thanks @SebTardif for AXorcist #46/#47 and Tachikoma #68.
+- Keep CLI wall-clock command deadlines bounded even under sustained executor load.
+- Reuse authenticated Bridge handshakes and explain implicit-host rejection before falling back locally.
+- Reject empty interaction commands, targetless background typing, malformed browser requests, and invalid video inputs before runtime discovery while explicit help still succeeds.
+- Preserve JSON flags after `--` as child-command arguments.
+- Preserve Option/Meta chords and fragmented escape sequences across higher-latency SSH connections.
+- Build deployment companion apps unsigned, then apply the Foundation signature manually before transactional installation to avoid Xcode provisioning stalls while preserving exact signer and TCC identity.

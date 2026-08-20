@@ -19,6 +19,7 @@ import {
   REMOVED_ROOT_COMMANDS,
   parseRemovedRootReplacements,
   validateChangelogContract,
+  validateNpmVersionAvailability,
   validateSourceDocumentationContracts,
   validateVersionConsistency
 } from './release-preflight-contract.mjs';
@@ -304,25 +305,15 @@ function checkVersionAvailability() {
 
   log(`Checking if ${packageName}@${version} is already published...`, colors.cyan);
 
-  // Check if version exists on npm
   const existingVersions = execNpm(`npm view ${packageName} versions --json`, { allowFailure: true });
-  
-  if (existingVersions) {
-    try {
-      const versions = JSON.parse(existingVersions);
-      if (versions.includes(version)) {
-        logError(`Version ${version} is already published on npm!`);
-        logError('Please update the version in package.json before releasing.');
-        return false;
-      }
-    } catch (e) {
-      // If parsing fails, try to check if it's a single version
-      if (existingVersions.includes(version)) {
-        logError(`Version ${version} is already published on npm!`);
-        logError('Please update the version in package.json before releasing.');
-        return false;
-      }
-    }
+  const failures = validateNpmVersionAvailability({
+    packageName,
+    version,
+    registryOutput: existingVersions
+  });
+  if (failures.length > 0) {
+    failures.forEach(logError);
+    return false;
   }
 
   logSuccess(`Version ${version} is available for publishing`);

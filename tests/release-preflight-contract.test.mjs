@@ -9,6 +9,7 @@ import {
   validateChangelogContract,
   validateCommandDocsContract,
   validateMigrationGuideContract,
+  validateNpmVersionAvailability,
   validateSourceDocumentationContracts,
   validateVersionConsistency,
   validateVersionValues
@@ -149,9 +150,46 @@ test('version parity reports missing and stale release surfaces', () => {
   ]);
 });
 
+test('npm version availability fails closed on failed, empty, and malformed registry responses', () => {
+  const request = { packageName: '@steipete/peekaboo', version: '4.2.2' };
+
+  for (const registryOutput of [null, undefined, '', '   ']) {
+    assert.match(
+      validateNpmVersionAvailability({ ...request, registryOutput })[0],
+      /registry query failed or returned no data.*npm view @steipete\/peekaboo versions --json/
+    );
+  }
+
+  assert.match(
+    validateNpmVersionAvailability({ ...request, registryOutput: 'npm ERR! offline' })[0],
+    /registry returned invalid JSON/
+  );
+  for (const registryOutput of ['{}', 'null', '["4.2.0", 422]', '[""]']) {
+    assert.match(
+      validateNpmVersionAvailability({ ...request, registryOutput })[0],
+      /registry returned an invalid version list/
+    );
+  }
+});
+
+test('npm version availability accepts valid registry lists and rejects an already published version', () => {
+  const request = { packageName: '@steipete/peekaboo', version: '4.2.2' };
+
+  for (const registryOutput of ['[]', '["4.2.0", "4.2.1"]', '"4.2.0"']) {
+    assert.deepEqual(validateNpmVersionAvailability({ ...request, registryOutput }), []);
+  }
+
+  for (const registryOutput of ['["4.2.0", "4.2.2"]', '"4.2.2"']) {
+    assert.deepEqual(validateNpmVersionAvailability({ ...request, registryOutput }), [
+      'Version 4.2.2 is already published on npm!',
+      'Please update the version in package.json before releasing.'
+    ]);
+  }
+});
+
 test('repository release source surfaces remain internally consistent', () => {
   const versionResult = validateVersionConsistency(projectRoot);
-  assert.equal(versionResult.version, '4.2.1');
+  assert.equal(versionResult.version, '4.2.2');
   assert.deepEqual(versionResult.failures, []);
   assert.deepEqual(validateSourceDocumentationContracts(projectRoot), []);
 });

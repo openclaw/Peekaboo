@@ -51,12 +51,9 @@ peekaboo see --app Finder --json
 
 That is the core loop: observe the current screen, choose an element from the result, and act on it.
 
-## What's new in 4.2
+## What's new in 4.2.2
 
-Peekaboo 4.2 deepens background automation with exact, generation-bound receipts for browser
-connections, dialogs, coordinate snapshots, and opaque web-view scrolling. These protocol upgrades
-keep long-lived Bridge sessions pinned to the process, window, and semantic target they actually
-validated, so stale or ambiguous work fails before dispatch instead of drifting to the active app.
+Peekaboo 4.2.2 adds exact-window background middle and triple clicks, restores editable TextEdit controls and minimized or off-Space targets, and makes Agent dry runs explain their requested and effective foreground authority. Keyboard, menu, window, and app actions refuse ambiguous targets, while bounded Accessibility work, Bridge handshake reuse, reliable SSH input, and explicitly signed deployment builds keep long-running automation predictable.
 
 ## Automate an app
 

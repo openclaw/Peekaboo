@@ -746,7 +746,7 @@ function artifactFixture(root, executablePath = '/usr/bin/true', monitorPath = '
     schema: 6,
     phase: 'candidate_verified_not_installed',
     source_commit: SOURCE,
-    version: '4.2.1',
+    version: '4.2.2',
     cli: {
       sha256: sha256(fs.readFileSync(executablePath)),
       cdhash: codeSignatureHash(executablePath),

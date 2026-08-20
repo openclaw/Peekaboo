@@ -5,43 +5,42 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-- Add Bridge protocol 1.31 one-request signed background Agent execution with authenticated CLI derivation, an irreversible earliest-entrypoint process limit, lifecycle-covered release acknowledgement, exact-leader reaping, canonical terminal receipt bundles, and nested exact-lane receipts.
-
-### Fixed
-- Treat empty `type`, `press`, `action`, `set-value`, and `click` invocations as invalid usage in both human and JSON output while preserving explicit help as a successful no-runtime path.
-- Expose requested foreground access and effective background/foreground UI authority in deterministic Agent dry-run human and JSON output without invoking models, tools, or sessions.
-- Warn when implicit Bridge hosts reject the CLI before local fallback while preserving the established `bridge status --json` schema.
-- Keep CLI wall-clock timeouts bounded under sustained executor load by sharing one monotonic dispatch timer and canceling losing timer/work paths without releasing mutation barriers early.
-- Pin foreground menu focus, clicks, and listing to one exact process/window generation across CLI and MCP, preserving focus outcomes when a later menu read fails.
-- Refuse fuzzy application selectors before app, menu, window, or background click mutations are pinned to a process, while preserving fuzzy read-only discovery.
-- Align CLI help and Agent guidance with receipt-pinned background keyboard input, targeted dialog AXValue, and explicit foreground consent for foreground-exposing actions.
-- Refuse targetless background typing, malformed browser requests, and invalid video inputs before runtime discovery, with path-specific media errors and CLI-native browser recovery.
-- Preserve local Option/Meta chords while buffering fragmented terminal escape sequences longer over SSH, and ignore stale cancelled escape timers that arrive after a newer sequence.
-- Update AXorcist so synchronous and legacy element observers share the bounded registration and cleanup state machine, preventing a wedged endpoint from blocking Peekaboo's main actor indefinitely or escaping late-result rollback.
-- Bound asynchronous Accessibility notification add and remove waits, removal joins, and subscription setup retries so one wedged endpoint cannot hang global observer startup or teardown. Thanks @SebTardif for AXorcist #47.
-
-## [4.2.1] - 2026-08-17
+## [4.2.2] - 2026-08-20
 
 ### Highlights
 
-- **Background type, paste, and press now share one fail-closed planner.** Fuzzy applications, partial window catalogs, ambiguous matches, and stale process identities are refused before input dispatch.
-- **Protocol 1.30 preserves complete-versus-partial target evidence.** CLI inventory and receipt validation expose the exact host source and negotiated protocol while remaining conservative with protocol 1.29 hosts.
-- **Exact-window background input covers more click families.** Middle and triple clicks use generation-bound native event sequences without activating the target or moving the shared cursor.
-- **Automation dependencies are more cancellation-safe.** AX permission observation no longer deadlocks during termination, and Realtime tool execution preserves the first completion or cancellation result.
+- **Background automation does more without stealing focus.** Exact-window middle and triple clicks join keyboard, menu, window, and app actions that refuse ambiguous targets.
+- **Previously invisible controls and windows are usable again.** Editable TextEdit fields and exact minimized or off-Space windows remain discoverable.
+- **Agent authority is explicit before anything runs.** Dry-run text and JSON explain requested and effective foreground access without touching models, tools, or sessions.
+- **Long-running CLI workflows stay responsive.** Bounded AX observers, command deadlines, and VibeTunnel helpers join safer retries, reused Bridge handshakes, reliable SSH input, and provisioning-free companion deployment.
 
 ### Added
-- Add Bridge protocol 1.30 planner inventory transport with explicit complete/partial evidence, while protocol 1.29 hosts keep legacy list bytes and conservative exact-target compatibility.
-- Add authenticated `bridge receipt validate` for fail-closed, agent-readable verification of private protocol 1.29 bundles against the exact live listener that produced them.
-- Add capability-gated exact-window background middle/triple clicks with native center-button and 1/2/3 click-state sequences, signed target receipts, and fail-closed protocol 1.29 compatibility.
-- Include the authenticated Bridge host's stamped source commit and negotiated protocol version in live receipt-validation results for exact-build protocol certification.
+- Add exact-window background middle and triple clicks without activating the target or moving the cursor.
+- Show requested and effective foreground authority in `agent --dry-run` text and JSON without invoking models, tools, or sessions.
+- Add authenticated `peekaboo bridge receipt validate` with the live host's source commit and negotiated protocol metadata.
+- Add Bridge protocol 1.30 application and window inventories that distinguish complete from partial evidence while retaining conservative compatibility with older hosts.
 
 ### Fixed
-- Route CLI and MCP background keyboard delivery through one completeness-aware target planner, refusing fuzzy application selectors and partial window catalogs before type, paste, or press dispatch.
-- Make application and window inventories report omitted or identity-incomplete rows as partial, while keeping complete AX-only window listings usable without Screen Recording.
-- Update AXorcist and Tachikoma so Accessibility permission observation cancellation cannot deadlock the main queue or install timers after termination, while Realtime tool execution preserves the first completion/cancellation winner, keeps timeout returns bounded while owning delayed cleanup, preserves completed results during timer cancellation, and rejects invalid audio deadlines before dispatch. Thanks @SebTardif for AXorcist #46 and Tachikoma #68; follow-up fixes landed in AXorcist #48 and Tachikoma #69/#70.
+- Pin background type, paste, press, targeted clicks, and app, window, or menu mutations to one exact process and window generation; refuse fuzzy, ambiguous, stale, or incomplete targets before dispatch.
+- Keep TextEdit document fields and other editable controls discoverable when optional Accessibility attributes are unavailable.
+- Resolve exact minimized and off-Space windows without treating unreadable WindowServer catalogs as proof that a target is absent.
+- Preserve exact signed read-only selectors across application names, PIDs, bundle or executable paths, and window IDs or titles; reject contradictory evidence.
+- Report application and window inventory completeness honestly while keeping complete AX-only listings usable without Screen Recording.
+- Pin foreground menu listing and clicks to the exact process and window, preserving truthful focus outcomes.
+- Prevent duplicate scrolling and SwiftUI tab presses after accepted input; preserve exact dispatch counts and require fresh observation before retrying.
+- Return target-attributed, retry-unsafe outcomes when an accepted Accessibility `set-value` write cannot be verified.
+- Clean up cancelled held shortcuts only against their original process generation.
+- Return structured connection and discovery errors instead of crashing on malformed persisted custom-provider URLs. Thanks @SebTardif for #488.
+- Bound wedged VibeTunnel terminal-title helpers and fall back to ANSI title updates. Thanks @SebTardif for #489.
+- Explain actionable `set-value`/`set_value` recovery for unfocused background windows.
+- Align CLI help and Agent guidance around snapshot-pinned background input, targeted dialog entry, and explicit foreground consent.
+- Bound AX observer registration and removal, and preserve Realtime completion, cancellation, and timeout outcomes. Thanks @SebTardif for AXorcist #46/#47 and Tachikoma #68.
+- Keep CLI wall-clock command deadlines bounded even under sustained executor load.
+- Reuse authenticated Bridge handshakes and explain implicit-host rejection before falling back locally.
+- Reject empty interaction commands, targetless background typing, malformed browser requests, and invalid video inputs before runtime discovery while explicit help still succeeds.
+- Preserve JSON flags after `--` as child-command arguments.
+- Preserve Option/Meta chords and fragmented escape sequences across higher-latency SSH connections.
+- Build deployment companion apps unsigned, then apply the Foundation signature manually before transactional installation to avoid Xcode provisioning stalls while preserving exact signer and TCC identity.
 
 ## [4.2.0] - 2026-08-16
 

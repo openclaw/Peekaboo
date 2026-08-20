@@ -42,12 +42,13 @@ login-keychain or Dropbox fallbacks, and the private locator is never tracked in
 - Update `package.json`, both `version.json` files, `Apps/CLI/Sources/Resources/Info.plist`,
   `Apps/CLI/TestHost/Info.plist`, `PeekabooMCPVersion.current`, the README release-status copy, and
   `MARKETING_VERSION` in the Mac, Inspector, and Playground Xcode projects.
-- Keep the candidate sections in `CHANGELOG.md` and `Apps/CLI/CHANGELOG.md` marked `Unreleased` while preparing and
-  validating the release. Replace `Unreleased` with the actual release date only in the publication commit.
+- Candidate version and changelog sections may remain `Unreleased` only while running the deterministic preparation
+  dry run. Date both changelogs before the publication commit and full release preflight.
 - Update user-facing docs and `release/release-notes.md`. Release notes contain only that version's changelog section.
 - Update submodule repositories first only when their code or release metadata changed, then commit the gitlink here.
+- Use the supported Xcode 26.x release toolchain; do not substitute an older SDK for publication builds.
 
-## 2. Validate
+## 2. Validate the preparation patch
 
 ```bash
 pnpm run format
@@ -55,7 +56,6 @@ pnpm run lint
 pnpm run lint:docs
 pnpm run docs:site
 pnpm run test:safe
-pnpm run prepare-release
 ```
 
 While the version/changelog decision is still in progress, run the deterministic subset without registry, git-fetch,
@@ -63,21 +63,29 @@ or artifact work:
 
 ```bash
 pnpm run build:cli
-pnpm run prepare-release -- --dry-run --bin Apps/CLI/.build/debug/peekaboo
+BIN_PATH="$(swift build --package-path Apps/CLI --show-bin-path)"
+pnpm run prepare-release -- --dry-run --bin "$BIN_PATH/peekaboo"
 ```
 
 The dry run validates metadata consistency, docs/links, generated v4 help, retired-command rejection, and the
-`app list`/`window list`/`screen list` JSON contracts. It is intentionally not release-readiness proof; the full
-preflight remains required after the version is final and the tree is clean. Dry-run accepts the candidate's
-`Unreleased` changelog headings; full preflight requires exact `YYYY-MM-DD` headings before publication.
+`app list`/`window list`/`screen list` JSON contracts. It is intentionally not release-readiness proof. Dry-run
+accepts the candidate's `Unreleased` changelog headings; full preflight requires exact `YYYY-MM-DD` headings and a
+clean, current publication commit on `main`.
 
 Run `pnpm run test:automation` and live provider tests when the release changes those surfaces. Before committing,
 run the repository autoreview workflow until no accepted actionable findings remain.
 
-## 3. Commit and push
+## 3. Date, commit, push, and run publication preflight
 
-Use standard Git commands with Conventional Commits. Push `main`, pull with `--ff-only`, and confirm a clean tree
-before building release artifacts; dirty trees produce invalid version metadata.
+Replace `Unreleased` with the actual release date, then use standard Git commands with Conventional Commits. Push
+`main`, pull with `--ff-only`, and confirm the publication commit is current and the tree is clean. Only then run the
+full publication preflight:
+
+```bash
+pnpm run prepare-release
+```
+
+Do not build release artifacts until publication preflight succeeds; dirty trees produce invalid version metadata.
 
 ## 4. Publish
 

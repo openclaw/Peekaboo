@@ -49,11 +49,13 @@ Publishing a GitHub Release runs `.github/workflows/update-homebrew.yml`. The wo
 If the dispatch needs repair, calculate the SHA-256 of the final universal archive and update the template:
 
 ```bash
-shasum -a 256 release/peekaboo-macos-universal.tar.gz
-./scripts/update-homebrew-formula.sh 3.10.0 <sha256>
+VERSION="$(node -p "require('./package.json').version")"
+ARCHIVE=build/release/peekaboo-macos-universal.tar.gz
+SHA256="$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')"
+./scripts/update-homebrew-formula.sh "$VERSION" "$SHA256"
 ```
 
-The helper updates the formula URL, `sha256`, and `version` for `v3.10.0`. Review the diff, then copy the resulting `homebrew/peekaboo.rb` to `Formula/peekaboo.rb` in the tap and commit it there.
+The helper updates the formula URL, `sha256`, and `version` for the current package version. Review the diff, then copy the resulting `homebrew/peekaboo.rb` to `Formula/peekaboo.rb` in the tap and commit it there.
 
 ## Testing
 
