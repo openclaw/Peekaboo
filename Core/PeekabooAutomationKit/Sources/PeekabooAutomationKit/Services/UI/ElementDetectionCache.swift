@@ -10,17 +10,20 @@ import PeekabooFoundation
     public struct Key: Hashable, Sendable {
         public let windowID: Int
         public let processID: pid_t
+        public let processStartIdentity: UInt64
         public let allowWebFocus: Bool
         public let includeMenuBarElements: Bool
 
         public init(
             windowID: Int,
             processID: pid_t,
+            processStartIdentity: UInt64 = 0,
             allowWebFocus: Bool,
             includeMenuBarElements: Bool = false)
         {
             self.windowID = windowID
             self.processID = processID
+            self.processStartIdentity = processStartIdentity
             self.allowWebFocus = allowWebFocus
             self.includeMenuBarElements = includeMenuBarElements
         }
@@ -53,6 +56,7 @@ import PeekabooFoundation
     public func key(
         windowID: Int?,
         processID: pid_t,
+        processStartIdentity: UInt64 = 0,
         allowWebFocus: Bool,
         includeMenuBarElements: Bool = false) -> Key?
     {
@@ -60,6 +64,7 @@ import PeekabooFoundation
         return Key(
             windowID: windowID,
             processID: processID,
+            processStartIdentity: processStartIdentity,
             allowWebFocus: allowWebFocus,
             includeMenuBarElements: includeMenuBarElements)
     }

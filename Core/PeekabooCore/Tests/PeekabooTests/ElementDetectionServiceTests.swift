@@ -431,6 +431,26 @@ struct ElementDetectionCacheTests {
         #expect(cache.elements(for: unfocusedKey)?.map(\.id) == ["unfocused"])
     }
 
+    @Test
+    func `Cache key separates recycled process generations`() {
+        let cache = ElementDetectionCache()
+        let original = ElementDetectionCache.Key(
+            windowID: 7,
+            processID: pid_t(42),
+            processStartIdentity: 100,
+            allowWebFocus: false)
+        let replacement = ElementDetectionCache.Key(
+            windowID: 7,
+            processID: pid_t(42),
+            processStartIdentity: 101,
+            allowWebFocus: false)
+
+        cache.store([Self.element(id: "original")], for: original)
+
+        #expect(cache.elements(for: original)?.map(\.id) == ["original"])
+        #expect(cache.elements(for: replacement) == nil)
+    }
+
     private static func element(id: String) -> DetectedElement {
         DetectedElement(
             id: id,

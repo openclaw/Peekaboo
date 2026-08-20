@@ -140,7 +140,7 @@ extension SeeCommand {
         )
         do {
             try self.requireUsableTreeOnlyEvidence(result)
-            try self.requireActionCapableTreeOnlyEvidence(result)
+            try self.requireBoundTreeOnlyEvidence(result, receipt: receipt.targetReceipt)
             let bound = ElementDetectionResult(
                 snapshotId: snapshotID,
                 screenshotPath: "",
@@ -184,20 +184,37 @@ extension SeeCommand {
         throw PeekabooError.operationError(message: message)
     }
 
-    private func requireActionCapableTreeOnlyEvidence(_ result: ElementDetectionResult) throws {
+    private func requireBoundTreeOnlyEvidence(
+        _ result: ElementDetectionResult,
+        receipt: DesktopActionTargetReceipt?
+    ) throws {
         guard let context = result.metadata.windowContext,
               let processIdentifier = context.applicationProcessId,
               processIdentifier > 0,
-              let windowID = context.windowID,
-              windowID > 0,
-              let bounds = context.windowBounds,
-              bounds.width > 0,
-              bounds.height > 0,
-              let identity = context.windowMutationIdentity,
-              identity.windowID == windowID,
-              identity.ownerProcessIdentifier == processIdentifier,
-              identity.ownerProcessStartIdentity > 0,
-              identity.capturedBounds == bounds
+              let processStartIdentity = context.applicationProcessStartIdentity ??
+              context.windowMutationIdentity?.ownerProcessStartIdentity,
+              processStartIdentity > 0,
+              receipt?.processIdentifier == processIdentifier,
+              receipt?.processStartIdentity == processStartIdentity
+        else {
+            throw PeekabooError.snapshotStale(
+                "AX-only see could not bind its elements to an exact process-generation receipt. "
+                    + "Run see again before background input."
+            )
+        }
+        guard receipt?.windowID != nil else { return }
+        guard
+            let windowID = context.windowID,
+            windowID > 0,
+            let bounds = context.windowBounds,
+            bounds.width > 0,
+            bounds.height > 0,
+            let identity = context.windowMutationIdentity,
+            identity.windowID == windowID,
+            identity.ownerProcessIdentifier == processIdentifier,
+            identity.ownerProcessStartIdentity == processStartIdentity,
+            receipt?.windowID == windowID,
+            identity.capturedBounds == bounds
         else {
             throw PeekabooError.snapshotStale(
                 "AX-only see could not bind its elements to an exact process-generation, window, and bounds "

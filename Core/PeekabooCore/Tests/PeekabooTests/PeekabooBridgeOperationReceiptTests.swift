@@ -2294,6 +2294,28 @@ extension PeekabooBridgeOperationReceiptTests {
             request: inspectRequest,
             response: .elementDetection(detection)).target == .window(identity))
 
+        let processContext = WindowContext(
+            applicationName: "Fixture",
+            applicationProcessId: identity.ownerProcessIdentifier,
+            applicationProcessStartIdentity: identity.ownerProcessStartIdentity,
+            windowTitle: "AX-only description",
+            windowID: identity.windowID,
+            windowBounds: bounds)
+        let processDetection = ElementDetectionResult(
+            snapshotId: "process-snapshot",
+            screenshotPath: "",
+            elements: DetectedElements(),
+            metadata: .init(
+                detectionTime: 0,
+                elementCount: 0,
+                method: "fixture",
+                windowContext: processContext))
+        let processInspectRequest = PeekabooBridgeRequest.inspectAccessibilityTree(.init(
+            windowContext: WindowContext(applicationName: "Fixture")))
+        #expect(try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+            request: processInspectRequest,
+            response: .elementDetection(processDetection)).target == .process(identity.processIdentity))
+
         let selectorOnlyContexts = [
             WindowContext(windowID: identity.windowID),
             WindowContext(

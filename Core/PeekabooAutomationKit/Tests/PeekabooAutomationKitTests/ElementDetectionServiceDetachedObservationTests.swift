@@ -154,6 +154,7 @@ struct ElementDetectionServiceDetachedObservationTests {
     }
 
     private static let cachedContext = CachedDetachedAXObservationContext(
+        processStartIdentity: 7,
         windowID: 42,
         windowTitle: "Cached fixture",
         windowBounds: CGRect(x: 10, y: 20, width: 800, height: 600),

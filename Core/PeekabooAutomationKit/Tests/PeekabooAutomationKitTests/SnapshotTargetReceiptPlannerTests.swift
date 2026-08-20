@@ -4,6 +4,25 @@ import Testing
 
 struct SnapshotTargetReceiptPlannerTests {
     @Test
+    func `process scoped context keeps generation and discards unreceipted window hints`() throws {
+        let context = WindowContext(
+            applicationProcessId: 42,
+            applicationProcessStartIdentity: 1001,
+            windowTitle: "AX-only description",
+            windowID: 73,
+            windowBounds: .init(x: 20, y: 30, width: 640, height: 480))
+
+        let evidence = DesktopTargetEvidenceAdapter.evidence(context: context)
+        let resolved = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([evidence])
+        let identity = try #require(resolved)
+
+        #expect(identity.processIdentity == .init(processIdentifier: 42, processStartIdentity: 1001))
+        #expect(identity.exactWindow == nil)
+        #expect(evidence.windowID == nil)
+        #expect(evidence.windowBounds == nil)
+    }
+
+    @Test
     func `evidence adapters preserve linked process and exact-window identity`() {
         let focusedElement = AutomationTestFixtures.focusedElement()
         let fixture = AutomationTestFixtures.linkedSnapshotTarget(focusedElement: focusedElement)

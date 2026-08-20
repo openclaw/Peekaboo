@@ -792,6 +792,68 @@ extension SeeCommandRuntimeTests {
 
     @Test
     @MainActor
+    func `tree only See publishes a process scoped read when no exact window receipt exists`() async throws {
+        try await self.withTempConfigEnv { _ in
+            let fixture = Self.makeSeeCommandRuntimeFixture()
+            let processStartIdentity = try #require(fixture.applicationInfo.processStartIdentity)
+            let processDetection = ElementDetectionResult(
+                snapshotId: "process-scoped-tree",
+                screenshotPath: "",
+                elements: fixture.detectionResult.elements,
+                metadata: DetectionMetadata(
+                    detectionTime: 0.1,
+                    elementCount: fixture.detectionResult.elements.all.count,
+                    method: "stub",
+                    windowContext: WindowContext(
+                        applicationName: fixture.applicationInfo.name,
+                        applicationProcessId: fixture.applicationInfo.processIdentifier,
+                        applicationProcessStartIdentity: processStartIdentity,
+                        windowTitle: "AX-only description",
+                        windowID: fixture.windowInfo.windowID,
+                        windowBounds: fixture.windowInfo.bounds
+                    )
+                )
+            )
+            let automation = StubAutomationService()
+            automation.inspectAccessibilityTreeHandler = { _ in processDetection }
+            let (context, _) = Self.makeSeeCommandRuntimeContext(
+                automation: automation,
+                screenCapture: fixture.screenCapture,
+                applicationInfo: fixture.applicationInfo,
+                windowInfo: fixture.windowInfo
+            )
+
+            let result = try await InProcessCommandRunner.run(
+                [
+                    "see",
+                    "--app", fixture.applicationInfo.name,
+                    "--tree",
+                    "--no-screenshot",
+                    "--json",
+                ],
+                services: context.services
+            )
+            #expect(result.exitStatus == 0, Comment(rawValue: result.combinedOutput))
+            let response = try JSONDecoder().decode(
+                CodableJSONResponse<SeeResult>.self,
+                from: Data(result.stdout.utf8)
+            )
+            let receipt = try #require(response.target_receipt)
+            let stored = try #require(
+                context.snapshots.detectionResults[response.data.snapshot_id]?.metadata.windowContext
+            )
+
+            #expect(response.data.ui_elements.map(\.id) == ["B1"])
+            #expect(receipt.processIdentifier == fixture.applicationInfo.processIdentifier)
+            #expect(receipt.processStartIdentity == processStartIdentity)
+            #expect(receipt.windowID == nil)
+            #expect(stored.applicationProcessStartIdentity == processStartIdentity)
+            #expect(stored.windowMutationIdentity == nil)
+        }
+    }
+
+    @Test
+    @MainActor
     func `tree only See refuses incomplete action receipts before snapshot publication`() async throws {
         try await self.withTempConfigEnv { _ in
             let fixture = Self.makeSeeCommandRuntimeFixture()
@@ -854,7 +916,7 @@ extension SeeCommandRuntimeTests {
                 )
 
                 #expect(result.exitStatus == 1)
-                #expect(result.combinedOutput.contains("exact process-generation, window, and bounds receipt"))
+                #expect(result.combinedOutput.contains("AX-only see could not bind"))
                 #expect(!result.combinedOutput.contains("\"snapshot_id\""))
                 #expect(!result.combinedOutput.contains("\"ui_elements\""))
                 #expect(context.snapshots.detectionResults.isEmpty)

@@ -328,16 +328,17 @@ public enum ObservationActionResultSemantics {
     }
 
     private static func targetEvidence(_ context: WindowContext?) -> [DesktopTargetIdentity.Evidence] {
-        guard let context,
-              let identity = context.windowMutationIdentity,
-              let bounds = context.windowBounds
-        else { return [] }
-        return [
-            DesktopTargetEvidenceAdapter.evidence(
+        guard let context else { return [] }
+        if let identity = context.windowMutationIdentity,
+           let bounds = context.windowBounds
+        {
+            return [DesktopTargetEvidenceAdapter.evidence(
                 windowIdentity: identity,
                 bounds: bounds,
-                focusedElement: context.focusedElement),
-        ]
+                focusedElement: context.focusedElement)]
+        }
+        guard context.applicationProcessStartIdentity != nil else { return [] }
+        return [DesktopTargetEvidenceAdapter.evidence(context: context)]
     }
 
     private static func targetFailure(

@@ -5,6 +5,7 @@ import os.log
 import PeekabooFoundation
 
 struct CachedDetachedAXObservationContext: Sendable {
+    let processStartIdentity: UInt64
     let windowID: Int?
     let windowTitle: String?
     let windowBounds: CGRect?
@@ -12,6 +13,7 @@ struct CachedDetachedAXObservationContext: Sendable {
 }
 
 struct DetachedAXObservationOutcome: Sendable {
+    let processStartIdentity: UInt64
     let elements: [DetectedElement]
     let windowID: Int?
     let windowTitle: String?
@@ -170,6 +172,7 @@ public final class ElementDetectionService {
             applicationBundlePath: applicationIdentity.bundlePath,
             applicationExecutablePath: applicationIdentity.executablePath,
             applicationProcessId: windowContext?.applicationProcessId ?? targetApp.processIdentifier,
+            applicationProcessStartIdentity: resolvedWindowMutationIdentity?.ownerProcessStartIdentity,
             windowTitle: windowName,
             windowID: resolvedWindowID,
             windowBounds: resolvedWindowBounds,
@@ -197,6 +200,7 @@ public final class ElementDetectionService {
             ? self.axTreeCache.key(
                 windowID: resolvedWindowID,
                 processID: targetApp.processIdentifier,
+                processStartIdentity: resolvedWindowMutationIdentity?.ownerProcessStartIdentity ?? 0,
                 allowWebFocus: allowWebFocus,
                 includeMenuBarElements: includeMenuBarElements)
             : nil
@@ -276,6 +280,7 @@ public final class ElementDetectionService {
                invalidatedThrough: invalidatedThrough)
         {
             return DetachedAXObservationOutcome(
+                processStartIdentity: cachedContext.processStartIdentity,
                 elements: cached.elements,
                 windowID: cachedContext.windowID,
                 windowTitle: cachedContext.windowTitle,
@@ -293,6 +298,7 @@ public final class ElementDetectionService {
                 for: cacheKey)
         }
         return DetachedAXObservationOutcome(
+            processStartIdentity: cachedContext.processStartIdentity,
             elements: detachedResult.elements,
             windowID: detachedResult.windowID,
             windowTitle: detachedResult.windowTitle,
@@ -309,6 +315,10 @@ public final class ElementDetectionService {
         applicationIdentity: ResolvedApplicationIdentity) async throws -> ElementDetectionResult
     {
         let processIdentifier = targetApp.processIdentifier
+        guard let processStartIdentity = SystemIdentityResolver.processStartIdentity(processIdentifier) else {
+            throw PeekabooError.snapshotStale(
+                "Could not capture the target process generation before detached AX observation")
+        }
         let context = try Self.readOnlyWindowContext(
             targetApp: targetApp,
             requested: windowContext,
@@ -335,6 +345,7 @@ public final class ElementDetectionService {
             applicationBundlePath: applicationIdentity.bundlePath,
             applicationExecutablePath: applicationIdentity.executablePath,
             applicationProcessId: processIdentifier,
+            applicationProcessStartIdentity: processStartIdentity,
             windowTitle: context?.windowTitle,
             windowID: context?.windowID,
             windowBounds: context?.windowBounds,
@@ -355,6 +366,7 @@ public final class ElementDetectionService {
             ? self.axTreeCache.key(
                 windowID: context?.windowID,
                 processID: processIdentifier,
+                processStartIdentity: processStartIdentity,
                 allowWebFocus: false,
                 includeMenuBarElements: includeMenuBarElements)
             : nil
@@ -364,20 +376,21 @@ public final class ElementDetectionService {
             cacheKey: cacheKey,
             invalidatedThrough: invalidatedThrough,
             cachedContext: CachedDetachedAXObservationContext(
+                processStartIdentity: processStartIdentity,
                 windowID: context?.windowID,
                 windowTitle: context?.windowTitle,
                 windowBounds: context?.windowBounds,
                 isDialog: false))
         {
-            let expectedProcessStartIdentity = context?.windowMutationIdentity?.ownerProcessStartIdentity ??
-                SystemIdentityResolver.processStartIdentity(processIdentifier)
-            guard let expectedProcessStartIdentity else {
+            if let expectedWindowGeneration = context?.windowMutationIdentity?.ownerProcessStartIdentity,
+               expectedWindowGeneration != processStartIdentity
+            {
                 throw PeekabooError.snapshotStale(
-                    "Could not capture the target process generation before detached AX observation")
+                    "Exact AX observation window changed process generation before traversal")
             }
             return DetachedAXObservationRequest(
                 processIdentifier: processIdentifier,
-                expectedProcessStartIdentity: expectedProcessStartIdentity,
+                expectedProcessStartIdentity: processStartIdentity,
                 windowID: context?.windowID,
                 windowTitle: context?.windowTitle,
                 expectedWindowBounds: context?.windowBounds,
@@ -388,12 +401,18 @@ public final class ElementDetectionService {
                 timing: DetachedAXObservationTiming(hardTimeoutSeconds: timeoutSeconds))
         }
 
+        guard SystemIdentityResolver.processStartIdentity(processIdentifier) == outcome.processStartIdentity else {
+            throw PeekabooError.snapshotStale(
+                "Target PID \(processIdentifier) changed process generation during AX observation")
+        }
+
         let resolvedContext = WindowContext(
             applicationName: applicationIdentity.name,
             applicationBundleId: applicationIdentity.bundleIdentifier,
             applicationBundlePath: applicationIdentity.bundlePath,
             applicationExecutablePath: applicationIdentity.executablePath,
             applicationProcessId: processIdentifier,
+            applicationProcessStartIdentity: outcome.processStartIdentity,
             windowTitle: outcome.windowTitle,
             windowID: outcome.windowID,
             windowBounds: context?.windowBounds ?? outcome.windowBounds,
@@ -442,6 +461,7 @@ public final class ElementDetectionService {
                 applicationBundlePath: applicationIdentity.bundlePath,
                 applicationExecutablePath: applicationIdentity.executablePath,
                 applicationProcessId: targetApp.processIdentifier,
+                applicationProcessStartIdentity: actionableReceipt.identity.ownerProcessStartIdentity,
                 windowTitle: requested?.windowTitle ?? liveWindow.title,
                 windowID: requestedWindowID,
                 windowBounds: actionableReceipt.bounds,
@@ -476,6 +496,7 @@ public final class ElementDetectionService {
             applicationBundlePath: applicationIdentity.bundlePath,
             applicationExecutablePath: applicationIdentity.executablePath,
             applicationProcessId: targetApp.processIdentifier,
+            applicationProcessStartIdentity: actionableReceipt.identity.ownerProcessStartIdentity,
             windowTitle: window.title,
             windowID: window.windowID,
             windowBounds: actionableReceipt.bounds,

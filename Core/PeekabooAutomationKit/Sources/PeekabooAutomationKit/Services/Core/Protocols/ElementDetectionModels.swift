@@ -207,6 +207,10 @@ public nonisolated struct WindowContext: Sendable, Codable {
     /// Process identifier (most precise when available)
     public let applicationProcessId: Int32?
 
+    /// Process generation verified across the accessibility observation.
+    /// This binds process-scoped read results when no exact window receipt is available.
+    public let applicationProcessStartIdentity: UInt64?
+
     /// Window title
     public let windowTitle: String?
 
@@ -244,6 +248,7 @@ public nonisolated struct WindowContext: Sendable, Codable {
         applicationBundlePath: String? = nil,
         applicationExecutablePath: String? = nil,
         applicationProcessId: Int32? = nil,
+        applicationProcessStartIdentity: UInt64? = nil,
         windowTitle: String? = nil,
         windowID: Int? = nil,
         windowBounds: CGRect? = nil,
@@ -260,6 +265,7 @@ public nonisolated struct WindowContext: Sendable, Codable {
         self.applicationBundlePath = applicationBundlePath
         self.applicationExecutablePath = applicationExecutablePath
         self.applicationProcessId = applicationProcessId
+        self.applicationProcessStartIdentity = applicationProcessStartIdentity
         self.windowTitle = windowTitle
         self.windowID = windowID
         self.windowBounds = windowBounds
@@ -278,6 +284,7 @@ public nonisolated struct WindowContext: Sendable, Codable {
         applicationBundlePath: String? = nil,
         applicationExecutablePath: String? = nil,
         applicationProcessId: Int32? = nil,
+        applicationProcessStartIdentity: UInt64? = nil,
         windowTitle: String? = nil,
         windowID: Int? = nil,
         windowBounds: CGRect? = nil,
@@ -294,6 +301,7 @@ public nonisolated struct WindowContext: Sendable, Codable {
             applicationBundlePath: applicationBundlePath,
             applicationExecutablePath: applicationExecutablePath,
             applicationProcessId: applicationProcessId,
+            applicationProcessStartIdentity: applicationProcessStartIdentity,
             windowTitle: windowTitle,
             windowID: windowID,
             windowBounds: windowBounds,

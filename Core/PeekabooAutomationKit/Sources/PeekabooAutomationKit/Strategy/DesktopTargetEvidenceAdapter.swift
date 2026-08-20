@@ -44,13 +44,17 @@ public enum DesktopTargetEvidenceAdapter {
     }
 
     public static func evidence(context: WindowContext) -> DesktopTargetIdentity.Evidence {
-        .init(
+        let exactWindowIdentity = context.windowMutationIdentity
+        return .init(
             processIdentifier: context.applicationProcessId,
-            processIdentity: context.windowMutationIdentity?.processIdentity,
-            windowID: context.windowID,
-            windowIdentity: context.windowMutationIdentity,
-            windowBounds: context.windowBounds,
-            focusedElement: context.focusedElement)
+            processIdentity: self.processIdentity(
+                processIdentifier: context.applicationProcessId,
+                processStartIdentity: context.applicationProcessStartIdentity) ??
+                exactWindowIdentity?.processIdentity,
+            windowID: exactWindowIdentity.map { context.windowID ?? $0.windowID },
+            windowIdentity: exactWindowIdentity,
+            windowBounds: exactWindowIdentity.flatMap { context.windowBounds ?? $0.capturedBounds },
+            focusedElement: exactWindowIdentity == nil ? nil : context.focusedElement)
     }
 
     public static func evidence(snapshot: UIAutomationSnapshot) -> DesktopTargetIdentity.Evidence {
