@@ -9,6 +9,7 @@
 - Bind signed `set-value` results to the opaque requested element and refuse older Bridge hosts before dispatch.
 - Preserve verified process-generation receipts for background AX-only reads when an app has no actionable WindowServer window, while keeping window mutations exact-window-only.
 - Keep verified non-modal SwiftUI windows eligible for exact background mutation, retain fail-closed file-dialog classification, and recognize `inspect_ui` as fresh Agent perception.
+- Keep legacy Agent JSON tool-call arguments privacy-safe and deterministic instead of exposing Swift implementation details and runtime addresses.
 
 ## [4.2.2] - 2026-08-20
 

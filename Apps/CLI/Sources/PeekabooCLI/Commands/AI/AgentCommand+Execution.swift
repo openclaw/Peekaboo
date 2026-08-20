@@ -129,14 +129,27 @@ extension AgentCommand {
     }
 
     func makeAgentJSONResponse(_ result: AgentExecutionResult) -> [String: Any] {
-        let legacyToolCalls: [[String: Any]] = result.messages.flatMap { message in
-            message.content.compactMap { content in
-                guard case let .toolCall(toolCall) = content else { return nil }
-                return [
+        let trace = result.executionTrace()
+        var legacyToolCalls: [[String: Any]] = []
+        var traceIndex = 0
+        for message in result.messages {
+            for content in message.content {
+                guard case let .toolCall(toolCall) = content else { continue }
+                let arguments: String
+                if trace.entries.indices.contains(traceIndex) {
+                    let entry = trace.entries[traceIndex]
+                    arguments = entry.id == toolCall.id && entry.name == toolCall.name
+                        ? Self.safeLegacyArguments(entry.arguments)
+                        : Self.fullyRedactedLegacyArguments
+                } else {
+                    arguments = Self.fullyRedactedLegacyArguments
+                }
+                legacyToolCalls.append([
                     "id": toolCall.id,
                     "name": toolCall.name,
-                    "arguments": String(describing: toolCall.arguments),
-                ]
+                    "arguments": arguments,
+                ])
+                traceIndex += 1
             }
         }
         let usage: Any = result.usage.map { usage in
@@ -150,7 +163,7 @@ extension AgentCommand {
             "content": result.content,
             "sessionId": result.sessionId.map { $0 as Any } ?? NSNull(),
             "toolCalls": legacyToolCalls,
-            "executionTrace": self.executionTraceJSONObject(for: result),
+            "executionTrace": self.executionTraceJSONObject(trace),
             "metadata": [
                 "executionTime": result.metadata.executionTime,
                 "toolCallCount": result.metadata.toolCallCount,
@@ -161,8 +174,20 @@ extension AgentCommand {
         return ["success": true, "result": resultPayload]
     }
 
-    private func executionTraceJSONObject(for result: AgentExecutionResult) -> [String: Any] {
-        let trace = result.executionTrace()
+    private static let fullyRedactedLegacyArguments = #"{"redacted":true}"#
+
+    private static func safeLegacyArguments(_ arguments: [String: AnyAgentToolValue]) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(arguments),
+              let text = String(data: data, encoding: .utf8)
+        else {
+            return Self.fullyRedactedLegacyArguments
+        }
+        return text
+    }
+
+    private func executionTraceJSONObject(_ trace: AgentExecutionTrace) -> [String: Any] {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(trace),

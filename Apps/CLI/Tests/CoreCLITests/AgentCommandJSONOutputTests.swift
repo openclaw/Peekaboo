@@ -72,7 +72,23 @@ struct AgentCommandJSONOutputTests {
 
         #expect(resultObject["sessionId"] is NSNull)
         #expect(legacyCalls.count == 1)
-        #expect(legacyCalls[0]["arguments"] is String)
+        let legacyArguments = try #require(legacyCalls[0]["arguments"] as? String)
+        let legacyArgumentsData = try #require(legacyArguments.data(using: .utf8))
+        let legacyArgumentsObject = try #require(
+            JSONSerialization.jsonObject(with: legacyArgumentsData) as? [String: Any]
+        )
+        #expect(legacyArgumentsObject["app"] as? String == "TextEdit")
+        #expect(legacyArgumentsObject["foreground"] as? Bool == false)
+        #expect(legacyArgumentsObject["mode"] as? String == "background")
+        #expect(legacyArgumentsObject["snapshot"] as? String == "snapshot-123")
+        #expect(legacyArgumentsObject["window_id"] as? Int == 42)
+        for key in ["text", "value", "url", "custom_number", "custom_boolean"] {
+            #expect((legacyArgumentsObject[key] as? [String: Any])?["redacted"] as? Bool == true)
+        }
+        #expect(!legacyArguments.contains("Tachikoma"))
+        #expect(!legacyArguments.contains("AnyAgentToolValue"))
+        #expect(!legacyArguments.contains("unknown context"))
+        #expect(!legacyArguments.contains("storage:"))
         #expect(entries.count == 1)
         #expect(entries[0]["id"] as? String == call.id)
         #expect(entries[0]["disposition"] as? String == "executed/succeeded")
@@ -96,9 +112,88 @@ struct AgentCommandJSONOutputTests {
         #expect(!text.contains("iVBORw0KGgo"))
         #expect(!text.contains("/Users/example/private/capture.png"))
         #expect(!text.contains("sk-testSECRET123456789"))
+        #expect(!text.contains(privateMessage))
+        #expect(!text.contains(ordinaryPassword))
+        #expect(!text.contains(privateURL))
+        #expect(!text.contains("731991"))
+        #expect(!text.contains("AnyAgentToolValue"))
+        #expect(!text.contains("unknown context"))
         #expect(!traceText.contains(privateMessage))
         #expect(!traceText.contains(ordinaryPassword))
         #expect(!traceText.contains(privateURL))
         #expect(!traceText.contains("731991"))
+    }
+
+    @Test
+    func `Legacy calls beyond the bounded trace stay valid and fully redacted`() throws {
+        let calls = (0...512).map { index in
+            AgentToolCall(
+                id: "call-\(index)",
+                name: "inspect_ui",
+                arguments: [
+                    "app_target": AnyAgentToolValue(string: "PID:42"),
+                    "window_id": AnyAgentToolValue(int: 99),
+                ]
+            )
+        }
+        let result = AgentExecutionResult(
+            content: "complete",
+            messages: [ModelMessage(role: .assistant, content: calls.map { .toolCall($0) })],
+            metadata: AgentMetadata(
+                executionTime: 0.1,
+                toolCallCount: calls.count,
+                modelName: "test-model",
+                startTime: Date(),
+                endTime: Date()
+            )
+        )
+        let command = try AgentCommand.parse(["ephemeral task", "--no-cache"])
+
+        let response = command.makeAgentJSONResponse(result)
+        let resultObject = try #require(response["result"] as? [String: Any])
+        let legacyCalls = try #require(resultObject["toolCalls"] as? [[String: Any]])
+        let firstArguments = try #require(legacyCalls.first?["arguments"] as? String)
+        let lastArguments = try #require(legacyCalls.last?["arguments"] as? String)
+
+        #expect(legacyCalls.count == 513)
+        #expect(firstArguments == #"{"app_target":"PID:42","window_id":99}"#)
+        #expect(lastArguments == #"{"redacted":true}"#)
+    }
+
+    @Test
+    func `Legacy argument JSON is stable across dictionary insertion order`() throws {
+        var forward: [String: AnyAgentToolValue] = [:]
+        forward["app_target"] = AnyAgentToolValue(string: "PID:42")
+        forward["foreground"] = AnyAgentToolValue(bool: false)
+        forward["window_id"] = AnyAgentToolValue(int: 99)
+        var reverse: [String: AnyAgentToolValue] = [:]
+        reverse["window_id"] = AnyAgentToolValue(int: 99)
+        reverse["foreground"] = AnyAgentToolValue(bool: false)
+        reverse["app_target"] = AnyAgentToolValue(string: "PID:42")
+        let calls = [
+            AgentToolCall(id: "forward", name: "inspect_ui", arguments: forward),
+            AgentToolCall(id: "reverse", name: "inspect_ui", arguments: reverse),
+        ]
+        let result = AgentExecutionResult(
+            content: "complete",
+            messages: [ModelMessage(role: .assistant, content: calls.map { .toolCall($0) })],
+            metadata: AgentMetadata(
+                executionTime: 0.1,
+                toolCallCount: calls.count,
+                modelName: "test-model",
+                startTime: Date(),
+                endTime: Date()
+            )
+        )
+        let command = try AgentCommand.parse(["ephemeral task", "--no-cache"])
+
+        let response = command.makeAgentJSONResponse(result)
+        let resultObject = try #require(response["result"] as? [String: Any])
+        let legacyCalls = try #require(resultObject["toolCalls"] as? [[String: Any]])
+        let firstArguments = try #require(legacyCalls.first?["arguments"] as? String)
+        let lastArguments = try #require(legacyCalls.last?["arguments"] as? String)
+
+        #expect(firstArguments == lastArguments)
+        #expect(firstArguments == #"{"app_target":"PID:42","foreground":false,"window_id":99}"#)
     }
 }

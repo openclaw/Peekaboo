@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Bind signed `set-value` results to the opaque requested element and refuse older Bridge hosts before dispatch.
 - Keep non-modal SwiftUI `AXDialog`-subrole windows eligible for exact background mutations while preserving modal, sheet, and file-dialog protections, and recognize `inspect_ui` as fresh Agent perception in recovery guidance.
+- Keep legacy Agent JSON tool-call arguments privacy-safe and deterministic instead of exposing Swift implementation details and runtime addresses.
 
 ## [4.2.2] - 2026-08-20
 
