@@ -258,7 +258,27 @@ struct CLIRuntimeSmokeTests {
         #expect(json["success"] as? Bool == true)
         #expect(payload["tool"] as? String == "browser")
         #expect(payload["isError"] as? Bool == false)
-        #expect((payload["text"] as? String)?.contains("Chrome DevTools MCP Status") == true)
+        let text = try #require(payload["text"] as? String)
+        #expect(text.contains("Chrome DevTools MCP Status"))
+        #expect(text.contains("Run `peekaboo browser connect --channel stable --foreground`."))
+        #expect(text.contains("pass `--browser-url`"))
+        #expect(!text.contains("Run browser {"))
+        #expect(!text.contains("pass browser_url"))
+    }
+
+    @Test
+    func `peekaboo browser disconnected status prints CLI-native recovery instructions`() async throws {
+        guard Self.ensureLocalRuntimeAvailable() else { return }
+        let result = try await TestChildProcess.runPeekaboo(["browser", "status", "--no-remote"])
+
+        #expect(result.status == .exited(0))
+        #expect(result.standardError.isEmpty)
+        #expect(result.standardOutput.contains(
+            "Run `peekaboo browser connect --channel stable --foreground`."
+        ))
+        #expect(result.standardOutput.contains("pass `--browser-url`"))
+        #expect(!result.standardOutput.contains("Run browser {"))
+        #expect(!result.standardOutput.contains("pass browser_url"))
     }
 
     @Test

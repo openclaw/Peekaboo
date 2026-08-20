@@ -3,10 +3,16 @@ import MCP
 import PeekabooFoundation
 import TachikomaMCP
 
+public enum BrowserToolInstructionAudience: Sendable {
+    case mcp
+    case commandLine
+}
+
 public struct BrowserTool: MCPTool {
     private let client: any BrowserMCPClientProviding
     private let connectionPolicy: BrowserMCPExecutionConnectionPolicy
     private let executionPolicy: MCPToolExecutionPolicy
+    private let instructionAudience: BrowserToolInstructionAudience
 
     public let name = "browser"
     public let description = """
@@ -108,9 +114,14 @@ public struct BrowserTool: MCPTool {
             required: ["action"])
     }
 
-    public init(context: MCPToolContext = .shared, client: (any BrowserMCPClientProviding)? = nil) {
+    public init(
+        context: MCPToolContext = .shared,
+        client: (any BrowserMCPClientProviding)? = nil,
+        instructionAudience: BrowserToolInstructionAudience = .mcp)
+    {
         self.client = client ?? context.browser
         self.executionPolicy = context.executionPolicy
+        self.instructionAudience = instructionAudience
         self.connectionPolicy = context.executionPolicy == .backgroundOnly
             ? .requireExistingLiveReceipt
             : .allowAutoConnect
@@ -118,10 +129,12 @@ public struct BrowserTool: MCPTool {
 
     public init(
         client: any BrowserMCPClientProviding,
-        executionPolicy: MCPToolExecutionPolicy = .backgroundOnly)
+        executionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
+        instructionAudience: BrowserToolInstructionAudience = .mcp)
     {
         self.client = client
         self.executionPolicy = executionPolicy
+        self.instructionAudience = instructionAudience
         self.connectionPolicy = executionPolicy == .backgroundOnly
             ? .requireExistingLiveReceipt
             : .allowAutoConnect
@@ -191,7 +204,7 @@ public struct BrowserTool: MCPTool {
                 for: failure,
                 invalidatedSnapshotID: nil)
         } catch {
-            return ToolResponse.error(Self.permissionHelp(error: error))
+            return ToolResponse.error(self.permissionHelp(error: error))
         }
     }
 
@@ -372,7 +385,7 @@ public struct BrowserTool: MCPTool {
 
         if !status.isConnected {
             lines.append("")
-            lines.append(contentsOf: Self.permissionInstructions())
+            lines.append(contentsOf: self.permissionInstructions())
         }
 
         return try ToolResponse.text(
@@ -420,21 +433,33 @@ public struct BrowserTool: MCPTool {
         return meta
     }
 
-    private static func permissionHelp(error: any Error) -> String {
+    private func permissionHelp(error: any Error) -> String {
         var lines = ["Chrome DevTools MCP failed: \(error.localizedDescription)", ""]
         lines.append(contentsOf: self.permissionInstructions())
         return lines.joined(separator: "\n")
     }
 
-    private static func permissionInstructions() -> [String] {
-        [
+    private func permissionInstructions() -> [String] {
+        let connectInstruction: String
+        let endpointInstruction: String
+        switch self.instructionAudience {
+        case .mcp:
+            connectInstruction = "4. Run browser { \"action\": \"connect\" }."
+            endpointInstruction = "If multiple Chrome processes share a channel, pass browser_url for one exact " +
+                "loopback DevTools port."
+        case .commandLine:
+            connectInstruction = "4. Run `peekaboo browser connect --channel stable --foreground`."
+            endpointInstruction = "If multiple Chrome processes share a channel, pass `--browser-url` for one " +
+                "exact loopback DevTools port."
+        }
+        return [
             "To enable browser control:",
             "1. Open Chrome 144+.",
             "2. Visit chrome://inspect/#remote-debugging.",
             "3. Enable remote debugging for this profile.",
-            "4. Run browser { \"action\": \"connect\" }.",
+            connectInstruction,
             "5. Accept Chrome's remote debugging permission prompt.",
-            "If multiple Chrome processes share a channel, pass browser_url for one exact loopback DevTools port.",
+            endpointInstruction,
         ]
     }
 }

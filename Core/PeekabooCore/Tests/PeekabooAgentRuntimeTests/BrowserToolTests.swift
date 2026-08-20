@@ -227,6 +227,30 @@ struct BrowserToolTests {
         #expect(text.contains("Connected: no"))
         #expect(text.contains("chrome://inspect/#remote-debugging"))
         #expect(text.contains("remote debugging permission prompt"))
+        #expect(text.contains(#"Run browser { "action": "connect" }."#))
+        #expect(text.contains("pass browser_url"))
+        #expect(!text.contains("peekaboo browser connect"))
+    }
+
+    @Test
+    func `Browser tool command-line status uses CLI-native permission instructions`() async throws {
+        let client = MockBrowserMCPClient(status: BrowserMCPStatus(
+            isConnected: false,
+            toolCount: 0,
+            detectedBrowsers: []))
+        let tool = BrowserTool(
+            client: client,
+            executionPolicy: .unrestricted,
+            instructionAudience: .commandLine)
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: ["action": "status"]))
+
+        #expect(response.isError == false)
+        let text = Self.text(from: response)
+        #expect(text.contains("Run `peekaboo browser connect --channel stable --foreground`."))
+        #expect(text.contains("pass `--browser-url`"))
+        #expect(!text.contains("Run browser {"))
+        #expect(!text.contains("pass browser_url"))
     }
 
     @Test

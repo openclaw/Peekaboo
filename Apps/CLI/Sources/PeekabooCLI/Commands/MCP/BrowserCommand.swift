@@ -123,7 +123,7 @@ InjectedRuntimeBackedCommand {
                 services: self.services,
                 executionPolicy: self.toolExecutionPolicy
             )
-            let tool = BrowserTool(context: context)
+            let tool = BrowserTool(context: context, instructionAudience: .commandLine)
             let response = try await tool.execute(arguments: ToolArguments(raw: arguments))
             try MCPToolCommandOutput.output(
                 tool: tool.name,
