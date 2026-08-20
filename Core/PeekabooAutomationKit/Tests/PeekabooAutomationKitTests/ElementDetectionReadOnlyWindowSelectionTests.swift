@@ -30,6 +30,53 @@ final class ElementDetectionReadOnlyWindowSelectionTests: XCTestCase {
         XCTAssertEqual(projected.executablePath, Self.executablePath)
     }
 
+    func testResolvedApplicationAcceptsEveryMatchingSingleSelectorAndCombinedConstraints() {
+        let matchingContexts = [
+            WindowContext(applicationProcessId: 42),
+            WindowContext(applicationBundleId: "dev.peekaboo.fixture"),
+            WindowContext(applicationName: "Fixt"),
+            WindowContext(applicationName: Self.bundlePath),
+            WindowContext(applicationName: Self.executablePath),
+            WindowContext(applicationName: "fixture"),
+            WindowContext(applicationBundlePath: Self.bundlePath),
+            WindowContext(applicationExecutablePath: Self.executablePath),
+            WindowContext(
+                applicationName: "Fixture",
+                applicationBundleId: "dev.peekaboo.fixture",
+                applicationBundlePath: Self.bundlePath,
+                applicationExecutablePath: Self.executablePath,
+                applicationProcessId: 42),
+        ]
+
+        for context in matchingContexts {
+            XCTAssertNil(ElementDetectionWindowResolver.applicationConstraintMismatch(
+                candidate: Self.applicationCandidate,
+                context: context))
+        }
+    }
+
+    func testResolvedApplicationRejectsContradictoryCombinedSelectorsBeforeObservation() {
+        let contradictoryContexts = [
+            WindowContext(applicationName: "Other", applicationProcessId: 42),
+            WindowContext(applicationName: "/Applications/Other.app", applicationProcessId: 42),
+            WindowContext(
+                applicationName: "Other",
+                applicationBundleId: "dev.peekaboo.fixture"),
+            WindowContext(
+                applicationName: "Fixture",
+                applicationBundlePath: "/Applications/Other.app"),
+            WindowContext(
+                applicationName: "Fixture",
+                applicationExecutablePath: "/Applications/Fixture.app/Contents/MacOS/other"),
+        ]
+
+        for context in contradictoryContexts {
+            XCTAssertNotNil(ElementDetectionWindowResolver.applicationConstraintMismatch(
+                candidate: Self.applicationCandidate,
+                context: context))
+        }
+    }
+
     func testRequestedTitleSelectsExactSiblingInsteadOfBestWindow() throws {
         let bestWindow = Self.window(
             id: 100,
@@ -172,6 +219,14 @@ final class ElementDetectionReadOnlyWindowSelectionTests: XCTestCase {
 
     private static let bundlePath = "/Applications/Fixture.app"
     private static let executablePath = bundlePath + "/Contents/MacOS/fixture"
+    private static let applicationCandidate = ApplicationIdentifierMatcher.Candidate(
+        processIdentifier: 42,
+        bundleIdentifier: "dev.peekaboo.fixture",
+        name: "Fixture",
+        bundlePath: bundlePath,
+        executablePath: executablePath,
+        allowsFuzzyMatching: true,
+        isRegularApplication: true)
 
     private static func detectProjection(requested: WindowContext) -> ElementDetectionService
     .ResolvedApplicationIdentity {

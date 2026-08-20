@@ -28,16 +28,16 @@ struct ElementDetectionWindowResolver {
     }
 
     func resolveApplication(windowContext: WindowContext?) async throws -> NSRunningApplication {
+        let runningApplication: NSRunningApplication
         if let pid = windowContext?.applicationProcessId {
             if let runningApp = NSRunningApplication(processIdentifier: pid) {
                 self.logger.debug("Resolved application via PID: \(pid)")
-                return runningApp
+                runningApplication = runningApp
+            } else {
+                self.logger.error("Could not resolve NSRunningApplication for PID: \(pid)")
+                throw PeekabooError.appNotFound("PID:\(pid)")
             }
-            self.logger.error("Could not resolve NSRunningApplication for PID: \(pid)")
-            throw PeekabooError.appNotFound("PID:\(pid)")
-        }
-
-        if let bundleId = windowContext?.applicationBundleId {
+        } else if let bundleId = windowContext?.applicationBundleId {
             self.logger.debug("Looking for application via bundle ID: \(bundleId)")
 
             let appInfo = try await self.applicationService.findApplication(identifier: bundleId)
@@ -48,10 +48,8 @@ struct ElementDetectionWindowResolver {
             }
 
             self.logger.debug("Resolved application: \(runningApp.localizedName ?? "unknown")")
-            return runningApp
-        }
-
-        if let appName = windowContext?.applicationName {
+            runningApplication = runningApp
+        } else if let appName = windowContext?.applicationName {
             self.logger.debug("Looking for application via ApplicationService: \(appName)")
 
             let appInfo = try await self.applicationService.findApplication(identifier: appName)
@@ -62,10 +60,8 @@ struct ElementDetectionWindowResolver {
             }
 
             self.logger.debug("Resolved application: \(runningApp.localizedName ?? "unknown")")
-            return runningApp
-        }
-
-        if let windowID = windowContext?.windowID {
+            runningApplication = runningApp
+        } else if let windowID = windowContext?.windowID {
             guard let processIdentifier = Self.stableExactWindowOwner(
                 windowID: windowID,
                 receipt: windowContext?.windowMutationIdentity,
@@ -76,14 +72,60 @@ struct ElementDetectionWindowResolver {
                 throw PeekabooError.windowNotFound(criteria: "live owner for exact window id \(windowID)")
             }
             self.logger.debug("Resolved application via exact window \(windowID), PID: \(processIdentifier)")
-            return runningApp
+            runningApplication = runningApp
+        } else {
+            guard let frontmost = NSWorkspace.shared.frontmostApplication else {
+                self.logger.error("No frontmost application")
+                throw PeekabooError.operationError(message: "No frontmost application")
+            }
+            runningApplication = frontmost
         }
 
-        guard let frontmost = NSWorkspace.shared.frontmostApplication else {
-            self.logger.error("No frontmost application")
-            throw PeekabooError.operationError(message: "No frontmost application")
+        let candidate = ApplicationIdentifierMatcher.Candidate(
+            processIdentifier: runningApplication.processIdentifier,
+            bundleIdentifier: runningApplication.bundleIdentifier,
+            name: runningApplication.localizedName ?? runningApplication.bundleIdentifier ?? "Unknown",
+            bundlePath: runningApplication.bundleURL?.standardizedFileURL.path,
+            executablePath: runningApplication.executableURL?.standardizedFileURL.path,
+            allowsFuzzyMatching: runningApplication.activationPolicy != .prohibited,
+            isRegularApplication: runningApplication.activationPolicy == .regular)
+        if let mismatch = Self.applicationConstraintMismatch(candidate: candidate, context: windowContext) {
+            throw PeekabooError.invalidInput(field: "windowContext", reason: mismatch)
         }
-        return frontmost
+        return runningApplication
+    }
+
+    nonisolated static func applicationConstraintMismatch(
+        candidate: ApplicationIdentifierMatcher.Candidate,
+        context: WindowContext?) -> String?
+    {
+        guard let context else { return nil }
+        if let processIdentifier = context.applicationProcessId,
+           processIdentifier != candidate.processIdentifier
+        {
+            return "applicationProcessId contradicts the resolved application"
+        }
+        if let bundleIdentifier = context.applicationBundleId,
+           bundleIdentifier != candidate.bundleIdentifier
+        {
+            return "applicationBundleId contradicts the resolved application"
+        }
+        if let applicationName = context.applicationName,
+           !ApplicationIdentifierMatcher.matches(candidate, identifier: applicationName)
+        {
+            return "applicationName contradicts the resolved application"
+        }
+        if let bundlePath = context.applicationBundlePath,
+           bundlePath != candidate.bundlePath
+        {
+            return "applicationBundlePath contradicts the resolved application"
+        }
+        if let executablePath = context.applicationExecutablePath,
+           executablePath != candidate.executablePath
+        {
+            return "applicationExecutablePath contradicts the resolved application"
+        }
+        return nil
     }
 
     nonisolated static func stableExactWindowOwner(
