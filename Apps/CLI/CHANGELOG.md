@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Bind signed `set-value` results to the opaque requested element and refuse older Bridge hosts before dispatch.
+- Keep non-modal SwiftUI `AXDialog`-subrole windows eligible for exact background mutations while preserving modal, sheet, and file-dialog protections, and recognize `inspect_ui` as fresh Agent perception in recovery guidance.
 
 ## [4.2.2] - 2026-08-20
 
@@ -26,7 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add Bridge protocol 1.30 application and window inventories that distinguish complete from partial evidence while retaining conservative compatibility with older hosts.
 
 ### Fixed
-- Keep non-modal SwiftUI `AXDialog`-subrole windows eligible for exact background mutations while preserving modal, sheet, and file-dialog protections, and recognize `inspect_ui` as fresh Agent perception in recovery guidance.
 - Pin background type, paste, press, targeted clicks, and app, window, or menu mutations to one exact process and window generation; refuse fuzzy, ambiguous, stale, or incomplete targets before dispatch.
 - Keep TextEdit document fields and other editable controls discoverable when optional Accessibility attributes are unavailable.
 - Resolve exact minimized and off-Space windows without treating unreadable WindowServer catalogs as proof that a target is absent.
