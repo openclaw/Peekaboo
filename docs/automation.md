@@ -46,8 +46,8 @@ Examples:
 
 ```bash
 # Background: use semantic controls without activating Safari
-peekaboo click "Address and search bar" --app Safari
-peekaboo type "github.com/openclaw/Peekaboo" --app Safari
+peekaboo click "Address and search bar" --app Safari --window-id 12345
+peekaboo type "github.com/openclaw/Peekaboo" --app Safari --window-id 12345
 
 # Exact-window raw chords can stay background; app-only chords require foreground consent
 peekaboo press cmd+l --window-id 12345

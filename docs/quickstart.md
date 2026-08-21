@@ -61,10 +61,14 @@ Each element has `id`, `role`, `label`, `frame`, and `actions`. Pass an `id` to 
 
 ## 4. Click and type
 
+List Safari's windows and copy the intended `window_id` (`12345` below). Keeping every step pinned to that exact
+window makes the primary workflow background-safe even when Safari has multiple windows:
+
 ```bash
-peekaboo click "Address and search bar" --app Safari
-peekaboo type "github.com/openclaw/Peekaboo" --app Safari
-peekaboo press Return --app Safari --foreground
+peekaboo window list --app Safari --json
+peekaboo click "Address and search bar" --app Safari --window-id 12345
+peekaboo type "github.com/openclaw/Peekaboo" --app Safari --window-id 12345
+peekaboo press Return --app Safari --window-id 12345
 ```
 
 Coordinate clicks need a fresh capture receipt and an exact target in the default background mode. First run

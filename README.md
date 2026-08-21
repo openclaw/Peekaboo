@@ -57,18 +57,21 @@ Peekaboo 4.2.2 adds exact-window background middle and triple clicks, restores e
 
 ## Automate an app
 
-Target an element by its accessible label, then send text to the same app:
+List Safari's windows, copy the intended `window_id` (`12345` below), then keep the entire interaction pinned to
+that exact window:
 
 ```sh
-peekaboo click "Address and search bar" --app Safari
-peekaboo type "github.com/openclaw/Peekaboo" --app Safari
-peekaboo press Return --app Safari --foreground
+peekaboo window list --app Safari --json
+peekaboo click "Address and search bar" --app Safari --window-id 12345
+peekaboo type "github.com/openclaw/Peekaboo" --app Safari --window-id 12345
+peekaboo press Return --app Safari --window-id 12345
 ```
 
 Targeted semantic and typed CLI input uses background delivery when Peekaboo can resolve the process, so the app does
-not have to become frontmost. Raw `press` chords can also stay background with a fresh exact non-dialog snapshot
-receipt; app/PID-only, window-selector-only under Agent/MCP policy, and targetless chords require explicit foreground
-consent. Prefer a semantic action such as `menu click` when one exists. See the
+not have to become frontmost. Raw CLI `press` chords can also stay background with an exact window selector. The CLI
+also accepts a fresh exact non-dialog snapshot; that snapshot is required by background-only Agent/MCP policy.
+App/PID-only and targetless chords require explicit foreground consent, as do window-selector-only Agent/MCP chords.
+Prefer a semantic action such as `menu click` when one exists. See the
 [automation guide](docs/automation.md) for element IDs, coordinates, snapshots, waits, and input behavior.
 
 ## Agent and MCP

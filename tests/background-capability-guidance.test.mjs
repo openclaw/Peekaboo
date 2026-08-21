@@ -34,6 +34,24 @@ const isTargetedRawPress = (line) => /^peekaboo press\b.*--(?:app|pid)\b/.test(l
 const hasSafeRawPressRoute = (line) =>
   /--(?:foreground|snapshot|window-(?:id|title|index))\b/.test(line);
 
+test('primary app automation examples stay exact-window and background-only', () => {
+  for (const path of ['README.md', 'docs/quickstart.md']) {
+    const source = read(path);
+    assert.match(source, /^peekaboo window list --app Safari --json$/m);
+    assert.match(source, /^peekaboo click .*--app Safari --window-id 12345$/m);
+    assert.match(source, /^peekaboo type .*--app Safari --window-id 12345$/m);
+    assert.match(source, /^peekaboo press Return --app Safari --window-id 12345$/m);
+    assert.doesNotMatch(source, /^peekaboo press Return --app Safari --foreground$/m);
+  }
+
+  assert.match(read('README.md'), /Raw CLI `press` chords.*exact window selector/s);
+  assert.match(read('README.md'), /snapshot.*required by background-only Agent\/MCP policy/s);
+
+  const automation = read('docs/automation.md');
+  assert.match(automation, /^peekaboo click .*--app Safari --window-id 12345$/m);
+  assert.match(automation, /^peekaboo type .*--app Safari --window-id 12345$/m);
+});
+
 test('bundled skill never advertises app/PID-only background press', () => {
   const skill = read('skills/peekaboo/SKILL.md');
   const targetedPressExamples = skill
