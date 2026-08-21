@@ -431,7 +431,8 @@ struct WindowCommandTests {
                             isFrontmost: true,
                             subrole: "AXStandardWindow",
                             windowLevel: 0,
-                            index: 0
+                            index: 0,
+                            observationCapability: .combinedEligible
                         ),
                     ],
                 ]
@@ -456,6 +457,8 @@ struct WindowCommandTests {
         #expect(window.is_key == true)
         #expect(window.layer == 0)
         #expect(window.subrole == "AXStandardWindow")
+        #expect(window.observation_capability == .combinedEligible)
+        #expect(window.observation_capability_reason == nil)
     }
 
     @Test

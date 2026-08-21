@@ -377,11 +377,18 @@ struct MCPToolExecutionTests {
             title: "Desktop",
             bounds: CGRect(x: 10, y: 20, width: 800, height: 600),
             index: 0,
-            isOffScreen: true)
+            isOffScreen: true,
+            observationCapability: .pixelsOnly(reason: .noMatchingAccessibilityWindow))
+        let incompleteWindow = ServiceWindowInfo(
+            windowID: 43,
+            title: "Partial AX inventory",
+            bounds: CGRect(x: 30, y: 40, width: 900, height: 700),
+            index: 1,
+            observationCapability: .unknown(reason: .accessibilityEnumerationIncomplete))
         let applications = await MainActor.run {
             MockApplicationService(
                 applications: [app],
-                windowsByIdentifier: ["Finder": [window]])
+                windowsByIdentifier: ["Finder": [window, incompleteWindow]])
         }
         let context = await MCPToolTestHelpers.makeLegacyContext(applications: applications)
         let response = try await WindowTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -397,6 +404,28 @@ struct MCPToolExecutionTests {
         #expect(output.contains("ID: 42"))
         #expect(output.contains("Bounds: 10, 20 800×600"))
         #expect(output.contains("OFF-SCREEN"))
+        #expect(output.contains("Observation: pixels_only"))
+        #expect(output.contains("no_matching_accessibility_window"))
+        #expect(output.contains("no_elements: true"))
+        #expect(output.contains("Observation: unknown"))
+        #expect(output.contains("accessibility_enumeration_incomplete"))
+
+        let metadata = try #require(response.meta?.objectValue)
+        let rows = try #require(metadata["windows"]?.arrayValue)
+        #expect(rows.count == 2)
+        let row = try #require(rows.first?.objectValue)
+        #expect(Set(row.keys) == [
+            "window_id",
+            "observation_capability",
+            "observation_capability_reason",
+        ])
+        #expect(row["window_id"] == .int(42))
+        #expect(row["observation_capability"] == .string("pixels_only"))
+        #expect(row["observation_capability_reason"] == .string("no_matching_accessibility_window"))
+        let incompleteRow = try #require(rows.last?.objectValue)
+        #expect(incompleteRow["observation_capability"] == .string("unknown"))
+        #expect(incompleteRow["observation_capability_reason"] ==
+            .string("accessibility_enumeration_incomplete"))
     }
 
     @Test

@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -25,6 +26,7 @@ struct WindowListIndexNormalizationTests {
                 isOnScreen: true,
                 sharingState: nil,
                 isExcludedFromWindowsMenu: false,
+                observationCapability: .pixelsOnly(reason: .noMatchingAccessibilityWindow),
                 mutationIdentity: .init(
                     windowID: 111,
                     ownerProcessIdentifier: 42,
@@ -54,12 +56,42 @@ struct WindowListIndexNormalizationTests {
         #expect(normalized.map(\.title) == ["First", "Second"])
         #expect(normalized.map(\.index) == [0, 1])
         #expect(normalized.map(\.isOffScreen) == [true, false])
+        #expect(normalized.first?.observationCapability ==
+            .pixelsOnly(reason: .noMatchingAccessibilityWindow))
         #expect(normalized.first?.mutationIdentity?.ownerProcessStartIdentity == 7)
     }
 
     @Test
     func `normalizeWindowIndices handles empty input`() {
         #expect(ApplicationService.normalizeWindowIndices([]).isEmpty)
+    }
+
+    @Test
+    func `observation capability round trips through service window wire encoding`() throws {
+        let source = ServiceWindowInfo(
+            windowID: 223,
+            title: "Partial inventory",
+            bounds: .zero,
+            observationCapability: .unknown(reason: .accessibilityEnumerationIncomplete))
+
+        let decoded = try JSONDecoder().decode(
+            ServiceWindowInfo.self,
+            from: JSONEncoder().encode(source))
+
+        #expect(decoded.observationCapability == .unknown(reason: .accessibilityEnumerationIncomplete))
+    }
+
+    @Test
+    func `observation capability rejects invalid mode reason pairs`() {
+        let invalidUnknown = Data(#"{"mode":"unknown","reason":"no_matching_accessibility_window"}"#.utf8)
+        let invalidPixels = Data(#"{"mode":"pixels_only","reason":"raster_capture_unverified"}"#.utf8)
+
+        #expect(throws: (any Error).self) {
+            try JSONDecoder().decode(WindowObservationCapability.self, from: invalidUnknown)
+        }
+        #expect(throws: (any Error).self) {
+            try JSONDecoder().decode(WindowObservationCapability.self, from: invalidPixels)
+        }
     }
 
     @Test
@@ -123,10 +155,11 @@ struct WindowListIndexNormalizationTests {
         #expect(window.isMinimized)
         #expect(!window.isOnScreen)
         #expect(window.mutationIdentity == receipt)
+        #expect(window.observationCapability == .combinedEligible)
     }
 
     @Test
-    func `hybrid merge appends AX-only minimized exact window with receipt`() throws {
+    func `hybrid merge keeps AX-only minimized raster eligibility unknown`() throws {
         let bounds = CGRect(x: 40, y: 50, width: 700, height: 500)
         let receipt = WindowMutationIdentity(
             windowID: 444,
@@ -156,6 +189,50 @@ struct WindowListIndexNormalizationTests {
         #expect(window.windowID == 444)
         #expect(window.isMinimized)
         #expect(window.mutationIdentity == receipt)
+        #expect(window.observationCapability == .unknown(reason: .rasterCaptureUnverified))
+    }
+
+    @Test
+    func `standalone AX row requires stable raster metadata for combined eligibility`() {
+        let bounds = CGRect(x: 40, y: 50, width: 700, height: 500)
+        let process = ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 7)
+        let stable = SystemWindowIdentity(
+            windowID: 444,
+            ownerProcessIdentifier: process.processIdentifier,
+            ownerProcessStartIdentity: process.processStartIdentity,
+            title: "Fixture",
+            bounds: bounds,
+            layer: 0,
+            alpha: 1,
+            isOnScreen: true,
+            sharingState: .readOnly)
+
+        #expect(ApplicationService.standaloneObservationCapability(
+            stableWindowIdentity: stable,
+            expectedProcessIdentity: process,
+            expectedWindowID: 444,
+            expectedBounds: bounds,
+            isMinimized: false) == .combinedEligible)
+        #expect(ApplicationService.standaloneObservationCapability(
+            stableWindowIdentity: nil,
+            expectedProcessIdentity: process,
+            expectedWindowID: 444,
+            expectedBounds: bounds,
+            isMinimized: true) == .unknown(reason: .rasterCaptureUnverified))
+    }
+
+    @Test
+    func `hybrid merge marks unmatched CG rows as pixels only with a stable reason`() throws {
+        let cgWindow = ServiceWindowInfo(
+            windowID: 445,
+            title: "WindowServer-only panel",
+            bounds: CGRect(x: 40, y: 50, width: 700, height: 500))
+
+        let window = try #require(WindowEnumerationContext.mergeWindows(
+            cgWindows: [cgWindow],
+            axDescriptors: []).first)
+
+        #expect(window.observationCapability == .pixelsOnly(reason: .noMatchingAccessibilityWindow))
     }
 
     @Test
@@ -172,7 +249,9 @@ struct WindowListIndexNormalizationTests {
             cgWindows: [cgWindow],
             axDescriptors: [descriptor])
 
-        #expect(merged.windows == [cgWindow])
+        #expect(merged.windows.map(\.windowID) == [cgWindow.windowID])
+        #expect(merged.windows.first?.observationCapability ==
+            .pixelsOnly(reason: .noMatchingAccessibilityWindow))
         #expect(merged.unmaterializedAXDescriptorCount == 0)
     }
 
@@ -191,6 +270,8 @@ struct WindowListIndexNormalizationTests {
             axDescriptors: [descriptor])
 
         #expect(merged.windows.map(\.title) == ["Fixture"])
+        #expect(merged.windows.first?.observationCapability ==
+            .pixelsOnly(reason: .noMatchingAccessibilityWindow))
         #expect(merged.unmaterializedAXDescriptorCount == 0)
     }
 
@@ -231,7 +312,9 @@ struct WindowListIndexNormalizationTests {
             cgWindows: [cgWindow],
             axDescriptors: [descriptor, descriptor])
 
-        #expect(merged.windows == [cgWindow])
+        #expect(merged.windows.map(\.windowID) == [cgWindow.windowID])
+        #expect(merged.windows.first?.observationCapability ==
+            .pixelsOnly(reason: .noMatchingAccessibilityWindow))
         #expect(merged.unmaterializedAXDescriptorCount == 1)
     }
 
@@ -249,7 +332,8 @@ struct WindowListIndexNormalizationTests {
             cgWindows: [cgWindow],
             axDescriptors: [descriptor, descriptor])
 
-        #expect(merged.windows == [cgWindow])
+        #expect(merged.windows.map(\.windowID) == [cgWindow.windowID])
+        #expect(merged.windows.first?.observationCapability == .combinedEligible)
         #expect(merged.unmaterializedAXDescriptorCount == 1)
     }
 
@@ -272,7 +356,8 @@ struct WindowListIndexNormalizationTests {
             cgWindows: [cgWindow],
             axDescriptors: [exact, unidentified])
 
-        #expect(merged.windows == [cgWindow])
+        #expect(merged.windows.map(\.windowID) == [cgWindow.windowID])
+        #expect(merged.windows.first?.observationCapability == .combinedEligible)
         #expect(merged.unmaterializedAXDescriptorCount == 1)
     }
 
@@ -295,7 +380,8 @@ struct WindowListIndexNormalizationTests {
             cgWindows: [cgWindow],
             axDescriptors: [exact, unidentified])
 
-        #expect(merged.windows == [cgWindow])
+        #expect(merged.windows.map(\.windowID) == [cgWindow.windowID])
+        #expect(merged.windows.first?.observationCapability == .combinedEligible)
         #expect(merged.unmaterializedAXDescriptorCount == 1)
     }
 }

@@ -2,6 +2,9 @@
 
 ## [4.2.3] - Unreleased
 
+### Added
+- Report each listed window's combined-observation route eligibility so agents can select screenshot-only `--no-elements` capture before an Accessibility-ineligible attempt while incomplete AX or unverified raster inventories remain explicitly unknown.
+
 ### Changed
 - Skip provider discovery and Agent construction for caller-local CLI commands that cannot invoke the Agent, reducing cold startup while preserving full Agent and MCP initialization.
 

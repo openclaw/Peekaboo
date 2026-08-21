@@ -109,6 +109,11 @@ extension WindowCommand {
                                 print(
                                     "         Size: \(Int(window.bounds.size.width))x\(Int(window.bounds.size.height))"
                                 )
+                                let observation = Self.observationDescription(
+                                    window.observationCapability,
+                                    windowID: window.windowID
+                                )
+                                print("         Observation: \(observation)")
                             }
                         }
                     } else {
@@ -121,6 +126,12 @@ extension WindowCommand {
                                 print("       Position: (\(bounds.x), \(bounds.y))")
                                 print("       Size: \(bounds.width)x\(bounds.height)")
                             }
+                            let observation = Self.observationDescription(
+                                window.observation_capability,
+                                reason: window.observation_capability_reason,
+                                windowID: window.window_id.map(Int.init)
+                            )
+                            print("       Observation: \(observation)")
                         }
                     }
                 }
@@ -128,6 +139,44 @@ extension WindowCommand {
             } catch {
                 handleError(error)
                 throw ExitCode(1)
+            }
+        }
+
+        static func observationDescription(
+            _ capability: WindowObservationCapability?,
+            windowID: Int?
+        ) -> String {
+            self.observationDescription(
+                capability?.mode,
+                reason: capability?.reason,
+                windowID: windowID
+            )
+        }
+
+        static func observationDescription(
+            _ mode: WindowObservationCapability.Mode?,
+            reason: WindowObservationCapability.Reason?,
+            windowID: Int?
+        ) -> String {
+            switch mode {
+            case .combinedEligible:
+                "combined_eligible"
+            case .pixelsOnly:
+                if let windowID, let reason {
+                    "pixels_only (\(reason.rawValue); use `peekaboo see --window-id \(windowID) --no-elements`)"
+                } else if let reason {
+                    "pixels_only (\(reason.rawValue); use `peekaboo see --no-elements`)"
+                } else {
+                    "pixels_only"
+                }
+            case .unknown:
+                if let reason {
+                    "unknown (\(reason.rawValue); refresh the window inventory before choosing an observation mode)"
+                } else {
+                    "unknown"
+                }
+            case nil:
+                "unknown (host did not report combined-observation eligibility)"
             }
         }
     }
@@ -149,7 +198,9 @@ extension WindowInfo {
             is_frontmost: window.isFrontmost,
             is_key: window.isKeyWindow,
             layer: window.layer,
-            subrole: window.subrole
+            subrole: window.subrole,
+            observation_capability: window.observationCapability?.mode,
+            observation_capability_reason: window.observationCapability?.reason
         )
     }
 }

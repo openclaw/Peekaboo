@@ -338,6 +338,7 @@ extension ServiceWindowInfo {
             isOnScreen: isMinimized ? false : self.isOnScreen,
             sharingState: self.sharingState,
             isExcludedFromWindowsMenu: self.isExcludedFromWindowsMenu,
+            observationCapability: self.observationCapability,
             mutationIdentity: self.mutationIdentity.map { identity in
                 WindowMutationIdentity(
                     windowID: identity.windowID,

@@ -19,6 +19,8 @@ public struct WindowInfo: Codable, Sendable {
     public let is_key: Bool?
     public let layer: Int?
     public let subrole: String?
+    public let observation_capability: WindowObservationCapability.Mode?
+    public let observation_capability_reason: WindowObservationCapability.Reason?
 
     public init(
         window_title: String,
@@ -31,7 +33,9 @@ public struct WindowInfo: Codable, Sendable {
         is_frontmost: Bool? = nil,
         is_key: Bool? = nil,
         layer: Int? = nil,
-        subrole: String? = nil)
+        subrole: String? = nil,
+        observation_capability: WindowObservationCapability.Mode? = nil,
+        observation_capability_reason: WindowObservationCapability.Reason? = nil)
     {
         self.window_title = window_title
         self.window_id = window_id
@@ -44,6 +48,8 @@ public struct WindowInfo: Codable, Sendable {
         self.is_key = is_key
         self.layer = layer
         self.subrole = subrole
+        self.observation_capability = observation_capability
+        self.observation_capability_reason = observation_capability_reason
     }
 }
 

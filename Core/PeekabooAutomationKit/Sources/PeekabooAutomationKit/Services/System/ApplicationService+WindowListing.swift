@@ -59,6 +59,7 @@ extension ApplicationService {
                 isOnScreen: window.isOnScreen,
                 sharingState: window.sharingState,
                 isExcludedFromWindowsMenu: window.isExcludedFromWindowsMenu,
+                observationCapability: window.observationCapability,
                 mutationIdentity: window.mutationIdentity)
         }
     }
@@ -92,8 +93,14 @@ extension ApplicationService {
         let screen = self.screenInfo(for: bounds)
         let spaces = self.spaceInfo(for: windowID)
         let level = self.windowLevel(for: windowID)
-
+        let stableWindowIdentity = SystemIdentityResolver.stableWindowIdentity(windowID)
         let minimized = descriptor.isMinimized ?? false
+        let observationCapability = Self.standaloneObservationCapability(
+            stableWindowIdentity: stableWindowIdentity,
+            expectedProcessIdentity: expectedProcessIdentity,
+            expectedWindowID: windowID,
+            expectedBounds: bounds,
+            isMinimized: minimized)
         return ServiceWindowInfo(
             windowID: resolvedID,
             title: descriptor.title,
@@ -104,15 +111,51 @@ extension ApplicationService {
             isFrontmost: descriptor.isFrontmost,
             subrole: descriptor.subrole,
             windowLevel: level,
+            alpha: stableWindowIdentity?.alpha ?? 1,
             index: index,
             spaceID: spaces.spaceID,
             spaceName: spaces.spaceName,
             screenIndex: screen.index,
             screenName: screen.name,
-            isOffScreen: minimized || screen.index == nil,
-            layer: 0,
-            isOnScreen: !minimized,
+            isOffScreen: minimized || screen.index == nil || stableWindowIdentity?.isOnScreen == false,
+            layer: stableWindowIdentity?.layer ?? 0,
+            isOnScreen: stableWindowIdentity?.isOnScreen ?? !minimized,
+            sharingState: stableWindowIdentity?.sharingState,
+            observationCapability: observationCapability,
             mutationIdentity: mutationIdentity)
+    }
+
+    static func standaloneObservationCapability(
+        stableWindowIdentity: SystemWindowIdentity?,
+        expectedProcessIdentity: ApplicationProcessIdentity,
+        expectedWindowID: CGWindowID,
+        expectedBounds: CGRect,
+        isMinimized: Bool) -> WindowObservationCapability
+    {
+        guard let identity = stableWindowIdentity,
+              identity.windowID == expectedWindowID,
+              identity.ownerProcessIdentifier == expectedProcessIdentity.processIdentifier,
+              identity.ownerProcessStartIdentity == expectedProcessIdentity.processStartIdentity,
+              identity.bounds == expectedBounds,
+              identity.sharingState != nil
+        else {
+            return .unknown(reason: .rasterCaptureUnverified)
+        }
+        let candidate = ServiceWindowInfo(
+            windowID: Int(identity.windowID),
+            title: identity.title,
+            bounds: identity.bounds,
+            isMinimized: isMinimized,
+            windowLevel: identity.layer,
+            alpha: identity.alpha,
+            isOffScreen: !identity.isOnScreen,
+            layer: identity.layer,
+            isOnScreen: identity.isOnScreen,
+            sharingState: identity.sharingState)
+        guard WindowFiltering.isRenderable(candidate, mode: .capture) else {
+            return .unknown(reason: .rasterCaptureUnverified)
+        }
+        return .combinedEligible
     }
 
     private func screenInfo(for bounds: CGRect) -> (index: Int?, name: String?) {

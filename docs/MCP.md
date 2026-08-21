@@ -24,7 +24,13 @@ Action-oriented UI tools include:
 - `action` for invoking a named accessibility action such as `AXPress`, `AXShowMenu`, or `AXIncrement`.
 
 Inventory is exposed on the nouns: use `app` with `action: "list"` for running applications and `window` with
-`action: "list"` plus `app` for window IDs, bounds, and off-screen state. The former generic `list` tool and its
+`action: "list"` plus `app` for window IDs, bounds, off-screen state, and combined-observation eligibility. Each
+window line and the response `_meta.windows` row reports `observation_capability`: `combined_eligible` means the exact
+combined raster plus AX route is eligible, not guaranteed to return usable AX elements. `pixels_only` includes the stable
+`no_matching_accessibility_window` reason and directs the caller to `see` with `no_elements: true`. `unknown` with
+`accessibility_enumeration_incomplete` means a timeout or partial AX result could not prove either mode and the caller
+must refresh the inventory; `raster_capture_unverified` keeps an AX-only row unknown when stable pixel metadata was not
+available. A null capability means the selected host predates this additive inventory evidence. The former generic `list` tool and its
 duplicate `server_status` view are not exposed. `menu` supports only application-menu `list` and `click` actions;
 status items use the dedicated menubar surface. MCP retains `sleep` because an MCP client may not have shell access.
 

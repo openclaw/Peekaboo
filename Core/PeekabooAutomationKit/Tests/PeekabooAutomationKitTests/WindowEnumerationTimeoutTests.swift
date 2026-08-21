@@ -131,6 +131,8 @@ struct WindowEnumerationTimeoutTests {
         #expect(output.metadata.warnings == [
             "CoreGraphics omitted 1 owner window row without complete identity evidence",
         ])
+        #expect(output.data.windows.first?.observationCapability ==
+            .pixelsOnly(reason: .noMatchingAccessibilityWindow))
     }
 
     @Test
@@ -195,8 +197,46 @@ struct WindowEnumerationTimeoutTests {
         let output = try await context.run()
 
         #expect(output.data.windows.map(\.windowID) == [333])
+        #expect(output.data.windows.first?.observationCapability ==
+            .unknown(reason: .accessibilityEnumerationIncomplete))
         #expect(output.summary.status == .partial)
         #expect(output.metadata.warnings.contains { $0.contains("timed out") })
+    }
+
+    @Test
+    func `AX descriptor count shortfall keeps unmatched CG eligibility unknown`() async throws {
+        let identity = ApplicationProcessIdentity(processIdentifier: 45, processStartIdentity: 10)
+        let service = Self.makeService { _ in identity.processStartIdentity }
+        let cgWindow = ServiceWindowInfo(
+            windowID: 334,
+            title: "CG Window",
+            bounds: CGRect(x: 10, y: 20, width: 800, height: 600))
+        let context = WindowEnumerationContext(
+            service: service,
+            app: Self.application(identity: identity),
+            startTime: Date(),
+            axTimeout: 0.05,
+            hasScreenRecording: true,
+            logger: Self.logger,
+            processIdentity: identity,
+            cgSnapshotProvider: { .init(windows: [cgWindow]) },
+            applicationRunningProvider: { true },
+            axEnumerator: { _, _ in
+                // Production never filters AX rows for renderability. A shortfall means a read was
+                // lost; this inconsistent injected result proves the merge still fails closed.
+                DetachedAXWindowEnumerationResult(
+                    descriptors: [],
+                    focusedWindowID: nil,
+                    timedOut: false,
+                    incomplete: false,
+                    reportedWindowCount: 1)
+            })
+
+        let output = try await context.run()
+
+        #expect(output.data.windows.first?.observationCapability ==
+            .unknown(reason: .accessibilityEnumerationIncomplete))
+        #expect(output.metadata.warnings.contains { $0.contains("Accessibility reported 1 windows") })
     }
 
     @Test
@@ -239,6 +279,7 @@ struct WindowEnumerationTimeoutTests {
         #expect(window.isMainWindow)
         #expect(window.isKeyWindow == true)
         #expect(window.isFrontmost == true)
+        #expect(window.observationCapability == .combinedEligible)
         #expect(output.summary.status == .success)
         #expect(output.metadata.warnings.isEmpty)
     }

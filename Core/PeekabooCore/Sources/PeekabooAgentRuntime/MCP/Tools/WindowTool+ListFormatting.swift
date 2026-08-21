@@ -23,6 +23,7 @@ struct WindowListFormatter {
         let baseMeta: Value = .object([
             "window_count": .int(self.windows.count),
             "app": self.appInfo?.name != nil ? .string(self.appInfo!.name) : .string(self.identifier),
+            "windows": .array(self.windows.map(Self.windowMetadata)),
         ])
         let summary = ToolEventSummary(
             targetApp: self.appInfo?.name ?? self.identifier,
@@ -78,7 +79,33 @@ struct WindowListFormatter {
                 "\(Int(bounds.width))×\(Int(bounds.height))"
             parts.append(text)
         }
+        parts.append("Observation: \(Self.observationDescription(for: window))")
         guard !parts.isEmpty else { return "" }
         return "[" + parts.joined(separator: ", ") + "]"
+    }
+
+    private static func observationDescription(for window: ServiceWindowInfo) -> String {
+        switch window.observationCapability {
+        case .combinedEligible:
+            "combined_eligible"
+        case let .pixelsOnly(reason):
+            "pixels_only (\(reason.rawValue); use see with no_elements: true)"
+        case let .unknown(reason):
+            "unknown (\(reason.rawValue); refresh inventory before choosing an observation mode)"
+        case nil:
+            "unknown"
+        }
+    }
+
+    private static func windowMetadata(_ window: ServiceWindowInfo) -> Value {
+        .object([
+            "window_id": .int(window.windowID),
+            "observation_capability": window.observationCapability.map {
+                .string($0.mode.rawValue)
+            } ?? .null,
+            "observation_capability_reason": window.observationCapability?.reason.map {
+                .string($0.rawValue)
+            } ?? .null,
+        ])
     }
 }

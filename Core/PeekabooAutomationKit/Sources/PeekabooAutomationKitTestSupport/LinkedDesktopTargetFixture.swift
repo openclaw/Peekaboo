@@ -170,6 +170,7 @@ extension AutomationTestFixtures {
             isOnScreen: isOnScreen ?? source.isOnScreen,
             sharingState: source.sharingState,
             isExcludedFromWindowsMenu: source.isExcludedFromWindowsMenu,
+            observationCapability: source.observationCapability,
             mutationIdentity: resolvedMutationIdentity,
             mutationPostconditionEvidence: preservesPostcondition ? source.mutationPostconditionEvidence : nil)
     }

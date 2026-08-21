@@ -117,6 +117,7 @@ extension DesktopObservationService {
             isOnScreen: capturedWindow.isOnScreen,
             sharingState: capturedWindow.sharingState,
             isExcludedFromWindowsMenu: capturedWindow.isExcludedFromWindowsMenu,
+            observationCapability: capturedWindow.observationCapability,
             mutationIdentity: capturedWindow.mutationIdentity)
         let metadata = CaptureMetadata(
             size: capture.metadata.size,

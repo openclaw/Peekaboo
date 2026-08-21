@@ -17,7 +17,7 @@ public struct WindowTool: MCPTool {
         List and manipulate application windows.
 
         Actions:
-        - list: List an application's windows with IDs, bounds, and off-screen state
+        - list: List windows with IDs, bounds, off-screen state, and combined-observation eligibility
         - close: Close a window
         - minimize: Minimize a window
         - restore: Restore a minimized window without activating or focusing its application

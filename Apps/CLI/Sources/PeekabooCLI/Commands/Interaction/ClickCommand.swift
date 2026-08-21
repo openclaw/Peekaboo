@@ -562,6 +562,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             isOnScreen: window.isOnScreen,
             sharingState: window.sharingState,
             isExcludedFromWindowsMenu: window.isExcludedFromWindowsMenu,
+            observationCapability: window.observationCapability,
             mutationIdentity: actionIdentity
         )
     }

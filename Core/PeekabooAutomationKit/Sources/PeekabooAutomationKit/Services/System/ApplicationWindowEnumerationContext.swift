@@ -258,6 +258,7 @@ struct WindowEnumerationContext {
             isOnScreen: isOnScreen,
             sharingState: sharingState,
             isExcludedFromWindowsMenu: excludedFromMenu,
+            observationCapability: .pixelsOnly(reason: .noMatchingAccessibilityWindow),
             mutationIdentity: mutationIdentity)
     }
 
@@ -298,8 +299,17 @@ struct WindowEnumerationContext {
         let descriptors = self.materializeStandaloneWindows(
             axResult: axResult,
             cgWindowIDs: Set(snapshot.windows.map(\.windowID)))
-
-        let merge = Self.mergeWindowInventory(cgWindows: snapshot.windows, axDescriptors: descriptors)
+        // The AX worker never drops non-renderable rows, so a descriptor-count shortfall is missing
+        // evidence, not a harmless filter. Keep the count check for injected/alternate enumerators.
+        let axInventoryIncomplete = axResult.timedOut || axResult.incomplete ||
+            axResult.reportedWindowCount > descriptors.count
+        let unmatchedCapability: WindowObservationCapability = axInventoryIncomplete
+            ? .unknown(reason: .accessibilityEnumerationIncomplete)
+            : .pixelsOnly(reason: .noMatchingAccessibilityWindow)
+        let merge = Self.mergeWindowInventory(
+            cgWindows: snapshot.windows,
+            axDescriptors: descriptors,
+            unmatchedCapability: unmatchedCapability)
 
         if axResult.timedOut {
             warnings.append("Window enumeration timed out after \(self.axTimeout)s, results may be incomplete")
@@ -416,14 +426,21 @@ struct WindowEnumerationContext {
 
     nonisolated static func mergeWindows(
         cgWindows: [ServiceWindowInfo],
-        axDescriptors: [AXWindowDescriptor]) -> [ServiceWindowInfo]
+        axDescriptors: [AXWindowDescriptor],
+        unmatchedCapability: WindowObservationCapability =
+            .pixelsOnly(reason: .noMatchingAccessibilityWindow)) -> [ServiceWindowInfo]
     {
-        self.mergeWindowInventory(cgWindows: cgWindows, axDescriptors: axDescriptors).windows
+        self.mergeWindowInventory(
+            cgWindows: cgWindows,
+            axDescriptors: axDescriptors,
+            unmatchedCapability: unmatchedCapability).windows
     }
 
     nonisolated static func mergeWindowInventory(
         cgWindows: [ServiceWindowInfo],
-        axDescriptors: [AXWindowDescriptor]) -> WindowMergeResult
+        axDescriptors: [AXWindowDescriptor],
+        unmatchedCapability: WindowObservationCapability =
+            .pixelsOnly(reason: .noMatchingAccessibilityWindow)) -> WindowMergeResult
     {
         // Exact CGWindowID → title is one-to-one (CG windows are deduplicated by ID): an unambiguous
         // enrichment source for the untitled CG window carrying that id.
@@ -499,9 +516,9 @@ struct WindowEnumerationContext {
         var seenWindowIDs = Set<Int>()
 
         for cgWindow in cgWindows where seenWindowIDs.insert(cgWindow.windowID).inserted {
-            var enrichedWindow = cgWindow
+            var enrichedWindow = cgWindow.withObservationCapability(unmatchedCapability)
             if let descriptor = axDescriptorByID[cgWindow.windowID] {
-                enrichedWindow = enrichedWindow.withAXMetadata(descriptor)
+                enrichedWindow = enrichedWindow.withExactAXMetadata(descriptor)
             }
 
             guard enrichedWindow.title.isEmpty else {
@@ -529,7 +546,8 @@ struct WindowEnumerationContext {
                 continue
             }
             coveredDescriptorIndices.insert(index)
-            merged.append(info)
+            merged.append(info.withObservationCapability(
+                info.observationCapability ?? .unknown(reason: .rasterCaptureUnverified)))
         }
 
         return WindowMergeResult(
@@ -631,7 +649,37 @@ extension ServiceWindowInfo {
             isOnScreen: self.isOnScreen,
             sharingState: self.sharingState,
             isExcludedFromWindowsMenu: self.isExcludedFromWindowsMenu,
+            observationCapability: self.observationCapability,
             mutationIdentity: mutationIdentity)
+    }
+
+    fileprivate func withObservationCapability(
+        _ observationCapability: WindowObservationCapability) -> ServiceWindowInfo
+    {
+        ServiceWindowInfo(
+            windowID: self.windowID,
+            title: self.title,
+            bounds: self.bounds,
+            isMinimized: self.isMinimized,
+            isMainWindow: self.isMainWindow,
+            isKeyWindow: self.isKeyWindow,
+            isFrontmost: self.isFrontmost,
+            subrole: self.subrole,
+            windowLevel: self.windowLevel,
+            alpha: self.alpha,
+            index: self.index,
+            spaceID: self.spaceID,
+            spaceName: self.spaceName,
+            screenIndex: self.screenIndex,
+            screenName: self.screenName,
+            isOffScreen: self.isOffScreen,
+            layer: self.layer,
+            isOnScreen: self.isOnScreen,
+            sharingState: self.sharingState,
+            isExcludedFromWindowsMenu: self.isExcludedFromWindowsMenu,
+            observationCapability: observationCapability,
+            mutationIdentity: self.mutationIdentity,
+            mutationPostconditionEvidence: self.mutationPostconditionEvidence)
     }
 
     /// Returns a copy of this window with a replacement title, preserving every other field.
@@ -657,13 +705,17 @@ extension ServiceWindowInfo {
             isOnScreen: self.isOnScreen,
             sharingState: self.sharingState,
             isExcludedFromWindowsMenu: self.isExcludedFromWindowsMenu,
+            observationCapability: self.observationCapability,
             mutationIdentity: self.mutationIdentity)
     }
 
-    fileprivate func withAXMetadata(
+    fileprivate func withExactAXMetadata(
         _ descriptor: WindowEnumerationContext.AXWindowDescriptor) -> ServiceWindowInfo
     {
-        ServiceWindowInfo(
+        guard descriptor.windowID == self.windowID else {
+            return self
+        }
+        return ServiceWindowInfo(
             windowID: self.windowID,
             title: self.title,
             bounds: self.bounds,
@@ -684,6 +736,7 @@ extension ServiceWindowInfo {
             isOnScreen: (descriptor.isMinimized ?? self.isMinimized) ? false : self.isOnScreen,
             sharingState: self.sharingState,
             isExcludedFromWindowsMenu: self.isExcludedFromWindowsMenu,
+            observationCapability: .combinedEligible,
             mutationIdentity: self.mutationIdentity?
                 .withMinimizedState(descriptor.isMinimized ?? self.isMinimized) ?? descriptor.mutationIdentity)
     }

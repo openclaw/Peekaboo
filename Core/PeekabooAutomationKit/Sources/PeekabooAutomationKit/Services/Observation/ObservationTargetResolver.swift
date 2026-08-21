@@ -300,6 +300,7 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
             isOnScreen: window.isOnScreen,
             sharingState: window.sharingState,
             isExcludedFromWindowsMenu: window.isExcludedFromWindowsMenu,
+            observationCapability: window.observationCapability,
             mutationIdentity: nil)
     }
 

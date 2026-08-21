@@ -882,6 +882,82 @@ extension DesktopActionFailure {
     }
 }
 
+/// Whether an exact window is eligible for a combined raster and Accessibility observation route.
+///
+/// Eligibility proves exact target linkage, not that Accessibility traversal will return usable
+/// elements. A combined attempt can still fail with `ACCESSIBILITY_INCOMPLETE`.
+public enum WindowObservationCapability: Sendable, Codable, Equatable {
+    public enum Mode: String, Sendable, Codable {
+        case combinedEligible = "combined_eligible"
+        case pixelsOnly = "pixels_only"
+        case unknown
+    }
+
+    public enum Reason: String, Sendable, Codable {
+        case noMatchingAccessibilityWindow = "no_matching_accessibility_window"
+        case accessibilityEnumerationIncomplete = "accessibility_enumeration_incomplete"
+        case rasterCaptureUnverified = "raster_capture_unverified"
+    }
+
+    public enum PixelsOnlyReason: String, Sendable, Codable {
+        case noMatchingAccessibilityWindow = "no_matching_accessibility_window"
+    }
+
+    public enum UnknownReason: String, Sendable, Codable {
+        case accessibilityEnumerationIncomplete = "accessibility_enumeration_incomplete"
+        case rasterCaptureUnverified = "raster_capture_unverified"
+    }
+
+    case combinedEligible
+    case pixelsOnly(reason: PixelsOnlyReason)
+    case unknown(reason: UnknownReason)
+
+    public var mode: Mode {
+        switch self {
+        case .combinedEligible: .combinedEligible
+        case .pixelsOnly: .pixelsOnly
+        case .unknown: .unknown
+        }
+    }
+
+    public var reason: Reason? {
+        switch self {
+        case .combinedEligible: nil
+        case .pixelsOnly: .noMatchingAccessibilityWindow
+        case let .unknown(reason):
+            switch reason {
+            case .accessibilityEnumerationIncomplete: .accessibilityEnumerationIncomplete
+            case .rasterCaptureUnverified: .rasterCaptureUnverified
+            }
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case mode
+        case reason
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(Mode.self, forKey: .mode) {
+        case .combinedEligible:
+            self = .combinedEligible
+        case .pixelsOnly:
+            self = try .pixelsOnly(reason: container.decode(PixelsOnlyReason.self, forKey: .reason))
+        case .unknown:
+            self = try .unknown(reason: container.decode(UnknownReason.self, forKey: .reason))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.mode, forKey: .mode)
+        if let reason = self.reason {
+            try container.encode(reason, forKey: .reason)
+        }
+    }
+}
+
 public struct ServiceWindowInfo: Sendable, Codable, Equatable {
     /// Window identifier
     public let windowID: Int
@@ -943,6 +1019,12 @@ public struct ServiceWindowInfo: Sendable, Codable, Equatable {
     /// Whether our own NSWindow asked to hide from the Windows menu
     public let isExcludedFromWindowsMenu: Bool
 
+    /// Exact combined-observation eligibility, when reported by the inventory source.
+    ///
+    /// Nil means the source predates this additive contract and must not be treated as proof of
+    /// either eligibility or ineligibility.
+    public let observationCapability: WindowObservationCapability?
+
     /// Process-generation receipt captured with this listing for later destructive mutations.
     public let mutationIdentity: WindowMutationIdentity?
 
@@ -970,6 +1052,7 @@ public struct ServiceWindowInfo: Sendable, Codable, Equatable {
         case isOnScreen
         case sharingState
         case isExcludedFromWindowsMenu
+        case observationCapability
         case mutationIdentity
         case mutationPostconditionEvidence
     }
@@ -995,6 +1078,7 @@ public struct ServiceWindowInfo: Sendable, Codable, Equatable {
         isOnScreen: Bool = true,
         sharingState: WindowSharingState? = nil,
         isExcludedFromWindowsMenu: Bool = false,
+        observationCapability: WindowObservationCapability? = nil,
         mutationIdentity: WindowMutationIdentity? = nil,
         mutationPostconditionEvidence: WindowMutationPostconditionEvidence? = nil)
     {
@@ -1018,6 +1102,7 @@ public struct ServiceWindowInfo: Sendable, Codable, Equatable {
         self.isOnScreen = isOnScreen
         self.sharingState = sharingState
         self.isExcludedFromWindowsMenu = isExcludedFromWindowsMenu
+        self.observationCapability = observationCapability
         self.mutationIdentity = mutationIdentity
         self.mutationPostconditionEvidence = mutationPostconditionEvidence
     }
@@ -1053,6 +1138,7 @@ public struct ServiceWindowInfo: Sendable, Codable, Equatable {
             isOnScreen: self.isOnScreen,
             sharingState: self.sharingState,
             isExcludedFromWindowsMenu: self.isExcludedFromWindowsMenu,
+            observationCapability: self.observationCapability,
             mutationIdentity: self.mutationIdentity,
             mutationPostconditionEvidence: evidence)
     }
