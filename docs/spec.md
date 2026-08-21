@@ -83,8 +83,8 @@ services.installAgentRuntimeDefaults()
 ## 4. Snapshot Lifecycle & Storage
 
 1. **Creation:** `peekaboo see` captures the target, runs element detection, and writes a snapshot under `~/.peekaboo/snapshots/<snapshot-id>/` via `SnapshotManager` (`snapshot.json`, plus `raw.png` / `annotated.png` when available).
-2. **Resolution:** Interaction commands call `services.snapshots.getMostRecentSnapshot()` when `--snapshot` is omitted. Coordinate-only commands skip snapshot usage entirely to avoid stale data.
-3. **Reuse:** Commands that focus applications (`click`, `type`, etc.) merge snapshot info with explicit `--app` or `FocusCommandOptions` to bring the right window/Space forward before interacting.
+2. **Resolution:** Snapshot selection is command-specific. `type` never infers a snapshot when `--snapshot` is omitted; commands whose contract permits implicit reuse, such as element/query `click` and `action`, may resolve the latest unmodified snapshot. Background coordinates require an explicit fresh exact-window snapshot, while explicit foreground global coordinates are snapshot-free.
+3. **Reuse:** Background delivery is the default. Commands bind snapshot metadata to explicit app/window selectors to verify the same process generation and window without focusing it. Focus and Space switching occur only through explicit foreground delivery.
 4. **Cleanup:** `peekaboo clean` proxies into `services.files.clean*Snapshots` helpers. Users can delete all snapshots, those older than N hours, or a single snapshot ID; `--dry-run` reports would-be deletions without touching disk.
 
 This shared cache is the hand-off mechanism between CLI invocations, custom scripts, and agents. Nothing else should read/write UI maps manually.
