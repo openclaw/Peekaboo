@@ -8,8 +8,10 @@ enum ScreenCaptureKitCaptureGate {
     static let defaultExclusiveWaitNanoseconds: UInt64 = 8_000_000_000
 
     @TaskLocal private static var isInsideCaptureOperation = false
+    @TaskLocal private static var captureTransactionUsage: CaptureTransactionUsage?
     @TaskLocal static var processOwnerClaimOverride:
         (@MainActor @Sendable () throws -> ScreenCaptureKitOwnerLease.OwnerReceipt)?
+    @TaskLocal static var postCaptureSettleOverride: (@MainActor @Sendable () async -> Void)?
     private static let processOwnerLease = Result { try ScreenCaptureKitOwnerLease() }
     @MainActor private static let captureCoordinator = ScreenCaptureKitOperationCoordinator(
         lockFilePath: (NSTemporaryDirectory() as NSString)
@@ -52,6 +54,7 @@ enum ScreenCaptureKitCaptureGate {
         try await self.withProcessOwner(operationName: operationName) {
             try await self.captureCoordinator.run(seconds: seconds, operationName: operationName) {
                 try self.requireProcessOwner(operationName: operationName)
+                self.captureTransactionUsage?.recordScreenCaptureKitUse()
                 return try await operation()
             }
         }
@@ -98,17 +101,30 @@ enum ScreenCaptureKitCaptureGate {
         }
         defer { flock(fd, LOCK_UN) }
 
-        return try await self.$isInsideCaptureOperation.withValue(true) {
-            do {
-                let value = try await operation()
-                // replayd can report transient TCC/capture failures when another CLI grabs SCK immediately after
-                // a screenshot completes. Keep the transaction lock briefly so the system service can settle.
-                try? await Task.sleep(nanoseconds: 100_000_000)
-                return value
-            } catch {
-                try? await Task.sleep(nanoseconds: 100_000_000)
-                throw error
+        let usage = CaptureTransactionUsage()
+        return try await self.$captureTransactionUsage.withValue(usage) {
+            try await self.$isInsideCaptureOperation.withValue(true) {
+                do {
+                    let value = try await operation()
+                    await self.settleAfterScreenCaptureKitUseIfNeeded(usage)
+                    return value
+                } catch {
+                    await self.settleAfterScreenCaptureKitUseIfNeeded(usage)
+                    throw error
+                }
             }
+        }
+    }
+
+    @MainActor
+    private static func settleAfterScreenCaptureKitUseIfNeeded(_ usage: CaptureTransactionUsage) async {
+        guard usage.usedScreenCaptureKit else { return }
+        // replayd can report transient TCC/capture failures when another CLI grabs SCK immediately after a
+        // screenshot completes. Keep the transaction lock briefly only when this transaction entered SCK.
+        if let postCaptureSettleOverride {
+            await postCaptureSettleOverride()
+        } else {
+            try? await Task.sleep(nanoseconds: 100_000_000)
         }
     }
 
@@ -170,6 +186,15 @@ enum ScreenCaptureKitCaptureGate {
         return OperationError.captureFailed(
             reason: "ScreenCaptureKit owner validation failed before \(operationName): " +
                 "\(error.localizedDescription). No ScreenCaptureKit operation was dispatched.")
+    }
+}
+
+@MainActor
+private final class CaptureTransactionUsage {
+    private(set) var usedScreenCaptureKit = false
+
+    func recordScreenCaptureKitUse() {
+        self.usedScreenCaptureKit = true
     }
 }
 

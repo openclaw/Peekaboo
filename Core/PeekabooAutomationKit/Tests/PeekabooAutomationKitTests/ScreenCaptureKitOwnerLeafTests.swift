@@ -6,6 +6,73 @@ import Testing
 @MainActor
 struct ScreenCaptureKitOwnerLeafTests {
     @Test
+    func `classic transaction skips ScreenCaptureKit settlement`() async throws {
+        var steps: [String] = []
+        let settle: @MainActor @Sendable () async -> Void = {
+            steps.append("settle")
+        }
+
+        let value = try await ScreenCaptureKitCaptureGate.$postCaptureSettleOverride.withValue(settle) {
+            try await ScreenCaptureKitCaptureGate.withExclusiveCaptureOperation(operationName: "classic") {
+                steps.append("capture")
+                return 42
+            }
+        }
+
+        #expect(value == 42)
+        #expect(steps == ["capture"])
+    }
+
+    @Test
+    func `ScreenCaptureKit transaction settles before returning`() async throws {
+        var steps: [String] = []
+        let receipt = Self.receipt(processIdentifier: 100, processStartIdentity: 200)
+        let claim: @MainActor @Sendable () throws -> ScreenCaptureKitOwnerLease.OwnerReceipt = { receipt }
+        let settle: @MainActor @Sendable () async -> Void = {
+            steps.append("settle")
+        }
+
+        let operation: () async throws -> Int = {
+            try await ScreenCaptureKitCaptureGate.$postCaptureSettleOverride.withValue(settle) {
+                try await ScreenCaptureKitCaptureGate.withExclusiveCaptureOperation(operationName: "modern") {
+                    steps.append("transaction")
+                    return try await ScreenCaptureKitCaptureGate.runOwnedOperation(
+                        seconds: 1,
+                        operationName: "leaf")
+                    {
+                        steps.append("leaf")
+                        return 42
+                    }
+                }
+            }
+        }
+
+        let value = try await ScreenCaptureKitCaptureGate.$processOwnerClaimOverride.withValue(
+            claim,
+            operation: operation)
+
+        #expect(value == 42)
+        #expect(steps == ["transaction", "leaf", "settle"])
+    }
+
+    @Test
+    func `cancelled classic transaction skips settlement and preserves cancellation`() async {
+        var settleCalls = 0
+        let settle: @MainActor @Sendable () async -> Void = {
+            settleCalls += 1
+        }
+
+        await #expect(throws: CancellationError.self) {
+            try await ScreenCaptureKitCaptureGate.$postCaptureSettleOverride.withValue(settle) {
+                try await ScreenCaptureKitCaptureGate.withExclusiveCaptureOperation(operationName: "classic") {
+                    throw CancellationError()
+                }
+            }
+        }
+        #expect(settleCalls == 0)
+    }
+
+    @Test
     func `owner claim completes before the ScreenCaptureKit leaf`() async throws {
         var steps: [String] = []
         let receipt = Self.receipt(processIdentifier: 100, processStartIdentity: 200)
