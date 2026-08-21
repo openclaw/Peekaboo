@@ -235,7 +235,8 @@ struct ConfigCredentialInput {
         guard fstat(fileDescriptor, &metadata) == 0,
               metadata.st_mode & S_IFMT == S_IFCHR,
               isatty(fileDescriptor) == 1,
-              tcgetattr(fileDescriptor, &terminal) == 0
+              tcgetattr(fileDescriptor, &terminal) == 0,
+              tcgetpgrp(fileDescriptor) == getpgrp()
         else {
             throw InputError.terminalUnavailable
         }

@@ -188,6 +188,25 @@ struct ConfigCredentialInputCLITests {
     }
 
     @Test
+    func `background process group fails before prompting or changing echo`() async throws {
+        let result = try await self.runTTYCredentialCommand(
+            arguments: [
+                "config", "credential", "set", "PEEKABOO_BACKGROUND_TTY_TEST_KEY",
+                "--json", "--no-remote",
+            ],
+            action: .waitForExit,
+            topology: .background
+        )
+
+        #expect(!result.sawPrompt)
+        #expect(result.exitedWithinDeadline)
+        #expect(result.terminationStatus == .exited(1))
+        #expect(result.echoEnabledAfterExit)
+        #expect(result.output.contains("CREDENTIAL_INPUT_ERROR"))
+        #expect(!result.output.contains("Credential for"))
+    }
+
+    @Test
     func `terminating a secure prompt restores terminal echo and signal status`() async throws {
         for signalNumber in [SIGINT, SIGTERM, SIGQUIT, SIGHUP, SIGPIPE] {
             let result = try await self.runTTYCredentialCommand(
@@ -474,6 +493,7 @@ extension ConfigCredentialInputCLITests {
 
     private enum TTYTopology {
         case controlling
+        case background
         case detached
     }
 
@@ -529,6 +549,8 @@ extension ConfigCredentialInputCLITests {
         childEnvironment["SWIFT_BACKTRACE"] = "enable=no"
         if topology == .detached {
             childEnvironment["PEEKABOO_TEST_DETACHED_TTY"] = "1"
+        } else if topology == .background {
+            childEnvironment["PEEKABOO_TEST_BACKGROUND_TTY"] = "1"
         }
         let supervisor = try self.ttyCredentialSupervisorURL()
         var environmentOverrides: [Environment.Key: String?] = [:]

@@ -70,9 +70,14 @@ int main(int argument_count, char *arguments[]) {
     }
 
     close(release_pipe[0]);
+    const char *background_terminal = getenv("PEEKABOO_TEST_BACKGROUND_TTY");
+    pid_t foreground_process_group =
+        background_terminal != NULL && strcmp(background_terminal, "1") == 0
+            ? getpgrp()
+            : process_identifier;
     if ((setpgid(process_identifier, process_identifier) != 0 && errno != EACCES) ||
         signal(SIGTTOU, SIG_IGN) == SIG_ERR ||
-        tcsetpgrp(STDIN_FILENO, process_identifier) != 0 ||
+        tcsetpgrp(STDIN_FILENO, foreground_process_group) != 0 ||
         dprintf(STDOUT_FILENO, "PEEKABOO_CHILD_PID=%d\n", process_identifier) < 0 ||
         write(release_pipe[1], "x", 1) != 1) {
         close(release_pipe[1]);
