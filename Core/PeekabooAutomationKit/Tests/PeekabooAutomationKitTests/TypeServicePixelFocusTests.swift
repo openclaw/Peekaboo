@@ -326,6 +326,102 @@ struct TypeServicePixelFocusTests {
     }
 
     @Test
+    func `accessibility refusal before focus releases snapshot lease`() async throws {
+        let fixture = AutomationTestFixtures.linkedSnapshotTarget()
+        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let exactWindow = try #require(fixture.targetIdentity.exactWindow)
+        let service = TypeService(
+            snapshotManager: manager,
+            clickService: ClickService(
+                snapshotManager: manager,
+                inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+                exactWindowIdentityValidator: { _, _ in true },
+                exactWindowPixelFocusExecutor: { _, _ in
+                    throw PeekabooError.permissionDeniedAccessibility
+                }),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly))
+
+        do {
+            _ = try await service.typeActionsByFocusingPixel(
+                ExactWindowPixelFocusTypeRequest(
+                    point: CGPoint(x: 40, y: 50),
+                    actions: [.text("x")],
+                    cadence: .fixed(milliseconds: 0),
+                    snapshotID: fixture.snapshotID,
+                    windowIdentity: exactWindow.identity,
+                    windowBounds: exactWindow.bounds),
+                deliveryValidator: { _ in })
+            Issue.record("Expected Accessibility refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .permissionDenied)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.targetReceipt == DesktopTargetIdentity(exactWindow: exactWindow).actionTargetReceipt)
+        }
+        let lease = try await manager.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        try await manager.finishSnapshotMutation(lease, requiresFreshObservation: false)
+    }
+
+    @Test
+    func `cancellation before focus releases snapshot lease`() async throws {
+        let fixture = AutomationTestFixtures.linkedSnapshotTarget()
+        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let exactWindow = try #require(fixture.targetIdentity.exactWindow)
+        let service = TypeService(
+            snapshotManager: manager,
+            clickService: ClickService(
+                snapshotManager: manager,
+                inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+                exactWindowIdentityValidator: { _, _ in true },
+                exactWindowPixelFocusExecutor: { _, _ in throw CancellationError() }),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly))
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await service.typeActionsByFocusingPixel(
+                ExactWindowPixelFocusTypeRequest(
+                    point: CGPoint(x: 40, y: 50),
+                    actions: [.text("x")],
+                    cadence: .fixed(milliseconds: 0),
+                    snapshotID: fixture.snapshotID,
+                    windowIdentity: exactWindow.identity,
+                    windowBounds: exactWindow.bounds),
+                deliveryValidator: { _ in })
+        }
+        let lease = try await manager.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        try await manager.finishSnapshotMutation(lease, requiresFreshObservation: false)
+    }
+
+    @Test
+    func `cancellation after focus keeps snapshot replay blocked`() async throws {
+        let fixture = AutomationTestFixtures.linkedSnapshotTarget()
+        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let exactWindow = try #require(fixture.targetIdentity.exactWindow)
+        let service = TypeService(
+            snapshotManager: manager,
+            clickService: ClickService(
+                snapshotManager: manager,
+                inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+                exactWindowIdentityValidator: { _, _ in true },
+                exactWindowPixelFocusExecutor: { _, window in Self.focusAction(for: window) }),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly))
+
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await service.typeActionsByFocusingPixel(
+                ExactWindowPixelFocusTypeRequest(
+                    point: CGPoint(x: 40, y: 50),
+                    actions: [.text("x")],
+                    cadence: .fixed(milliseconds: 0),
+                    snapshotID: fixture.snapshotID,
+                    windowIdentity: exactWindow.identity,
+                    windowBounds: exactWindow.bounds),
+                deliveryValidator: { _ in throw CancellationError() })
+        }
+        await #expect(throws: (any Error).self) {
+            _ = try await manager.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        }
+    }
+
+    @Test
     func `zero keyboard units refuse before the focus write`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
         let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)

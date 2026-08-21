@@ -128,10 +128,20 @@ final class ForegroundModifierClickExecutor {
             identity: request.windowIdentity,
             bounds: request.windowBounds)
         let targetIdentity = DesktopTargetIdentity(exactWindow: exactWindow)
+        var enteredOwned = false
         do {
             return try await self.laneCoordinator.run(scope: .global, access: .write) {
-                try await self.executeOwned(request, exactWindow: exactWindow, targetIdentity: targetIdentity)
+                enteredOwned = true
+                return try await self.executeOwned(
+                    request,
+                    exactWindow: exactWindow,
+                    targetIdentity: targetIdentity)
             }
+        } catch is CancellationError where !enteredOwned {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .requestCancelled,
+                message: "Modifier-click was cancelled before acquiring its foreground operation lane.")
+                .attributed(to: targetIdentity.actionTargetReceipt)
         } catch let failure as DesktopActionFailure {
             throw failure.attributed(to: targetIdentity.actionTargetReceipt)
         }

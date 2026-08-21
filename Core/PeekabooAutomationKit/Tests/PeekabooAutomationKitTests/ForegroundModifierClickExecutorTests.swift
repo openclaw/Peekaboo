@@ -174,6 +174,35 @@ struct ForegroundModifierClickExecutorTests {
     }
 
     @Test
+    func `focus adapter normalizes only proven predispatch exits`() throws {
+        let cancelled = try #require(UIAutomationService.modifierClickFocusFailure(
+            CancellationError(),
+            sequence: DesktopActionSequenceAccumulator()) as? DesktopActionFailure)
+        #expect(cancelled.outcome.state == .refused)
+        #expect(cancelled.outcome.refusalReason == .requestCancelled)
+        #expect(cancelled.outcome.dispatchState == .none)
+
+        let denied = try #require(UIAutomationService.modifierClickFocusFailure(
+            PeekabooError.permissionDeniedAccessibility,
+            sequence: DesktopActionSequenceAccumulator()) as? DesktopActionFailure)
+        #expect(denied.outcome.state == .refused)
+        #expect(denied.outcome.refusalReason == .permissionDenied)
+        #expect(denied.outcome.dispatchState == .none)
+
+        var dispatched = DesktopActionSequenceAccumulator()
+        dispatched.record(.dispatched(
+            route: .local,
+            delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+            unitCount: .one))
+        let postDispatch = try #require(UIAutomationService.modifierClickFocusFailure(
+            CancellationError(),
+            sequence: dispatched) as? DesktopActionFailure)
+        #expect(postDispatch.outcome.state == .indeterminate)
+        #expect(postDispatch.outcome.retrySafety == .unsafe)
+        #expect(postDispatch.outcome.dispatchState.unitCount == .one)
+    }
+
+    @Test
     func `strict focus guard rejects activation drift and admits unchanged set-main fallback`() throws {
         let state = ModifierClickDispatchGuardState()
         let dispatchGuard = FocusDispatchGuard(
@@ -721,6 +750,66 @@ struct ForegroundModifierClickExecutorTests {
 
         #expect(!focusAttempted)
         #expect(!clickAttempted)
+    }
+
+    @Test
+    func `cancellation before foreground lane is a typed predispatch refusal`() async throws {
+        let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = DesktopOperationLaneCoordinator(coordinationRootURL: root)
+        let suspension = ModifierClickLaneSuspension()
+        let holder = Task {
+            try await coordinator.run(scope: .global, access: .write) {
+                await suspension.hold()
+            }
+        }
+        await suspension.waitUntilHeld()
+        var focusAttempted = false
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: coordinator,
+            dependencies: .init(
+                focusExactWindow: { _, _ in
+                    focusAttempted = true
+                    return .confirmedNoChange()
+                },
+                currentFrontmostIdentity: { prior },
+                currentFocusedExactWindow: { nil },
+                activate: { _, _ in false },
+                currentCursorLocation: { CGPoint(x: 10, y: 10) },
+                moveCursor: { _ in },
+                click: { _, _, _ in .confirmedNoChange() },
+                validateExactWindow: { _, _ in true }))
+        let operation = Task { @MainActor in
+            try await executor.execute(ForegroundModifierClickRequest(
+                point: CGPoint(x: 20, y: 20),
+                clickType: .single,
+                modifiers: [.command],
+                windowIdentity: WindowMutationIdentity(
+                    windowID: 7,
+                    ownerProcessIdentifier: 22,
+                    ownerProcessStartIdentity: 220,
+                    capturedBounds: bounds),
+                windowBounds: bounds))
+        }
+        operation.cancel()
+        await suspension.release()
+        _ = try await holder.value
+
+        do {
+            _ = try await operation.value
+            Issue.record("Expected pre-lane cancellation refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .requestCancelled)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.targetReceipt == DesktopActionTargetReceipt(
+                processIdentifier: 22,
+                processStartIdentity: 220,
+                windowID: 7))
+        }
+        #expect(!focusAttempted)
     }
 
     @Test
@@ -1679,5 +1768,29 @@ private enum ModifierClickTestError: LocalizedError {
         case .focusRestoreFailed:
             "focus restore failed"
         }
+    }
+}
+
+private actor ModifierClickLaneSuspension {
+    private var held = false
+    private var heldContinuations: [CheckedContinuation<Void, Never>] = []
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    func hold() async {
+        self.held = true
+        let continuations = self.heldContinuations
+        self.heldContinuations.removeAll()
+        continuations.forEach { $0.resume() }
+        await withCheckedContinuation { self.releaseContinuation = $0 }
+    }
+
+    func waitUntilHeld() async {
+        guard !self.held else { return }
+        await withCheckedContinuation { self.heldContinuations.append($0) }
+    }
+
+    func release() {
+        self.releaseContinuation?.resume()
+        self.releaseContinuation = nil
     }
 }

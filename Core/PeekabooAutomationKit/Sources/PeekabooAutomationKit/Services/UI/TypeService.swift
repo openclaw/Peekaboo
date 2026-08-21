@@ -11,6 +11,12 @@ private struct PixelFocusSnapshotPreparationFailure: Error {
 
 private struct PixelFocusSnapshotPreparationCancellation: Error {}
 
+private struct PixelFocusActionPreDispatchCancellation: Error {}
+
+private struct PixelFocusActionPreDispatchFailure: Error {
+    let causeDescription: String
+}
+
 /// Service for handling typing and text input operations
 @MainActor
 public final class TypeService {
@@ -783,6 +789,21 @@ extension TypeService {
                 lease,
                 requiresFreshObservation: false)
             throw CancellationError()
+        } catch is PixelFocusActionPreDispatchCancellation {
+            try? await self.snapshotManager.finishSnapshotMutation(
+                lease,
+                requiresFreshObservation: false)
+            throw CancellationError()
+        } catch let error as PixelFocusActionPreDispatchFailure {
+            try? await self.snapshotManager.finishSnapshotMutation(
+                lease,
+                requiresFreshObservation: false)
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .permissionDenied,
+                message: "Pixel-focus typing could not establish Accessibility focus before dispatch.",
+                hint: "Grant Accessibility permission before retrying.",
+                causeDescription: error.causeDescription)
+                .attributed(to: DesktopTargetIdentity(exactWindow: exactWindow).actionTargetReceipt)
         } catch let failure as DesktopActionFailure {
             try? await self.snapshotManager.finishSnapshotMutation(
                 lease,
@@ -902,7 +923,7 @@ extension TypeService {
                     {
                         throw failure
                     }
-                    throw CancellationError()
+                    throw PixelFocusActionPreDispatchCancellation()
                 } catch let error as InputDeliveryIndeterminateError {
                     throw sequence.failure(
                         combining: error.desktopActionFailure(delivery: automationTarget.keyboardDelivery),
@@ -914,7 +935,15 @@ extension TypeService {
                         message: "Pixel-focus typing did not complete after its focus write.",
                         hint: "Observe the exact target before deciding whether to retry.")
                 } catch {
-                    guard sequence.mutationDisposition.mutationDispatched else { throw error }
+                    guard sequence.mutationDisposition.mutationDispatched else {
+                        if let peekabooError = error as? PeekabooError,
+                           case .permissionDeniedAccessibility = peekabooError
+                        {
+                            throw PixelFocusActionPreDispatchFailure(
+                                causeDescription: error.localizedDescription)
+                        }
+                        throw error
+                    }
                     let leaf = DesktopActionFailure.preDispatchRefusal(
                         reason: .targetUnavailable,
                         message: error.localizedDescription)

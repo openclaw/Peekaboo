@@ -136,6 +136,53 @@ struct MCPComposedInputParityTests {
     }
 
     @Test
+    func `prelane modifier click cancellation releases snapshot lease`() async throws {
+        let fixture = await Self.makeFixture()
+        await MainActor.run {
+            fixture.automation.foregroundModifierClickError = DesktopActionFailure.preDispatchRefusal(
+                reason: .requestCancelled,
+                message: "Modifier-click was cancelled before acquiring its foreground operation lane.")
+        }
+
+        let response = try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "coords": "600,300",
+            "snapshot": fixture.snapshotID,
+            "foreground": true,
+            "modifiers": ["cmd"],
+        ]))
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+        let lease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        try await fixture.snapshots.finishSnapshotMutation(lease, requiresFreshObservation: false)
+    }
+
+    @Test
+    func `postdispatch modifier click cancellation keeps snapshot replay blocked`() async throws {
+        let fixture = await Self.makeFixture()
+        await MainActor.run {
+            fixture.automation.foregroundModifierClickError = DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .composite, mode: .foreground),
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "Modifier-click was cancelled after dispatch began.")
+        }
+
+        let response = try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "coords": "600,300",
+            "snapshot": fixture.snapshotID,
+            "foreground": true,
+            "modifiers": ["cmd"],
+        ]))
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(true))
+        await #expect(throws: (any Error).self) {
+            _ = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        }
+    }
+
+    @Test
     func `typed receipt refusal releases modifier click snapshot lease`() async throws {
         let fixture = await Self.makeFixture()
         await MainActor.run {

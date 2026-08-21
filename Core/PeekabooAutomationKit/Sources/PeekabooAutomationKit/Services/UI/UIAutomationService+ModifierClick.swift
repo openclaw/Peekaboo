@@ -58,14 +58,7 @@ extension UIAutomationService {
                             message: "Modifier-click target focus lost foreground ownership after dispatch.",
                             hint: "Inspect the shared desktop before taking another input action."))
                     } catch {
-                        guard sequence.mutationDisposition.mutationDispatched else { throw error }
-                        let leaf = error as? DesktopActionFailure ?? .preDispatchRefusal(
-                            reason: .targetUnavailable,
-                            message: error.localizedDescription)
-                        throw sequence.failure(
-                            combining: leaf,
-                            message: "Exact-window focus stopped after a partial foreground dispatch.",
-                            hint: "Inspect the shared desktop before taking another input action.")
+                        throw Self.modifierClickFocusFailure(error, sequence: sequence)
                     }
                     return FocusDispatchAccounting.verifiedFocusOutcome(sequence.successResolution())
                 },
@@ -120,6 +113,43 @@ extension UIAutomationService {
                 },
                 prepareClick: Self.prepareModifierClick))
         return try await executor.execute(request)
+    }
+
+    static func modifierClickFocusFailure(
+        _ error: any Error,
+        sequence: DesktopActionSequenceAccumulator) -> any Error
+    {
+        if error is CancellationError {
+            if let failure = sequence.cancellationFailure(
+                fallbackRoute: .local,
+                message: "Exact-window focus was cancelled after foreground dispatch began.",
+                hint: "Inspect the shared desktop before taking another input action.",
+                causeDescription: "Modifier-click focus task cancelled")
+            {
+                return failure
+            }
+            return DesktopActionFailure.preDispatchRefusal(
+                reason: .requestCancelled,
+                message: "Modifier-click was cancelled before exact-window focus dispatch.")
+        }
+        if let peekabooError = error as? PeekabooError,
+           case .permissionDeniedAccessibility = peekabooError,
+           sequence.mutationDisposition == .none
+        {
+            return DesktopActionFailure.preDispatchRefusal(
+                reason: .permissionDenied,
+                message: "Modifier-click cannot focus its exact window without Accessibility permission.",
+                hint: "Grant Accessibility permission before retrying.",
+                causeDescription: peekabooError.localizedDescription)
+        }
+        guard sequence.mutationDisposition.mutationDispatched else { return error }
+        let leaf = error as? DesktopActionFailure ?? .preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: error.localizedDescription)
+        return sequence.failure(
+            combining: leaf,
+            message: "Exact-window focus stopped after a partial foreground dispatch.",
+            hint: "Inspect the shared desktop before taking another input action.")
     }
 
     private static func currentFrontmostProcessIdentity() -> ApplicationProcessIdentity? {
