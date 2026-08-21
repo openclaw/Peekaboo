@@ -11,8 +11,10 @@ struct AppCommand: ParsableCommand {
         abstract: "Control applications - launch, quit, relaunch, hide/unhide, switch, focus, and list apps",
         discussion: """
         EXAMPLES:
-          # Launch an application
+          # Verify an already-running application without dispatching a launch
           peekaboo app launch "Visual Studio Code"
+
+          # Launch or open an application with explicit foreground consent
           peekaboo app launch --bundle-id com.microsoft.VSCode --wait-ready --foreground
           peekaboo app launch "Safari" --open https://example.com --open ~/Desktop/notes.txt --foreground
           peekaboo app launch "Safari" --foreground

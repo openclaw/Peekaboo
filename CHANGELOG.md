@@ -10,6 +10,7 @@
 - Read credentials for `config credential set` and `config provider add` from piped stdin, owner-only files, or no-echo prompts by default; keep argv input as a documented deprecated compatibility path.
 
 ### Fixed
+- Hide shared-pointer-only tools from background MCP and Agent catalogs, and keep CLI follow-up guidance explicit about foreground consent.
 - Restore terminal echo around credential-prompt job-control stops and common termination signals, then re-disable echo only after a stopped prompt continues.
 - Let exact-window background mutations ignore unrelated incomplete application rows while still refusing ambiguous, incomplete, stale, or mismatched selected owners.
 - Give unknown CLI commands a current-help recovery hint and remove source-checkout rebuild advice from installed help.

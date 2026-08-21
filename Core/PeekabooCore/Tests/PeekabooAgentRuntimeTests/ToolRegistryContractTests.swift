@@ -24,19 +24,22 @@ struct ToolRegistryContractTests {
             "scroll",
             "press",
             "action",
-            "drag",
-            "move",
             "app",
             "window",
         ]))
-        #expect(!names.contains("shell"))
-        #expect(names.isDisjoint(with: ["hotkey", "launch_app", "list"]))
+        #expect(names.isDisjoint(with: ["drag", "move", "shell", "hotkey", "launch_app", "list"]))
 
         let agent = try PeekabooAgentService(services: services)
         let sessionNames = await Set(agent.buildToolset(for: .anthropic(.sonnet45)).map(\.name))
         let publicFactoryNames = Set(agent.publicAgentTools().map(\.name))
         #expect(names == sessionNames)
         #expect(names == publicFactoryNames)
+
+        let foregroundNames = await Set(agent.buildToolset(
+            for: .anthropic(.sonnet45),
+            executionPolicy: .foregroundAllowed).map(\.name))
+        #expect(foregroundNames.isSuperset(of: ["drag", "move"]))
+        #expect(!foregroundNames.contains("shell"))
     }
 
     @Test

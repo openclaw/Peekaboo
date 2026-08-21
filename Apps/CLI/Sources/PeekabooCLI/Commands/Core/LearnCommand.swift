@@ -9,6 +9,9 @@ typealias PeekabooToolParameter = ParameterDefinition
 
 @MainActor
 struct LearnCommand {
+    static let foregroundDragExample =
+        "peekaboo drag --from <id|x,y> --to <id|x,y> --foreground"
+
     @RuntimeStorage private var runtime: CommandRuntime?
 
     private var resolvedRuntime: CommandRuntime {
@@ -57,8 +60,8 @@ struct LearnCommand {
         - Exact targeted `dialog input` defaults to background AXValue; targetless/global input, file actions, and
           forced dismiss require explicit foreground consent.
         - Use `verify` instead of fixed sleeps to wait for stable window and element predicates.
-        - Invoke accessibility actions with `action`; drag from elements or coordinates with
-          `drag --from <id|x,y> --to <id|x,y>`.
+        - Invoke accessibility actions with `action`. Drag changes the shared physical cursor and requires explicit
+          foreground consent: `\(Self.foregroundDragExample)`.
         - Management commands are subcommand trees: `clipboard get|set|clear|save|restore`,
           `menubar list|click`, `agent run|resume|sessions|chat`, `config provider ...`, and
           `permissions request <kind>`.
@@ -162,7 +165,8 @@ struct LearnCommand {
         print("""
         ## MCP / Agent Tool Quick Reference
         - **Vision**: see, image
-        - **UI Automation**: click, type, press, scroll, drag
+        - **UI Automation**: click, type, press, scroll
+        - **Foreground-only CLI pointer**: move and drag require explicit `--foreground` consent
         - **Window Management**: window, space
         - **Applications**: app
         - **Elements**: inspect_ui, verify_state, set_value, action

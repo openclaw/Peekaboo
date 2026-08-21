@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Skip provider discovery and Agent construction for caller-local commands that cannot invoke the Agent, reducing cold startup while preserving full Agent and MCP initialization.
 
 ### Fixed
+- Hide shared-pointer-only tools from background MCP and Agent catalogs, and keep CLI follow-up guidance explicit about foreground consent.
 - Let exact-window background mutations ignore unrelated incomplete application rows while still refusing ambiguous, incomplete, stale, or mismatched selected owners.
 - Give unknown commands a current-help recovery hint and remove source-checkout rebuild advice from installed help.
 - Return explicitly application-scoped, observation-only AX semantics for tree-only reads of exact pixel-only windows while withholding snapshot and mutation authority.

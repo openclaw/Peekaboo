@@ -31,6 +31,22 @@ struct CommandHelpRendererTests {
     }
 
     @Test
+    func `root app help distinguishes a background readiness probe from foreground launch`() {
+        let help = AppCommand.helpMessage()
+
+        #expect(help.contains("Verify an already-running application without dispatching a launch"))
+        #expect(help.contains("Launch or open an application with explicit foreground consent"))
+    }
+
+    @Test
+    func `learn drag guidance carries explicit foreground consent`() {
+        #expect(
+            LearnCommand.foregroundDragExample ==
+                "peekaboo drag --from <id|x,y> --to <id|x,y> --foreground"
+        )
+    }
+
+    @Test
     func `V4 generated help uses canonical commands and explicit duration units`() {
         let help = [
             AppCommand.helpMessage(),

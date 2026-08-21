@@ -10,8 +10,15 @@ public enum MCPToolCatalog {
         filters: ToolFilters = ToolFiltering.currentFilters(),
         log: ((String) -> Void)? = nil) -> [any MCPTool]
     {
+        let authorityFilteredTools = self.unfilteredTools(context: context).filter { tool in
+            let isExposed = context.executionPolicy.exposesToolInCatalog(named: tool.name)
+            if !isExposed {
+                log?("Tool '\(tool.name)' not exposed under \(context.executionPolicy.rawValue) authority.")
+            }
+            return isExposed
+        }
         let filteredTools = ToolFiltering.apply(
-            self.unfilteredTools(context: context),
+            authorityFilteredTools,
             filters: filters,
             log: log)
 

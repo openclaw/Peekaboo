@@ -115,6 +115,23 @@ struct MenuBarCommandConsentTests {
 
     @Test
     @MainActor
+    func `human list follow-up includes foreground consent for both selectors`() async throws {
+        let menu = RecordingMenuBarService(items: [Self.item])
+        let result = try await InProcessCommandRunner.run(
+            ["menubar", "list"],
+            services: TestServicesFactory.makePeekabooServices(menu: menu)
+        )
+
+        #expect(result.exitStatus == 0)
+        #expect(result.stdout.contains("peekaboo menubar click --index <index> --foreground"))
+        #expect(result.stdout.contains("peekaboo menubar click \"<name>\" --foreground"))
+        #expect(menu.listCallCount == 1)
+        #expect(menu.namedClickCalls.isEmpty)
+        #expect(menu.indexClickCalls.isEmpty)
+    }
+
+    @Test
+    @MainActor
     func `foreground named click preserves name-based dispatch`() async throws {
         let menu = RecordingMenuBarService(items: [Self.item])
         let result = try await InProcessCommandRunner.run(

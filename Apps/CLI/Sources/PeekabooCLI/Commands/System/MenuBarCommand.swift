@@ -90,7 +90,10 @@ InjectedRuntimeBackedCommand {
             } else {
                 MenuBarItemListOutput.display(menuBarItems)
                 if !menuBarItems.isEmpty {
-                    print("\n💡 Tip: Use 'peekaboo menubar click --index <index>' or click by name")
+                    print(
+                        "\n💡 Tip: Use 'peekaboo menubar click --index <index> --foreground' " +
+                            "or 'peekaboo menubar click \"<name>\" --foreground'"
+                    )
                 }
             }
         } catch {

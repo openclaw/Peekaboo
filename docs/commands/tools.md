@@ -7,7 +7,7 @@ read_when:
 
 # `peekaboo tools`
 
-`peekaboo tools` prints the background-only MCP tool catalog that `peekaboo mcp` exposes (Image, See, Click, Press, Action, Window, Browser, Inspect UI, etc.). `peekaboo tools describe <name>` prints one tool's policy-aware JSON input schema for token-cheap, on-demand discovery. Guaranteed-refused foreground shapes are omitted from background-only schemas and their descriptions explain the required human-authorized foreground Agent or standalone CLI route. The public Agent catalog is a separate Shell-free surface; run `peekaboo learn` for that exact guide. The CLI keeps `browser` as a dedicated wrapper and exposes AX-only inspection through `peekaboo see --tree --no-screenshot`; run `peekaboo --help` for the full CLI command list.
+`peekaboo tools` prints the background-only MCP tool catalog that `peekaboo mcp` exposes (Image, See, Click, Press, Action, Window, Browser, Inspect UI, etc.). `peekaboo tools describe <name>` prints one tool's policy-aware JSON input schema for token-cheap, on-demand discovery. Tools with no background-safe form, such as `move` and `drag`, are omitted. Mixed-capability tools retain their background-safe actions and describe which foreground shapes require a human-authorized foreground Agent or standalone CLI route. The public Agent catalog is a separate Shell-free surface; run `peekaboo learn` for that exact guide. The CLI keeps `browser` as a dedicated wrapper and exposes AX-only inspection through `peekaboo see --tree --no-screenshot`; run `peekaboo --help` for the full CLI command list.
 
 ## Key options
 | Flag | Description |

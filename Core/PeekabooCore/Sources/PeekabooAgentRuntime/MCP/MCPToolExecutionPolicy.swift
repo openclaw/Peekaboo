@@ -16,6 +16,21 @@ public enum MCPToolExecutionPolicy: String, Codable, Sendable {
 
     static let refusalErrorCode = "AGENT_EXECUTION_POLICY_REFUSAL"
 
+    private static let nonUnrestrictedCatalogExclusions: Set<String> = ["shell"]
+    private static let backgroundOnlyCatalogExclusions: Set<String> = ["drag", "move"]
+
+    func exposesToolInCatalog(named toolName: String) -> Bool {
+        switch self {
+        case .unrestricted:
+            true
+        case .foregroundAllowed:
+            !Self.nonUnrestrictedCatalogExclusions.contains(toolName)
+        case .backgroundOnly:
+            !Self.nonUnrestrictedCatalogExclusions.contains(toolName) &&
+                !Self.backgroundOnlyCatalogExclusions.contains(toolName)
+        }
+    }
+
     func rejection(toolName: String, arguments: ToolArguments) -> ToolResponse? {
         let refusal: (message: String, reason: DesktopActionOutcome.RefusalReason)? = switch self {
         case .unrestricted:

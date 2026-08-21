@@ -183,7 +183,7 @@ struct MCPToolRegistryIntegrationTests {
             filters: noToolFilters)
         let names = Set(tools.map(\.name))
 
-        #expect(tools.count == 26)
+        #expect(tools.count == 24)
         #expect(names.contains("clipboard"))
         #expect(names.contains("paste"))
         #expect(names.contains("set_value"))
@@ -195,6 +195,14 @@ struct MCPToolRegistryIntegrationTests {
         #expect(names.contains("verify_state"))
         #expect(names.contains("capture"))
         #expect(!names.contains("shell"))
+        #expect(names.isDisjoint(with: ["drag", "move"]))
+
+        let foregroundContext = MCPToolContext(services: services, executionPolicy: .foregroundAllowed)
+        let foregroundNames = Set(MCPToolCatalog.tools(
+            context: foregroundContext,
+            inputPolicy: services.configuration.getUIInputPolicy(),
+            filters: noToolFilters).map(\.name))
+        #expect(foregroundNames.isSuperset(of: ["drag", "move"]))
     }
 
     @Test
@@ -209,7 +217,7 @@ struct MCPToolRegistryIntegrationTests {
             filters: noToolFilters))
 
         let tools = registry.allTools()
-        #expect(tools.count == 26)
+        #expect(tools.count == 24)
 
         // Verify some key tools are present
         let imageToolExists = registry.tool(named: "image") != nil
