@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep legacy Agent JSON tool-call arguments privacy-safe and deterministic instead of exposing Swift implementation details and runtime addresses.
 - Report `retry_safe: false` whenever an Agent trace cannot prove whether a mutation dispatched.
 - Replace arbitrary provider-authored Agent trace field names with deterministic ordinal placeholders at every argument nesting level.
+- Treat an exact missing-window readback after `window close` as confirmed closure instead of a retry-unsafe failure.
 
 ## [4.2.2] - 2026-08-20
 
