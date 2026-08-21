@@ -40,9 +40,12 @@ extension PeekabooAgentService {
                 self.createAgentTools()
             }
         }
-        let authorityFiltered = executionPolicy == .unrestricted
-            ? tools
-            : tools.filter { $0.name != "shell" }
+        let authorityFiltered: [AgentTool] = switch executionPolicy {
+        case .unrestricted:
+            tools
+        case .backgroundOnly, .foregroundAllowed:
+            tools.filter { $0.name != "shell" }
+        }
 
         let filters = ToolFiltering.currentFilters()
         return ToolFiltering.applyInputStrategyAvailability(
