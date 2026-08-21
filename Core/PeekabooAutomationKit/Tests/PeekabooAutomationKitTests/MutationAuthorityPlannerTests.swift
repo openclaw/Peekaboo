@@ -278,6 +278,84 @@ struct MutationAuthorityPlannerTests {
             requirement: .exactWindow(automaticSelection: .preferredMutationWindow(.general)))
 
         #expect(direct.window?.identity == fixture.windowIdentity)
+        #expect(directScript.applicationInventoryRequestCount == 0)
+        #expect(directScript.exactApplicationRequests == ["PID:101", "PID:101"])
+    }
+
+    @Test
+    func `exact window owner ignores unrelated incomplete application rows`() async throws {
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 2468, processStartIdentity: 7),
+            applicationName: "Calculator",
+            windowID: 42)
+        let unpinnableSystemRow = AutomationTestFixtures.application(
+            processIdentifier: 1,
+            processStartIdentity: nil,
+            bundleIdentifier: nil,
+            name: "WindowServer",
+            isHiddenKnown: false,
+            activationPolicy: .prohibited)
+        let warning = "Application PID 1 lacked process-generation identity and was omitted."
+        let script = MutationAuthorityCatalogScript(
+            applicationInventories: [
+                .partial([fixture.application, unpinnableSystemRow], warnings: [warning]),
+            ],
+            windowInventories: [.complete([fixture.window])])
+
+        let authority = try await script.planner().plan(selector: InteractionTargetSelector(
+            applicationIdentifier: "Calculator",
+            windowID: fixture.window.windowID))
+
+        #expect(authority.window?.identity == fixture.windowIdentity)
+        #expect(authority.application.processIdentity == fixture.processIdentity)
+        #expect(authority.application.selectorProof.matchKind == .exactName)
+        #expect(script.applicationInventoryRequestCount == 1)
+        #expect(script.exactApplicationRequests == ["Calculator", "PID:2468"])
+        #expect(script.windowInventoryTargets == [.windowId(fixture.window.windowID)])
+    }
+
+    @Test
+    func `exact window owner still refuses known application ambiguity and selected row incompleteness`() async throws {
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 2468, processStartIdentity: 7),
+            applicationName: "Calculator",
+            windowID: 42)
+        let duplicate = AutomationTestFixtures.application(
+            processIdentifier: 2469,
+            processStartIdentity: 8,
+            bundleIdentifier: "com.example.OtherCalculator",
+            name: "Calculator")
+        let ambiguous = MutationAuthorityCatalogScript(
+            applicationInventories: [
+                .partial([fixture.application, duplicate], warnings: ["unrelated row omitted"]),
+            ],
+            windowInventories: [.complete([fixture.window])])
+
+        await #expect(throws: DesktopTargetPlanningError.ambiguousApplication(
+            identifier: "Calculator",
+            candidatePIDs: []))
+        {
+            _ = try await ambiguous.planner().plan(selector: InteractionTargetSelector(
+                applicationIdentifier: "Calculator",
+                windowID: fixture.window.windowID))
+        }
+
+        let incompleteApplication = AutomationTestFixtures.application(
+            processIdentifier: fixture.processIdentity.processIdentifier,
+            processStartIdentity: nil,
+            bundleIdentifier: fixture.application.bundleIdentifier,
+            name: fixture.application.name)
+        let incomplete = MutationAuthorityCatalogScript(
+            applicationInventories: [
+                .partial([incompleteApplication], warnings: ["selected row was incomplete"]),
+            ],
+            windowInventories: [.complete([fixture.window])])
+
+        await #expect(throws: DesktopTargetPlanningError.missingProcessIdentity(processIdentifier: 2468)) {
+            _ = try await incomplete.planner().plan(selector: InteractionTargetSelector(
+                applicationIdentifier: "Calculator",
+                windowID: fixture.window.windowID))
+        }
     }
 
     @Test

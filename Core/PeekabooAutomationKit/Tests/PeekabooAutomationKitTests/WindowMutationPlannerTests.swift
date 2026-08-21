@@ -318,6 +318,80 @@ struct WindowMutationPlannerTests {
     }
 
     @Test
+    func `exact window owner revalidation refuses generation drift after partial discovery`() async throws {
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 2468, processStartIdentity: 7),
+            applicationName: "Calculator",
+            windowID: 42)
+        let resolution = try #require(try ApplicationIdentifierMatcher.resolution(
+            for: "Calculator",
+            in: [ApplicationIdentifierMatcher.Candidate(fixture.application)]))
+        let authoritativeApplication = fixture.application.withSelectorResolutionProofs([
+            resolution.proof(selectedProcessIdentity: fixture.processIdentity),
+        ])
+        let currentApplication = AutomationTestLockedValue(authoritativeApplication)
+        let applications = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: {
+                .partial([fixture.application], warnings: ["unrelated system row was omitted"])
+            },
+            exactIdentifierProvider: { _ in currentApplication.value })
+        let planner = DesktopTargetPlanning.WindowMutationPlanner(
+            applicationPlanner: applications,
+            windowInventoryProvider: { _ in .complete([fixture.window]) })
+        let plan = try await planner.plan(selector: InteractionTargetSelector(
+            applicationIdentifier: "Calculator",
+            windowID: fixture.window.windowID))
+        currentApplication.value = AutomationTestFixtures.application(
+            processIdentifier: fixture.processIdentity.processIdentifier,
+            processStartIdentity: fixture.processIdentity.processStartIdentity + 1,
+            bundleIdentifier: fixture.application.bundleIdentifier,
+            name: fixture.application.name)
+
+        await #expect(throws: DesktopTargetPlanningError.staleApplication(expected: fixture.processIdentity)) {
+            _ = try await planner.revalidate(plan)
+        }
+    }
+
+    @Test
+    func `exact Calculator window refuses a mismatched window owner after partial discovery`() async throws {
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 2468, processStartIdentity: 7),
+            applicationName: "Calculator",
+            windowID: 42)
+        let resolution = try #require(try ApplicationIdentifierMatcher.resolution(
+            for: "Calculator",
+            in: [ApplicationIdentifierMatcher.Candidate(fixture.application)]))
+        let authoritativeApplication = fixture.application.withSelectorResolutionProofs([
+            resolution.proof(selectedProcessIdentity: fixture.processIdentity),
+        ])
+        let wrongOwner = ApplicationProcessIdentity(
+            processIdentifier: 2469,
+            processStartIdentity: 8)
+        let mismatchedWindow = AutomationTestFixtures.window(
+            windowID: fixture.window.windowID,
+            title: fixture.window.title,
+            bounds: fixture.window.bounds,
+            processIdentity: wrongOwner)
+        let applications = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: {
+                .partial([fixture.application], warnings: ["unrelated system row was omitted"])
+            },
+            exactIdentifierProvider: { _ in authoritativeApplication })
+        let planner = DesktopTargetPlanning.WindowMutationPlanner(
+            applicationPlanner: applications,
+            windowInventoryProvider: { _ in .complete([mismatchedWindow]) })
+
+        await #expect(throws: DesktopTargetPlanningError.windowOwnerMismatch(
+            windowID: fixture.window.windowID,
+            expected: fixture.processIdentity))
+        {
+            _ = try await planner.plan(selector: InteractionTargetSelector(
+                applicationIdentifier: "Calculator",
+                windowID: fixture.window.windowID))
+        }
+    }
+
+    @Test
     func `selection failures revalidate an already selected owner before returning`() async throws {
         let original = AutomationTestFixtures.application()
         let changed = AutomationTestFixtures.wrongGenerationApplication()

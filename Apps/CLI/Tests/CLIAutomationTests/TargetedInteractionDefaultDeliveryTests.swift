@@ -174,6 +174,81 @@ struct TargetedInteractionDefaultDeliveryTests {
     }
 
     @Test
+    func `exact Calculator window ignores unrelated unpinnable system application row`() async throws {
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 2468, processStartIdentity: 7),
+            applicationName: "Calculator",
+            windowID: 42
+        )
+        let unpinnableSystemRow = AutomationTestFixtures.application(
+            processIdentifier: 1,
+            processStartIdentity: nil,
+            bundleIdentifier: nil,
+            name: "WindowServer",
+            isHiddenKnown: false,
+            activationPolicy: .prohibited
+        )
+        let candidates = [fixture.application, unpinnableSystemRow]
+            .map(ApplicationIdentifierMatcher.Candidate.init)
+        let resolution = try #require(try ApplicationIdentifierMatcher.resolution(
+            for: "Calculator",
+            in: candidates
+        ))
+        let calculator = fixture.application.withSelectorResolutionProofs([
+            resolution.proof(selectedProcessIdentity: fixture.processIdentity),
+        ])
+        let applications = StubApplicationService(applications: [calculator, unpinnableSystemRow])
+        applications.inventoryCompleteness = .partial
+        applications.inventoryWarnings = [
+            "Application PID 1 lacked process-generation identity and was omitted.",
+        ]
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+            unitCount: .one
+        )
+        automation.actionOutcomeTargetIdentity = fixture.windowTargetIdentity
+        automation.targetedFocusedElement = UIFocusInfo(
+            role: "AXTextField",
+            title: nil,
+            value: nil,
+            frame: fixture.window.bounds.insetBy(dx: 40, dy: 40),
+            applicationName: fixture.application.name,
+            bundleIdentifier: fixture.application.bundleIdentifier ?? "com.apple.calculator",
+            processId: Int(fixture.processIdentity.processIdentifier),
+            windowID: fixture.window.windowID,
+            identifier: "calculator-display"
+        )
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: applications,
+            windows: StubWindowService(windowsByApp: [fixture.application.name: [fixture.window]]),
+            clipboard: StubClipboardService(),
+            automation: automation
+        )
+
+        for arguments in [
+            ["type", "12345"],
+            ["press", "return"],
+        ] {
+            let result = try await InProcessCommandRunner.run(
+                arguments + [
+                    "--app", "Calculator",
+                    "--window-id", String(fixture.window.windowID),
+                    "--json", "--no-remote",
+                ],
+                services: services
+            )
+            #expect(result.exitStatus == 0, "Unexpected exact-window refusal: \(result.combinedOutput)")
+        }
+
+        #expect(automation.exactTypeActionsCalls.count == 1)
+        #expect(automation.exactTypeActionsCalls.first?.target.windowIdentity == fixture.windowIdentity)
+        #expect(automation.exactHotkeyCalls.count == 1)
+        #expect(automation.exactHotkeyCalls.first?.target.windowIdentity == fixture.windowIdentity)
+        #expect(automation.hotkeyCalls.isEmpty)
+    }
+
+    @Test
     func `foreground explicitly preserves intentional global keyboard delivery`() async throws {
         let automation = StubAutomationService()
         let services = TestServicesFactory.makePeekabooServices(

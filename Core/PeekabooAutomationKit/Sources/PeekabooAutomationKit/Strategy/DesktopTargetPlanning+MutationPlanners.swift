@@ -188,6 +188,51 @@ extension DesktopTargetPlanning {
             }
         }
 
+        /// Resolves an application constraint through an authoritative direct lookup.
+        ///
+        /// This path is reserved for an already-selected exact window. The direct provider must
+        /// carry a complete selector proof, so omitted broad-inventory rows cannot hide ambiguity.
+        func resolveAuthoritativeWindowOwner(
+            selector: InteractionTargetSelector) async throws -> ApplicationMutationPlan
+        {
+            do {
+                try selector.validate(policy: .mutationSafe)
+            } catch let error as InteractionTargetSelector.ValidationError {
+                throw DesktopTargetPlanningError.invalidSelector(error)
+            }
+            guard selector.hasOwnerInput,
+                  let normalizedTarget = try selector.normalizedApplicationTarget(policy: .mutationSafe).map({
+                      try ApplicationMutationSelector.normalizedIdentifier($0)
+                  }),
+                  let exactIdentifierProvider
+            else {
+                throw DesktopTargetPlanningError.missingApplicationTarget
+            }
+
+            let application = try await self.exactApplication(
+                identifier: normalizedTarget,
+                staleIdentity: nil,
+                provider: exactIdentifierProvider)
+            let processIdentity = try Self.validatedIdentity(application)
+            _ = try ApplicationMutationSelector.select(
+                identifier: normalizedTarget,
+                applications: [application])
+            let candidate = ApplicationIdentifierMatcher.Candidate(application)
+            guard let proof = application.selectorResolutionProofs?.first(where: {
+                $0.applicationMismatch(
+                    identifier: normalizedTarget,
+                    selectedCandidate: candidate,
+                    processIdentity: processIdentity) == nil
+            })
+            else {
+                throw DesktopTargetPlanningError.applicationInventoryUnavailable(identifier: normalizedTarget)
+            }
+            return ApplicationMutationPlan(
+                application: application,
+                processIdentity: processIdentity,
+                selectorProof: proof)
+        }
+
         func frontmost() async throws -> ServiceApplicationInfo {
             guard let frontmostProvider else {
                 throw DesktopTargetPlanningError.unsupportedFrontmostTarget
@@ -209,6 +254,11 @@ extension DesktopTargetPlanning {
             } catch let error as DesktopTargetPlanningError {
                 throw error
             } catch let error as PeekabooError {
+                if case .ambiguousAppIdentifier = error {
+                    throw DesktopTargetPlanningError.ambiguousApplication(
+                        identifier: identifier,
+                        candidatePIDs: [])
+                }
                 guard case .appNotFound = error else {
                     throw DesktopTargetPlanningError.applicationInventoryUnavailable(identifier: identifier)
                 }
@@ -335,8 +385,14 @@ extension DesktopTargetPlanning {
                 throw DesktopTargetPlanningError.invalidSelector(error)
             }
 
+            let isDirectWindowIDLookup = if case .id = windowSelector {
+                true
+            } else {
+                false
+            }
+
             var owner: ApplicationMutationPlan?
-            if selector.hasOwnerInput {
+            if selector.hasOwnerInput, !isDirectWindowIDLookup {
                 owner = try await self.applications.resolve(
                     selector: selector,
                     expectedIdentity: nil,
@@ -364,13 +420,6 @@ extension DesktopTargetPlanning {
                     }
                     return nil
                 }())
-            let isDirectWindowIDLookup = if case .id = windowSelector,
-                                            case .windowId = inventoryTarget
-            {
-                true
-            } else {
-                false
-            }
             guard inventory.isComplete || isDirectWindowIDLookup else {
                 throw DesktopTargetPlanningError.incompleteWindowInventory(
                     selector: selectorDescription,
@@ -394,11 +443,24 @@ extension DesktopTargetPlanning {
             }
 
             if owner == nil {
-                owner = try await self.applications.resolve(
-                    selector: InteractionTargetSelector(
-                        processIdentifier: Int(selectedIdentity.ownerProcessIdentifier)),
-                    expectedIdentity: selectedIdentity.processIdentity,
-                    revalidateBeforeReturn: false)
+                if selector.hasOwnerInput {
+                    do {
+                        owner = try await self.applications.resolve(
+                            selector: selector,
+                            expectedIdentity: nil,
+                            revalidateBeforeReturn: false)
+                    } catch let error as DesktopTargetPlanningError {
+                        guard case .incompleteApplicationInventory = error else { throw error }
+                        owner = try await self.applications.resolveAuthoritativeWindowOwner(
+                            selector: selector)
+                    }
+                } else {
+                    owner = try await self.applications.resolve(
+                        selector: InteractionTargetSelector(
+                            processIdentifier: Int(selectedIdentity.ownerProcessIdentifier)),
+                        expectedIdentity: selectedIdentity.processIdentity,
+                        revalidateBeforeReturn: false)
+                }
             }
             guard let owner else {
                 preconditionFailure("Window planning must resolve an owner")

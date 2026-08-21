@@ -65,19 +65,23 @@ public final class MutationAuthorityCatalogScript {
 
     private func exactApplication(identifier: String) throws -> ServiceApplicationInfo {
         self.exactApplicationRequests.append(identifier)
-        let normalized = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        let pid = normalized.uppercased().hasPrefix("PID:")
-            ? Int32(normalized.dropFirst(4))
-            : nil
-        let matches = self.currentApplications.filter { application in
-            pid.map { application.processIdentifier == $0 } == true ||
-                application.bundleIdentifier?.caseInsensitiveCompare(normalized) == .orderedSame ||
-                application.name.caseInsensitiveCompare(normalized) == .orderedSame
-        }
-        guard matches.count == 1, let application = matches.first else {
+        let candidates = self.currentApplications.map(ApplicationIdentifierMatcher.Candidate.init)
+        guard let resolution = try ApplicationIdentifierMatcher.resolution(
+            for: identifier,
+            in: candidates)
+        else {
             throw PeekabooError.appNotFound(identifier)
         }
-        return application
+        guard !resolution.hasWinningTie else {
+            throw PeekabooError.ambiguousAppIdentifier(
+                identifier,
+                suggestions: self.currentApplications.map(\.name))
+        }
+        let application = self.currentApplications[resolution.index]
+        guard let processIdentity = application.processIdentity else { return application }
+        return application.withSelectorResolutionProofs([
+            resolution.proof(selectedProcessIdentity: processIdentity),
+        ])
     }
 
     private static func step<Element: Sendable>(
