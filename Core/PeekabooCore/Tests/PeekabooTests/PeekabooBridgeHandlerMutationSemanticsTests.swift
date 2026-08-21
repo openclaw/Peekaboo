@@ -982,6 +982,68 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
 
     @Test
     @MainActor
+    func `current close treats a window not found readback as a proved absent target`() async throws {
+        let cases: [(request: PeekabooBridgeRequest, mode: DesktopActionOutcome.Delivery.Mode, fallback: Bool)] = [
+            (
+                .closeWindow(.init(target: .windowId(77), expectedIdentity: Self.windowIdentity)),
+                .foreground,
+                true),
+            (
+                .backgroundCloseWindow(.init(target: .windowId(77), expectedIdentity: Self.windowIdentity)),
+                .background,
+                false),
+        ]
+
+        for testCase in cases {
+            let windows = HandlerMutationWindowService(
+                readbackError: .windowNotFound(criteria: "windowId 77"))
+            let handled = try await Self.handleCurrent(
+                testCase.request,
+                with: Self.server(services: StubServices(windows: windows)))
+
+            guard case .window(nil) = handled.response else {
+                Issue.record("Expected the missing post-close window to be returned as nil")
+                continue
+            }
+            #expect(handled.outcome?.state == .confirmedChange)
+            #expect(handled.outcome?.delivery?.mode == testCase.mode)
+            guard case .requestPinned? = handled.mutation?.target else {
+                Issue.record("Expected current close to retain its request-pinned window")
+                continue
+            }
+            #expect(await windows.recordedClose()?.allowForegroundFallback == testCase.fallback)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `current window mutations keep other readback failures indeterminate`() async throws {
+        let cases: [(request: PeekabooBridgeRequest, error: PeekabooError)] = [
+            (
+                .closeWindow(.init(target: .windowId(77), expectedIdentity: Self.windowIdentity)),
+                .commandFailed("fixture readback failure")),
+            (
+                .maximizeWindow(.init(target: .windowId(77), expectedIdentity: Self.windowIdentity)),
+                .windowNotFound(criteria: "windowId 77")),
+        ]
+
+        for testCase in cases {
+            let windows = HandlerMutationWindowService(readbackError: testCase.error)
+            do {
+                _ = try await Self.handleCurrent(
+                    testCase.request,
+                    with: Self.server(services: StubServices(windows: windows)))
+                Issue.record("Expected an unrecognized post-mutation readback failure to be indeterminate")
+            } catch let failure as DesktopActionFailure {
+                #expect(failure.outcome.state == .indeterminate)
+                #expect(failure.outcome.evidence == .completionUnknown)
+                #expect(failure.outcome.retrySafety == .unsafe)
+            }
+        }
+    }
+
+    @Test
+    @MainActor
     func `current close refuses receiptless provider before dispatch`() async throws {
         let windows = ReceiptlessCloseWindowService()
         let server = Self.server(services: StubServices(windows: windows))
@@ -1290,13 +1352,16 @@ private final class HandlerMutationWindowService: WindowManagementServiceProtoco
     private let recorder = HandlerMutationWindowRecorder()
     private let maximizeOutcome: DesktopActionOutcome
     private let readback: ServiceWindowInfo?
+    private let readbackError: PeekabooError?
 
     init(
         maximizeOutcome: DesktopActionOutcome = .confirmedNoChange(),
-        readback: ServiceWindowInfo? = nil)
+        readback: ServiceWindowInfo? = nil,
+        readbackError: PeekabooError? = nil)
     {
         self.maximizeOutcome = maximizeOutcome
         self.readback = readback
+        self.readbackError = readbackError
     }
 
     func closeWindow(target _: WindowTarget) async throws {}
@@ -1321,9 +1386,12 @@ private final class HandlerMutationWindowService: WindowManagementServiceProtoco
             target: target,
             expectedIdentity: expectedIdentity,
             allowForegroundFallback: allowForegroundFallback)
+        let delivery: DesktopActionOutcome.Delivery = allowForegroundFallback
+            ? .init(mechanism: .composite, mode: .foreground)
+            : .init(mechanism: .accessibilityAction, mode: .background)
         return DesktopActionResult(outcome: .confirmedChange(
-            delivery: .init(mechanism: .composite, mode: .foreground),
-            unitCount: DesktopActionOutcome.DispatchUnitCount(2)))
+            delivery: delivery,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(allowForegroundFallback ? 2 : 1)))
     }
 
     func minimizeWindowActionResult(
@@ -1412,7 +1480,10 @@ private final class HandlerMutationWindowService: WindowManagementServiceProtoco
     }
 
     func listWindows(target _: WindowTarget) async throws -> [ServiceWindowInfo] {
-        self.readback.map { [$0] } ?? []
+        if let readbackError {
+            throw readbackError
+        }
+        return self.readback.map { [$0] } ?? []
     }
 
     func getFocusedWindow() async throws -> ServiceWindowInfo? {

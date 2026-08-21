@@ -100,8 +100,20 @@ extension PeekabooBridgeServer {
             guard let identity = request.pinnedWindowMutation?.identity else {
                 throw DesktopTargetIdentityError.incompleteExactWindow
             }
-            let rawReadback = try await self.services.windows
-                .listWindows(target: .windowId(identity.windowID)).first
+            let rawReadback: ServiceWindowInfo?
+            do {
+                rawReadback = try await self.services.windows
+                    .listWindows(target: .windowId(identity.windowID)).first
+            } catch let error as PeekabooError {
+                if [.closeWindow, .backgroundCloseWindow].contains(request.operation),
+                   case .windowNotFound = error
+                {
+                    // Exact-window lookup reports a successful close as target absence.
+                    rawReadback = nil
+                } else {
+                    throw error
+                }
+            }
             if request.operation == .maximizeWindow, let rawReadback {
                 let visibleWorkArea = self.maximizedVisibleWorkAreaProvider(rawReadback.bounds)
                 readback = rawReadback.withMutationPostconditionEvidence(.init(
