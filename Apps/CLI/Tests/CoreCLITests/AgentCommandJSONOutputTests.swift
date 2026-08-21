@@ -82,9 +82,17 @@ struct AgentCommandJSONOutputTests {
         #expect(legacyArgumentsObject["mode"] as? String == "background")
         #expect(legacyArgumentsObject["snapshot"] as? String == "snapshot-123")
         #expect(legacyArgumentsObject["window_id"] as? Int == 42)
-        for key in ["text", "value", "url", "custom_number", "custom_boolean"] {
+        for key in ["text", "value", "url"] {
             #expect((legacyArgumentsObject[key] as? [String: Any])?["redacted"] as? Bool == true)
         }
+        #expect(
+            (legacyArgumentsObject["__peekaboo_trace_unknown_field_1"] as? [String: Any])?["value_type"]
+                as? String == "boolean"
+        )
+        #expect(
+            (legacyArgumentsObject["__peekaboo_trace_unknown_field_2"] as? [String: Any])?["value_type"]
+                as? String == "integer"
+        )
         #expect(!legacyArguments.contains("Tachikoma"))
         #expect(!legacyArguments.contains("AnyAgentToolValue"))
         #expect(!legacyArguments.contains("unknown context"))
@@ -98,9 +106,17 @@ struct AgentCommandJSONOutputTests {
         #expect(arguments["mode"] as? String == "background")
         #expect(arguments["snapshot"] as? String == "snapshot-123")
         #expect(arguments["window_id"] as? Int == 42)
-        for key in ["text", "value", "url", "custom_number", "custom_boolean"] {
+        for key in ["text", "value", "url"] {
             #expect((arguments[key] as? [String: Any])?["redacted"] as? Bool == true)
         }
+        #expect(
+            (arguments["__peekaboo_trace_unknown_field_1"] as? [String: Any])?["value_type"] as? String ==
+                "boolean"
+        )
+        #expect(
+            (arguments["__peekaboo_trace_unknown_field_2"] as? [String: Any])?["value_type"] as? String ==
+                "integer"
+        )
         #expect(resultSummary["success"] as? Bool == true)
         #expect(entries[0]["mutationDispatch"] as? String == "possibly_dispatched")
         #expect(resultSummary["mutation_dispatched"] == nil)
@@ -116,6 +132,8 @@ struct AgentCommandJSONOutputTests {
         #expect(!text.contains(ordinaryPassword))
         #expect(!text.contains(privateURL))
         #expect(!text.contains("731991"))
+        #expect(!text.contains("custom_boolean"))
+        #expect(!text.contains("custom_number"))
         #expect(!text.contains("AnyAgentToolValue"))
         #expect(!text.contains("unknown context"))
         #expect(!traceText.contains(privateMessage))

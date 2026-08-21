@@ -100,7 +100,9 @@ descriptions or runtime addresses. Calls beyond the trace limit and any call/tra
 bounded and allowlist only audit-relevant targeting, delivery modes, action enums, timeouts, predicate kinds, and safe
 boolean controls. Content-bearing and unknown values are represented by typed redaction summaries, including typed or
 pasted text, expected values, messages, prompts, shell commands, URLs, open targets, queries, labels, paths, and binary
-image data. Each `result` is a bounded status summary, not the raw tool payload; screenshot bytes and arbitrary output
+image data. Field names also follow one closed policy at the top level and inside allowed containers; unknown
+provider-authored names become deterministic `__peekaboo_trace_unknown_field_<n>` placeholders in sorted order. Each
+`result` is a bounded status summary, not the raw tool payload; screenshot bytes and arbitrary output
 text are intentionally omitted. The trace is capped at 512 entries and reports `totalCallCount` plus `truncated` when
 calls were omitted.
 

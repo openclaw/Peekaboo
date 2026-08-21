@@ -302,13 +302,14 @@ struct AgentExecutionTraceTests {
         #expect(arguments["mode"] as? String == "background")
         #expect(arguments["snapshot"] as? String == "snapshot-123")
         #expect(arguments["window_id"] as? Int == 42)
-        for key in [
-            "api_key", "path", "image", "text", "value", "url", "query", "custom_string",
-            "custom_number", "custom_boolean", "custom_array",
-        ] {
+        for key in ["api_key", "path", "image", "text", "value", "url", "query"] {
             #expect((arguments[key] as? [String: Any])?["redacted"] as? Bool == true)
         }
-        #expect((arguments["custom_array"] as? [String: Any])?["item_count"] as? Int == 2)
+        let unknownFields = (1...4).map { arguments["__peekaboo_trace_unknown_field_\($0)"] }
+        #expect((unknownFields[0] as? [String: Any])?["item_count"] as? Int == 2)
+        #expect((unknownFields[1] as? [String: Any])?["value_type"] as? String == "boolean")
+        #expect((unknownFields[2] as? [String: Any])?["value_type"] as? String == "integer")
+        #expect((unknownFields[3] as? [String: Any])?["value_type"] as? String == "string")
         #expect(predicates[0]["kind"] as? String == "element_value")
         #expect(predicates[0]["expected"] as? Bool == true)
         #expect((predicates[0]["expected_value"] as? [String: Any])?["redacted"] as? Bool == true)
@@ -327,6 +328,9 @@ struct AgentExecutionTraceTests {
         #expect(!text.contains("ordinary unclassified private value"))
         #expect(!text.contains("731991"))
         #expect(!text.contains("Private diary entry"))
+        for key in ["custom_array", "custom_boolean", "custom_number", "custom_string"] {
+            #expect(!text.contains(key))
+        }
 
         let fullTraceData = try JSONEncoder().encode(result.executionTrace())
         let fullTrace = try #require(JSONSerialization.jsonObject(with: fullTraceData) as? [String: Any])
@@ -334,6 +338,86 @@ struct AgentExecutionTraceTests {
         #expect(fullEntries[1]["disposition"] as? String == "missing-result")
         #expect(fullEntries[1]["isError"] is NSNull)
         #expect(fullEntries[1]["result"] is NSNull)
+    }
+
+    @Test
+    func `Trace replaces arbitrary field names with stable ordinals at every object depth`() throws {
+        let topStringKey = "alpha meet me behind the greenhouse at eleven"
+        let topNumberKey = "beta violet elephant porch"
+        let nestedStringKey = "alpha https private example invite"
+        let nestedBooleanKey = "beta private diary toggle"
+        let privateString = "top-level provider content must not survive"
+        let nestedPrivateString = "nested provider content must not survive"
+
+        let selectorForward = AnyAgentToolValue(object: [
+            "identifier": AnyAgentToolValue(string: "basic-text-field"),
+            nestedStringKey: AnyAgentToolValue(string: nestedPrivateString),
+            nestedBooleanKey: AnyAgentToolValue(bool: true),
+        ])
+        var selectorReverseObject: [String: AnyAgentToolValue] = [:]
+        selectorReverseObject[nestedBooleanKey] = AnyAgentToolValue(bool: true)
+        selectorReverseObject[nestedStringKey] = AnyAgentToolValue(string: nestedPrivateString)
+        selectorReverseObject["identifier"] = AnyAgentToolValue(string: "basic-text-field")
+
+        var forward: [String: AnyAgentToolValue] = [:]
+        forward["app"] = AnyAgentToolValue(string: "TextEdit")
+        forward[topStringKey] = AnyAgentToolValue(string: privateString)
+        forward[topNumberKey] = AnyAgentToolValue(int: 731_991)
+        forward["selector"] = selectorForward
+        forward["window_id"] = AnyAgentToolValue(int: 42)
+        var reverse: [String: AnyAgentToolValue] = [:]
+        reverse["window_id"] = AnyAgentToolValue(int: 42)
+        reverse["selector"] = AnyAgentToolValue(object: selectorReverseObject)
+        reverse[topNumberKey] = AnyAgentToolValue(int: 731_991)
+        reverse[topStringKey] = AnyAgentToolValue(string: privateString)
+        reverse["app"] = AnyAgentToolValue(string: "TextEdit")
+
+        let calls = [
+            AgentToolCall(id: "preserved-forward", name: "verify_state", arguments: forward),
+            AgentToolCall(id: "preserved-reverse", name: "verify_state", arguments: reverse),
+        ]
+        let result = AgentExecutionResult(
+            content: "",
+            messages: [ModelMessage(role: .assistant, content: calls.map(ModelMessage.ContentPart.toolCall))],
+            metadata: AgentMetadata(
+                executionTime: 0,
+                toolCallCount: calls.count,
+                modelName: "test",
+                startTime: Date(),
+                endTime: Date()))
+
+        let trace = result.executionTrace()
+        let first = try #require(trace.entries.first)
+        let second = try #require(trace.entries.last)
+        let selector = try #require(first.arguments["selector"]?.objectValue)
+        let data = try JSONEncoder().encode(trace)
+        let text = try #require(String(data: data, encoding: .utf8))
+
+        #expect(first.id == "preserved-forward")
+        #expect(second.id == "preserved-reverse")
+        #expect(first.name == "verify_state")
+        #expect(second.name == "verify_state")
+        #expect(first.arguments == second.arguments)
+        #expect(first.arguments["app"]?.stringValue == "TextEdit")
+        #expect(first.arguments["window_id"]?.intValue == 42)
+        #expect(first.arguments["__peekaboo_trace_unknown_field_1"]?.objectValue?["value_type"]?.stringValue ==
+            "string")
+        #expect(first.arguments["__peekaboo_trace_unknown_field_2"]?.objectValue?["value_type"]?.stringValue ==
+            "integer")
+        #expect(selector["identifier"]?.stringValue == "basic-text-field")
+        #expect(selector["__peekaboo_trace_unknown_field_1"]?.objectValue?["value_type"]?.stringValue == "string")
+        #expect(selector["__peekaboo_trace_unknown_field_2"]?.objectValue?["value_type"]?.stringValue == "boolean")
+        for privateContent in [
+            topStringKey,
+            topNumberKey,
+            nestedStringKey,
+            nestedBooleanKey,
+            privateString,
+            nestedPrivateString,
+            "731991",
+        ] {
+            #expect(!text.contains(privateContent))
+        }
     }
 }
 

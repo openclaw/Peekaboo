@@ -300,6 +300,141 @@ private enum AgentExecutionTraceSanitizer {
         "success",
     ]
 
+    private struct ArgumentFieldPolicy: OptionSet {
+        let rawValue: UInt8
+
+        static let boolean = Self(rawValue: 1 << 0)
+        static let number = Self(rawValue: 1 << 1)
+        static let string = Self(rawValue: 1 << 2)
+        static let container = Self(rawValue: 1 << 3)
+    }
+
+    private struct ArgumentField {
+        let key: String
+        let policy: ArgumentFieldPolicy
+    }
+
+    /// Closed field-name policy for provider-authored arguments. An empty policy preserves a known
+    /// content-bearing field name while redacting every value type. Unknown names never reach output.
+    private static let argumentFieldPolicies: [String: ArgumentFieldPolicy] = [
+        "action": .string,
+        "amount": .number,
+        "api_key": [],
+        "app": .string,
+        "app_target": .string,
+        "background": .boolean,
+        "base64": [],
+        "blob": [],
+        "bounds": .container,
+        "bundle": .string,
+        "bundle_id": .string,
+        "bundle_identifier": .string,
+        "button": [],
+        "bytes": [],
+        "capture_engine": .string,
+        "clear": .boolean,
+        "command": [],
+        "coordinates": .container,
+        "coords": [.number, .container],
+        "data": [],
+        "dataBase64": [],
+        "data_base64": [],
+        "delay": .number,
+        "delivery_mode": .string,
+        "direction": .string,
+        "display_index": .number,
+        "double": .boolean,
+        "duration": .number,
+        "element": .string,
+        "element_id": [.number, .string],
+        "engine": .string,
+        "expected": .boolean,
+        "expected_value": [],
+        "field": [],
+        "file": [],
+        "filePath": [],
+        "file_path": [],
+        "filename": [],
+        "final_screenshot": .boolean,
+        "foreground": .boolean,
+        "format": .string,
+        "from": .container,
+        "height": .number,
+        "identifier": .string,
+        "image": [],
+        "imagePath": [],
+        "image_data": [],
+        "image_path": [],
+        "index": .number,
+        "item_type": .string,
+        "keys": [],
+        "kind": .string,
+        "label": [],
+        "message": [],
+        "mode": .string,
+        "modifiers": [],
+        "name": .string,
+        "on": .string,
+        "open": [],
+        "openTargets": [],
+        "open_target": [],
+        "open_targets": [],
+        "operator": .string,
+        "outputPath": [],
+        "output_path": [],
+        "path": [],
+        "pid": .number,
+        "position": .container,
+        "predicate": .string,
+        "predicate_kind": .string,
+        "predicates": .container,
+        "press_return": .boolean,
+        "process_id": .number,
+        "prompt": [],
+        "promptText": [],
+        "prompt_text": [],
+        "query": [],
+        "question": [],
+        "region": [],
+        "requestFilePath": [],
+        "request_file_path": [],
+        "responseFilePath": [],
+        "response_file_path": [],
+        "right": .boolean,
+        "roi": [],
+        "role": .string,
+        "screen_index": .number,
+        "screenshot": [],
+        "screenshot_data": [],
+        "selector": .container,
+        "shell": [],
+        "smooth": .boolean,
+        "snapshot": .string,
+        "snapshot_id": [.number, .string],
+        "space_id": .number,
+        "stable_samples": .number,
+        "steps": .number,
+        "target": [],
+        "target_pid": .number,
+        "task": [],
+        "text": [],
+        "timeout": .number,
+        "timeout_ms": .number,
+        "title": [],
+        "to": [.number, .container],
+        "tolerance": .number,
+        "type": .string,
+        "url": [],
+        "value": [],
+        "video_out": [],
+        "web_focus": .boolean,
+        "width": .number,
+        "window_id": .number,
+        "window_title": [],
+        "x": .number,
+        "y": .number,
+    ]
+
     private struct Budget {
         var remainingNodes = AgentExecutionTraceSanitizer.maximumNodes
         var remainingStringScalars = AgentExecutionTraceSanitizer.maximumTotalStringScalars
@@ -487,12 +622,20 @@ private enum AgentExecutionTraceSanitizer {
     {
         var sanitized: [String: AnyAgentToolValue] = [:]
         let keys = object.keys.sorted()
-        for (index, key) in keys.prefix(self.maximumContainerItems).enumerated() {
+        var unknownFieldOrdinal = 0
+        for key in keys.prefix(self.maximumContainerItems) {
             guard let value = object[key] else { continue }
-            let outputKey = self.sanitizedObjectKey(key, index: index, existingKeys: Set(sanitized.keys))
+            let policy = self.argumentFieldPolicy(for: key, toolName: toolName)
+            let outputKey: String
+            if policy == nil {
+                unknownFieldOrdinal += 1
+                outputKey = "__peekaboo_trace_unknown_field_\(unknownFieldOrdinal)"
+            } else {
+                outputKey = key
+            }
             sanitized[outputKey] = self.sanitizeArgument(
                 value,
-                key: key,
+                field: ArgumentField(key: key, policy: policy ?? []),
                 toolName: toolName,
                 depth: depth + 1,
                 budget: &budget)
@@ -506,7 +649,7 @@ private enum AgentExecutionTraceSanitizer {
 
     private static func sanitizeArgument(
         _ value: AnyAgentToolValue,
-        key: String,
+        field: ArgumentField,
         toolName: String,
         depth: Int,
         budget: inout Budget) -> AnyAgentToolValue
@@ -524,31 +667,31 @@ private enum AgentExecutionTraceSanitizer {
             return AnyAgentToolValue(null: ())
         }
         if let bool = value.boolValue {
-            guard self.allowsBoolean(key, toolName: toolName) else {
+            guard field.policy.contains(.boolean) else {
                 return self.redactedSummary(value)
             }
             return AnyAgentToolValue(bool: bool)
         }
         if let int = value.intValue {
-            guard self.allowsNumber(key, toolName: toolName) else {
+            guard field.policy.contains(.number) else {
                 return self.redactedSummary(value)
             }
             return AnyAgentToolValue(int: int)
         }
         if let double = value.doubleValue {
-            guard self.allowsNumber(key, toolName: toolName) else {
+            guard field.policy.contains(.number) else {
                 return self.redactedSummary(value)
             }
             return AnyAgentToolValue(double: double)
         }
         if let string = value.stringValue {
-            guard self.allowsString(key, toolName: toolName) else {
+            guard field.policy.contains(.string) else {
                 return self.redactedSummary(value)
             }
-            return AnyAgentToolValue(string: self.sanitizedString(string, key: key, budget: &budget))
+            return AnyAgentToolValue(string: self.sanitizedString(string, key: field.key, budget: &budget))
         }
         if let array = value.arrayValue {
-            guard self.allowsContainer(key, toolName: toolName) else {
+            guard field.policy.contains(.container) else {
                 return self.redactedSummary(value)
             }
             var sanitized = array.prefix(self.maximumContainerItems).map { item in
@@ -561,7 +704,7 @@ private enum AgentExecutionTraceSanitizer {
                 }
                 return self.sanitizeArgument(
                     item,
-                    key: key,
+                    field: field,
                     toolName: toolName,
                     depth: depth + 1,
                     budget: &budget)
@@ -573,7 +716,7 @@ private enum AgentExecutionTraceSanitizer {
             return AnyAgentToolValue(array: sanitized)
         }
         if let object = value.objectValue {
-            guard self.allowsContainer(key, toolName: toolName) else {
+            guard field.policy.contains(.container) else {
                 return self.redactedSummary(value)
             }
             return AnyAgentToolValue(object: self.sanitizedObject(
@@ -613,108 +756,15 @@ private enum AgentExecutionTraceSanitizer {
         return AnyAgentToolValue(object: summary)
     }
 
-    private static func allowsString(_ key: String, toolName: String) -> Bool {
-        let key = self.normalizedKey(key)
-        let auditStrings: Set = [
-            "action",
-            "app",
-            "app_target",
-            "bundle",
-            "bundle_id",
-            "bundle_identifier",
-            "capture_engine",
-            "delivery_mode",
-            "direction",
-            "element",
-            "element_id",
-            "engine",
-            "format",
-            "identifier",
-            "item_type",
-            "kind",
-            "mode",
-            "on",
-            "operator",
-            "predicate",
-            "predicate_kind",
-            "role",
-            "snapshot",
-            "snapshot_id",
-            "type",
-        ]
-        if auditStrings.contains(key) {
-            return true
+    private static func argumentFieldPolicy(
+        for key: String,
+        toolName: String) -> ArgumentFieldPolicy?
+    {
+        guard var policy = self.argumentFieldPolicies[key] else { return nil }
+        if key == "name", toolName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() != "app" {
+            policy.remove(.string)
         }
-        return key == "name" && self.normalizedKey(toolName) == "app"
-    }
-
-    private static func allowsNumber(_ key: String, toolName _: String) -> Bool {
-        let key = self.normalizedKey(key)
-        let auditNumbers: Set = [
-            "amount",
-            "coords",
-            "delay",
-            "display_index",
-            "duration",
-            "element_id",
-            "height",
-            "index",
-            "pid",
-            "process_id",
-            "screen_index",
-            "snapshot_id",
-            "space_id",
-            "stable_samples",
-            "steps",
-            "target_pid",
-            "timeout",
-            "timeout_ms",
-            "tolerance",
-            "to",
-            "width",
-            "window_id",
-            "x",
-            "y",
-        ]
-        return auditNumbers.contains(key) || key.hasSuffix("_timeout") || key.hasSuffix("_timeout_ms")
-    }
-
-    private static func allowsBoolean(_ key: String, toolName _: String) -> Bool {
-        let key = self.normalizedKey(key)
-        let auditBooleans: Set = [
-            "background",
-            "clear",
-            "double",
-            "expected",
-            "final_screenshot",
-            "foreground",
-            "press_return",
-            "right",
-            "smooth",
-            "web_focus",
-        ]
-        return auditBooleans.contains(key)
-    }
-
-    private static func allowsContainer(_ key: String, toolName _: String) -> Bool {
-        let key = self.normalizedKey(key)
-        return [
-            "bounds",
-            "coordinates",
-            "coords",
-            "from",
-            "position",
-            "predicates",
-            "selector",
-            "to",
-        ].contains(key)
-    }
-
-    private static func normalizedKey(_ key: String) -> String {
-        key
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "-", with: "_")
-            .lowercased()
+        return policy
     }
 
     private static func sanitizedString(_ value: String, key: String?, budget: inout Budget) -> String {
@@ -738,17 +788,6 @@ private enum AgentExecutionTraceSanitizer {
         budget.remainingStringScalars -= prefix.count
         let sanitized = String(prefix)
         return prefix.count < scalars.count ? sanitized + "…" : sanitized
-    }
-
-    private static func sanitizedObjectKey(_ key: String, index: Int, existingKeys: Set<String>) -> String {
-        let base: String
-        if self.containsSecret(key) || self.looksLikeLocalPath(key) || self.looksLikeBinaryPayload(key) {
-            base = "__peekaboo_trace_redacted_key"
-        } else {
-            let prefix = key.unicodeScalars.prefix(self.maximumStringScalars)
-            base = String(prefix) + (prefix.count < key.unicodeScalars.count ? "…" : "")
-        }
-        return existingKeys.contains(base) ? "\(base)_\(index)" : base
     }
 
     private static func isSensitiveKey(_ key: String) -> Bool {
