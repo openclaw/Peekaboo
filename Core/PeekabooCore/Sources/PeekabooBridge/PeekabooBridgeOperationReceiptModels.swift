@@ -49,8 +49,39 @@ public struct PeekabooBridgeAttestedOperationRequest: Codable, Sendable {
     }
 }
 
+extension PeekabooBridgeOperationReceiptSemantics {
+    static func validateTargetAttribution(
+        _ payload: PeekabooBridgeOperationReceiptPayload,
+        request: PeekabooBridgeRequest,
+        response: PeekabooBridgeResponse) throws
+    {
+        try self.validateTargetAttribution(
+            payload,
+            plan: PeekabooBridgeOperationResultSemantics.semanticPlan(for: request),
+            response: response)
+    }
+
+    static func validateReceiptCarriage(
+        _ payload: PeekabooBridgeOperationReceiptPayload,
+        request: PeekabooBridgeRequest,
+        response: PeekabooBridgeResponse) throws
+    {
+        try self.validateReceiptCarriage(
+            payload,
+            plan: PeekabooBridgeOperationResultSemantics.semanticPlan(for: request),
+            response: response)
+    }
+}
+
 extension PeekabooBridgeRequest {
     fileprivate func validateAttestedOperationCarriage() throws {
+        try self.validateAttestedOperationCarriage(
+            plan: PeekabooBridgeOperationResultSemantics.semanticPlan(for: self))
+    }
+
+    fileprivate func validateAttestedOperationCarriage(
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan) throws
+    {
         switch self {
         case .attestedOperation:
             throw PeekabooBridgeErrorEnvelope(
@@ -67,7 +98,7 @@ extension PeekabooBridgeRequest {
                     code: .invalidRequest,
                     message: "Attested Bridge operation requests cannot be nested inside action carriage")
             }
-        case _ where self.mayMutateDesktop:
+        case _ where plan.result.completion.mutatesDesktop:
             throw PeekabooBridgeErrorEnvelope(
                 code: .invalidRequest,
                 message: "Mutating attested Bridge operations require action outcome carriage")
@@ -461,11 +492,11 @@ enum PeekabooBridgeOperationReceiptSemantics {
 
     static func validateTargetAttribution(
         _ payload: PeekabooBridgeOperationReceiptPayload,
-        request: PeekabooBridgeRequest,
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         response: PeekabooBridgeResponse) throws
     {
         try payload.validateTargetState()
-        try self.validateReceiptCarriage(payload, request: request, response: response)
+        try self.validateReceiptCarriage(payload, plan: plan, response: response)
         guard let failure = payload.targetAttributionFailure else {
             if self.errorEnvelope(in: response)?.context?.hasPrefix("bridge_target_attribution:") == true {
                 throw PeekabooBridgeOperationReceiptError.receiptMismatch(
@@ -473,24 +504,25 @@ enum PeekabooBridgeOperationReceiptSemantics {
             }
             try self.validateSuccessfulTargetAttribution(
                 payload,
-                request: request,
+                plan: plan,
                 response: response)
             return
         }
         try self.validateFailedTargetAttribution(
             payload,
             failure: failure,
-            request: request,
+            plan: plan,
             response: response)
     }
 
     static func validateReceiptCarriage(
         _ payload: PeekabooBridgeOperationReceiptPayload,
-        request: PeekabooBridgeRequest,
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         response: PeekabooBridgeResponse) throws
     {
+        let request = plan.carriageRequest
         do {
-            try request.validateAttestedOperationCarriage()
+            try request.validateAttestedOperationCarriage(plan: plan)
         } catch {
             try self.validateInvalidRequestCarriageRefusal(
                 payload,
@@ -505,11 +537,11 @@ enum PeekabooBridgeOperationReceiptSemantics {
         }
         guard PeekabooBridgeOperationResultSemantics.responseMatchesContract(
             semanticResponse,
-            request: request)
+            plan: plan)
         else {
             throw PeekabooBridgeOperationReceiptError.receiptMismatch("operation response family")
         }
-        if request.mayMutateDesktop {
+        if plan.result.completion.mutatesDesktop {
             guard case .projectedAction = request,
                   case let .projectedAction(projected) = response,
                   let outcome = projected.outcome,
@@ -534,7 +566,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
                       !outcome.isConfirmed,
                       PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
                           outcome,
-                          request: request)
+                          plan: plan)
                 else {
                     throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                         "read-only action outcome semantics")
@@ -553,8 +585,8 @@ enum PeekabooBridgeOperationReceiptSemantics {
                 }
             }
         }
-        try self.validateTypedResponseSemantics(semanticResponse, outerResponse: response, request: request)
-        try self.validateResponseOutcomeConsistency(response, request: request)
+        try self.validateTypedResponseSemantics(semanticResponse, outerResponse: response, plan: plan)
+        try self.validateResponseOutcomeConsistency(response, plan: plan)
         try self.validateSelectedLeafEvidence(payload, request: request, response: semanticResponse)
     }
 
@@ -785,9 +817,10 @@ enum PeekabooBridgeOperationReceiptSemantics {
 
     private static func validateSuccessfulTargetAttribution(
         _ payload: PeekabooBridgeOperationReceiptPayload,
-        request: PeekabooBridgeRequest,
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         response: PeekabooBridgeResponse) throws
     {
+        let request = plan.carriageRequest
         if self.allowsTargetlessFailureReceipt(for: response) {
             guard payload.target == nil else {
                 throw PeekabooBridgeOperationReceiptError.receiptMismatch("no-dispatch failure target")
@@ -798,13 +831,13 @@ enum PeekabooBridgeOperationReceiptSemantics {
             throw PeekabooBridgeOperationReceiptError.receiptMismatch("targetless successful attribution")
         }
         do {
-            _ = try PeekabooBridgeOperationTargetAttribution.resolveRequest(request)
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveRequest(plan)
         } catch {
             throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                 "successful request target contract")
         }
         if [.browserConnect, .browserExecute].contains(request.operation),
-           PeekabooBridgeOperationResultSemantics.semanticPlan(for: request).contract.completion.mutatesDesktop,
+           plan.result.completion.mutatesDesktop,
            !PeekabooBridgeOperationResultSemantics.isNoDispatchFailure(response)
         {
             guard let responseReceipt = response.browserExecutionConnectionReceipt,
@@ -853,7 +886,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
                 "browser target used outside external browser execution")
         }
         let signedIdentity = try payload.resolvedTargetIdentity()
-        let targetPolicy = PeekabooBridgeOperationResultSemantics.semanticPlan(for: request).contract.targetPolicy
+        let targetPolicy = plan.target.policy
         let handledTarget: DesktopTargetIdentity? = switch targetPolicy {
         case .handlerRequired, .handlerResolvedOrGlobal, .external:
             signedIdentity
@@ -865,7 +898,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
         let resolvedIdentity: DesktopTargetIdentity?
         do {
             resolvedIdentity = try PeekabooBridgeOperationTargetAttribution.resolve(
-                request: request,
+                plan: plan,
                 response: response,
                 handledTarget: handledTarget)
         } catch {
@@ -884,9 +917,10 @@ enum PeekabooBridgeOperationReceiptSemantics {
     private static func validateFailedTargetAttribution(
         _ payload: PeekabooBridgeOperationReceiptPayload,
         failure: PeekabooBridgeTargetAttributionFailure,
-        request: PeekabooBridgeRequest,
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         response: PeekabooBridgeResponse) throws
     {
+        let request = plan.carriageRequest
         let envelope = self.errorEnvelope(in: response)
         guard envelope?.context == "bridge_target_attribution:\(failure.code.rawValue)" else {
             throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution failure response")
@@ -896,7 +930,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
         }
         try self.validateFailureResponseSemantics(
             failure,
-            request: request,
+            plan: plan,
             envelope: envelope)
         guard let signedEvidence = payload.targetAttributionEvidence else {
             throw PeekabooBridgeOperationReceiptError.receiptMismatch("target attribution failure evidence")
@@ -911,7 +945,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
                 throw PeekabooBridgeOperationReceiptError.receiptMismatch("pre-dispatch target evidence")
             }
             do {
-                _ = try PeekabooBridgeOperationTargetAttribution.resolveRequest(request)
+                _ = try PeekabooBridgeOperationTargetAttribution.resolveRequest(plan)
                 throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                     "claimed pre-dispatch target attribution failure")
             } catch let error as DesktopTargetIdentityError {
@@ -922,7 +956,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
             return
         case .postExecution:
             do {
-                _ = try PeekabooBridgeOperationTargetAttribution.resolveRequest(request)
+                _ = try PeekabooBridgeOperationTargetAttribution.resolveRequest(plan)
             } catch {
                 throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                     "post-execution request target evidence")
@@ -930,7 +964,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
         }
         do {
             _ = try PeekabooBridgeOperationTargetAttribution.resolveEvidence(
-                request: request,
+                plan: plan,
                 evidence: signedEvidence.map(\.desktopEvidence))
             throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                 "claimed target attribution failure")
@@ -943,10 +977,10 @@ enum PeekabooBridgeOperationReceiptSemantics {
 
     private static func validateFailureResponseSemantics(
         _ failure: PeekabooBridgeTargetAttributionFailure,
-        request: PeekabooBridgeRequest,
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         envelope: PeekabooBridgeErrorEnvelope) throws
     {
-        guard request.mayMutateDesktop else {
+        guard plan.result.completion.mutatesDesktop else {
             guard envelope.code == .invalidRequest,
                   envelope.actionOutcome == nil
             else {
@@ -980,7 +1014,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
                   outcome.retrySafety == .unsafe,
                   PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
                       outcome,
-                      request: request)
+                      plan: plan)
             else {
                 throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                     "retry-unsafe target attribution failure")
@@ -1006,10 +1040,9 @@ enum PeekabooBridgeOperationReceiptSemantics {
     private static func validateTypedResponseSemantics(
         _ response: PeekabooBridgeResponse,
         outerResponse: PeekabooBridgeResponse,
-        request: PeekabooBridgeRequest) throws
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan) throws
     {
-        let request = request.unwrappedOperationRequest
-        let plan = PeekabooBridgeOperationResultSemantics.semanticPlan(for: request)
+        let request = plan.request
         let outerOutcome = self.outcome(in: outerResponse)?.outcome
         try plan.validateBoundTypedResponse(response, outcome: outerOutcome)
         if plan.responseCarriesPostMutationWindowState,
@@ -1091,7 +1124,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
         case let (.postMutationWindow, _, .window(window)):
             try self.validatePostMutationWindow(
                 window,
-                request: request,
+                plan: plan,
                 outcome: outerOutcome)
         case let (.menuStructureApplication, .listMenus(expected), .menuStructure(actual)):
             try self.validateApplication(
@@ -1331,7 +1364,19 @@ enum PeekabooBridgeOperationReceiptSemantics {
         request: PeekabooBridgeRequest,
         outcome: DesktopActionOutcome?) throws
     {
-        guard let expected = request.pinnedWindowMutation?.identity else {
+        try self.validatePostMutationWindow(
+            window,
+            plan: PeekabooBridgeOperationResultSemantics.semanticPlan(for: request),
+            outcome: outcome)
+    }
+
+    static func validatePostMutationWindow(
+        _ window: ServiceWindowInfo?,
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
+        outcome: DesktopActionOutcome?) throws
+    {
+        let request = plan.request
+        guard let expected = plan.pinnedWindowMutation?.identity else {
             throw PeekabooBridgeOperationReceiptError.receiptMismatch("post-mutation window request target")
         }
         guard let window else {
@@ -1508,8 +1553,9 @@ enum PeekabooBridgeOperationReceiptSemantics {
 
     private static func validateResponseOutcomeConsistency(
         _ response: PeekabooBridgeResponse,
-        request: PeekabooBridgeRequest) throws
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan) throws
     {
+        let request = plan.request
         guard case let .projectedAction(projected) = response else { return }
         if case let .browserToolResponse(browserResponse) = projected.response {
             guard let browserRequest = request.browserExecutionRequest else {
@@ -1542,7 +1588,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
                       outcome.retrySafety == .unsafe,
                       PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
                           failure.outcome,
-                          request: request)
+                          plan: plan)
                 else {
                     throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                         "browser response unknown progress")
@@ -1571,7 +1617,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
                       outcome.refusalReason != nil,
                       PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
                           failure.outcome,
-                          request: request)
+                          plan: plan)
                 else {
                     throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                         "browser response zero progress refusal")
@@ -1588,7 +1634,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
                 guard failure.outcome.projection == projected.outcome,
                       PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
                           failure.outcome,
-                          request: request)
+                          plan: plan)
                 else {
                     throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                         "browser response action failure")
@@ -1608,7 +1654,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
             return
         }
         guard let outcome = projected.outcome?.outcome else {
-            guard !request.mayMutateDesktop else {
+            guard !plan.result.completion.mutatesDesktop else {
                 throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                     "projected response outcome")
             }
@@ -1625,7 +1671,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
                   !outcome.isConfirmed,
                   PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
                       outcome,
-                      request: request)
+                      plan: plan)
             else {
                 throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                     "projected error outcome")
@@ -1635,10 +1681,10 @@ enum PeekabooBridgeOperationReceiptSemantics {
         guard PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
             outcome,
             response: projected.response,
-            request: request) || PeekabooBridgeOperationResultSemantics.nonErrorResponseAllowsFailureOutcome(
+            plan: plan) || PeekabooBridgeOperationResultSemantics.nonErrorResponseAllowsFailureOutcome(
             projected.response,
             outcome: outcome,
-            request: request)
+            plan: plan)
         else {
             throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                 "successful projected response outcome")

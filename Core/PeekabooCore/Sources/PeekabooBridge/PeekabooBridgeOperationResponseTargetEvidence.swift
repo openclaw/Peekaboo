@@ -63,14 +63,15 @@ extension PeekabooBridgeResponse {
     }
 
     func operationTargetEvidence(
-        for operation: PeekabooBridgeOperation) -> [DesktopTargetIdentity.Evidence]
+        for plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan)
+        -> [DesktopTargetIdentity.Evidence]
     {
         switch self {
         case let .attestedOperation(payload):
-            return payload.response.operationTargetEvidence(for: operation)
+            return payload.response.operationTargetEvidence(for: plan)
         case let .projectedAction(payload):
-            return payload.response.operationTargetEvidence(for: operation)
-        case let .desktopObservation(result):
+            return payload.response.operationTargetEvidence(for: plan)
+        case let .desktopObservation(result) where plan.target.responseEvidenceSource == .desktopObservation:
             if let mutationTargetIdentity = result.target.mutationTargetIdentity {
                 return [DesktopTargetEvidenceAdapter.evidence(
                     processIdentity: mutationTargetIdentity.processIdentity,
@@ -82,55 +83,89 @@ extension PeekabooBridgeResponse {
                 result.target.app.map { DesktopTargetEvidenceAdapter.evidence(application: $0) },
                 result.target.window.map { DesktopTargetEvidenceAdapter.evidence(window: $0) },
             ].compactMap(\.self) + DesktopTargetEvidenceAdapter.fragments(captureMetadata: result.capture.metadata)
-        case let .capture(result):
+        case let .capture(result) where plan.target.responseEvidenceSource == .capture:
             return DesktopTargetEvidenceAdapter.fragments(captureMetadata: result.metadata)
-        case let .elementDetection(result):
-            return operation == .inspectAccessibilityTree
-                ? result.metadata.windowContext.map { [DesktopTargetEvidenceAdapter.evidence(context: $0)] } ?? []
-                : []
-        case let .window(window):
-            return PeekabooBridgeOperationResultSemantics.operationPolicy(for: operation)
-                .windowResponseProof == .postMutationState
+        case let .elementDetection(result) where plan.target.responseEvidenceSource == .inspectWindowContext:
+            return result.metadata.windowContext.map { [DesktopTargetEvidenceAdapter.evidence(context: $0)] } ?? []
+        case let .window(window) where plan.target.responseEvidenceSource == .window:
+            return plan.responseCarriesPostMutationWindowState
                 ? []
                 : window.map { [DesktopTargetEvidenceAdapter.evidence(window: $0)] } ?? []
-        case let .application(application):
+        case let .application(application) where plan.target.responseEvidenceSource == .application:
             return [DesktopTargetEvidenceAdapter.evidence(application: application)]
-        case let .agentExecutionTrace(result):
-            guard operation == .agentExecutionTrace else { return [] }
+        case let .agentExecutionTrace(result) where plan.target.responseEvidenceSource == .agentProcess:
             let process = result.process.processIdentity
             return [.init(
                 processIdentifier: process.processIdentifier,
                 processIdentity: .init(
                     processIdentifier: process.processIdentifier,
                     processStartIdentity: process.processStartIdentity))]
-        case let .browserToolResponse(result):
-            return operation == .browserExecute
-                ? [Self.browserEvidence(result.connectionReceipt)].compactMap(\.self)
-                : []
-        case let .browserStatus(status):
-            return operation == .browserConnect
-                ? [Self.browserEvidence(status.connectionReceipt)].compactMap(\.self)
-                : []
-        case let .preparedDialogAction(receipt):
+        case let .browserToolResponse(result)
+            where plan.operation == .browserExecute && plan.target.responseEvidenceSource == .browserConnection:
+            return [Self.browserEvidence(result.connectionReceipt)].compactMap(\.self)
+        case let .browserStatus(status)
+            where plan.operation == .browserConnect && plan.target.responseEvidenceSource == .browserConnection:
+            return [Self.browserEvidence(status.connectionReceipt)].compactMap(\.self)
+        case let .preparedDialogAction(receipt) where plan.target.responseEvidenceSource == .preparedDialog:
             return [.init(target: DesktopTargetIdentity(exactWindow: receipt.target))]
-        case let .dialogElements(elements):
-            guard operation == .targetedDialogListElements,
-                  let target = elements.resolvedTarget?.target
+        case let .dialogElements(elements) where plan.target.responseEvidenceSource == .targetedDialog:
+            guard let target = elements.resolvedTarget?.target
             else {
                 return []
             }
             return [.init(target: DesktopTargetIdentity(exactWindow: target))]
-        case let .dialogResult(result):
+        case let .dialogResult(result) where plan.target.responseEvidenceSource == .dialog:
             return DesktopTargetEvidenceAdapter.fragments(dialogResult: result)
-        case let .exactWindowHeldPointerTermination(termination?):
+        case let .exactWindowHeldPointerTermination(termination?)
+            where plan.target.responseEvidenceSource == .heldPointerTermination:
             return [DesktopTargetEvidenceAdapter.evidence(
                 windowIdentity: termination.receipt.windowIdentity,
                 bounds: termination.receipt.windowBounds)]
-        case .focusedElement:
-            return []
         case let .error(envelope):
             return envelope.actionTargetReceipt.map { [DesktopTargetEvidenceAdapter.evidence(receipt: $0)] } ?? []
-        default:
+        case .operationSessionRollover,
+             .handshake,
+             .permissionsStatus,
+             .daemonStatus,
+             .agentExecutionTrace,
+             .processGenerationObservation,
+             .certificationProducerAttestation,
+             .browserStatus,
+             .browserToolResponse,
+             .capture,
+             .elementDetection,
+             .focusedElement,
+             .desktopObservation,
+             .ok,
+             .waitResult,
+             .windows,
+             .windowMutationInventory,
+             .window,
+             .applications,
+             .applicationMutationInventory,
+             .application,
+             .bool,
+             .typeResult,
+             .exactWindowHeldPointerOwner,
+             .exactWindowHeldPointerReceipt,
+             .exactWindowHeldPointerTermination,
+             .elementActionResult,
+             .clickResult,
+             .menuStructure,
+             .menuExtras,
+             .menuBarItems,
+             .dockItems,
+             .dockItem,
+             .rect,
+             .dialogInfo,
+             .dialogElements,
+             .dialogResult,
+             .preparedDialogAction,
+             .snapshotId,
+             .snapshotMutationLease,
+             .snapshots,
+             .detection,
+             .int:
             return []
         }
     }

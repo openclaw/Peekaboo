@@ -2131,18 +2131,24 @@ struct PeekabooBridgeResolvedOperationTarget: Sendable {
 
 enum PeekabooBridgeOperationTargetAttribution {
     static func resolveRequest(_ request: PeekabooBridgeRequest) throws -> DesktopTargetIdentity? {
-        let targetPolicy = PeekabooBridgeOperationResultSemantics.contract(for: request).targetPolicy
+        try self.resolveRequest(PeekabooBridgeOperationResultSemantics.semanticPlan(for: request))
+    }
+
+    static func resolveRequest(
+        _ plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan) throws
+        -> DesktopTargetIdentity?
+    {
         let identity: DesktopTargetIdentity?
         do {
             identity = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve(
-                request.operationTargetEvidence)
+                plan.target.requestEvidence)
         } catch let error as DesktopTargetIdentityError {
-            guard targetPolicy == .responseResolved,
+            guard plan.target.policy == .responseResolved,
                   error == .missingProcessGeneration || error == .incompleteExactWindow
             else { throw error }
             identity = nil
         }
-        if request.requiresStableOperationTarget, identity == nil {
+        if plan.target.requiresStableIdentity, identity == nil {
             throw DesktopTargetIdentityError.incompleteExactWindow
         }
         return identity
@@ -2153,13 +2159,24 @@ enum PeekabooBridgeOperationTargetAttribution {
         response: PeekabooBridgeResponse,
         handledTarget: DesktopTargetIdentity?) throws -> DesktopTargetIdentity?
     {
+        try self.resolve(
+            plan: PeekabooBridgeOperationResultSemantics.semanticPlan(for: request),
+            response: response,
+            handledTarget: handledTarget)
+    }
+
+    static func resolve(
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
+        response: PeekabooBridgeResponse,
+        handledTarget: DesktopTargetIdentity?) throws -> DesktopTargetIdentity?
+    {
         if PeekabooBridgeOperationResultSemantics.isNoDispatchFailure(response) {
             return nil
         }
         return try self.resolveEvidence(
-            request: request,
+            plan: plan,
             evidence: self.evidence(
-                request: request,
+                plan: plan,
                 response: response,
                 handledTarget: handledTarget))
     }
@@ -2168,11 +2185,20 @@ enum PeekabooBridgeOperationTargetAttribution {
         request: PeekabooBridgeRequest,
         evidence: [DesktopTargetIdentity.Evidence]) throws -> DesktopTargetIdentity?
     {
+        try self.resolveEvidence(
+            plan: PeekabooBridgeOperationResultSemantics.semanticPlan(for: request),
+            evidence: evidence)
+    }
+
+    static func resolveEvidence(
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
+        evidence: [DesktopTargetIdentity.Evidence]) throws -> DesktopTargetIdentity?
+    {
         let identity = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve(evidence)
-        if request.requiresResolvedOperationTarget, identity == nil {
+        if plan.target.requiresResolvedIdentity, identity == nil {
             throw DesktopTargetIdentityError.incompleteExactWindow
         }
-        try request.validateResolvedOperationTarget(identity)
+        try plan.request.validateResolvedOperationTarget(identity)
         return identity
     }
 
@@ -2181,15 +2207,25 @@ enum PeekabooBridgeOperationTargetAttribution {
         response: PeekabooBridgeResponse,
         handledTarget: DesktopTargetIdentity?) -> [DesktopTargetIdentity.Evidence]
     {
-        var evidence = request.operationTargetEvidence
-        let targetPolicy = PeekabooBridgeOperationResultSemantics.contract(for: request).targetPolicy
+        self.evidence(
+            plan: PeekabooBridgeOperationResultSemantics.semanticPlan(for: request),
+            response: response,
+            handledTarget: handledTarget)
+    }
+
+    static func evidence(
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
+        response: PeekabooBridgeResponse,
+        handledTarget: DesktopTargetIdentity?) -> [DesktopTargetIdentity.Evidence]
+    {
+        var evidence = plan.target.requestEvidence
         if let handledTarget,
-           request.requiresResolvedOperationTarget || targetPolicy == .handlerResolvedOrGlobal ||
-           !request.operationTargetEvidence.isEmpty
+           plan.target.requiresResolvedIdentity || plan.target.policy == .handlerResolvedOrGlobal ||
+           !plan.target.requestEvidence.isEmpty
         {
             evidence.append(.init(target: handledTarget))
         }
-        evidence.append(contentsOf: response.operationTargetEvidence(for: request.operation))
+        evidence.append(contentsOf: response.operationTargetEvidence(for: plan))
         return evidence
     }
 
@@ -2198,27 +2234,25 @@ enum PeekabooBridgeOperationTargetAttribution {
         response: PeekabooBridgeResponse,
         handledTarget: DesktopTargetIdentity? = nil) throws -> PeekabooBridgeResolvedOperationTarget
     {
+        try self.resolveReceipt(
+            plan: PeekabooBridgeOperationResultSemantics.semanticPlan(for: request),
+            response: response,
+            handledTarget: handledTarget)
+    }
+
+    static func resolveReceipt(
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
+        response: PeekabooBridgeResponse,
+        handledTarget: DesktopTargetIdentity? = nil) throws -> PeekabooBridgeResolvedOperationTarget
+    {
         try PeekabooBridgeResolvedOperationTarget(self.resolve(
-            request: request,
+            plan: plan,
             response: response,
             handledTarget: handledTarget))
     }
 }
 
 extension PeekabooBridgeRequest {
-    fileprivate var requiresStableOperationTarget: Bool {
-        PeekabooBridgeOperationResultSemantics.contract(for: self).targetPolicy == .requestPinned
-    }
-
-    fileprivate var requiresResolvedOperationTarget: Bool {
-        switch PeekabooBridgeOperationResultSemantics.contract(for: self).targetPolicy {
-        case .requestPinned, .handlerRequired, .responseResolved, .external:
-            true
-        case .handlerResolvedOrGlobal, .notApplicable, .requestDependent, .global:
-            false
-        }
-    }
-
     fileprivate func validateResolvedOperationTarget(_ identity: DesktopTargetIdentity?) throws {
         switch self {
         case let .attestedOperation(payload):

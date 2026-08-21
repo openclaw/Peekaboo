@@ -4,6 +4,7 @@ import PeekabooFoundation
 
 private struct OperationReceiptEncodingContext {
     let request: PeekabooBridgeRequest
+    let plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan
     let requestPayload: PeekabooBridgeAttestedOperationRequest
     let authority: PeekabooBridgeOperationReceiptAuthority
     let claim: PeekabooBridgeOperationSessionClaim
@@ -69,18 +70,20 @@ extension PeekabooBridgeServer {
         }
         let encodingContext = OperationReceiptEncodingContext(
             request: request,
+            plan: PeekabooBridgeOperationResultSemantics.requestPlan(for: request, vocabulary: .current),
             requestPayload: payload,
             authority: authority,
             claim: claim,
             startedAt: startedAt)
-        let requestEvidence = request.operationTargetEvidence
+        let plan = encodingContext.plan
+        let requestEvidence = plan.target.requestEvidence
         let requestTarget: DesktopTargetIdentity?
         do {
-            requestTarget = try PeekabooBridgeOperationTargetAttribution.resolveRequest(request)
+            requestTarget = try PeekabooBridgeOperationTargetAttribution.resolveRequest(plan)
         } catch let error as DesktopTargetIdentityError {
             let failure = PeekabooBridgeTargetAttributionFailure(error, stage: .preDispatch)
             let response = Self.targetAttributionFailureResponse(
-                request: request,
+                plan: plan,
                 failure: failure,
                 originalOutcome: nil,
                 afterExecution: false)
@@ -117,7 +120,7 @@ extension PeekabooBridgeServer {
             claim.negotiatedCapabilities)
         {
             await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(true) {
-                await self.terminalResponse(for: request, peer: peer)
+                await self.terminalResponse(for: plan, peer: peer)
             }
         }
         let response: PeekabooBridgeResponse
@@ -126,12 +129,12 @@ extension PeekabooBridgeServer {
         let targetFailure: PeekabooBridgeTargetAttributionFailure?
         let targetFailureEvidence: [PeekabooBridgeOperationTargetEvidence]?
         let attributionEvidence = PeekabooBridgeOperationTargetAttribution.evidence(
-            request: request,
+            plan: plan,
             response: handled.response,
             handledTarget: handled.targetIdentity ?? requestTarget)
         do {
             try PeekabooBridgeOperationResultSemantics.validateSuccessfulTargetDisposition(
-                request: request,
+                plan: plan,
                 handled: handled)
             if PeekabooBridgeOperationReceiptSemantics.allowsTargetlessFailureReceipt(for: handled.response) {
                 response = handled.response
@@ -150,7 +153,7 @@ extension PeekabooBridgeServer {
                 focusedElement = nil
             } else {
                 let resolved = try PeekabooBridgeOperationTargetAttribution.resolve(
-                    request: request,
+                    plan: plan,
                     response: handled.response,
                     handledTarget: handled.targetIdentity ?? requestTarget)
                 let receiptTarget = PeekabooBridgeResolvedOperationTarget(resolved)
@@ -163,7 +166,7 @@ extension PeekabooBridgeServer {
         } catch let error as DesktopTargetIdentityError {
             let failure = PeekabooBridgeTargetAttributionFailure(error, stage: .postExecution)
             response = Self.targetAttributionFailureResponse(
-                request: request,
+                plan: plan,
                 failure: failure,
                 originalOutcome: handled.outcome?.projection ??
                     PeekabooBridgeOperationReceiptSemantics.outcome(in: handled.response),
@@ -232,7 +235,7 @@ extension PeekabooBridgeServer {
                 PeekabooBridgeOperationReceiptCoding.unixMilliseconds()))
         try PeekabooBridgeOperationReceiptSemantics.validateReceiptCarriage(
             receiptPayload,
-            request: context.request,
+            plan: context.plan,
             response: response)
         let receipt: PeekabooBridgeOperationReceipt
         do {
@@ -242,7 +245,7 @@ extension PeekabooBridgeServer {
                 code: .internalError,
                 message: "Bridge operation completed, but its signed receipt could not be archived",
                 details: error.localizedDescription,
-                operationMayHaveCompleted: context.request.mayMutateDesktop)
+                operationMayHaveCompleted: context.plan.result.completion.mutatesDesktop)
         }
         return try self.encoder.encode(PeekabooBridgeResponse.attestedOperation(.init(
             response: response,
@@ -276,6 +279,9 @@ extension PeekabooBridgeServer {
                 failureEvidence: nil),
             context: .init(
                 request: payload.request,
+                plan: PeekabooBridgeOperationResultSemantics.requestPlan(
+                    for: payload.request,
+                    vocabulary: .current),
                 requestPayload: payload,
                 authority: authority,
                 claim: claim,
@@ -300,13 +306,17 @@ extension PeekabooBridgeServer {
     }
 
     private func terminalResponse(
-        for request: PeekabooBridgeRequest,
+        for plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         peer: PeekabooBridgePeer) async -> PeekabooBridgeHandledResponse
     {
+        let request = plan.carriageRequest
         if case let .projectedAction(payload) = request {
             do {
                 let nestedRequest = try payload.validatedRequest()
-                let handled = try await self.route(nestedRequest, peer: peer)
+                let nestedPlan = PeekabooBridgeOperationResultSemantics.requestPlan(
+                    for: nestedRequest,
+                    vocabulary: plan.vocabulary)
+                let handled = try await self.route(nestedPlan, peer: peer)
                 return .init(
                     response: .projectedActionForCurrentRequestVocabulary(
                         response: handled.response,
@@ -315,25 +325,33 @@ extension PeekabooBridgeServer {
                     targetIdentity: handled.targetIdentity,
                     selectedLeafEvidence: handled.selectedLeafEvidence)
             } catch let envelope as PeekabooBridgeErrorEnvelope {
-                return Self.projectedFailure(envelope, for: payload.request)
+                return Self.projectedFailure(
+                    envelope,
+                    mayMutateDesktop: plan.result.completion.mutatesDesktop)
             } catch let failure as DesktopActionFailure {
-                return Self.projectedFailure(.init(
-                    code: .internalError,
-                    actionFailure: failure.routed(to: .bridge),
-                    details: "\(failure)"), for: payload.request)
+                return Self.projectedFailure(
+                    .init(
+                        code: .internalError,
+                        actionFailure: failure.routed(to: .bridge),
+                        details: "\(failure)"),
+                    mayMutateDesktop: plan.result.completion.mutatesDesktop)
             } catch is CancellationError {
-                return Self.projectedFailure(.init(
-                    code: .timeout,
-                    message: "Bridge request was cancelled"), for: payload.request)
+                return Self.projectedFailure(
+                    .init(
+                        code: .timeout,
+                        message: "Bridge request was cancelled"),
+                    mayMutateDesktop: plan.result.completion.mutatesDesktop)
             } catch {
-                return Self.projectedFailure(.init(
-                    code: .internalError,
-                    message: error.localizedDescription,
-                    details: "\(error)"), for: payload.request)
+                return Self.projectedFailure(
+                    .init(
+                        code: .internalError,
+                        message: error.localizedDescription,
+                        details: "\(error)"),
+                    mayMutateDesktop: plan.result.completion.mutatesDesktop)
             }
         }
         do {
-            return try await self.route(request, peer: peer)
+            return try await self.route(plan, peer: peer)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             return .init(
                 response: .error(envelope.legacyCompatible),
@@ -360,9 +378,11 @@ extension PeekabooBridgeServer {
 
     private static func projectedFailure(
         _ unprojectedEnvelope: PeekabooBridgeErrorEnvelope,
-        for request: PeekabooBridgeRequest) -> PeekabooBridgeHandledResponse
+        mayMutateDesktop: Bool) -> PeekabooBridgeHandledResponse
     {
-        let envelope = self.canonicalMutationFailureEnvelope(unprojectedEnvelope, for: request)
+        let envelope = self.canonicalMutationFailureEnvelope(
+            unprojectedEnvelope,
+            mayMutateDesktop: mayMutateDesktop)
         return .init(
             response: .projectedActionForCurrentRequestVocabulary(
                 response: .error(envelope),
@@ -372,9 +392,9 @@ extension PeekabooBridgeServer {
 
     private static func canonicalMutationFailureEnvelope(
         _ envelope: PeekabooBridgeErrorEnvelope,
-        for request: PeekabooBridgeRequest) -> PeekabooBridgeErrorEnvelope
+        mayMutateDesktop: Bool) -> PeekabooBridgeErrorEnvelope
     {
-        guard request.mayMutateDesktop, envelope.actionOutcome == nil else { return envelope }
+        guard mayMutateDesktop, envelope.actionOutcome == nil else { return envelope }
         let failure = DesktopActionFailure.indeterminate(
             route: .bridge,
             evidence: .completionUnknown,
@@ -391,13 +411,13 @@ extension PeekabooBridgeServer {
     }
 
     private static func targetAttributionFailureResponse(
-        request: PeekabooBridgeRequest,
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         failure: PeekabooBridgeTargetAttributionFailure,
         originalOutcome: DesktopActionOutcome.Projection?,
         afterExecution: Bool) -> PeekabooBridgeResponse
     {
         let context = "bridge_target_attribution:\(failure.code.rawValue)"
-        guard request.mayMutateDesktop else {
+        guard plan.result.completion.mutatesDesktop else {
             return .error(.init(
                 code: .invalidRequest,
                 message: "Bridge operation target attribution failed",
@@ -428,7 +448,7 @@ extension PeekabooBridgeServer {
             code: mayHaveDispatched ? .internalError : .invalidRequest,
             actionFailure: actionFailure,
             context: context)
-        if case .projectedAction = request {
+        if case .projectedAction = plan.carriageRequest {
             return .projectedActionForCurrentRequestVocabulary(
                 response: .error(envelope),
                 outcome: actionFailure.outcome.projection,

@@ -269,6 +269,7 @@ struct PeekabooBridgeOperationResultSemanticsTests {
     @Test
     func `Every unconditionally mutating wire operation has one explicit result contract`() {
         let expected: Set<PeekabooBridgeOperation> = [
+            .agentExecutionTrace,
             .requestPostEventPermission,
             .browserConnect,
             .browserExecute,

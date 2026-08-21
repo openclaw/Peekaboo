@@ -345,13 +345,35 @@ enum PeekabooBridgeOperationResultSemantics {
         case postMutationState
     }
 
-    /// Static policy that every wire operation must classify explicitly.
-    struct OperationPolicy: Equatable, Sendable {
+    /// Where a successful response can contribute target-attribution evidence.
+    enum ResponseTargetEvidenceSource: Equatable, Sendable {
+        case none
+        case agentProcess
+        case application
+        case browserConnection
+        case capture
+        case desktopObservation
+        case dialog
+        case heldPointerTermination
+        case inspectWindowContext
+        case preparedDialog
+        case targetedDialog
+        case window
+    }
+
+    /// Static policy that every wire operation must classify in one descriptor.
+    struct OperationDescriptor: Equatable, Sendable {
+        let operation: PeekabooBridgeOperation
         let lane: LanePolicy
         let pinnedWindow: PinnedWindowPolicy
         let typedResponse: TypedResponseBinding
         let windowResponseProof: WindowResponseProofPolicy
+        let contract: Contract
+        let responseFamilies: Set<ResponseFamily>
+        let responseTargetEvidence: ResponseTargetEvidenceSource
     }
+
+    typealias OperationPolicy = OperationDescriptor
 
     enum ExactReadTarget: Equatable, Sendable {
         case process(pid_t)
@@ -364,20 +386,112 @@ enum PeekabooBridgeOperationResultSemantics {
         let identity: WindowMutationIdentity
     }
 
-    struct SemanticPlan: Sendable {
-        let operation: PeekabooBridgeOperation
-        let operationPolicy: OperationPolicy
-        let contract: Contract
+    struct TargetPlan: Sendable {
+        let policy: TargetPolicy
+        let responseEvidenceSource: ResponseTargetEvidenceSource
+        let requestEvidence: [DesktopTargetIdentity.Evidence]
+        let desktopOperationScope: DesktopOperationScope
+        let desktopReadOperationLane: (scope: DesktopOperationScope, access: DesktopOperationAccess)?
+        let exactReadTarget: ExactReadTarget?
+        let pinnedWindowMutation: PinnedWindowMutation?
+        let requiresPinnedWindowMutation: Bool
+
+        var requiresStableIdentity: Bool {
+            self.policy == .requestPinned
+        }
+
+        var requiresResolvedIdentity: Bool {
+            switch self.policy {
+            case .requestPinned, .handlerRequired, .responseResolved, .external:
+                true
+            case .handlerResolvedOrGlobal, .notApplicable, .requestDependent, .global:
+                false
+            }
+        }
+    }
+
+    struct ResultPlan: Sendable {
+        let completion: Completion
         let responseFamilies: Set<ResponseFamily>
         let deliveryRules: [DeliveryRule]
         let allowedSuccessStates: [DesktopActionOutcome.State]
         let successResponsePolicy: SuccessResponsePolicy
         let deliveryAgnosticFailureUnits: UnitPolicy?
         let typedResponseRule: TypedResponseRule
-        let desktopOperationScope: DesktopOperationScope
-        let desktopReadOperationLane: (scope: DesktopOperationScope, access: DesktopOperationAccess)?
-        let exactReadTarget: ExactReadTarget?
-        let pinnedWindowMutation: PinnedWindowMutation?
+    }
+
+    struct PeekabooBridgeRequestPlan: Sendable {
+        enum Vocabulary: Equatable, Sendable {
+            case legacy
+            case current
+
+            init(usesCurrentResultSemantics: Bool) {
+                self = usesCurrentResultSemantics ? .current : .legacy
+            }
+
+            var usesCurrentResultSemantics: Bool {
+                self == .current
+            }
+        }
+
+        let request: PeekabooBridgeRequest
+        let carriageRequest: PeekabooBridgeRequest
+        let descriptor: OperationDescriptor
+        let vocabulary: Vocabulary
+        let target: TargetPlan
+        let result: ResultPlan
+
+        var operation: PeekabooBridgeOperation {
+            self.descriptor.operation
+        }
+
+        var operationPolicy: OperationPolicy {
+            self.descriptor
+        }
+
+        var contract: Contract {
+            .init(completion: self.result.completion, targetPolicy: self.target.policy)
+        }
+
+        var responseFamilies: Set<ResponseFamily> {
+            self.result.responseFamilies
+        }
+
+        var deliveryRules: [DeliveryRule] {
+            self.result.deliveryRules
+        }
+
+        var allowedSuccessStates: [DesktopActionOutcome.State] {
+            self.result.allowedSuccessStates
+        }
+
+        var successResponsePolicy: SuccessResponsePolicy {
+            self.result.successResponsePolicy
+        }
+
+        var deliveryAgnosticFailureUnits: UnitPolicy? {
+            self.result.deliveryAgnosticFailureUnits
+        }
+
+        var typedResponseRule: TypedResponseRule {
+            self.result.typedResponseRule
+        }
+
+        var desktopOperationScope: DesktopOperationScope {
+            self.target.desktopOperationScope
+        }
+
+        var desktopReadOperationLane: (scope: DesktopOperationScope, access: DesktopOperationAccess)? {
+            self.target.desktopReadOperationLane
+        }
+
+        var exactReadTarget: ExactReadTarget? {
+            self.target.exactReadTarget
+        }
+
+        var pinnedWindowMutation: PinnedWindowMutation? {
+            self.target.pinnedWindowMutation
+        }
 
         func responseMatches(_ response: PeekabooBridgeResponse) -> Bool {
             if case .error = response {
@@ -467,22 +581,15 @@ enum PeekabooBridgeOperationResultSemantics {
         }
 
         var nativeServiceOwnsDesktopOperationLane: Bool {
-            self.operationPolicy.lane.nativeOwnership == .service
+            self.descriptor.lane.nativeOwnership == .service
         }
 
         var requiresPinnedWindowMutation: Bool {
-            switch self.operationPolicy.pinnedWindow {
-            case .required:
-                true
-            case .legacyOptionalCurrentRequired:
-                PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics
-            case .unavailable:
-                false
-            }
+            self.target.requiresPinnedWindowMutation
         }
 
         var responseCarriesPostMutationWindowState: Bool {
-            self.operationPolicy.windowResponseProof == .postMutationState
+            self.descriptor.windowResponseProof == .postMutationState
         }
 
         func defaultSuccessfulDispatchUnitCount(
@@ -499,678 +606,16 @@ enum PeekabooBridgeOperationResultSemantics {
     }
 }
 
+typealias PeekabooBridgeRequestPlan =
+    PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan
+
 extension PeekabooBridgeOperationResultSemantics {
     static func operationPolicy(for operation: PeekabooBridgeOperation) -> OperationPolicy {
-        let typedResponse = self.typedResponseBinding(for: operation)
-        return OperationPolicy(
-            lane: .init(
-                nativeOwnership: self.nativeLaneOwnership(for: operation),
-                readPolicy: self.readLanePolicy(for: operation)),
-            pinnedWindow: self.pinnedWindowPolicy(for: operation),
-            typedResponse: typedResponse,
-            windowResponseProof: typedResponse == .postMutationWindow ? .postMutationState : .none)
+        self.operationDescriptor(for: operation)
     }
 
-    private static func nativeLaneOwnership(for operation: PeekabooBridgeOperation) -> NativeLaneOwnership {
-        switch operation {
-        case .click,
-             .type,
-             .typeActions,
-             .targetedTypeActions,
-             .exactWindowTargetedTypeActions,
-             .setValue,
-             .performAction,
-             .scroll,
-             .targetedScroll,
-             .hotkey,
-             .targetedHotkey,
-             .exactWindowTargetedHotkey,
-             .beginExactWindowHeldPointer,
-             .releaseExactWindowHeldPointer,
-             .revokeExactWindowHeldPointer,
-             .disconnectExactWindowHeldPointerOwner,
-             .targetedClick,
-             .exactWindowTargetedClick,
-             .swipe,
-             .drag,
-             .moveMouse,
-             .focusWindow,
-             .moveWindow,
-             .resizeWindow,
-             .setWindowBounds,
-             .closeWindow,
-             .backgroundCloseWindow,
-             .minimizeWindow,
-             .restoreWindow,
-             .maximizeWindow,
-             .launchApplication,
-             .launchApplicationWithOptions,
-             .relaunchApplicationWithOptions,
-             .activateApplication,
-             .quitApplication,
-             .hideApplication,
-             .unhideApplication,
-             .hideOtherApplications,
-             .showAllApplications,
-             .clickMenuItem,
-             .clickMenuItemByName,
-             .clickMenuExtra,
-             .clickMenuBarItemNamed,
-             .clickMenuBarItemIndex,
-             .launchDockItem,
-             .rightClickDockItem,
-             .hideDock,
-             .showDock,
-             .dialogFindActive,
-             .dialogClickButton,
-             .backgroundDialogClickButton,
-             .dialogEnterText,
-             .dialogHandleFile,
-             .dialogDismiss,
-             .dialogListElements,
-             .targetedDialogListElements,
-             .prepareDialogAction,
-             .exactDialogClickButton,
-             .exactDialogDismiss,
-             .exactDialogEnterText,
-             .exactDialogForceDismiss,
-             .desktopObservation:
-            .service
-        case .permissionsStatus,
-             .agentExecutionTrace,
-             .observeProcessGeneration,
-             .certificationProducerAttestation,
-             .createExactWindowHeldPointerOwner,
-             .requestPostEventPermission,
-             .daemonStatus,
-             .daemonStop,
-             .browserStatus,
-             .browserConnect,
-             .browserDisconnect,
-             .browserExecute,
-             .captureScreen,
-             .captureWindow,
-             .captureFrontmost,
-             .captureArea,
-             .detectElements,
-             .inspectAccessibilityTree,
-             .getFocusedElement,
-             .waitForElement,
-             .listWindows,
-             .getFocusedWindow,
-             .listApplications,
-             .findApplication,
-             .getFrontmostApplication,
-             .isApplicationRunning,
-             .listMenus,
-             .listFrontmostMenus,
-             .listMenuExtras,
-             .menuExtraOpenMenuFrame,
-             .listMenuBarItems,
-             .listDockItems,
-             .isDockHidden,
-             .findDockItem,
-             .createSnapshot,
-             .storeDetectionResult,
-             .getDetectionResult,
-             .storeScreenshot,
-             .storeObservationSnapshot,
-             .storeAnnotatedScreenshot,
-             .listSnapshots,
-             .getMostRecentSnapshot,
-             .invalidateImplicitLatestSnapshot,
-             .beginSnapshotMutation,
-             .finishSnapshotMutation,
-             .cleanSnapshot,
-             .cleanSnapshotsOlderThan,
-             .cleanAllSnapshots,
-             ._appleScriptProbe:
-            .bridge
-        }
-    }
-
-    private static func readLanePolicy(for operation: PeekabooBridgeOperation) -> ReadLanePolicy {
-        switch operation {
-        case .captureWindow, .desktopObservation, .inspectAccessibilityTree:
-            .exactTargetOrGlobalExclusive
-        case .captureScreen,
-             .captureFrontmost,
-             .captureArea,
-             .detectElements,
-             .getFocusedElement,
-             .waitForElement,
-             .listWindows,
-             .getFocusedWindow,
-             .listApplications,
-             .findApplication,
-             .getFrontmostApplication,
-             .isApplicationRunning,
-             .listMenus,
-             .listFrontmostMenus,
-             .listMenuExtras,
-             .menuExtraOpenMenuFrame,
-             .listMenuBarItems,
-             .listDockItems,
-             .isDockHidden,
-             .findDockItem,
-             .dialogFindActive,
-             .dialogListElements,
-             .targetedDialogListElements,
-             .prepareDialogAction:
-            .globalExclusive
-        case .permissionsStatus,
-             .agentExecutionTrace,
-             .observeProcessGeneration,
-             .certificationProducerAttestation,
-             .requestPostEventPermission,
-             .daemonStatus,
-             .daemonStop,
-             .browserStatus,
-             .browserConnect,
-             .browserDisconnect,
-             .browserExecute,
-             .click,
-             .type,
-             .typeActions,
-             .targetedTypeActions,
-             .exactWindowTargetedTypeActions,
-             .setValue,
-             .performAction,
-             .scroll,
-             .targetedScroll,
-             .hotkey,
-             .targetedHotkey,
-             .exactWindowTargetedHotkey,
-             .createExactWindowHeldPointerOwner,
-             .beginExactWindowHeldPointer,
-             .releaseExactWindowHeldPointer,
-             .revokeExactWindowHeldPointer,
-             .disconnectExactWindowHeldPointerOwner,
-             .targetedClick,
-             .exactWindowTargetedClick,
-             .swipe,
-             .drag,
-             .moveMouse,
-             .focusWindow,
-             .moveWindow,
-             .resizeWindow,
-             .setWindowBounds,
-             .closeWindow,
-             .backgroundCloseWindow,
-             .minimizeWindow,
-             .restoreWindow,
-             .maximizeWindow,
-             .launchApplication,
-             .launchApplicationWithOptions,
-             .relaunchApplicationWithOptions,
-             .activateApplication,
-             .quitApplication,
-             .hideApplication,
-             .unhideApplication,
-             .hideOtherApplications,
-             .showAllApplications,
-             .clickMenuItem,
-             .clickMenuItemByName,
-             .clickMenuExtra,
-             .clickMenuBarItemNamed,
-             .clickMenuBarItemIndex,
-             .launchDockItem,
-             .rightClickDockItem,
-             .hideDock,
-             .showDock,
-             .dialogClickButton,
-             .backgroundDialogClickButton,
-             .dialogEnterText,
-             .dialogHandleFile,
-             .dialogDismiss,
-             .exactDialogClickButton,
-             .exactDialogDismiss,
-             .exactDialogEnterText,
-             .exactDialogForceDismiss,
-             .createSnapshot,
-             .storeDetectionResult,
-             .getDetectionResult,
-             .storeScreenshot,
-             .storeObservationSnapshot,
-             .storeAnnotatedScreenshot,
-             .listSnapshots,
-             .getMostRecentSnapshot,
-             .invalidateImplicitLatestSnapshot,
-             .beginSnapshotMutation,
-             .finishSnapshotMutation,
-             .cleanSnapshot,
-             .cleanSnapshotsOlderThan,
-             .cleanAllSnapshots,
-             ._appleScriptProbe:
-            .none
-        }
-    }
-
-    private static func pinnedWindowPolicy(for operation: PeekabooBridgeOperation) -> PinnedWindowPolicy {
-        switch operation {
-        case .focusWindow:
-            .legacyOptionalCurrentRequired
-        case .moveWindow,
-             .resizeWindow,
-             .setWindowBounds,
-             .closeWindow,
-             .backgroundCloseWindow,
-             .minimizeWindow,
-             .restoreWindow,
-             .maximizeWindow:
-            .required
-        case .permissionsStatus,
-             .agentExecutionTrace,
-             .observeProcessGeneration,
-             .certificationProducerAttestation,
-             .requestPostEventPermission,
-             .daemonStatus,
-             .daemonStop,
-             .browserStatus,
-             .browserConnect,
-             .browserDisconnect,
-             .browserExecute,
-             .captureScreen,
-             .captureWindow,
-             .captureFrontmost,
-             .captureArea,
-             .detectElements,
-             .inspectAccessibilityTree,
-             .getFocusedElement,
-             .desktopObservation,
-             .click,
-             .type,
-             .typeActions,
-             .targetedTypeActions,
-             .exactWindowTargetedTypeActions,
-             .setValue,
-             .performAction,
-             .scroll,
-             .targetedScroll,
-             .hotkey,
-             .targetedHotkey,
-             .exactWindowTargetedHotkey,
-             .createExactWindowHeldPointerOwner,
-             .beginExactWindowHeldPointer,
-             .releaseExactWindowHeldPointer,
-             .revokeExactWindowHeldPointer,
-             .disconnectExactWindowHeldPointerOwner,
-             .targetedClick,
-             .exactWindowTargetedClick,
-             .swipe,
-             .drag,
-             .moveMouse,
-             .waitForElement,
-             .listWindows,
-             .getFocusedWindow,
-             .listApplications,
-             .findApplication,
-             .getFrontmostApplication,
-             .isApplicationRunning,
-             .launchApplication,
-             .launchApplicationWithOptions,
-             .relaunchApplicationWithOptions,
-             .activateApplication,
-             .quitApplication,
-             .hideApplication,
-             .unhideApplication,
-             .hideOtherApplications,
-             .showAllApplications,
-             .listMenus,
-             .listFrontmostMenus,
-             .clickMenuItem,
-             .clickMenuItemByName,
-             .listMenuExtras,
-             .clickMenuExtra,
-             .menuExtraOpenMenuFrame,
-             .listMenuBarItems,
-             .clickMenuBarItemNamed,
-             .clickMenuBarItemIndex,
-             .listDockItems,
-             .launchDockItem,
-             .rightClickDockItem,
-             .hideDock,
-             .showDock,
-             .isDockHidden,
-             .findDockItem,
-             .dialogFindActive,
-             .dialogClickButton,
-             .backgroundDialogClickButton,
-             .dialogEnterText,
-             .dialogHandleFile,
-             .dialogDismiss,
-             .dialogListElements,
-             .targetedDialogListElements,
-             .prepareDialogAction,
-             .exactDialogClickButton,
-             .exactDialogDismiss,
-             .exactDialogEnterText,
-             .exactDialogForceDismiss,
-             .createSnapshot,
-             .storeDetectionResult,
-             .getDetectionResult,
-             .storeScreenshot,
-             .storeObservationSnapshot,
-             .storeAnnotatedScreenshot,
-             .listSnapshots,
-             .getMostRecentSnapshot,
-             .invalidateImplicitLatestSnapshot,
-             .beginSnapshotMutation,
-             .finishSnapshotMutation,
-             .cleanSnapshot,
-             .cleanSnapshotsOlderThan,
-             .cleanAllSnapshots,
-             ._appleScriptProbe:
-            .unavailable
-        }
-    }
-
-    // swiftlint:disable:next cyclomatic_complexity
-    private static func typedResponseBinding(for operation: PeekabooBridgeOperation) -> TypedResponseBinding {
-        switch operation {
-        case .agentExecutionTrace:
-            .agentExecutionTrace
-        case .observeProcessGeneration:
-            .processGenerationObservation
-        case .certificationProducerAttestation:
-            .certificationProducerAttestation
-        case .typeActions, .targetedTypeActions, .exactWindowTargetedTypeActions:
-            .typeActions
-        case .setValue:
-            .setValue
-        case .performAction:
-            .performAction
-        case .getFocusedElement:
-            .focusedElement
-        case .findApplication, .launchApplication:
-            .applicationIdentifier
-        case .launchApplicationWithOptions:
-            .applicationLaunch
-        case .relaunchApplicationWithOptions:
-            .applicationRelaunch
-        case .captureScreen, .captureWindow, .captureFrontmost, .captureArea:
-            .capture
-        case .detectElements, .inspectAccessibilityTree:
-            .elementDetection
-        case .desktopObservation:
-            .desktopObservation
-        case .focusWindow,
-             .moveWindow,
-             .resizeWindow,
-             .setWindowBounds,
-             .closeWindow,
-             .backgroundCloseWindow,
-             .minimizeWindow,
-             .restoreWindow,
-             .maximizeWindow:
-            .postMutationWindow
-        case .dialogClickButton,
-             .backgroundDialogClickButton,
-             .dialogEnterText,
-             .dialogHandleFile,
-             .dialogDismiss,
-             .exactDialogClickButton,
-             .exactDialogDismiss,
-             .exactDialogEnterText,
-             .exactDialogForceDismiss:
-            .dialogResult
-        case .prepareDialogAction:
-            .preparedDialogAction
-        case .targetedDialogListElements:
-            .targetedDialogElements
-        case .listMenus:
-            .menuStructureApplication
-        case .waitForElement:
-            .waitElementSelector
-        case .findDockItem:
-            .dockItemSelector
-        case .storeDetectionResult:
-            .storedDetection
-        case .getDetectionResult:
-            .detectionSnapshot
-        case .beginSnapshotMutation:
-            .snapshotMutationLease
-        case .permissionsStatus,
-             .requestPostEventPermission,
-             .daemonStatus,
-             .daemonStop,
-             .browserStatus,
-             .browserConnect,
-             .browserDisconnect,
-             .browserExecute,
-             .click,
-             .type,
-             .scroll,
-             .targetedScroll,
-             .hotkey,
-             .targetedHotkey,
-             .exactWindowTargetedHotkey,
-             .createExactWindowHeldPointerOwner,
-             .beginExactWindowHeldPointer,
-             .releaseExactWindowHeldPointer,
-             .revokeExactWindowHeldPointer,
-             .disconnectExactWindowHeldPointerOwner,
-             .targetedClick,
-             .exactWindowTargetedClick,
-             .swipe,
-             .drag,
-             .moveMouse,
-             .listWindows,
-             .getFocusedWindow,
-             .listApplications,
-             .getFrontmostApplication,
-             .isApplicationRunning,
-             .activateApplication,
-             .quitApplication,
-             .hideApplication,
-             .unhideApplication,
-             .hideOtherApplications,
-             .showAllApplications,
-             .listFrontmostMenus,
-             .clickMenuItem,
-             .clickMenuItemByName,
-             .listMenuExtras,
-             .clickMenuExtra,
-             .menuExtraOpenMenuFrame,
-             .listMenuBarItems,
-             .clickMenuBarItemNamed,
-             .clickMenuBarItemIndex,
-             .listDockItems,
-             .launchDockItem,
-             .rightClickDockItem,
-             .hideDock,
-             .showDock,
-             .isDockHidden,
-             .dialogFindActive,
-             .dialogListElements,
-             .createSnapshot,
-             .storeScreenshot,
-             .storeObservationSnapshot,
-             .storeAnnotatedScreenshot,
-             .listSnapshots,
-             .getMostRecentSnapshot,
-             .invalidateImplicitLatestSnapshot,
-             .finishSnapshotMutation,
-             .cleanSnapshot,
-             .cleanSnapshotsOlderThan,
-             .cleanAllSnapshots:
-            .familyOnly
-        case ._appleScriptProbe:
-            .noSuccessResponse
-        }
-    }
-
-    // One exhaustive wire-operation matrix is intentionally more useful here than scattered
-    // low-complexity partial switches that can silently drift apart.
-    // swiftlint:disable:next cyclomatic_complexity function_body_length
     static func contract(for operation: PeekabooBridgeOperation) -> Contract {
-        let accessibilityForeground = DesktopActionOutcome.Delivery(
-            mechanism: .accessibilityAction,
-            mode: .foreground)
-        let accessibilityBackground = DesktopActionOutcome.Delivery(
-            mechanism: .accessibilityAction,
-            mode: .background)
-        let accessibilityValueBackground = DesktopActionOutcome.Delivery(
-            mechanism: .accessibilityValue,
-            mode: .background)
-        let globalForeground = DesktopActionOutcome.Delivery(
-            mechanism: .globalEvents,
-            mode: .foreground)
-        let processBackground = DesktopActionOutcome.Delivery(
-            mechanism: .processTargetedEvents,
-            mode: .background)
-        let windowBackground = DesktopActionOutcome.Delivery(
-            mechanism: .windowTargetedEvents,
-            mode: .background)
-        let nativeForeground = DesktopActionOutcome.Delivery(
-            mechanism: .nativeFramework,
-            mode: .foreground)
-        let nativeBackground = DesktopActionOutcome.Delivery(
-            mechanism: .nativeFramework,
-            mode: .background)
-        let compositeForeground = DesktopActionOutcome.Delivery(
-            mechanism: .composite,
-            mode: .foreground)
-
-        return switch operation {
-        case .agentExecutionTrace:
-            .init(completion: .externalProcessDispatch(nativeBackground), targetPolicy: .responseResolved)
-        case .requestPostEventPermission:
-            .init(completion: .dispatchedUnverified(nativeForeground), targetPolicy: .global)
-        case .browserConnect:
-            .init(
-                completion: .dispatchedUnverified(.init(
-                    mechanism: .browserProtocol,
-                    mode: .foreground)),
-                targetPolicy: .external)
-        case .browserExecute:
-            .init(
-                completion: .dispatchedUnverified(.init(
-                    mechanism: .browserProtocol,
-                    mode: .background)),
-                targetPolicy: .external)
-        case .click, .type, .scroll:
-            .init(completion: .requestDependent(mutatesDesktop: true), targetPolicy: .requestDependent)
-        case .typeActions, .hotkey, .swipe, .drag, .moveMouse:
-            .init(completion: .dispatchedUnverified(globalForeground), targetPolicy: .global)
-        case .targetedTypeActions, .targetedHotkey:
-            .init(completion: .dispatchedUnverified(processBackground), targetPolicy: .requestPinned)
-        case .exactWindowTargetedTypeActions, .exactWindowTargetedHotkey:
-            .init(completion: .dispatchedUnverified(windowBackground), targetPolicy: .requestPinned)
-        case .beginExactWindowHeldPointer:
-            .init(completion: .dispatchedUnverified(windowBackground), targetPolicy: .requestPinned)
-        case .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer:
-            .init(completion: .requestDependent(mutatesDesktop: true), targetPolicy: .requestPinned)
-        case .disconnectExactWindowHeldPointerOwner:
-            .init(completion: .requestDependent(mutatesDesktop: true), targetPolicy: .handlerResolvedOrGlobal)
-        case .setValue:
-            .init(completion: .dispatchedUnverified(accessibilityValueBackground), targetPolicy: .handlerRequired)
-        case .performAction, .targetedScroll:
-            .init(completion: .dispatchedUnverified(accessibilityBackground), targetPolicy: .handlerRequired)
-        case .targetedClick, .exactWindowTargetedClick:
-            .init(completion: .dispatchedUnverified(accessibilityBackground), targetPolicy: .requestPinned)
-        case .focusWindow, .closeWindow:
-            .init(completion: .dispatchedUnverified(compositeForeground), targetPolicy: .requestPinned)
-        case .moveWindow, .resizeWindow, .setWindowBounds:
-            .init(completion: .dispatchedUnverified(accessibilityValueBackground), targetPolicy: .requestPinned)
-        case .backgroundCloseWindow:
-            .init(completion: .dispatchedUnverified(accessibilityBackground), targetPolicy: .requestPinned)
-        case .minimizeWindow, .restoreWindow, .maximizeWindow:
-            .init(completion: .dispatchedUnverified(accessibilityValueBackground), targetPolicy: .requestPinned)
-        case .launchApplication:
-            .init(completion: .dispatchedUnverified(nativeForeground), targetPolicy: .responseResolved)
-        case .launchApplicationWithOptions:
-            .init(completion: .requestDependent(mutatesDesktop: false), targetPolicy: .requestDependent)
-        case .relaunchApplicationWithOptions:
-            .init(completion: .requestDependent(mutatesDesktop: true), targetPolicy: .responseResolved)
-        case .activateApplication:
-            .init(completion: .dispatchedUnverified(nativeForeground), targetPolicy: .requestPinned)
-        case .quitApplication:
-            .init(completion: .dispatchedUnverified(nativeBackground), targetPolicy: .requestPinned)
-        case .hideApplication:
-            .init(completion: .dispatchedUnverified(nativeBackground), targetPolicy: .requestPinned)
-        case .unhideApplication:
-            .init(completion: .dispatchedUnverified(nativeBackground), targetPolicy: .handlerRequired)
-        case .hideOtherApplications, .showAllApplications:
-            .init(completion: .dispatchedUnverified(accessibilityBackground), targetPolicy: .global)
-        case .clickMenuItem, .clickMenuItemByName:
-            .init(completion: .dispatchedUnverified(accessibilityBackground), targetPolicy: .requestPinned)
-        case .clickMenuExtra, .clickMenuBarItemNamed:
-            .init(completion: .dispatchedUnverified(accessibilityForeground), targetPolicy: .external)
-        case .clickMenuBarItemIndex:
-            .init(completion: .dispatchedUnverified(globalForeground), targetPolicy: .external)
-        case .launchDockItem:
-            .init(completion: .dispatchedUnverified(accessibilityForeground), targetPolicy: .external)
-        case .rightClickDockItem:
-            .init(completion: .dispatchedUnverified(globalForeground), targetPolicy: .external)
-        case .hideDock, .showDock:
-            .init(completion: .dispatchedUnverified(nativeBackground), targetPolicy: .global)
-        case .dialogClickButton, .dialogDismiss:
-            .init(completion: .dispatchedUnverified(accessibilityForeground), targetPolicy: .responseResolved)
-        case .backgroundDialogClickButton:
-            .init(completion: .dispatchedUnverified(accessibilityBackground), targetPolicy: .responseResolved)
-        case .dialogEnterText:
-            .init(completion: .dispatchedUnverified(globalForeground), targetPolicy: .responseResolved)
-        case .dialogHandleFile:
-            .init(completion: .dispatchedUnverified(.init(
-                mechanism: .clipboardTransaction,
-                mode: .foreground)), targetPolicy: .responseResolved)
-        case .exactDialogClickButton, .exactDialogDismiss:
-            .init(completion: .dispatchedUnverified(accessibilityBackground), targetPolicy: .requestPinned)
-        case .exactDialogEnterText:
-            .init(completion: .dispatchedUnverified(.init(
-                mechanism: .accessibilityValue,
-                mode: .background)), targetPolicy: .responseResolved)
-        case .exactDialogForceDismiss:
-            .init(completion: .dispatchedUnverified(globalForeground), targetPolicy: .responseResolved)
-        case .desktopObservation, .detectElements, .inspectAccessibilityTree,
-             .captureScreen, .captureWindow, .captureFrontmost, .captureArea:
-            .init(completion: .requestDependent(mutatesDesktop: false), targetPolicy: .requestDependent)
-        case .permissionsStatus,
-             .createExactWindowHeldPointerOwner,
-             .observeProcessGeneration,
-             .certificationProducerAttestation,
-             .daemonStatus,
-             .daemonStop,
-             .browserStatus,
-             .browserDisconnect,
-             .getFocusedElement,
-             .waitForElement,
-             .listWindows,
-             .getFocusedWindow,
-             .listApplications,
-             .findApplication,
-             .getFrontmostApplication,
-             .isApplicationRunning,
-             .listMenus,
-             .listFrontmostMenus,
-             .listMenuExtras,
-             .menuExtraOpenMenuFrame,
-             .listMenuBarItems,
-             .listDockItems,
-             .isDockHidden,
-             .findDockItem,
-             .dialogFindActive,
-             .dialogListElements,
-             .targetedDialogListElements,
-             .prepareDialogAction,
-             .createSnapshot,
-             .storeDetectionResult,
-             .getDetectionResult,
-             .storeScreenshot,
-             .storeObservationSnapshot,
-             .storeAnnotatedScreenshot,
-             .listSnapshots,
-             .getMostRecentSnapshot,
-             .invalidateImplicitLatestSnapshot,
-             .beginSnapshotMutation,
-             .finishSnapshotMutation,
-             .cleanSnapshot,
-             .cleanSnapshotsOlderThan,
-             .cleanAllSnapshots,
-             ._appleScriptProbe:
-            .init(completion: .readOnly, targetPolicy: .notApplicable)
-        }
+        self.operationDescriptor(for: operation).contract
     }
 
     // swiftlint:disable:next cyclomatic_complexity
@@ -1331,62 +776,111 @@ extension PeekabooBridgeOperationResultSemantics {
             targetPolicy: mutationTargetPolicy)
     }
 
-    static func semanticPlan(for request: PeekabooBridgeRequest) -> SemanticPlan {
+    static func semanticPlan(for request: PeekabooBridgeRequest) -> PeekabooBridgeRequestPlan {
+        self.requestPlan(
+            for: request,
+            vocabulary: .init(usesCurrentResultSemantics:
+                PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics))
+    }
+
+    static func requestPlan(
+        for request: PeekabooBridgeRequest,
+        vocabulary: PeekabooBridgeRequestPlan.Vocabulary) -> PeekabooBridgeRequestPlan
+    {
+        let carriageRequest = request
         let request = request.unwrappedOperationRequest
         let operation = request.operation
         if case .attestedOperation = request {
-            return self.invalidCarriageSemanticPlan(operation: operation)
+            return self.invalidCarriageSemanticPlan(
+                request: request,
+                operation: operation,
+                vocabulary: vocabulary)
         }
         if case .projectedAction = request {
-            return self.invalidCarriageSemanticPlan(operation: operation)
+            return self.invalidCarriageSemanticPlan(
+                request: request,
+                operation: operation,
+                vocabulary: vocabulary)
         }
-        let operationPolicy = self.operationPolicy(for: operation)
+        let descriptor = self.operationPolicy(for: operation)
         let typedResponseRule = self.typedResponseRule(for: request)
         precondition(
-            typedResponseRule.isConsistent(with: operationPolicy.typedResponse),
+            typedResponseRule.isConsistent(with: descriptor.typedResponse),
             "Typed response rule must match the exhaustive operation binding")
         let contract = self.contract(for: request)
         let exactReadTarget = self.exactReadTarget(for: request)
         let readLane = self.desktopReadOperationLane(
             contract: contract,
-            policy: operationPolicy.lane.readPolicy,
+            policy: descriptor.lane.readPolicy,
             exactTarget: exactReadTarget)
-        return SemanticPlan(
-            operation: operation,
-            operationPolicy: operationPolicy,
-            contract: contract,
-            responseFamilies: self.responseFamilies(for: request),
-            deliveryRules: self.deliveryRules(for: request),
-            allowedSuccessStates: self.allowedSuccessStates(for: request),
-            successResponsePolicy: self.successResponsePolicy(for: request),
-            deliveryAgnosticFailureUnits: self.deliveryAgnosticFailureUnits(for: request),
-            typedResponseRule: typedResponseRule,
-            desktopOperationScope: self.desktopOperationScope(for: request),
-            desktopReadOperationLane: readLane,
-            exactReadTarget: exactReadTarget,
-            pinnedWindowMutation: self.pinnedWindowMutation(for: request))
+        let requiresPinnedWindowMutation = switch descriptor.pinnedWindow {
+        case .required: true
+        case .legacyOptionalCurrentRequired: vocabulary == .current
+        case .unavailable: false
+        }
+        return PeekabooBridgeRequestPlan(
+            request: request,
+            carriageRequest: carriageRequest,
+            descriptor: descriptor,
+            vocabulary: vocabulary,
+            target: .init(
+                policy: contract.targetPolicy,
+                responseEvidenceSource: descriptor.responseTargetEvidence,
+                requestEvidence: request.operationTargetEvidence,
+                desktopOperationScope: self.desktopOperationScope(for: request),
+                desktopReadOperationLane: readLane,
+                exactReadTarget: exactReadTarget,
+                pinnedWindowMutation: self.pinnedWindowMutation(for: request),
+                requiresPinnedWindowMutation: requiresPinnedWindowMutation),
+            result: .init(
+                completion: contract.completion,
+                responseFamilies: self.responseFamilies(for: request),
+                deliveryRules: self.deliveryRules(for: request, contract: contract),
+                allowedSuccessStates: self.allowedSuccessStates(
+                    for: request,
+                    completion: contract.completion),
+                successResponsePolicy: self.successResponsePolicy(for: request),
+                deliveryAgnosticFailureUnits: self.deliveryAgnosticFailureUnits(for: request),
+                typedResponseRule: typedResponseRule))
     }
 
-    private static func invalidCarriageSemanticPlan(operation: PeekabooBridgeOperation) -> SemanticPlan {
+    private static func invalidCarriageSemanticPlan(
+        request: PeekabooBridgeRequest,
+        operation: PeekabooBridgeOperation,
+        vocabulary: PeekabooBridgeRequestPlan.Vocabulary) -> PeekabooBridgeRequestPlan
+    {
         let lane = LanePolicy(nativeOwnership: .bridge, readPolicy: .globalExclusive)
-        return SemanticPlan(
+        let descriptor = OperationDescriptor(
             operation: operation,
-            operationPolicy: .init(
-                lane: lane,
-                pinnedWindow: .unavailable,
-                typedResponse: .noSuccessResponse,
-                windowResponseProof: .none),
+            lane: lane,
+            pinnedWindow: .unavailable,
+            typedResponse: .noSuccessResponse,
+            windowResponseProof: .none,
             contract: .init(completion: .readOnly, targetPolicy: .notApplicable),
             responseFamilies: [],
-            deliveryRules: [],
-            allowedSuccessStates: [],
-            successResponsePolicy: .errorOnly,
-            deliveryAgnosticFailureUnits: nil,
-            typedResponseRule: .none,
-            desktopOperationScope: .global,
-            desktopReadOperationLane: (.global, .write),
-            exactReadTarget: nil,
-            pinnedWindowMutation: nil)
+            responseTargetEvidence: .none)
+        return PeekabooBridgeRequestPlan(
+            request: request,
+            carriageRequest: request,
+            descriptor: descriptor,
+            vocabulary: vocabulary,
+            target: .init(
+                policy: .notApplicable,
+                responseEvidenceSource: .none,
+                requestEvidence: [],
+                desktopOperationScope: .global,
+                desktopReadOperationLane: (.global, .write),
+                exactReadTarget: nil,
+                pinnedWindowMutation: nil,
+                requiresPinnedWindowMutation: false),
+            result: .init(
+                completion: .readOnly,
+                responseFamilies: [],
+                deliveryRules: [],
+                allowedSuccessStates: [],
+                successResponsePolicy: .errorOnly,
+                deliveryAgnosticFailureUnits: nil,
+                typedResponseRule: .none))
     }
 
     private static func desktopOperationScope(for request: PeekabooBridgeRequest) -> DesktopOperationScope {
@@ -1679,9 +1173,10 @@ extension PeekabooBridgeOperationResultSemantics {
     }
 
     private static func allowedSuccessStates(
-        for request: PeekabooBridgeRequest) -> [DesktopActionOutcome.State]
+        for request: PeekabooBridgeRequest,
+        completion: Completion) -> [DesktopActionOutcome.State]
     {
-        guard self.contract(for: request).completion.mutatesDesktop else { return [] }
+        guard completion.mutatesDesktop else { return [] }
         let verifiedOrAccepted: [DesktopActionOutcome.State] = [
             .confirmedChange,
             .confirmedNoChange,
@@ -1782,78 +1277,8 @@ extension PeekabooBridgeOperationResultSemantics {
         }
     }
 
-    // Every wire operation has exactly one success-response family set here. Errors are admitted
-    // separately and still have to satisfy the operation's outcome and target rules.
-    // swiftlint:disable:next cyclomatic_complexity
     static func responseFamilies(for operation: PeekabooBridgeOperation) -> Set<ResponseFamily> {
-        switch operation {
-        case .permissionsStatus: [.permissionsStatus]
-        case .agentExecutionTrace: [.agentExecutionTrace]
-        case .observeProcessGeneration: [.processGenerationObservation]
-        case .certificationProducerAttestation: [.certificationProducerAttestation]
-        case .requestPostEventPermission: [.bool]
-        case .daemonStatus: [.daemonStatus]
-        case .daemonStop: [.bool]
-        case .browserStatus, .browserConnect: [.browserStatus]
-        case .browserDisconnect: [.ok]
-        case .browserExecute: [.browserToolResponse]
-        case .captureScreen, .captureWindow, .captureFrontmost, .captureArea: [.capture]
-        case .detectElements, .inspectAccessibilityTree: [.elementDetection]
-        case .getFocusedElement: [.focusedElement]
-        case .createExactWindowHeldPointerOwner: [.heldPointerOwner]
-        case .beginExactWindowHeldPointer: [.heldPointerReceipt]
-        case .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer,
-             .disconnectExactWindowHeldPointerOwner:
-            [.heldPointerTermination]
-        case .desktopObservation: [.desktopObservation]
-        case .click, .type, .scroll, .targetedScroll, .hotkey, .targetedHotkey,
-             .exactWindowTargetedHotkey, .targetedClick, .exactWindowTargetedClick,
-             .swipe, .drag, .moveMouse:
-            [.ok]
-        case .typeActions, .targetedTypeActions, .exactWindowTargetedTypeActions: [.typeResult]
-        case .setValue, .performAction: [.elementActionResult]
-        case .waitForElement: [.waitResult]
-        case .listWindows: [.windows]
-        case .focusWindow, .moveWindow, .resizeWindow, .setWindowBounds, .closeWindow,
-             .backgroundCloseWindow, .minimizeWindow, .restoreWindow, .maximizeWindow:
-            [.ok, .window]
-        case .getFocusedWindow: [.window]
-        case .listApplications: [.applications]
-        case .findApplication, .getFrontmostApplication, .launchApplication,
-             .launchApplicationWithOptions, .relaunchApplicationWithOptions:
-            [.application]
-        case .isApplicationRunning, .quitApplication: [.bool]
-        case .activateApplication, .hideApplication, .unhideApplication,
-             .hideOtherApplications, .showAllApplications:
-            [.ok]
-        case .listMenus, .listFrontmostMenus: [.menuStructure]
-        case .clickMenuItem, .clickMenuItemByName, .clickMenuExtra: [.ok]
-        case .listMenuExtras: [.menuExtras]
-        case .menuExtraOpenMenuFrame: [.rect]
-        case .listMenuBarItems: [.menuBarItems]
-        case .clickMenuBarItemNamed, .clickMenuBarItemIndex: [.clickResult]
-        case .listDockItems: [.dockItems]
-        case .launchDockItem, .rightClickDockItem, .hideDock, .showDock: [.ok]
-        case .isDockHidden: [.bool]
-        case .findDockItem: [.dockItem]
-        case .dialogFindActive: [.dialogInfo]
-        case .dialogClickButton, .backgroundDialogClickButton, .dialogEnterText,
-             .dialogHandleFile, .dialogDismiss, .exactDialogClickButton, .exactDialogDismiss,
-             .exactDialogEnterText, .exactDialogForceDismiss:
-            [.dialogResult]
-        case .dialogListElements, .targetedDialogListElements: [.dialogElements]
-        case .prepareDialogAction: [.preparedDialogAction]
-        case .createSnapshot, .getMostRecentSnapshot: [.snapshotID]
-        case .storeDetectionResult, .storeScreenshot, .storeObservationSnapshot,
-             .storeAnnotatedScreenshot, .finishSnapshotMutation, .cleanSnapshot:
-            [.ok]
-        case .getDetectionResult: [.detection]
-        case .listSnapshots: [.snapshots]
-        case .invalidateImplicitLatestSnapshot: [.ok, .snapshotID]
-        case .beginSnapshotMutation: [.snapshotMutationLease]
-        case .cleanSnapshotsOlderThan, .cleanAllSnapshots: [.int]
-        case ._appleScriptProbe: []
-        }
+        self.operationDescriptor(for: operation).responseFamilies
     }
 
     private static func responseFamilies(for request: PeekabooBridgeRequest) -> Set<ResponseFamily> {
@@ -1870,7 +1295,10 @@ extension PeekabooBridgeOperationResultSemantics {
     // Delivery is a route result, not just an operation property: several operations have bounded
     // native/AX or AX/window-targeted alternatives. Keep each alternative paired with its unit rule.
     // swiftlint:disable:next cyclomatic_complexity function_body_length
-    private static func deliveryRules(for request: PeekabooBridgeRequest) -> [DeliveryRule] {
+    private static func deliveryRules(
+        for request: PeekabooBridgeRequest,
+        contract: Contract) -> [DeliveryRule]
+    {
         let axForeground = DesktopActionOutcome.Delivery(mechanism: .accessibilityAction, mode: .foreground)
         let axBackground = DesktopActionOutcome.Delivery(mechanism: .accessibilityAction, mode: .background)
         let valueForeground = DesktopActionOutcome.Delivery(mechanism: .accessibilityValue, mode: .foreground)
@@ -2076,7 +1504,7 @@ extension PeekabooBridgeOperationResultSemantics {
                 : .foreground
             return [rule(.init(mechanism: .capturePipeline, mode: mode), .variable)]
         case .captureScreen, .captureWindow, .captureFrontmost, .captureArea:
-            guard self.contract(for: request).completion.mutatesDesktop else { return [] }
+            guard contract.completion.mutatesDesktop else { return [] }
             return [rule(.init(mechanism: .capturePipeline, mode: .background), .exact(1))]
         case .detectElements, .inspectAccessibilityTree:
             return [rule(axBackground, .exact(1))]
@@ -2089,7 +1517,6 @@ extension PeekabooBridgeOperationResultSemantics {
         case .browserExecute:
             return [rule(browserBackground, .variable)]
         default:
-            let contract = self.contract(for: request)
             guard let delivery = contract.completion.fixedDelivery else { return [] }
             return [rule(delivery, .exact(1))]
         }
@@ -2163,7 +1590,17 @@ extension PeekabooBridgeOperationResultSemantics {
         response: PeekabooBridgeResponse? = nil,
         request: PeekabooBridgeRequest) -> Bool
     {
-        let plan = self.semanticPlan(for: request)
+        self.successfulOutcomeMatchesContract(
+            outcome,
+            response: response,
+            plan: self.semanticPlan(for: request))
+    }
+
+    static func successfulOutcomeMatchesContract(
+        _ outcome: DesktopActionOutcome,
+        response: PeekabooBridgeResponse? = nil,
+        plan: PeekabooBridgeRequestPlan) -> Bool
+    {
         guard outcome.route == .bridge,
               plan.contract.completion.mutatesDesktop,
               plan.allowsSuccessState(outcome.state),
@@ -2181,7 +1618,7 @@ extension PeekabooBridgeOperationResultSemantics {
     private static func successResponseMatchesPolicy(
         _ response: PeekabooBridgeResponse?,
         outcome: DesktopActionOutcome,
-        plan: SemanticPlan) -> Bool
+        plan: PeekabooBridgeRequestPlan) -> Bool
     {
         switch plan.successResponsePolicy {
         case .ordinary:
@@ -2215,11 +1652,17 @@ extension PeekabooBridgeOperationResultSemantics {
         _ outcome: DesktopActionOutcome,
         request: PeekabooBridgeRequest) -> Bool
     {
+        self.failureOutcomeMatchesContract(outcome, plan: self.semanticPlan(for: request))
+    }
+
+    static func failureOutcomeMatchesContract(
+        _ outcome: DesktopActionOutcome,
+        plan: PeekabooBridgeRequestPlan) -> Bool
+    {
         guard outcome.route == .bridge, !outcome.isConfirmed else { return false }
         if outcome.state == .refused {
             return outcome.delivery == nil && outcome.dispatchState == .none
         }
-        let plan = self.semanticPlan(for: request)
         guard let delivery = outcome.delivery else {
             guard outcome.state == .indeterminate else { return false }
             guard let unitCount = outcome.dispatchState.unitCount else { return true }
@@ -2239,31 +1682,57 @@ extension PeekabooBridgeOperationResultSemantics {
         self.semanticPlan(for: request).responseMatches(response)
     }
 
+    static func responseMatchesContract(
+        _ response: PeekabooBridgeResponse,
+        plan: PeekabooBridgeRequestPlan) -> Bool
+    {
+        plan.responseMatches(response)
+    }
+
     static func nonErrorResponseAllowsFailureOutcome(
         _ response: PeekabooBridgeResponse,
         outcome: DesktopActionOutcome,
         request: PeekabooBridgeRequest) -> Bool
     {
-        guard self.semanticPlan(for: request).successResponsePolicy == .quitBoolean,
+        self.nonErrorResponseAllowsFailureOutcome(
+            response,
+            outcome: outcome,
+            plan: self.semanticPlan(for: request))
+    }
+
+    static func nonErrorResponseAllowsFailureOutcome(
+        _ response: PeekabooBridgeResponse,
+        outcome: DesktopActionOutcome,
+        plan: PeekabooBridgeRequestPlan) -> Bool
+    {
+        guard plan.successResponsePolicy == .quitBoolean,
               case let .bool(terminated) = response,
               !terminated,
               outcome.state == .refused,
               outcome.refusalReason == .targetUnavailable,
               outcome.dispatchState == .none
         else { return false }
-        return self.failureOutcomeMatchesContract(outcome, request: request)
+        return self.failureOutcomeMatchesContract(outcome, plan: plan)
     }
 
     static func finalizeSuccessful(
         request: PeekabooBridgeRequest,
         handled: PeekabooBridgeHandledResponse) throws -> PeekabooBridgeHandledResponse
     {
-        guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics else { return handled }
-        guard request.mayMutateDesktop else { return handled }
+        try self.finalizeSuccessful(plan: self.semanticPlan(for: request), handled: handled)
+    }
+
+    static func finalizeSuccessful(
+        plan: PeekabooBridgeRequestPlan,
+        handled: PeekabooBridgeHandledResponse) throws -> PeekabooBridgeHandledResponse
+    {
+        let request = plan.request
+        guard plan.vocabulary.usesCurrentResultSemantics else { return handled }
+        guard plan.result.completion.mutatesDesktop else { return handled }
         if let mutation = handled.mutation {
             let outcome = self.fillingExpectedSuccessfulDispatchUnitCount(
                 mutation.outcome,
-                request: request)
+                plan: plan)
             let normalized = outcome == mutation.outcome
                 ? handled
                 : handled.finalizingMutation(outcome: outcome, target: mutation.target)
@@ -2271,7 +1740,7 @@ extension PeekabooBridgeOperationResultSemantics {
                 return normalized
             }
             guard [.partial, .refused, .indeterminate].contains(outcome.state),
-                  self.failureOutcomeMatchesContract(outcome.routed(to: .bridge), request: request),
+                  self.failureOutcomeMatchesContract(outcome.routed(to: .bridge), plan: plan),
                   let failure = DesktopActionFailure(
                       outcome: outcome.routed(to: .bridge),
                       message: "The desktop action provider returned a non-success result.",
@@ -2285,7 +1754,7 @@ extension PeekabooBridgeOperationResultSemantics {
                outcome.dispatchState.mutationDispatched
             {
                 guard let target = try PeekabooBridgeOperationTargetAttribution.resolve(
-                    request: request,
+                    plan: plan,
                     response: normalized.response,
                     handledTarget: normalized.targetIdentity)
                 else {
@@ -2309,7 +1778,6 @@ extension PeekabooBridgeOperationResultSemantics {
         if let failure = self.actionFailure(in: handled.response) {
             throw failure.routed(to: .bridge)
         }
-        let plan = self.semanticPlan(for: request)
         let contract = plan.contract
         guard contract.completion.fixedDelivery != nil else {
             preconditionFailure("Mutating Bridge request has no successful result contract: \(request.operation)")
@@ -2380,12 +1848,11 @@ extension PeekabooBridgeOperationResultSemantics {
 
     private static func fillingExpectedSuccessfulDispatchUnitCount(
         _ outcome: DesktopActionOutcome,
-        request: PeekabooBridgeRequest) -> DesktopActionOutcome
+        plan: PeekabooBridgeRequestPlan) -> DesktopActionOutcome
     {
         guard outcome.dispatchState.unitCount == nil,
               let delivery = outcome.delivery,
-              let unitCount = self.semanticPlan(for: request)
-                  .defaultSuccessfulDispatchUnitCount(for: delivery)
+              let unitCount = plan.defaultSuccessfulDispatchUnitCount(for: delivery)
         else { return outcome }
         switch outcome.state {
         case .confirmedChange:
@@ -2411,7 +1878,18 @@ extension PeekabooBridgeOperationResultSemantics {
         request: PeekabooBridgeRequest,
         stage: FailureStage) -> PeekabooBridgeErrorEnvelope
     {
-        let usesCurrentVocabulary = PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics
+        self.canonicalFailure(
+            envelope,
+            plan: self.semanticPlan(for: request),
+            stage: stage)
+    }
+
+    static func canonicalFailure(
+        _ envelope: PeekabooBridgeErrorEnvelope,
+        plan: PeekabooBridgeRequestPlan,
+        stage: FailureStage) -> PeekabooBridgeErrorEnvelope
+    {
+        let usesCurrentVocabulary = plan.vocabulary.usesCurrentResultSemantics
         let compatibleEnvelope = usesCurrentVocabulary
             ? envelope
             : self.removingReceiptOnlyFailureVocabulary(from: envelope)
@@ -2434,7 +1912,7 @@ extension PeekabooBridgeOperationResultSemantics {
                 stage
             }
         }
-        guard request.mayMutateDesktop, compatibleEnvelope.actionOutcome == nil else {
+        guard plan.result.completion.mutatesDesktop, compatibleEnvelope.actionOutcome == nil else {
             return compatibleEnvelope
         }
         let failure: DesktopActionFailure = switch compatibleStage {
@@ -2479,9 +1957,18 @@ extension PeekabooBridgeOperationResultSemantics {
         request: PeekabooBridgeRequest,
         handled: PeekabooBridgeHandledResponse) throws
     {
-        guard request.mayMutateDesktop else { return }
+        try self.validateSuccessfulTargetDisposition(
+            plan: self.semanticPlan(for: request),
+            handled: handled)
+    }
+
+    static func validateSuccessfulTargetDisposition(
+        plan: PeekabooBridgeRequestPlan,
+        handled: PeekabooBridgeHandledResponse) throws
+    {
+        guard plan.result.completion.mutatesDesktop else { return }
         guard !self.isNoDispatchFailure(handled.response) else { return }
-        let policy = self.semanticPlan(for: request).contract.targetPolicy
+        let policy = plan.target.policy
         guard let mutation = handled.mutation else {
             guard self.isDispatchedFailure(handled.response) else {
                 throw DesktopTargetIdentityError.incompleteExactWindow
@@ -2490,7 +1977,7 @@ extension PeekabooBridgeOperationResultSemantics {
             case .global:
                 break
             case .requestPinned:
-                guard try PeekabooBridgeOperationTargetAttribution.resolveRequest(request) != nil else {
+                guard try PeekabooBridgeOperationTargetAttribution.resolveRequest(plan) != nil else {
                     throw DesktopTargetIdentityError.incompleteExactWindow
                 }
             case .handlerRequired, .handlerResolvedOrGlobal, .responseResolved, .external:

@@ -30,13 +30,17 @@ extension PeekabooBridgeClient {
         -> PeekabooBridgeTransportReply
     {
         try self.requireNegotiatedInputCapabilities(for: request)
+        let plan = PeekabooBridgeOperationResultSemantics.requestPlan(
+            for: request,
+            vocabulary: self.actionProjectionEnabled ? .current : .legacy)
+        let mayMutateDesktop = plan.result.completion.mutatesDesktop
         let explicitlyProjected = if case .projectedAction = request {
             true
         } else {
             false
         }
         let expectsProjectedResponse = explicitlyProjected ||
-            (automaticallyProjectsActions && self.actionProjectionEnabled && request.mayMutateDesktop)
+            (automaticallyProjectsActions && self.actionProjectionEnabled && mayMutateDesktop)
         let projectedRequest = expectsProjectedResponse && !explicitlyProjected
             ? PeekabooBridgeRequest.projectedAction(.init(request: request))
             : request
@@ -53,16 +57,16 @@ extension PeekabooBridgeClient {
         while true {
             let preparedRequest = try await self.prepareWireRequestForSend(
                 projectedRequest,
-                originalRequest: request,
+                plan: plan,
                 operation: op,
                 deadline: deadline,
                 operationReceiptRequirement: operationReceiptRequirement)
             try self.checkCancellationBeforeTransport(
-                request: request,
+                plan: plan,
                 preparedRequest: preparedRequest)
             let verified = try await self.exchange(
                 preparedRequest,
-                originalRequest: request,
+                plan: plan,
                 deadline: deadline)
             switch verified {
             case let .terminal(verifiedWireResponse, bundle, connectedHost):
@@ -94,7 +98,7 @@ extension PeekabooBridgeClient {
                     verifiedWireResponse,
                     expectsProjectedResponse: expectsProjectedResponse,
                     hasVerifiedOperationReceipt: bundle != nil,
-                    request: request)
+                    plan: plan)
                 let reply = PeekabooBridgeTransportReply(
                     response: unwrappedReply.response,
                     outcome: unwrappedReply.outcome,
@@ -105,7 +109,7 @@ extension PeekabooBridgeClient {
                     operationReceiptBundle: bundle)
                 let response = reply.response
                 if case let .error(envelope) = response,
-                   request.mayMutateDesktop,
+                   mayMutateDesktop,
                    throwsActionFailures
                 {
                     if let failure = envelope.desktopActionFailure {
@@ -130,7 +134,7 @@ extension PeekabooBridgeClient {
                     self.invalidateOperationSession(for: context)
                     try Self.throwVerifiedRolloverUnavailable(
                         operation: op,
-                        mutating: request.mayMutateDesktop)
+                        mutating: mayMutateDesktop)
                 }
                 do {
                     try self.installOperationSession(
@@ -141,16 +145,16 @@ extension PeekabooBridgeClient {
                 } catch {
                     try Self.throwVerifiedRolloverInstallationFailure(
                         operation: op,
-                        mutating: request.mayMutateDesktop,
+                        mutating: mayMutateDesktop,
                         cause: error)
                 }
                 guard rolloverRetryCount == 0 else {
-                    try Self.throwRepeatedRolloverRefusal(operation: op, mutating: request.mayMutateDesktop)
+                    try Self.throwRepeatedRolloverRefusal(operation: op, mutating: mayMutateDesktop)
                 }
                 rolloverRetryCount += 1
                 try Self.checkCancellationBeforeRolloverRetry(
                     operation: op,
-                    mutating: request.mayMutateDesktop)
+                    mutating: mayMutateDesktop)
             }
         }
     }
@@ -163,12 +167,13 @@ extension PeekabooBridgeClient {
 
     private func prepareWireRequestForSend(
         _ projectedRequest: PeekabooBridgeRequest,
-        originalRequest: PeekabooBridgeRequest,
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         operation: PeekabooBridgeOperation,
         deadline: Date,
         operationReceiptRequirement: PeekabooBridgeOperationReceiptRequirement) async throws
         -> PeekabooBridgePreparedRequest
     {
+        let originalRequest = plan.request
         try self.requireNegotiatedInputCapabilities(for: originalRequest)
         let preparedRequest: PeekabooBridgePreparedRequest
         do {
@@ -177,12 +182,12 @@ extension PeekabooBridgeClient {
                 throw PeekabooBridgeClientOperationSessionError.handshakeRequired
             }
         } catch let cancellation as CancellationError {
-            guard originalRequest.mayMutateDesktop,
+            guard plan.result.completion.mutatesDesktop,
                   !self.usesExplicitReceiptlessTransport()
             else { throw cancellation }
             throw Self.preTransportRequestCancelledFailure(operation: operation)
         } catch {
-            guard originalRequest.mayMutateDesktop else { throw error }
+            guard plan.result.completion.mutatesDesktop else { throw error }
             throw Self.preTransportSessionUnavailableFailure(operation: operation, cause: error)
         }
         try self.requireNegotiatedInputCapabilities(for: originalRequest)
@@ -260,25 +265,26 @@ extension PeekabooBridgeClient {
     }
 
     private func checkCancellationBeforeTransport(
-        request: PeekabooBridgeRequest,
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         preparedRequest: PeekabooBridgePreparedRequest) throws
     {
         do {
             try Task.checkCancellation()
         } catch let cancellation as CancellationError {
             self.invalidateOperationSession(for: preparedRequest.context)
-            guard request.mayMutateDesktop,
+            guard plan.result.completion.mutatesDesktop,
                   preparedRequest.context != nil
             else { throw cancellation }
-            throw Self.preTransportRequestCancelledFailure(operation: request.operation)
+            throw Self.preTransportRequestCancelledFailure(operation: plan.operation)
         }
     }
 
     private func exchange(
         _ preparedRequest: PeekabooBridgePreparedRequest,
-        originalRequest: PeekabooBridgeRequest,
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         deadline: Date) async throws -> PeekabooBridgeVerifiedResponse
     {
+        let originalRequest = plan.request
         let attestedContext = preparedRequest.context
         let payload: Data
         do {
@@ -335,7 +341,7 @@ extension PeekabooBridgeClient {
             self.invalidateOperationSession(for: attestedContext)
             self.invalidateReceiptlessAuthenticatedHost(
                 reservation: preparedRequest.receiptlessHostReservation)
-            guard originalRequest.mayMutateDesktop else {
+            guard plan.result.completion.mutatesDesktop else {
                 throw failure.underlying
             }
             throw Self.responseLostFailure(
@@ -347,12 +353,12 @@ extension PeekabooBridgeClient {
             self.invalidateReceiptlessAuthenticatedHost(
                 reservation: preparedRequest.receiptlessHostReservation)
             if error is CancellationError,
-               originalRequest.mayMutateDesktop,
+               plan.result.completion.mutatesDesktop,
                attestedContext != nil
             {
                 throw Self.preTransportRequestCancelledFailure(operation: op)
             }
-            if originalRequest.mayMutateDesktop,
+            if plan.result.completion.mutatesDesktop,
                attestedContext != nil || preparedRequest.receiptlessHostReservation != nil
             {
                 throw Self.preTransportSessionUnavailableFailure(operation: op, cause: error)
@@ -374,7 +380,7 @@ extension PeekabooBridgeClient {
             self.invalidateOperationSession(for: attestedContext)
             self.invalidateReceiptlessAuthenticatedHost(
                 reservation: preparedRequest.receiptlessHostReservation)
-            guard originalRequest.mayMutateDesktop else {
+            guard plan.result.completion.mutatesDesktop else {
                 throw PeekabooBridgeErrorEnvelope(
                     code: .internalError,
                     message: "Bridge host returned no response",
@@ -393,7 +399,7 @@ extension PeekabooBridgeClient {
             self.invalidateOperationSession(for: attestedContext)
             self.invalidateReceiptlessAuthenticatedHost(
                 reservation: preparedRequest.receiptlessHostReservation)
-            guard originalRequest.mayMutateDesktop else {
+            guard plan.result.completion.mutatesDesktop else {
                 throw PeekabooBridgeErrorEnvelope(
                     code: .decodingFailed,
                     message: "Bridge host returned an invalid response",
@@ -423,7 +429,7 @@ extension PeekabooBridgeClient {
             }
             self.invalidateReceiptlessAuthenticatedHost(
                 reservation: preparedRequest.receiptlessHostReservation)
-            guard originalRequest.mayMutateDesktop else { throw error }
+            guard plan.result.completion.mutatesDesktop else { throw error }
             throw Self.responseLostFailure(
                 operation: op,
                 causeDescription: "Bridge operation receipt validation failed: \(error.localizedDescription)",
@@ -515,14 +521,16 @@ extension PeekabooBridgeClient {
         _ response: PeekabooBridgeResponse,
         expectsProjectedResponse: Bool,
         hasVerifiedOperationReceipt: Bool,
-        request: PeekabooBridgeRequest) throws -> PeekabooBridgeTransportReply
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan) throws
+        -> PeekabooBridgeTransportReply
     {
+        let request = plan.request
         let needsStandaloneReceiptlessFamilyValidation = if case let .projectedAction(projected) = response {
             projected.outcome == nil
         } else {
             true
         }
-        if request.mayMutateDesktop,
+        if plan.result.completion.mutatesDesktop,
            !hasVerifiedOperationReceipt,
            needsStandaloneReceiptlessFamilyValidation
         {
@@ -533,7 +541,7 @@ extension PeekabooBridgeClient {
             }
             guard PeekabooBridgeOperationResultSemantics.responseMatchesContract(
                 semanticResponse,
-                request: request)
+                plan: plan)
             else {
                 throw Self.responseLostFailure(
                     operation: request.operation,
@@ -559,7 +567,7 @@ extension PeekabooBridgeClient {
                     causeDescription: "Bridge action response and error envelope carried contradictory outcomes")
             }
             if payload.outcome != nil, !hasVerifiedOperationReceipt {
-                try Self.validateReceiptlessProjectedResponse(payload, request: request)
+                try Self.validateReceiptlessProjectedResponse(payload, plan: plan)
             }
             return PeekabooBridgeTransportReply(
                 response: payload.response,
@@ -569,7 +577,7 @@ extension PeekabooBridgeClient {
         guard case .projectedAction = response else {
             return PeekabooBridgeTransportReply(response: response, outcome: nil)
         }
-        if request.mayMutateDesktop {
+        if plan.result.completion.mutatesDesktop {
             throw self.responseLostFailure(
                 operation: request.operation,
                 causeDescription: "Bridge host returned unrequested action projection carriage")
@@ -581,13 +589,14 @@ extension PeekabooBridgeClient {
 
     private nonisolated static func validateReceiptlessProjectedResponse(
         _ projected: PeekabooBridgeProjectedActionResponse,
-        request: PeekabooBridgeRequest) throws
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan) throws
     {
+        let request = plan.request
         guard let projection = projected.outcome else { return }
         let outcome = projection.outcome
         guard PeekabooBridgeOperationResultSemantics.responseMatchesContract(
             projected.response,
-            request: request)
+            plan: plan)
         else {
             try Self.throwReceiptlessProjectionMismatch(
                 request: request,
@@ -599,21 +608,21 @@ extension PeekabooBridgeClient {
             projection == envelope.actionOutcome &&
                 PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
                     outcome,
-                    request: request)
+                    plan: plan)
         case let .browserToolResponse(browserResponse):
             Self.receiptlessBrowserProjectionMatches(
                 browserResponse,
                 projection: projection,
-                request: request)
+                plan: plan)
         default:
             PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
                 outcome,
                 response: projected.response,
-                request: request) ||
+                plan: plan) ||
                 PeekabooBridgeOperationResultSemantics.nonErrorResponseAllowsFailureOutcome(
                     projected.response,
                     outcome: outcome,
-                    request: request)
+                    plan: plan)
         }
         guard outcomeMatches else {
             try Self.throwReceiptlessProjectionMismatch(
@@ -627,7 +636,7 @@ extension PeekabooBridgeClient {
         else { return }
         do {
             try Self.validateReceiptlessProjectedTarget(
-                request: request,
+                plan: plan,
                 response: wrappedResponse)
         } catch {
             try Self.throwReceiptlessProjectionMismatch(
@@ -637,9 +646,10 @@ extension PeekabooBridgeClient {
     }
 
     private nonisolated static func validateReceiptlessProjectedTarget(
-        request: PeekabooBridgeRequest,
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         response: PeekabooBridgeResponse) throws
     {
+        let request = plan.request
         switch request {
         case let .activateApplication(payload) where payload.expectedIdentity == nil:
             return
@@ -648,7 +658,7 @@ extension PeekabooBridgeClient {
         default:
             break
         }
-        let policy = PeekabooBridgeOperationResultSemantics.semanticPlan(for: request).contract.targetPolicy
+        let policy = plan.target.policy
         if policy == .external,
            request.operation == .browserExecute
         {
@@ -676,14 +686,14 @@ extension PeekabooBridgeClient {
         }
 
         let resolved = try PeekabooBridgeOperationTargetAttribution.resolve(
-            request: request,
+            plan: plan,
             response: response,
             handledTarget: nil)
         switch policy {
         case .global:
             guard resolved == nil else { throw DesktopTargetIdentityError.incompleteExactWindow }
         case .requestPinned:
-            let requested = try PeekabooBridgeOperationTargetAttribution.resolveRequest(request)
+            let requested = try PeekabooBridgeOperationTargetAttribution.resolveRequest(plan)
             guard requested != nil, resolved == requested else {
                 throw DesktopTargetIdentityError.incompleteExactWindow
             }
@@ -699,8 +709,9 @@ extension PeekabooBridgeClient {
     private nonisolated static func receiptlessBrowserProjectionMatches(
         _ response: PeekabooBridgeBrowserToolResponse,
         projection: DesktopActionOutcome.Projection,
-        request: PeekabooBridgeRequest) -> Bool
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan) -> Bool
     {
+        let request = plan.request
         guard let browserRequest = request.browserExecutionRequest,
               response.isError == (response.actionFailure != nil)
         else { return false }
@@ -721,7 +732,7 @@ extension PeekabooBridgeClient {
             else { return false }
             return PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
                 failure.outcome,
-                request: request)
+                plan: plan)
         }
         guard completed >= 0,
               dispatched >= completed,
@@ -735,7 +746,7 @@ extension PeekabooBridgeClient {
             else { return false }
             return PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
                 failure.outcome,
-                request: request)
+                plan: plan)
         }
         guard let units = DesktopActionOutcome.DispatchUnitCount(dispatched),
               projection.outcome.dispatchState.unitCount == units
@@ -744,14 +755,14 @@ extension PeekabooBridgeClient {
             return failure.outcome.projection == projection &&
                 PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
                     failure.outcome,
-                    request: request)
+                    plan: plan)
         }
         return completed == callCount &&
             dispatched == callCount &&
             PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
                 projection.outcome,
                 response: .browserToolResponse(response),
-                request: request)
+                plan: plan)
     }
 
     private nonisolated static func throwReceiptlessProjectionMismatch(

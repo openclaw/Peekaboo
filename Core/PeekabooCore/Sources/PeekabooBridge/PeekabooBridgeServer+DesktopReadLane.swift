@@ -13,7 +13,10 @@ extension PeekabooBridgeServer {
         proposed: (scope: DesktopOperationScope, access: DesktopOperationAccess))
         -> (scope: DesktopOperationScope, access: DesktopOperationAccess)
     {
-        switch self.desktopReadLaneResolution(for: request, proposed: proposed) {
+        switch self.desktopReadLaneResolution(
+            for: PeekabooBridgeOperationResultSemantics.semanticPlan(for: request),
+            proposed: proposed)
+        {
         case let .lane(scope, access, validatesIdentity):
             if validatesIdentity, !self.desktopReadScopeIsCurrent(scope) {
                 return (.global, .write)
@@ -30,19 +33,29 @@ extension PeekabooBridgeServer {
         operation: () async throws -> T) async throws -> T
     {
         try await self.withValidatedDesktopReadOperationLane(
-            for: request,
+            for: PeekabooBridgeOperationResultSemantics.semanticPlan(for: request),
             proposed: proposed)
         { _ in
             try await operation()
         }
     }
 
+    func withValidatedDesktopReadOperationLane<T: Sendable>(
+        for plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
+        proposed: (scope: DesktopOperationScope, access: DesktopOperationAccess),
+        operation: () async throws -> T) async throws -> T
+    {
+        try await self.withValidatedDesktopReadOperationLane(for: plan, proposed: proposed) { _ in
+            try await operation()
+        }
+    }
+
     private func withValidatedDesktopReadOperationLane<T: Sendable>(
-        for request: PeekabooBridgeRequest,
+        for plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         proposed: (scope: DesktopOperationScope, access: DesktopOperationAccess),
         operation: (DesktopOperationScope) async throws -> T) async throws -> T
     {
-        let resolution = self.desktopReadLaneResolution(for: request, proposed: proposed)
+        let resolution = self.desktopReadLaneResolution(for: plan, proposed: proposed)
         guard case let .lane(scope, access, validatesIdentity) = resolution else {
             throw Self.exactDesktopReadTargetChangedError()
         }
@@ -61,10 +74,9 @@ extension PeekabooBridgeServer {
     }
 
     private func desktopReadLaneResolution(
-        for request: PeekabooBridgeRequest,
+        for plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         proposed: (scope: DesktopOperationScope, access: DesktopOperationAccess)) -> DesktopReadLaneResolution
     {
-        let plan = PeekabooBridgeOperationResultSemantics.semanticPlan(for: request)
         if let exactTarget = plan.exactReadTarget,
            let exactScope = self.exactDesktopReadScope(for: exactTarget)
         {

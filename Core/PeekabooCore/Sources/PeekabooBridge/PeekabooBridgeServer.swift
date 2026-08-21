@@ -565,62 +565,64 @@ public final class PeekabooBridgeServer {
     }
 
     func handleAuthorizedWithDesktopMutationBarrier(
-        _ request: PeekabooBridgeRequest,
+        _ plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         peer: PeekabooBridgePeer?,
         permissions: PermissionsStatus) async throws -> PeekabooBridgeHandledResponse
     {
+        let request = plan.request
         if request.bypassesOuterDesktopMutationLane {
             return try await self.handleAuthorized(request, peer: peer, permissions: permissions)
         }
-        let nativeLeafOwnsLane = request.nativeLeafOwnsDesktopOperationLane &&
+        let nativeLeafOwnsLane = plan.nativeServiceOwnsDesktopOperationLane &&
             self.services.ownsDesktopOperationLane(for: request.operation)
-        if let proposedReadLane = request.desktopReadOperationLane, !nativeLeafOwnsLane {
+        if let proposedReadLane = plan.desktopReadOperationLane, !nativeLeafOwnsLane {
             return try await self.withValidatedDesktopReadOperationLane(
-                for: request,
+                for: plan,
                 proposed: proposedReadLane)
             {
                 try await self.handleAuthorizedWithOwnedDesktopOperationLane(
-                    request,
+                    plan,
                     peer: peer,
                     permissions: permissions)
             }
         }
 
-        if request.mayMutateDesktop, !nativeLeafOwnsLane {
+        if plan.result.completion.mutatesDesktop, !nativeLeafOwnsLane {
             return try await self.desktopOperationLaneCoordinator.run(
-                scope: request.desktopOperationScope,
+                scope: plan.desktopOperationScope,
                 access: .write)
             {
                 try await self.handleAuthorizedWithOwnedDesktopOperationLane(
-                    request,
+                    plan,
                     peer: peer,
                     permissions: permissions)
             }
         }
         return try await self.handleAuthorizedWithOwnedDesktopOperationLane(
-            request,
+            plan,
             peer: peer,
             permissions: permissions)
     }
 
     private func handleAuthorizedWithOwnedDesktopOperationLane(
-        _ request: PeekabooBridgeRequest,
+        _ plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         peer: PeekabooBridgePeer?,
         permissions: PermissionsStatus) async throws -> PeekabooBridgeHandledResponse
     {
-        guard request.mayMutateDesktop else {
+        let request = plan.request
+        guard plan.result.completion.mutatesDesktop else {
             return try await self.handleAuthorized(request, peer: peer, permissions: permissions)
         }
 
         guard let desktopMutationWatermarkStore else {
-            try self.validatePreDispatchState(for: request)
+            try self.validatePreDispatchState(for: plan)
             return try await self.handleAuthorized(request, peer: peer, permissions: permissions)
         }
-        try self.validatePreDispatchState(for: request)
+        try self.validatePreDispatchState(for: plan)
         let mutation: DesktopMutationWatermarkStore.PendingMutation
         do {
             mutation = try await desktopMutationWatermarkStore.beginMutationCancellable(
-                target: request.desktopOperationScope)
+                target: plan.desktopOperationScope)
         } catch {
             throw PeekabooBridgeErrorEnvelope(
                 code: .internalError,
@@ -629,7 +631,7 @@ public final class PeekabooBridgeServer {
         }
 
         do {
-            try self.validatePreDispatchState(for: request)
+            try self.validatePreDispatchState(for: plan)
         } catch {
             do {
                 try desktopMutationWatermarkStore.cancelMutation(mutation)
@@ -688,25 +690,29 @@ public final class PeekabooBridgeServer {
         return completedLegacyResponse.map(response.replacingResponse) ?? response
     }
 
-    private func validatePreDispatchState(for request: PeekabooBridgeRequest) throws {
+    private func validatePreDispatchState(
+        for plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan) throws
+    {
         do {
             try PeekabooBridgeRequestContext.checkRequestIsActive()
-            try self.validatePinnedWindowMutation(request)
+            try self.validatePinnedWindowMutation(plan)
         } catch is CancellationError {
             throw PeekabooBridgeOperationResultSemantics.canonicalFailure(
                 .init(code: .timeout, message: "Bridge request was cancelled before dispatch"),
-                request: request,
+                plan: plan,
                 stage: .preDispatch(.requestCancelled))
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             throw PeekabooBridgeOperationResultSemantics.canonicalFailure(
                 envelope,
-                request: request,
+                plan: plan,
                 stage: .preDispatch(PeekabooBridgeOperationResultSemantics.preDispatchReason(for: envelope)))
         }
     }
 
-    private func validatePinnedWindowMutation(_ request: PeekabooBridgeRequest) throws {
-        guard let pinned = request.pinnedWindowMutation else { return }
+    private func validatePinnedWindowMutation(
+        _ plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan) throws
+    {
+        guard let pinned = plan.pinnedWindowMutation else { return }
         let identity = pinned.identity
         guard identity.capturedBounds != nil else {
             throw PeekabooBridgeErrorEnvelope(
@@ -835,6 +841,20 @@ public final class PeekabooBridgeServer {
         permissions: PermissionsStatus,
         effectiveOps: Set<PeekabooBridgeOperation>) throws
     {
+        try self.validateOperationAccess(
+            for: PeekabooBridgeOperationResultSemantics.semanticPlan(for: request),
+            peer: peer,
+            permissions: permissions,
+            effectiveOps: effectiveOps)
+    }
+
+    func validateOperationAccess(
+        for plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
+        peer: PeekabooBridgePeer? = nil,
+        permissions: PermissionsStatus,
+        effectiveOps: Set<PeekabooBridgeOperation>) throws
+    {
+        let request = plan.request
         let op = request.operation
         if case .handshake = request {
             return
@@ -877,7 +897,7 @@ public final class PeekabooBridgeServer {
                 message: "Operation \(op.rawValue) is not supported by this host's background dialog provider")
         }
 
-        if request.requiresPinnedWindowMutationReceipt, request.pinnedWindowMutation == nil {
+        if plan.requiresPinnedWindowMutation, plan.pinnedWindowMutation == nil {
             throw PeekabooBridgeErrorEnvelope(
                 code: .invalidRequest,
                 message: "Operation \(op.rawValue) requires a process-generation window mutation receipt")

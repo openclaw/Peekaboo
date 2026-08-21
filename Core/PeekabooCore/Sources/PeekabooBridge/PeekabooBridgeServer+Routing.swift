@@ -8,12 +8,24 @@ extension PeekabooBridgeServer {
         _ request: PeekabooBridgeRequest,
         peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeHandledResponse
     {
+        let plan = PeekabooBridgeOperationResultSemantics.requestPlan(
+            for: request,
+            vocabulary: .init(usesCurrentResultSemantics:
+                PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics))
+        return try await self.route(plan, peer: peer)
+    }
+
+    func route(
+        _ plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
+        peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeHandledResponse
+    {
+        let request = plan.request
         do {
             try self.validatePeerAuthorization(peer)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             throw PeekabooBridgeOperationResultSemantics.canonicalFailure(
                 envelope,
-                request: request,
+                plan: plan,
                 stage: .preDispatch(.transportSessionUnavailable))
         }
         do {
@@ -21,7 +33,7 @@ extension PeekabooBridgeServer {
         } catch {
             throw PeekabooBridgeOperationResultSemantics.canonicalFailure(
                 .init(code: .timeout, message: "Bridge request was cancelled before dispatch"),
-                request: request,
+                plan: plan,
                 stage: .preDispatch(.requestCancelled))
         }
 
@@ -47,7 +59,7 @@ extension PeekabooBridgeServer {
         do {
             try request.validatePlatformIdentifierBounds()
             try self.validateOperationAccess(
-                for: request,
+                for: plan,
                 peer: peer,
                 permissions: permissions,
                 effectiveOps: effectiveOps)
@@ -62,18 +74,18 @@ extension PeekabooBridgeServer {
                 """)
             throw PeekabooBridgeOperationResultSemantics.canonicalFailure(
                 envelope,
-                request: request,
+                plan: plan,
                 stage: .preDispatch(PeekabooBridgeOperationResultSemantics.preDispatchReason(for: envelope)))
         }
 
         do {
-            return try await self.withDaemonActivity(for: request) {
+            return try await self.withDaemonActivity(for: plan) {
                 let response = try await self.handleAuthorizedWithDesktopMutationBarrier(
-                    request,
+                    plan,
                     peer: peer,
                     permissions: permissions)
                 return try PeekabooBridgeOperationResultSemantics.finalizeSuccessful(
-                    request: request,
+                    plan: plan,
                     handled: response)
             }
         } catch let envelope as PeekabooBridgeErrorEnvelope {
@@ -87,7 +99,7 @@ extension PeekabooBridgeServer {
                 """)
             throw PeekabooBridgeOperationResultSemantics.canonicalFailure(
                 envelope,
-                request: request,
+                plan: plan,
                 stage: .executionMayHaveStarted)
         } catch {
             failed = true
@@ -101,15 +113,16 @@ extension PeekabooBridgeServer {
 
             throw PeekabooBridgeOperationResultSemantics.canonicalFailure(
                 Self.bridgeErrorEnvelope(for: error, operation: op),
-                request: request,
+                plan: plan,
                 stage: .executionMayHaveStarted)
         }
     }
 
     private func withDaemonActivity<Value>(
-        for request: PeekabooBridgeRequest,
+        for plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         operation: () async throws -> Value) async throws -> Value
     {
+        let request = plan.request
         let op = request.operation
         guard let daemonControl = self.daemonControl,
               op != .daemonStatus,
@@ -122,7 +135,7 @@ extension PeekabooBridgeServer {
             guard await conditionalControl.admitActivity(operation: op) else {
                 throw PeekabooBridgeOperationResultSemantics.canonicalFailure(
                     .init(code: .serverBusy, message: "Daemon is shutting down"),
-                    request: request,
+                    plan: plan,
                     stage: .preDispatch(.transportSessionUnavailable))
             }
         } else {
