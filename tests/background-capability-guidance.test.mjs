@@ -40,7 +40,7 @@ test('bundled skill never advertises app-only background press', () => {
   for (const example of appTargetedPressExamples) {
     assert.match(
       example,
-      /--(?:foreground|window-id|snapshot)\b/,
+      /--(?:foreground|snapshot|window-(?:id|title|index))\b/,
       `app-only background press is not a valid route: ${example}`
     );
   }
