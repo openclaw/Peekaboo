@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Report per-window `combined_eligible`, `pixels_only`, or `unknown` observation eligibility, including screenshot-only recovery.
-- Add `type --at` for atomic exact-window background pixel focus plus typing from one fresh screenshot snapshot.
+- Add `type --at` for atomic exact-window background focus-only Accessibility input plus typing from one fresh screenshot snapshot.
 - Add `click --modifiers ... --foreground` with exact snapshot preflight and truthful cursor/focus restoration reporting.
 
 ### Changed

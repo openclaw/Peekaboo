@@ -11,6 +11,49 @@ import Testing
 struct BackgroundInputDriverPositionalTargetTests {
     @Test
     @MainActor
+    func `focus-only resolution never presses a button or selects a row`() {
+        let point = CGPoint(x: 50, y: 50)
+        let button = PositionalMockElement(
+            role: "AXButton",
+            frame: CGRect(x: 30, y: 30, width: 80, height: 40),
+            supportedActions: [AXActionNames.kAXPressAction])
+        let row = PositionalMockElement(
+            role: AXRoleNames.kAXRowRole,
+            frame: CGRect(x: 20, y: 20, width: 160, height: 60),
+            isSelectedSettable: true)
+
+        #expect(BackgroundInputDriver.positionalClickTarget(
+            inCandidates: [button, row],
+            at: point,
+            button: .left)?.action == .press)
+        #expect(BackgroundInputDriver.positionalFocusTarget(
+            inCandidates: [button, row],
+            at: point) == nil)
+    }
+
+    @Test
+    @MainActor
+    func `focus-only resolution skips a pressable hit and finds the editable field`() {
+        let point = CGPoint(x: 50, y: 50)
+        let button = PositionalMockElement(
+            role: "AXButton",
+            frame: CGRect(x: 30, y: 30, width: 80, height: 40),
+            supportedActions: [AXActionNames.kAXPressAction])
+        let textField = PositionalMockElement(
+            role: "AXTextField",
+            frame: CGRect(x: 30, y: 30, width: 200, height: 40),
+            isValueSettable: true,
+            isFocusedSettable: true)
+
+        let resolved = BackgroundInputDriver.positionalFocusTarget(
+            inCandidates: [button, textField],
+            at: point)
+
+        #expect((resolved as? PositionalMockElement) === textField)
+    }
+
+    @Test
+    @MainActor
     func `pressable hit-test element at depth 0 is pressed even when the actions attribute is empty`() {
         // Regression for the live failure: `AXUIElementCopyElementAtPosition` returns the SwiftUI
         // AXButton directly, but its `AXActionNames` *attribute* read is unsupported, so

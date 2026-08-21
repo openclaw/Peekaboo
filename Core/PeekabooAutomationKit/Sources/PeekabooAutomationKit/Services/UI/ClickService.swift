@@ -65,6 +65,9 @@ private struct ClickExecutionRequest: Sendable {
 }
 
 typealias TabSelectionVerifier = @MainActor (AutomationElement, Int?) async throws -> Bool
+typealias ExactWindowPixelFocusExecutor = @MainActor @Sendable (
+    CGPoint,
+    UIAutomationTarget.ExactWindow) async throws -> UIInputExecutionResult.Action
 
 private func validatedClickWindowID(_ windowID: Int?) throws -> CGWindowID? {
     guard let windowID else { return nil }
@@ -109,6 +112,7 @@ public final class ClickService {
     private let desktopOperationExecutor: DesktopOperationExecutor
     private let operationFinalizer: @MainActor () -> Void
     private let tabSelectionVerifier: TabSelectionVerifier
+    private let exactWindowPixelFocusExecutor: ExactWindowPixelFocusExecutor
 
     public convenience init(
         snapshotManager: (any SnapshotManagerProtocol)? = nil,
@@ -134,7 +138,10 @@ public final class ClickService {
             SystemIdentityResolver.processStartIdentity,
         desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
         operationFinalizer: @escaping @MainActor () -> Void = {},
-        tabSelectionVerifier: @escaping TabSelectionVerifier = ClickService.verifyTabSelection)
+        tabSelectionVerifier: @escaping TabSelectionVerifier = ClickService.verifyTabSelection,
+        exactWindowPixelFocusExecutor: @escaping ExactWindowPixelFocusExecutor = { point, exactWindow in
+            try await BackgroundInputDriver.focus(at: point, exactWindow: exactWindow)
+        })
     {
         self.snapshotManager = snapshotManager ?? SnapshotManager()
         self.inputPolicy = inputPolicy
@@ -146,6 +153,7 @@ public final class ClickService {
         self.desktopOperationExecutor = desktopOperationExecutor
         self.operationFinalizer = operationFinalizer
         self.tabSelectionVerifier = tabSelectionVerifier
+        self.exactWindowPixelFocusExecutor = exactWindowPixelFocusExecutor
     }
 
     private static func verifyTabSelection(_ element: AutomationElement, valueBefore: Int?) async throws -> Bool {
@@ -935,6 +943,51 @@ public final class ClickService {
 }
 
 extension ClickService {
+    /// Establishes one exact-window focused-element receipt while the caller owns the process lane.
+    ///
+    /// This is intentionally separate from `clickOwned`: normal click resolution may press buttons
+    /// or select rows, while a typing prelude may only write AXFocused on an editable element.
+    func focusExactWindowPixelOwned(
+        at point: CGPoint,
+        exactWindow: UIAutomationTarget.ExactWindow) async throws
+        -> UIAutomationActionResult<FocusedElementIdentity>
+    {
+        let targetIdentity = DesktopTargetIdentity(exactWindow: exactWindow)
+        guard self.exactWindowIdentityValidator(exactWindow.identity, exactWindow.bounds) else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Pixel-focus exact-window receipt is stale.")
+                .attributed(to: targetIdentity.actionTargetReceipt)
+        }
+
+        let action = try await self.exactWindowPixelFocusExecutor(point, exactWindow)
+        guard let focusedElement = action.focusedElement else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: action.outcome.delivery,
+                evidence: .completionUnknown,
+                unitCount: action.outcome.dispatchState.unitCount,
+                message: "Pixel focus completed without an exact focused-element receipt.",
+                hint: "Observe the exact target before deciding whether to retry typing.")
+                .attributed(to: targetIdentity.actionTargetReceipt)
+        }
+        do {
+            try Self.validateFocusedElement(focusedElement, exactWindow: exactWindow)
+            guard self.exactWindowIdentityValidator(exactWindow.identity, exactWindow.bounds) else {
+                throw PeekabooError.snapshotStale("Pixel-focus exact-window receipt changed after dispatch")
+            }
+        } catch {
+            throw clickPostDispatchFailure(
+                outcome: action.outcome,
+                message: "Pixel focus was dispatched, but its exact target could not be revalidated",
+                cause: error)
+                .attributed(to: targetIdentity.actionTargetReceipt)
+        }
+        return UIAutomationActionResult(
+            payload: focusedElement,
+            outcome: action.outcome,
+            targetIdentity: targetIdentity)
+    }
+
     func focusExactElementWithOutcome(
         target: ClickTarget,
         snapshotId: String,

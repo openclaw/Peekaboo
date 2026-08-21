@@ -31,7 +31,7 @@ that snapshot. Use `press` for standalone keys or chords.
 - **Background** is the default when Peekaboo can resolve a target from flags or snapshot metadata. Exact window/snapshot routes pin the process generation, window ID/bounds, and focused element without activating the app. App/PID routes upgrade when one eligible window exists and refuse when several are eligible.
 - **Background-only Agent/MCP** requires an explicit fresh exact non-dialog `snapshot`. It refuses implicit-latest,
   targetless, app/PID/window-only, and snapshot-plus-selector requests before dispatch.
-- **Pixel-focus background typing** (`--at`) derives one exact process/window/bounds target from the named screenshot snapshot. Its background focus click and all keyboard units share one process lane and one receipt; target drift before any unit is retry-safe, while a completed click or typed prefix is retry-unsafe and requires a fresh observation.
+- **Pixel-focus background typing** (`--at`) derives one exact process/window/bounds target from the named screenshot snapshot. Its focus-only Accessibility write and all keyboard units share one process lane and one receipt; target drift before any unit is retry-safe, while a completed focus write or typed prefix is retry-unsafe and requires a fresh observation. The focus prelude never presses a button or selects a row.
 - **Foreground** (`--foreground`) focuses the target first and sends normal/global keyboard input. Use it for apps or fields that only accept text in the focused key window, or when focus changes are desired.
 - If no target process can be resolved, `type` fails before sending input. Add `--foreground` only when global delivery is intentional.
 

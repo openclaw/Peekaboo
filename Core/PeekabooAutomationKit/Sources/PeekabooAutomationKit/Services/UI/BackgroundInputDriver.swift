@@ -51,12 +51,7 @@ enum BackgroundInputDriver {
         at point: CGPoint,
         button: MouseButton) -> (element: any AutomationElementRepresenting, action: PositionalClickAction)?
     {
-        guard let hit = candidates.first else { return nil }
-        // Trust the hit-test element regardless of its reported frame (coordinate-space quirks must
-        // not veto the element macOS resolved for the point); spatially filter the rest.
-        let spatiallyValid = [hit] + candidates.dropFirst().filter { element in
-            element.frame?.contains(point) == true
-        }
+        let spatiallyValid = self.spatiallyValidCandidates(candidates, at: point)
 
         let requiredAction = button == .right ? AXActionNames.kAXShowMenuAction : AXActionNames.kAXPressAction
         if let actionable = spatiallyValid.first(where: {
@@ -92,6 +87,33 @@ enum BackgroundInputDriver {
         }
         self.logger.debug("No actionable background positional click target resolved")
         return nil
+    }
+
+    /// Picks only a writable focus target at one hit-tested point.
+    ///
+    /// Composed pixel-focus typing must not reuse normal click resolution: that resolver deliberately
+    /// prefers pressable controls and selectable rows before editable fields. A focus prelude instead
+    /// admits only the narrow text-entry roles whose AXFocused attribute can be set.
+    @MainActor
+    static func positionalFocusTarget(
+        inCandidates candidates: [any AutomationElementRepresenting],
+        at point: CGPoint) -> (any AutomationElementRepresenting)?
+    {
+        self.spatiallyValidCandidates(candidates, at: point)
+            .first(where: self.canFocusForPositionalClick)
+    }
+
+    @MainActor
+    private static func spatiallyValidCandidates(
+        _ candidates: [any AutomationElementRepresenting],
+        at point: CGPoint) -> [any AutomationElementRepresenting]
+    {
+        guard let hit = candidates.first else { return [] }
+        // Trust the hit-test element regardless of its reported frame (coordinate-space quirks must
+        // not veto the element macOS resolved for the point); spatially filter the rest.
+        return [hit] + candidates.dropFirst().filter { element in
+            element.frame?.contains(point) == true
+        }
     }
 
     /// Coordinate clicks may focus text-entry controls that expose no press action. Keep this
@@ -885,6 +907,60 @@ extension BackgroundInputDriver {
                 delivery: .init(mechanism: .accessibilityValue, mode: .background),
                 evidence: .deliveryAccepted)
         }
+    }
+
+    /// Establishes background focus at one exact-window point without pressing or selecting it.
+    @MainActor
+    static func focus(
+        at point: CGPoint,
+        exactWindow: UIAutomationTarget.ExactWindow) async throws -> UIInputExecutionResult.Action
+    {
+        let targetProcessIdentifier = exactWindow.identity.ownerProcessIdentifier
+        guard targetProcessIdentifier > 0, self.isProcessAlive(targetProcessIdentifier) else {
+            throw PeekabooError.invalidInput("Target process identifier is not running: \(targetProcessIdentifier)")
+        }
+        guard point.x.isFinite, point.y.isFinite, exactWindow.bounds.contains(point) else {
+            throw PeekabooError.invalidInput("Background pixel-focus point is outside the exact target window")
+        }
+        guard AXIsProcessTrusted() else {
+            throw PeekabooError.permissionDeniedAccessibility
+        }
+
+        guard let targetWindowID = CGWindowID(exactly: exactWindow.identity.windowID) else {
+            throw PeekabooError.snapshotStale("Exact-window pixel focus has an invalid window identifier")
+        }
+        _ = try self.resolveTargetWindowID(
+            at: point,
+            targetProcessIdentifier: targetProcessIdentifier,
+            exactWindowID: targetWindowID,
+            candidates: self.mouseWindowRouteCandidates(exactWindowID: targetWindowID))
+
+        let candidates = self.hitTestCandidates(at: point, targetProcessIdentifier: targetProcessIdentifier)
+        guard let element = self.positionalFocusTarget(inCandidates: candidates, at: point) else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "Background pixel focus is unavailable at the requested point.",
+                hint: "Target a writable text field or use explicit foreground typing.")
+        }
+        try self.assertBelongsToTargetWindow(element, targetWindowID: targetWindowID, at: point)
+
+        let outcome = try await self.performPositionalClickAction(.focus, on: element)
+        guard element.focusedState == true,
+              let focusedElement = element.focusedElementIdentity
+        else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: outcome.delivery,
+                evidence: .completionUnknown,
+                unitCount: outcome.dispatchState.unitCount ?? .one,
+                message: "Background pixel focus was dispatched but could not be confirmed.",
+                hint: "Observe the exact target before deciding whether to retry typing.")
+        }
+        return UIInputExecutionResult.Action(
+            outcome: outcome,
+            actionName: AXAttributeNames.kAXFocusedAttribute,
+            anchorPoint: element.anchorPoint,
+            elementRole: element.role,
+            focusedElement: focusedElement)
     }
 
     @MainActor

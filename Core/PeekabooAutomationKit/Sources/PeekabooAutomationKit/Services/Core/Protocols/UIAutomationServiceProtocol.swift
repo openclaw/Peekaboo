@@ -419,8 +419,8 @@ public protocol ExactWindowFocusedElementServiceProtocol: UIAutomationServicePro
 /// Atomically focuses one capture-owned pixel in an exact background window and types into it.
 ///
 /// The operation never activates the application or falls back to global input. Providers must
-/// retain one exact-target lane across the focus click, focused-window proof, and every keyboard
-/// unit, and must preserve any completed prefix as retry-unsafe failure state.
+/// retain one exact-target lane across the focus-only Accessibility write, focused-element proof,
+/// and every keyboard unit, and must preserve any completed prefix as retry-unsafe failure state.
 @MainActor
 public protocol ExactWindowPixelFocusTypingServiceProtocol: UIAutomationServiceProtocol {
     var supportsExactWindowPixelFocusTyping: Bool { get }

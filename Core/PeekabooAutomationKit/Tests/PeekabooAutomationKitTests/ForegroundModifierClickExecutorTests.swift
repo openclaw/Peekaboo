@@ -86,6 +86,127 @@ struct ForegroundModifierClickExecutorTests {
     }
 
     @Test
+    func `cursor restoration baseline is recaptured immediately before click dispatch`() async throws {
+        let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
+        let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
+        let bounds = CGRect(x: 100, y: 100, width: 600, height: 400)
+        let point = CGPoint(x: 220, y: 240)
+        let preflightCursor = CGPoint(x: 20, y: 30)
+        let cursorAfterFocus = CGPoint(x: 740, y: 520)
+        var frontmost = prior
+        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var cursor = preflightCursor
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { window, beforeDispatch in
+                    try beforeDispatch()
+                    frontmost = target
+                    focusedWindow = window
+                    cursor = cursorAfterFocus
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                        unitCount: .one)
+                },
+                currentFrontmostIdentity: { frontmost },
+                currentFocusedExactWindow: { focusedWindow },
+                activate: { identity, beforeDispatch in
+                    try beforeDispatch()
+                    frontmost = identity
+                    focusedWindow = nil
+                    return true
+                },
+                currentCursorLocation: { cursor },
+                moveCursor: { cursor = $0 },
+                click: { location, _, _ in
+                    cursor = location
+                    return .dispatchedUnverified(
+                        delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                        evidence: .deliveryAccepted,
+                        unitCount: .one)
+                },
+                validateExactWindow: { _, _ in true }))
+
+        let result = try await executor.execute(ForegroundModifierClickRequest(
+            point: point,
+            clickType: .single,
+            modifiers: [.command],
+            windowIdentity: WindowMutationIdentity(
+                windowID: 7,
+                ownerProcessIdentifier: target.processIdentifier,
+                ownerProcessStartIdentity: target.processStartIdentity,
+                capturedBounds: bounds),
+            windowBounds: bounds))
+
+        #expect(result.payload.cursorRestoration == .restored)
+        #expect(cursor == cursorAfterFocus)
+        #expect(frontmost == prior)
+    }
+
+    @Test
+    func `focus dispatch guard revalidates ownership before every dispatch`() throws {
+        let state = ModifierClickDispatchGuardState()
+        let dispatchGuard = FocusDispatchGuard {
+            state.validationCount += 1
+            guard state.ownershipIsValid else { throw ModifierClickTestError.focusRestoreFailed }
+        }
+
+        try dispatchGuard()
+        state.ownershipIsValid = false
+        #expect(throws: ModifierClickTestError.self) {
+            try dispatchGuard()
+        }
+        #expect(state.validationCount == 2)
+    }
+
+    @Test
+    func `strict focus guard rejects activation drift and admits unchanged set-main fallback`() throws {
+        let state = ModifierClickDispatchGuardState()
+        let dispatchGuard = FocusDispatchGuard(
+            requiresStrictDispatchOwnership: true,
+            validateOwnership: { _ in
+                state.validationCount += 1
+                guard state.currentState == state.expectedState else {
+                    throw ModifierClickTestError.focusRestoreFailed
+                }
+            },
+            completeDispatch: { stage in
+                let isAllowed = switch stage {
+                case .applicationActivation:
+                    state.currentState == state.finalState
+                case .setMainWindow:
+                    state.currentState == state.expectedState || state.currentState == state.finalState
+                case .raiseWindow:
+                    state.currentState == state.expectedState || state.currentState == state.finalState
+                case .spaceTransition, .unspecified:
+                    false
+                }
+                guard isAllowed else {
+                    throw ModifierClickTestError.focusRestoreFailed
+                }
+                state.adoptionCount += 1
+                state.expectedState = state.currentState
+            })
+
+        try dispatchGuard.validate(.applicationActivation)
+        state.currentState = state.intermediateState
+        #expect(throws: ModifierClickTestError.self) {
+            try dispatchGuard.didCompleteDispatch(.applicationActivation)
+        }
+        state.currentState = state.expectedState
+        try dispatchGuard.validate(.setMainWindow)
+        try dispatchGuard.didCompleteDispatch(.setMainWindow)
+        try dispatchGuard.validate(.raiseWindow)
+        try dispatchGuard.didCompleteDispatch(.raiseWindow)
+        #expect(state.validationCount == 3)
+        #expect(state.adoptionCount == 2)
+        #expect(state.expectedState == 0)
+        #expect(dispatchGuard.completedStrictTerminalDispatch)
+    }
+
+    @Test
     func `newer user cursor and focus state win compare and swap restoration`() async throws {
         let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
         let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
@@ -520,6 +641,7 @@ struct ForegroundModifierClickExecutorTests {
             dependencies: .init(
                 focusExactWindow: { window, beforeDispatch in
                     try beforeDispatch()
+                    #expect(window == targetWindow)
                     focusCalls.append(window.identity.windowID)
                     focusedWindow = window
                     return .confirmedChange(
@@ -542,7 +664,16 @@ struct ForegroundModifierClickExecutorTests {
                         evidence: .deliveryAccepted,
                         unitCount: .one)
                 },
-                validateExactWindow: { _, _ in true }))
+                validateExactWindow: { _, _ in true },
+                restoreExactWindow: { window, beforeDispatch in
+                    try beforeDispatch()
+                    #expect(window == priorWindow)
+                    focusCalls.append(window.identity.windowID)
+                    focusedWindow = window
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                        unitCount: .one)
+                }))
 
         let result = try await executor.execute(ForegroundModifierClickRequest(
             point: CGPoint(x: 220, y: 240),
@@ -848,6 +979,17 @@ struct ForegroundModifierClickExecutorTests {
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
     }
+}
+
+@MainActor
+private final class ModifierClickDispatchGuardState {
+    var ownershipIsValid = true
+    var validationCount = 0
+    var adoptionCount = 0
+    var currentState = 0
+    var expectedState = 0
+    var intermediateState = 1
+    var finalState = 2
 }
 
 private enum ModifierClickTestError: LocalizedError {

@@ -12,14 +12,25 @@ extension UIAutomationService {
         let executor = ForegroundModifierClickExecutor(
             laneCoordinator: self.operationLaneCoordinator,
             dependencies: .init(
-                focusExactWindow: { target, firstDispatchGuard in
+                focusExactWindow: { target, dispatchGuard in
                     var sequence = DesktopActionSequenceAccumulator()
-                    try await focusService.focusWindowWithOwnedLane(
-                        windowID: CGWindowID(target.identity.windowID),
-                        options: .init(timeout: 2, retryCount: 2, switchSpace: false),
-                        expectedIdentity: target.identity,
-                        firstDispatchGuard: firstDispatchGuard,
-                        onDispatch: { sequence.record($0.sequenceStep) })
+                    do {
+                        try await focusService.focusWindowWithOwnedLane(
+                            windowID: CGWindowID(target.identity.windowID),
+                            options: .init(timeout: 2, retryCount: 2, switchSpace: false),
+                            expectedIdentity: target.identity,
+                            dispatchGuard: dispatchGuard,
+                            onDispatch: { sequence.record($0.sequenceStep) })
+                    } catch {
+                        guard sequence.mutationDisposition.mutationDispatched else { throw error }
+                        let leaf = error as? DesktopActionFailure ?? .preDispatchRefusal(
+                            reason: .targetUnavailable,
+                            message: error.localizedDescription)
+                        throw sequence.failure(
+                            combining: leaf,
+                            message: "Exact-window focus stopped after a partial foreground dispatch.",
+                            hint: "Inspect the shared desktop before taking another input action.")
+                    }
                     return FocusDispatchAccounting.verifiedFocusOutcome(sequence.successResolution())
                 },
                 currentFrontmostIdentity: Self.currentFrontmostProcessIdentity,
@@ -28,7 +39,42 @@ extension UIAutomationService {
                 currentCursorLocation: { self.syntheticInputDriver.currentLocation() },
                 moveCursor: { try self.syntheticInputDriver.move(to: $0) },
                 click: Self.postModifierClick,
-                validateExactWindow: self.exactWindowIdentityValidator))
+                validateExactWindow: self.exactWindowIdentityValidator,
+                restoreExactWindow: { target, dispatchGuard in
+                    var sequence = DesktopActionSequenceAccumulator()
+                    do {
+                        try await focusService.focusWindowWithOwnedLane(
+                            windowID: CGWindowID(target.identity.windowID),
+                            options: .init(timeout: 2, retryCount: 2, switchSpace: false),
+                            expectedIdentity: target.identity,
+                            dispatchGuard: dispatchGuard,
+                            onDispatch: { sequence.record($0.sequenceStep) })
+                    } catch ForegroundModifierClickError.focusRestorationSatisfied {
+                        guard sequence.mutationDisposition.mutationDispatched else {
+                            throw ForegroundModifierClickError.focusRestorationBecameUnnecessary
+                        }
+                        return FocusDispatchAccounting.verifiedFocusOutcome(sequence.successResolution())
+                    } catch ForegroundModifierClickError.focusRestorationOwnershipLost {
+                        let resolution = sequence.successResolution()
+                        let partialOutcome = resolution.outcome ?? resolution.mutationDisposition.unitCount.map {
+                            DesktopActionOutcome.indeterminate(
+                                route: .local,
+                                evidence: .completionUnknown,
+                                unitCount: $0)
+                        }
+                        throw FocusRestorationOwnershipLoss(partialOutcome: partialOutcome)
+                    } catch {
+                        guard sequence.mutationDisposition.mutationDispatched else { throw error }
+                        let leaf = error as? DesktopActionFailure ?? .preDispatchRefusal(
+                            reason: .targetUnavailable,
+                            message: error.localizedDescription)
+                        throw sequence.failure(
+                            combining: leaf,
+                            message: "Exact-window restoration stopped after a foreground dispatch.",
+                            hint: "Inspect the shared desktop before taking another input action.")
+                    }
+                    return FocusDispatchAccounting.verifiedFocusOutcome(sequence.successResolution())
+                }))
         return try await executor.execute(request)
     }
 
@@ -57,12 +103,12 @@ extension UIAutomationService {
 
     private static func activateAndVerify(
         _ identity: ApplicationProcessIdentity,
-        firstDispatchGuard: FocusFirstDispatchGuard) async throws -> Bool
+        dispatchGuard: FocusDispatchGuard) async throws -> Bool
     {
         guard SystemIdentityResolver.processStartIdentity(identity.processIdentifier) == identity.processStartIdentity,
               let application = NSRunningApplication(processIdentifier: identity.processIdentifier)
         else { return false }
-        try firstDispatchGuard.validate()
+        try dispatchGuard.validate()
         guard application.activate() else { return false }
         for _ in 0..<20 {
             if self.currentFrontmostProcessIdentity() == identity {

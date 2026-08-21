@@ -729,7 +729,8 @@ public final class TypeService {
 extension TypeService {
     func typeActionsByFocusingPixel(
         _ request: ExactWindowPixelFocusTypeRequest,
-        deliveryValidator: @escaping @MainActor @Sendable () async throws -> Void) async throws
+        deliveryValidator: @escaping @MainActor @Sendable (
+            FocusedElementIdentity) async throws -> Void) async throws
         -> UIAutomationActionResult<TypeResult>
     {
         let exactWindow = try UIAutomationTarget.ExactWindow(
@@ -772,23 +773,31 @@ extension TypeService {
             synthesis: DesktopOperationPlan.SynthesisRoute {
                 var sequence = DesktopActionSequenceAccumulator()
                 do {
-                    let click = try await self.clickService.clickOwned(
-                        target: .coordinates(request.point),
-                        clickType: .single,
-                        snapshotId: request.snapshotID,
-                        automationTarget: automationTarget,
-                        validatesProcessIdentity: true)
+                    let focus = try await self.clickService.focusExactWindowPixelOwned(
+                        at: request.point,
+                        exactWindow: exactWindow)
+                    guard let focusOutcome = focus.outcome else {
+                        throw DesktopActionFailure.indeterminate(
+                            delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                            evidence: .completionUnknown,
+                            message: "Pixel focus returned no canonical action outcome.",
+                            hint: "Observe the exact target before deciding whether to retry typing.")
+                    }
                     sequence.record(.reportedOutcome(
-                        click.outcome,
+                        focusOutcome,
                         defaultDispatchedUnitCount: .one))
 
-                    try await deliveryValidator()
+                    let focusedElement = focus.payload
+                    let validateFocusedElement: @MainActor @Sendable () async throws -> Void = {
+                        try await deliveryValidator(focusedElement)
+                    }
+                    try await validateFocusedElement()
                     let typed = try await self.performSyntheticTypeActions(
                         request.actions,
                         cadence: request.cadence,
                         snapshotId: request.snapshotID,
                         targetProcessIdentifier: request.windowIdentity.ownerProcessIdentifier,
-                        deliveryValidator: deliveryValidator)
+                        deliveryValidator: validateFocusedElement)
                     guard let typingUnits = DesktopActionOutcome.DispatchUnitCount(typed.result.keyPresses) else {
                         throw PeekabooError.invalidInput("Pixel-focus typing produced no keyboard input")
                     }
@@ -826,7 +835,7 @@ extension TypeService {
                 } catch let failure as DesktopActionFailure {
                     throw sequence.failure(
                         combining: failure,
-                        message: "Pixel-focus typing did not complete after its focus click.",
+                        message: "Pixel-focus typing did not complete after its focus write.",
                         hint: "Observe the exact target before deciding whether to retry.")
                 } catch {
                     guard sequence.mutationDisposition.mutationDispatched else { throw error }
@@ -835,7 +844,7 @@ extension TypeService {
                         message: error.localizedDescription)
                     throw sequence.failure(
                         combining: leaf,
-                        message: "Pixel-focus typing could not prove its destination after clicking.",
+                        message: "Pixel-focus typing could not prove its destination after focusing.",
                         hint: "Observe the exact target before deciding whether to retry.",
                         causeDescription: error.localizedDescription)
                 }
