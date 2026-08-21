@@ -270,6 +270,51 @@ struct ConfigCredentialInputCLITests {
         #expect(error["code"] as? String == "INVALID_ID")
     }
 
+    @Test
+    func `writerless FIFO credential file is rejected without blocking`() throws {
+        let directory = try self.makeTemporaryConfigDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let fifo = directory.appendingPathComponent("credential.fifo")
+        #expect(mkfifo(fifo.path, mode_t(0o600)) == 0)
+
+        let output = Pipe()
+        let process = Process()
+        process.executableURL = try TestChildProcess.peekabooBinaryURL()
+        process.arguments = [
+            "config", "credential", "set", "PEEKABOO_FIFO_TEST_KEY",
+            "--credential-file", fifo.path,
+            "--no-input",
+            "--json",
+            "--no-remote",
+        ]
+        process.environment = ProcessInfo.processInfo.environment.merging(
+            self.environment(for: directory),
+            uniquingKeysWith: { _, new in new }
+        )
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = output
+        process.standardError = Pipe()
+
+        try process.run()
+        let exitedWithinDeadline = self.waitForExit(process, timeout: 2)
+        if !exitedWithinDeadline, process.isRunning {
+            _ = kill(process.processIdentifier, SIGKILL)
+        }
+        process.waitUntilExit()
+
+        #expect(exitedWithinDeadline)
+        #expect(process.terminationStatus == 1)
+        let json = try #require(
+            JSONSerialization.jsonObject(
+                with: output.fileHandleForReading.readDataToEndOfFile()
+            ) as? [String: Any]
+        )
+        let error = try #require(json["error"] as? [String: Any])
+        #expect(error["code"] as? String == "CREDENTIAL_INPUT_ERROR")
+        #expect((error["message"] as? String)?.contains("regular file") == true)
+    }
+
     private func makeTemporaryConfigDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-credential-cli-\(UUID().uuidString)", isDirectory: true)

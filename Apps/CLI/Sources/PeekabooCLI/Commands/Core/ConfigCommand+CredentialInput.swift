@@ -293,7 +293,9 @@ struct ConfigCredentialInput {
     }
 
     static func readSecureFile(at path: String) throws -> String {
-        let fileDescriptor = path.withCString { Darwin.open($0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW) }
+        let fileDescriptor = path.withCString {
+            Darwin.open($0, O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW)
+        }
         guard fileDescriptor >= 0 else {
             if errno == ELOOP {
                 throw InputError.insecureFile(path)
