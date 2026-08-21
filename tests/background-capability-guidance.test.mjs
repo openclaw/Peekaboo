@@ -30,6 +30,22 @@ test('press guidance preserves the snapshot-pinned background route', () => {
   assert.match(press, /Background-only Agent\/MCP.*explicit fresh exact non-dialog snapshot/s);
 });
 
+test('bundled skill never advertises app-only background press', () => {
+  const skill = read('skills/peekaboo/SKILL.md');
+  const appTargetedPressExamples = skill
+    .split('\n')
+    .filter((line) => /^peekaboo press\b.*--app\b/.test(line));
+
+  assert.ok(appTargetedPressExamples.length > 0);
+  for (const example of appTargetedPressExamples) {
+    assert.match(
+      example,
+      /--(?:foreground|window-id|snapshot)\b/,
+      `app-only background press is not a valid route: ${example}`
+    );
+  }
+});
+
 test('background Agent type guidance requires an explicit non-dialog snapshot', () => {
   for (const path of ['docs/commands/agent.md', 'docs/MCP.md']) {
     const source = read(path);

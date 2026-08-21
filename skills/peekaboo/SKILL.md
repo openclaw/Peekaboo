@@ -90,7 +90,7 @@ peekaboo permissions request screen-recording
 peekaboo app focus Safari
 peekaboo config provider list --json
 peekaboo agent sessions --json
-peekaboo press cmd+shift+t --app Safari
+peekaboo press cmd+shift+t --app Safari --window-id 12345
 peekaboo verify --app Safari --window-exists --timeout 2s --json
 ```
 
