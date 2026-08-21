@@ -364,6 +364,7 @@ enum PeekabooBridgeOperationResultSemantics {
     /// Static policy that every wire operation must classify in one descriptor.
     struct OperationDescriptor: Equatable, Sendable {
         let operation: PeekabooBridgeOperation
+        let requiredPermissions: Set<PeekabooBridgePermissionKind>
         let lane: LanePolicy
         let pinnedWindow: PinnedWindowPolicy
         let typedResponse: TypedResponseBinding
@@ -852,6 +853,7 @@ extension PeekabooBridgeOperationResultSemantics {
         let lane = LanePolicy(nativeOwnership: .bridge, readPolicy: .globalExclusive)
         let descriptor = OperationDescriptor(
             operation: operation,
+            requiredPermissions: [],
             lane: lane,
             pinnedWindow: .unavailable,
             typedResponse: .noSuccessResponse,

@@ -43,6 +43,107 @@ struct PeekabooBridgeRequestPlanTests {
     }
 
     @Test
+    func `Static descriptors own the exact base permission partition`() {
+        let allOperations = PeekabooBridgeOperation.allCases
+        let descriptors = allOperations.map(Semantics.operationDescriptor(for:))
+
+        func operationSet(requiring permissions: Set<PeekabooBridgePermissionKind>) -> Set<PeekabooBridgeOperation> {
+            Set(descriptors.filter { $0.requiredPermissions == permissions }.map(\.operation))
+        }
+
+        let screenRecording: Set<PeekabooBridgeOperation> = [
+            .captureScreen,
+            .captureWindow,
+            .captureFrontmost,
+            .captureArea,
+            .detectElements,
+            .desktopObservation,
+        ]
+        let postEvent: Set<PeekabooBridgeOperation> = [
+            .targetedHotkey,
+            .targetedTypeActions,
+            .click,
+            .scroll,
+            .swipe,
+            .drag,
+            .moveMouse,
+            .beginExactWindowHeldPointer,
+        ]
+        let accessibilityAndPostEvent: Set<PeekabooBridgeOperation> = [
+            .exactWindowTargetedHotkey,
+            .exactWindowTargetedTypeActions,
+            .exactDialogForceDismiss,
+            .clickMenuBarItemIndex,
+        ]
+        let accessibility: Set<PeekabooBridgeOperation> = [
+            .inspectAccessibilityTree,
+            .getFocusedElement,
+            .type,
+            .typeActions,
+            .setValue,
+            .performAction,
+            .hotkey,
+            .waitForElement,
+            .listWindows,
+            .focusWindow,
+            .moveWindow,
+            .resizeWindow,
+            .setWindowBounds,
+            .closeWindow,
+            .backgroundCloseWindow,
+            .minimizeWindow,
+            .restoreWindow,
+            .maximizeWindow,
+            .getFocusedWindow,
+            .listMenus,
+            .listFrontmostMenus,
+            .clickMenuItem,
+            .clickMenuItemByName,
+            .listMenuExtras,
+            .clickMenuExtra,
+            .menuExtraOpenMenuFrame,
+            .listMenuBarItems,
+            .clickMenuBarItemNamed,
+            .listDockItems,
+            .launchDockItem,
+            .rightClickDockItem,
+            .hideDock,
+            .showDock,
+            .isDockHidden,
+            .findDockItem,
+            .dialogFindActive,
+            .dialogClickButton,
+            .backgroundDialogClickButton,
+            .dialogEnterText,
+            .dialogHandleFile,
+            .dialogDismiss,
+            .dialogListElements,
+            .targetedDialogListElements,
+            .prepareDialogAction,
+            .exactDialogClickButton,
+            .exactDialogDismiss,
+            .exactDialogEnterText,
+            .targetedClick,
+            .exactWindowTargetedClick,
+            .targetedScroll,
+        ]
+
+        #expect(operationSet(requiring: [.screenRecording]) == screenRecording)
+        #expect(operationSet(requiring: [.postEvent]) == postEvent)
+        #expect(operationSet(requiring: [.accessibility, .postEvent]) == accessibilityAndPostEvent)
+        #expect(operationSet(requiring: [.accessibility]) == accessibility)
+
+        let nonempty = screenRecording
+            .union(postEvent)
+            .union(accessibilityAndPostEvent)
+            .union(accessibility)
+        #expect(operationSet(requiring: []) == Set(allOperations).subtracting(nonempty))
+        #expect(allOperations.allSatisfy {
+            $0.requiredPermissions == Semantics.operationDescriptor(for: $0).requiredPermissions
+        })
+    }
+
+    @Test
     func `Linked exact window plan captures legacy and current vocabulary immutably`() throws {
         let fixture = AutomationTestFixtures.linkedDesktopTarget()
         let request = PeekabooBridgeRequest.focusWindow(.init(
@@ -94,5 +195,6 @@ struct PeekabooBridgeRequestPlanTests {
         #expect(plan.descriptor.lane.nativeOwnership == .bridge)
         #expect(plan.descriptor.lane.readPolicy == .globalExclusive)
         #expect(plan.descriptor.typedResponse == .noSuccessResponse)
+        #expect(plan.descriptor.requiredPermissions.isEmpty)
     }
 }

@@ -25,6 +25,7 @@ extension PeekabooBridgeOperationResultSemantics {
             read: ReadLanePolicy = .none,
             pinnedWindow: PinnedWindowPolicy = .unavailable,
             typedResponse: TypedResponseBinding = .familyOnly,
+            requiredPermissions: Set<PeekabooBridgePermissionKind> = [],
             completion: Completion,
             targetPolicy: TargetPolicy,
             responseFamilies: Set<ResponseFamily>,
@@ -32,6 +33,7 @@ extension PeekabooBridgeOperationResultSemantics {
         {
             OperationDescriptor(
                 operation: operation,
+                requiredPermissions: requiredPermissions,
                 lane: .init(nativeOwnership: ownership, readPolicy: read),
                 pinnedWindow: pinnedWindow,
                 typedResponse: typedResponse,
@@ -107,6 +109,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 read: .globalExclusive,
                 typedResponse: .capture,
+                requiredPermissions: [.screenRecording],
                 completion: .requestDependent(mutatesDesktop: false),
                 targetPolicy: .requestDependent,
                 responseFamilies: [.capture],
@@ -115,6 +118,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 read: .exactTargetOrGlobalExclusive,
                 typedResponse: .capture,
+                requiredPermissions: [.screenRecording],
                 completion: .requestDependent(mutatesDesktop: false),
                 targetPolicy: .requestDependent,
                 responseFamilies: [.capture],
@@ -123,6 +127,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 read: .globalExclusive,
                 typedResponse: .elementDetection,
+                requiredPermissions: [.screenRecording],
                 completion: .requestDependent(mutatesDesktop: false),
                 targetPolicy: .requestDependent,
                 responseFamilies: [.elementDetection])
@@ -130,6 +135,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 read: .exactTargetOrGlobalExclusive,
                 typedResponse: .elementDetection,
+                requiredPermissions: [.accessibility],
                 completion: .requestDependent(mutatesDesktop: false),
                 targetPolicy: .requestDependent,
                 responseFamilies: [.elementDetection],
@@ -138,6 +144,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 read: .globalExclusive,
                 typedResponse: .focusedElement,
+                requiredPermissions: [.accessibility],
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.focusedElement])
@@ -146,13 +153,22 @@ extension PeekabooBridgeOperationResultSemantics {
                 ownership: .service,
                 read: .exactTargetOrGlobalExclusive,
                 typedResponse: .desktopObservation,
+                requiredPermissions: [.screenRecording],
                 completion: .requestDependent(mutatesDesktop: false),
                 targetPolicy: .requestDependent,
                 responseFamilies: [.desktopObservation],
                 responseTargetEvidence: .desktopObservation)
-        case .click, .type, .scroll:
+        case .click, .scroll:
             descriptor(
                 ownership: .service,
+                requiredPermissions: [.postEvent],
+                completion: .requestDependent(mutatesDesktop: true),
+                targetPolicy: .requestDependent,
+                responseFamilies: [.ok])
+        case .type:
+            descriptor(
+                ownership: .service,
+                requiredPermissions: [.accessibility],
                 completion: .requestDependent(mutatesDesktop: true),
                 targetPolicy: .requestDependent,
                 responseFamilies: [.ok])
@@ -160,6 +176,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 ownership: .service,
                 typedResponse: .typeActions,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(globalForeground),
                 targetPolicy: .global,
                 responseFamilies: [.typeResult])
@@ -167,6 +184,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 ownership: .service,
                 typedResponse: .typeActions,
+                requiredPermissions: [.postEvent],
                 completion: .dispatchedUnverified(processBackground),
                 targetPolicy: .requestPinned,
                 responseFamilies: [.typeResult])
@@ -174,6 +192,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 ownership: .service,
                 typedResponse: .typeActions,
+                requiredPermissions: [.accessibility, .postEvent],
                 completion: .dispatchedUnverified(windowBackground),
                 targetPolicy: .requestPinned,
                 responseFamilies: [.typeResult])
@@ -181,6 +200,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 ownership: .service,
                 typedResponse: .setValue,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(valueBackground),
                 targetPolicy: .handlerRequired,
                 responseFamilies: [.elementActionResult])
@@ -188,30 +208,42 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 ownership: .service,
                 typedResponse: .performAction,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(axBackground),
                 targetPolicy: .handlerRequired,
                 responseFamilies: [.elementActionResult])
         case .targetedScroll:
             descriptor(
                 ownership: .service,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(axBackground),
                 targetPolicy: .handlerRequired,
                 responseFamilies: [.ok])
-        case .hotkey, .swipe, .drag, .moveMouse:
+        case .hotkey:
             descriptor(
                 ownership: .service,
+                requiredPermissions: [.accessibility],
+                completion: .dispatchedUnverified(globalForeground),
+                targetPolicy: .global,
+                responseFamilies: [.ok])
+        case .swipe, .drag, .moveMouse:
+            descriptor(
+                ownership: .service,
+                requiredPermissions: [.postEvent],
                 completion: .dispatchedUnverified(globalForeground),
                 targetPolicy: .global,
                 responseFamilies: [.ok])
         case .targetedHotkey:
             descriptor(
                 ownership: .service,
+                requiredPermissions: [.postEvent],
                 completion: .dispatchedUnverified(processBackground),
                 targetPolicy: .requestPinned,
                 responseFamilies: [.ok])
         case .exactWindowTargetedHotkey:
             descriptor(
                 ownership: .service,
+                requiredPermissions: [.accessibility, .postEvent],
                 completion: .dispatchedUnverified(windowBackground),
                 targetPolicy: .requestPinned,
                 responseFamilies: [.ok])
@@ -223,6 +255,7 @@ extension PeekabooBridgeOperationResultSemantics {
         case .beginExactWindowHeldPointer:
             descriptor(
                 ownership: .service,
+                requiredPermissions: [.postEvent],
                 completion: .dispatchedUnverified(windowBackground),
                 targetPolicy: .requestPinned,
                 responseFamilies: [.heldPointerReceipt])
@@ -243,6 +276,7 @@ extension PeekabooBridgeOperationResultSemantics {
         case .targetedClick, .exactWindowTargetedClick:
             descriptor(
                 ownership: .service,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(axBackground),
                 targetPolicy: .requestPinned,
                 responseFamilies: [.ok])
@@ -250,12 +284,14 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 read: .globalExclusive,
                 typedResponse: .waitElementSelector,
+                requiredPermissions: [.accessibility],
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.waitResult])
         case .listWindows:
             descriptor(
                 read: .globalExclusive,
+                requiredPermissions: [.accessibility],
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.windows])
@@ -264,6 +300,7 @@ extension PeekabooBridgeOperationResultSemantics {
                 ownership: .service,
                 pinnedWindow: .legacyOptionalCurrentRequired,
                 typedResponse: .postMutationWindow,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(compositeForeground),
                 targetPolicy: .requestPinned,
                 responseFamilies: [.ok, .window],
@@ -273,6 +310,7 @@ extension PeekabooBridgeOperationResultSemantics {
                 ownership: .service,
                 pinnedWindow: .required,
                 typedResponse: .postMutationWindow,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(valueBackground),
                 targetPolicy: .requestPinned,
                 responseFamilies: [.ok, .window],
@@ -282,6 +320,7 @@ extension PeekabooBridgeOperationResultSemantics {
                 ownership: .service,
                 pinnedWindow: .required,
                 typedResponse: .postMutationWindow,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(compositeForeground),
                 targetPolicy: .requestPinned,
                 responseFamilies: [.ok, .window],
@@ -291,6 +330,7 @@ extension PeekabooBridgeOperationResultSemantics {
                 ownership: .service,
                 pinnedWindow: .required,
                 typedResponse: .postMutationWindow,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(axBackground),
                 targetPolicy: .requestPinned,
                 responseFamilies: [.ok, .window],
@@ -298,6 +338,7 @@ extension PeekabooBridgeOperationResultSemantics {
         case .getFocusedWindow:
             descriptor(
                 read: .globalExclusive,
+                requiredPermissions: [.accessibility],
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.window],
@@ -387,84 +428,98 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 read: .globalExclusive,
                 typedResponse: .menuStructureApplication,
+                requiredPermissions: [.accessibility],
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.menuStructure])
         case .listFrontmostMenus:
             descriptor(
                 read: .globalExclusive,
+                requiredPermissions: [.accessibility],
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.menuStructure])
         case .clickMenuItem, .clickMenuItemByName:
             descriptor(
                 ownership: .service,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(axBackground),
                 targetPolicy: .requestPinned,
                 responseFamilies: [.ok])
         case .listMenuExtras:
             descriptor(
                 read: .globalExclusive,
+                requiredPermissions: [.accessibility],
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.menuExtras])
         case .clickMenuExtra:
             descriptor(
                 ownership: .service,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(axForeground),
                 targetPolicy: .external,
                 responseFamilies: [.ok])
         case .menuExtraOpenMenuFrame:
             descriptor(
                 read: .globalExclusive,
+                requiredPermissions: [.accessibility],
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.rect])
         case .listMenuBarItems:
             descriptor(
                 read: .globalExclusive,
+                requiredPermissions: [.accessibility],
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.menuBarItems])
         case .clickMenuBarItemNamed:
             descriptor(
                 ownership: .service,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(axForeground),
                 targetPolicy: .external,
                 responseFamilies: [.clickResult])
         case .clickMenuBarItemIndex:
             descriptor(
                 ownership: .service,
+                requiredPermissions: [.accessibility, .postEvent],
                 completion: .dispatchedUnverified(globalForeground),
                 targetPolicy: .external,
                 responseFamilies: [.clickResult])
         case .listDockItems:
             descriptor(
                 read: .globalExclusive,
+                requiredPermissions: [.accessibility],
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.dockItems])
         case .launchDockItem:
             descriptor(
                 ownership: .service,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(axForeground),
                 targetPolicy: .external,
                 responseFamilies: [.ok])
         case .rightClickDockItem:
             descriptor(
                 ownership: .service,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(globalForeground),
                 targetPolicy: .external,
                 responseFamilies: [.ok])
         case .hideDock, .showDock:
             descriptor(
                 ownership: .service,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(nativeBackground),
                 targetPolicy: .global,
                 responseFamilies: [.ok])
         case .isDockHidden:
             descriptor(
                 read: .globalExclusive,
+                requiredPermissions: [.accessibility],
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.bool])
@@ -472,6 +527,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 read: .globalExclusive,
                 typedResponse: .dockItemSelector,
+                requiredPermissions: [.accessibility],
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.dockItem])
@@ -479,6 +535,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 ownership: .service,
                 read: .globalExclusive,
+                requiredPermissions: [.accessibility],
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.dialogInfo])
@@ -486,6 +543,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 ownership: .service,
                 typedResponse: .dialogResult,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(axForeground),
                 targetPolicy: .responseResolved,
                 responseFamilies: [.dialogResult],
@@ -494,6 +552,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 ownership: .service,
                 typedResponse: .dialogResult,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(axBackground),
                 targetPolicy: .responseResolved,
                 responseFamilies: [.dialogResult],
@@ -502,6 +561,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 ownership: .service,
                 typedResponse: .dialogResult,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(globalForeground),
                 targetPolicy: .responseResolved,
                 responseFamilies: [.dialogResult],
@@ -510,6 +570,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 ownership: .service,
                 typedResponse: .dialogResult,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(clipboardForeground),
                 targetPolicy: .responseResolved,
                 responseFamilies: [.dialogResult],
@@ -518,6 +579,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 ownership: .service,
                 read: .globalExclusive,
+                requiredPermissions: [.accessibility],
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.dialogElements])
@@ -526,6 +588,7 @@ extension PeekabooBridgeOperationResultSemantics {
                 ownership: .service,
                 read: .globalExclusive,
                 typedResponse: .targetedDialogElements,
+                requiredPermissions: [.accessibility],
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.dialogElements],
@@ -535,6 +598,7 @@ extension PeekabooBridgeOperationResultSemantics {
                 ownership: .service,
                 read: .globalExclusive,
                 typedResponse: .preparedDialogAction,
+                requiredPermissions: [.accessibility],
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.preparedDialogAction],
@@ -543,6 +607,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 ownership: .service,
                 typedResponse: .dialogResult,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(axBackground),
                 targetPolicy: .requestPinned,
                 responseFamilies: [.dialogResult],
@@ -551,6 +616,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 ownership: .service,
                 typedResponse: .dialogResult,
+                requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(valueBackground),
                 targetPolicy: .responseResolved,
                 responseFamilies: [.dialogResult],
@@ -559,6 +625,7 @@ extension PeekabooBridgeOperationResultSemantics {
             descriptor(
                 ownership: .service,
                 typedResponse: .dialogResult,
+                requiredPermissions: [.accessibility, .postEvent],
                 completion: .dispatchedUnverified(globalForeground),
                 targetPolicy: .responseResolved,
                 responseFamilies: [.dialogResult],

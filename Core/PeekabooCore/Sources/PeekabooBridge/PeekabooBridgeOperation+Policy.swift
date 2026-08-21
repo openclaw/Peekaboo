@@ -22,78 +22,9 @@ extension PeekabooBridgeOperation {
             .windowResponseProof == .postMutationState
     }
 
-    /// TCC permissions an operation relies on. Used to gate advertisement/handling.
+    /// The operation's static/current TCC permissions. Protocol- and request-specific modifiers stay server-owned.
     public var requiredPermissions: Set<PeekabooBridgePermissionKind> {
-        switch self {
-        case .captureScreen, .captureWindow, .captureFrontmost, .captureArea, .detectElements,
-             .desktopObservation:
-            [.screenRecording]
-        case .targetedHotkey, .targetedTypeActions, .click, .scroll, .swipe, .drag, .moveMouse,
-             .beginExactWindowHeldPointer:
-            [.postEvent]
-        case .exactWindowTargetedHotkey, .exactWindowTargetedTypeActions,
-             .exactDialogForceDismiss, .clickMenuBarItemIndex:
-            [.postEvent, .accessibility]
-        case .inspectAccessibilityTree,
-             .getFocusedElement,
-             .type, .typeActions, .setValue, .performAction, .hotkey,
-             .waitForElement, .listWindows, .focusWindow, .moveWindow, .resizeWindow, .setWindowBounds, .closeWindow,
-             .backgroundCloseWindow,
-             .minimizeWindow, .restoreWindow, .maximizeWindow, .getFocusedWindow, .listMenus, .listFrontmostMenus,
-             .clickMenuItem, .clickMenuItemByName, .listMenuExtras, .clickMenuExtra, .menuExtraOpenMenuFrame,
-             .listMenuBarItems, .clickMenuBarItemNamed, .listDockItems, .launchDockItem,
-             .rightClickDockItem, .hideDock, .showDock, .isDockHidden, .findDockItem, .dialogFindActive,
-             .dialogClickButton, .backgroundDialogClickButton, .dialogEnterText, .dialogHandleFile, .dialogDismiss,
-             .dialogListElements, .targetedDialogListElements, .prepareDialogAction,
-             .exactDialogClickButton, .exactDialogDismiss, .exactDialogEnterText:
-            [.accessibility]
-        case .targetedClick, .exactWindowTargetedClick, .targetedScroll:
-            [.accessibility]
-        case ._appleScriptProbe,
-             .agentExecutionTrace,
-             .observeProcessGeneration,
-             .certificationProducerAttestation,
-             .createExactWindowHeldPointerOwner,
-             .releaseExactWindowHeldPointer,
-             .revokeExactWindowHeldPointer,
-             .disconnectExactWindowHeldPointerOwner,
-             .permissionsStatus,
-             .requestPostEventPermission,
-             .daemonStatus,
-             .daemonStop,
-             .browserStatus,
-             .browserConnect,
-             .browserDisconnect,
-             .browserExecute,
-             .createSnapshot,
-             .storeDetectionResult,
-             .getDetectionResult,
-             .storeScreenshot,
-             .storeObservationSnapshot,
-             .storeAnnotatedScreenshot,
-             .listSnapshots,
-             .getMostRecentSnapshot,
-             .invalidateImplicitLatestSnapshot,
-             .beginSnapshotMutation,
-             .finishSnapshotMutation,
-             .cleanSnapshot,
-             .cleanSnapshotsOlderThan,
-             .cleanAllSnapshots,
-             .listApplications,
-             .findApplication,
-             .getFrontmostApplication,
-             .isApplicationRunning,
-             .launchApplication,
-             .launchApplicationWithOptions,
-             .relaunchApplicationWithOptions,
-             .activateApplication,
-             .quitApplication,
-             .hideApplication,
-             .unhideApplication,
-             .hideOtherApplications,
-             .showAllApplications:
-            []
-        }
+        PeekabooBridgeOperationResultSemantics.operationPolicy(for: self).requiredPermissions
     }
 
     /// Operations enabled by default for remote helper hosts.

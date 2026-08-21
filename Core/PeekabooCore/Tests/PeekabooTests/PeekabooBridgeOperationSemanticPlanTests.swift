@@ -78,6 +78,16 @@ struct PeekabooBridgeOperationSemanticPlanTests {
         partition(
             [.none, .postMutationState],
             by: \Semantics.OperationPolicy.windowResponseProof)
+        let permissionSets: [Set<PeekabooBridgePermissionKind>] = [
+            [],
+            [.screenRecording],
+            [.accessibility],
+            [.postEvent],
+            [.accessibility, .postEvent],
+        ]
+        partition(
+            permissionSets,
+            by: \Semantics.OperationPolicy.requiredPermissions)
 
         let postWindow = Set(operations.filter {
             Semantics.operationPolicy(for: $0).windowResponseProof == .postMutationState
