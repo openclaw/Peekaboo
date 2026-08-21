@@ -94,7 +94,7 @@ public struct ClickTool: MCPTool {
                     minimum: 1,
                     maximum: Int(Int32.max)),
                 "modifiers": SchemaBuilder.array(
-                    items: SchemaBuilder.string(enum: ["cmd", "shift", "option", "ctrl"]),
+                    items: SchemaBuilder.string(enum: ["cmd", "shift", "option"]),
                     description: "Foreground-only modifier keys. Requires foreground=true and a fresh exact snapshot."),
             ],
             required: [])
@@ -918,6 +918,9 @@ private struct ClickRequest {
             }
             if let coordinateReference, coordinateReference != snapshotId {
                 throw ClickToolError("snapshot and coordinate_reference must match for modifier-click")
+            }
+            guard !self.modifiers.contains(.control), !isRight else {
+                throw ClickToolError("modifier-click cannot use Control or right-click contextual input")
             }
         }
     }

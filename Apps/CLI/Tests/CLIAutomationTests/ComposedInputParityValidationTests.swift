@@ -33,6 +33,8 @@ struct ComposedInputParityValidationTests {
             ["--on", "B1", "--modifiers", "cmd", "--foreground"],
             ["--on", "B1", "--modifiers", "cmd", "--foreground", "--snapshot", "latest"],
             ["--on", "B1", "--modifiers", "fn", "--foreground", "--snapshot", "snap"],
+            ["--on", "B1", "--modifiers", "ctrl", "--foreground", "--snapshot", "snap"],
+            ["--on", "B1", "--modifiers", "cmd", "--right", "--foreground", "--snapshot", "snap"],
             ["--on", "B1", "--modifiers", "cmd", "--foreground", "--snapshot", "snap", "--app", "Safari"],
             ["--on", "B1", "--modifiers", "cmd", "--foreground", "--snapshot", "snap", "--space-switch"],
         ]

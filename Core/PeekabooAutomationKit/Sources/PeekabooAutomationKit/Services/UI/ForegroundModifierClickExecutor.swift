@@ -18,10 +18,36 @@ private final class FocusRestorationOwnershipState {
 }
 
 @MainActor
+private final class TargetFocusOwnershipState {
+    var expected: TargetFocusObservation
+
+    init(expected: TargetFocusObservation) {
+        self.expected = expected
+    }
+}
+
+private struct TargetFocusObservation: Equatable {
+    let frontmostProcess: ApplicationProcessIdentity
+    let focusedWindow: UIAutomationTarget.ExactWindow?
+}
+
+struct ModifierClickDispatchBarrierFailure: Error {
+    let failure: DesktopActionFailure
+}
+
+struct ModifierClickFocusOwnershipLossFailure: Error {
+    let failure: DesktopActionFailure
+}
+
+@MainActor
 final class ForegroundModifierClickExecutor {
     typealias ExactWindowFocusExecutor = @MainActor (
         UIAutomationTarget.ExactWindow,
         FocusDispatchGuard) async throws -> DesktopActionOutcome
+    typealias CursorRestoreExecutor = @MainActor (
+        CGPoint,
+        CGPoint,
+        SharedInputActivityToken) throws -> SharedDesktopRestorationStatus
 
     struct Dependencies {
         let focusExactWindow: ExactWindowFocusExecutor
@@ -33,6 +59,8 @@ final class ForegroundModifierClickExecutor {
             FocusDispatchGuard) async throws -> Bool
         let currentCursorLocation: @MainActor () -> CGPoint?
         let moveCursor: @MainActor (CGPoint) throws -> Void
+        let sharedInputActivityToken: @MainActor () -> SharedInputActivityToken
+        let restoreCursor: CursorRestoreExecutor
         let click: @MainActor (CGPoint, ClickType, [PointerModifier]) throws -> DesktopActionOutcome
         let validateExactWindow: @Sendable (WindowMutationIdentity, CGRect) -> Bool
 
@@ -47,7 +75,9 @@ final class ForegroundModifierClickExecutor {
             moveCursor: @escaping @MainActor (CGPoint) throws -> Void,
             click: @escaping @MainActor (CGPoint, ClickType, [PointerModifier]) throws -> DesktopActionOutcome,
             validateExactWindow: @escaping @Sendable (WindowMutationIdentity, CGRect) -> Bool,
-            restoreExactWindow: ExactWindowFocusExecutor? = nil)
+            restoreExactWindow: ExactWindowFocusExecutor? = nil,
+            sharedInputActivityToken: @escaping @MainActor () -> SharedInputActivityToken = { .zero },
+            restoreCursor: CursorRestoreExecutor? = nil)
         {
             self.focusExactWindow = focusExactWindow
             self.restoreExactWindow = restoreExactWindow ?? focusExactWindow
@@ -56,6 +86,16 @@ final class ForegroundModifierClickExecutor {
             self.activate = activate
             self.currentCursorLocation = currentCursorLocation
             self.moveCursor = moveCursor
+            self.sharedInputActivityToken = sharedInputActivityToken
+            self.restoreCursor = restoreCursor ?? { original, lastWritten, expectedActivity in
+                try CursorRestorationOwnership.restore(
+                    original: original,
+                    lastWritten: lastWritten,
+                    activityToken: expectedActivity,
+                    currentActivity: sharedInputActivityToken,
+                    currentLocation: currentCursorLocation,
+                    move: moveCursor)
+            }
             self.click = click
             self.validateExactWindow = validateExactWindow
         }
@@ -116,10 +156,64 @@ final class ForegroundModifierClickExecutor {
         var primaryFailure: (any Error)?
         var cleanupFailures: [(phase: String, failure: DesktopActionFailure)] = []
         var originalCursor: CGPoint?
+        var inputActivityToken: SharedInputActivityToken? = self.dependencies.sharedInputActivityToken()
         var clickAttempted = false
+        var cleanupAllowed = true
 
         do {
-            let focusOutcome = try await self.dependencies.focusExactWindow(exactWindow, FocusDispatchGuard())
+            let priorObservation = TargetFocusObservation(
+                frontmostProcess: priorFrontmost,
+                focusedWindow: priorFocusedWindow)
+            let targetObservation = TargetFocusObservation(
+                frontmostProcess: exactWindow.identity.processIdentity,
+                focusedWindow: exactWindow)
+            let focusOwnership = TargetFocusOwnershipState(expected: priorObservation)
+            let focusGuard = FocusDispatchGuard(
+                requiresStrictDispatchOwnership: true,
+                validateOwnership: { _ in
+                    guard let current = self.currentTargetFocusObservation() else {
+                        throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                            reason: .targetUnavailable,
+                            message: "Modifier-click prior foreground state changed before target focus dispatch."))
+                    }
+                    if current == targetObservation {
+                        throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                            reason: .targetUnavailable,
+                            message: "Modifier-click target was focused by newer external state."))
+                    }
+                    guard current == focusOwnership.expected else {
+                        throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                            reason: .targetUnavailable,
+                            message: "Modifier-click foreground ownership changed during target focus."))
+                    }
+                },
+                completeDispatch: { stage in
+                    guard let current = self.currentTargetFocusObservation() else {
+                        throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                            reason: .targetUnavailable,
+                            message: "Modifier-click could not verify target-focus ownership after dispatch."))
+                    }
+                    let isAllowed = switch stage {
+                    case .applicationActivation:
+                        current == targetObservation
+                    case .setMainWindow:
+                        current == focusOwnership.expected || current == targetObservation
+                    case .raiseWindow:
+                        current == targetObservation
+                    case .spaceTransition, .unspecified:
+                        false
+                    }
+                    guard isAllowed else {
+                        throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                            reason: .targetUnavailable,
+                            message: "Modifier-click target focus produced an ambiguous foreground state."))
+                    }
+                    if current == targetObservation {
+                        throw ForegroundModifierClickError.focusTargetSatisfied
+                    }
+                    focusOwnership.expected = current
+                })
+            let focusOutcome = try await self.dependencies.focusExactWindow(exactWindow, focusGuard)
             sequence.record(.reportedOutcome(focusOutcome, defaultDispatchedUnitCount: .one))
             guard focusOutcome.isConfirmed,
                   self.dependencies.currentFrontmostIdentity() == request.windowIdentity.processIdentity,
@@ -130,13 +224,18 @@ final class ForegroundModifierClickExecutor {
                     reason: .targetUnavailable,
                     message: "Modifier-click could not confirm the exact foreground window.")
             }
+        } catch let ownershipLoss as ModifierClickFocusOwnershipLossFailure {
+            primaryFailure = ownershipLoss.failure
+            cleanupAllowed = false
         } catch {
             primaryFailure = error
         }
 
         if primaryFailure == nil {
+            let preClickInputActivity = self.dependencies.sharedInputActivityToken()
             if let currentCursor = self.dependencies.currentCursorLocation() {
                 originalCursor = currentCursor
+                inputActivityToken = preClickInputActivity
                 do {
                     guard self.dependencies.currentFrontmostIdentity() == request.windowIdentity.processIdentity,
                           self.dependencies.currentFocusedExactWindow() == exactWindow,
@@ -146,12 +245,21 @@ final class ForegroundModifierClickExecutor {
                             reason: .targetUnavailable,
                             message: "Modifier-click exact foreground ownership changed before click dispatch.")
                     }
+                    guard self.dependencies.sharedInputActivityToken() == preClickInputActivity else {
+                        throw DesktopActionFailure.preDispatchRefusal(
+                            reason: .targetUnavailable,
+                            message: "Modifier-click physical cursor activity changed before click dispatch.")
+                    }
                     clickAttempted = true
                     let clickOutcome = try self.dependencies.click(
                         request.point,
                         request.clickType,
                         request.modifiers)
                     sequence.record(.reportedOutcome(clickOutcome, defaultDispatchedUnitCount: .one))
+                    inputActivityToken = preClickInputActivity.afterModifierClick(request.clickType)
+                } catch let barrierFailure as ModifierClickDispatchBarrierFailure {
+                    primaryFailure = barrierFailure.failure
+                    cleanupAllowed = false
                 } catch {
                     primaryFailure = error
                 }
@@ -163,13 +271,17 @@ final class ForegroundModifierClickExecutor {
         }
 
         var cursorRestoration = SharedDesktopRestorationStatus.notNeeded
-        if clickAttempted, let originalCursor {
+        if cleanupAllowed, clickAttempted, let originalCursor, let ownedInputActivity = inputActivityToken {
             let cursorRestorationPrefixCount = sequence.completedStepCount
             do {
-                cursorRestoration = try self.restoreCursorIfOwned(
-                    original: originalCursor,
-                    lastWritten: request.point,
-                    sequence: &sequence)
+                cursorRestoration = try self.dependencies.restoreCursor(
+                    originalCursor,
+                    request.point,
+                    ownedInputActivity)
+                if cursorRestoration == .restored {
+                    sequence.record(.dispatched(route: .local, delivery: Self.globalForeground, unitCount: .one))
+                    inputActivityToken = ownedInputActivity.afterMouseMove()
+                }
             } catch {
                 cleanupFailures.append((
                     phase: "Cursor restoration",
@@ -182,21 +294,28 @@ final class ForegroundModifierClickExecutor {
         }
 
         var focusRestoration = SharedDesktopRestorationStatus.notNeeded
-        let focusRestorationPrefixCount = sequence.completedStepCount
-        do {
-            focusRestoration = try await self.restoreFocusIfOwned(
-                priorProcess: priorFrontmost,
-                priorWindow: priorFocusedWindow,
-                targetWindow: exactWindow,
-                sequence: &sequence)
-        } catch {
-            cleanupFailures.append((
-                phase: "Focus restoration",
-                failure: self.restorationFailure(
-                    error,
-                    stepWasRecorded: sequence.completedStepCount != focusRestorationPrefixCount,
-                    delivery: Self.nativeForeground,
-                    message: "Modifier-click could not restore the prior foreground window or application.")))
+        if cleanupAllowed, let inputActivityToken,
+           self.dependencies.sharedInputActivityToken() == inputActivityToken
+        {
+            let focusRestorationPrefixCount = sequence.completedStepCount
+            do {
+                focusRestoration = try await self.restoreFocusIfOwned(
+                    priorProcess: priorFrontmost,
+                    priorWindow: priorFocusedWindow,
+                    targetWindow: exactWindow,
+                    inputActivityToken: inputActivityToken,
+                    sequence: &sequence)
+            } catch {
+                cleanupFailures.append((
+                    phase: "Focus restoration",
+                    failure: self.restorationFailure(
+                        error,
+                        stepWasRecorded: sequence.completedStepCount != focusRestorationPrefixCount,
+                        delivery: Self.nativeForeground,
+                        message: "Modifier-click could not restore the prior foreground window or application.")))
+            }
+        } else if cleanupAllowed, clickAttempted {
+            focusRestoration = .preservedNewerState
         }
 
         if !cleanupFailures.isEmpty {
@@ -281,6 +400,11 @@ final class ForegroundModifierClickExecutor {
                 reason: .operationUnsupported,
                 message: "Modifier-click does not support long press.")
         }
+        guard request.clickType != .right, !request.modifiers.contains(.control) else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "Modifier-click does not support contextual right- or Control-click restoration.")
+        }
         guard self.dependencies.validateExactWindow(request.windowIdentity, request.windowBounds) else {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .targetUnavailable,
@@ -288,32 +412,22 @@ final class ForegroundModifierClickExecutor {
         }
     }
 
-    private func restoreCursorIfOwned(
-        original: CGPoint,
-        lastWritten: CGPoint,
-        sequence: inout DesktopActionSequenceAccumulator) throws -> SharedDesktopRestorationStatus
-    {
-        guard let current = self.dependencies.currentCursorLocation() else {
-            throw ForegroundModifierClickError.cursorRestorationUnverified
+    private func currentTargetFocusObservation() -> TargetFocusObservation? {
+        guard let frontmostProcess = self.dependencies.currentFrontmostIdentity() else { return nil }
+        let focusedWindow = self.dependencies.currentFocusedExactWindow()
+        guard focusedWindow == nil || focusedWindow?.identity.processIdentity == frontmostProcess else {
+            return nil
         }
-        if Self.pointsMatch(current, original) {
-            return .notNeeded
-        }
-        guard Self.pointsMatch(current, lastWritten) else {
-            return .preservedNewerState
-        }
-        try self.dependencies.moveCursor(original)
-        sequence.record(.dispatched(route: .local, delivery: Self.globalForeground, unitCount: .one))
-        guard self.dependencies.currentCursorLocation().map({ Self.pointsMatch($0, original) }) == true else {
-            throw ForegroundModifierClickError.cursorRestorationUnverified
-        }
-        return .restored
+        return TargetFocusObservation(
+            frontmostProcess: frontmostProcess,
+            focusedWindow: focusedWindow)
     }
 
     private func restoreFocusIfOwned(
         priorProcess: ApplicationProcessIdentity,
         priorWindow: UIAutomationTarget.ExactWindow?,
         targetWindow: UIAutomationTarget.ExactWindow,
+        inputActivityToken: SharedInputActivityToken,
         sequence: inout DesktopActionSequenceAccumulator) async throws -> SharedDesktopRestorationStatus
     {
         if let priorWindow {
@@ -342,6 +456,9 @@ final class ForegroundModifierClickExecutor {
                 let dispatchGuard = FocusDispatchGuard(
                     requiresStrictDispatchOwnership: true,
                     validateOwnership: { _ in
+                        guard self.dependencies.sharedInputActivityToken() == inputActivityToken else {
+                            throw ForegroundModifierClickError.focusRestorationOwnershipLost
+                        }
                         guard let current = self.currentFocusRestorationObservation() else {
                             throw ForegroundModifierClickError.focusRestorationOwnershipLost
                         }
@@ -353,6 +470,9 @@ final class ForegroundModifierClickExecutor {
                         }
                     },
                     completeDispatch: { stage in
+                        guard self.dependencies.sharedInputActivityToken() == inputActivityToken else {
+                            throw ForegroundModifierClickError.focusRestorationOwnershipLost
+                        }
                         guard let current = self.currentFocusRestorationObservation() else {
                             throw ForegroundModifierClickError.focusRestorationOwnershipLost
                         }
@@ -406,6 +526,9 @@ final class ForegroundModifierClickExecutor {
         }
         do {
             let dispatchGuard = FocusDispatchGuard {
+                guard self.dependencies.sharedInputActivityToken() == inputActivityToken else {
+                    throw ForegroundModifierClickError.focusRestorationOwnershipLost
+                }
                 let dispatchCurrent = self.dependencies.currentFrontmostIdentity()
                 if dispatchCurrent == priorProcess {
                     throw ForegroundModifierClickError.focusRestorationBecameUnnecessary
@@ -482,10 +605,6 @@ final class ForegroundModifierClickExecutor {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func pointsMatch(_ lhs: CGPoint, _ rhs: CGPoint) -> Bool {
-        abs(lhs.x - rhs.x) <= 0.5 && abs(lhs.y - rhs.y) <= 0.5
-    }
-
     private static let globalForeground = DesktopActionOutcome.Delivery(
         mechanism: .globalEvents,
         mode: .foreground)
@@ -503,6 +622,7 @@ enum ForegroundModifierClickError: LocalizedError {
     case focusRestorationBecameUnnecessary
     case focusRestorationOwnershipLost
     case focusRestorationSatisfied
+    case focusTargetSatisfied
     case focusRestorationUnverified
 
     var errorDescription: String? {
@@ -515,6 +635,8 @@ enum ForegroundModifierClickError: LocalizedError {
             "Newer foreground state replaced Peekaboo's target before restoration dispatch."
         case .focusRestorationSatisfied:
             "The prior foreground state was restored by Peekaboo's accepted dispatch."
+        case .focusTargetSatisfied:
+            "The exact modifier-click target became focused before another focus dispatch was needed."
         case .focusRestorationUnverified:
             "The prior foreground window or application could not be re-established."
         }

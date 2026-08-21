@@ -67,11 +67,14 @@ extension ClickCommand: PreRuntimeValidatingCommand {
             else {
                 throw ValidationError("--modifiers requires one explicit fresh screenshot --snapshot ID")
             }
-            guard self.modifiers?.values.allSatisfy({ $0 != "fn" }) == true else {
-                throw ValidationError("--modifiers supports cmd, shift, option, and ctrl")
+            guard self.modifiers?.values.allSatisfy({ $0 != "fn" && $0 != "ctrl" }) == true else {
+                throw ValidationError("--modifiers supports cmd, shift, and option; Control-click is contextual")
             }
             guard !self.longPress else {
                 throw ValidationError("--modifiers cannot be combined with --long-press")
+            }
+            guard !self.right else {
+                throw ValidationError("--modifiers cannot be combined with contextual --right input")
             }
         }
 

@@ -56,7 +56,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     @Flag(help: "Press and hold for 1.2 seconds at a stationary point (requires --foreground)")
     var longPress = false
 
-    @Option(help: "Modifier keys for an exact foreground click: cmd,shift,option,ctrl")
+    @Option(help: "Modifier keys for an exact foreground click: cmd,shift,option")
     var modifiers: CLIModifierList?
 
     @OptionGroup var focusOptions: FocusCommandOptions
@@ -763,9 +763,12 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         guard let modifiers = self.modifiers?.values.map(Self.pointerModifier),
               !modifiers.contains(where: { $0 == nil })
         else {
-            throw ValidationError("--modifiers accepts only cmd, shift, option, and ctrl")
+            throw ValidationError("--modifiers accepts only cmd, shift, and option")
         }
         let canonicalModifiers = modifiers.compactMap(\.self)
+        guard !canonicalModifiers.contains(.control), self.requestedClickType != .right else {
+            throw ValidationError("Modifier-click cannot use Control or right-click contextual input")
+        }
         let authority: SnapshotTargetReceipt.CoordinateAuthority
         do {
             authority = try await SnapshotTargetReceiptPlanner(

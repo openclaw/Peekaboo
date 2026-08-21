@@ -48,6 +48,20 @@ struct MCPComposedInputParityTests {
         #expect(refused.meta?.objectValue?["mutation_dispatched"] == .bool(false))
         #expect(await MainActor.run { fixture.automation.foregroundModifierClickRequests.isEmpty })
 
+        for contextual in [
+            ["coords": "600,300", "snapshot": fixture.snapshotID, "foreground": true, "modifiers": ["ctrl"]],
+            [
+                "coords": "600,300", "snapshot": fixture.snapshotID, "foreground": true,
+                "modifiers": ["cmd"], "right": true,
+            ],
+        ] as [[String: Any]] {
+            let contextualResponse = try await ClickTool(context: fixture.context).execute(
+                arguments: ToolArguments(raw: contextual))
+            #expect(contextualResponse.isError)
+            #expect(contextualResponse.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+        }
+        #expect(await MainActor.run { fixture.automation.foregroundModifierClickRequests.isEmpty })
+
         let response = try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
             "coords": "600,300",
             "snapshot": fixture.snapshotID,
@@ -98,7 +112,7 @@ struct MCPComposedInputParityTests {
         #expect(typeProperties["coordinate_space"]?.objectValue?["enum"] == .array(
             CaptureCoordinateSpace.allCases.map { .string($0.rawValue) }))
         #expect(clickProperties["modifiers"]?.objectValue?["items"]?.objectValue?["enum"] == .array([
-            .string("cmd"), .string("shift"), .string("option"), .string("ctrl"),
+            .string("cmd"), .string("shift"), .string("option"),
         ]))
     }
 

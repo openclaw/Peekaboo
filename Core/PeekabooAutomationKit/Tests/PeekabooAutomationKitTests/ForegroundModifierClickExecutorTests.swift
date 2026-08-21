@@ -13,12 +13,24 @@ struct ForegroundModifierClickExecutorTests {
             point: CGPoint(x: 220, y: 240),
             clickType: .double,
             modifiers: [.command, .shift],
-            source: CGEventSource(stateID: .hidSystemState))
+            source: CGEventSource(stateID: .hidSystemState),
+            eventSourceUserData: 42)
 
         #expect(events.map(\.type) == [.leftMouseDown, .leftMouseUp, .leftMouseDown, .leftMouseUp])
         #expect(events.map { $0.getIntegerValueField(.mouseEventClickState) } == [1, 1, 2, 2])
         #expect(events.allSatisfy { $0.flags.contains([.maskCommand, .maskShift]) })
+        #expect(events.allSatisfy { $0.getIntegerValueField(.eventSourceUserData) == 42 })
         #expect(CGEventSource.flagsState(.combinedSessionState) == priorFlags)
+    }
+
+    @Test
+    func `private event sources expose distinct counter state tables`() throws {
+        let first = try #require(CGEventSource(stateID: .privateState))
+        let second = try #require(CGEventSource(stateID: .privateState))
+
+        #expect(first.sourceStateID != .privateState)
+        #expect(second.sourceStateID != .privateState)
+        #expect(first.sourceStateID != second.sourceStateID)
     }
 
     @Test
@@ -448,6 +460,107 @@ struct ForegroundModifierClickExecutorTests {
     }
 
     @Test
+    func `foreground drift before initial focus dispatch preserves newer state`() async throws {
+        let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
+        let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
+        let newer = ApplicationProcessIdentity(processIdentifier: 33, processStartIdentity: 330)
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        var frontmost = prior
+        var clickAttempted = false
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { _, beforeDispatch in
+                    frontmost = newer
+                    try beforeDispatch()
+                    Issue.record("Initial focus must not overwrite newer foreground state")
+                    return .confirmedNoChange()
+                },
+                currentFrontmostIdentity: { frontmost },
+                currentFocusedExactWindow: { nil },
+                activate: { _, _ in false },
+                currentCursorLocation: { CGPoint(x: 10, y: 10) },
+                moveCursor: { _ in },
+                click: { _, _, _ in
+                    clickAttempted = true
+                    return .confirmedNoChange()
+                },
+                validateExactWindow: { _, _ in true }))
+
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await executor.execute(ForegroundModifierClickRequest(
+                point: CGPoint(x: 20, y: 20),
+                clickType: .single,
+                modifiers: [.command],
+                windowIdentity: WindowMutationIdentity(
+                    windowID: 7,
+                    ownerProcessIdentifier: target.processIdentifier,
+                    ownerProcessStartIdentity: target.processStartIdentity,
+                    capturedBounds: bounds),
+                windowBounds: bounds))
+        }
+        #expect(!clickAttempted)
+        #expect(frontmost == newer)
+    }
+
+    @Test
+    func `external target focus between initial dispatch stages preserves newer state`() async throws {
+        let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
+        let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        var frontmost = prior
+        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var clickAttempted = false
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { window, dispatchGuard in
+                    try dispatchGuard.validate(.setMainWindow)
+                    try dispatchGuard.didCompleteDispatch(.setMainWindow)
+                    frontmost = target
+                    focusedWindow = window
+                    try dispatchGuard.validate(.raiseWindow)
+                    Issue.record("Initial focus must not claim an external exact-target transition")
+                    return .confirmedNoChange()
+                },
+                currentFrontmostIdentity: { frontmost },
+                currentFocusedExactWindow: { focusedWindow },
+                activate: { _, _ in false },
+                currentCursorLocation: { CGPoint(x: 10, y: 10) },
+                moveCursor: { _ in },
+                click: { _, _, _ in
+                    clickAttempted = true
+                    return .confirmedNoChange()
+                },
+                validateExactWindow: { _, _ in true }))
+
+        do {
+            _ = try await executor.execute(ForegroundModifierClickRequest(
+                point: CGPoint(x: 20, y: 20),
+                clickType: .single,
+                modifiers: [.command],
+                windowIdentity: WindowMutationIdentity(
+                    windowID: 7,
+                    ownerProcessIdentifier: target.processIdentifier,
+                    ownerProcessStartIdentity: target.processStartIdentity,
+                    capturedBounds: bounds),
+                windowBounds: bounds))
+            Issue.record("Expected external exact-target focus to refuse")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.dispatchState == .none)
+        }
+
+        #expect(!clickAttempted)
+        #expect(frontmost == target)
+        #expect(focusedWindow?.identity.windowID == 7)
+    }
+
+    @Test
     func `foreground drift during cursor recapture refuses before click dispatch`() async throws {
         let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
         let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
@@ -505,6 +618,219 @@ struct ForegroundModifierClickExecutorTests {
         }
         #expect(!clickAttempted)
         #expect(frontmost == newer)
+    }
+
+    @Test
+    func `cursor movement or stationary click generation wins before restoration write`() throws {
+        let expected = SharedInputActivityToken.trackedZero
+        let original = CGPoint(x: 10, y: 10)
+        let lastWritten = CGPoint(x: 20, y: 20)
+        for newer in [expected.afterMouseMove(), expected.afterModifierClick(.single)] {
+            var activityReads = 0
+            var cursor = lastWritten
+            var moveAttempted = false
+
+            let status = try CursorRestorationOwnership.restore(
+                original: original,
+                lastWritten: lastWritten,
+                activityToken: expected,
+                currentActivity: {
+                    activityReads += 1
+                    return activityReads == 1 ? expected : newer
+                },
+                currentLocation: { cursor },
+                move: {
+                    moveAttempted = true
+                    cursor = $0
+                })
+
+            #expect(status == .preservedNewerState)
+            #expect(!moveAttempted)
+            #expect(cursor == lastWritten)
+        }
+    }
+
+    @Test(arguments: SharedDesktopInterruption.allCases)
+    func `newer shared input suppresses cursor and focus cleanup`(
+        _ interruption: SharedDesktopInterruption) async throws
+    {
+        let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
+        let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let point = CGPoint(x: 20, y: 20)
+        var frontmost = prior
+        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var cursor = CGPoint(x: 10, y: 10)
+        var activity = SharedInputActivityToken.trackedZero
+        var cursorCleanupAttempted = false
+        var focusCleanupAttempted = false
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { window, dispatchGuard in
+                    try dispatchGuard()
+                    frontmost = target
+                    focusedWindow = window
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                        unitCount: .one)
+                },
+                currentFrontmostIdentity: { frontmost },
+                currentFocusedExactWindow: { focusedWindow },
+                activate: { _, _ in
+                    focusCleanupAttempted = true
+                    return true
+                },
+                currentCursorLocation: { cursor },
+                moveCursor: { location in
+                    cursorCleanupAttempted = true
+                    cursor = location
+                },
+                click: { location, clickType, _ in
+                    cursor = location
+                    activity = interruption.activity(
+                        after: activity.afterModifierClick(clickType))
+                    return .dispatchedUnverified(
+                        delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                        evidence: .deliveryAccepted,
+                        unitCount: .one)
+                },
+                validateExactWindow: { _, _ in true },
+                sharedInputActivityToken: { activity }))
+
+        let result = try await executor.execute(ForegroundModifierClickRequest(
+            point: point,
+            clickType: .single,
+            modifiers: [.command],
+            windowIdentity: WindowMutationIdentity(
+                windowID: 7,
+                ownerProcessIdentifier: target.processIdentifier,
+                ownerProcessStartIdentity: target.processStartIdentity,
+                capturedBounds: bounds),
+            windowBounds: bounds))
+
+        #expect(result.payload.cursorRestoration == .preservedNewerState)
+        #expect(result.payload.focusRestoration == .preservedNewerState)
+        #expect(!cursorCleanupAttempted)
+        #expect(!focusCleanupAttempted)
+        #expect(cursor == point)
+        #expect(frontmost == target)
+    }
+
+    @Test
+    func `private source mouse up barrier waits for the complete sequence`() throws {
+        let clock = ContinuousClock()
+        var now = clock.now
+        let deadline = now.advanced(by: .milliseconds(3))
+        var counter: UInt32 = 7
+        var steps = 0
+
+        try ModifierClickDispatchBarrier.waitForMouseUps(
+            baseline: 7,
+            expectedIncrement: 2,
+            deadline: deadline,
+            now: { now },
+            counter: { counter },
+            runLoopStep: {
+                steps += 1
+                counter += 1
+                now = now.advanced(by: .milliseconds(1))
+            })
+
+        #expect(steps == 2)
+        #expect(counter == 9)
+    }
+
+    @Test
+    func `mouse up barrier timeout is cleanup unsafe and accounts one click unit`() {
+        let clock = ContinuousClock()
+        var now = clock.now
+        let deadline = now.advanced(by: .milliseconds(1))
+        do {
+            try ModifierClickDispatchBarrier.waitForMouseUps(
+                baseline: 7,
+                expectedIncrement: 1,
+                deadline: deadline,
+                now: { now },
+                counter: { 7 },
+                runLoopStep: { now = deadline })
+            Issue.record("Expected the modifier-click delivery barrier to time out")
+        } catch let failure as ModifierClickDispatchBarrierFailure {
+            #expect(failure.failure.outcome.state == .indeterminate)
+            #expect(failure.failure.outcome.dispatchState.unitCount == .one)
+            #expect(failure.failure.outcome.retrySafety == .unsafe)
+        } catch {
+            Issue.record("Unexpected barrier error: \(error)")
+        }
+    }
+
+    @Test
+    func `uncertain click barrier skips cursor and focus cleanup`() async throws {
+        let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
+        let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let point = CGPoint(x: 20, y: 20)
+        var frontmost = prior
+        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var cursor = CGPoint(x: 10, y: 10)
+        var cursorCleanupAttempted = false
+        var focusCleanupAttempted = false
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { window, beforeDispatch in
+                    try beforeDispatch()
+                    frontmost = target
+                    focusedWindow = window
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                        unitCount: .one)
+                },
+                currentFrontmostIdentity: { frontmost },
+                currentFocusedExactWindow: { focusedWindow },
+                activate: { _, _ in
+                    focusCleanupAttempted = true
+                    return true
+                },
+                currentCursorLocation: { cursor },
+                moveCursor: {
+                    cursorCleanupAttempted = true
+                    cursor = $0
+                },
+                click: { location, _, _ in
+                    cursor = location
+                    throw ModifierClickDispatchBarrierFailure(failure: .indeterminate(
+                        delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                        evidence: .completionUnknown,
+                        unitCount: .one,
+                        message: "fixture barrier timeout"))
+                },
+                validateExactWindow: { _, _ in true }))
+
+        do {
+            _ = try await executor.execute(ForegroundModifierClickRequest(
+                point: point,
+                clickType: .single,
+                modifiers: [.command],
+                windowIdentity: WindowMutationIdentity(
+                    windowID: 7,
+                    ownerProcessIdentifier: target.processIdentifier,
+                    ownerProcessStartIdentity: target.processStartIdentity,
+                    capturedBounds: bounds),
+                windowBounds: bounds))
+            Issue.record("Expected uncertain modifier-click delivery")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.dispatchState.unitCount?.rawValue == 2)
+        }
+        #expect(!cursorCleanupAttempted)
+        #expect(!focusCleanupAttempted)
+        #expect(cursor == point)
+        #expect(frontmost == target)
     }
 
     @Test
@@ -738,13 +1064,28 @@ struct ForegroundModifierClickExecutorTests {
             laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
             dependencies: .init(
                 focusExactWindow: { window, beforeDispatch in
-                    try beforeDispatch()
                     #expect(window == targetWindow)
+                    var focusSequence = DesktopActionSequenceAccumulator()
+                    try beforeDispatch.validate(.setMainWindow)
+                    focusSequence.record(.dispatched(
+                        route: .local,
+                        delivery: .init(mechanism: .accessibilityValue, mode: .foreground),
+                        unitCount: .one))
+                    try beforeDispatch.didCompleteDispatch(.setMainWindow)
+                    try beforeDispatch.validate(.raiseWindow)
                     focusCalls.append(window.identity.windowID)
                     focusedWindow = window
-                    return .confirmedChange(
-                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
-                        unitCount: .one)
+                    focusSequence.record(.dispatched(
+                        route: .local,
+                        delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                        unitCount: .one))
+                    do {
+                        try beforeDispatch.didCompleteDispatch(.raiseWindow)
+                        Issue.record("Exact target focus should terminate after the owned raise")
+                    } catch ForegroundModifierClickError.focusTargetSatisfied {
+                        return FocusDispatchAccounting.verifiedFocusOutcome(focusSequence.successResolution())
+                    }
+                    return .confirmedNoChange()
                 },
                 currentFrontmostIdentity: { process },
                 currentFocusedExactWindow: { focusedWindow },
@@ -1088,6 +1429,23 @@ private final class ModifierClickDispatchGuardState {
     var expectedState = 0
     var intermediateState = 1
     var finalState = 2
+}
+
+enum SharedDesktopInterruption: CaseIterable, Sendable {
+    case stationaryClick
+    case keyboard
+    case scroll
+
+    func activity(after token: SharedInputActivityToken) -> SharedInputActivityToken {
+        switch self {
+        case .stationaryClick:
+            token.afterModifierClick(.single)
+        case .keyboard:
+            token.afterKeyboardInput()
+        case .scroll:
+            token.afterScrollInput()
+        }
+    }
 }
 
 private enum ModifierClickTestError: LocalizedError {

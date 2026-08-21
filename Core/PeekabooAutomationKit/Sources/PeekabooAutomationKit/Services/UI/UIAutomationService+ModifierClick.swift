@@ -3,6 +3,34 @@ import CoreGraphics
 import Foundation
 import PeekabooFoundation
 
+@MainActor
+enum ModifierClickDispatchBarrier {
+    static func waitForMouseUps(
+        baseline: UInt32,
+        expectedIncrement: UInt32,
+        deadline: ContinuousClock.Instant,
+        now: () -> ContinuousClock.Instant = { ContinuousClock.now },
+        counter: () -> UInt32,
+        runLoopStep: () -> Void) throws
+    {
+        while now() < deadline {
+            if counter() &- baseline >= expectedIncrement {
+                return
+            }
+            runLoopStep()
+        }
+        if counter() &- baseline >= expectedIncrement {
+            return
+        }
+        throw ModifierClickDispatchBarrierFailure(failure: .indeterminate(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: "Modifier-click mouse-up delivery did not reach the session before cleanup.",
+            hint: "Inspect the shared desktop state before taking another input action."))
+    }
+}
+
 extension UIAutomationService {
     public func foregroundModifierClickWithOutcome(
         _ request: ForegroundModifierClickRequest) async throws
@@ -21,6 +49,14 @@ extension UIAutomationService {
                             expectedIdentity: target.identity,
                             dispatchGuard: dispatchGuard,
                             onDispatch: { sequence.record($0.sequenceStep) })
+                    } catch ForegroundModifierClickError.focusTargetSatisfied {
+                        return FocusDispatchAccounting.verifiedFocusOutcome(sequence.successResolution())
+                    } catch let ownershipLoss as ModifierClickFocusOwnershipLossFailure {
+                        guard sequence.mutationDisposition.mutationDispatched else { throw ownershipLoss }
+                        throw ModifierClickFocusOwnershipLossFailure(failure: sequence.failure(
+                            combining: ownershipLoss.failure,
+                            message: "Modifier-click target focus lost foreground ownership after dispatch.",
+                            hint: "Inspect the shared desktop before taking another input action."))
                     } catch {
                         guard sequence.mutationDisposition.mutationDispatched else { throw error }
                         let leaf = error as? DesktopActionFailure ?? .preDispatchRefusal(
@@ -74,6 +110,13 @@ extension UIAutomationService {
                             hint: "Inspect the shared desktop before taking another input action.")
                     }
                     return FocusDispatchAccounting.verifiedFocusOutcome(sequence.successResolution())
+                },
+                sharedInputActivityToken: { self.syntheticInputDriver.sharedInputActivityToken() },
+                restoreCursor: { original, lastWritten, activityToken in
+                    try self.syntheticInputDriver.restoreCursorIfOwned(
+                        original: original,
+                        lastWritten: lastWritten,
+                        activityToken: activityToken)
                 }))
         return try await executor.execute(request)
     }
@@ -127,13 +170,33 @@ extension UIAutomationService {
         guard CGPreflightPostEventAccess() else {
             throw PeekabooError.permissionDeniedEventSynthesizing
         }
-        let source = CGEventSource(stateID: .hidSystemState)
+        guard let source = CGEventSource(stateID: .privateState) else {
+            throw PeekabooError.serviceUnavailable(
+                "Modifier-click could not create its private event source")
+        }
+        let marker = Int64.random(in: 1...Int64.max)
         let events = try self.makeModifierClickEvents(
             point: point,
             clickType: clickType,
             modifiers: modifiers,
-            source: source)
+            source: source,
+            eventSourceUserData: marker)
+        let descriptor = self.mouseEventDescriptor(for: clickType)
+        let sourceStateID = source.sourceStateID
+        // CoreGraphics replaces the `.privateState` creation sentinel with a unique state-table ID.
+        // The event counter below is therefore scoped to this source rather than the shared session.
+        guard sourceStateID != .privateState else {
+            throw PeekabooError.serviceUnavailable(
+                "Modifier-click could not establish a private event state table")
+        }
+        let baseline = CGEventSource.counterForEventType(sourceStateID, eventType: descriptor.up)
         events.forEach { $0.post(tap: .cghidEventTap) }
+        try ModifierClickDispatchBarrier.waitForMouseUps(
+            baseline: baseline,
+            expectedIncrement: UInt32(descriptor.count),
+            deadline: ContinuousClock.now.advanced(by: .milliseconds(500)),
+            counter: { CGEventSource.counterForEventType(sourceStateID, eventType: descriptor.up) },
+            runLoopStep: { CFRunLoopRunInMode(.defaultMode, 0.005, true) })
         return .dispatchedUnverified(
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
             evidence: .deliveryAccepted,
@@ -144,7 +207,8 @@ extension UIAutomationService {
         point: CGPoint,
         clickType: ClickType,
         modifiers: [PointerModifier],
-        source: CGEventSource?) throws -> [CGEvent]
+        source: CGEventSource?,
+        eventSourceUserData: Int64? = nil) throws -> [CGEvent]
     {
         let descriptor = self.mouseEventDescriptor(for: clickType)
         let flags = self.flags(for: modifiers)
@@ -167,6 +231,9 @@ extension UIAutomationService {
             for event in [down, up] {
                 event.flags = flags
                 event.setIntegerValueField(.mouseEventClickState, value: Int64(clickState))
+                if let eventSourceUserData {
+                    event.setIntegerValueField(.eventSourceUserData, value: eventSourceUserData)
+                }
                 events.append(event)
             }
         }

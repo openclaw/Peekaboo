@@ -83,7 +83,7 @@ extension ClickCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "modifiers",
-                    help: "Foreground modifier keys: cmd,shift,option,ctrl",
+                    help: "Foreground modifier keys: cmd,shift,option",
                     long: "modifiers"
                 ),
             ],

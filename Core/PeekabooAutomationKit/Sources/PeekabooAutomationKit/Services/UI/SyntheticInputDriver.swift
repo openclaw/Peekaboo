@@ -1,12 +1,191 @@
 import AXorcist
 import CoreGraphics
 import Foundation
+import enum PeekabooFoundation.ClickType
+import struct PeekabooFoundation.DesktopActionFailure
 import struct PeekabooFoundation.DesktopActionOutcome
 import enum PeekabooFoundation.PeekabooError
 
 struct ExactWindowPointerTarget: Sendable {
     let identity: WindowMutationIdentity
     let bounds: CGRect
+}
+
+struct SharedInputActivityToken: Equatable, Sendable {
+    private let tracksActivity: Bool
+    let moved: UInt32
+    let leftDragged: UInt32
+    let rightDragged: UInt32
+    let otherDragged: UInt32
+    let leftDown: UInt32
+    let leftUp: UInt32
+    let rightDown: UInt32
+    let rightUp: UInt32
+    let otherDown: UInt32
+    let otherUp: UInt32
+    let keyDown: UInt32
+    let keyUp: UInt32
+    let flagsChanged: UInt32
+    let scrollWheel: UInt32
+
+    static let zero = Self(
+        tracksActivity: false,
+        moved: 0,
+        leftDragged: 0,
+        rightDragged: 0,
+        otherDragged: 0,
+        leftDown: 0,
+        leftUp: 0,
+        rightDown: 0,
+        rightUp: 0,
+        otherDown: 0,
+        otherUp: 0,
+        keyDown: 0,
+        keyUp: 0,
+        flagsChanged: 0,
+        scrollWheel: 0)
+    static let trackedZero = Self(
+        tracksActivity: true,
+        moved: 0,
+        leftDragged: 0,
+        rightDragged: 0,
+        otherDragged: 0,
+        leftDown: 0,
+        leftUp: 0,
+        rightDown: 0,
+        rightUp: 0,
+        otherDown: 0,
+        otherUp: 0,
+        keyDown: 0,
+        keyUp: 0,
+        flagsChanged: 0,
+        scrollWheel: 0)
+
+    static func current() -> Self {
+        Self(
+            tracksActivity: true,
+            moved: CGEventSource.counterForEventType(.combinedSessionState, eventType: .mouseMoved),
+            leftDragged: CGEventSource.counterForEventType(.combinedSessionState, eventType: .leftMouseDragged),
+            rightDragged: CGEventSource.counterForEventType(.combinedSessionState, eventType: .rightMouseDragged),
+            otherDragged: CGEventSource.counterForEventType(.combinedSessionState, eventType: .otherMouseDragged),
+            leftDown: CGEventSource.counterForEventType(.combinedSessionState, eventType: .leftMouseDown),
+            leftUp: CGEventSource.counterForEventType(.combinedSessionState, eventType: .leftMouseUp),
+            rightDown: CGEventSource.counterForEventType(.combinedSessionState, eventType: .rightMouseDown),
+            rightUp: CGEventSource.counterForEventType(.combinedSessionState, eventType: .rightMouseUp),
+            otherDown: CGEventSource.counterForEventType(.combinedSessionState, eventType: .otherMouseDown),
+            otherUp: CGEventSource.counterForEventType(.combinedSessionState, eventType: .otherMouseUp),
+            keyDown: CGEventSource.counterForEventType(.combinedSessionState, eventType: .keyDown),
+            keyUp: CGEventSource.counterForEventType(.combinedSessionState, eventType: .keyUp),
+            flagsChanged: CGEventSource.counterForEventType(.combinedSessionState, eventType: .flagsChanged),
+            scrollWheel: CGEventSource.counterForEventType(.combinedSessionState, eventType: .scrollWheel))
+    }
+
+    func afterModifierClick(_ clickType: ClickType) -> Self {
+        guard self.tracksActivity else { return self }
+        let count: UInt32 = switch clickType {
+        case .double: 2
+        case .triple: 3
+        default: 1
+        }
+        return switch clickType {
+        case .right:
+            self.with(rightDown: self.rightDown &+ count, rightUp: self.rightUp &+ count)
+        case .middle:
+            self.with(otherDown: self.otherDown &+ count, otherUp: self.otherUp &+ count)
+        case .single, .double, .triple, .longPress:
+            self.with(leftDown: self.leftDown &+ count, leftUp: self.leftUp &+ count)
+        }
+    }
+
+    func afterMouseMove() -> Self {
+        guard self.tracksActivity else { return self }
+        return self.with(moved: self.moved &+ 1)
+    }
+
+    func afterKeyboardInput() -> Self {
+        guard self.tracksActivity else { return self }
+        return self.with(keyDown: self.keyDown &+ 1)
+    }
+
+    func afterScrollInput() -> Self {
+        guard self.tracksActivity else { return self }
+        return self.with(scrollWheel: self.scrollWheel &+ 1)
+    }
+
+    private func with(
+        moved: UInt32? = nil,
+        leftDown: UInt32? = nil,
+        leftUp: UInt32? = nil,
+        rightDown: UInt32? = nil,
+        rightUp: UInt32? = nil,
+        otherDown: UInt32? = nil,
+        otherUp: UInt32? = nil,
+        keyDown: UInt32? = nil,
+        keyUp: UInt32? = nil,
+        flagsChanged: UInt32? = nil,
+        scrollWheel: UInt32? = nil) -> Self
+    {
+        Self(
+            tracksActivity: self.tracksActivity,
+            moved: moved ?? self.moved,
+            leftDragged: self.leftDragged,
+            rightDragged: self.rightDragged,
+            otherDragged: self.otherDragged,
+            leftDown: leftDown ?? self.leftDown,
+            leftUp: leftUp ?? self.leftUp,
+            rightDown: rightDown ?? self.rightDown,
+            rightUp: rightUp ?? self.rightUp,
+            otherDown: otherDown ?? self.otherDown,
+            otherUp: otherUp ?? self.otherUp,
+            keyDown: keyDown ?? self.keyDown,
+            keyUp: keyUp ?? self.keyUp,
+            flagsChanged: flagsChanged ?? self.flagsChanged,
+            scrollWheel: scrollWheel ?? self.scrollWheel)
+    }
+}
+
+@MainActor
+enum CursorRestorationOwnership {
+    static func restore(
+        original: CGPoint,
+        lastWritten: CGPoint,
+        activityToken: SharedInputActivityToken,
+        currentActivity: () -> SharedInputActivityToken,
+        currentLocation: () -> CGPoint?,
+        move: (CGPoint) throws -> Void) throws -> SharedDesktopRestorationStatus
+    {
+        guard currentActivity() == activityToken else {
+            return .preservedNewerState
+        }
+        guard let current = currentLocation() else {
+            throw ForegroundModifierClickError.cursorRestorationUnverified
+        }
+        if self.pointsMatch(current, original) {
+            return .notNeeded
+        }
+        guard self.pointsMatch(current, lastWritten) else {
+            return .preservedNewerState
+        }
+        // Recheck the shared event-generation journal inside the synchronous restore primitive,
+        // immediately before posting our move. Any intervening physical move/drag owns the cursor.
+        guard currentActivity() == activityToken else {
+            return .preservedNewerState
+        }
+        try move(original)
+        guard currentLocation().map({ self.pointsMatch($0, original) }) == true else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "The physical cursor restoration was dispatched but could not be verified.",
+                hint: "Inspect the shared desktop state before taking another input action.")
+        }
+        return .restored
+    }
+
+    private static func pointsMatch(_ lhs: CGPoint, _ rhs: CGPoint) -> Bool {
+        abs(lhs.x - rhs.x) <= 0.5 && abs(lhs.y - rhs.y) <= 0.5
+    }
 }
 
 @MainActor
@@ -27,6 +206,11 @@ protocol SyntheticInputDriving: Sendable {
         target: ExactWindowPointerTarget) async throws -> DesktopActionOutcome
     func move(to point: CGPoint) throws
     func currentLocation() -> CGPoint?
+    func sharedInputActivityToken() -> SharedInputActivityToken
+    func restoreCursorIfOwned(
+        original: CGPoint,
+        lastWritten: CGPoint,
+        activityToken: SharedInputActivityToken) throws -> SharedDesktopRestorationStatus
     func pressHold(at point: CGPoint, button: MouseButton, duration: TimeInterval) async throws
     func scroll(deltaX: Double, deltaY: Double, at point: CGPoint?) throws
     func type(_ text: String, delayPerCharacter: TimeInterval) throws
@@ -35,6 +219,24 @@ protocol SyntheticInputDriving: Sendable {
 }
 
 extension SyntheticInputDriving {
+    func sharedInputActivityToken() -> SharedInputActivityToken {
+        .zero
+    }
+
+    func restoreCursorIfOwned(
+        original: CGPoint,
+        lastWritten: CGPoint,
+        activityToken: SharedInputActivityToken) throws -> SharedDesktopRestorationStatus
+    {
+        try CursorRestorationOwnership.restore(
+            original: original,
+            lastWritten: lastWritten,
+            activityToken: activityToken,
+            currentActivity: self.sharedInputActivityToken,
+            currentLocation: self.currentLocation,
+            move: self.move)
+    }
+
     func click(
         at point: CGPoint,
         button: MouseButton,
@@ -149,6 +351,24 @@ struct SyntheticInputDriver: SyntheticInputDriving {
 
     func currentLocation() -> CGPoint? {
         InputDriver.currentLocation()
+    }
+
+    func sharedInputActivityToken() -> SharedInputActivityToken {
+        .current()
+    }
+
+    func restoreCursorIfOwned(
+        original: CGPoint,
+        lastWritten: CGPoint,
+        activityToken: SharedInputActivityToken) throws -> SharedDesktopRestorationStatus
+    {
+        try CursorRestorationOwnership.restore(
+            original: original,
+            lastWritten: lastWritten,
+            activityToken: activityToken,
+            currentActivity: self.sharedInputActivityToken,
+            currentLocation: self.currentLocation,
+            move: self.move)
     }
 
     func pressHold(at point: CGPoint, button: MouseButton = .left, duration: TimeInterval) async throws {
