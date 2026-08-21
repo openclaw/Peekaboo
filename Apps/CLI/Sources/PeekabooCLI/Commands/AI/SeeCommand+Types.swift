@@ -269,6 +269,14 @@ struct SeeCommandRenderContext {
     let observation: SeeObservationDiagnostics?
     let menuBar: MenuBarSummary?
     let receipt: SeeExecutionReceipt
+
+    var snapshotReusable: Bool {
+        !self.metadata.isApplicationScopedAccessibilityFallback
+    }
+
+    var semanticScope: String {
+        self.snapshotReusable ? "exact_or_requested" : "application_partial"
+    }
 }
 
 struct UIElementSummary: Codable {
@@ -405,7 +413,10 @@ struct SeeTruncationSummary: Codable {
 }
 
 struct SeeResult: Codable {
-    let snapshot_id: String
+    let snapshot_id: String?
+    let snapshot_reusable: Bool
+    let semantic_scope: String
+    let mutation_targeting_available: Bool
     let screenshot_raw: String
     let screenshot_annotated: String
     let ui_map: String
@@ -423,8 +434,34 @@ struct SeeResult: Codable {
     let observation: SeeObservationDiagnostics?
     let coordinate_context: CaptureCoordinateContext?
 
+    private enum CodingKeys: String, CodingKey {
+        case snapshot_id
+        case snapshot_reusable
+        case semantic_scope
+        case mutation_targeting_available
+        case screenshot_raw
+        case screenshot_annotated
+        case ui_map
+        case application_name
+        case window_title
+        case is_dialog
+        case element_count
+        case interactable_count
+        case capture_mode
+        case analysis
+        case execution_time
+        case ui_elements
+        case truncation
+        case menu_bar
+        case observation
+        case coordinate_context
+    }
+
     init(
-        snapshot_id: String,
+        snapshot_id: String?,
+        snapshot_reusable: Bool = true,
+        semantic_scope: String = "exact_or_requested",
+        mutation_targeting_available: Bool = true,
         screenshot_raw: String,
         screenshot_annotated: String,
         ui_map: String,
@@ -443,6 +480,9 @@ struct SeeResult: Codable {
         coordinate_context: CaptureCoordinateContext? = nil
     ) {
         self.snapshot_id = snapshot_id
+        self.snapshot_reusable = snapshot_reusable
+        self.semantic_scope = semantic_scope
+        self.mutation_targeting_available = mutation_targeting_available
         self.screenshot_raw = screenshot_raw
         self.screenshot_annotated = screenshot_annotated
         self.ui_map = ui_map
@@ -459,6 +499,34 @@ struct SeeResult: Codable {
         self.menu_bar = menu_bar
         self.observation = observation
         self.coordinate_context = coordinate_context
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if let snapshot_id {
+            try container.encode(snapshot_id, forKey: .snapshot_id)
+        } else {
+            try container.encodeNil(forKey: .snapshot_id)
+        }
+        try container.encode(self.snapshot_reusable, forKey: .snapshot_reusable)
+        try container.encode(self.semantic_scope, forKey: .semantic_scope)
+        try container.encode(self.mutation_targeting_available, forKey: .mutation_targeting_available)
+        try container.encode(self.screenshot_raw, forKey: .screenshot_raw)
+        try container.encode(self.screenshot_annotated, forKey: .screenshot_annotated)
+        try container.encode(self.ui_map, forKey: .ui_map)
+        try container.encodeIfPresent(self.application_name, forKey: .application_name)
+        try container.encodeIfPresent(self.window_title, forKey: .window_title)
+        try container.encode(self.is_dialog, forKey: .is_dialog)
+        try container.encode(self.element_count, forKey: .element_count)
+        try container.encode(self.interactable_count, forKey: .interactable_count)
+        try container.encode(self.capture_mode, forKey: .capture_mode)
+        try container.encodeIfPresent(self.analysis, forKey: .analysis)
+        try container.encode(self.execution_time, forKey: .execution_time)
+        try container.encode(self.ui_elements, forKey: .ui_elements)
+        try container.encodeIfPresent(self.truncation, forKey: .truncation)
+        try container.encodeIfPresent(self.menu_bar, forKey: .menu_bar)
+        try container.encodeIfPresent(self.observation, forKey: .observation)
+        try container.encodeIfPresent(self.coordinate_context, forKey: .coordinate_context)
     }
 }
 

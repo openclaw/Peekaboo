@@ -94,6 +94,7 @@ extension SeeCommand {
     }
 
     private func outputJSONResults(context: SeeCommandRenderContext) throws {
+        let mutationTargetingAvailable = context.snapshotReusable
         let uiElements: [UIElementSummary] = context.elements.all.map { element in
             UIElementSummary(
                 id: element.id,
@@ -108,10 +109,10 @@ extension SeeCommand {
                 identifier: element.attributes["identifier"],
                 confidence: element.attributes["confidence"].flatMap(Double.init),
                 bounds: UIElementBounds(element.bounds),
-                is_actionable: element.isActionable,
+                is_actionable: mutationTargetingAvailable && element.isActionable,
                 is_enabled: element.knownIsEnabled,
                 is_selected: element.isSelected,
-                is_value_settable: element.isValueSettable,
+                is_value_settable: mutationTargetingAvailable ? element.isValueSettable : nil,
                 keyboard_shortcut: element.attributes["keyboardShortcut"]
             )
         }
@@ -119,7 +120,10 @@ extension SeeCommand {
         let snapshotPaths = self.snapshotPaths(for: context)
 
         let output = SeeResult(
-            snapshot_id: context.snapshotId,
+            snapshot_id: context.snapshotReusable ? context.snapshotId : nil,
+            snapshot_reusable: context.snapshotReusable,
+            semantic_scope: context.semanticScope,
+            mutation_targeting_available: mutationTargetingAvailable,
             screenshot_raw: snapshotPaths.raw,
             screenshot_annotated: snapshotPaths.annotated,
             ui_map: snapshotPaths.map,
@@ -127,7 +131,9 @@ extension SeeCommand {
             window_title: context.metadata.windowContext?.windowTitle,
             is_dialog: context.metadata.isDialog,
             element_count: context.metadata.elementCount,
-            interactable_count: context.elements.all.count(where: \.isActionable),
+            interactable_count: mutationTargetingAvailable
+                ? context.elements.all.count(where: \.isActionable)
+                : 0,
             capture_mode: self.determineMode().rawValue,
             analysis: context.analysis,
             execution_time: context.executionTime,
@@ -187,7 +193,11 @@ extension SeeCommand {
         }
         print("🧊 Detection method: \(context.metadata.method)")
         print("📊 UI elements detected: \(context.metadata.elementCount)")
-        print("⚙️  Interactable elements: \(context.elements.all.count(where: \.isActionable))")
+        let mutationTargetingAvailable = context.snapshotReusable
+        let interactableCount = mutationTargetingAvailable
+            ? context.elements.all.count(where: \.isActionable)
+            : 0
+        print("⚙️  Interactable elements: \(interactableCount)")
         if let truncationInfo = context.metadata.truncationInfo, truncationInfo.isTruncated {
             print(
                 "⚠️  \(truncationInfo.remediationMessage(budget: context.metadata.windowContext?.traversalBudget))"
@@ -201,7 +211,10 @@ extension SeeCommand {
         }
 
         if self.tree {
-            self.printTree(context.elements.all)
+            self.printTree(
+                context.elements.all,
+                exposesMutationCapabilities: mutationTargetingAvailable
+            )
         } else if context.metadata.elementCount > 0 {
             print("\n🔍 Element Summary")
             for element in context.elements.all.prefix(10) {
@@ -219,7 +232,11 @@ extension SeeCommand {
             print("\n📝 Annotated screenshot created")
         }
 
-        print("\nSnapshot ID: \(context.snapshotId)")
+        if context.snapshotReusable {
+            print("\nSnapshot ID: \(context.snapshotId)")
+        } else {
+            print("\nObservation scope: application_partial (no reusable snapshot or mutation authority)")
+        }
         self.printSeeExecutionReceipt(context.receipt)
 
         let terminalCapabilities = TerminalDetector.detectCapabilities()
@@ -228,7 +245,10 @@ extension SeeCommand {
         }
     }
 
-    private func printTree(_ elements: [DetectedElement]) {
+    private func printTree(
+        _ elements: [DetectedElement],
+        exposesMutationCapabilities: Bool
+    ) {
         print("\nAccessibility Tree")
         guard !elements.isEmpty else {
             print("No accessible UI elements found.")
@@ -237,7 +257,9 @@ extension SeeCommand {
         for element in elements {
             let label = element.label ?? element.attributes["title"] ?? element.value ?? ""
             let value = element.value.map { " value=\"\($0)\"" } ?? ""
-            let valueSettable = element.isValueSettable.map { " value_settable=\($0)" } ?? ""
+            let valueSettable = exposesMutationCapabilities
+                ? element.isValueSettable.map { " value_settable=\($0)" } ?? ""
+                : ""
             let state = element.knownIsEnabled == false ? " disabled" : ""
             print("  \(element.id) [\(element.type.rawValue)] \(label)\(value)\(valueSettable)\(state)")
         }
@@ -248,7 +270,9 @@ extension SeeCommand {
         return SnapshotPaths(
             raw: publishesScreenshotPaths ? context.screenshotPath : "",
             annotated: publishesScreenshotPaths ? context.annotatedPath ?? "" : "",
-            map: self.services.snapshots.getSnapshotStoragePath() + "/\(context.snapshotId)/snapshot.json"
+            map: context.snapshotReusable
+                ? self.services.snapshots.getSnapshotStoragePath() + "/\(context.snapshotId)/snapshot.json"
+                : ""
         )
     }
 

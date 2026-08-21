@@ -20,6 +20,8 @@ struct DetachedAXObservationOutcome: Sendable {
     let isDialog: Bool
     let truncationInfo: DetectionTruncationInfo?
     let usedCache: Bool
+    var isApplicationScopedFallback = false
+    var applicationScopedFallbackOrigin: ApplicationScopedAccessibilityFallbackOrigin?
 }
 
 /**
@@ -108,7 +110,8 @@ public final class ElementDetectionService {
         return try await self.inspectElements(
             snapshotId: snapshotId,
             windowContext: windowContext,
-            preservesRequestedApplicationIdentity: true)
+            preservesRequestedApplicationIdentity: true,
+            allowsApplicationScopedFallback: false)
     }
 
     /// Inspect UI elements via the accessibility tree without a screenshot.
@@ -119,13 +122,15 @@ public final class ElementDetectionService {
         try await self.inspectElements(
             snapshotId: snapshotId,
             windowContext: windowContext,
-            preservesRequestedApplicationIdentity: false)
+            preservesRequestedApplicationIdentity: false,
+            allowsApplicationScopedFallback: true)
     }
 
     private func inspectElements(
         snapshotId: String?,
         windowContext: WindowContext?,
-        preservesRequestedApplicationIdentity: Bool) async throws -> ElementDetectionResult
+        preservesRequestedApplicationIdentity: Bool,
+        allowsApplicationScopedFallback: Bool) async throws -> ElementDetectionResult
     {
         self.logger.info("Starting accessibility tree inspection")
 
@@ -141,7 +146,8 @@ public final class ElementDetectionService {
                 targetApp: targetApp,
                 snapshotId: effectiveSnapshotId,
                 windowContext: windowContext,
-                applicationIdentity: applicationIdentity)
+                applicationIdentity: applicationIdentity,
+                allowsApplicationScopedFallback: allowsApplicationScopedFallback)
         }
 
         let windowResolution = try await self.windowResolver.resolveWindow(for: targetApp, context: windowContext)
@@ -287,7 +293,9 @@ public final class ElementDetectionService {
                 windowBounds: cachedContext.windowBounds,
                 isDialog: cached.isDialog ?? true,
                 truncationInfo: cached.truncationInfo,
-                usedCache: true)
+                usedCache: true,
+                isApplicationScopedFallback: false,
+                applicationScopedFallbackOrigin: nil)
         }
 
         let detachedResult = try await self.detachedAXObservationRunner(makeRequest())
@@ -306,14 +314,17 @@ public final class ElementDetectionService {
             windowBounds: detachedResult.windowBounds,
             isDialog: detachedResult.isDialog,
             truncationInfo: detachedResult.truncationInfo,
-            usedCache: false)
+            usedCache: false,
+            isApplicationScopedFallback: detachedResult.isApplicationScopedFallback,
+            applicationScopedFallbackOrigin: detachedResult.applicationScopedFallbackOrigin)
     }
 
     private func inspectReadOnlyElements(
         targetApp: NSRunningApplication,
         snapshotId: String,
         windowContext: WindowContext?,
-        applicationIdentity: ResolvedApplicationIdentity) async throws -> ElementDetectionResult
+        applicationIdentity: ResolvedApplicationIdentity,
+        allowsApplicationScopedFallback: Bool) async throws -> ElementDetectionResult
     {
         let processIdentifier = targetApp.processIdentifier
         guard let processStartIdentity = SystemIdentityResolver.processStartIdentity(processIdentifier) else {
@@ -336,6 +347,8 @@ public final class ElementDetectionService {
         }
 
         let includeMenuBarElements = context?.includeMenuBarElements ?? true
+        let allowApplicationScopedFallback = allowsApplicationScopedFallback &&
+            context?.allowApplicationScopedAccessibilityFallback == true
         let budget = AXTraversalBudget.normalizedForTraversal(context?.traversalBudget)
         let canReuseAXTree = Self.shouldUseAXTreeCache(
             budget: budget,
@@ -355,7 +368,8 @@ public final class ElementDetectionService {
             includeMenuBarElements: includeMenuBarElements,
             traversalBudget: budget,
             requiresFreshAccessibilityTree: context?.requiresFreshAccessibilityTree ?? false,
-            accessibilityTimeoutSeconds: context?.accessibilityTimeoutSeconds)
+            accessibilityTimeoutSeconds: context?.accessibilityTimeoutSeconds,
+            allowApplicationScopedAccessibilityFallback: allowApplicationScopedFallback ? true : nil)
         if let gameBridgeResult = GameBridgeDetectionService.tryDetect(
             windowContext: preliminaryContext,
             snapshotId: snapshotId)
@@ -398,7 +412,8 @@ public final class ElementDetectionService {
                 includeMenuBarElements: includeMenuBarElements,
                 appIsActive: targetApp.isActive,
                 traversalBudget: budget,
-                timing: DetachedAXObservationTiming(hardTimeoutSeconds: timeoutSeconds))
+                timing: DetachedAXObservationTiming(hardTimeoutSeconds: timeoutSeconds),
+                allowApplicationScopedFallback: allowApplicationScopedFallback)
         }
 
         guard SystemIdentityResolver.processStartIdentity(processIdentifier) == outcome.processStartIdentity else {
@@ -415,14 +430,15 @@ public final class ElementDetectionService {
             applicationProcessStartIdentity: outcome.processStartIdentity,
             windowTitle: outcome.windowTitle,
             windowID: outcome.windowID,
-            windowBounds: context?.windowBounds ?? outcome.windowBounds,
-            windowMutationIdentity: context?.windowMutationIdentity,
+            windowBounds: outcome.isApplicationScopedFallback ? nil : context?.windowBounds ?? outcome.windowBounds,
+            windowMutationIdentity: outcome.isApplicationScopedFallback ? nil : context?.windowMutationIdentity,
             shouldFocusWebContent: false,
             includeMenuBarElements: includeMenuBarElements,
             traversalBudget: budget,
             requiresFreshAccessibilityTree: outcome.usedCache ? false :
                 context?.requiresFreshAccessibilityTree ?? false,
-            accessibilityTimeoutSeconds: outcome.usedCache ? context?.accessibilityTimeoutSeconds : timeoutSeconds)
+            accessibilityTimeoutSeconds: outcome.usedCache ? context?.accessibilityTimeoutSeconds : timeoutSeconds,
+            allowApplicationScopedAccessibilityFallback: nil)
 
         if !outcome.usedCache {
             self.logger.info("Detected \(outcome.elements.count) elements on detached AX lane")
@@ -433,7 +449,11 @@ public final class ElementDetectionService {
             usedCache: outcome.usedCache,
             windowContext: resolvedContext,
             isDialog: outcome.isDialog,
-            truncationInfo: outcome.truncationInfo)
+            truncationInfo: outcome.truncationInfo,
+            applicationScopedAccessibilityFallbackOrigin: outcome.applicationScopedFallbackOrigin,
+            additionalWarnings: outcome.isApplicationScopedFallback
+                ? [DetectionMetadata.applicationScopedAccessibilityFallbackWarning]
+                : [])
     }
 
     private static func readOnlyWindowContext(
@@ -470,7 +490,9 @@ public final class ElementDetectionService {
                 includeMenuBarElements: requested?.includeMenuBarElements,
                 traversalBudget: requested?.traversalBudget,
                 requiresFreshAccessibilityTree: requested?.requiresFreshAccessibilityTree ?? false,
-                accessibilityTimeoutSeconds: requested?.accessibilityTimeoutSeconds)
+                accessibilityTimeoutSeconds: requested?.accessibilityTimeoutSeconds,
+                allowApplicationScopedAccessibilityFallback:
+                requested?.allowApplicationScopedAccessibilityFallback)
         }
         let windows = SystemIdentityResolver.windowIdentities(
             ownerProcessIdentifier: targetApp.processIdentifier)
@@ -505,7 +527,9 @@ public final class ElementDetectionService {
             includeMenuBarElements: requested?.includeMenuBarElements,
             traversalBudget: requested?.traversalBudget,
             requiresFreshAccessibilityTree: requested?.requiresFreshAccessibilityTree ?? false,
-            accessibilityTimeoutSeconds: requested?.accessibilityTimeoutSeconds)
+            accessibilityTimeoutSeconds: requested?.accessibilityTimeoutSeconds,
+            allowApplicationScopedAccessibilityFallback:
+            requested?.allowApplicationScopedAccessibilityFallback)
     }
 
     struct ResolvedApplicationIdentity: Sendable {

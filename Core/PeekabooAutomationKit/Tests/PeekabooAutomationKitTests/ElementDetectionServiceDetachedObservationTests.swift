@@ -189,6 +189,46 @@ struct ElementDetectionServiceDetachedObservationTests {
         #expect(state.requestBuildCount == 1)
     }
 
+    @Test
+    func `application scoped partial evidence is never cached as exact semantics`() async throws {
+        let cache = ElementDetectionCache()
+        let cacheKey = try #require(cache.key(windowID: 42, processID: 123, allowWebFocus: false))
+        let state = RunnerState()
+        let service = ElementDetectionService(
+            snapshotManager: nil,
+            applicationService: nil,
+            axTreeCache: cache,
+            detachedAXObservationRunner: { request in
+                state.requests.append(request)
+                return DetachedAXObservationResult(
+                    elements: [Self.partialElement],
+                    windowID: nil,
+                    windowTitle: "Application-scoped partial semantics",
+                    windowBounds: nil,
+                    isDialog: false,
+                    truncationInfo: DetectionTruncationInfo(incompleteAccessibilityRead: true),
+                    isApplicationScopedFallback: true)
+            })
+
+        let first = try await service.cachedOrRunDetachedAXObservation(
+            cacheKey: cacheKey,
+            invalidatedThrough: nil,
+            cachedContext: Self.cachedContext,
+            makeRequest: { state.makeRequest(timeoutSeconds: 20) })
+        #expect(first.isApplicationScopedFallback)
+        #expect(first.windowID == nil)
+        #expect(first.elements.map(\.id) == [Self.partialElement.id])
+        #expect(cache.result(for: cacheKey) == nil)
+
+        let second = try await service.cachedOrRunDetachedAXObservation(
+            cacheKey: cacheKey,
+            invalidatedThrough: nil,
+            cachedContext: Self.cachedContext,
+            makeRequest: { state.makeRequest(timeoutSeconds: 20) })
+        #expect(second.isApplicationScopedFallback)
+        #expect(state.requests.count == 2)
+    }
+
     private static let cachedContext = CachedDetachedAXObservationContext(
         processStartIdentity: 7,
         windowID: 42,

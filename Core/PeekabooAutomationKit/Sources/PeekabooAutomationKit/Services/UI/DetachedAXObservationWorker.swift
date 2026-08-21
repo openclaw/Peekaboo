@@ -34,6 +34,7 @@ struct DetachedAXObservationRequest: Sendable {
     let appIsActive: Bool
     let traversalBudget: AXTraversalBudget
     let timing: DetachedAXObservationTiming
+    var allowApplicationScopedFallback = false
 }
 
 struct DetachedAXObservationTiming: Sendable, Equatable {
@@ -62,6 +63,8 @@ struct DetachedAXObservationResult: Sendable {
     let windowBounds: CGRect?
     let isDialog: Bool
     let truncationInfo: DetectionTruncationInfo?
+    var isApplicationScopedFallback = false
+    var applicationScopedFallbackOrigin: ApplicationScopedAccessibilityFallbackOrigin?
 }
 
 enum DetachedAXMultiAttributeReadDisposition: Equatable {
@@ -73,7 +76,7 @@ enum DetachedAXMultiAttributeReadDisposition: Equatable {
 enum DetachedAXNodeTraversalDisposition: Equatable {
     case emitAndTraverse
     case traverseOnly
-    case stopIncomplete
+    case traverseOnlyIncomplete
 }
 
 enum DetachedAXPostChildStopReason: Equatable {
@@ -170,7 +173,7 @@ enum DetachedAXObservationWorker {
         readIncomplete: Bool) -> DetachedAXNodeTraversalDisposition
     {
         if readIncomplete {
-            return .stopIncomplete
+            return .traverseOnlyIncomplete
         }
         return descriptorAvailable ? .emitAndTraverse : .traverseOnly
     }
@@ -242,17 +245,31 @@ enum DetachedAXObservationWorker {
         self.prepare(application, deadline: deadline)
 
         let window: AXUIElement
+        let isApplicationScopedFallback: Bool
         do {
             window = try resolveWindow(application, request, deadline)
+            isApplicationScopedFallback = false
         } catch {
-            if let fallback = exactWindowUnavailableResult(
-                request,
-                ContinuousClock.now >= deadline)
+            let deadlineReached = ContinuousClock.now >= deadline
+            let exactWindowNotFound = self.isExactWindowNotFound(error)
+            let exactWindowUnavailable = exactWindowNotFound
+                ? exactWindowUnavailableResult(request, deadlineReached)
+                : nil
+            if request.allowApplicationScopedFallback,
+               request.windowID != nil,
+               exactWindowNotFound,
+               !deadlineReached,
+               exactWindowUnavailable?.windowID == request.windowID
             {
-                try validateIdentity(request)
-                return fallback
+                window = application
+                isApplicationScopedFallback = true
+            } else {
+                if let fallback = exactWindowUnavailable {
+                    try validateIdentity(request)
+                    return fallback
+                }
+                throw error
             }
-            throw error
         }
         self.prepare(window, deadline: deadline)
         let title = self.stringAttribute(kAXTitleAttribute, of: window) ?? request.windowTitle ?? "Untitled"
@@ -284,19 +301,37 @@ enum DetachedAXObservationWorker {
                 state: &state)
         }
 
+        let partialFallback = isApplicationScopedFallback
+            ? DetectionTruncationInfo(incompleteAccessibilityRead: true)
+            : nil
+        let applicationScopedFallbackOrigin: ApplicationScopedAccessibilityFallbackOrigin?
+        if isApplicationScopedFallback {
+            guard let identity = request.windowMutationIdentity,
+                  let origin = ApplicationScopedAccessibilityFallbackOrigin(windowIdentity: identity)
+            else {
+                throw PeekabooError.snapshotStale(
+                    "Application-scoped AX fallback lost its exact WindowServer origin receipt")
+            }
+            applicationScopedFallbackOrigin = origin
+        } else {
+            applicationScopedFallbackOrigin = nil
+        }
         let result = DetachedAXObservationResult(
             elements: state.elements,
-            windowID: AXWindowIDResolver.windowID(of: window).map(Int.init) ?? request.windowID,
-            windowTitle: title,
-            windowBounds: bounds,
-            isDialog: DialogElementClassifier.isObservationDialog(DialogElementEvidence(
+            windowID: isApplicationScopedFallback ? nil : AXWindowIDResolver.windowID(of: window).map(Int.init)
+                ?? request.windowID,
+            windowTitle: isApplicationScopedFallback ? "Application-scoped partial semantics" : title,
+            windowBounds: isApplicationScopedFallback ? nil : bounds,
+            isDialog: !isApplicationScopedFallback && DialogElementClassifier.isObservationDialog(DialogElementEvidence(
                 role: role,
                 subrole: subrole,
                 roleDescription: "",
                 identifier: identifier,
                 title: title,
                 isModal: isModal)),
-            truncationInfo: state.truncationInfo)
+            truncationInfo: DetectionTruncationInfo.merge(state.truncationInfo, partialFallback),
+            isApplicationScopedFallback: isApplicationScopedFallback,
+            applicationScopedFallbackOrigin: applicationScopedFallbackOrigin)
         try validateIdentity(request)
         return result
     }
@@ -360,7 +395,17 @@ enum DetachedAXObservationWorker {
             windowBounds: identity.bounds,
             isDialog: self.isFileDialogTitle(identity.title),
             truncationInfo: self.exactWindowResolutionFailureTruncation(
-                deadlineReached: deadlineReached))
+                deadlineReached: deadlineReached),
+            isApplicationScopedFallback: false,
+            applicationScopedFallbackOrigin: nil)
+    }
+
+    private static func isExactWindowNotFound(_ error: any Error) -> Bool {
+        guard let error = error as? PeekabooError else { return false }
+        if case .windowNotFound = error {
+            return true
+        }
+        return false
     }
 
     static func exactWindowResolutionFailureTruncation(
@@ -450,8 +495,11 @@ enum DetachedAXObservationWorker {
             descriptorAvailable: descriptorRead.descriptor != nil,
             readIncomplete: descriptorRead.isIncomplete)
         {
-        case .stopIncomplete:
+        case .traverseOnlyIncomplete:
             state.incompleteAccessibilityRead = true
+            // The unreadable container is never emitted or targetable. Its descendants still
+            // receive independent complete role/frame descriptor checks before they can be returned.
+            self.processChildren(of: element, request: request, state: &state)
             return
         case .traverseOnly:
             self.processChildren(of: element, request: request, state: &state)

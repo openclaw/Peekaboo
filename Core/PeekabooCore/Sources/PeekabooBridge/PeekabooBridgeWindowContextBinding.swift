@@ -55,6 +55,67 @@ enum PeekabooBridgeWindowContextBinding {
                 defaultingTo: self.defaultAccessibilityTimeoutSeconds)
     }
 
+    static func applicationScopedFallbackRefines(
+        _ actual: WindowContext?,
+        requested: WindowContext?,
+        origin: ApplicationScopedAccessibilityFallbackOrigin?) -> Bool
+    {
+        guard let requested,
+              requested.allowApplicationScopedAccessibilityFallback == true,
+              requested.shouldFocusWebContent != true,
+              requested.windowID != nil,
+              let actual,
+              let origin,
+              origin.windowID == requested.windowID,
+              origin.processIdentifier == actual.applicationProcessId,
+              origin.processStartIdentity == actual.applicationProcessStartIdentity,
+              self.satisfies(requested.applicationProcessId, with: origin.processIdentifier),
+              self.satisfies(requested.applicationProcessStartIdentity, with: origin.processStartIdentity),
+              self.satisfies(requested.windowBounds, with: origin.windowBounds),
+              requested.windowMutationIdentity.map({ identity in
+                  identity.windowID == origin.windowID &&
+                      identity.processIdentity == origin.processIdentity &&
+                      identity.capturedBounds == origin.windowBounds
+              }) ?? true,
+              actual.windowID == nil,
+              actual.windowBounds == nil,
+              actual.windowMutationIdentity == nil,
+              actual.focusedElement == nil,
+              actual.allowApplicationScopedAccessibilityFallback == nil
+        else { return false }
+
+        let applicationOnlyRequest = WindowContext(
+            applicationName: requested.applicationName,
+            applicationBundleId: requested.applicationBundleId,
+            applicationBundlePath: requested.applicationBundlePath,
+            applicationExecutablePath: requested.applicationExecutablePath,
+            applicationProcessId: requested.applicationProcessId,
+            applicationProcessStartIdentity: requested.applicationProcessStartIdentity,
+            shouldFocusWebContent: requested.shouldFocusWebContent,
+            includeMenuBarElements: requested.includeMenuBarElements,
+            traversalBudget: requested.traversalBudget,
+            requiresFreshAccessibilityTree: requested.requiresFreshAccessibilityTree ?? false,
+            accessibilityTimeoutSeconds: requested.accessibilityTimeoutSeconds)
+        return self.refines(actual, requested: applicationOnlyRequest)
+    }
+
+    static func validateApplicationScopedFallback(
+        _ metadata: DetectionMetadata,
+        requested: WindowContext?,
+        allowsResolvedWindowContext: Bool) throws
+    {
+        guard allowsResolvedWindowContext,
+              metadata.truncationInfo?.incompleteAccessibilityRead == true,
+              self.applicationScopedFallbackRefines(
+                  metadata.windowContext,
+                  requested: requested,
+                  origin: metadata.applicationScopedAccessibilityFallbackOrigin)
+        else {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                "element-detection response application-scoped fallback")
+        }
+    }
+
     private static func satisfies<Value: Equatable>(_ constraint: Value?, with actual: Value?) -> Bool {
         constraint.map { $0 == actual } ?? true
     }

@@ -94,38 +94,12 @@ public enum FocusedElementReceiptResolver {
     {
         guard let context else { return nil }
         let focusedElement = try? self.uniqueReceipt(elements: elements, context: context)
-        return WindowContext(
-            applicationName: context.applicationName,
-            applicationBundleId: context.applicationBundleId,
-            applicationProcessId: context.applicationProcessId,
-            windowTitle: context.windowTitle,
-            windowID: context.windowID,
-            windowBounds: context.windowBounds,
-            windowMutationIdentity: context.windowMutationIdentity,
-            focusedElement: focusedElement,
-            shouldFocusWebContent: context.shouldFocusWebContent,
-            includeMenuBarElements: context.includeMenuBarElements,
-            traversalBudget: context.traversalBudget,
-            requiresFreshAccessibilityTree: context.requiresFreshAccessibilityTree ?? false,
-            accessibilityTimeoutSeconds: context.accessibilityTimeoutSeconds)
+        return context.replacingFocusedElement(focusedElement)
     }
 
     public static func clearingObservedFocus(from context: WindowContext?) -> WindowContext? {
         guard let context else { return nil }
-        return WindowContext(
-            applicationName: context.applicationName,
-            applicationBundleId: context.applicationBundleId,
-            applicationProcessId: context.applicationProcessId,
-            windowTitle: context.windowTitle,
-            windowID: context.windowID,
-            windowBounds: context.windowBounds,
-            windowMutationIdentity: context.windowMutationIdentity,
-            focusedElement: nil,
-            shouldFocusWebContent: context.shouldFocusWebContent,
-            includeMenuBarElements: context.includeMenuBarElements,
-            traversalBudget: context.traversalBudget,
-            requiresFreshAccessibilityTree: context.requiresFreshAccessibilityTree ?? false,
-            accessibilityTimeoutSeconds: context.accessibilityTimeoutSeconds)
+        return context.replacingFocusedElement(nil)
     }
 
     private static func role(for type: ElementType) -> String {

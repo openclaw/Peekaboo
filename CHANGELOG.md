@@ -14,6 +14,7 @@
 - Let exact-window background mutations ignore unrelated incomplete application rows while still refusing ambiguous, incomplete, stale, or mismatched selected owners.
 - Give unknown CLI commands a current-help recovery hint and remove source-checkout rebuild advice from installed help.
 - Bind persistent MCP capture preflight to its explicitly selected Bridge generation, preserve precise signed capture refusals, and expose safe request-local classic `see` capture.
+- Return explicitly application-scoped, observation-only AX semantics for tree-only reads of exact pixel-only windows while withholding snapshot and mutation authority.
 - Keep provider dry-run, validation, error, and JSON output free of credential values, and reject special, symlinked, permissive, wrong-owner, or extended-ACL credential files on the opened descriptor before reading.
 - Use the canonical MCP mutation policy for Agent visual verification, including conditional browser and foreground menu actions.
 - Let background certification pin Activity Monitor's exact source-declared window title while refusing unsafe partial, duplicate, or drifting title evidence.

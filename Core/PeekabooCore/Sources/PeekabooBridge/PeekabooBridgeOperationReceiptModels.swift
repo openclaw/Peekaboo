@@ -1224,6 +1224,13 @@ enum PeekabooBridgeOperationReceiptSemantics {
                     "element-detection generated snapshot")
             }
         }
+        if result.metadata.isApplicationScopedAccessibilityFallback {
+            try PeekabooBridgeWindowContextBinding.validateApplicationScopedFallback(
+                result.metadata,
+                requested: expectedWindowContext,
+                allowsResolvedWindowContext: allowsResolvedWindowContext)
+            return
+        }
         let windowContextMatches = if allowsResolvedWindowContext {
             PeekabooBridgeWindowContextBinding.refines(
                 result.metadata.windowContext,

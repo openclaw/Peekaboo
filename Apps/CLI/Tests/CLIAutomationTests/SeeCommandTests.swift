@@ -376,6 +376,12 @@ struct SeeCommandRuntimeTests {
 
     @Test
     @MainActor
+    func `tree only See labels application fallback as observation only`() async throws {
+        try await self.runApplicationPartialSeeAssertions()
+    }
+
+    @Test
+    @MainActor
     func `Remote See publishes a host-certified observation without a caller barrier`() async throws {
         try await self.withTempConfigEnv { tempDir in
             let fixture = Self.makeSeeCommandRuntimeFixture()
@@ -1041,8 +1047,10 @@ extension SeeCommandRuntimeTests {
         try await self.withTempConfigEnv { _ in
             let fixture = Self.makeSeeCommandRuntimeFixture()
             let automation = StubAutomationService()
-            automation.detectElementsHandler = { _, snapshotID, _ in
-                ElementDetectionResult(
+            var detectionContext: WindowContext?
+            automation.detectElementsHandler = { _, snapshotID, context in
+                detectionContext = context
+                return ElementDetectionResult(
                     snapshotId: snapshotID ?? "legacy-empty",
                     screenshotPath: "",
                     elements: DetectedElements(),
@@ -1082,6 +1090,7 @@ extension SeeCommandRuntimeTests {
             #expect(error["retry_safe"] as? Bool == true)
             #expect(error["mutation_dispatched"] as? Bool == false)
             #expect((error["message"] as? String)?.contains("Exact window 101") == true)
+            #expect(detectionContext?.allowApplicationScopedAccessibilityFallback != true)
             #expect(FileManager.default.fileExists(atPath: outputURL.path))
             #expect(try await context.snapshots.listSnapshots().isEmpty)
         }

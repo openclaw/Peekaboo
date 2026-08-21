@@ -202,13 +202,13 @@ struct DetachedAXObservationWorkerTests {
     }
 
     @Test
-    func `non-renderable structural node traverses descendants without being emitted`() {
+    func `non-renderable and incomplete structural nodes traverse descendants without being emitted`() {
         #expect(DetachedAXObservationWorker.nodeTraversalDisposition(
             descriptorAvailable: false,
             readIncomplete: false) == .traverseOnly)
         #expect(DetachedAXObservationWorker.nodeTraversalDisposition(
             descriptorAvailable: false,
-            readIncomplete: true) == .stopIncomplete)
+            readIncomplete: true) == .traverseOnlyIncomplete)
     }
 
     @Test
@@ -250,6 +250,56 @@ struct DetachedAXObservationWorkerTests {
         #expect(!immediate.deadlineReached)
         #expect(expired.deadlineReached)
         #expect(!expired.incompleteAccessibilityRead)
+    }
+
+    @Test
+    func `explicit read only fallback returns application scoped incomplete evidence`() throws {
+        var request = Self.identityRequest()
+        request.allowApplicationScopedFallback = true
+
+        let result = try DetachedAXObservationWorker.inspect(
+            request,
+            resolveWindow: { _, _, _ in
+                throw PeekabooError.windowNotFound(criteria: "injected exact AX mismatch")
+            },
+            exactWindowUnavailableResult: { request, _ in
+                DetachedAXObservationResult(
+                    elements: [],
+                    windowID: request.windowID,
+                    windowTitle: request.windowTitle ?? "Fixture",
+                    windowBounds: request.expectedWindowBounds,
+                    isDialog: false,
+                    truncationInfo: DetectionTruncationInfo(incompleteAccessibilityRead: true))
+            },
+            validateIdentity: { _ in })
+
+        #expect(result.isApplicationScopedFallback)
+        #expect(result.windowID == nil)
+        #expect(result.windowBounds == nil)
+        #expect(result.isDialog == false)
+        #expect(result.truncationInfo?.incompleteAccessibilityRead == true)
+        #expect(result.applicationScopedFallbackOrigin?.windowID == request.windowID)
+        #expect(result.applicationScopedFallbackOrigin?.processIdentity == request.windowMutationIdentity?
+            .processIdentity)
+    }
+
+    @Test
+    func `explicit read only fallback does not mask unexpected resolution errors`() {
+        var request = Self.identityRequest()
+        request.allowApplicationScopedFallback = true
+
+        #expect(throws: PeekabooError.self) {
+            _ = try DetachedAXObservationWorker.inspect(
+                request,
+                resolveWindow: { _, _, _ in
+                    throw PeekabooError.snapshotStale("injected unexpected resolution failure")
+                },
+                exactWindowUnavailableResult: { _, _ in
+                    Issue.record("Unexpected errors must not probe the exact-window fallback")
+                    return nil
+                },
+                validateIdentity: { _ in })
+        }
     }
 
     @Test
@@ -367,7 +417,8 @@ struct DetachedAXObservationWorkerTests {
             windowMutationIdentity: WindowMutationIdentity(
                 windowID: 42,
                 ownerProcessIdentifier: 123,
-                ownerProcessStartIdentity: 7),
+                ownerProcessStartIdentity: 7,
+                capturedBounds: CGRect(x: 10, y: 20, width: 800, height: 600)),
             includeMenuBarElements: false,
             appIsActive: false,
             traversalBudget: AXTraversalBudget(),

@@ -219,6 +219,120 @@ struct PeekabooBridgeTypedResultReceiptBindingTests {
     }
 
     @Test
+    func `signed application partial tree drops exact window authority only with explicit opt in`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let processIdentity = fixture.windowIdentity.processIdentity
+        let requestContext = WindowContext(
+            windowID: fixture.windowIdentity.windowID,
+            shouldFocusWebContent: false,
+            includeMenuBarElements: true,
+            traversalBudget: AXTraversalBudget(),
+            requiresFreshAccessibilityTree: false,
+            accessibilityTimeoutSeconds: 20,
+            allowApplicationScopedAccessibilityFallback: true)
+        let responseContext = WindowContext(
+            applicationName: "Fixture",
+            applicationBundleId: "dev.peekaboo.fixture",
+            applicationBundlePath: "/Applications/Fixture.app",
+            applicationExecutablePath: "/Applications/Fixture.app/Contents/MacOS/fixture",
+            applicationProcessId: processIdentity.processIdentifier,
+            applicationProcessStartIdentity: processIdentity.processStartIdentity,
+            windowTitle: "Application-scoped partial semantics",
+            shouldFocusWebContent: false,
+            includeMenuBarElements: true,
+            traversalBudget: AXTraversalBudget(),
+            requiresFreshAccessibilityTree: false,
+            accessibilityTimeoutSeconds: 20)
+        let response = PeekabooBridgeResponse.elementDetection(Self.detection(
+            snapshotID: "application-partial",
+            context: responseContext,
+            warnings: [DetectionMetadata.applicationScopedAccessibilityFallbackWarning],
+            truncationInfo: DetectionTruncationInfo(incompleteAccessibilityRead: true),
+            fallbackOrigin: ApplicationScopedAccessibilityFallbackOrigin(
+                windowIdentity: fixture.windowIdentity)))
+        let request = PeekabooBridgeRequest.inspectAccessibilityTree(.init(windowContext: requestContext))
+        let bundle = try await Self.signedBundle(
+            fixture: fixture,
+            sequence: 0,
+            request: request,
+            response: response,
+            target: .process(processIdentity))
+
+        #expect(try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+            request: request,
+            response: response).target == .process(processIdentity))
+        try bundle.validateIntegrity()
+
+        let noOptInRequest = PeekabooBridgeRequest.inspectAccessibilityTree(.init(windowContext: WindowContext(
+            applicationName: "Fixture",
+            applicationProcessId: processIdentity.processIdentifier,
+            windowID: fixture.windowIdentity.windowID)))
+        let noOptInBundle = try await Self.signedBundle(
+            fixture: fixture,
+            sequence: 1,
+            request: noOptInRequest,
+            response: response,
+            target: .process(processIdentity))
+        #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+            try noOptInBundle.validateIntegrity()
+        }
+
+        let wrongProcess = ApplicationProcessIdentity(
+            processIdentifier: processIdentity.processIdentifier + 1,
+            processStartIdentity: processIdentity.processStartIdentity + 1)
+        let wrongProcessResponse = PeekabooBridgeResponse.elementDetection(Self.detection(
+            snapshotID: "application-partial",
+            context: WindowContext(
+                applicationName: "Other",
+                applicationProcessId: wrongProcess.processIdentifier,
+                applicationProcessStartIdentity: wrongProcess.processStartIdentity),
+            warnings: [DetectionMetadata.applicationScopedAccessibilityFallbackWarning],
+            truncationInfo: DetectionTruncationInfo(incompleteAccessibilityRead: true),
+            fallbackOrigin: ApplicationScopedAccessibilityFallbackOrigin(
+                windowIdentity: fixture.windowIdentity)))
+        let wrongProcessBundle = try await Self.signedBundle(
+            fixture: fixture,
+            sequence: 2,
+            request: request,
+            response: wrongProcessResponse,
+            target: .process(wrongProcess))
+        #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+            try wrongProcessBundle.validateIntegrity()
+        }
+
+        let detectRequest = PeekabooBridgeRequest.detectElements(.init(
+            imageData: Data([1]),
+            snapshotId: "application-partial",
+            windowContext: requestContext))
+        let detectBundle = try await Self.signedBundle(
+            fixture: fixture,
+            sequence: 3,
+            request: detectRequest,
+            response: response,
+            target: .global)
+        #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+            try detectBundle.validateIntegrity()
+        }
+
+        let missingIncompleteResponse = PeekabooBridgeResponse.elementDetection(Self.detection(
+            snapshotID: "application-partial",
+            context: responseContext,
+            warnings: [DetectionMetadata.applicationScopedAccessibilityFallbackWarning],
+            fallbackOrigin: ApplicationScopedAccessibilityFallbackOrigin(
+                windowIdentity: fixture.windowIdentity)))
+        let missingIncompleteBundle = try await Self.signedBundle(
+            fixture: fixture,
+            sequence: 4,
+            request: request,
+            response: missingIncompleteResponse,
+            target: .process(processIdentity))
+        #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+            try missingIncompleteBundle.validateIntegrity()
+        }
+    }
+
+    @Test
     func `signed detect projection binds only explicitly requested application paths`() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -556,7 +670,13 @@ struct PeekabooBridgeTypedResultReceiptBindingTests {
                 capturedBounds: bounds))
     }
 
-    private static func detection(snapshotID: String, context: WindowContext?) -> ElementDetectionResult {
+    private static func detection(
+        snapshotID: String,
+        context: WindowContext?,
+        warnings: [String] = [],
+        truncationInfo: DetectionTruncationInfo? = nil,
+        fallbackOrigin: ApplicationScopedAccessibilityFallbackOrigin? = nil) -> ElementDetectionResult
+    {
         ElementDetectionResult(
             snapshotId: snapshotID,
             screenshotPath: "/tmp/\(snapshotID).png",
@@ -565,7 +685,10 @@ struct PeekabooBridgeTypedResultReceiptBindingTests {
                 detectionTime: 0,
                 elementCount: 0,
                 method: "fixture",
-                windowContext: context))
+                warnings: warnings,
+                windowContext: context,
+                truncationInfo: truncationInfo,
+                applicationScopedAccessibilityFallbackOrigin: fallbackOrigin))
     }
 
     private static func exactDetectionContext(

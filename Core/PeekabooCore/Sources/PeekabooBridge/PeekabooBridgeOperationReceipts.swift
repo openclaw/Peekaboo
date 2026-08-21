@@ -2175,6 +2175,15 @@ enum PeekabooBridgeOperationTargetAttribution {
         response: PeekabooBridgeResponse,
         handledTarget: DesktopTargetIdentity?) -> [DesktopTargetIdentity.Evidence]
     {
+        if case let .inspectAccessibilityTree(payload) = plan.request,
+           payload.windowContext?.allowApplicationScopedAccessibilityFallback == true,
+           case let .elementDetection(result) = response,
+           result.metadata.isApplicationScopedAccessibilityFallback
+        {
+            // The signed request still binds the exact WindowServer selector, while the labeled
+            // fallback response intentionally carries only same-process read authority.
+            return response.operationTargetEvidence(for: plan)
+        }
         var evidence = plan.target.requestEvidence
         if let handledTarget,
            plan.target.requiresResolvedIdentity || plan.target.policy == .handlerResolvedOrGlobal ||

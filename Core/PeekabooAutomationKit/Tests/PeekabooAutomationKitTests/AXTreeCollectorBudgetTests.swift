@@ -62,6 +62,38 @@ final class AXTreeCollectorBudgetTests: XCTestCase {
         XCTAssertTrue(result.truncationInfo?.isTruncated == true)
     }
 
+    func testIncompleteContainerStillPublishesCompleteDescendant() {
+        let root = Element(AXUIElementCreateApplication(getpid()))
+        let child = Element(AXUIElementCreateSystemWide())
+        let childDescriptor = AXDescriptorReader.Descriptor(
+            frame: CGRect(x: 10, y: 20, width: 100, height: 30),
+            role: "AXStaticText",
+            title: "Recovered child",
+            label: "Recovered child",
+            value: nil,
+            description: nil,
+            help: nil,
+            roleDescription: nil,
+            identifier: nil,
+            isEnabled: true,
+            isSelected: nil,
+            isFocused: nil,
+            placeholder: nil)
+        let collector = AXTreeCollector(
+            descriptorReader: { element in
+                element == root ? .incomplete : .descriptor(childDescriptor)
+            },
+            childrenReader: { element in
+                element == root ? [child] : []
+            })
+
+        let result = collector.collect(window: root, deadline: Date().addingTimeInterval(1))
+
+        XCTAssertEqual(result.elements.count, 1)
+        XCTAssertEqual(result.elements.first?.label, "Recovered child")
+        XCTAssertEqual(result.truncationInfo?.incompleteAccessibilityRead, true)
+    }
+
     func testWindowContextDecodesPayloadWithoutFreshnessPolicy() throws {
         let data = Data(#"{"applicationProcessId":42,"windowID":7}"#.utf8)
 

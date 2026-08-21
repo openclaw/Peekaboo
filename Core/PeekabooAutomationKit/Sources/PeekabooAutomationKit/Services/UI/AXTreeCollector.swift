@@ -66,9 +66,14 @@ struct AXTreeCollector {
 
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "AXTreeCollector")
     private let descriptorReader: @MainActor (Element) -> AXDescriptorReader.ReadResult
+    private let childrenReader: @MainActor (Element) -> [Element]
 
-    init(descriptorReader: @escaping @MainActor (Element) -> AXDescriptorReader.ReadResult = AXDescriptorReader.read) {
+    init(
+        descriptorReader: @escaping @MainActor (Element) -> AXDescriptorReader.ReadResult = AXDescriptorReader.read,
+        childrenReader: @escaping @MainActor (Element) -> [Element] = { $0.children() ?? [] })
+    {
         self.descriptorReader = descriptorReader
+        self.childrenReader = childrenReader
     }
 
     func collect(window: Element, deadline: Date, budget: AXTraversalBudget? = nil) -> Result {
@@ -122,6 +127,14 @@ struct AXTreeCollector {
             return
         case .incomplete:
             state.truncationFlags.incompleteAccessibilityRead = true
+            // Preserve usable descendants without publishing the unreadable container itself.
+            // Every descendant must still pass its own complete role/frame descriptor read.
+            self.processChildren(
+                of: element,
+                depth: depth + 1,
+                deadline: deadline,
+                budget: budget,
+                state: &state)
             return
         }
 
@@ -183,7 +196,7 @@ struct AXTreeCollector {
         state: inout TraversalState)
     {
         guard !Task.isCancelled else { return }
-        guard let children = element.children() else { return }
+        let children = self.childrenReader(element)
         if children.count > budget.maxChildrenPerNode {
             state.truncationFlags.maxChildrenPerNodeReached = true
         }

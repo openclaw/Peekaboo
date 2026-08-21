@@ -73,7 +73,9 @@ RuntimeBackedCommand {
     @Flag(help: "Add host-local Vision OCR text to the accessibility element map")
     var ocr = false
 
-    @Flag(help: "Print the accessibility text tree")
+    @Flag(
+        help: "Print the AX tree; exact pixel-only windows can return labeled application-partial read-only semantics"
+    )
     var tree = false
 
     @Flag(help: "Skip image capture; requires --tree")
@@ -244,6 +246,10 @@ RuntimeBackedCommand {
                 }
                 observationCompleted = true
                 executionReceipt = context.receipt
+
+                if !context.snapshotReusable {
+                    try await self.services.snapshots.cleanSnapshot(snapshotId: snapshotID)
+                }
 
                 if let scope {
                     let publicationTimeout = try Self.remainingObservationTimeout(

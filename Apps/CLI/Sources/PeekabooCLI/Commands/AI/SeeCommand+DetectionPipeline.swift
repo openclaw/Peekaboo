@@ -128,7 +128,8 @@ extension SeeCommand {
                 windowID: windowID,
                 shouldFocusWebContent: self.webFocus,
                 traversalBudget: self.axTraversalBudget(),
-                accessibilityTimeoutSeconds: accessibilityTimeoutSeconds
+                accessibilityTimeoutSeconds: accessibilityTimeoutSeconds,
+                allowApplicationScopedAccessibilityFallback: windowID != nil && !self.webFocus
             )
         )
         let result = actionResult.payload
@@ -140,14 +141,20 @@ extension SeeCommand {
         )
         do {
             try self.requireUsableTreeOnlyEvidence(result)
-            try self.requireBoundTreeOnlyEvidence(result, receipt: receipt.targetReceipt)
+            try self.requireBoundTreeOnlyEvidence(
+                result,
+                receipt: receipt.targetReceipt,
+                expectedWindowID: windowID
+            )
             let bound = ElementDetectionResult(
                 snapshotId: snapshotID,
                 screenshotPath: "",
                 elements: result.elements,
                 metadata: result.metadata
             )
-            try await self.services.snapshots.storeDetectionResult(snapshotId: snapshotID, result: bound)
+            if !bound.metadata.isApplicationScopedAccessibilityFallback {
+                try await self.services.snapshots.storeDetectionResult(snapshotId: snapshotID, result: bound)
+            }
             return CaptureAndDetectionResult(
                 snapshotId: snapshotID,
                 screenshotPath: "",
@@ -178,7 +185,8 @@ extension SeeCommand {
             budget: result.metadata.windowContext?.traversalBudget
         )
         if truncationInfo.incompleteAccessibilityRead,
-           result.metadata.windowContext?.windowID != nil {
+           result.metadata.windowContext?.windowID != nil ||
+           result.metadata.isApplicationScopedAccessibilityFallback {
             throw PeekabooError.accessibilityIncomplete(message)
         }
         throw PeekabooError.operationError(message: message)
@@ -186,7 +194,8 @@ extension SeeCommand {
 
     private func requireBoundTreeOnlyEvidence(
         _ result: ElementDetectionResult,
-        receipt: DesktopActionTargetReceipt?
+        receipt: DesktopActionTargetReceipt?,
+        expectedWindowID: Int?
     ) throws {
         guard let context = result.metadata.windowContext,
               let processIdentifier = context.applicationProcessId,
@@ -201,6 +210,23 @@ extension SeeCommand {
                 "AX-only see could not bind its elements to an exact process-generation receipt. "
                     + "Run see again before background input."
             )
+        }
+        if result.metadata.isApplicationScopedAccessibilityFallback {
+            guard let expectedWindowID,
+                  let origin = result.metadata.applicationScopedAccessibilityFallbackOrigin,
+                  origin.windowID == expectedWindowID,
+                  origin.processIdentifier == processIdentifier,
+                  origin.processStartIdentity == processStartIdentity,
+                  context.windowID == nil,
+                  context.windowBounds == nil,
+                  context.windowMutationIdentity == nil,
+                  receipt?.windowID == nil
+            else {
+                throw PeekabooError.snapshotStale(
+                    "Application-partial AX evidence did not retain its exact WindowServer origin receipt."
+                )
+            }
+            return
         }
         guard receipt?.windowID != nil else { return }
         guard

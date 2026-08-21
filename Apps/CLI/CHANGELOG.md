@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Let exact-window background mutations ignore unrelated incomplete application rows while still refusing ambiguous, incomplete, stale, or mismatched selected owners.
 - Give unknown commands a current-help recovery hint and remove source-checkout rebuild advice from installed help.
+- Return explicitly application-scoped, observation-only AX semantics for tree-only reads of exact pixel-only windows while withholding snapshot and mutation authority.
 - Use the canonical MCP mutation policy for Agent visual verification, including conditional browser and foreground menu actions.
 - Bind signed `set-value` results to the opaque requested element and refuse older Bridge hosts before dispatch.
 - Keep non-modal SwiftUI `AXDialog`-subrole windows eligible for exact background mutations while preserving modal, sheet, and file-dialog protections, and recognize `inspect_ui` as fresh Agent perception in recovery guidance.

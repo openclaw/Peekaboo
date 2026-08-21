@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 import PeekabooFoundation
 import Testing
-@testable import PeekabooAutomationKit
+@testable @_spi(Testing) import PeekabooAutomationKit
 
 struct FocusedElementReceiptResolverTests {
     private let bounds = CGRect(x: 100, y: 100, width: 800, height: 600)
@@ -29,6 +29,73 @@ struct FocusedElementReceiptResolverTests {
         let result = FocusedElementReceiptResolver.clearingObservedFocus(from: self.context())
 
         #expect(result?.focusedElement == nil)
+    }
+
+    @Test
+    func `focus replacement preserves every non focus context field`() throws {
+        let original = WindowContext(
+            applicationName: "Editor",
+            applicationBundleId: "dev.peekaboo.editor",
+            applicationBundlePath: "/Applications/Editor.app",
+            applicationExecutablePath: "/Applications/Editor.app/Contents/MacOS/Editor",
+            applicationProcessId: 700,
+            applicationProcessStartIdentity: 99,
+            windowTitle: "Document",
+            windowID: 42,
+            windowBounds: self.bounds,
+            windowMutationIdentity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: 700,
+                ownerProcessStartIdentity: 99,
+                capturedBounds: self.bounds),
+            focusedElement: self.focusedIdentity(title: "Editor", identifier: "editor"),
+            shouldFocusWebContent: false,
+            includeMenuBarElements: true,
+            traversalBudget: AXTraversalBudget(maxDepth: 7),
+            requiresFreshAccessibilityTree: true,
+            accessibilityTimeoutSeconds: 33,
+            allowApplicationScopedAccessibilityFallback: true)
+
+        let cleared = try #require(FocusedElementReceiptResolver.clearingObservedFocus(from: original))
+
+        #expect(cleared.focusedElement == nil)
+        #expect(cleared.applicationBundlePath == original.applicationBundlePath)
+        #expect(cleared.applicationExecutablePath == original.applicationExecutablePath)
+        #expect(cleared.applicationProcessStartIdentity == original.applicationProcessStartIdentity)
+        #expect(cleared.traversalBudget == original.traversalBudget)
+        #expect(cleared.requiresFreshAccessibilityTree == original.requiresFreshAccessibilityTree)
+        #expect(cleared.allowApplicationScopedAccessibilityFallback ==
+            original.allowApplicationScopedAccessibilityFallback)
+    }
+
+    @Test
+    func `application partial builder clears preexisting focus and preserves process generation`() {
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 700,
+            ownerProcessStartIdentity: 99,
+            capturedBounds: self.bounds)
+        let context = WindowContext(
+            applicationName: "Editor",
+            applicationProcessId: 700,
+            applicationProcessStartIdentity: 99,
+            windowTitle: "Application-scoped partial semantics",
+            focusedElement: self.focusedIdentity(title: "Editor", identifier: "editor"))
+        let result = ElementDetectionResultBuilder.makeResult(
+            snapshotId: "application-partial",
+            elements: [self.element(id: "elem_1", identifier: "editor", focused: true)],
+            usedCache: false,
+            windowContext: context,
+            isDialog: false,
+            truncationInfo: DetectionTruncationInfo(incompleteAccessibilityRead: true),
+            applicationScopedAccessibilityFallbackOrigin:
+            ApplicationScopedAccessibilityFallbackOrigin(windowIdentity: identity),
+            additionalWarnings: [DetectionMetadata.applicationScopedAccessibilityFallbackWarning])
+
+        #expect(result.metadata.windowContext?.focusedElement == nil)
+        #expect(result.metadata.windowContext?.applicationProcessStartIdentity == 99)
+        #expect(result.metadata.applicationScopedAccessibilityFallbackOrigin?.processIdentity ==
+            identity.processIdentity)
     }
 
     @Test

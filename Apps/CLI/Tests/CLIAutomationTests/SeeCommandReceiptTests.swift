@@ -223,6 +223,10 @@ extension SeeCommandRuntimeTests {
             #expect(target.processStartIdentity == fixture.applicationInfo.processStartIdentity)
             #expect(target.windowID == fixture.windowInfo.windowID)
             #expect(automation.inspectAccessibilityTreeCalls.count == 1)
+            let inspectionContext = try #require(
+                automation.inspectAccessibilityTreeCalls.compactMap(\.self).first
+            )
+            #expect(inspectionContext.allowApplicationScopedAccessibilityFallback != true)
         }
     }
 
@@ -777,8 +781,9 @@ extension SeeCommandRuntimeTests {
             )
             let data = try #require(result.stdout.data(using: .utf8))
             let response = try JSONDecoder().decode(CodableJSONResponse<SeeResult>.self, from: data)
+            let snapshotID = try #require(response.data.snapshot_id)
             let stored = try #require(
-                context.snapshots.detectionResults[response.data.snapshot_id]?.metadata.windowContext
+                context.snapshots.detectionResults[snapshotID]?.metadata.windowContext
             )
 
             #expect(result.exitStatus == 0)
@@ -839,8 +844,9 @@ extension SeeCommandRuntimeTests {
                 from: Data(result.stdout.utf8)
             )
             let receipt = try #require(response.target_receipt)
+            let snapshotID = try #require(response.data.snapshot_id)
             let stored = try #require(
-                context.snapshots.detectionResults[response.data.snapshot_id]?.metadata.windowContext
+                context.snapshots.detectionResults[snapshotID]?.metadata.windowContext
             )
 
             #expect(response.data.ui_elements.map(\.id) == ["B1"])

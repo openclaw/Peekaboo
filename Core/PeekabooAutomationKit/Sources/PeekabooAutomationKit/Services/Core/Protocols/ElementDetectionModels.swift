@@ -242,6 +242,10 @@ public nonisolated struct WindowContext: Sendable, Codable {
     /// Optional caller deadline for the AX traversal itself.
     public let accessibilityTimeoutSeconds: TimeInterval?
 
+    /// Whether a read-only exact-window observation may return explicitly application-scoped
+    /// semantics when WindowServer ownership is exact but Accessibility exposes no matching window.
+    public let allowApplicationScopedAccessibilityFallback: Bool?
+
     public init(
         applicationName: String? = nil,
         applicationBundleId: String? = nil,
@@ -258,7 +262,8 @@ public nonisolated struct WindowContext: Sendable, Codable {
         includeMenuBarElements: Bool? = nil,
         traversalBudget: AXTraversalBudget?,
         requiresFreshAccessibilityTree: Bool = false,
-        accessibilityTimeoutSeconds: TimeInterval? = nil)
+        accessibilityTimeoutSeconds: TimeInterval? = nil,
+        allowApplicationScopedAccessibilityFallback: Bool? = nil)
     {
         self.applicationName = applicationName
         self.applicationBundleId = applicationBundleId
@@ -276,6 +281,7 @@ public nonisolated struct WindowContext: Sendable, Codable {
         self.traversalBudget = traversalBudget
         self.requiresFreshAccessibilityTree = requiresFreshAccessibilityTree
         self.accessibilityTimeoutSeconds = accessibilityTimeoutSeconds
+        self.allowApplicationScopedAccessibilityFallback = allowApplicationScopedAccessibilityFallback
     }
 
     public init(
@@ -293,7 +299,8 @@ public nonisolated struct WindowContext: Sendable, Codable {
         shouldFocusWebContent: Bool? = nil,
         includeMenuBarElements: Bool? = nil,
         requiresFreshAccessibilityTree: Bool = false,
-        accessibilityTimeoutSeconds: TimeInterval? = nil)
+        accessibilityTimeoutSeconds: TimeInterval? = nil,
+        allowApplicationScopedAccessibilityFallback: Bool? = nil)
     {
         self.init(
             applicationName: applicationName,
@@ -311,12 +318,71 @@ public nonisolated struct WindowContext: Sendable, Codable {
             includeMenuBarElements: includeMenuBarElements,
             traversalBudget: nil,
             requiresFreshAccessibilityTree: requiresFreshAccessibilityTree,
-            accessibilityTimeoutSeconds: accessibilityTimeoutSeconds)
+            accessibilityTimeoutSeconds: accessibilityTimeoutSeconds,
+            allowApplicationScopedAccessibilityFallback: allowApplicationScopedAccessibilityFallback)
+    }
+
+    public func replacingFocusedElement(_ focusedElement: FocusedElementIdentity?) -> WindowContext {
+        WindowContext(
+            applicationName: self.applicationName,
+            applicationBundleId: self.applicationBundleId,
+            applicationBundlePath: self.applicationBundlePath,
+            applicationExecutablePath: self.applicationExecutablePath,
+            applicationProcessId: self.applicationProcessId,
+            applicationProcessStartIdentity: self.applicationProcessStartIdentity,
+            windowTitle: self.windowTitle,
+            windowID: self.windowID,
+            windowBounds: self.windowBounds,
+            windowMutationIdentity: self.windowMutationIdentity,
+            focusedElement: focusedElement,
+            shouldFocusWebContent: self.shouldFocusWebContent,
+            includeMenuBarElements: self.includeMenuBarElements,
+            traversalBudget: self.traversalBudget,
+            requiresFreshAccessibilityTree: self.requiresFreshAccessibilityTree ?? false,
+            accessibilityTimeoutSeconds: self.accessibilityTimeoutSeconds,
+            allowApplicationScopedAccessibilityFallback: self.allowApplicationScopedAccessibilityFallback)
+    }
+}
+
+/// Signed provenance for application-scoped semantics returned after an exact AX window mismatch.
+///
+/// This receipt proves which WindowServer generation led to the process-level fallback. It is not
+/// element-targeting or mutation authority, and fallback results are never stored as snapshots.
+public nonisolated struct ApplicationScopedAccessibilityFallbackOrigin: Sendable, Codable, Equatable {
+    public let windowID: Int
+    public let processIdentifier: Int32
+    public let processStartIdentity: UInt64
+    public let windowBounds: CGRect
+
+    public init?(windowIdentity: WindowMutationIdentity) {
+        guard windowIdentity.windowID > 0,
+              windowIdentity.ownerProcessIdentifier > 0,
+              windowIdentity.ownerProcessStartIdentity > 0,
+              let bounds = windowIdentity.capturedBounds,
+              !bounds.isEmpty
+        else { return nil }
+        self.windowID = windowIdentity.windowID
+        self.processIdentifier = windowIdentity.ownerProcessIdentifier
+        self.processStartIdentity = windowIdentity.ownerProcessStartIdentity
+        self.windowBounds = bounds
+    }
+
+    public var processIdentity: ApplicationProcessIdentity {
+        ApplicationProcessIdentity(
+            processIdentifier: self.processIdentifier,
+            processStartIdentity: self.processStartIdentity)
     }
 }
 
 /// Metadata about element detection
 public struct DetectionMetadata: Sendable, Codable {
+    public static let applicationScopedAccessibilityFallbackWarning =
+        "ax_application_scoped_fallback_observation_only"
+
+    public var isApplicationScopedAccessibilityFallback: Bool {
+        self.warnings.contains(Self.applicationScopedAccessibilityFallbackWarning)
+    }
+
     /// Time taken for detection
     public let detectionTime: TimeInterval
 
@@ -338,6 +404,9 @@ public struct DetectionMetadata: Sendable, Codable {
     /// Truncation metadata if traversal budgets were reached
     public let truncationInfo: DetectionTruncationInfo?
 
+    /// Exact origin evidence for a labeled application-scoped fallback. Never mutation authority.
+    public let applicationScopedAccessibilityFallbackOrigin: ApplicationScopedAccessibilityFallbackOrigin?
+
     /// Host-confirmed completion boundary for focus-capable bridge detection.
     public let desktopMutationCompletedAt: Date?
 
@@ -355,6 +424,7 @@ public struct DetectionMetadata: Sendable, Codable {
         case windowContext
         case isDialog
         case truncationInfo
+        case applicationScopedAccessibilityFallbackOrigin
         case desktopMutationCompletedAt
         case desktopMutationCompletedAtReferenceDateSeconds
         case desktopMutationPreservationAllowed
@@ -369,6 +439,7 @@ public struct DetectionMetadata: Sendable, Codable {
         windowContext: WindowContext? = nil,
         isDialog: Bool = false,
         truncationInfo: DetectionTruncationInfo?,
+        applicationScopedAccessibilityFallbackOrigin: ApplicationScopedAccessibilityFallbackOrigin? = nil,
         desktopMutationCompletedAt: Date? = nil,
         desktopMutationPreservationAllowed: Bool? = nil,
         captureCoordinateContext: CaptureCoordinateContext? = nil)
@@ -380,6 +451,7 @@ public struct DetectionMetadata: Sendable, Codable {
         self.windowContext = windowContext
         self.isDialog = isDialog
         self.truncationInfo = truncationInfo
+        self.applicationScopedAccessibilityFallbackOrigin = applicationScopedAccessibilityFallbackOrigin
         self.desktopMutationCompletedAt = desktopMutationCompletedAt
         self.desktopMutationPreservationAllowed = desktopMutationPreservationAllowed
         self.captureCoordinateContext = captureCoordinateContext
@@ -396,6 +468,9 @@ public struct DetectionMetadata: Sendable, Codable {
         self.truncationInfo = try container.decodeIfPresent(
             DetectionTruncationInfo.self,
             forKey: .truncationInfo)
+        self.applicationScopedAccessibilityFallbackOrigin = try container.decodeIfPresent(
+            ApplicationScopedAccessibilityFallbackOrigin.self,
+            forKey: .applicationScopedAccessibilityFallbackOrigin)
         if let seconds = try container.decodeIfPresent(
             TimeInterval.self,
             forKey: .desktopMutationCompletedAtReferenceDateSeconds)
@@ -423,6 +498,9 @@ public struct DetectionMetadata: Sendable, Codable {
         try container.encodeIfPresent(self.windowContext, forKey: .windowContext)
         try container.encode(self.isDialog, forKey: .isDialog)
         try container.encodeIfPresent(self.truncationInfo, forKey: .truncationInfo)
+        try container.encodeIfPresent(
+            self.applicationScopedAccessibilityFallbackOrigin,
+            forKey: .applicationScopedAccessibilityFallbackOrigin)
         try container.encodeIfPresent(
             self.desktopMutationCompletedAt?.timeIntervalSinceReferenceDate,
             forKey: .desktopMutationCompletedAtReferenceDateSeconds)

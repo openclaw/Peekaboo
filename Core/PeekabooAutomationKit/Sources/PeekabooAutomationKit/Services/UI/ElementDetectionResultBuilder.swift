@@ -11,7 +11,9 @@ import PeekabooFoundation
         windowContext: WindowContext?,
         isDialog: Bool,
         detectionTime: TimeInterval = 0.0,
-        truncationInfo: DetectionTruncationInfo? = nil) -> ElementDetectionResult
+        truncationInfo: DetectionTruncationInfo? = nil,
+        applicationScopedAccessibilityFallbackOrigin: ApplicationScopedAccessibilityFallbackOrigin? = nil,
+        additionalWarnings: [String] = []) -> ElementDetectionResult
     {
         var warnings: [String] = []
         if usedCache {
@@ -32,11 +34,15 @@ import PeekabooFoundation
         if truncationInfo?.incompleteAccessibilityRead == true {
             warnings.append("ax_incomplete_read")
         }
+        warnings.append(contentsOf: additionalWarnings)
 
-        let resolvedWindowContext = usedCache ? FocusedElementReceiptResolver.clearingObservedFocus(
-            from: windowContext) : FocusedElementReceiptResolver.attachingObservedFocus(
-            to: windowContext,
-            elements: elements)
+        let resolvedWindowContext = if usedCache || applicationScopedAccessibilityFallbackOrigin != nil {
+            FocusedElementReceiptResolver.clearingObservedFocus(from: windowContext)
+        } else {
+            FocusedElementReceiptResolver.attachingObservedFocus(
+                to: windowContext,
+                elements: elements)
+        }
         return ElementDetectionResult(
             snapshotId: snapshotId,
             screenshotPath: screenshotPath,
@@ -48,7 +54,8 @@ import PeekabooFoundation
                 warnings: warnings,
                 windowContext: resolvedWindowContext,
                 isDialog: isDialog || DialogElementClassifier.containsDialog(in: elements),
-                truncationInfo: truncationInfo))
+                truncationInfo: truncationInfo,
+                applicationScopedAccessibilityFallbackOrigin: applicationScopedAccessibilityFallbackOrigin))
     }
 
     public static func group(_ elements: [DetectedElement]) -> DetectedElements {
