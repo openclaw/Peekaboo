@@ -150,6 +150,36 @@ struct TypeServicePixelFocusTests {
         #expect(synthetic.events.isEmpty)
     }
 
+    @Test
+    func `zero keyboard units refuse before the focus click`() async throws {
+        let fixture = AutomationTestFixtures.linkedSnapshotTarget()
+        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let synthetic = ClickRecordingSyntheticInputDriver()
+        let exactWindow = try #require(fixture.targetIdentity.exactWindow)
+        let service = TypeService(
+            snapshotManager: manager,
+            clickService: ClickService(
+                snapshotManager: manager,
+                inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+                syntheticInputDriver: synthetic,
+                exactWindowIdentityValidator: { _, _ in true }),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            syntheticInputDriver: synthetic)
+
+        await #expect(throws: (any Error).self) {
+            _ = try await service.typeActionsByFocusingPixel(
+                ExactWindowPixelFocusTypeRequest(
+                    point: CGPoint(x: 40, y: 50),
+                    actions: [.text("")],
+                    cadence: .fixed(milliseconds: 0),
+                    snapshotID: fixture.snapshotID,
+                    windowIdentity: exactWindow.identity,
+                    windowBounds: exactWindow.bounds),
+                deliveryValidator: {})
+        }
+        #expect(synthetic.events.isEmpty)
+    }
+
     private func temporaryRoot() -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-pixel-focus-tests-\(UUID().uuidString)", isDirectory: true)

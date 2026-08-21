@@ -115,7 +115,28 @@ func focusTargetIdentityMatches(
 private struct FocusWindowDispatchContext {
     let attachedDialog: AttachedDialogFocusReceipt?
     let expectedIdentity: WindowMutationIdentity?
+    let firstDispatchGuard: FocusFirstDispatchGuard?
     let onDispatch: ((FocusDispatchRecord) -> Void)?
+}
+
+@MainActor
+final class FocusFirstDispatchGuard {
+    private let validateOwnership: @MainActor () throws -> Void
+    private var validated = false
+
+    init(validateOwnership: @escaping @MainActor () throws -> Void = {}) {
+        self.validateOwnership = validateOwnership
+    }
+
+    func validate() throws {
+        guard !self.validated else { return }
+        try self.validateOwnership()
+        self.validated = true
+    }
+
+    func callAsFunction() throws {
+        try self.validate()
+    }
 }
 
 enum FocusDispatchRecord: Equatable, Sendable {
@@ -476,6 +497,7 @@ public final class FocusManagementService {
         windowID: CGWindowID,
         options: FocusOptions = FocusOptions(),
         expectedIdentity: WindowMutationIdentity? = nil,
+        firstDispatchGuard: FocusFirstDispatchGuard? = nil,
         onDispatch: ((FocusDispatchRecord) -> Void)? = nil) async throws
     {
         try await self.focusWindowWithOwnedLane(
@@ -483,6 +505,7 @@ public final class FocusManagementService {
             options: options,
             attachedDialog: nil,
             expectedIdentity: expectedIdentity,
+            firstDispatchGuard: firstDispatchGuard,
             onDispatch: onDispatch)
     }
 
@@ -505,6 +528,7 @@ public final class FocusManagementService {
                 parentBounds: target.bounds,
                 dialog: dialog),
             expectedIdentity: target.identity,
+            firstDispatchGuard: nil,
             onDispatch: nil)
     }
 
@@ -631,6 +655,7 @@ public final class FocusManagementService {
         options: FocusOptions,
         attachedDialog: AttachedDialogFocusReceipt?,
         expectedIdentity: WindowMutationIdentity?,
+        firstDispatchGuard: FocusFirstDispatchGuard?,
         onDispatch: ((FocusDispatchRecord) -> Void)?) async throws
     {
         // Verify window exists before any focus work starts.
@@ -662,6 +687,7 @@ public final class FocusManagementService {
                 windowID: windowID,
                 bringToCurrentSpace: options.bringToCurrentSpace,
                 expectedIdentity: expectedIdentity,
+                firstDispatchGuard: firstDispatchGuard,
                 onDispatch: onDispatch)
             try self.requireExpectedFocusIdentity(expectedIdentity, windowID: windowID)
         }
@@ -682,6 +708,7 @@ public final class FocusManagementService {
                 expectedIdentity,
                 windowID: windowID,
                 element: initialHandle.element)
+            try firstDispatchGuard?.validate()
             _ = try FocusDispatchAccounting.acceptingBool(
                 delivery: .init(mechanism: .nativeFramework, mode: .foreground),
                 onDispatch: onDispatch,
@@ -729,6 +756,7 @@ public final class FocusManagementService {
             context: FocusWindowDispatchContext(
                 attachedDialog: attachedDialog,
                 expectedIdentity: expectedIdentity,
+                firstDispatchGuard: firstDispatchGuard,
                 onDispatch: onDispatch))
     }
 
@@ -738,6 +766,7 @@ public final class FocusManagementService {
         windowID: CGWindowID,
         bringToCurrentSpace: Bool,
         expectedIdentity: WindowMutationIdentity?,
+        firstDispatchGuard: FocusFirstDispatchGuard?,
         onDispatch: ((FocusDispatchRecord) -> Void)?) async throws
     {
         switch FocusSpaceActionPlan.make(
@@ -745,6 +774,7 @@ public final class FocusManagementService {
             expectedIdentity: expectedIdentity)
         {
         case let .moveToCurrentSpace(.some(identity)):
+            try firstDispatchGuard?.validate()
             let result = try self.spaceService.moveWindowToCurrentSpaceResult(
                 windowID: windowID,
                 expectedIdentity: identity)
@@ -756,12 +786,14 @@ public final class FocusManagementService {
                 onDispatch: onDispatch)
 
         case .moveToCurrentSpace(.none):
+            try firstDispatchGuard?.validate()
             try FocusDispatchAccounting.submittingThrowing(
                 delivery: .init(mechanism: .nativeFramework, mode: .foreground),
                 onDispatch: onDispatch,
                 operation: { try self.spaceService.moveWindowToCurrentSpace(windowID: windowID) })
 
         case let .switchToWindowSpace(.some(identity)):
+            try firstDispatchGuard?.validate()
             let result = try await self.spaceService.switchToWindowSpaceResult(
                 windowID: windowID,
                 expectedIdentity: identity)
@@ -775,11 +807,13 @@ public final class FocusManagementService {
         case .switchToWindowSpace(.none):
             let isActive = self.spaceService.getSpacesForWindow(windowID: windowID).first?.isActive
             if FocusDispatchAccounting.shouldAccountSpaceSwitch(isActive: isActive) {
+                try firstDispatchGuard?.validate()
                 try await FocusDispatchAccounting.submittingAsync(
                     delivery: .init(mechanism: .nativeFramework, mode: .foreground),
                     onDispatch: onDispatch,
                     operation: { try await self.spaceService.switchToWindowSpace(windowID: windowID) })
             } else {
+                try firstDispatchGuard?.validate()
                 try await self.spaceService.switchToWindowSpace(windowID: windowID)
             }
         }
@@ -830,6 +864,7 @@ public final class FocusManagementService {
                 context.expectedIdentity,
                 windowID: windowID,
                 element: windowElement)
+            try context.firstDispatchGuard?.validate()
             _ = try FocusDispatchAccounting.acceptingBool(
                 delivery: .init(mechanism: .accessibilityValue, mode: .foreground),
                 onDispatch: context.onDispatch,
@@ -841,6 +876,7 @@ public final class FocusManagementService {
                     context.expectedIdentity,
                     windowID: windowID,
                     element: windowElement)
+                try context.firstDispatchGuard?.validate()
                 _ = try FocusDispatchAccounting.submittingThrowing(
                     delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
                     onDispatch: context.onDispatch,

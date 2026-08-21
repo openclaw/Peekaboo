@@ -12,12 +12,13 @@ extension UIAutomationService {
         let executor = ForegroundModifierClickExecutor(
             laneCoordinator: self.operationLaneCoordinator,
             dependencies: .init(
-                focusExactWindow: { target in
+                focusExactWindow: { target, firstDispatchGuard in
                     var sequence = DesktopActionSequenceAccumulator()
                     try await focusService.focusWindowWithOwnedLane(
                         windowID: CGWindowID(target.identity.windowID),
                         options: .init(timeout: 2, retryCount: 2, switchSpace: false),
                         expectedIdentity: target.identity,
+                        firstDispatchGuard: firstDispatchGuard,
                         onDispatch: { sequence.record($0.sequenceStep) })
                     return FocusDispatchAccounting.verifiedFocusOutcome(sequence.successResolution())
                 },
@@ -54,11 +55,15 @@ extension UIAutomationService {
         return try? UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds)
     }
 
-    private static func activateAndVerify(_ identity: ApplicationProcessIdentity) async throws -> Bool {
+    private static func activateAndVerify(
+        _ identity: ApplicationProcessIdentity,
+        firstDispatchGuard: FocusFirstDispatchGuard) async throws -> Bool
+    {
         guard SystemIdentityResolver.processStartIdentity(identity.processIdentifier) == identity.processStartIdentity,
-              let application = NSRunningApplication(processIdentifier: identity.processIdentifier),
-              application.activate()
+              let application = NSRunningApplication(processIdentifier: identity.processIdentifier)
         else { return false }
+        try firstDispatchGuard.validate()
+        guard application.activate() else { return false }
         for _ in 0..<20 {
             if self.currentFrontmostProcessIdentity() == identity {
                 return true

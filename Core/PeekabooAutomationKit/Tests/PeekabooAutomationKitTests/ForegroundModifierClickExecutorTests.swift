@@ -37,7 +37,8 @@ struct ForegroundModifierClickExecutorTests {
         let executor = ForegroundModifierClickExecutor(
             laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
             dependencies: .init(
-                focusExactWindow: { window in
+                focusExactWindow: { window, beforeDispatch in
+                    try beforeDispatch()
                     frontmost = target
                     focusedWindow = window
                     return .confirmedChange(
@@ -46,7 +47,8 @@ struct ForegroundModifierClickExecutorTests {
                 },
                 currentFrontmostIdentity: { frontmost },
                 currentFocusedExactWindow: { focusedWindow },
-                activate: { identity in
+                activate: { identity, beforeDispatch in
+                    try beforeDispatch()
                     frontmost = identity
                     focusedWindow = nil
                     return true
@@ -101,7 +103,8 @@ struct ForegroundModifierClickExecutorTests {
         let executor = ForegroundModifierClickExecutor(
             laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
             dependencies: .init(
-                focusExactWindow: { window in
+                focusExactWindow: { window, beforeDispatch in
+                    try beforeDispatch()
                     frontmost = target
                     focusedWindow = window
                     return .confirmedChange(
@@ -110,7 +113,10 @@ struct ForegroundModifierClickExecutorTests {
                 },
                 currentFrontmostIdentity: { frontmost },
                 currentFocusedExactWindow: { focusedWindow },
-                activate: { _ in
+                activate: { _, beforeDispatch in
+                    frontmost = newer
+                    focusedWindow = nil
+                    try beforeDispatch()
                     didReactivate = true
                     return true
                 },
@@ -121,8 +127,6 @@ struct ForegroundModifierClickExecutorTests {
                 },
                 click: { _, _, _ in
                     cursor = userCursor
-                    frontmost = newer
-                    focusedWindow = nil
                     return .dispatchedUnverified(
                         delivery: .init(mechanism: .globalEvents, mode: .foreground),
                         evidence: .deliveryAccepted,
@@ -157,13 +161,13 @@ struct ForegroundModifierClickExecutorTests {
         let executor = ForegroundModifierClickExecutor(
             laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
             dependencies: .init(
-                focusExactWindow: { _ in
+                focusExactWindow: { _, _ in
                     dispatched = true
                     return .confirmedNoChange()
                 },
                 currentFrontmostIdentity: { nil },
                 currentFocusedExactWindow: { nil },
-                activate: { _ in false },
+                activate: { _, _ in false },
                 currentCursorLocation: { nil },
                 moveCursor: { _ in dispatched = true },
                 click: { _, _, _ in
@@ -196,13 +200,13 @@ struct ForegroundModifierClickExecutorTests {
         let executor = ForegroundModifierClickExecutor(
             laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
             dependencies: .init(
-                focusExactWindow: { _ in
+                focusExactWindow: { _, _ in
                     dispatched = true
                     return .confirmedNoChange()
                 },
                 currentFrontmostIdentity: { nil },
                 currentFocusedExactWindow: { nil },
-                activate: { _ in
+                activate: { _, _ in
                     dispatched = true
                     return true
                 },
@@ -245,13 +249,13 @@ struct ForegroundModifierClickExecutorTests {
         let executor = ForegroundModifierClickExecutor(
             laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
             dependencies: .init(
-                focusExactWindow: { _ in
+                focusExactWindow: { _, _ in
                     dispatched = true
                     return .confirmedNoChange()
                 },
                 currentFrontmostIdentity: { prior },
                 currentFocusedExactWindow: { nil },
-                activate: { _ in
+                activate: { _, _ in
                     dispatched = true
                     return true
                 },
@@ -301,7 +305,8 @@ struct ForegroundModifierClickExecutorTests {
         let executor = ForegroundModifierClickExecutor(
             laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
             dependencies: .init(
-                focusExactWindow: { window in
+                focusExactWindow: { window, beforeDispatch in
+                    try beforeDispatch()
                     frontmost = target
                     focusedWindow = window
                     return .confirmedChange(
@@ -310,7 +315,8 @@ struct ForegroundModifierClickExecutorTests {
                 },
                 currentFrontmostIdentity: { frontmost },
                 currentFocusedExactWindow: { focusedWindow },
-                activate: { identity in
+                activate: { identity, beforeDispatch in
+                    try beforeDispatch()
                     focusRestoreAttempted = true
                     frontmost = identity
                     focusedWindow = nil
@@ -356,6 +362,71 @@ struct ForegroundModifierClickExecutorTests {
     }
 
     @Test
+    func `unreadable cursor during cleanup is indeterminate and still restores focus`() async throws {
+        let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
+        let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
+        let bounds = CGRect(x: 100, y: 100, width: 600, height: 400)
+        let point = CGPoint(x: 220, y: 240)
+        var frontmost = prior
+        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var cursor: CGPoint? = CGPoint(x: 20, y: 30)
+        var focusRestoreAttempted = false
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { window, beforeDispatch in
+                    try beforeDispatch()
+                    frontmost = target
+                    focusedWindow = window
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                        unitCount: .one)
+                },
+                currentFrontmostIdentity: { frontmost },
+                currentFocusedExactWindow: { focusedWindow },
+                activate: { identity, beforeDispatch in
+                    try beforeDispatch()
+                    focusRestoreAttempted = true
+                    frontmost = identity
+                    focusedWindow = nil
+                    return true
+                },
+                currentCursorLocation: { cursor },
+                moveCursor: { _ in Issue.record("Unreadable cursor must not be moved blindly") },
+                click: { _, _, _ in
+                    cursor = nil
+                    return .dispatchedUnverified(
+                        delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                        evidence: .deliveryAccepted,
+                        unitCount: .one)
+                },
+                validateExactWindow: { _, _ in true }))
+
+        do {
+            _ = try await executor.execute(ForegroundModifierClickRequest(
+                point: point,
+                clickType: .single,
+                modifiers: [.command],
+                windowIdentity: WindowMutationIdentity(
+                    windowID: 7,
+                    ownerProcessIdentifier: target.processIdentifier,
+                    ownerProcessStartIdentity: target.processStartIdentity,
+                    capturedBounds: bounds),
+                windowBounds: bounds))
+            Issue.record("Expected unreadable-cursor cleanup failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.causeDescription?.contains("Cursor restoration") == true)
+        }
+
+        #expect(focusRestoreAttempted)
+        #expect(frontmost == prior)
+    }
+
+    @Test
     func `post-dispatch cursor verification failure does not double count restoration`() async throws {
         let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
         let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
@@ -370,7 +441,8 @@ struct ForegroundModifierClickExecutorTests {
         let executor = ForegroundModifierClickExecutor(
             laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
             dependencies: .init(
-                focusExactWindow: { window in
+                focusExactWindow: { window, beforeDispatch in
+                    try beforeDispatch()
                     frontmost = target
                     focusedWindow = window
                     return .confirmedChange(
@@ -379,7 +451,8 @@ struct ForegroundModifierClickExecutorTests {
                 },
                 currentFrontmostIdentity: { frontmost },
                 currentFocusedExactWindow: { focusedWindow },
-                activate: { identity in
+                activate: { identity, beforeDispatch in
+                    try beforeDispatch()
                     frontmost = identity
                     focusedWindow = nil
                     return true
@@ -445,7 +518,8 @@ struct ForegroundModifierClickExecutorTests {
         let executor = ForegroundModifierClickExecutor(
             laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
             dependencies: .init(
-                focusExactWindow: { window in
+                focusExactWindow: { window, beforeDispatch in
+                    try beforeDispatch()
                     focusCalls.append(window.identity.windowID)
                     focusedWindow = window
                     return .confirmedChange(
@@ -454,7 +528,8 @@ struct ForegroundModifierClickExecutorTests {
                 },
                 currentFrontmostIdentity: { process },
                 currentFocusedExactWindow: { focusedWindow },
-                activate: { _ in
+                activate: { _, beforeDispatch in
+                    try beforeDispatch()
                     processActivationAttempted = true
                     return true
                 },
@@ -480,6 +555,80 @@ struct ForegroundModifierClickExecutorTests {
         #expect(focusedWindow == priorWindow)
         #expect(focusCalls == [targetWindow.identity.windowID, priorWindow.identity.windowID])
         #expect(!processActivationAttempted)
+    }
+
+    @Test
+    func `newer exact window at restoration dispatch wins compare and swap`() async throws {
+        let process = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
+        let priorBounds = CGRect(x: 20, y: 20, width: 500, height: 300)
+        let targetBounds = CGRect(x: 100, y: 100, width: 600, height: 400)
+        let newerBounds = CGRect(x: 40, y: 40, width: 450, height: 280)
+        let priorWindow = try UIAutomationTarget.ExactWindow(
+            identity: WindowMutationIdentity(
+                windowID: 6,
+                ownerProcessIdentifier: process.processIdentifier,
+                ownerProcessStartIdentity: process.processStartIdentity,
+                capturedBounds: priorBounds),
+            bounds: priorBounds)
+        let targetWindow = try UIAutomationTarget.ExactWindow(
+            identity: WindowMutationIdentity(
+                windowID: 7,
+                ownerProcessIdentifier: process.processIdentifier,
+                ownerProcessStartIdentity: process.processStartIdentity,
+                capturedBounds: targetBounds),
+            bounds: targetBounds)
+        let newerWindow = try UIAutomationTarget.ExactWindow(
+            identity: WindowMutationIdentity(
+                windowID: 8,
+                ownerProcessIdentifier: process.processIdentifier,
+                ownerProcessStartIdentity: process.processStartIdentity,
+                capturedBounds: newerBounds),
+            bounds: newerBounds)
+        let point = CGPoint(x: 220, y: 240)
+        var focusedWindow = priorWindow
+        var dispatchedWindows: [Int] = []
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { window, beforeDispatch in
+                    if window == priorWindow {
+                        focusedWindow = newerWindow
+                        try beforeDispatch()
+                        Issue.record("Restoration must not overwrite the newer exact window")
+                    } else {
+                        try beforeDispatch()
+                    }
+                    dispatchedWindows.append(window.identity.windowID)
+                    focusedWindow = window
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                        unitCount: .one)
+                },
+                currentFrontmostIdentity: { process },
+                currentFocusedExactWindow: { focusedWindow },
+                activate: { _, _ in false },
+                currentCursorLocation: { point },
+                moveCursor: { _ in },
+                click: { _, _, _ in
+                    .dispatchedUnverified(
+                        delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                        evidence: .deliveryAccepted,
+                        unitCount: .one)
+                },
+                validateExactWindow: { _, _ in true }))
+
+        let result = try await executor.execute(ForegroundModifierClickRequest(
+            point: point,
+            clickType: .single,
+            modifiers: [.command],
+            windowIdentity: targetWindow.identity,
+            windowBounds: targetBounds))
+
+        #expect(result.payload.focusRestoration == .preservedNewerState)
+        #expect(focusedWindow == newerWindow)
+        #expect(dispatchedWindows == [targetWindow.identity.windowID])
     }
 
     @Test
@@ -510,7 +659,8 @@ struct ForegroundModifierClickExecutorTests {
         let executor = ForegroundModifierClickExecutor(
             laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
             dependencies: .init(
-                focusExactWindow: { window in
+                focusExactWindow: { window, beforeDispatch in
+                    try beforeDispatch()
                     frontmost = window.identity.processIdentity
                     focusedWindow = window
                     if window == targetWindow {
@@ -526,7 +676,7 @@ struct ForegroundModifierClickExecutorTests {
                 },
                 currentFrontmostIdentity: { frontmost },
                 currentFocusedExactWindow: { focusedWindow },
-                activate: { _ in false },
+                activate: { _, _ in false },
                 currentCursorLocation: { CGPoint(x: 20, y: 30) },
                 moveCursor: { _ in },
                 click: { _, _, _ in
@@ -577,14 +727,16 @@ struct ForegroundModifierClickExecutorTests {
         let executor = ForegroundModifierClickExecutor(
             laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
             dependencies: .init(
-                focusExactWindow: { window in
+                focusExactWindow: { window, beforeDispatch in
                     if window == priorWindow {
+                        try beforeDispatch()
                         throw DesktopActionFailure.indeterminate(
                             delivery: .init(mechanism: .nativeFramework, mode: .foreground),
                             evidence: .completionUnknown,
                             unitCount: restorationUnits,
                             message: "focus restoration response was lost")
                     }
+                    try beforeDispatch()
                     frontmost = targetProcess
                     focusedWindow = targetWindow
                     return .confirmedChange(
@@ -593,7 +745,7 @@ struct ForegroundModifierClickExecutorTests {
                 },
                 currentFrontmostIdentity: { frontmost },
                 currentFocusedExactWindow: { focusedWindow },
-                activate: { _ in false },
+                activate: { _, _ in false },
                 currentCursorLocation: { CGPoint(x: 220, y: 240) },
                 moveCursor: { _ in },
                 click: { _, _, _ in
@@ -648,10 +800,12 @@ struct ForegroundModifierClickExecutorTests {
         let executor = ForegroundModifierClickExecutor(
             laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
             dependencies: .init(
-                focusExactWindow: { window in
+                focusExactWindow: { window, beforeDispatch in
                     if window == priorWindow {
+                        try beforeDispatch()
                         throw ModifierClickTestError.focusRestoreFailed
                     }
+                    try beforeDispatch()
                     frontmost = targetProcess
                     focusedWindow = targetWindow
                     throw DesktopActionFailure.indeterminate(
@@ -662,7 +816,7 @@ struct ForegroundModifierClickExecutorTests {
                 },
                 currentFrontmostIdentity: { frontmost },
                 currentFocusedExactWindow: { focusedWindow },
-                activate: { _ in false },
+                activate: { _, _ in false },
                 currentCursorLocation: { CGPoint(x: 20, y: 30) },
                 moveCursor: { _ in },
                 click: { _, _, _ in

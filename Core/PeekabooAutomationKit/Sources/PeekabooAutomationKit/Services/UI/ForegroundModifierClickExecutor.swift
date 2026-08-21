@@ -6,10 +6,14 @@ import PeekabooFoundation
 @MainActor
 final class ForegroundModifierClickExecutor {
     struct Dependencies {
-        let focusExactWindow: @MainActor (UIAutomationTarget.ExactWindow) async throws -> DesktopActionOutcome
+        let focusExactWindow: @MainActor (
+            UIAutomationTarget.ExactWindow,
+            FocusFirstDispatchGuard) async throws -> DesktopActionOutcome
         let currentFrontmostIdentity: @MainActor () -> ApplicationProcessIdentity?
         let currentFocusedExactWindow: @MainActor () -> UIAutomationTarget.ExactWindow?
-        let activate: @MainActor (ApplicationProcessIdentity) async throws -> Bool
+        let activate: @MainActor (
+            ApplicationProcessIdentity,
+            FocusFirstDispatchGuard) async throws -> Bool
         let currentCursorLocation: @MainActor () -> CGPoint?
         let moveCursor: @MainActor (CGPoint) throws -> Void
         let click: @MainActor (CGPoint, ClickType, [PointerModifier]) throws -> DesktopActionOutcome
@@ -72,7 +76,7 @@ final class ForegroundModifierClickExecutor {
         var cleanupFailures: [(phase: String, failure: DesktopActionFailure)] = []
 
         do {
-            let focusOutcome = try await self.dependencies.focusExactWindow(exactWindow)
+            let focusOutcome = try await self.dependencies.focusExactWindow(exactWindow, FocusFirstDispatchGuard())
             sequence.record(.reportedOutcome(focusOutcome, defaultDispatchedUnitCount: .one))
             guard focusOutcome.isConfirmed,
                   self.dependencies.currentFrontmostIdentity() == request.windowIdentity.processIdentity,
@@ -226,7 +230,7 @@ final class ForegroundModifierClickExecutor {
         sequence: inout DesktopActionSequenceAccumulator) throws -> SharedDesktopRestorationStatus
     {
         guard let current = self.dependencies.currentCursorLocation() else {
-            return .preservedNewerState
+            throw ForegroundModifierClickError.cursorRestorationUnverified
         }
         if Self.pointsMatch(current, original) {
             return .notNeeded
@@ -256,7 +260,23 @@ final class ForegroundModifierClickExecutor {
             guard priorWindow != targetWindow, currentWindow == targetWindow else {
                 return .preservedNewerState
             }
-            let outcome = try await self.dependencies.focusExactWindow(priorWindow)
+            let outcome: DesktopActionOutcome
+            do {
+                let dispatchGuard = FocusFirstDispatchGuard {
+                    let dispatchCurrent = self.dependencies.currentFocusedExactWindow()
+                    if dispatchCurrent == priorWindow {
+                        throw ForegroundModifierClickError.focusRestorationBecameUnnecessary
+                    }
+                    guard dispatchCurrent == targetWindow else {
+                        throw ForegroundModifierClickError.focusRestorationOwnershipLost
+                    }
+                }
+                outcome = try await self.dependencies.focusExactWindow(priorWindow, dispatchGuard)
+            } catch ForegroundModifierClickError.focusRestorationBecameUnnecessary {
+                return .notNeeded
+            } catch ForegroundModifierClickError.focusRestorationOwnershipLost {
+                return .preservedNewerState
+            }
             sequence.record(.reportedOutcome(outcome, defaultDispatchedUnitCount: .one))
             guard outcome.isConfirmed,
                   self.dependencies.currentFocusedExactWindow() == priorWindow
@@ -274,8 +294,23 @@ final class ForegroundModifierClickExecutor {
         guard current == targetWindow.identity.processIdentity else {
             return .preservedNewerState
         }
-        guard try await self.dependencies.activate(priorProcess) else {
-            throw ForegroundModifierClickError.focusRestorationUnverified
+        do {
+            let dispatchGuard = FocusFirstDispatchGuard {
+                let dispatchCurrent = self.dependencies.currentFrontmostIdentity()
+                if dispatchCurrent == priorProcess {
+                    throw ForegroundModifierClickError.focusRestorationBecameUnnecessary
+                }
+                guard dispatchCurrent == targetWindow.identity.processIdentity else {
+                    throw ForegroundModifierClickError.focusRestorationOwnershipLost
+                }
+            }
+            guard try await self.dependencies.activate(priorProcess, dispatchGuard) else {
+                throw ForegroundModifierClickError.focusRestorationUnverified
+            }
+        } catch ForegroundModifierClickError.focusRestorationBecameUnnecessary {
+            return .notNeeded
+        } catch ForegroundModifierClickError.focusRestorationOwnershipLost {
+            return .preservedNewerState
         }
         sequence.record(.dispatched(route: .local, delivery: Self.nativeForeground, unitCount: .one))
         guard self.dependencies.currentFrontmostIdentity() == priorProcess else {
@@ -341,12 +376,18 @@ final class ForegroundModifierClickExecutor {
 
 private enum ForegroundModifierClickError: LocalizedError {
     case cursorRestorationUnverified
+    case focusRestorationBecameUnnecessary
+    case focusRestorationOwnershipLost
     case focusRestorationUnverified
 
     var errorDescription: String? {
         switch self {
         case .cursorRestorationUnverified:
             "The physical cursor did not return to its captured location."
+        case .focusRestorationBecameUnnecessary:
+            "The prior foreground state was restored before Peekaboo dispatched restoration."
+        case .focusRestorationOwnershipLost:
+            "Newer foreground state replaced Peekaboo's target before restoration dispatch."
         case .focusRestorationUnverified:
             "The prior foreground window or application could not be re-established."
         }

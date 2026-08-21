@@ -754,6 +754,9 @@ extension TypeService {
                 guard !request.actions.isEmpty else {
                     throw PeekabooError.invalidInput("Pixel-focus typing requires at least one typing action")
                 }
+                guard Self.plannedKeyPressCount(request.actions) > 0 else {
+                    throw PeekabooError.invalidInput("Pixel-focus typing requires at least one keyboard unit")
+                }
                 let receiptPlan = try await SnapshotTargetReceiptPlanner(
                     snapshots: self.snapshotManager).plan(snapshotID: request.snapshotID)
                 let authority = try receiptPlan.receipt.requireCoordinateAuthority()
@@ -847,5 +850,15 @@ extension TypeService {
             payload: payloadSummary.result,
             outcome: sequenceResolution?.outcome,
             targetIdentity: DesktopTargetIdentity(exactWindow: exactWindow))
+    }
+
+    private static func plannedKeyPressCount(_ actions: [TypeAction]) -> Int {
+        actions.reduce(into: 0) { count, action in
+            switch action {
+            case let .text(text): count += text.count
+            case .key: count += 1
+            case .clear: count += 2
+            }
+        }
     }
 }
