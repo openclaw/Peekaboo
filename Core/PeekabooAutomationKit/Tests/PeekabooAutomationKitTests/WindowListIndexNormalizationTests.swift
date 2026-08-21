@@ -85,12 +85,17 @@ struct WindowListIndexNormalizationTests {
     func `observation capability rejects invalid mode reason pairs`() {
         let invalidUnknown = Data(#"{"mode":"unknown","reason":"no_matching_accessibility_window"}"#.utf8)
         let invalidPixels = Data(#"{"mode":"pixels_only","reason":"raster_capture_unverified"}"#.utf8)
+        let invalidCombined = Data(
+            #"{"mode":"combined_eligible","reason":"no_matching_accessibility_window"}"#.utf8)
 
         #expect(throws: (any Error).self) {
             try JSONDecoder().decode(WindowObservationCapability.self, from: invalidUnknown)
         }
         #expect(throws: (any Error).self) {
             try JSONDecoder().decode(WindowObservationCapability.self, from: invalidPixels)
+        }
+        #expect(throws: (any Error).self) {
+            try JSONDecoder().decode(WindowObservationCapability.self, from: invalidCombined)
         }
     }
 

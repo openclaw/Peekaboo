@@ -941,6 +941,12 @@ public enum WindowObservationCapability: Sendable, Codable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         switch try container.decode(Mode.self, forKey: .mode) {
         case .combinedEligible:
+            guard !container.contains(.reason) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .reason,
+                    in: container,
+                    debugDescription: "combined_eligible must not include a reason")
+            }
             self = .combinedEligible
         case .pixelsOnly:
             self = try .pixelsOnly(reason: container.decode(PixelsOnlyReason.self, forKey: .reason))
