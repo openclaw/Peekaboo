@@ -22,12 +22,20 @@ const UUID_V8 = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 const UINT64_MAX = 0xffff_ffff_ffff_ffffn;
 const REQUEST_ID_DOMAIN = Buffer.from('peekaboo.bridge.operation-request.v1\0', 'utf8');
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
-const BUILTIN_CATALOG_SHA256 = '47b8bf590439f6f69ce73939ea7db63907f484c1a7e7184317c091cad37a7f8e';
+const BUILTIN_CATALOG_SHA256 = 'b3c0d2c2e6cc0f3afd32978053cc3636a914bddead29be4f18ddf644e7318531';
 const BUILTIN_DIGEST_SPEC_SHA256 = '6d80d6264a4d3b80c69cee0c68ce3b5c2fd801e8483bb4bbddd4402d87066a33';
 const CLI_VERSION = '2';
 const LIVE_CERTIFICATION_AUTHORITY = Symbol('peekaboo-live-certification-authority');
 const LIVE_CERTIFICATION_RESULT = Symbol('peekaboo-live-certification-result');
 const FINALIZER_CATALOG_DIGEST_PROJECTION = 'normalize-builtin-catalog-sha256-to-zero-v1';
+const SUPPORTED_LIVE_VALIDATOR_HOST_PROTOCOLS = new Set(['1.31', '1.32']);
+
+// Keep this source-bound finalizer self-contained: importing a mutable helper would put protocol
+// admission outside current_build_source.finalizer.projected_sha256. The final-qualification layer
+// mirrors the same closed reviewed-version set in its own source-manifested shared library.
+function isSupportedQualificationHostProtocol(value) {
+  return typeof value === 'string' && SUPPORTED_LIVE_VALIDATOR_HOST_PROTOCOLS.has(value);
+}
 
 class LosslessJSONInteger {
   constructor(source) {
@@ -2032,7 +2040,7 @@ function validFirstPartyVerdict(value, slot, manifestRow, contract) {
     && value.validator_id === 'peekaboo-bridge-receipt-validate-v1'
     && value.trust_source === 'authenticated_live_listener'
     && value.minimum_protocol_version === '1.29'
-    && value.host_protocol_version === '1.31'
+    && isSupportedQualificationHostProtocol(value.host_protocol_version)
     && value.request_id === slot.request_id
     && value.session_id === slot.session.id
     && value.session_sequence === slot.session.sequence
@@ -2933,7 +2941,7 @@ export function validateSuccessfulCertificationSummary(summary, label = 'certifi
         || row.verdict.validator_id !== 'peekaboo-bridge-receipt-validate-v1'
         || row.verdict.trust_source !== 'authenticated_live_listener'
         || row.verdict.minimum_protocol_version !== '1.29'
-        || row.verdict.host_protocol_version !== '1.31'
+        || !isSupportedQualificationHostProtocol(row.verdict.host_protocol_version)
         || row.verdict.terminal_receipt_attested !== true
         || row.verdict.target_attested !== true
         || typeof row.verdict.outcome_attested !== 'boolean'

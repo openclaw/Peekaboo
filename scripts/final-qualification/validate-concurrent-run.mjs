@@ -20,6 +20,7 @@ import {
   decodeCanonicalBase64JSON,
   exactKeys,
   isAgentMutatingToolName,
+  isSupportedQualificationHostProtocol,
   normalizedAgentToolName,
   parseOptions,
   positiveDecimal,
@@ -208,7 +209,7 @@ function signedBundle(filePath, validatorPath, operation, label, authentication)
     && report.validator_id === 'peekaboo-bridge-receipt-validate-v1'
     && report.trust_source === 'authenticated_live_listener'
     && report.minimum_protocol_version === '1.29'
-    && report.host_protocol_version === '1.31'
+    && isSupportedQualificationHostProtocol(report.host_protocol_version)
     && HEX40.test(report.host_source_commit ?? '')
     && report.terminal_receipt_attested === true
     && report.retention_basis === 'exported_bundle'

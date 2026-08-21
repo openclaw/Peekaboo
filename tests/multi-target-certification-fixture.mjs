@@ -752,7 +752,7 @@ export function makeMultiTargetFixture(catalog, catalogFileSHA256, options = {})
         validator_id: 'peekaboo-bridge-receipt-validate-v1',
         trust_source: 'authenticated_live_listener',
         minimum_protocol_version: '1.29',
-        host_protocol_version: '1.31',
+        host_protocol_version: '1.32',
         request_id: slot.request_id,
         session_id: slot.session.id,
         session_sequence: slot.session.sequence,

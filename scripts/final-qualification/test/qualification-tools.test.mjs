@@ -39,8 +39,10 @@ import { aggregateSHA256 as multiTargetAggregateSHA256 } from '../../finalize-mu
 import {
   aggregateSHA256,
   canonicalBytes,
+  isSupportedQualificationHostProtocol,
   publishPrivateAtomicNoReplace,
   sha256,
+  validateCurrentQualificationBridgeHandshake,
 } from '../lib.mjs';
 
 const TEAM = 'FWJYW4S8P8';
@@ -133,49 +135,65 @@ const SOURCE = spawnSync(
 const toolRoot = path.join(qualificationRepositoryRoot, 'scripts/final-qualification');
 process.on('exit', () => fs.rmSync(qualificationRepositoryRoot, { recursive: true, force: true }));
 
-function fixtureAuthenticatedBundle({ bundlePath, expectedHost }) {
-  const bytes = fs.readFileSync(bundlePath);
-  const payload = JSON.parse(bytes).receipt.payload;
-  return {
-    valid: true,
-    validator_id: 'peekaboo-bridge-receipt-validate-v1',
-    trust_source: 'authenticated_live_listener',
-    minimum_protocol_version: '1.29',
-    request_id: String(payload.requestID).toLowerCase(),
-    session_id: String(payload.sessionID).toLowerCase(),
-    session_sequence: payload.sessionSequence,
-    operation: payload.operation,
-    listener_instance_id: String(payload.listenerInstanceID).toLowerCase(),
-    client_instance_id: String(payload.clientInstanceID).toLowerCase(),
-    host: {
-      pid: expectedHost.process_identifier,
-      start_identity: expectedHost.process_start_identity_decimal,
-      code_signature_hash: expectedHost.code_signature_hash,
-    },
-    client: {
-      pid: payload.client.processIdentifier,
-      start_identity: payload.client.processStartIdentity,
-      code_signature_hash: payload.client.codeSignatureHash,
-    },
-    host_source_commit: expectedHost.source_commit,
-    host_protocol_version: '1.31',
-    ...(payload.listenerPublicKeySHA256 === undefined ? {} : {
-      listener_public_key_sha256: payload.listenerPublicKeySHA256,
-      request_sha256: payload.requestSHA256,
-      response_sha256: payload.responseSHA256,
-    }),
-    bundle_sha256: sha256(bytes),
-    terminal_receipt_attested: true,
-    target_attested: payload.target !== null,
-    outcome_attested: payload.outcome !== undefined,
-    retention_basis: 'exported_bundle',
+function fixtureAuthenticatedBundleForProtocol(hostProtocolVersion) {
+  return ({ bundlePath, expectedHost }) => {
+    const bytes = fs.readFileSync(bundlePath);
+    const payload = JSON.parse(bytes).receipt.payload;
+    return {
+      valid: true,
+      validator_id: 'peekaboo-bridge-receipt-validate-v1',
+      trust_source: 'authenticated_live_listener',
+      minimum_protocol_version: '1.29',
+      request_id: String(payload.requestID).toLowerCase(),
+      session_id: String(payload.sessionID).toLowerCase(),
+      session_sequence: payload.sessionSequence,
+      operation: payload.operation,
+      listener_instance_id: String(payload.listenerInstanceID).toLowerCase(),
+      client_instance_id: String(payload.clientInstanceID).toLowerCase(),
+      host: {
+        pid: expectedHost.process_identifier,
+        start_identity: expectedHost.process_start_identity_decimal,
+        code_signature_hash: expectedHost.code_signature_hash,
+      },
+      client: {
+        pid: payload.client.processIdentifier,
+        start_identity: payload.client.processStartIdentity,
+        code_signature_hash: payload.client.codeSignatureHash,
+      },
+      host_source_commit: expectedHost.source_commit,
+      host_protocol_version: hostProtocolVersion,
+      ...(payload.listenerPublicKeySHA256 === undefined ? {} : {
+        listener_public_key_sha256: payload.listenerPublicKeySHA256,
+        request_sha256: payload.requestSHA256,
+        response_sha256: payload.responseSHA256,
+      }),
+      bundle_sha256: sha256(bytes),
+      terminal_receipt_attested: true,
+      target_attested: payload.target !== null,
+      outcome_attested: payload.outcome !== undefined,
+      retention_basis: 'exported_bundle',
+    };
   };
 }
+
+const fixtureAuthenticatedBundle = fixtureAuthenticatedBundleForProtocol('1.32');
 
 function validateConcurrentRun(specPath, outputPath) {
   return validateConcurrentRunProduction(specPath, outputPath, {
     authenticateBundle: fixtureAuthenticatedBundle,
   });
+}
+
+function setConcurrentValidatorHostProtocol(fixture, hostProtocolVersion) {
+  const paths = [
+    fixture.spec.agent_execution_validator_report,
+    ...fixture.spec.agent_bundles.map((entry) => entry.validator_report_path),
+  ];
+  for (const filePath of paths) {
+    const value = JSON.parse(fs.readFileSync(filePath));
+    value.data.host_protocol_version = hostProtocolVersion;
+    writeJSON(filePath, value);
+  }
 }
 
 function generateManifest(inputPath, outputPath) {
@@ -283,7 +301,7 @@ function certificationSummaryFixture(monitorEvidence, planControllers) {
       validator_id: 'peekaboo-bridge-receipt-validate-v1',
       trust_source: 'authenticated_live_listener',
       minimum_protocol_version: '1.29',
-      host_protocol_version: '1.31',
+      host_protocol_version: '1.32',
       request_id: row.requestID,
       session_id: row.sessionID,
       session_sequence: '0',
@@ -1177,8 +1195,23 @@ function projectionFixture(root) {
         source: 'remote',
         socketPath: path.join(root, 'bridge.sock'),
         handshake: {
-          negotiatedVersion: { major: 1, minor: 31 },
+          negotiatedVersion: { major: 1, minor: 32 },
           hostKind: 'gui',
+          supportedOperations: [
+            'agentExecutionTrace',
+            'observeProcessGeneration',
+            'certificationProducerAttestation',
+          ],
+          enabledOperations: [
+            'agentExecutionTrace',
+            'observeProcessGeneration',
+            'certificationProducerAttestation',
+          ],
+          hostCapabilities: [
+            'agentExecutionTrace',
+            'processGenerationObservation',
+            'certificationProducerAttestation',
+          ],
           hostIdentity: {
             processIdentifier: 200,
             processStartIdentityDecimal: '200001',
@@ -1272,6 +1305,49 @@ test('release qualification generation and verification fail closed without a tr
   }
 });
 
+test('qualification host protocol contract accepts only the reviewed Agent floor and current host', () => {
+  assert.equal(isSupportedQualificationHostProtocol('1.31'), true);
+  assert.equal(isSupportedQualificationHostProtocol('1.32'), true);
+  for (const value of ['1.30', '1.33', '2.0', '01.31', '1.31.0', '', null, 1.32]) {
+    assert.equal(isSupportedQualificationHostProtocol(value), false, String(value));
+  }
+
+  const handshake = {
+    negotiatedVersion: { major: 1, minor: 32 },
+    supportedOperations: [
+      'agentExecutionTrace',
+      'observeProcessGeneration',
+      'certificationProducerAttestation',
+    ],
+    enabledOperations: [
+      'agentExecutionTrace',
+      'observeProcessGeneration',
+      'certificationProducerAttestation',
+    ],
+    hostCapabilities: [
+      'agentExecutionTrace',
+      'processGenerationObservation',
+      'certificationProducerAttestation',
+    ],
+  };
+  assert.doesNotThrow(() => validateCurrentQualificationBridgeHandshake(handshake, 'fixture'));
+  for (const [name, mutate] of [
+    ['Agent-floor host', (value) => { value.negotiatedVersion.minor = 31; }],
+    ['future host', (value) => { value.negotiatedVersion.minor = 33; }],
+    ['producer operation', (value) => { value.supportedOperations.pop(); }],
+    ['enabled producer operation', (value) => { value.enabledOperations.pop(); }],
+    ['producer capability', (value) => { value.hostCapabilities.pop(); }],
+  ]) {
+    const changed = structuredClone(handshake);
+    mutate(changed);
+    assert.throws(
+      () => validateCurrentQualificationBridgeHandshake(changed, 'fixture'),
+      /current qualification/,
+      name,
+    );
+  }
+});
+
 test('closed raw receipts project deterministic live-v4 bindings and reject ambiguity', () => {
   const root = fs.mkdtempSync('/private/tmp/pbq-tools-project-');
   fs.chmodSync(root, 0o700);
@@ -1294,6 +1370,44 @@ test('closed raw receipts project deterministic live-v4 bindings and reject ambi
     assert.equal(plan.version, 1);
     assert.equal(plan.bridge.expected_host.source_commit, SOURCE);
     assert.equal(fs.statSync(planPath).mode & 0o777, 0o600);
+
+    const bridgeBaseline = JSON.parse(fs.readFileSync(fix.spec.receipts.bridge_status));
+    for (const [name, mutate, error] of [
+      [
+        'agent-floor-host',
+        (value) => { value.data.selected.handshake.negotiatedVersion.minor = 31; },
+        /must negotiate current qualification protocol 1\.32/,
+      ],
+      [
+        'future-host',
+        (value) => { value.data.selected.handshake.negotiatedVersion.minor = 33; },
+        /must negotiate current qualification protocol 1\.32/,
+      ],
+      [
+        'missing-producer-operation',
+        (value) => { value.data.selected.handshake.supportedOperations.pop(); },
+        /lacks required current qualification supportedOperations/,
+      ],
+      [
+        'disabled-producer-operation',
+        (value) => { value.data.selected.handshake.enabledOperations.pop(); },
+        /lacks required current qualification enabledOperations/,
+      ],
+      [
+        'missing-producer-capability',
+        (value) => { value.data.selected.handshake.hostCapabilities.pop(); },
+        /lacks required current qualification hostCapabilities/,
+      ],
+    ]) {
+      const changed = structuredClone(bridgeBaseline);
+      mutate(changed);
+      writeJSON(fix.spec.receipts.bridge_status, changed);
+      assert.throws(
+        () => projectBindings(input, path.join(root, `${name}.json`)),
+        error,
+      );
+    }
+    writeJSON(fix.spec.receipts.bridge_status, bridgeBaseline);
 
     const calibrated = JSON.parse(fs.readFileSync(fix.spec.receipts.integrated_cu_emitter));
     calibrated.after.code_signature_hash = '9'.repeat(40);
@@ -2564,7 +2678,7 @@ function signedBundleFixture(root, name, operation, targetValue, startedAt, comp
         code_signature_hash: client.code_signature_hash,
       },
       host_source_commit: sourceCommit,
-      host_protocol_version: '1.31',
+      host_protocol_version: '1.32',
       bundle_sha256: sha256(fs.readFileSync(bundle)),
       terminal_receipt_attested: true,
       target_attested: !targetAbsent,
@@ -3917,6 +4031,47 @@ test('post-run validator does not accept caller-authored validator JSON without 
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('post-run validator accepts the Agent protocol floor and refuses unreviewed host versions', () => {
+  for (const hostProtocolVersion of ['1.31', '1.32']) {
+    const root = fs.mkdtempSync('/private/tmp/pbq-tools-protocol-host-');
+    fs.chmodSync(root, 0o700);
+    try {
+      const fix = concurrentFixture(root);
+      setConcurrentValidatorHostProtocol(fix, hostProtocolVersion);
+      const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
+      const result = validateConcurrentRunProduction(
+        specPath,
+        path.join(root, 'report.json'),
+        { authenticateBundle: fixtureAuthenticatedBundleForProtocol(hostProtocolVersion) },
+      );
+      assert.equal(result.report.passed, true, hostProtocolVersion);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  for (const hostProtocolVersion of ['1.30', '1.33']) {
+    const root = fs.mkdtempSync('/private/tmp/pbq-tools-protocol-host-');
+    fs.chmodSync(root, 0o700);
+    try {
+      const fix = concurrentFixture(root);
+      setConcurrentValidatorHostProtocol(fix, hostProtocolVersion);
+      const specPath = writeJSON(path.join(root, 'validation-input.json'), fix.spec);
+      assert.throws(
+        () => validateConcurrentRunProduction(
+          specPath,
+          path.join(root, 'report.json'),
+          { authenticateBundle: fixtureAuthenticatedBundleForProtocol(hostProtocolVersion) },
+        ),
+        /supported protocol-1\.31\+ terminal bundle|exact bundle/,
+        hostProtocolVersion,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   }
 });
 

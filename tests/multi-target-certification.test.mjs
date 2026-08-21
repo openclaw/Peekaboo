@@ -1103,7 +1103,7 @@ test('foreground controller and target cannot alias a background owner', async (
   assert.ok(driftResult.failures.some((entry) => entry.rule === 'contract_foreground_isolation'));
 });
 
-test('signed protocol-1.30 slot requires a triple click and authenticated 1.30 host', async () => {
+test('signed protocol-1.30 slot requires a triple click and a reviewed live-validator host', async () => {
   const wrongRequest = makeMultiTargetFixture(catalog, catalogFileSHA256, {
     protocolClickType: 'double',
   });
@@ -1131,10 +1131,19 @@ test('signed protocol-1.30 slot requires a triple click and authenticated 1.30 h
       && entry.message.includes('protocol-1.30 click')
   )));
 
-  const wrongHost = makeFixture();
-  wrongHost.firstPartyVerdicts[0].verdict.host_protocol_version = '1.29';
-  const hostResult = await assertRejected(wrongHost, 'protocol-1.30 host');
-  assert.ok(hostResult.failures.some((entry) => entry.rule === 'first_party_execution'));
+  const floorHost = makeFixture();
+  for (const row of floorHost.firstPartyVerdicts) {
+    row.verdict.host_protocol_version = '1.31';
+  }
+  const floorResult = await finalize(floorHost);
+  assert.equal(floorResult.structural_validation_passed, true);
+
+  for (const hostProtocolVersion of ['1.29', '1.30', '1.33']) {
+    const wrongHost = makeFixture();
+    wrongHost.firstPartyVerdicts[0].verdict.host_protocol_version = hostProtocolVersion;
+    const hostResult = await assertRejected(wrongHost, `host protocol ${hostProtocolVersion}`);
+    assert.ok(hostResult.failures.some((entry) => entry.rule === 'first_party_execution'));
+  }
 });
 
 test('foreground activity must occur while every designated background slot is in flight', async () => {

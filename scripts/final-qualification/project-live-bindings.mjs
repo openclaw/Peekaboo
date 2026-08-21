@@ -19,6 +19,7 @@ import {
   requireStableExecutable,
   sameJSON,
   sha256,
+  validateCurrentQualificationBridgeHandshake,
   validateBounds,
   writePrivateExclusive,
 } from './lib.mjs';
@@ -109,9 +110,7 @@ function bridgeReceipt(filePath, catalog) {
   const handshake = selected.handshake;
   const identity = handshake?.hostIdentity;
   requireCondition(['gui', 'daemon'].includes(handshake?.hostKind), `${label} host kind is invalid`);
-  exactKeys(handshake?.negotiatedVersion, ['major', 'minor'], `${label} negotiatedVersion`);
-  requireCondition(handshake.negotiatedVersion.major === 1
-    && handshake.negotiatedVersion.minor === 31, `${label} must be protocol 1.31`);
+  validateCurrentQualificationBridgeHandshake(handshake, label);
   requireCondition(identity && positiveInteger(identity.processIdentifier), `${label} host PID is invalid`);
   const start = identity.processStartIdentityDecimal;
   requireCondition(positiveDecimal(start), `${label} host generation is not lossless decimal`);

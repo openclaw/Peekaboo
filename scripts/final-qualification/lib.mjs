@@ -52,6 +52,54 @@ export function sameJSON(left, right) {
   }
 }
 
+export const QUALIFICATION_AGENT_EXECUTION_PROTOCOL_FLOOR = '1.31';
+export const QUALIFICATION_CURRENT_HOST_PROTOCOL = '1.32';
+const QUALIFICATION_SUPPORTED_HOST_PROTOCOLS = new Set([
+  QUALIFICATION_AGENT_EXECUTION_PROTOCOL_FLOOR,
+  QUALIFICATION_CURRENT_HOST_PROTOCOL,
+]);
+
+// Live validator reports expose the protocol negotiated by the validation connection, not the
+// minimum version of the operation retained in the bundle. Keep this closed to explicitly
+// reviewed host versions: 1.31 is the Agent-execution floor, 1.32 is the current producer-aware
+// host, and a future protocol must update the qualification contract before it can certify.
+export function isSupportedQualificationHostProtocol(value) {
+  return typeof value === 'string' && QUALIFICATION_SUPPORTED_HOST_PROTOCOLS.has(value);
+}
+
+export function validateCurrentQualificationBridgeHandshake(handshake, label) {
+  exactKeys(handshake?.negotiatedVersion, ['major', 'minor'], `${label} negotiatedVersion`);
+  requireCondition(
+    handshake.negotiatedVersion.major === 1 && handshake.negotiatedVersion.minor === 32,
+    `${label} must negotiate current qualification protocol ${QUALIFICATION_CURRENT_HOST_PROTOCOL}`,
+  );
+
+  const requiredOperations = [
+    'agentExecutionTrace',
+    'observeProcessGeneration',
+    'certificationProducerAttestation',
+  ];
+  const requiredCapabilities = [
+    'agentExecutionTrace',
+    'processGenerationObservation',
+    'certificationProducerAttestation',
+  ];
+  for (const [field, required] of [
+    ['supportedOperations', requiredOperations],
+    ['enabledOperations', requiredOperations],
+    ['hostCapabilities', requiredCapabilities],
+  ]) {
+    const values = handshake?.[field];
+    requireCondition(
+      Array.isArray(values)
+        && values.every((entry) => typeof entry === 'string' && entry.length > 0)
+        && new Set(values).size === values.length
+        && required.every((entry) => values.includes(entry)),
+      `${label} lacks required current qualification ${field}`,
+    );
+  }
+}
+
 const AGENT_MUTATING_TOOL_NAMES = new Set([
   'action', 'app', 'click', 'dialog', 'dock', 'drag', 'menu', 'move', 'paste', 'press',
   'scroll', 'set_value', 'space', 'type', 'window',
@@ -720,7 +768,7 @@ export function authenticateAgentExecutionTerminalBundle({
     && report.validator_id === 'peekaboo-bridge-receipt-validate-v1'
     && report.trust_source === 'authenticated_live_listener'
     && report.minimum_protocol_version === '1.29'
-    && report.host_protocol_version === '1.31'
+    && isSupportedQualificationHostProtocol(report.host_protocol_version)
     && report.terminal_receipt_attested === true
     && report.target_attested === true
     && report.outcome_attested === true
@@ -732,7 +780,7 @@ export function authenticateAgentExecutionTerminalBundle({
     && report.request_sha256 === request.sha256
     && report.response_sha256 === payload.responseSHA256
     && report.response_sha256 === response.sha256,
-  `${label} validator is not bound to one protocol-1.31 terminal bundle`);
+  `${label} validator is not bound to one supported protocol-1.31+ terminal bundle`);
 
   const semanticRequest = projectedAgentExecutionRequest(request.value, `${label} request`);
   validateAgentExecutionRequest(semanticRequest, expectedRequest, socketPath, label);
