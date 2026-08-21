@@ -115,12 +115,68 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     exit 2
 fi
 
-for command_name in git jq node plutil realpath rg swiftc xcodebuild codesign security open uuidgen shasum; do
+for command_name in file git jq node plutil realpath rg swiftc xcodebuild codesign security open uuidgen shasum; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Missing required command: $command_name" >&2
         exit 2
     fi
 done
+
+read_code_signature_hash() {
+    local details
+    details="$(codesign -dvvv "$1" 2>&1)" || return 1
+    awk -F= '
+        /^CDHash=/ {
+            count += 1
+            value = $2
+        }
+        END {
+            if (count != 1 || value !~ /^[0-9a-f]{40}$/) {
+                exit 1
+            }
+            print value
+        }
+    ' <<<"$details"
+}
+
+openclaw_codesign_identity() {
+    local identities
+    identities="$(security find-identity -p codesigning -v 2>/dev/null)" || true
+    awk -F'"' '
+        /Developer ID Application: OpenClaw Foundation/ && identity == "" {
+            identity = $2
+        }
+        END { print identity }
+    ' <<<"$identities"
+}
+
+sign_playground_app() {
+    local app="$1"
+    local identity="$2"
+    local executable_name main_executable candidate description
+    executable_name="$(plutil -extract CFBundleExecutable raw "$app/Contents/Info.plist")"
+    main_executable="$app/Contents/MacOS/$executable_name"
+
+    while IFS= read -r -d '' candidate; do
+        [[ "$candidate" != "$main_executable" ]] || continue
+        description="$(file -b "$candidate" 2>/dev/null || true)"
+        [[ "$description" == *Mach-O* ]] || continue
+        case "$candidate" in
+            "$app/Contents/MacOS/$executable_name.debug.dylib" | \
+            "$app/Contents/MacOS/__preview.dylib" | \
+            "$app/Contents/Frameworks/libswiftCompatibilitySpan.dylib") ;;
+            *)
+                echo "Unexpected nested Playground Mach-O payload: $candidate" >&2
+                return 1
+                ;;
+        esac
+        "$ROOT_DIR/scripts/codesign-with-retry.sh" \
+            --force --options runtime --timestamp --sign "$identity" "$candidate"
+    done < <(find -P "$app/Contents" -type f -print0)
+
+    "$ROOT_DIR/scripts/codesign-with-retry.sh" \
+        --force --options runtime --timestamp --sign "$identity" "$app"
+}
 
 CERTIFICATION_INVARIANTS_JSON="$(jq -cer '
     .invariants |
@@ -696,6 +752,40 @@ physical_target_receipt() {
 }
 
 if $SELF_TEST_ONLY; then
+    CODE_SIGNATURE_HASH_SELF_TEST="0123456789abcdef0123456789abcdef01234567"
+    codesign() {
+        printf 'CDHash=%s\n' "$CODE_SIGNATURE_HASH_SELF_TEST"
+        local index
+        for ((index = 0; index < 4096; index += 1)); do
+            printf 'Metadata-%d=value\n' "$index"
+        done
+    }
+    if [[ "$(read_code_signature_hash /self-test)" != "$CODE_SIGNATURE_HASH_SELF_TEST" ]]; then
+        echo "Code-signature hash extraction self-test failed." >&2
+        exit 1
+    fi
+    codesign() {
+        printf 'CDHash=%s\nCDHash=%s\n' \
+            "$CODE_SIGNATURE_HASH_SELF_TEST" "$CODE_SIGNATURE_HASH_SELF_TEST"
+    }
+    if read_code_signature_hash /self-test >/dev/null 2>&1; then
+        echo "Code-signature hash extraction accepted duplicate fields." >&2
+        exit 1
+    fi
+    unset -f codesign
+
+    security() {
+        printf '%s\n' \
+            '1) 1111111111111111111111111111111111111111 "Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)"' \
+            '2) 2222222222222222222222222222222222222222 "Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)"'
+    }
+    if [[ "$(openclaw_codesign_identity)" != \
+          "Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)" ]]; then
+        echo "Code-signing identity extraction self-test failed." >&2
+        exit 1
+    fi
+    unset -f security
+
     "$PROBE_BIN" process-identity --pid "$$" \
         --output "$ARTIFACT_ROOT/probe-process-identity.json"
     jq -e --argjson pid "$$" \
@@ -942,8 +1032,7 @@ PEEKABOO_BIN="$(realpath "$PEEKABOO_BIN")"
 PEEKABOO_EXECUTABLE_SHA256="$(shasum -a 256 "$PEEKABOO_BIN" | awk '{print $1}')"
 PEEKABOO_EXECUTABLE_DEVICE="$(stat -f '%d' "$PEEKABOO_BIN")"
 PEEKABOO_EXECUTABLE_INODE="$(stat -f '%i' "$PEEKABOO_BIN")"
-PEEKABOO_CODE_SIGNATURE_HASH="$(codesign -dvvv "$PEEKABOO_BIN" 2>&1 | \
-    awk -F= '/^CDHash=/{print $2; exit}')"
+PEEKABOO_CODE_SIGNATURE_HASH="$(read_code_signature_hash "$PEEKABOO_BIN")"
 if [[ ! "$PEEKABOO_EXECUTABLE_SHA256" =~ ^[0-9a-f]{64}$ || \
       ! "$PEEKABOO_CODE_SIGNATURE_HASH" =~ ^[0-9a-f]{40}$ ]]; then
     echo "Peekaboo CLI lacks an exact executable SHA-256 or code-signature hash." >&2
@@ -1045,8 +1134,7 @@ build_playground() {
     PLAYGROUND_APP="$derived_data/Build/Products/Debug/Playground.app"
     local identity="${PEEKABOO_PLAYGROUND_SIGN_IDENTITY:-}"
     if [[ -z "$identity" ]]; then
-        identity="$(security find-identity -p codesigning -v 2>/dev/null \
-            | awk -F'"' '/Developer ID Application: OpenClaw Foundation/ { print $2; exit }')"
+        identity="$(openclaw_codesign_identity)"
     fi
     if [[ -z "$identity" ]]; then
         echo "No OpenClaw Foundation Developer ID Application identity is available." >&2
@@ -1061,7 +1149,7 @@ build_playground() {
     ' > "$PLAYGROUND_APP/Contents/Resources/PeekabooPlaygroundSource.json"
     chmod 444 "$PLAYGROUND_APP/Contents/Resources/PeekabooPlaygroundSource.json"
 
-    codesign --force --deep --options runtime --timestamp --sign "$identity" "$PLAYGROUND_APP"
+    sign_playground_app "$PLAYGROUND_APP" "$identity"
 }
 
 if $SKIP_PLAYGROUND_BUILD; then
@@ -1363,8 +1451,7 @@ attest_physical_target_binary() {
     else
         codesign --verify --strict -R '=anchor apple' "$executable_path"
     fi
-    code_signature_hash="$(codesign -dvvv "$executable_path" 2>&1 | \
-        awk -F= '/^CDHash=/{print $2; exit}')"
+    code_signature_hash="$(read_code_signature_hash "$executable_path")"
     [[ "$code_signature_hash" =~ ^[0-9a-f]{40}$ ]] || return 1
     jq \
         --arg slug "$slug" \
@@ -2282,8 +2369,7 @@ run_physical_observation() {
             .sha256 == $target.executable.sha256
        ' "$executable_file" >/dev/null; then
         target_verified=false
-    elif [[ "$(codesign -dvvv "$(jq -er '.path' "$executable_file")" 2>&1 | \
-        awk -F= '/^CDHash=/{print $2; exit}')" != \
+    elif [[ "$(read_code_signature_hash "$(jq -er '.path' "$executable_file")")" != \
         "$(jq -er '.executable.code_signature_hash' <<< "$target")" ]]; then
         target_verified=false
     fi
@@ -2920,7 +3006,7 @@ if [[ "$(shasum -a 256 "$PROBE_BIN" | awk '{print $1}')" != \
     PROVENANCE_STABLE=false
 fi
 if [[ "$(shasum -a 256 "$PEEKABOO_BIN" | awk '{print $1}')" != "$PEEKABOO_EXECUTABLE_SHA256" || \
-      "$(codesign -dvvv "$PEEKABOO_BIN" 2>&1 | awk -F= '/^CDHash=/{print $2; exit}')" != \
+      "$(read_code_signature_hash "$PEEKABOO_BIN")" != \
         "$PEEKABOO_CODE_SIGNATURE_HASH" || \
       "$(stat -f '%d' "$PEEKABOO_BIN")" != "$PEEKABOO_EXECUTABLE_DEVICE" || \
       "$(stat -f '%i' "$PEEKABOO_BIN")" != "$PEEKABOO_EXECUTABLE_INODE" ]]; then
@@ -2947,8 +3033,7 @@ if ! $NO_REMOTE; then
         PROVENANCE_STABLE=false
     fi
 fi
-PLAYGROUND_CODE_SIGNATURE_HASH="$(codesign -dvvv "$PLAYGROUND_APP" 2>&1 | \
-    awk -F= '/^CDHash=/{print $2; exit}')"
+PLAYGROUND_CODE_SIGNATURE_HASH="$(read_code_signature_hash "$PLAYGROUND_APP")"
 SOURCE_ARTIFACTS_JSON="$(jq -cn \
     --arg catalogSHA256 "$CATALOG_SHA256_INITIAL" \
     --arg reporterSHA256 "$REPORTER_SHA256_INITIAL" \
