@@ -51,9 +51,11 @@ private enum SeeCommandPlaygroundHarness {
             configuration: configuration
         )
         let pid = application.processIdentifier
-        let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(pid))
-        let launch = Launch(pid: pid, processStartIdentity: processStartIdentity)
+        var processStartIdentity: UInt64?
         do {
+            let identity = try #require(SystemIdentityResolver.processStartIdentity(pid))
+            processStartIdentity = identity
+            let launch = Launch(pid: pid, processStartIdentity: identity)
             let deadline = ContinuousClock.now + .seconds(5)
             while ContinuousClock.now < deadline {
                 if application.isFinishedLaunching,
@@ -67,7 +69,12 @@ private enum SeeCommandPlaygroundHarness {
             }
             throw HarnessError.windowReadinessTimedOut(pid: pid)
         } catch {
-            _ = try? self.run(self.cleanupArguments(for: launch))
+            if let cleanupArguments = self.cleanupArguments(
+                pid: pid,
+                processStartIdentity: processStartIdentity
+            ) {
+                _ = try? self.run(cleanupArguments)
+            }
             if !application.isTerminated {
                 _ = application.forceTerminate()
             }
@@ -91,6 +98,17 @@ private enum SeeCommandPlaygroundHarness {
             "--expected-process-start-identity", String(launch.processStartIdentity),
             "--force", "--no-remote", "--json",
         ]
+    }
+
+    static func cleanupArguments(
+        pid: Int32,
+        processStartIdentity: UInt64?
+    ) -> [String]? {
+        guard let processStartIdentity else { return nil }
+        return self.cleanupArguments(for: Launch(
+            pid: pid,
+            processStartIdentity: processStartIdentity
+        ))
     }
 
     static func run(
@@ -140,6 +158,10 @@ struct SeeCommandPlaygroundHarnessContractTests {
             "--expected-process-start-identity", "9001",
             "--force", "--no-remote", "--json",
         ])
+        #expect(SeeCommandPlaygroundHarness.cleanupArguments(
+            pid: 42,
+            processStartIdentity: nil
+        ) == nil)
     }
 }
 
