@@ -410,6 +410,104 @@ struct ForegroundModifierClickExecutorTests {
     }
 
     @Test
+    func `raw initial focus failure with no dispatch is preserved`() async throws {
+        let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
+        let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        var clickAttempted = false
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { _, _ in throw ModifierClickTestError.focusRestoreFailed },
+                currentFrontmostIdentity: { prior },
+                currentFocusedExactWindow: { nil },
+                activate: { _, _ in false },
+                currentCursorLocation: { CGPoint(x: 10, y: 10) },
+                moveCursor: { _ in },
+                click: { _, _, _ in
+                    clickAttempted = true
+                    return .confirmedNoChange()
+                },
+                validateExactWindow: { _, _ in true }))
+
+        await #expect(throws: ModifierClickTestError.self) {
+            _ = try await executor.execute(ForegroundModifierClickRequest(
+                point: CGPoint(x: 20, y: 20),
+                clickType: .single,
+                modifiers: [.command],
+                windowIdentity: WindowMutationIdentity(
+                    windowID: 7,
+                    ownerProcessIdentifier: target.processIdentifier,
+                    ownerProcessStartIdentity: target.processStartIdentity,
+                    capturedBounds: bounds),
+                windowBounds: bounds))
+        }
+        #expect(!clickAttempted)
+    }
+
+    @Test
+    func `foreground drift during cursor recapture refuses before click dispatch`() async throws {
+        let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
+        let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
+        let newer = ApplicationProcessIdentity(processIdentifier: 33, processStartIdentity: 330)
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let exactWindow = try UIAutomationTarget.ExactWindow(
+            identity: WindowMutationIdentity(
+                windowID: 7,
+                ownerProcessIdentifier: target.processIdentifier,
+                ownerProcessStartIdentity: target.processStartIdentity,
+                capturedBounds: bounds),
+            bounds: bounds)
+        var frontmost = prior
+        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var cursorReads = 0
+        var clickAttempted = false
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { window, beforeDispatch in
+                    try beforeDispatch()
+                    frontmost = target
+                    focusedWindow = window
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                        unitCount: .one)
+                },
+                currentFrontmostIdentity: { frontmost },
+                currentFocusedExactWindow: { focusedWindow },
+                activate: { _, _ in false },
+                currentCursorLocation: {
+                    cursorReads += 1
+                    if cursorReads == 2 {
+                        frontmost = newer
+                        focusedWindow = nil
+                    }
+                    return CGPoint(x: 10, y: 10)
+                },
+                moveCursor: { _ in },
+                click: { _, _, _ in
+                    clickAttempted = true
+                    return .confirmedNoChange()
+                },
+                validateExactWindow: { _, _ in true }))
+
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await executor.execute(ForegroundModifierClickRequest(
+                point: CGPoint(x: 20, y: 20),
+                clickType: .single,
+                modifiers: [.command],
+                windowIdentity: exactWindow.identity,
+                windowBounds: bounds))
+        }
+        #expect(!clickAttempted)
+        #expect(frontmost == newer)
+    }
+
+    @Test
     func `cursor restoration failure still attempts focus restoration`() async throws {
         let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
         let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)

@@ -138,6 +138,14 @@ final class ForegroundModifierClickExecutor {
             if let currentCursor = self.dependencies.currentCursorLocation() {
                 originalCursor = currentCursor
                 do {
+                    guard self.dependencies.currentFrontmostIdentity() == request.windowIdentity.processIdentity,
+                          self.dependencies.currentFocusedExactWindow() == exactWindow,
+                          self.dependencies.validateExactWindow(request.windowIdentity, request.windowBounds)
+                    else {
+                        throw DesktopActionFailure.preDispatchRefusal(
+                            reason: .targetUnavailable,
+                            message: "Modifier-click exact foreground ownership changed before click dispatch.")
+                    }
                     clickAttempted = true
                     let clickOutcome = try self.dependencies.click(
                         request.point,
@@ -216,6 +224,9 @@ final class ForegroundModifierClickExecutor {
                     combining: failure,
                     message: "Modifier-click failed after foreground setup began.",
                     hint: "Observe the exact target before deciding whether to retry.")
+            }
+            if sequence.mutationDisposition == .none {
+                throw primaryFailure
             }
             let leaf = DesktopActionFailure.indeterminate(
                 delivery: Self.globalForeground,
