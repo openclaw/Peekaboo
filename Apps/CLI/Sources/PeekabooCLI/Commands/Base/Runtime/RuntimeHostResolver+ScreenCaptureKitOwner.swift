@@ -308,9 +308,10 @@ extension RuntimeHostResolver {
         var paths = plan.candidates.map(\.socketPath)
         if options.usesPersistentDynamicToolRuntime,
            plan.explicitSocket?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-            // A persistent MCP/Agent runtime with an explicit Bridge route retains the authenticated
-            // client from this handshake. Its listener generation is revalidated for every request,
-            // so unrelated global sockets cannot contribute capture authority or poison the session.
+            // Scope only caller-side socket discovery. The selected host must advertise process
+            // ownership here, and every real SCK leaf then rescans all same-user potential Peekaboo
+            // processes through ScreenCaptureKitOwnerLease before dispatch. Omitted sockets therefore
+            // cannot contribute authority or escape the canonical process-level safety scan.
             return self.screenCaptureKitSafetyCandidates(paths: paths)
         }
         paths.append(plan.daemonSocketPath)

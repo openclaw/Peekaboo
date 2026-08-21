@@ -39,9 +39,8 @@ macOS can strand a second process's ScreenCaptureKit screenshot request after an
 when no capture is in flight. Peekaboo therefore gives the first process that explicitly preclaims caller-local modern
 capture or enters a real SCK API a per-user, process-lifetime owner lease. Later remote `modern` requests prefer the
 compatible Bridge host whose PID, process generation, and signed build match that lease.
-First acquisition always scans and refuses owner-unaware live processes. Once an exact process generation holds the
-canonical lease, reentrant SCK leaves validate and return that same held receipt before scanning processes that started
-later; a late legacy process cannot retroactively displace already-proven ownership.
+Every claim scans and refuses owner-unaware live processes, including processes discovered after the current generation
+acquired the canonical lease.
 
 Every transported engine requires the additive `screenCaptureKitProcessOwnership` host capability. For `auto` and
 `modern`, it proves the host enforces the owner lease; for `classic`, it proves a false CoreGraphics permission preflight

@@ -314,7 +314,7 @@ struct ScreenCaptureKitOwnerLeaseTests {
     }
 
     @Test
-    func `Exact current owner reentry precedes late uncoordinated process discovery`() throws {
+    func `Same-process reentry rescans late-starting uncoordinated hosts`() throws {
         let fixture = try LeaseFixture(name: "reentry-rescan")
         defer { fixture.removeLockPath() }
         let conflict = ScreenCaptureKitOwnerLease.UncoordinatedProcess(
@@ -332,7 +332,7 @@ struct ScreenCaptureKitOwnerLeaseTests {
                 scanCount.increment()
                 return []
             })
-        let first = try firstLease.claim()
+        _ = try firstLease.claim()
         let reentrantLease = ScreenCaptureKitOwnerLease(
             lockURL: fixture.lockURL,
             ownerIdentity: .init(
@@ -344,12 +344,10 @@ struct ScreenCaptureKitOwnerLeaseTests {
                 return [conflict]
             })
 
-        guard case let .acquired(receipt) = first else {
-            Issue.record("Expected the first exact generation to acquire the lease")
-            return
+        #expect(throws: ScreenCaptureKitOwnerLease.LeaseError.uncoordinatedProcesses([conflict])) {
+            try reentrantLease.claim()
         }
-        #expect(try reentrantLease.claim() == .alreadyOwnedByCurrentProcess(receipt))
-        #expect(scanCount.value == 1)
+        #expect(scanCount.value == 2)
     }
 
     @Test
