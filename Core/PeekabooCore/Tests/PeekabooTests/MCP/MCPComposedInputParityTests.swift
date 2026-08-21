@@ -1,12 +1,12 @@
 import CoreGraphics
 import Foundation
 import MCP
-@testable import PeekabooAutomationKit
 import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
+@testable import PeekabooAutomationKit
 @testable import PeekabooCore
 
 @Suite(.serialized)

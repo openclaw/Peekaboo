@@ -5,6 +5,12 @@ import Foundation
 import os.log
 import PeekabooFoundation
 
+private struct PixelFocusSnapshotPreparationFailure: Error {
+    let causeDescription: String
+}
+
+private struct PixelFocusSnapshotPreparationCancellation: Error {}
+
 /// Service for handling typing and text input operations
 @MainActor
 public final class TypeService {
@@ -36,6 +42,7 @@ public final class TypeService {
     private let targetedCharacterTyper: @MainActor (Character, pid_t) throws -> Void
     private let desktopOperationExecutor: DesktopOperationExecutor
     private let operationFinalizer: @MainActor () -> Void
+    private let pixelFocusReceiptPlanner: @MainActor @Sendable (String) async throws -> SnapshotTargetReceiptPlan
 
     public convenience init(
         snapshotManager: (any SnapshotManagerProtocol)? = nil,
@@ -86,7 +93,8 @@ public final class TypeService {
         targetedCharacterTyper: @escaping @MainActor (Character, pid_t) throws -> Void = TypeService
             .typeTargetedCharacter,
         desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
-        operationFinalizer: @escaping @MainActor () -> Void = {})
+        operationFinalizer: @escaping @MainActor () -> Void = {},
+        pixelFocusReceiptPlanner: (@MainActor @Sendable (String) async throws -> SnapshotTargetReceiptPlan)? = nil)
     {
         let manager = snapshotManager ?? SnapshotManager()
         self.snapshotManager = manager
@@ -107,6 +115,9 @@ public final class TypeService {
         self.targetedCharacterTyper = targetedCharacterTyper
         self.desktopOperationExecutor = desktopOperationExecutor
         self.operationFinalizer = operationFinalizer
+        self.pixelFocusReceiptPlanner = pixelFocusReceiptPlanner ?? { snapshotID in
+            try await SnapshotTargetReceiptPlanner(snapshots: manager).plan(snapshotID: snapshotID)
+        }
     }
 
     /// Type text with optional target and settings
@@ -733,9 +744,75 @@ extension TypeService {
             FocusedElementIdentity) async throws -> Void) async throws
         -> UIAutomationActionResult<TypeResult>
     {
+        guard request.point.x.isFinite, request.point.y.isFinite else {
+            throw PeekabooError.invalidInput("Pixel-focus coordinates must be finite")
+        }
+        guard !request.actions.isEmpty else {
+            throw PeekabooError.invalidInput("Pixel-focus typing requires at least one typing action")
+        }
+        guard Self.plannedKeyPressCount(request.actions) > 0 else {
+            throw PeekabooError.invalidInput("Pixel-focus typing requires at least one keyboard unit")
+        }
         let exactWindow = try UIAutomationTarget.ExactWindow(
             identity: request.windowIdentity,
             bounds: request.windowBounds)
+
+        let lease = try await self.snapshotManager.beginSnapshotMutation(snapshotId: request.snapshotID)
+        let result: UIAutomationActionResult<TypeResult>
+        do {
+            result = try await self.executePixelFocusType(
+                request,
+                exactWindow: exactWindow,
+                deliveryValidator: deliveryValidator)
+        } catch let error as SnapshotTargetReceiptPreDispatchError {
+            try? await self.snapshotManager.finishSnapshotMutation(
+                lease,
+                requiresFreshObservation: false)
+            throw error
+        } catch let error as PixelFocusSnapshotPreparationFailure {
+            try? await self.snapshotManager.finishSnapshotMutation(
+                lease,
+                requiresFreshObservation: false)
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Pixel-focus typing could not validate its snapshot before dispatch.",
+                hint: "Observe the exact target again before retrying.",
+                causeDescription: error.causeDescription)
+        } catch is PixelFocusSnapshotPreparationCancellation {
+            try? await self.snapshotManager.finishSnapshotMutation(
+                lease,
+                requiresFreshObservation: false)
+            throw CancellationError()
+        } catch let failure as DesktopActionFailure {
+            try? await self.snapshotManager.finishSnapshotMutation(
+                lease,
+                requiresFreshObservation: failure.outcome.projection.requiresFreshObservation)
+            throw failure
+        }
+        do {
+            try await self.snapshotManager.finishSnapshotMutation(
+                lease,
+                requiresFreshObservation: result.outcome?.projection.requiresFreshObservation ?? true)
+        } catch {
+            throw DesktopActionFailure.indeterminate(
+                route: result.outcome?.route ?? .local,
+                delivery: result.outcome?.delivery,
+                evidence: .completionUnknown,
+                unitCount: result.outcome?.dispatchState.unitCount,
+                message: "Pixel-focus typing completed, but its snapshot mutation lease could not be finalized.",
+                hint: "Observe the exact target before any retry and do not reuse this snapshot.",
+                causeDescription: error.localizedDescription)
+        }
+        return result
+    }
+
+    private func executePixelFocusType(
+        _ request: ExactWindowPixelFocusTypeRequest,
+        exactWindow: UIAutomationTarget.ExactWindow,
+        deliveryValidator: @escaping @MainActor @Sendable (
+            FocusedElementIdentity) async throws -> Void) async throws
+        -> UIAutomationActionResult<TypeResult>
+    {
         let automationTarget = UIAutomationTarget.exactWindow(exactWindow)
         let captureReceipt = DesktopOperationPlan.CaptureReceipt(
             snapshotID: request.snapshotID,
@@ -749,24 +826,23 @@ extension TypeService {
             captureReceipt: captureReceipt,
             strategy: .synthOnly,
             prepare: {
-                guard request.point.x.isFinite, request.point.y.isFinite else {
-                    throw PeekabooError.invalidInput("Pixel-focus coordinates must be finite")
-                }
-                guard !request.actions.isEmpty else {
-                    throw PeekabooError.invalidInput("Pixel-focus typing requires at least one typing action")
-                }
-                guard Self.plannedKeyPressCount(request.actions) > 0 else {
-                    throw PeekabooError.invalidInput("Pixel-focus typing requires at least one keyboard unit")
-                }
-                let receiptPlan = try await SnapshotTargetReceiptPlanner(
-                    snapshots: self.snapshotManager).plan(snapshotID: request.snapshotID)
-                let authority = try receiptPlan.receipt.requireCoordinateAuthority()
-                guard authority.target == exactWindow,
-                      authority.sourceBounds.contains(request.point),
-                      exactWindow.bounds.contains(request.point)
-                else {
-                    throw PeekabooError.snapshotStale(
-                        "Pixel-focus coordinates no longer match the exact capture-time window receipt")
+                do {
+                    let receiptPlan = try await self.pixelFocusReceiptPlanner(request.snapshotID)
+                    let authority = try receiptPlan.receipt.requireCoordinateAuthority()
+                    guard authority.target == exactWindow else {
+                        throw SnapshotTargetReceiptPreDispatchError(.coordinateWindowMismatch)
+                    }
+                    guard authority.sourceBounds.contains(request.point),
+                          exactWindow.bounds.contains(request.point)
+                    else {
+                        throw SnapshotTargetReceiptPreDispatchError(.coordinateBoundsMismatch)
+                    }
+                } catch let error as SnapshotTargetReceiptPreDispatchError {
+                    throw error
+                } catch is CancellationError {
+                    throw PixelFocusSnapshotPreparationCancellation()
+                } catch {
+                    throw PixelFocusSnapshotPreparationFailure(causeDescription: error.localizedDescription)
                 }
             },
             action: nil,
