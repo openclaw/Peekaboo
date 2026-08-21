@@ -39,6 +39,9 @@ extension WindowCommand {
                 let windows = ObservationTargetResolver.filteredWindows(from: rawWindows, mode: .list)
                 var outputCompleteness = inventory.completeness
                 var outputWarnings = inventory.warnings
+                if inventory.completeness == .partial, outputWarnings.isEmpty {
+                    outputWarnings.append("Window inventory provider reported partial results without a reason.")
+                }
                 let omittedRowCount = rawWindows.count - windows.count
                 if omittedRowCount > 0 {
                     outputCompleteness = .partial

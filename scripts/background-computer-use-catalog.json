@@ -36,6 +36,9 @@
     "activity-monitor": "com.apple.ActivityMonitor",
     "finder": "com.apple.finder"
   },
+  "physical_app_window_titles": {
+    "activity-monitor": "Activity Monitor"
+  },
   "cases": [
     {"id":"lifecycle-maximize","surface":"cli","command":"window maximize","phase":"background","expected_exit":"success","expected_effect":"confirmed","contamination_retry_safe":true,"required_oracles":["nonmaximized_precondition","verified_bounds"]},
     {"id":"lifecycle-close","surface":"cli","command":"window close","phase":"background","expected_exit":"success","expected_effect":"confirmed","required_oracles":[]},

@@ -65,6 +65,22 @@ function validateCatalog(catalog) {
       "Catalog must map every physical app to one distinct exact bundle identifier",
     ));
   }
+  const physicalTitleKeys = catalog.physical_app_window_titles
+    && typeof catalog.physical_app_window_titles === "object"
+    && !Array.isArray(catalog.physical_app_window_titles)
+    ? Object.keys(catalog.physical_app_window_titles).sort()
+    : [];
+  if (JSON.stringify(physicalTitleKeys) !== JSON.stringify(["activity-monitor"])
+      || physicalTitleKeys.some((name) => !catalog.physical_apps?.includes(name))
+      || Object.values(catalog.physical_app_window_titles ?? {}).some((title) => (
+        typeof title !== "string" || title.length === 0 || title.trim() !== title
+      ))) {
+    failures.push(failure(
+      "catalog",
+      "physical_app_window_titles",
+      "Catalog must declare one normalized exact Activity Monitor window title",
+    ));
+  }
   const ids = catalog.cases.map((entry) => entry?.id).filter(Boolean);
   for (const id of duplicateValues(ids)) {
     failures.push(failure(id, "duplicate_catalog_case", `Catalog case '${id}' is duplicated`));
@@ -276,7 +292,7 @@ function isExactMonitorReceipt(receipt) {
     && receipt.final.wall_clock_milliseconds >= receipt.start.wall_clock_milliseconds;
 }
 
-function isExactPhysicalTarget(target, physicalApp, expectedBundleID) {
+function isExactPhysicalTarget(target, physicalApp, expectedBundleID, expectedWindowTitle) {
   const keys = target && typeof target === "object" && !Array.isArray(target)
     ? Object.keys(target).sort()
     : [];
@@ -291,6 +307,11 @@ function isExactPhysicalTarget(target, physicalApp, expectedBundleID) {
     && keys.every((key, index) => key === expectedKeys[index])
     && target.physical_app === physicalApp
     && typeof target.application_name === "string" && target.application_name.length > 0
+    && (expectedWindowTitle === undefined || (
+      target.application_name.trim() === expectedWindowTitle
+      && typeof target.window_title === "string"
+      && target.window_title.trim() === expectedWindowTitle
+    ))
     && target.bundle_id === expectedBundleID
     && Number.isSafeInteger(target.pid) && target.pid > 0
     && typeof target.process_start_identity === "string"
@@ -540,6 +561,7 @@ export function validateCertification(catalog, report, trustedSourceArtifacts = 
       observed.physical_target,
       expected.physical_app,
       catalog.physical_app_bundle_ids[expected.physical_app],
+      catalog.physical_app_window_titles?.[expected.physical_app],
     )) {
       failures.push(failure(
         expected.id,
@@ -664,6 +686,7 @@ export function makePassingReport(catalog) {
     const evidence = Object.fromEntries(catalog.required_evidence.map((name) => [name, true]));
     const oracles = Object.fromEntries(entry.required_oracles.map((name) => [name, true]));
     const invariants = catalog.invariants.map((name) => ({ name, passed: true }));
+    const expectedWindowTitle = catalog.physical_app_window_titles?.[entry.physical_app];
     return {
       id: entry.id,
       surface: entry.surface,
@@ -671,12 +694,12 @@ export function makePassingReport(catalog) {
       phase: entry.phase,
       physical_app: entry.physical_app ?? null,
       physical_target: entry.physical_app === undefined ? null : {
-        application_name: entry.physical_app,
+        application_name: expectedWindowTitle ?? entry.physical_app,
         bundle_id: catalog.physical_app_bundle_ids[entry.physical_app],
         pid: index + 100,
         process_start_identity: String(index + 1000),
         window_id: index + 200,
-        window_title: "Fixture",
+        window_title: expectedWindowTitle ?? "Fixture",
         bounds: { x: 0, y: 0, width: 800, height: 600 },
         physical_app: entry.physical_app,
         executable: {

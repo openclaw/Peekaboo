@@ -325,6 +325,48 @@ struct WindowCommandTests {
     }
 
     @Test
+    func `window list explains partial inventory without provider warnings`() async throws {
+        let appName = "UnexplainedPartialApp"
+        let context = await MainActor.run {
+            self.makeWindowContext(
+                appInfo: ServiceApplicationInfo(
+                    processIdentifier: 5557,
+                    bundleIdentifier: "dev.partial-unexplained",
+                    name: appName
+                ),
+                windows: [
+                    appName: [
+                        ServiceWindowInfo(
+                            windowID: 13,
+                            title: "Document",
+                            bounds: CGRect(x: 50, y: 50, width: 1200, height: 800),
+                            index: 0
+                        ),
+                    ],
+                ]
+            )
+        }
+        await MainActor.run {
+            context.windowService.inventoryCompleteness = .partial
+            context.windowService.inventoryWarnings = []
+        }
+
+        let result = try await self.runWindowCommand([
+            "window", "list", "--app", appName, "--json",
+        ], context: context)
+        let output = result.stdout.isEmpty ? result.stderr : result.stdout
+        let response = try JSONDecoder().decode(
+            CodableJSONResponse<WindowListData>.self,
+            from: Data(output.utf8)
+        )
+
+        #expect(response.data.inventory_completeness == "partial")
+        #expect(response.data.inventory_warnings == [
+            "Window inventory provider reported partial results without a reason.",
+        ])
+    }
+
+    @Test
     func `window close help`() async throws {
         let output = try await runPeekabooCommand(["window", "close", "--help"])
 

@@ -21,11 +21,15 @@ setup launch must leave the sentinel unchanged; the harness never foregrounds a 
 foreground app after setup.
 
 The live matrix also requires one already-running process with one exact key or sole visible window for Safari,
-Calendar, System Settings, Calculator, Activity Monitor, and Finder. Those six processes are read-only prerequisites:
-the harness never launches, quits, closes, or otherwise mutates them. Together with the owned Playground and TextEdit
-targets, eight monitored screenshot-only exact-window cells prove cross-app routing without focus or cursor control.
+Calendar, System Settings, Calculator, and Finder. Activity Monitor instead uses the catalog's source-controlled exact
+application/window title to distinguish its main window from `Dock Icon Host Window`. Those six processes are read-only
+prerequisites: the harness never launches, quits, closes, or otherwise mutates them. Together with the owned Playground
+and TextEdit targets, eight monitored screenshot-only exact-window cells prove cross-app routing without focus or
+cursor control.
 Missing processes, duplicate instances, ambiguous windows, process-generation drift, or changed window receipts fail
-closed rather than selecting a first match.
+closed rather than selecting a first match. The exact-title route accepts a complete warning-free inventory or one
+partial inventory whose only warning proves that the omitted rows were non-renderable or duplicate; every other partial
+or malformed inventory is refused. The same exact selector and PID generation must still match after observation.
 
 The remaining cases exercise fresh, exact PID/window snapshots through `see` (including AX-only and screenshot-only
 modes), `capture live`, click by ID and query, exact-window `type`, `press`, and `paste`, app/PID-only raw-press refusal,
@@ -348,7 +352,8 @@ Use `--bin`, `--artifacts`, `--sentinel-bundle-id`, or `--playground-app ... --s
 binary, require an already-frontmost app, or use a prebuilt signed fixture. The harness refuses rather than activating a
 requested sentinel that is not already frontmost; the sentinel must not be any of the eight physical targets. Before a
 live run, leave exactly one visible key or sole window open for Safari, Calendar, System Settings, Calculator, Activity
-Monitor, and Finder. Add `--no-remote` when the exact CLI is team-signed and
+Monitor, and Finder; Activity Monitor may also retain auxiliary windows when exactly one visible window matches the
+catalog title. Add `--no-remote` when the exact CLI is team-signed and
 has local TCC grants; this prevents an installed bridge host from masking working-tree behavior. A prebuilt app must
 have a team signature and the exact current-source `PeekabooPlaygroundSource.json` manifest; ad-hoc or unstamped
 fixtures are rejected.

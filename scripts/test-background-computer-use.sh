@@ -196,6 +196,19 @@ CERTIFICATION_PHYSICAL_APPS_JSON="$(jq -cer '
     echo "Certification catalog must declare eight unique physical app names." >&2
     exit 2
 }
+CERTIFICATION_PHYSICAL_APP_WINDOW_TITLES_JSON="$(jq -cer '
+    def normalized_title: gsub("^[[:space:]]+|[[:space:]]+$"; "");
+    .physical_app_window_titles |
+    select(type == "object" and keys == ["activity-monitor"]) |
+    select(all(to_entries[];
+        (.key | type) == "string" and
+        (.value | type) == "string" and
+        .value != "" and
+        (.value | normalized_title) == .value))
+' "$CERTIFICATION_CATALOG")" || {
+    echo "Certification catalog must declare one normalized Activity Monitor title selector." >&2
+    exit 2
+}
 
 if [[ -z "$ARTIFACT_ROOT" ]]; then
     ARTIFACT_ROOT="$ROOT_DIR/.artifacts/background-computer-use/$(date -u +%Y%m%dT%H%M%SZ)"
@@ -248,6 +261,16 @@ CERTIFICATION_PHYSICAL_APPS_JSON="$(jq -cer '
     select(type == "array" and length == 8) |
     select(all(.[]; type == "string" and length > 0)) |
     select((unique | length) == length)
+' "$CERTIFICATION_CATALOG")"
+CERTIFICATION_PHYSICAL_APP_WINDOW_TITLES_JSON="$(jq -cer '
+    def normalized_title: gsub("^[[:space:]]+|[[:space:]]+$"; "");
+    .physical_app_window_titles |
+    select(type == "object" and keys == ["activity-monitor"]) |
+    select(all(to_entries[];
+        (.key | type) == "string" and
+        (.value | type) == "string" and
+        .value != "" and
+        (.value | normalized_title) == .value))
 ' "$CERTIFICATION_CATALOG")"
 
 PROBE_BIN="$ARTIFACT_ROOT/bin/background-computer-use-probe"
@@ -738,6 +761,84 @@ exact_window_receipt_from_inventory() {
     ' "$inventory_file"
 }
 
+physical_expected_window_title() {
+    local slug="${1:?Physical app slug required}"
+    jq -er --arg slug "$slug" '.[$slug] // empty' \
+        <<< "$CERTIFICATION_PHYSICAL_APP_WINDOW_TITLES_JSON"
+}
+
+exact_named_window_receipt_from_inventory() {
+    local inventory_file="${1:?Window inventory required}"
+    local expected_title="${2:?Expected window title required}"
+    local expected_pid="${3:?Expected PID required}"
+    local expected_bundle_id="${4:?Expected bundle identifier required}"
+    local expected_application_name="${5:?Expected application name required}"
+    jq -cer \
+        --arg expectedTitle "$expected_title" \
+        --argjson expectedPID "$expected_pid" \
+        --arg expectedBundleID "$expected_bundle_id" \
+        --arg expectedApplicationName "$expected_application_name" '
+        def normalized_title: gsub("^[[:space:]]+|[[:space:]]+$"; "");
+        def exact_filter_warning:
+            type == "string" and
+            (test("^Window list omitted 1 non-renderable or duplicate inventory row\\.$") or
+                test("^Window list omitted (?:[2-9]|[1-9][0-9]+) non-renderable or duplicate inventory rows\\.$"));
+        def valid_window:
+            type == "object" and
+            (.window_id | type) == "number" and
+            .window_id > 0 and .window_id <= 4294967295 and
+            (.window_id | floor) == .window_id and
+            (.window_title | type) == "string" and
+            (.bounds | type) == "object" and
+            ([.bounds.x, .bounds.y, .bounds.width, .bounds.height] | all(type == "number")) and
+            .bounds.width > 0 and .bounds.height > 0 and
+            (.layer | type) == "number" and (.layer | floor) == .layer and
+            (.is_on_screen | type) == "boolean";
+        select(.success == true) |
+        .data as $data |
+        select(($expectedTitle | normalized_title) == $expectedTitle) |
+        select(($expectedApplicationName | normalized_title) == $expectedTitle) |
+        select(
+            $data.target_application_info.pid == $expectedPID and
+            $data.target_application_info.bundle_id == $expectedBundleID and
+            $data.target_application_info.app_name == $expectedApplicationName
+        ) |
+        $data.inventory_completeness as $completeness |
+        $data.inventory_warnings as $warnings |
+        select(
+            ($completeness == "complete" and ($warnings | type) == "array" and
+                ($warnings | length) == 0) or
+            ($completeness == "partial" and ($warnings | type) == "array" and
+                ($warnings | length) == 1 and ($warnings[0] | exact_filter_warning))
+        ) |
+        $data.windows as $windows |
+        select(($windows | type) == "array" and all($windows[]; valid_window)) |
+        [$windows[] |
+            select(.layer == 0 and .is_on_screen == true) |
+            select((.window_title | normalized_title) == $expectedTitle) |
+            {
+                window_id: .window_id,
+                window_title: .window_title,
+                bounds: .bounds
+            }] as $matches |
+        select(($matches | length) == 1) |
+        $matches[0]
+    ' "$inventory_file"
+}
+
+exact_window_receipts_match() {
+    local expected_file="${1:?Expected window receipt required}"
+    local observed_file="${2:?Observed window receipt required}"
+    jq -ne \
+        --slurpfile expected "$expected_file" \
+        --slurpfile observed "$observed_file" '
+        ($expected | length) == 1 and ($observed | length) == 1 and
+        $observed[0].window_id == $expected[0].window_id and
+        $observed[0].window_title == $expected[0].window_title and
+        $observed[0].bounds == $expected[0].bounds
+    ' >/dev/null
+}
+
 physical_target_receipt() {
     local slug="${1:?Physical app slug required}"
     local application_receipt_file="${2:?Application receipt required}"
@@ -880,6 +981,120 @@ if $SELF_TEST_ONLY; then
         "$APPLICATIONS_AMBIGUOUS_SELF_TEST" "$TEXTEDIT_BUNDLE_ID" >/dev/null 2>&1 || \
        exact_window_receipt_from_inventory "$WINDOWS_AMBIGUOUS_SELF_TEST" >/dev/null 2>&1; then
         echo "Owned application/window receipt self-test failed." >&2
+        exit 1
+    fi
+    NAMED_WINDOWS_SELF_TEST="$ARTIFACT_ROOT/named-windows-self-test.json"
+    NAMED_WINDOWS_COMPLETE_SELF_TEST="$ARTIFACT_ROOT/named-windows-complete-self-test.json"
+    NAMED_WINDOWS_DUPLICATE_SELF_TEST="$ARTIFACT_ROOT/named-windows-duplicate-self-test.json"
+    NAMED_WINDOWS_TITLE_DRIFT_SELF_TEST="$ARTIFACT_ROOT/named-windows-title-drift-self-test.json"
+    NAMED_WINDOWS_BOUNDS_DRIFT_SELF_TEST="$ARTIFACT_ROOT/named-windows-bounds-drift-self-test.json"
+    NAMED_WINDOWS_UNSAFE_PARTIAL_SELF_TEST="$ARTIFACT_ROOT/named-windows-unsafe-partial-self-test.json"
+    NAMED_WINDOWS_MIXED_PARTIAL_SELF_TEST="$ARTIFACT_ROOT/named-windows-mixed-partial-self-test.json"
+    NAMED_WINDOWS_BAD_SINGULAR_SELF_TEST="$ARTIFACT_ROOT/named-windows-bad-singular-self-test.json"
+    NAMED_WINDOWS_BAD_PLURAL_SELF_TEST="$ARTIFACT_ROOT/named-windows-bad-plural-self-test.json"
+    NAMED_WINDOWS_OWNER_MISMATCH_SELF_TEST="$ARTIFACT_ROOT/named-windows-owner-mismatch-self-test.json"
+    NAMED_WINDOWS_NAME_MISMATCH_SELF_TEST="$ARTIFACT_ROOT/named-windows-name-mismatch-self-test.json"
+    NAMED_WINDOWS_OFFSCREEN_SELF_TEST="$ARTIFACT_ROOT/named-windows-offscreen-self-test.json"
+    NAMED_WINDOWS_LAYER_SELF_TEST="$ARTIFACT_ROOT/named-windows-layer-self-test.json"
+    NAMED_WINDOWS_BOUNDS_SELF_TEST="$ARTIFACT_ROOT/named-windows-bounds-self-test.json"
+    NAMED_WINDOW_RECEIPT_SELF_TEST="$ARTIFACT_ROOT/named-window-receipt-self-test.json"
+    NAMED_WINDOW_COMPLETE_RECEIPT_SELF_TEST="$ARTIFACT_ROOT/named-window-complete-receipt-self-test.json"
+    NAMED_WINDOW_DRIFT_RECEIPT_SELF_TEST="$ARTIFACT_ROOT/named-window-drift-receipt-self-test.json"
+    printf '%s\n' \
+        '{"success":true,"data":{"inventory_completeness":"partial","inventory_warnings":["Window list omitted 5 non-renderable or duplicate inventory rows."],"target_application_info":{"pid":11393,"bundle_id":"com.apple.ActivityMonitor","app_name":"Activity Monitor"},"windows":[{"window_id":770,"window_title":"Activity Monitor","bounds":{"x":1250,"y":138,"width":960,"height":858},"layer":0,"is_on_screen":true},{"window_id":769,"window_title":"Dock Icon Host Window","bounds":{"x":416,"y":376,"width":361,"height":361},"layer":0,"is_on_screen":true}]}}' \
+        > "$NAMED_WINDOWS_SELF_TEST"
+    jq '.data.inventory_completeness = "complete" | .data.inventory_warnings = []' \
+        "$NAMED_WINDOWS_SELF_TEST" > "$NAMED_WINDOWS_COMPLETE_SELF_TEST"
+    jq '.data.windows += [(.data.windows[0] | .window_id = 771 | .window_title = " Activity Monitor ")]' \
+        "$NAMED_WINDOWS_SELF_TEST" > "$NAMED_WINDOWS_DUPLICATE_SELF_TEST"
+    jq '.data.windows[0].window_title = "CPU"' \
+        "$NAMED_WINDOWS_SELF_TEST" > "$NAMED_WINDOWS_TITLE_DRIFT_SELF_TEST"
+    jq '.data.inventory_warnings = ["Accessibility window enrichment was incomplete"]' \
+        "$NAMED_WINDOWS_SELF_TEST" > "$NAMED_WINDOWS_UNSAFE_PARTIAL_SELF_TEST"
+    jq '.data.inventory_warnings += ["Accessibility window enrichment was incomplete"]' \
+        "$NAMED_WINDOWS_SELF_TEST" > "$NAMED_WINDOWS_MIXED_PARTIAL_SELF_TEST"
+    jq '.data.inventory_warnings = ["Window list omitted 2 non-renderable or duplicate inventory row."]' \
+        "$NAMED_WINDOWS_SELF_TEST" > "$NAMED_WINDOWS_BAD_SINGULAR_SELF_TEST"
+    jq '.data.inventory_warnings = ["Window list omitted 1 non-renderable or duplicate inventory rows."]' \
+        "$NAMED_WINDOWS_SELF_TEST" > "$NAMED_WINDOWS_BAD_PLURAL_SELF_TEST"
+    jq '.data.target_application_info.pid = 11394' \
+        "$NAMED_WINDOWS_SELF_TEST" > "$NAMED_WINDOWS_OWNER_MISMATCH_SELF_TEST"
+    jq '.data.target_application_info.app_name = "Dock Icon Host Window"' \
+        "$NAMED_WINDOWS_SELF_TEST" > "$NAMED_WINDOWS_NAME_MISMATCH_SELF_TEST"
+    jq '.data.windows[0].is_on_screen = false' \
+        "$NAMED_WINDOWS_SELF_TEST" > "$NAMED_WINDOWS_OFFSCREEN_SELF_TEST"
+    jq '.data.windows[0].layer = 1' \
+        "$NAMED_WINDOWS_SELF_TEST" > "$NAMED_WINDOWS_LAYER_SELF_TEST"
+    jq '.data.windows[0].bounds.width = 0' \
+        "$NAMED_WINDOWS_SELF_TEST" > "$NAMED_WINDOWS_BOUNDS_SELF_TEST"
+    exact_named_window_receipt_from_inventory \
+        "$NAMED_WINDOWS_SELF_TEST" "Activity Monitor" 11393 com.apple.ActivityMonitor "Activity Monitor" \
+        > "$NAMED_WINDOW_RECEIPT_SELF_TEST"
+    exact_named_window_receipt_from_inventory \
+        "$NAMED_WINDOWS_COMPLETE_SELF_TEST" "Activity Monitor" 11393 \
+        com.apple.ActivityMonitor "Activity Monitor" \
+        > "$NAMED_WINDOW_COMPLETE_RECEIPT_SELF_TEST"
+    jq '.data.windows[0].bounds.x += 1' \
+        "$NAMED_WINDOWS_SELF_TEST" > "$NAMED_WINDOWS_BOUNDS_DRIFT_SELF_TEST"
+    exact_named_window_receipt_from_inventory \
+        "$NAMED_WINDOWS_BOUNDS_DRIFT_SELF_TEST" "Activity Monitor" 11393 \
+        com.apple.ActivityMonitor "Activity Monitor" \
+        > "$NAMED_WINDOW_DRIFT_RECEIPT_SELF_TEST"
+    if [[ "$(physical_expected_window_title activity-monitor)" != "Activity Monitor" ]] || \
+       physical_expected_window_title finder >/dev/null 2>&1 || \
+       ! jq -e '.window_id == 770 and .window_title == "Activity Monitor"' \
+        "$NAMED_WINDOW_RECEIPT_SELF_TEST" >/dev/null || \
+       ! exact_window_receipts_match \
+        "$NAMED_WINDOW_RECEIPT_SELF_TEST" "$NAMED_WINDOW_COMPLETE_RECEIPT_SELF_TEST" || \
+       ! exact_window_receipts_match \
+        "$NAMED_WINDOW_RECEIPT_SELF_TEST" "$NAMED_WINDOW_RECEIPT_SELF_TEST" || \
+       exact_window_receipts_match \
+        "$NAMED_WINDOW_RECEIPT_SELF_TEST" "$NAMED_WINDOW_DRIFT_RECEIPT_SELF_TEST" || \
+       exact_named_window_receipt_from_inventory \
+        "$NAMED_WINDOWS_DUPLICATE_SELF_TEST" "Activity Monitor" 11393 \
+        com.apple.ActivityMonitor "Activity Monitor" \
+        >/dev/null 2>&1 || \
+       exact_named_window_receipt_from_inventory \
+        "$NAMED_WINDOWS_TITLE_DRIFT_SELF_TEST" "Activity Monitor" 11393 \
+        com.apple.ActivityMonitor "Activity Monitor" \
+        >/dev/null 2>&1 || \
+       exact_named_window_receipt_from_inventory \
+        "$NAMED_WINDOWS_UNSAFE_PARTIAL_SELF_TEST" "Activity Monitor" 11393 \
+        com.apple.ActivityMonitor "Activity Monitor" \
+        >/dev/null 2>&1 || \
+       exact_named_window_receipt_from_inventory \
+        "$NAMED_WINDOWS_MIXED_PARTIAL_SELF_TEST" "Activity Monitor" 11393 \
+        com.apple.ActivityMonitor "Activity Monitor" \
+        >/dev/null 2>&1 || \
+       exact_named_window_receipt_from_inventory \
+        "$NAMED_WINDOWS_BAD_SINGULAR_SELF_TEST" "Activity Monitor" 11393 \
+        com.apple.ActivityMonitor "Activity Monitor" \
+        >/dev/null 2>&1 || \
+       exact_named_window_receipt_from_inventory \
+        "$NAMED_WINDOWS_BAD_PLURAL_SELF_TEST" "Activity Monitor" 11393 \
+        com.apple.ActivityMonitor "Activity Monitor" \
+        >/dev/null 2>&1 || \
+       exact_named_window_receipt_from_inventory \
+        "$NAMED_WINDOWS_OWNER_MISMATCH_SELF_TEST" "Activity Monitor" 11393 \
+        com.apple.ActivityMonitor "Activity Monitor" \
+        >/dev/null 2>&1 || \
+       exact_named_window_receipt_from_inventory \
+        "$NAMED_WINDOWS_NAME_MISMATCH_SELF_TEST" "Activity Monitor" 11393 \
+        com.apple.ActivityMonitor "Activity Monitor" \
+        >/dev/null 2>&1 || \
+       exact_named_window_receipt_from_inventory \
+        "$NAMED_WINDOWS_OFFSCREEN_SELF_TEST" "Activity Monitor" 11393 \
+        com.apple.ActivityMonitor "Activity Monitor" \
+        >/dev/null 2>&1 || \
+       exact_named_window_receipt_from_inventory \
+        "$NAMED_WINDOWS_LAYER_SELF_TEST" "Activity Monitor" 11393 \
+        com.apple.ActivityMonitor "Activity Monitor" \
+        >/dev/null 2>&1 || \
+       exact_named_window_receipt_from_inventory \
+        "$NAMED_WINDOWS_BOUNDS_SELF_TEST" "Activity Monitor" 11393 \
+        com.apple.ActivityMonitor "Activity Monitor" \
+        >/dev/null 2>&1; then
+        echo "Exact physical title receipt self-test failed." >&2
         exit 1
     fi
     HEARTBEAT_SELF_TEST="$ARTIFACT_ROOT/heartbeat-self-test.json"
@@ -1350,17 +1565,34 @@ resolve_existing_physical_target() {
         echo "Physical app $slug requires exactly one already-running $bundle_id process." >&2
         return 1
     fi
-    local pid process_start_identity
+    local pid process_start_identity application_name expected_window_title
     pid="$(jq -er '.pid' "$application_receipt")"
     process_start_identity="$(jq -er '.process_start_identity' "$application_receipt")"
+    application_name="$(jq -er '.application_name' "$application_receipt")"
+    expected_window_title="$(physical_expected_window_title "$slug" 2>/dev/null || true)"
     if ! process_generation_matches \
         "$pid" "$process_start_identity" "$target_dir/process-identity.json"; then
         echo "Physical app $slug changed process generation during setup." >&2
         return 1
     fi
-    if ! pb window list --pid "$pid" --json > "$window_inventory" ||
-       ! exact_window_receipt_from_inventory "$window_inventory" > "$window_receipt"; then
+    if ! pb window list --pid "$pid" --json > "$window_inventory"; then
+        echo "Physical app $slug window inventory failed." >&2
+        return 1
+    fi
+    if [[ -n "$expected_window_title" ]]; then
+        if ! exact_named_window_receipt_from_inventory \
+            "$window_inventory" "$expected_window_title" "$pid" "$bundle_id" "$application_name" \
+            > "$window_receipt"; then
+            echo "Physical app $slug requires one exact visible '$expected_window_title' window." >&2
+            return 1
+        fi
+    elif ! exact_window_receipt_from_inventory "$window_inventory" > "$window_receipt"; then
         echo "Physical app $slug requires one exact visible key or sole window." >&2
+        return 1
+    fi
+    if ! process_generation_matches \
+        "$pid" "$process_start_identity" "$target_dir/process-identity-after-window.json"; then
+        echo "Physical app $slug changed process generation during window selection." >&2
         return 1
     fi
     physical_target_receipt \
@@ -2341,10 +2573,11 @@ run_physical_observation() {
     local target
     target="$(jq -cer --arg slug "$slug" '.targets[$slug]' \
         "$ARTIFACT_ROOT/physical-targets.json")"
-    local pid process_start_identity window_id artifact case_dir
+    local pid process_start_identity window_id artifact case_dir expected_window_title
     pid="$(jq -er '.pid' <<< "$target")"
     process_start_identity="$(jq -er '.process_start_identity' <<< "$target")"
     window_id="$(jq -er '.window_id' <<< "$target")"
+    expected_window_title="$(physical_expected_window_title "$slug" 2>/dev/null || true)"
     case_dir="$(case_dir_path "$case_name")"
     artifact="$case_dir/window.png"
 
@@ -2356,6 +2589,7 @@ run_physical_observation() {
     local generation_file="$case_dir/target-process-identity.json"
     local executable_file="$case_dir/target-process-executable.json"
     local window_readback="$case_dir/target-window-readback.json"
+    local selector_readback="$case_dir/target-window-selector-readback.json"
     local target_verified=true
     if ! process_generation_matches \
         "$pid" "$process_start_identity" "$generation_file"; then
@@ -2373,13 +2607,31 @@ run_physical_observation() {
         "$(jq -er '.executable.code_signature_hash' <<< "$target")" ]]; then
         target_verified=false
     fi
-    if ! pb window list --pid "$pid" --json > "$window_readback" ||
-       ! jq -e --argjson target "$target" '
-            any(.data.windows[]?;
-                .window_id == $target.window_id and
-                .window_title == $target.window_title and
-                .bounds == $target.bounds)
-       ' "$window_readback" >/dev/null; then
+    if ! pb window list --pid "$pid" --json > "$window_readback"; then
+        target_verified=false
+    elif [[ -n "$expected_window_title" ]]; then
+        if ! exact_named_window_receipt_from_inventory \
+            "$window_readback" \
+            "$expected_window_title" \
+            "$pid" \
+            "$(jq -er '.bundle_id' <<< "$target")" \
+            "$(jq -er '.application_name' <<< "$target")" \
+            > "$selector_readback" ||
+           ! exact_window_receipts_match \
+            "$ARTIFACT_ROOT/physical-targets/$slug/target-receipt.json" \
+            "$selector_readback"; then
+            target_verified=false
+        fi
+    elif ! jq -e --argjson target "$target" '
+        any(.data.windows[]?;
+            .window_id == $target.window_id and
+            .window_title == $target.window_title and
+            .bounds == $target.bounds)
+    ' "$window_readback" >/dev/null; then
+        target_verified=false
+    fi
+    if ! process_generation_matches \
+        "$pid" "$process_start_identity" "$case_dir/target-process-identity-after-window-readback.json"; then
         target_verified=false
     fi
     if ! jq -e --argjson target "$target" --arg artifact "$artifact" '

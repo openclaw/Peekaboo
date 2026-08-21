@@ -119,6 +119,33 @@ test("catalog has no monitored process launch and covers eight physical apps exa
     .filter(Boolean)
     .sort();
   assert.deepEqual(coveredApps, [...catalog.physical_apps].sort());
+  assert.deepEqual(catalog.physical_app_window_titles, {
+    "activity-monitor": "Activity Monitor",
+  });
+});
+
+test("physical title selector catalog is closed and exact", () => {
+  const missing = structuredClone(catalog);
+  delete missing.physical_app_window_titles;
+  assert.ok(rules(validateCertification(missing, makePassingReport(catalog)))
+    .has("physical_app_window_titles"));
+
+  const expanded = structuredClone(catalog);
+  expanded.physical_app_window_titles.finder = "Finder";
+  assert.ok(rules(validateCertification(expanded, makePassingReport(catalog)))
+    .has("physical_app_window_titles"));
+
+  const padded = structuredClone(catalog);
+  padded.physical_app_window_titles["activity-monitor"] = " Activity Monitor ";
+  assert.ok(rules(validateCertification(padded, makePassingReport(catalog)))
+    .has("physical_app_window_titles"));
+});
+
+test("Activity Monitor physical target must retain its catalog title", () => {
+  const report = makePassingReport(catalog);
+  const physical = caseById(report, "physical-activity-monitor").physical_target;
+  physical.window_title = "Dock Icon Host Window";
+  assert.ok(rules(validateCertification(catalog, report)).has("physical_target_mismatch"));
 });
 
 test("keyboard contract requires exact-window positives and app/PID raw-key refusals", () => {
