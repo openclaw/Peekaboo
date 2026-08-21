@@ -385,3 +385,26 @@ enum MCPToolSnapshotMutationPolicy {
             : .none
     }
 }
+
+/// Invocation-level visual verification derived from the canonical mutation effect.
+///
+/// Browser connection state is intentionally nonvisual even though connecting mutates the session.
+/// Empty arguments preserve broad verification for tools whose concrete action is unavailable.
+enum MCPToolVisualVerificationPolicy {
+    static func requiresVerification(toolName: String, stringArguments: [String: String]) -> Bool {
+        guard !stringArguments.isEmpty else { return true }
+        let arguments = ToolArguments(raw: stringArguments.mapValues { $0 as Any })
+        if toolName == "browser",
+           let actionName = arguments.getString("action"),
+           let action = BrowserAction(rawValue: actionName)
+        {
+            switch action {
+            case .status, .connect, .disconnect:
+                return false
+            default:
+                break
+            }
+        }
+        return MCPToolSnapshotMutationPolicy.effect(toolName: toolName, arguments: arguments) != .none
+    }
+}
