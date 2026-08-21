@@ -51,6 +51,43 @@ extension CommanderRuntimeRouter {
         return lines.joined(separator: "\n")
     }
 
+    static func renderCommandHelp(
+        _ descriptor: CommanderCommandDescriptor,
+        path: [String],
+        theme: HelpTheme
+    ) -> String {
+        var sections = [
+            self.renderUsageCard(for: descriptor, path: path, theme: theme),
+            CommandHelpRenderer.renderHelp(for: descriptor.type, theme: theme),
+        ]
+
+        // Registry descriptors already inject the runtime signature into OPTIONS and FLAGS.
+        // Keep the standalone section only for descriptors that do not expose those entries.
+        if !self.signatureContainsRuntimeOptions(descriptor.metadata.signature) {
+            sections.append(self.renderGlobalFlagsSection(theme: theme))
+        }
+
+        if !descriptor.subcommands.isEmpty {
+            var lines = ["Subcommands:"]
+            lines.append(contentsOf: self.renderCommandList(for: descriptor.subcommands, theme: theme))
+            if let defaultName = descriptor.metadata.defaultSubcommandName {
+                lines.append("")
+                lines.append("Default subcommand: \(theme.command(defaultName))")
+            }
+            sections.append(lines.joined(separator: "\n"))
+        }
+
+        return sections.joined(separator: "\n\n")
+    }
+
+    static func signatureContainsRuntimeOptions(_ signature: CommandSignature) -> Bool {
+        let runtimeSignature = CommandSignature().withPeekabooRuntimeFlags().flattened()
+        let optionLabels = Set(signature.options.map(\.label))
+        let flagLabels = Set(signature.flags.map(\.label))
+        return Set(runtimeSignature.options.map(\.label)).isSubset(of: optionLabels) &&
+            Set(runtimeSignature.flags.map(\.label)).isSubset(of: flagLabels)
+    }
+
     static func globalFlagSummaries(theme: HelpTheme) -> [String] {
         [
             theme.bullet(label: "--json/-j (alias: --json-output)", description: "Emit machine-readable JSON output"),

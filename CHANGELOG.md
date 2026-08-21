@@ -16,6 +16,7 @@
 - Treat an exact missing-window readback after `window close` as confirmed closure instead of a retry-unsafe failure.
 - Refuse capture before permission or backend dispatch when the macOS GUI session is locked, while explaining that `screen list` can still report connected displays.
 - Show CLI-native recovery commands in disconnected browser status output while preserving MCP guidance.
+- Show global runtime flags once in generated leaf and nested command help while retaining root-level discovery.
 
 ## [4.2.2] - 2026-08-20
 

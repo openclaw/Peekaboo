@@ -40,6 +40,34 @@ struct RootEarlyExitRuntimeTests {
         #expect(result.standardError.isEmpty)
         #expect(result.standardOutput.contains("Usage"))
         #expect(result.standardOutput.contains("Global Runtime Flags"))
+        #expect(self.helpEntryCount("- --bridge-socket <path>", in: result.standardOutput) == 1)
+    }
+
+    @Test
+    func `leaf and nested help do not duplicate runtime flags`() async throws {
+        guard TestChildProcess.canLocatePeekabooBinary() else {
+            Issue.record("Build peekaboo before running CLI runtime tests.")
+            return
+        }
+
+        let cases = [
+            (["click", "--help"], "peekaboo click"),
+            (["app", "list", "--help"], "peekaboo app list"),
+            (["bridge", "receipt", "validate", "--help"], "peekaboo bridge receipt validate"),
+        ]
+        for (arguments, usage) in cases {
+            let result = try await TestChildProcess.runPeekaboo(arguments, isolateFromRemoteHosts: false)
+
+            #expect(result.status == .exited(0))
+            #expect(result.standardError.isEmpty)
+            #expect(result.standardOutput.contains("Usage\n  \(usage)"))
+            #expect(!result.standardOutput.contains("Global Runtime Flags"))
+            #expect(self.helpEntryCount("--bridge-socket <bridge-socket>", in: result.standardOutput) == 1)
+            #expect(self.helpEntryCount("--input-strategy <input-strategy>", in: result.standardOutput) == 1)
+            #expect(self.helpEntryCount("--no-remote", in: result.standardOutput) == 1)
+            #expect(self.helpEntryCount("--json, -j", in: result.standardOutput) == 1)
+            #expect(self.helpEntryCount("-v, --verbose", in: result.standardOutput) == 1)
+        }
     }
 
     @Test(arguments: [
@@ -139,5 +167,11 @@ struct RootEarlyExitRuntimeTests {
         #expect(result.standardOutput.isEmpty)
         #expect(result.standardError.contains("Error: Unknown command '--junk'"))
         #expect(!result.standardError.contains("\"success\""))
+    }
+
+    private func helpEntryCount(_ option: String, in help: String) -> Int {
+        help.split(separator: "\n").count { line in
+            line.trimmingCharacters(in: .whitespaces).hasPrefix(option)
+        }
     }
 }

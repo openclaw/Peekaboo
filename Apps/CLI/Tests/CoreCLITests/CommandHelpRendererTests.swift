@@ -85,6 +85,44 @@ struct CommandHelpRendererTests {
     }
 
     @Test
+    func `router help keeps one canonical runtime presentation for leaf and nested commands`() {
+        let cases: [(any ParsableCommand.Type, [String])] = [
+            (ClickCommand.self, ["click"]),
+            (AppCommand.ListSubcommand.self, ["app", "list"]),
+            (BridgeCommand.ValidateSubcommand.self, ["bridge", "receipt", "validate"]),
+        ]
+
+        for (type, path) in cases {
+            let descriptor = CommanderRegistryBuilder.buildDescriptor(for: type)
+            let help = CommanderRuntimeRouter.renderCommandHelp(
+                descriptor,
+                path: path,
+                theme: HelpTheme(useColors: false)
+            )
+
+            #expect(help.contains("Usage\n  peekaboo \(path.joined(separator: " "))"))
+            #expect(!help.contains("Global Runtime Flags"))
+            #expect(self.helpEntryCount("--bridge-socket <bridge-socket>", in: help) == 1)
+            #expect(self.helpEntryCount("--input-strategy <input-strategy>", in: help) == 1)
+            #expect(self.helpEntryCount("--no-remote", in: help) == 1)
+            #expect(self.helpEntryCount("--json, -j", in: help) == 1)
+            #expect(self.helpEntryCount("-v, --verbose", in: help) == 1)
+        }
+    }
+
+    @Test
+    func `root help retains one standalone global runtime section`() {
+        let help = CommanderRuntimeRouter.renderGlobalFlagsSection(theme: HelpTheme(useColors: false))
+
+        #expect(help.components(separatedBy: "Global Runtime Flags").count - 1 == 1)
+        #expect(self.helpEntryCount("- --bridge-socket <path>", in: help) == 1)
+        #expect(self.helpEntryCount("- --input-strategy <mode>", in: help) == 1)
+        #expect(self.helpEntryCount("- --no-remote", in: help) == 1)
+        #expect(self.helpEntryCount("- --json/-j", in: help) == 1)
+        #expect(self.helpEntryCount("- --verbose/-v", in: help) == 1)
+    }
+
+    @Test
     func `click help makes the background coordinate receipt contract explicit`() {
         let help = ClickCommand.helpMessage()
 
@@ -128,6 +166,12 @@ struct CommandHelpRendererTests {
         #expect(help.contains("Expected element value"))
         #expect(!help.contains("Required x,y,width,height"))
         #expect(!help.contains("Required element value"))
+    }
+
+    private func helpEntryCount(_ option: String, in help: String) -> Int {
+        help.split(separator: "\n").count { line in
+            line.trimmingCharacters(in: .whitespaces).hasPrefix(option)
+        }
     }
 }
 

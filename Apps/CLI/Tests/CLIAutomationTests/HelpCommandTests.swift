@@ -61,16 +61,13 @@ struct HelpCommandTests {
         for subcommand in subcommands {
             let output = try await runPeekaboo(["help", subcommand]).stdout
 
-            // Each subcommand help should contain a usage card + global flags.
+            // Each subcommand help should contain a usage card and one injected runtime signature.
             #expect(output.contains("Usage"), "Help for \(subcommand) should contain Usage")
             #expect(
                 output.contains("peekaboo \(subcommand)"),
                 "Help for \(subcommand) should contain usage line"
             )
-            #expect(
-                output.contains("Global Runtime Flags"),
-                "Help for \(subcommand) should mention global runtime flags"
-            )
+            #expect(!output.contains("Global Runtime Flags"), "Help for \(subcommand) should not duplicate flags")
             #expect(output.contains("--json"), "Help for \(subcommand) should include JSON flag")
 
             // Should not show agent execution output
@@ -140,6 +137,7 @@ struct HelpCommandTests {
 
         let pressHelp = try await runPeekaboo(["press", "--help"])
         #expect(pressHelp.stdout.contains("peekaboo press [<chord> ...]"))
+        #expect(!pressHelp.stdout.contains("Global Runtime Flags"))
     }
 
     @Test
@@ -151,7 +149,7 @@ struct HelpCommandTests {
             let output = try await runPeekaboo([subcommand, "--help"]).stdout
 
             #expect(output.contains("Usage"), "\(subcommand) --help should show usage")
-            #expect(output.contains("Global Runtime Flags"), "\(subcommand) --help should mention global flags")
+            #expect(!output.contains("Global Runtime Flags"), "\(subcommand) --help should not duplicate flags")
             #expect(!output.contains("[info] Peekaboo Agent"), "\(subcommand) --help should not invoke agent")
         }
     }

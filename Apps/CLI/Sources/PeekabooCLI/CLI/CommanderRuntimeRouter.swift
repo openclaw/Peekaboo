@@ -311,19 +311,6 @@ enum CommanderRuntimeRouter {
 
     private static func printCommandHelp(_ descriptor: CommanderCommandDescriptor, path: [String]) {
         let theme = self.makeHelpTheme()
-        let usageCard = self.renderUsageCard(for: descriptor, path: path, theme: theme)
-        let helpText = CommandHelpRenderer.renderHelp(for: descriptor.type, theme: theme)
-        print(usageCard)
-        print("")
-        print(helpText)
-        print("")
-        print(self.renderGlobalFlagsSection(theme: theme))
-        guard !descriptor.subcommands.isEmpty else { return }
-        print("\nSubcommands:")
-        let subcommandRows = self.renderCommandList(for: descriptor.subcommands, theme: theme)
-        subcommandRows.forEach { print($0) }
-        if let defaultName = descriptor.metadata.defaultSubcommandName {
-            print("\nDefault subcommand: \(theme.command(defaultName))")
-        }
+        print(self.renderCommandHelp(descriptor, path: path, theme: theme))
     }
 }
