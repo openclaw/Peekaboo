@@ -9,6 +9,7 @@ struct TextInputView: View {
     @State private var prefilledText = "This text is pre-filled"
     @State private var searchText = ""
     @State private var formattedText = ""
+    @State private var semanticState = TextInputSemanticState()
     @FocusState private var focusedField: Field?
 
     enum Field: String {
@@ -30,6 +31,7 @@ struct TextInputView: View {
                             identifier: "basic-text-field")
                             .focused(self.$focusedField, equals: .basic)
                             .onSubmit {
+                                self.semanticState.recordBasicTextSubmission(self.basicText)
                                 self.actionLogger.log(
                                     .text,
                                     "Submitted basic text field",
@@ -242,6 +244,9 @@ struct TextInputView: View {
             }
             .padding()
         }
+        .playgroundSemanticWitness(
+            .basicTextLastSubmitted,
+            value: self.semanticState.basicTextLastSubmitted)
         .onAppear {
             self.actionLogger.log(.focus, "Text input view appeared")
         }

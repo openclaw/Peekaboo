@@ -11,6 +11,7 @@ struct ScrollTestingView: View {
     @State private var lastHorizontalOffset: CGFloat?
     @State private var lastNestedInnerOffset: CGFloat?
     @State private var lastNestedOuterOffset: CGFloat?
+    @State private var semanticState = ScrollTestingSemanticState()
 
     var body: some View {
         VStack(spacing: 20) {
@@ -299,10 +300,14 @@ struct ScrollTestingView: View {
             Spacer()
         }
         .padding()
+        .playgroundSemanticWitness(
+            .verticalScrollOffset,
+            value: self.semanticState.verticalScrollOffset)
     }
 
     private func logVerticalScrollChange(offset: CGFloat) {
         let rounded = (offset * 100).rounded() / 100
+        self.semanticState.recordVerticalScrollOffset(rounded)
         if let lastOffset = self.lastVerticalOffset, abs(lastOffset - rounded) < 5 {
             return
         }

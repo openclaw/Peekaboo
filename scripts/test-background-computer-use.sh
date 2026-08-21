@@ -2508,6 +2508,37 @@ element_id_from_result() {
     ' "$result_file"
 }
 
+semantic_witness_value_from_result() {
+    local result_file="$1"
+    local identifier="$2"
+    jq -er --arg identifier "$identifier" '
+        [(.data.ui_elements? // .ui_elements? // [])[] |
+            select(.identifier == $identifier) |
+            select(.ax_role == "AXStaticText") |
+            select(.bounds.width > 5 and .bounds.height > 5) |
+            .value |
+            select(type == "string")] |
+        select(length == 1) |
+        .[0]
+    ' "$result_file"
+}
+
+assert_semantic_witness() {
+    local case_name="$1"
+    local oracle="$2"
+    local result_file="$3"
+    local identifier="$4"
+    local expected="$5"
+    local observed
+    observed="$(semantic_witness_value_from_result "$result_file" "$identifier" 2>/dev/null || true)"
+    if [[ "$observed" != "$expected" ]]; then
+        record_case_oracle "$case_name" "$oracle" false || true
+        record_failure "$case_name did not expose exact $identifier semantic witness value"
+        return 1
+    fi
+    record_case_oracle "$case_name" "$oracle" true
+}
+
 assert_result_contains() {
     local oracle="$1"
     local result_file="$2"
@@ -2991,6 +3022,8 @@ run_checked_case see-text-after-paste unchanged success \
     --path "$ARTIFACT_ROOT/text-after-paste.png" || true
 assert_case_artifacts see-text-after-paste "$ARTIFACT_ROOT/text-after-paste.png" || true
 assert_result_contains paste_readback "$LAST_RESULT" "$PASTE_TOKEN" || true
+assert_semantic_witness \
+    press-exact-window submitted_text_witness "$LAST_RESULT" basic-text-last-submitted "$TYPE_TOKEN" || true
 TEXT_SNAPSHOT="$(snapshot_id_from_result "$LAST_RESULT")"
 BASIC_FIELD_ID="$(element_id_from_result "$LAST_RESULT" basic-text-field)"
 
@@ -3035,6 +3068,7 @@ run_checked_case see-click-after-id unchanged success \
     --path "$ARTIFACT_ROOT/click-after-id.png" || true
 assert_case_artifacts see-click-after-id "$ARTIFACT_ROOT/click-after-id.png" || true
 assert_case_result_contains click-id click_id_readback "$LAST_RESULT" "1 total clicks" || true
+assert_semantic_witness click-id single_click_witness "$LAST_RESULT" single-click-count "1" || true
 CLICK_LOG_AFTER_ID="$ARTIFACT_ROOT/playground-click-after-id.json"
 capture_playground_log "$CLICK_LOG_AFTER_ID"
 assert_playground_log_delta click-id "$CLICK_LOG_BASELINE" "$CLICK_LOG_AFTER_ID" \
@@ -3052,6 +3086,8 @@ CLICK_SNAPSHOT="$(snapshot_id_from_result "$LAST_RESULT")"
 SINGLE_CLICK_ID="$(element_id_from_result "$LAST_RESULT" single-click-button)"
 assert_case_artifacts see-click-for-action "$ARTIFACT_ROOT/click-for-action.png" || true
 assert_snapshot_identifiers see-click-for-action "$CLICK_SNAPSHOT" "$SINGLE_CLICK_ID" || true
+assert_semantic_witness \
+    click-query secondary_click_witness "$LAST_RESULT" secondary-click-count "1" || true
 CLICK_LOG_AFTER_QUERY="$ARTIFACT_ROOT/playground-click-after-query.json"
 capture_playground_log "$CLICK_LOG_AFTER_QUERY"
 assert_playground_log_delta click-query "$CLICK_LOG_AFTER_ID" "$CLICK_LOG_AFTER_QUERY" \
@@ -3064,6 +3100,7 @@ run_checked_case see-click-after-action unchanged success \
     --path "$ARTIFACT_ROOT/click-after-action.png" || true
 assert_case_artifacts see-click-after-action "$ARTIFACT_ROOT/click-after-action.png" || true
 assert_case_result_contains action action_readback "$LAST_RESULT" "2 total clicks" || true
+assert_semantic_witness action single_click_witness "$LAST_RESULT" single-click-count "2" || true
 CLICK_LOG_AFTER_ACTION="$ARTIFACT_ROOT/playground-click-after-action.json"
 capture_playground_log "$CLICK_LOG_AFTER_ACTION"
 assert_playground_log_delta action "$CLICK_LOG_AFTER_QUERY" "$CLICK_LOG_AFTER_ACTION" \
@@ -3080,6 +3117,9 @@ run_checked_case see-scroll unchanged success \
     --path "$ARTIFACT_ROOT/scroll-see.png" || true
 SCROLL_SNAPSHOT="$(snapshot_id_from_result "$LAST_RESULT")"
 VERTICAL_SCROLL_ID="$(element_id_from_result "$LAST_RESULT" vertical-scroll)"
+SCROLL_WITNESS_BEFORE="$(
+    semantic_witness_value_from_result "$LAST_RESULT" vertical-scroll-offset 2>/dev/null || true
+)"
 assert_case_artifacts see-scroll "$ARTIFACT_ROOT/scroll-see.png" || true
 assert_snapshot_identifiers see-scroll "$SCROLL_SNAPSHOT" "$VERTICAL_SCROLL_ID" || true
 if [[ -z "$SCROLL_SNAPSHOT" || -z "$VERTICAL_SCROLL_ID" ]]; then
@@ -3097,6 +3137,25 @@ else
         record_last_case_oracle confirmed_scroll true
     fi
     sleep 0.3
+    SCROLL_WITNESS_READBACK="$ARTIFACT_ROOT/scroll-semantic-readback.json"
+    if ! pb see --tree --no-screenshot --pid "$PLAYGROUND_PID" --window-id "$SCROLL_WINDOW_ID" \
+        --json > "$SCROLL_WITNESS_READBACK"; then
+        record_last_case_oracle scroll_witness_changed false || true
+        record_failure "scroll-action-background could not read the vertical-scroll-offset witness"
+    else
+        SCROLL_WITNESS_AFTER="$(
+            semantic_witness_value_from_result \
+                "$SCROLL_WITNESS_READBACK" vertical-scroll-offset 2>/dev/null || true
+        )"
+        if [[ ! "$SCROLL_WITNESS_BEFORE" =~ ^-?[0-9]+([.][0-9]{2})?$ ]] ||
+           [[ ! "$SCROLL_WITNESS_AFTER" =~ ^-?[0-9]+([.][0-9]{2})?$ ]] ||
+           [[ "$SCROLL_WITNESS_AFTER" == "$SCROLL_WITNESS_BEFORE" ]]; then
+            record_last_case_oracle scroll_witness_changed false || true
+            record_failure "scroll-action-background did not change its exact AX semantic witness"
+        else
+            record_last_case_oracle scroll_witness_changed true
+        fi
+    fi
     SCROLL_LOG_AFTER="$ARTIFACT_ROOT/playground-scroll-after.json"
     capture_playground_log "$SCROLL_LOG_AFTER"
     assert_playground_scroll_changed scroll-action-background "$SCROLL_LOG_BEFORE" "$SCROLL_LOG_AFTER" || true

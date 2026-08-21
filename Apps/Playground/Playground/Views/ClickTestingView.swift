@@ -3,7 +3,7 @@ import SwiftUI
 struct ClickTestingView: View {
     @EnvironmentObject var actionLogger: ActionLogger
     @State private var toggleState = false
-    @State private var clickCount = 0
+    @State private var semanticState = ClickTestingSemanticState()
     @State private var lastClickType = ""
 
     var body: some View {
@@ -15,17 +15,18 @@ struct ClickTestingView: View {
                 GroupBox("Basic Buttons") {
                     HStack(spacing: 20) {
                         Button("Single Click") {
-                            self.clickCount += 1
+                            self.semanticState.recordSingleClick()
                             self.lastClickType = "Single"
                             self.actionLogger.log(
                                 .click,
                                 "Single click on 'Single Click' button",
-                                details: "Click count: \(self.clickCount)")
+                                details: "Click count: \(self.semanticState.singleClickCount)")
                         }
                         .buttonStyle(.borderedProminent)
                         .accessibilityIdentifier("single-click-button")
 
                         Button("Secondary Button") {
+                            self.semanticState.recordSecondaryClick()
                             self.actionLogger.log(.click, "Clicked 'Secondary Button'")
                         }
                         .buttonStyle(.bordered)
@@ -166,10 +167,10 @@ struct ClickTestingView: View {
                 }
 
                 // Status display
-                if self.clickCount > 0 {
+                if self.semanticState.singleClickCount > 0 {
                     GroupBox("Click Statistics") {
                         HStack {
-                            Label("\(self.clickCount) total clicks", systemImage: "hand.tap")
+                            Label("\(self.semanticState.singleClickCount) total clicks", systemImage: "hand.tap")
                             Spacer()
                             if !self.lastClickType.isEmpty {
                                 Text("Last: \(self.lastClickType)")
@@ -181,6 +182,12 @@ struct ClickTestingView: View {
             }
             .padding()
         }
+        .playgroundSemanticWitness(
+            .singleClickCount,
+            value: String(self.semanticState.singleClickCount))
+        .playgroundSemanticWitness(
+            .secondaryClickCount,
+            value: String(self.semanticState.secondaryClickCount))
     }
 }
 

@@ -121,6 +121,28 @@ struct AXDescriptorReaderPolicyTests {
     }
 
     @Test
+    func `Current AX reader retains a production semantic witness frame`() {
+        let required = Self.requiredDescriptorReads(
+            size: CGSize(width: 8, height: 8),
+            role: "AXStaticText",
+            identifier: "single-click-count",
+            value: "2")
+
+        let result = AXDescriptorReader.describeWithSingleAttributeReads { name in
+            required[name] ?? AXDescriptorReader.SingleAttributeRead(error: .noValue, value: nil)
+        }
+
+        guard case let .descriptor(descriptor) = result else {
+            Issue.record("Expected the current AX reader to retain the semantic witness")
+            return
+        }
+        #expect(descriptor.frame.size == CGSize(width: 8, height: 8))
+        #expect(descriptor.role == "AXStaticText")
+        #expect(descriptor.identifier == "single-click-count")
+        #expect(descriptor.value == "2")
+    }
+
+    @Test
     func `Single-read fallback treats successful nil value as malformed`() {
         let required = Self.requiredDescriptorReads()
 
@@ -183,17 +205,31 @@ struct AXDescriptorReaderPolicyTests {
             values: values) == .values)
     }
 
-    private static func requiredDescriptorReads() -> [String: AXDescriptorReader.SingleAttributeRead] {
+    private static func requiredDescriptorReads(
+        size: CGSize = CGSize(width: 100, height: 40),
+        role: String = "AXButton",
+        identifier: String? = nil,
+        value: String? = nil) -> [String: AXDescriptorReader.SingleAttributeRead]
+    {
         var point = CGPoint(x: 10, y: 20)
-        var size = CGSize(width: 100, height: 40)
-        return [
+        var size = size
+        var reads = [
             "AXPosition": AXDescriptorReader.SingleAttributeRead(
                 error: .success,
                 value: AXValueCreate(.cgPoint, &point)),
             "AXSize": AXDescriptorReader.SingleAttributeRead(
                 error: .success,
                 value: AXValueCreate(.cgSize, &size)),
-            "AXRole": AXDescriptorReader.SingleAttributeRead(error: .success, value: "AXButton"),
+            "AXRole": AXDescriptorReader.SingleAttributeRead(error: .success, value: role),
         ]
+        if let identifier {
+            reads["AXIdentifier"] = AXDescriptorReader.SingleAttributeRead(
+                error: .success,
+                value: identifier)
+        }
+        if let value {
+            reads["AXValue"] = AXDescriptorReader.SingleAttributeRead(error: .success, value: value)
+        }
+        return reads
     }
 }

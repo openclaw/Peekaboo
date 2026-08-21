@@ -61,7 +61,7 @@
     {"id":"stale-snapshot","surface":"cli","command":"click","phase":"background","expected_exit":"failure","expected_effect":"refused","expected_error_code":"SNAPSHOT_STALE","contamination_retry_safe":true,"required_oracles":["snapshot_window_drift","target_window_restored"]},
     {"id":"type-ambiguous-pid-refused","surface":"cli","command":"type","phase":"background","expected_exit":"failure","expected_effect":"refused","expected_error_code":"INVALID_INPUT","contamination_retry_safe":true,"required_oracles":["refusal_guidance"]},
     {"id":"type-exact-window","surface":"cli","command":"type","phase":"background","expected_exit":"success","expected_effect":"unverifiable","expected_delivery":"background","required_oracles":["background_delivery","playground_log_line"]},
-    {"id":"press-exact-window","surface":"cli","command":"press","phase":"background","expected_exit":"success","expected_effect":"unverifiable","expected_delivery":"background","required_oracles":["background_delivery","playground_log_line"]},
+    {"id":"press-exact-window","surface":"cli","command":"press","phase":"background","expected_exit":"success","expected_effect":"unverifiable","expected_delivery":"background","required_oracles":["background_delivery","playground_log_line","submitted_text_witness"]},
     {"id":"press-pid-refused","surface":"cli","command":"press","phase":"background","expected_exit":"failure","expected_effect":"refused","expected_error_code":"INTERACTION_FAILED","contamination_retry_safe":true,"required_oracles":["refusal_guidance"]},
     {"id":"press-app-refused","surface":"cli","command":"press","phase":"background","expected_exit":"failure","expected_effect":"refused","expected_error_code":"INTERACTION_FAILED","contamination_retry_safe":true,"required_oracles":["refusal_guidance"]},
     {"id":"paste-text","surface":"cli","command":"paste","phase":"background","expected_exit":"success","expected_effect":"unverifiable","expected_delivery":"background","required_oracles":["background_delivery","playground_log"]},
@@ -73,14 +73,14 @@
     {"id":"menu-open-scroll","surface":"cli","command":"menu click","phase":"background","expected_exit":"success","expected_effect":"confirmed","expected_delivery":"background","required_oracles":[]},
     {"id":"list-window-scroll","surface":"cli","command":"window list","phase":"background","expected_exit":"success","contamination_retry_safe":true,"required_oracles":["window_discovery"]},
     {"id":"see-click","surface":"cli","command":"see","phase":"background","expected_exit":"success","contamination_retry_safe":true,"required_oracles":["snapshot_identifiers","artifact"]},
-    {"id":"click-id","surface":"cli","command":"click","phase":"background","expected_exit":"success","expected_effect":"confirmed","expected_delivery":"background","required_oracles":["background_delivery","click_id_readback","playground_log_delta"]},
+    {"id":"click-id","surface":"cli","command":"click","phase":"background","expected_exit":"success","expected_effect":"confirmed","expected_delivery":"background","required_oracles":["background_delivery","click_id_readback","playground_log_delta","single_click_witness"]},
     {"id":"see-click-after-id","surface":"cli","command":"see","phase":"background","expected_exit":"success","contamination_retry_safe":true,"required_oracles":["artifact"]},
-    {"id":"click-query","surface":"cli","command":"click","phase":"background","expected_exit":"success","expected_effect":"confirmed","expected_delivery":"background","required_oracles":["background_delivery","playground_log_delta"]},
+    {"id":"click-query","surface":"cli","command":"click","phase":"background","expected_exit":"success","expected_effect":"confirmed","expected_delivery":"background","required_oracles":["background_delivery","playground_log_delta","secondary_click_witness"]},
     {"id":"see-click-for-action","surface":"cli","command":"see","phase":"background","expected_exit":"success","contamination_retry_safe":true,"required_oracles":["snapshot_identifiers","artifact"]},
-    {"id":"action","surface":"cli","command":"action","phase":"background","expected_exit":"success","expected_effect":"confirmed","required_oracles":["action_readback","playground_log_delta"]},
+    {"id":"action","surface":"cli","command":"action","phase":"background","expected_exit":"success","expected_effect":"confirmed","required_oracles":["action_readback","playground_log_delta","single_click_witness"]},
     {"id":"see-click-after-action","surface":"cli","command":"see","phase":"background","expected_exit":"success","contamination_retry_safe":true,"required_oracles":["artifact"]},
     {"id":"unsupported-action","surface":"cli","command":"action","phase":"background","expected_exit":"failure","expected_effect":"refused","expected_error_code":"INVALID_INPUT","contamination_retry_safe":true,"required_oracles":["refusal_guidance"]},
     {"id":"see-scroll","surface":"cli","command":"see","phase":"background","expected_exit":"success","contamination_retry_safe":true,"required_oracles":["snapshot_identifiers","artifact"]},
-    {"id":"scroll-action-background","surface":"cli","command":"scroll","phase":"background","expected_exit":"success","expected_effect":"confirmed","required_oracles":["confirmed_scroll","scroll_offset_changed"]}
+    {"id":"scroll-action-background","surface":"cli","command":"scroll","phase":"background","expected_exit":"success","expected_effect":"confirmed","required_oracles":["confirmed_scroll","scroll_offset_changed","scroll_witness_changed"]}
   ]
 }
