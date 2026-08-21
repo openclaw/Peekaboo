@@ -367,6 +367,24 @@ struct DesktopActionSequenceAccumulatorTests {
         #expect(composed.outcome.evidence == .responseLost)
         #expect(composed.outcome.retrySafety == .unsafe)
 
+        var recordedResponseLoss = DesktopActionSequenceAccumulator()
+        try recordedResponseLoss.record(.outcome(.indeterminate(
+            route: .bridge,
+            delivery: self.localBackground,
+            evidence: .responseLost,
+            unitCount: self.units(1))))
+        let laterFailure = DesktopActionFailure.indeterminate(
+            route: .bridge,
+            delivery: self.localBackground,
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: "Later cleanup completion is unknown")
+        let responseLossPrefix = recordedResponseLoss.failure(
+            combining: laterFailure,
+            message: "Composite retains earlier response loss")
+        #expect(responseLossPrefix.outcome.evidence == .responseLost)
+        #expect(try responseLossPrefix.outcome.dispatchState == .mayHaveDispatched(unitCount: self.units(2)))
+
         let cancellation = try #require(sequence.cancellationFailure(
             fallbackRoute: .local,
             message: "Cancelled after dispatch",

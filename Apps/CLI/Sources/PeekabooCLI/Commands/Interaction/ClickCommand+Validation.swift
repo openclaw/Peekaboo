@@ -53,6 +53,9 @@ extension ClickCommand: PreRuntimeValidatingCommand {
             guard self.focusOptions.foreground else {
                 throw ValidationError("--modifiers requires explicit --foreground consent")
             }
+            guard !self.focusOptions.hasForegroundFocusOverrides else {
+                throw ValidationError("--modifiers cannot be combined with focus options")
+            }
             guard !self.target.hasAnyTarget else {
                 throw ValidationError(
                     "--modifiers derives its exact target from --snapshot; remove app/window selectors"

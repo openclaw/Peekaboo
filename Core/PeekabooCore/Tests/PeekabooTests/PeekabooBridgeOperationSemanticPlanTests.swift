@@ -246,6 +246,26 @@ struct PeekabooBridgeOperationSemanticPlanTests {
             modifierOutcome,
             request: modifierRequest))
 
+        let alreadyFocusedResult = ForegroundModifierClickResult(
+            cursorRestoration: .notNeeded,
+            focusRestoration: .notNeeded)
+        let alreadyFocusedOutcome = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            alreadyFocusedOutcome,
+            request: modifierRequest))
+        let alreadyFocusedBundle = try await Self.makeBundle(
+            request: .projectedAction(.init(request: modifierRequest)),
+            response: .projectedAction(.init(
+                response: .foregroundModifierClickResult(alreadyFocusedResult),
+                outcome: alreadyFocusedOutcome.projection)),
+            target: target,
+            outcome: alreadyFocusedOutcome.projection)
+        try alreadyFocusedBundle.bundle.validateIntegrity()
+
         let projectedModifierRequest = PeekabooBridgeRequest.projectedAction(.init(request: modifierRequest))
         let projectedModifierResponse = PeekabooBridgeResponse.projectedAction(.init(
             response: .foregroundModifierClickResult(modifierResult),

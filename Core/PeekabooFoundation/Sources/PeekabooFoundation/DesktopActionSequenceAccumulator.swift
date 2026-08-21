@@ -418,7 +418,7 @@ public struct DesktopActionSequenceAccumulator: Sendable {
             }
 
             let evidence: DesktopActionOutcome.IndeterminateEvidence =
-                leafFailure.outcome.evidence == .responseLost ? .responseLost : .completionUnknown
+                aggregate.hasReportedResponseLoss ? .responseLost : .completionUnknown
             return DesktopActionFailure.indeterminate(
                 route: route,
                 delivery: aggregate.dispatchedRoute.value == nil ? nil : aggregate.dispatchedDelivery.value,

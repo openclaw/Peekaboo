@@ -21,7 +21,7 @@ read_when:
 | `--wait-for <duration>` | Timeout while waiting for the element (default `5s`; bare values are milliseconds). |
 | `--double` / `--triple` / `--right` / `--middle` | Select one alternate click kind. Background middle/triple delivery requires a fresh exact-window snapshot and uses native window-routed events; `--foreground` remains available for shared-pointer behavior. Click-kind flags are mutually exclusive. |
 | `--long-press` | Send mouse-down, hold stationary for 1.2 seconds, then mouse-up. This shared-pointer gesture requires explicit `--foreground` and cannot be combined with another click-kind flag or `--focus-background`. |
-| `--modifiers <keys>` | Hold a comma-separated set of `cmd`, `shift`, `option`, and `ctrl` for one exact foreground click. Requires explicit `--foreground` and a non-`latest` screenshot snapshot; `fn`, long press, and competing app/window selectors are refused. |
+| `--modifiers <keys>` | Hold a comma-separated set of `cmd`, `shift`, `option`, and `ctrl` for one exact foreground click. Requires explicit `--foreground` and a non-`latest` screenshot snapshot; `fn`, long press, focus overrides, and competing app/window selectors are refused. |
 | `--foreground` | Focus target and send a foreground mouse click. Focus flags require this explicit mode. |
 | Focus flags | `--no-auto-focus`, `--focus-timeout`, `--focus-retry-count`, `--space-switch`, `--bring-to-current-space` (foreground mode only; see `FocusCommandOptions`). |
 | `--focus-background` | Legacy alias for the default background delivery. Use `--app`, `--pid`, `--window-id`, or a snapshot with process metadata. |

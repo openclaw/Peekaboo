@@ -51,17 +51,25 @@ final class ForegroundModifierClickExecutor {
         -> UIAutomationActionResult<ForegroundModifierClickResult>
     {
         try self.validate(request, exactWindow: exactWindow)
-        let priorFrontmost = self.dependencies.currentFrontmostIdentity()
+        guard let priorFrontmost = self.dependencies.currentFrontmostIdentity() else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Modifier-click could not capture the prior foreground application for restoration.")
+        }
         let priorFocusedWindow = self.dependencies.currentFocusedExactWindow()
         guard priorFrontmost != exactWindow.identity.processIdentity || priorFocusedWindow != nil else {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .targetUnavailable,
                 message: "Modifier-click could not capture the exact prior focused window for restoration.")
         }
-        let originalCursor = self.dependencies.currentCursorLocation()
+        guard let originalCursor = self.dependencies.currentCursorLocation() else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Modifier-click could not capture the physical cursor for restoration.")
+        }
         var sequence = DesktopActionSequenceAccumulator()
         var primaryFailure: (any Error)?
-        var cleanupFailures: [String] = []
+        var cleanupFailures: [(phase: String, failure: DesktopActionFailure)] = []
 
         do {
             let focusOutcome = try await self.dependencies.focusExactWindow(exactWindow)
@@ -92,16 +100,24 @@ final class ForegroundModifierClickExecutor {
         }
 
         var cursorRestoration = SharedDesktopRestorationStatus.notNeeded
+        let cursorRestorationPrefixCount = sequence.completedStepCount
         do {
             cursorRestoration = try self.restoreCursorIfOwned(
                 original: originalCursor,
                 lastWritten: request.point,
                 sequence: &sequence)
         } catch {
-            cleanupFailures.append("Cursor restoration: \(error.localizedDescription)")
+            cleanupFailures.append((
+                phase: "Cursor restoration",
+                failure: self.restorationFailure(
+                    error,
+                    stepWasRecorded: sequence.completedStepCount != cursorRestorationPrefixCount,
+                    delivery: Self.globalForeground,
+                    message: "Modifier-click could not restore the physical cursor.")))
         }
 
         var focusRestoration = SharedDesktopRestorationStatus.notNeeded
+        let focusRestorationPrefixCount = sequence.completedStepCount
         do {
             focusRestoration = try await self.restoreFocusIfOwned(
                 priorProcess: priorFrontmost,
@@ -109,18 +125,32 @@ final class ForegroundModifierClickExecutor {
                 targetWindow: exactWindow,
                 sequence: &sequence)
         } catch {
-            cleanupFailures.append("Focus restoration: \(error.localizedDescription)")
+            cleanupFailures.append((
+                phase: "Focus restoration",
+                failure: self.restorationFailure(
+                    error,
+                    stepWasRecorded: sequence.completedStepCount != focusRestorationPrefixCount,
+                    delivery: Self.nativeForeground,
+                    message: "Modifier-click could not restore the prior foreground window or application.")))
         }
 
         if !cleanupFailures.isEmpty {
-            var causes = cleanupFailures
+            var failures = cleanupFailures
             if let primaryFailure {
-                causes.insert("Primary action: \(primaryFailure.localizedDescription)", at: 0)
+                failures.insert((
+                    phase: "Primary action",
+                    failure: self.primaryActionFailure(primaryFailure)), at: 0)
             }
-            throw self.cleanupFailure(
-                sequence: sequence,
+            var aggregate = sequence
+            for entry in failures.dropLast() {
+                aggregate.record(.outcome(entry.failure.outcome))
+            }
+            let leaf = failures[failures.index(before: failures.endIndex)]
+            throw aggregate.failure(
+                combining: leaf.failure,
                 message: "Modifier-click cleanup did not fully restore the shared desktop.",
-                causeDescription: causes.joined(separator: " "))
+                hint: "Inspect the shared desktop state before taking another input action.",
+                causeDescription: failures.map(Self.failureDescription).joined(separator: " "))
         }
 
         if let primaryFailure {
@@ -191,11 +221,10 @@ final class ForegroundModifierClickExecutor {
     }
 
     private func restoreCursorIfOwned(
-        original: CGPoint?,
+        original: CGPoint,
         lastWritten: CGPoint,
         sequence: inout DesktopActionSequenceAccumulator) throws -> SharedDesktopRestorationStatus
     {
-        guard let original else { return .notNeeded }
         guard let current = self.dependencies.currentCursorLocation() else {
             return .preservedNewerState
         }
@@ -214,7 +243,7 @@ final class ForegroundModifierClickExecutor {
     }
 
     private func restoreFocusIfOwned(
-        priorProcess: ApplicationProcessIdentity?,
+        priorProcess: ApplicationProcessIdentity,
         priorWindow: UIAutomationTarget.ExactWindow?,
         targetWindow: UIAutomationTarget.ExactWindow,
         sequence: inout DesktopActionSequenceAccumulator) async throws -> SharedDesktopRestorationStatus
@@ -237,7 +266,7 @@ final class ForegroundModifierClickExecutor {
             return .restored
         }
 
-        guard let priorProcess, priorProcess != targetWindow.identity.processIdentity else { return .notNeeded }
+        guard priorProcess != targetWindow.identity.processIdentity else { return .notNeeded }
         let current = self.dependencies.currentFrontmostIdentity()
         if current == priorProcess {
             return .notNeeded
@@ -255,18 +284,47 @@ final class ForegroundModifierClickExecutor {
         return .restored
     }
 
-    private func cleanupFailure(
-        sequence: DesktopActionSequenceAccumulator,
-        message: String,
-        causeDescription: String) -> DesktopActionFailure
+    private func primaryActionFailure(_ error: any Error) -> DesktopActionFailure {
+        if let failure = error as? DesktopActionFailure {
+            return failure
+        }
+        return .indeterminate(
+            delivery: Self.globalForeground,
+            evidence: .completionUnknown,
+            message: "Modifier-click completion is unknown.",
+            hint: "Observe the exact target before deciding whether to retry.",
+            causeDescription: error.localizedDescription)
+    }
+
+    private func restorationFailure(
+        _ error: any Error,
+        stepWasRecorded: Bool,
+        delivery: DesktopActionOutcome.Delivery,
+        message: String) -> DesktopActionFailure
     {
-        .partial(
-            route: .local,
-            delivery: .init(mechanism: .composite, mode: .foreground),
-            unitCount: sequence.mutationDisposition.unitCount,
+        if let failure = error as? DesktopActionFailure {
+            return failure
+        }
+        if stepWasRecorded {
+            return .preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: message,
+                hint: "Inspect the shared desktop state before taking another input action.",
+                causeDescription: error.localizedDescription)
+        }
+        return .indeterminate(
+            delivery: delivery,
+            evidence: .completionUnknown,
             message: message,
             hint: "Inspect the shared desktop state before taking another input action.",
-            causeDescription: causeDescription)
+            causeDescription: error.localizedDescription)
+    }
+
+    private static func failureDescription(
+        _ entry: (phase: String, failure: DesktopActionFailure)) -> String
+    {
+        "\(entry.phase): \(entry.failure.message) \(entry.failure.causeDescription ?? "")"
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func pointsMatch(_ lhs: CGPoint, _ rhs: CGPoint) -> Bool {

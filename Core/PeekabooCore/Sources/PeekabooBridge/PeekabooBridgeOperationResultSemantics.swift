@@ -1409,7 +1409,10 @@ extension PeekabooBridgeOperationResultSemantics {
         case .exactWindowPixelFocusType:
             return [rule(compositeBackground, .positive)]
         case .foregroundModifierClick:
-            return [rule(compositeForeground, .positive)]
+            return [
+                rule(globalForeground, .positive),
+                rule(compositeForeground, .positive),
+            ]
         case .typeActions, .hotkey:
             return [rule(globalForeground, .variable)]
         case .swipe, .drag, .moveMouse:
