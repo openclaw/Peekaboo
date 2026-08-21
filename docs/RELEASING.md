@@ -102,6 +102,7 @@ not valid here. The phase order is:
 scripts/build-terminal-artifacts.sh check-helper
 scripts/build-terminal-artifacts.sh build --stage /absolute/new/stage
 /usr/bin/env -u GH_TOKEN -u GITHUB_TOKEN -u NODE_AUTH_TOKEN -u NPM_CONFIG_USERCONFIG -u NPM_TOKEN \
+  -u MAC_RELEASE_TOOL \
   MAC_RELEASE_MANIFEST="$PWD/.mac-release-terminal.env" \
   "$PWD/scripts/mac-release" codesign-run -- \
   /usr/bin/env -u OP_SERVICE_ACCOUNT_TOKEN -u MOLTY_OP_SERVICE_ACCOUNT_TOKEN \
@@ -111,6 +112,7 @@ scripts/build-terminal-artifacts.sh build --stage /absolute/new/stage
   /bin/bash --noprofile --norc -p -c 'exec "$@"' peekaboo-codesign-phase \
   "$PWD/scripts/build-terminal-artifacts.sh" sign-code --stage /absolute/new/stage
 /usr/bin/env -u GH_TOKEN -u GITHUB_TOKEN -u NODE_AUTH_TOKEN -u NPM_CONFIG_USERCONFIG -u NPM_TOKEN \
+  -u MAC_RELEASE_TOOL \
   MAC_RELEASE_MANIFEST="$PWD/.mac-release-terminal.env" \
   "$PWD/scripts/mac-release" package-run -- \
   /usr/bin/env -u OP_SERVICE_ACCOUNT_TOKEN -u MOLTY_OP_SERVICE_ACCOUNT_TOKEN \
@@ -126,6 +128,7 @@ scripts/build-terminal-artifacts.sh build --stage /absolute/new/stage
 # receipt.json, and the exact post-staple tree.json.
 scripts/build-terminal-artifacts.sh build-dmg --stage /absolute/new/stage
 /usr/bin/env -u GH_TOKEN -u GITHUB_TOKEN -u NODE_AUTH_TOKEN -u NPM_CONFIG_USERCONFIG -u NPM_TOKEN \
+  -u MAC_RELEASE_TOOL \
   MAC_RELEASE_MANIFEST="$PWD/.mac-release-terminal.env" \
   "$PWD/scripts/mac-release" codesign-run -- \
   /usr/bin/env -u OP_SERVICE_ACCOUNT_TOKEN -u MOLTY_OP_SERVICE_ACCOUNT_TOKEN \

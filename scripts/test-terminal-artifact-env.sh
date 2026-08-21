@@ -194,6 +194,8 @@ releasing_docs="$ROOT_DIR/docs/RELEASING.md"
   fail 'manual codesign recovery wrappers are incomplete'
 [[ "$(grep -Fc 'peekaboo-notary-phase' "$releasing_docs")" == 1 ]] || \
   fail 'manual notary recovery wrapper is incomplete'
+[[ "$(grep -Fc -- '-u MAC_RELEASE_TOOL' "$releasing_docs")" == 3 ]] || \
+  fail 'manual credentialed recovery permits a release helper override'
 [[ "$(grep -Fc "/bin/bash --noprofile --norc -p -c 'exec \"\$@\"'" "$wrapper")" == 2 ]] || \
   fail 'credentialed phase children do not use the required non-login bash -c wrapper'
 rg -Fq 'peekaboo-codesign-phase' "$wrapper" || fail 'codesign phase wrapper label is missing'
