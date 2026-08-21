@@ -559,7 +559,9 @@ struct ForegroundModifierClickExecutorTests {
         #expect(frontmost == target)
         #expect(focusedWindow?.identity.windowID == 7)
     }
+}
 
+extension ForegroundModifierClickExecutorTests {
     @Test
     func `foreground drift during cursor recapture refuses before click dispatch`() async throws {
         let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
