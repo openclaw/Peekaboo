@@ -52,18 +52,27 @@ private enum SeeCommandPlaygroundHarness {
         )
         let pid = application.processIdentifier
         let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(pid))
-        let deadline = ContinuousClock.now + .seconds(5)
-        while ContinuousClock.now < deadline {
-            if application.isFinishedLaunching,
-               let output = try? self.run([
-                   "window", "list", "--pid", String(pid), "--no-remote", "--json",
-               ]),
-               self.hasWindow(output) {
-                return Launch(pid: pid, processStartIdentity: processStartIdentity)
+        let launch = Launch(pid: pid, processStartIdentity: processStartIdentity)
+        do {
+            let deadline = ContinuousClock.now + .seconds(5)
+            while ContinuousClock.now < deadline {
+                if application.isFinishedLaunching,
+                   let output = try? self.run([
+                       "window", "list", "--pid", String(pid), "--no-remote", "--json",
+                   ]),
+                   self.hasWindow(output) {
+                    return launch
+                }
+                try await Task.sleep(for: .milliseconds(50))
             }
-            try await Task.sleep(for: .milliseconds(50))
+            throw HarnessError.windowReadinessTimedOut(pid: pid)
+        } catch {
+            _ = try? self.run(self.cleanupArguments(for: launch))
+            if !application.isTerminated {
+                _ = application.forceTerminate()
+            }
+            throw error
         }
-        throw HarnessError.windowReadinessTimedOut(pid: pid)
     }
 
     static func hasWindow(_ output: String) -> Bool {
@@ -74,6 +83,14 @@ private enum SeeCommandPlaygroundHarness {
               let windows = payload["windows"] as? [Any]
         else { return false }
         return !windows.isEmpty
+    }
+
+    static func cleanupArguments(for launch: Launch) -> [String] {
+        [
+            "app", "quit", "--pid", String(launch.pid),
+            "--expected-process-start-identity", String(launch.processStartIdentity),
+            "--force", "--no-remote", "--json",
+        ]
     }
 
     static func run(
@@ -113,6 +130,17 @@ struct SeeCommandPlaygroundHarnessContractTests {
             #"{"success":false,"data":{"windows":[{"window_id":42}]}}"#
         ))
     }
+
+    @Test
+    func `Launch cleanup is exact-generation pinned`() {
+        #expect(SeeCommandPlaygroundHarness.cleanupArguments(
+            for: .init(pid: 42, processStartIdentity: 9001)
+        ) == [
+            "app", "quit", "--pid", "42",
+            "--expected-process-start-identity", "9001",
+            "--force", "--no-remote", "--json",
+        ])
+    }
 }
 
 @Suite(
@@ -125,11 +153,7 @@ struct SeeCommandPlaygroundTests {
     @MainActor
     func `Hidden web-style fields are detected in Playground`() async throws {
         let launch = try await SeeCommandPlaygroundHarness.launchBackgroundApplication()
-        let cleanupArguments = [
-            "app", "quit", "--pid", String(launch.pid),
-            "--expected-process-start-identity", String(launch.processStartIdentity),
-            "--force", "--no-remote", "--json",
-        ]
+        let cleanupArguments = SeeCommandPlaygroundHarness.cleanupArguments(for: launch)
 
         do {
             let output = try SeeCommandPlaygroundHarness.run([
@@ -182,11 +206,7 @@ struct SeeCommandPlaygroundTests {
         }
 
         let launch = try await SeeCommandPlaygroundHarness.launchBackgroundApplication()
-        let cleanupArguments = [
-            "app", "quit", "--pid", String(launch.pid),
-            "--expected-process-start-identity", String(launch.processStartIdentity),
-            "--force", "--no-remote", "--json",
-        ]
+        let cleanupArguments = SeeCommandPlaygroundHarness.cleanupArguments(for: launch)
 
         do {
             let fixtures: [(title: String, values: [(identifier: String, expected: String?)])] = [
