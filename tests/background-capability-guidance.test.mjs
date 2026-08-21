@@ -77,6 +77,9 @@ test('generated guidance sources retain CLI and policy distinctions', () => {
   const toolRegistry = read(
     'Core/PeekabooCore/Sources/PeekabooAgentRuntime/ToolRegistry/ToolRegistry.swift'
   );
+  const typeTool = read(
+    'Core/PeekabooCore/Sources/PeekabooAgentRuntime/MCP/Tools/TypeTool.swift'
+  );
   const pressMetadata = read(
     'Apps/CLI/Sources/PeekabooCLI/Commands/Interaction/PressCommand+CommanderMetadata.swift'
   );
@@ -86,8 +89,9 @@ test('generated guidance sources retain CLI and policy distinctions', () => {
   assert.doesNotMatch(learn, /\*\*System\*\*:\s*shell/);
   assert.doesNotMatch(learn, /type --app/);
   assert.doesNotMatch(toolRegistry, /peekaboo type .*--app/);
-  assert.match(toolRegistry, /"snapshot": "\$SNAPSHOT_ID"/);
+  assert.doesNotMatch(toolRegistry, /ToolOverride|toolOverrides/);
   assert.match(toolRegistry, /publicAgentTools\(\)/);
+  assert.match(typeTool, /explicit fresh exact non-dialog snapshot receipt/);
   assert.match(pressMetadata, /Agent\/MCP background-only policy/);
   assert.match(pressMetadata, /never infers latest/);
 });

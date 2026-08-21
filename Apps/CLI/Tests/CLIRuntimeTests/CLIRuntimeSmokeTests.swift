@@ -650,7 +650,18 @@ struct CLIRuntimeSmokeTests {
         #expect(!result.standardOutput.contains("#### `shell`"))
         #expect(!result.standardOutput.contains("- **System**: shell"))
         #expect(!result.standardOutput.contains("type --app"))
-        #expect(result.standardOutput.contains(#""snapshot": "$SNAPSHOT_ID""#))
+        #expect(result.standardOutput.contains("explicit fresh exact non-dialog snapshot receipt"))
+
+        let clipboardMarker = try #require(result.standardOutput.range(of: "#### `clipboard`"))
+        let clipboardTail = result.standardOutput[clipboardMarker.lowerBound...]
+        let nextTool = clipboardTail.dropFirst().range(of: "\n#### `")?.lowerBound ?? clipboardTail.endIndex
+        let clipboardSection = clipboardTail[..<nextTool]
+        let compactClipboard = clipboardSection.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        #expect(compactClipboard.contains("Available actions are `get` and `save`"))
+        #expect(compactClipboard.contains("Options: `get`, `save`"))
+        #expect(!clipboardSection.contains("**Examples:**"))
+        #expect(!clipboardSection.contains(#""action": "set""#))
+        #expect(!clipboardSection.contains("peekaboo clipboard set"))
 
         let registeredRoots = Set(CommandRegistry.definitions().map(\.name))
         let expression = try NSRegularExpression(pattern: #"\bpeekaboo ([a-z][a-z0-9-]*)"#)

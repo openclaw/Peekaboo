@@ -9,143 +9,6 @@ public enum ToolRegistry {
     @MainActor
     private static var defaultServicesFactory: (() -> any PeekabooServiceProviding)?
 
-    private struct ToolOverride {
-        let category: ToolCategory?
-        let abstract: String?
-        let discussion: String?
-        let examples: [String]?
-        let agentGuidance: String?
-    }
-
-    /// Runtime tool names carrying curated copy. Exposed so a contract test can
-    /// keep this table synchronized with the agent/MCP tool surface.
-    static var overriddenToolNames: Set<String> {
-        Set(self.toolOverrides.keys)
-    }
-
-    private static let toolOverrides: [String: ToolOverride] = [
-        "see": ToolOverride(
-            category: .vision,
-            abstract: "Capture and analyze UI contexts, returning snapshot-aware element maps.",
-            discussion: """
-            Capture a screenshot, analyze every visible UI element, and write the results to the snapshot cache
-            so later tools can reference the same IDs. The command automatically handles full screen,
-            frontmost window, or app-specific captures.
-
-            EXAMPLE
-            peekaboo see --app Safari --path ~/Desktop/safari.png --annotate
-
-            SNAPSHOT MANAGEMENT
-            - Each capture stores a snapshot id (returned in CLI output)
-            - Pass --snapshot <id> to reuse the same map in follow-up interaction commands
-
-            TROUBLESHOOTING
-            If a window is missing, try `--mode screen` so Peekaboo can discover all windows before filtering.
-            """,
-            examples: [
-                "peekaboo see --app Safari --path ~/Shots/safari.png --annotate",
-                "peekaboo see --mode screen --json",
-            ],
-            agentGuidance: "Run `inspect_ui` for AX-only element IDs, or `see` when a screenshot/visual " +
-                "element map is needed; both responses contain snapshot ids."),
-        "click": ToolOverride(
-            category: .automation,
-            abstract: "High-precision UI clicking with fuzzy matching and snapshot-aware targeting.",
-            discussion: """
-            Clicks on UI elements or coordinates. CLI interactions use IDs from `see`;
-            agent/MCP interactions may also use IDs from `inspect_ui`,
-            fuzzy text queries, or raw coordinates. Clicks use background delivery by default;
-            pass `--foreground` only when the target must receive a foreground mouse event.
-
-            ELEMENT MATCHING
-            - Fuzzy matching on element titles and labels
-            - Smart waiting keeps checking until the element is reachable
-            - Snapshot-aware IDs avoid ambiguity when multiple matches exist
-
-            CLICK KIND
-            - `--double`, `--triple`, `--right`, or `--middle` select one alternate click kind
-            - `--long-press` presses and holds, and requires `--foreground`
-
-            EXAMPLE
-            peekaboo see --app Safari --json
-            peekaboo click \"Submit\" --app Safari --snapshot "$SNAPSHOT_ID" --wait-for 1500ms
-            peekaboo click --on "$ELEMENT_ID" --snapshot "$SNAPSHOT_ID" --double
-
-            TROUBLESHOOTING
-            If the element isn't found, refresh the snapshot with a fresh observation (`peekaboo see`
-            in CLI, or `see`/`inspect_ui` in MCP), or provide a more precise query.
-            """,
-            examples: [
-                "peekaboo click \"Submit\" --app Safari --snapshot \"$SNAPSHOT_ID\" --wait-for 1500ms",
-                "peekaboo click --on \"$ELEMENT_ID\" --snapshot \"$SNAPSHOT_ID\"",
-                "peekaboo click --on \"$ELEMENT_ID\" --snapshot \"$SNAPSHOT_ID\" --double",
-            ],
-            agentGuidance: "Prefer ID-based clicks when possible. Use default background delivery, and add " +
-                "`--foreground` only when the app requires focused input. If fuzzy text fails, capture again and " +
-                "reference the new element id."),
-        "type": ToolOverride(
-            category: .automation,
-            abstract: "Types text through an explicit snapshot-pinned Agent target with configurable cadence.",
-            discussion: """
-            Background-only Agent typing requires a fresh exact non-dialog snapshot. An optional element ID must come
-            from that snapshot; app, PID, window-selector-only, targetless, and implicit-latest forms are refused.
-            Escape sequences are supported:
-            - Use "\\n" for newline
-            - Use "\\t" for tab
-            - Use "\\\\" or the word "escape" to send a literal backslash
-
-            EXAMPLE
-            { "text": "Hello\\nWorld", "snapshot": "$SNAPSHOT_ID" }
-            { "text": "Name:\\tJohn", "snapshot": "$SNAPSHOT_ID", "delay": 25 }
-
-            TROUBLESHOOTING
-            Background-click the field, observe the exact window again, and pass that new snapshot to `type`.
-            A foreground-capable Agent session may use its separately authorized foreground targeting forms.
-            """,
-            examples: [
-                "{ \"text\": \"Hello\\nWorld\", \"snapshot\": \"$SNAPSHOT_ID\" }",
-                "{ \"text\": \"Name:\\tJohn\", \"snapshot\": \"$SNAPSHOT_ID\", \"delay\": 25 }",
-            ],
-            agentGuidance: "Remember to escape newline/tab characters when providing prompts; " +
-                "literal newlines may be interpreted by the shell."),
-        "clipboard": ToolOverride(
-            category: .system,
-            abstract: "Read/write the macOS clipboard (text, images, files) with save/restore slots.",
-            discussion: """
-            Use `action: set` with text, file_path, or data_base64+uti to write the clipboard.
-            Use `action: get` to read it (optionally prefer a UTI or write binary to a filesystem outputPath).
-            MCP stdout carries JSON-RPC, so outputPath `-` is rejected; omit it to receive UTF-8 text.
-            `save`/`restore` keep user content safe while automating; `clear` empties the pasteboard.
-            """,
-            examples: [
-                "peekaboo clipboard set --text \"hello world\"",
-                "peekaboo clipboard get --output /tmp/clip.bin",
-                "peekaboo clipboard save --slot original && " +
-                    "peekaboo clipboard clear && " +
-                    "peekaboo clipboard restore --slot original",
-            ],
-            agentGuidance: "Use save/restore when a workflow might overwrite the user's clipboard."),
-        "browser": ToolOverride(
-            category: .browser,
-            abstract: "Control and inspect Chrome page content through Chrome DevTools MCP.",
-            discussion: """
-            Brokers Chrome DevTools MCP for page-level browser automation: snapshots, clicks, fills,
-            navigation, console, network, screenshots, and performance traces.
-
-            PERMISSIONS
-            - Requires Chrome 144+.
-            - The user must enable remote debugging at chrome://inspect/#remote-debugging.
-            - The user must accept Chrome's remote debugging prompt.
-            - Peekaboo disables Chrome DevTools MCP usage statistics and CrUX lookups.
-            """,
-            examples: [
-                "browser { \"action\": \"status\" }",
-                "browser { \"action\": \"connect\" }",
-                "browser { \"action\": \"snapshot\" }",
-            ],
-            agentGuidance: "Use for Chrome web page content. Use native Peekaboo tools for macOS UI and dialogs."),
-    ]
-
     // MARK: - Registry Access
 
     /// All registered tools collected from various definition structs
@@ -173,7 +36,7 @@ public enum ToolRegistry {
         let agentTools = agentService.publicAgentTools()
 
         // Convert AgentTools to PeekabooToolDefinitions
-        return agentTools.compactMap { agentTool in
+        return agentTools.map { agentTool in
             self.convertAgentToolToDefinition(agentTool)
         }
     }
@@ -199,26 +62,28 @@ public enum ToolRegistry {
     // MARK: - Private Helpers
 
     /// Convert an AgentTool to PeekabooToolDefinition
-    private static func convertAgentToolToDefinition(_ tool: AgentTool) -> PeekabooToolDefinition? {
+    private static func convertAgentToolToDefinition(_ tool: AgentTool) -> PeekabooToolDefinition {
         // Map common tool names to categories
         let category: ToolCategory = switch tool.name {
-        case "see", "screenshot", "window_capture":
+        case "see", "image", "capture", "analyze":
             .vision
         case "inspect_ui", "verify_state":
             .element
-        case "click", "type", "press", "scroll", "drag", "move", "action":
+        case "click", "type", "press", "scroll", "drag", "move", "action", "set_value", "paste":
             .automation
+        case "window", "space":
+            .window
         case "app":
             .app
-        case "menu_click", "list_menus":
+        case "menu":
             .menu
-        case "dialog_click", "dialog_input":
+        case "dialog":
             .dialog
-        case "dock_launch", "list_dock":
+        case "dock":
             .dock
         case "browser":
             .browser
-        case "shell", "clipboard", "copy_to_clipboard", "paste_from_clipboard":
+        case "shell", "clipboard", "permissions", "sleep":
             .system
         case "done", "need_info":
             .completion
@@ -229,7 +94,7 @@ public enum ToolRegistry {
         // Convert parameters from agent tool schema
         let parameters = self.convertAgentParameters(tool.parameters)
 
-        let baseDefinition = PeekabooToolDefinition(
+        return PeekabooToolDefinition(
             name: tool.name,
             commandName: tool.name.replacingOccurrences(of: "_", with: "-"),
             abstract: tool.description,
@@ -238,20 +103,6 @@ public enum ToolRegistry {
             parameters: parameters,
             examples: [],
             agentGuidance: "")
-
-        if let override = self.toolOverrides[tool.name] {
-            return PeekabooToolDefinition(
-                name: baseDefinition.name,
-                commandName: baseDefinition.commandName,
-                abstract: override.abstract ?? baseDefinition.abstract,
-                discussion: override.discussion ?? baseDefinition.discussion,
-                category: override.category ?? baseDefinition.category,
-                parameters: baseDefinition.parameters,
-                examples: override.examples ?? baseDefinition.examples,
-                agentGuidance: override.agentGuidance ?? baseDefinition.agentGuidance)
-        }
-
-        return baseDefinition
     }
 
     /// Convert agent tool parameters to parameter definitions

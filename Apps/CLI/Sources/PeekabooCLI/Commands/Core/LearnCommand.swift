@@ -119,7 +119,7 @@ struct LearnCommand {
 
     private func appendParameters(_ parameters: [PeekabooToolParameter], to output: inout String) {
         print("**Parameters:**", to: &output)
-        for param in parameters where param.cliOptions?.argumentType != .argument {
+        for param in parameters {
             var line = "- `\(param.name)` (\(param.type)"
             if param.required {
                 line += ", **required**"

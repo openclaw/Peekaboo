@@ -31,16 +31,7 @@ struct AgentToolDescriptionTests {
         for tool in allTools {
             let discussion = tool.discussion
 
-            // Check for common sections in enhanced descriptions
-            if discussion.count > 200 { // Only check substantial descriptions
-                // Many enhanced tools include EXAMPLES section
-                if tool.name == "click" || tool.name == "type" || tool.name == "see" {
-                    #expect(
-                        discussion.contains("EXAMPLE"),
-                        "Tool '\(tool.name)' should include examples")
-                }
-
-                // UI tools should mention relevant keywords
+            if discussion.count > 200 {
                 if tool.category == .automation {
                     let hasUIGuidance = discussion.contains("element") ||
                         discussion.contains("UI") ||
@@ -61,7 +52,7 @@ struct AgentToolDescriptionTests {
 
     @Test
     @MainActor
-    func `Click tool has enhanced element matching description`() {
+    func `Click tool preserves native receipt and background guidance`() {
         guard let clickTool = makeAgentTools().first(where: { $0.name == "click" }) else {
             Issue.record("Click tool not found")
             return
@@ -69,21 +60,14 @@ struct AgentToolDescriptionTests {
 
         let discussion = clickTool.discussion
 
-        // Verify enhanced features are documented
-        #expect(discussion.contains("Fuzzy matching"))
-        #expect(discussion.contains("Smart waiting"))
-        #expect(discussion.contains("ELEMENT MATCHING"))
-        #expect(discussion.contains("TROUBLESHOOTING"))
-
-        // Check for specific examples
-        #expect(discussion.contains("peekaboo click"))
-        #expect(discussion.contains("--wait-for"))
-        #expect(discussion.contains("--double"))
+        #expect(discussion.contains("specific IDs from `see` or `inspect_ui`"))
+        #expect(discussion.contains("fresh exact-window `see`"))
+        #expect(discussion.contains("Background delivery is the default"))
     }
 
     @Test
     @MainActor
-    func `Type tool includes escape sequence documentation`() {
+    func `Type tool preserves native background policy documentation`() {
         guard let typeTool = makeAgentTools().first(where: { $0.name == "type" }) else {
             Issue.record("Type tool not found")
             return
@@ -91,10 +75,9 @@ struct AgentToolDescriptionTests {
 
         let discussion = typeTool.discussion
 
-        // Check for escape sequence documentation
-        #expect(discussion.contains("\\n") || discussion.contains("newline"))
-        #expect(discussion.contains("\\t") || discussion.contains("tab"))
-        #expect(discussion.contains("escape") || discussion.contains("\\"))
+        #expect(discussion.contains("explicit fresh exact non-dialog snapshot receipt"))
+        #expect(discussion.contains("App/PID/window-only"))
+        #expect(discussion.contains("implicit-latest"))
     }
 
     @Test
@@ -109,7 +92,8 @@ struct AgentToolDescriptionTests {
 
         // Verify see tool features are documented
         #expect(discussion.contains("screenshot") || discussion.contains("capture"))
-        #expect(discussion.contains("app") || discussion.contains("window"))
+        #expect(discussion.contains("background-only"))
+        #expect(discussion.contains("opaque Peekaboo element IDs"))
 
         // Check for snapshot management info
         #expect(discussion.contains("snapshot"))
@@ -276,93 +260,20 @@ struct AgentToolDescriptionTests {
 
     @Test
     @MainActor
-    func `Tools provide helpful error guidance`() {
-        // Only check tools that are expected to have error guidance
-        // Based on actual tool definitions, only 'click' has TROUBLESHOOTING section
-        let toolsWithErrorGuidance = ["click"]
-
-        for toolName in toolsWithErrorGuidance {
-            guard let tool = makeAgentTools().first(where: { $0.name == toolName }) else {
-                continue
-            }
-
-            let discussion = tool.discussion
-
-            // Check for troubleshooting or error handling guidance
-            let hasErrorGuidance = discussion.contains("TROUBLESHOOTING") ||
-                discussion.contains("If") ||
-                discussion.contains("not found") ||
-                discussion.contains("fail") ||
-                discussion.contains("error") ||
-                discussion.contains("try")
-
-            #expect(
-                hasErrorGuidance,
-                "Tool '\(toolName)' should include error guidance")
-        }
-
-        // Additionally, verify that tools that need error guidance have it
-        // This is more of a design guideline check
-        let interactionTools = ["click", "type", "see", "app"]
-        var toolsWithGuidance = 0
-        var toolsWithoutGuidance: [String] = []
-
-        for toolName in interactionTools {
-            guard let tool = makeAgentTools().first(where: { $0.name == toolName }) else {
-                continue
-            }
-
-            let discussion = tool.discussion
-            let hasGuidance = discussion.contains("TROUBLESHOOTING") ||
-                discussion.contains("If") ||
-                discussion.contains("not found") ||
-                discussion.contains("fail") ||
-                discussion.contains("error") ||
-                discussion.contains("try")
-
-            if hasGuidance {
-                toolsWithGuidance += 1
-            } else {
-                toolsWithoutGuidance.append(toolName)
-            }
-        }
-
-        // At least some interaction tools should have error guidance
-        #expect(toolsWithGuidance > 0, "At least some interaction tools should have error guidance")
-
-        // This is informational - not a hard requirement
-        if !toolsWithoutGuidance.isEmpty {
-            // Note: Tools without explicit error guidance: \(toolsWithoutGuidance)
-            // This is OK as long as they have clear descriptions
-        }
+    func `Policy-sensitive tools preserve native refusal guidance`() throws {
+        let tools = Dictionary(uniqueKeysWithValues: makeAgentTools().map { ($0.name, $0) })
+        #expect(try #require(tools["app"]).discussion.contains("unavailable"))
+        #expect(try #require(tools["window"]).discussion.contains("Unavailable under background-only authority"))
+        #expect(try #require(tools["clipboard"]).discussion.contains("persistently"))
     }
 
     // MARK: - Example Quality Tests
 
     @Test
     @MainActor
-    func `Tool examples are realistic and helpful`() {
-        let allTools = makeAgentTools()
-
-        for tool in allTools where tool.discussion.contains("EXAMPLE") {
-            // Examples should reference the tool somehow
-            let toolNameParts = tool.name.split(separator: "_")
-            let hasReference = tool.discussion.contains("peekaboo") ||
-                tool.discussion.contains(tool.name) ||
-                toolNameParts.contains { part in
-                    tool.discussion.lowercased().contains(part.lowercased())
-                }
-            #expect(
-                hasReference,
-                "Examples for '\(tool.name)' should reference the tool")
-
-            // Examples should demonstrate various options
-            if tool.parameters.count > 2 {
-                let hasOptionExample = tool.discussion.contains("--") || tool.examples.contains { $0.contains("\"") }
-                #expect(
-                    hasOptionExample,
-                    "Tool '\(tool.name)' with multiple parameters should show option examples")
-            }
+    func `Final public definitions do not layer examples over policy-filtered schemas`() {
+        for tool in makeAgentTools() {
+            #expect(tool.examples.isEmpty, "Tool '\(tool.name)' should use only its policy-aware native description")
         }
     }
 }

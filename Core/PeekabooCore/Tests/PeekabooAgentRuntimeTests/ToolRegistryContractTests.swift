@@ -37,15 +37,20 @@ struct ToolRegistryContractTests {
     }
 
     @Test
-    func `Curated copy only overrides tools the runtime exposes`() {
+    func `Final definitions preserve policy-filtered source descriptions without widening`() throws {
         let services = PeekabooServices()
         services.installAgentRuntimeDefaults()
 
-        let exposed = Set(ToolRegistry.allTools(using: services).map(\.name))
-        let documented = ToolRegistry.overriddenToolNames
-        let orphaned = documented.subtracting(exposed).sorted()
+        let sourceTools = try PeekabooAgentService(services: services).publicAgentTools()
+        let sourceByName = Dictionary(uniqueKeysWithValues: sourceTools.map { ($0.name, $0) })
+        let definitions = ToolRegistry.allTools(using: services)
 
-        #expect(orphaned.isEmpty, "Curated copy overrides unavailable runtime tools: \(orphaned)")
+        for definition in definitions {
+            let source = try #require(sourceByName[definition.name])
+            #expect(definition.abstract == source.description)
+            #expect(definition.discussion == source.description)
+            #expect(definition.examples.isEmpty)
+        }
     }
 
     @Test
