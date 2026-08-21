@@ -214,6 +214,10 @@ struct AgentEnhancementIntegrationTests {
         #expect(!ActionVerifier.shouldVerify(toolName: "dock", arguments: ["action": "list"], options: options))
         #expect(ActionVerifier.shouldVerify(toolName: "dock", arguments: ["action": "hide"], options: options))
         #expect(!ActionVerifier.shouldVerify(toolName: "menu", arguments: ["action": "list"], options: options))
+        #expect(!ActionVerifier.shouldVerify(
+            toolName: "menu",
+            arguments: ["action": "list", "foreground": "false"],
+            options: options))
         #expect(ActionVerifier.shouldVerify(
             toolName: "menu",
             arguments: ["action": "list", "foreground": "true"],

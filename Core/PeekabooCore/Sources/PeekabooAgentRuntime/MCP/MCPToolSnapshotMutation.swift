@@ -393,7 +393,7 @@ enum MCPToolSnapshotMutationPolicy {
 enum MCPToolVisualVerificationPolicy {
     static func requiresVerification(toolName: String, stringArguments: [String: String]) -> Bool {
         guard !stringArguments.isEmpty else { return true }
-        let arguments = ToolArguments(raw: stringArguments.mapValues { $0 as Any })
+        let arguments = ToolArguments(raw: stringArguments.mapValues(Self.typedArgumentValue))
         if toolName == "browser",
            let actionName = arguments.getString("action"),
            let action = BrowserAction(rawValue: actionName)
@@ -406,5 +406,13 @@ enum MCPToolVisualVerificationPolicy {
             }
         }
         return MCPToolSnapshotMutationPolicy.effect(toolName: toolName, arguments: arguments) != .none
+    }
+
+    private static func typedArgumentValue(_ value: String) -> Any {
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "true": true
+        case "false": false
+        default: value
+        }
     }
 }
