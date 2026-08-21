@@ -23,6 +23,17 @@ private enum SeeCommandPlaygroundTestConfig {
 }
 
 private enum SeeCommandPlaygroundHarness {
+    enum HarnessError: LocalizedError {
+        case windowReadinessTimedOut(pid: Int32)
+
+        var errorDescription: String? {
+            switch self {
+            case let .windowReadinessTimedOut(pid):
+                "Playground process \(pid) did not publish a window before the readiness deadline."
+            }
+        }
+    }
+
     struct Launch {
         let pid: Int32
         let processStartIdentity: UInt64
@@ -41,7 +52,28 @@ private enum SeeCommandPlaygroundHarness {
         )
         let pid = application.processIdentifier
         let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(pid))
-        return Launch(pid: pid, processStartIdentity: processStartIdentity)
+        let deadline = ContinuousClock.now + .seconds(5)
+        while ContinuousClock.now < deadline {
+            if application.isFinishedLaunching,
+               let output = try? self.run([
+                   "window", "list", "--pid", String(pid), "--no-remote", "--json",
+               ]),
+               self.hasWindow(output) {
+                return Launch(pid: pid, processStartIdentity: processStartIdentity)
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw HarnessError.windowReadinessTimedOut(pid: pid)
+    }
+
+    static func hasWindow(_ output: String) -> Bool {
+        guard let data = output.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              root["success"] as? Bool == true,
+              let payload = root["data"] as? [String: Any],
+              let windows = payload["windows"] as? [Any]
+        else { return false }
+        return !windows.isEmpty
     }
 
     static func run(
@@ -67,6 +99,19 @@ struct SeeCommandPlaygroundHarnessContractTests {
                 environment: ["PEEKABOO_CLI_PATH": "/usr/bin/false"]
             )
         }
+    }
+
+    @Test
+    func `Launch readiness requires a successful nonempty window inventory`() {
+        #expect(SeeCommandPlaygroundHarness.hasWindow(
+            #"{"success":true,"data":{"windows":[{"window_id":42}]}}"#
+        ))
+        #expect(!SeeCommandPlaygroundHarness.hasWindow(
+            #"{"success":true,"data":{"windows":[]}}"#
+        ))
+        #expect(!SeeCommandPlaygroundHarness.hasWindow(
+            #"{"success":false,"data":{"windows":[{"window_id":42}]}}"#
+        ))
     }
 }
 
@@ -167,6 +212,7 @@ struct SeeCommandPlaygroundTests {
                 let output = try SeeCommandPlaygroundHarness.run([
                     "see", "--pid", String(launch.pid),
                     "--window-id", String(window.window_id),
+                    // Witness overlays are root-adjacent; keep the subprocess JSON below pipe capacity.
                     "--max-elements", "20", "--timeout", "5s", "--no-remote", "--json",
                 ])
                 let data = try #require(output.data(using: .utf8))
