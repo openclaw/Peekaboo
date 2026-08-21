@@ -10,6 +10,7 @@
 - Read credentials for `config credential set` and `config provider add` from piped stdin, owner-only files, or no-echo prompts by default; keep argv input as a documented deprecated compatibility path.
 
 ### Fixed
+- Restore terminal echo around credential-prompt job-control stops and common termination signals, then re-disable echo only after a stopped prompt continues.
 - Keep provider dry-run, validation, error, and JSON output free of credential values, and reject special, symlinked, permissive, wrong-owner, or extended-ACL credential files on the opened descriptor before reading.
 - Use the canonical MCP mutation policy for Agent visual verification, including conditional browser and foreground menu actions.
 - Let background certification pin Activity Monitor's exact source-declared window title while refusing unsafe partial, duplicate, or drifting title evidence.

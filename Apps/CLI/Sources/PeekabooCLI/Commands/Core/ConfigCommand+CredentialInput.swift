@@ -1,79 +1,23 @@
 import Darwin
-import Dispatch
 import Foundation
 
-private final class ConfigCredentialPromptSignalRestorer: @unchecked Sendable {
-    private let lock = NSLock()
-    private let queue = DispatchQueue(label: "boo.peekaboo.config-credential-prompt-signals")
-    private let fileDescriptor: Int32
-    private let originalTerminal: termios
-    private nonisolated(unsafe) var sources: [any DispatchSourceSignal] = []
-    private nonisolated(unsafe) var previousHandlers: [(Int32, sig_t?)] = []
-    private nonisolated(unsafe) var completed = false
+final nonisolated class ConfigCredentialPromptLease: @unchecked Sendable {
+    private let lock: NSLock
 
-    nonisolated init(fileDescriptor: Int32, originalTerminal: termios) {
-        self.fileDescriptor = fileDescriptor
-        self.originalTerminal = originalTerminal
-
-        for signalNumber in [SIGINT, SIGTERM] {
-            self.previousHandlers.append((signalNumber, Darwin.signal(signalNumber, SIG_IGN)))
-            let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: self.queue)
-            source.setEventHandler { [weak self] in
-                self?.restoreAndTerminate(signalNumber: signalNumber)
-            }
-            source.activate()
-            self.sources.append(source)
-        }
-    }
-
-    nonisolated func cancel() {
-        self.lock.lock()
-        guard !self.completed else {
-            self.lock.unlock()
-            return
-        }
-        self.completed = true
-        let sources = self.sources
-        let previousHandlers = self.previousHandlers
-        self.sources.removeAll()
-        self.previousHandlers.removeAll()
-        self.lock.unlock()
-
-        sources.forEach { $0.cancel() }
-        for (signalNumber, previousHandler) in previousHandlers {
-            Darwin.signal(signalNumber, previousHandler)
-        }
-    }
-
-    private nonisolated func restoreAndTerminate(signalNumber: Int32) {
-        self.lock.lock()
-        guard !self.completed else {
-            self.lock.unlock()
-            return
-        }
-        self.completed = true
-        let sources = self.sources
-        self.sources.removeAll()
-        self.previousHandlers.removeAll()
-        self.lock.unlock()
-
-        var restored = self.originalTerminal
-        _ = tcsetattr(self.fileDescriptor, TCSANOW, &restored)
-        sources.forEach { $0.cancel() }
-        Darwin.signal(SIGINT, SIG_DFL)
-        Darwin.signal(SIGTERM, SIG_DFL)
-        _ = Darwin.kill(getpid(), signalNumber)
-        _exit(128 + signalNumber)
+    init(lock: NSLock) {
+        self.lock = lock
     }
 
     deinit {
-        self.cancel()
+        self.lock.unlock()
     }
 }
 
 @MainActor
 struct ConfigCredentialInput {
     static let maximumByteCount = 64 * 1024
+    private nonisolated static let promptLock = NSLock()
+    private static let promptBufferSentinel = CChar(bitPattern: 0xFF)
 
     struct Request {
         var legacyValue: String?
@@ -220,35 +164,80 @@ struct ConfigCredentialInput {
         return name.dropFirst().allSatisfy { $0 == "_" || $0.isLetter || $0.isNumber }
     }
 
-    static func withEchoDisabled<T>(fileDescriptor: Int32, operation: () throws -> T) throws -> T {
-        var original = termios()
-        guard tcgetattr(fileDescriptor, &original) == 0 else {
-            throw InputError.terminalUnavailable
-        }
-
-        let signalRestorer = ConfigCredentialPromptSignalRestorer(
-            fileDescriptor: fileDescriptor,
-            originalTerminal: original
-        )
-        var protected = original
-        protected.c_lflag &= ~tcflag_t(ECHO)
-        guard tcsetattr(fileDescriptor, TCSANOW, &protected) == 0 else {
-            signalRestorer.cancel()
-            throw InputError.terminalUnavailable
-        }
-        defer {
-            var restored = original
-            _ = tcsetattr(fileDescriptor, TCSANOW, &restored)
-            signalRestorer.cancel()
-        }
-        return try operation()
+    nonisolated static func acquirePromptLease() -> ConfigCredentialPromptLease? {
+        guard self.promptLock.try() else { return nil }
+        return ConfigCredentialPromptLease(lock: self.promptLock)
     }
 
     private static func readPrompt(prompt: String) throws -> String {
-        try self.withEchoDisabled(fileDescriptor: STDIN_FILENO) {
-            self.write(prompt, to: STDERR_FILENO)
-            defer { self.write("\n", to: STDERR_FILENO) }
-            return try self.readLine(from: STDIN_FILENO)
+        guard let promptLease = self.acquirePromptLease() else {
+            throw InputError.terminalUnavailable
+        }
+        defer { withExtendedLifetime(promptLease) {} }
+        try self.verifyControllingTerminal()
+
+        var rawBuffer = [CChar](repeating: 0, count: self.maximumByteCount + 2)
+        return try prompt.withCString { promptPointer in
+            try self.readAndValidatePromptBuffer(&rawBuffer) { buffer, capacity in
+                readpassphrase(promptPointer, buffer, capacity, RPP_REQUIRE_TTY) != nil
+            }
+        }
+    }
+
+    static func readAndValidatePromptBuffer(
+        _ rawBuffer: inout [CChar],
+        read: (UnsafeMutablePointer<CChar>, Int) -> Bool
+    ) throws -> String {
+        rawBuffer.withUnsafeMutableBufferPointer { buffer in
+            for index in buffer.indices {
+                buffer[index] = self.promptBufferSentinel
+            }
+        }
+        defer {
+            rawBuffer.withUnsafeMutableBytes { bytes in
+                _ = memset_s(bytes.baseAddress, bytes.count, 0, bytes.count)
+            }
+        }
+
+        let nativeResult = rawBuffer.withUnsafeMutableBufferPointer { buffer in
+            read(buffer.baseAddress!, buffer.count)
+        }
+        guard nativeResult else { throw InputError.terminalUnavailable }
+
+        let firstTerminator = rawBuffer.withUnsafeBufferPointer { buffer in
+            strnlen(buffer.baseAddress!, buffer.count)
+        }
+        guard let finalTerminator = rawBuffer.lastIndex(of: 0),
+              rawBuffer[(finalTerminator + 1)...].allSatisfy({ $0 == self.promptBufferSentinel }),
+              firstTerminator == finalTerminator
+        else {
+            throw InputError.multilineValue
+        }
+        guard finalTerminator <= self.maximumByteCount else { throw InputError.valueTooLarge }
+
+        let value = rawBuffer.withUnsafeBufferPointer { buffer in
+            String(validatingCString: buffer.baseAddress!)
+        }
+        guard let value else {
+            throw InputError.inputReadFailed
+        }
+        return value
+    }
+
+    private static func verifyControllingTerminal() throws {
+        // Mirror readpassphrase's required access without mutating terminal state during preflight.
+        let fileDescriptor = Darwin.open("/dev/tty", O_RDWR | O_CLOEXEC | O_NOCTTY)
+        guard fileDescriptor >= 0 else { throw InputError.terminalUnavailable }
+        defer { close(fileDescriptor) }
+
+        var metadata = stat()
+        var terminal = termios()
+        guard fstat(fileDescriptor, &metadata) == 0,
+              metadata.st_mode & S_IFMT == S_IFCHR,
+              isatty(fileDescriptor) == 1,
+              tcgetattr(fileDescriptor, &terminal) == 0
+        else {
+            throw InputError.terminalUnavailable
         }
     }
 

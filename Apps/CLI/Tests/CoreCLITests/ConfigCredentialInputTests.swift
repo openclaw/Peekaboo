@@ -103,32 +103,76 @@ struct ConfigCredentialInputTests {
     }
 
     @Test
-    func `terminal echo is disabled during the protected operation and restored`() throws {
-        var primaryFD: Int32 = -1
-        var secondaryFD: Int32 = -1
-        var size = winsize(ws_row: 5, ws_col: 40, ws_xpixel: 0, ws_ypixel: 0)
-        #expect(openpty(&primaryFD, &secondaryFD, nil, nil, &size) == 0)
-        guard primaryFD >= 0, secondaryFD >= 0 else { return }
-        defer {
-            close(primaryFD)
-            close(secondaryFD)
+    func `credential prompt gate permits only one active reader`() {
+        var firstLease = ConfigCredentialInput.acquirePromptLease()
+        #expect(firstLease != nil)
+        #expect(ConfigCredentialInput.acquirePromptLease() == nil)
+        firstLease = nil
+        #expect(ConfigCredentialInput.acquirePromptLease() != nil)
+    }
+
+    @Test
+    func `validated prompt buffer is wiped after copying`() throws {
+        let fixture = "fixture-secret-buffer-wipe"
+        var rawBuffer = [CChar](repeating: 0, count: ConfigCredentialInput.maximumByteCount + 2)
+        let value = try ConfigCredentialInput.readAndValidatePromptBuffer(&rawBuffer) { buffer, capacity in
+            let bytes = Array(fixture.utf8)
+            guard bytes.count + 1 < capacity else { return false }
+            for (index, byte) in bytes.enumerated() {
+                buffer[index] = CChar(bitPattern: byte)
+            }
+            buffer[bytes.count] = 0
+            return true
         }
 
-        var before = termios()
-        #expect(tcgetattr(secondaryFD, &before) == 0)
-        before.c_lflag |= tcflag_t(ECHO)
-        #expect(tcsetattr(secondaryFD, TCSANOW, &before) == 0)
-        #expect(before.c_lflag & tcflag_t(ECHO) != 0)
+        #expect(value == fixture)
+        #expect(rawBuffer.allSatisfy { $0 == 0 })
+    }
 
-        try ConfigCredentialInput.withEchoDisabled(fileDescriptor: secondaryFD) {
-            var protected = termios()
-            #expect(tcgetattr(secondaryFD, &protected) == 0)
-            #expect(protected.c_lflag & tcflag_t(ECHO) == 0)
+    @Test
+    func `oversized prompt buffer is rejected and wiped`() {
+        var rawBuffer = [CChar](repeating: 0, count: ConfigCredentialInput.maximumByteCount + 2)
+
+        #expect(throws: ConfigCredentialInput.InputError.valueTooLarge) {
+            try ConfigCredentialInput.readAndValidatePromptBuffer(&rawBuffer) { buffer, capacity in
+                for index in 0...ConfigCredentialInput.maximumByteCount {
+                    buffer[index] = CChar(bitPattern: UInt8(ascii: "x"))
+                }
+                buffer[capacity - 1] = 0
+                return true
+            }
         }
+        #expect(rawBuffer.allSatisfy { $0 == 0 })
+    }
 
-        var after = termios()
-        #expect(tcgetattr(secondaryFD, &after) == 0)
-        #expect(after.c_lflag & tcflag_t(ECHO) != 0)
+    @Test
+    func `embedded NUL prompt input is rejected and wiped`() {
+        var rawBuffer = [CChar](repeating: 0, count: ConfigCredentialInput.maximumByteCount + 2)
+
+        #expect(throws: ConfigCredentialInput.InputError.multilineValue) {
+            try ConfigCredentialInput.readAndValidatePromptBuffer(&rawBuffer) { buffer, _ in
+                buffer[0] = CChar(bitPattern: UInt8(ascii: "a"))
+                buffer[1] = 0
+                buffer[2] = CChar(bitPattern: UInt8(ascii: "b"))
+                buffer[3] = 0
+                return true
+            }
+        }
+        #expect(rawBuffer.allSatisfy { $0 == 0 })
+    }
+
+    @Test
+    func `invalid UTF-8 prompt input is rejected and wiped`() {
+        var rawBuffer = [CChar](repeating: 0, count: ConfigCredentialInput.maximumByteCount + 2)
+
+        #expect(throws: ConfigCredentialInput.InputError.inputReadFailed) {
+            try ConfigCredentialInput.readAndValidatePromptBuffer(&rawBuffer) { buffer, _ in
+                buffer[0] = CChar(bitPattern: 0xFF)
+                buffer[1] = 0
+                return true
+            }
+        }
+        #expect(rawBuffer.allSatisfy { $0 == 0 })
     }
 
     @Test

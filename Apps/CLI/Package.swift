@@ -24,9 +24,9 @@ let swiftTestingSettings = cliConcurrencySettings + [
 let includeAutomationTests = ProcessInfo.processInfo.environment["PEEKABOO_INCLUDE_AUTOMATION_TESTS"] == "true"
 
 var targets: [Target] = [
-        .target(
-            name: "PeekabooCLI",
-            dependencies: [
+    .target(
+        name: "PeekabooCLI",
+        dependencies: [
             .product(name: "Commander", package: "Commander"),
             .product(name: "MCP", package: "swift-sdk"),
             .product(name: "Spinner", package: "Spinner"),
@@ -37,10 +37,10 @@ var targets: [Target] = [
             .product(name: "Tachikoma", package: "Tachikoma"),
             .product(name: "TachikomaMCP", package: "Tachikoma"),
             .product(name: "Swiftdansi", package: "Swiftdansi"),
-            ],
-            path: "Sources/PeekabooCLI",
-            swiftSettings: cliConcurrencySettings),
-        .executableTarget(
+        ],
+        path: "Sources/PeekabooCLI",
+        swiftSettings: cliConcurrencySettings),
+    .executableTarget(
         name: "peekaboo",
         dependencies: [
             "PeekabooCLI",
