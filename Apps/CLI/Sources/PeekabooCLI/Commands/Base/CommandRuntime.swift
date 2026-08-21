@@ -75,6 +75,7 @@ struct CommandRuntimeOptions {
     var usesPersistentDynamicToolRuntime: Bool {
         self.requiresAgentService && self.usesPerToolSnapshotInvalidation
     }
+
     var requiresExactWindowTargetedClicks = false
     /// Protocol 1.30 is required before encoding middle/triple click cases.
     var requiresStatelessClickVariants = false
