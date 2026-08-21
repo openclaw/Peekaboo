@@ -27,7 +27,8 @@ peekaboo see --app Calendar --window-id 12345 --ocr --json --path /tmp/calendar.
 
 ## When to use
 
-- Before issuing `click`/`type` commands so you have fresh element IDs.
+- Before element-targeted commands such as `click` or `action` so you have fresh IDs, or before `type` so you have
+  a fresh target snapshot.
 - When debugging automation failures—`--json` includes raw bounds, labels, and snapshot IDs.
 - To snapshot UI regressions (pass `--annotate` + `--path`).
 
@@ -91,7 +92,7 @@ ROI JSON adds `coordinate_context.viewport`:
 - `logical_bounds` maps the delivered raster into global logical coordinates.
 - `source_image_size` is the uncropped source raster size.
 
-Returned `ui_elements[].bounds` are clipped and translated into ROI-local logical coordinates for presentation. The snapshot retains their global action coordinates, so copy element IDs into `click`, `action`, `type`, and other element operations rather than replaying the displayed bounds. For coordinate work, use `coordinate_context.logical_bounds` to convert ROI pixels to global points and pass `--global`, or prefer the MCP `image_pixels`/`normalized` mapping described in [MCP](../MCP.md#exact-window-roi).
+Returned `ui_elements[].bounds` are clipped and translated into ROI-local logical coordinates for presentation. The snapshot retains their global action coordinates, so copy element IDs into element-targeted commands such as `click` and `action` rather than replaying the displayed bounds. `type` does not accept an element ID; focus the field with a background `click`, run `see` again, then type with the new snapshot. For coordinate work, use `coordinate_context.logical_bounds` to convert ROI pixels to global points and pass `--global`, or prefer the MCP `image_pixels`/`normalized` mapping described in [MCP](../MCP.md#exact-window-roi).
 
 ## Optional web focus fallback
 
@@ -113,7 +114,7 @@ When `--json` is supplied, the CLI prints:
 - `coordinate_context` – capture-owned raster mapping. ROI results include the full-window and cropped viewport rectangles described above.
 - `interactable_count`, `element_count`, `capture_mode`, and performance metadata for debugging.
 - Each `ui_elements[n]` entry mirrors the raw AX metadata we capture—semantic `role`, raw `ax_role`, `title`, `label`, scalar `value`, **`description`**, `role_description`, `help`, `identifier`, known enabled/selected state, value-settable capability, and the keyboard shortcut if one exists. The persisted `ui_map` keeps the same fields for follow-up tools. That makes controls whose name lives only in `AXDescription`, including Chrome toolbar icons and unlabeled sliders, searchable without relying on coordinates.
-- GLM vision model analysis responses are converted from the model's 0-1000 bounding box coordinate space into screenshot pixel coordinates before they are printed, so follow-up `click --at` calls can use returned box centers directly.
+- GLM vision model analysis responses are converted from the model's 0-1000 bounding box space into delivered screenshot pixels before they are printed. Screenshot pixels are not CLI `click --at` coordinates: map them through `coordinate_context` to global logical points before using `--global`, or use the MCP `image_pixels`/`normalized` coordinate mapping.
 
 Use `jq` or any JSON parser to find elements:
 

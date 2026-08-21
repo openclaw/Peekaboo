@@ -20,7 +20,7 @@ Peekaboo’s mission is to make macOS GUI automation as deterministic—and debu
 1. **CLI-first:** Every capability must be exposed through the `peekaboo` binary. Other surfaces (Peekaboo.app, agents, MCP) are thin shells over the same Swift services.
 2. **Semantic interaction:** Commands operate on accessibility metadata (roles, labels, element IDs) instead of raw coordinates wherever possible.
 3. **Visual transparency:** All interactions should be explainable via JSON output, logs, and annotated screenshots so humans/agents can reason about state.
-4. **Reliability by default:** Commands autofocus windows (`FocusCommandOptions`), wait for actionable elements, and reuse sessions instead of forcing manual sleeps.
+4. **Reliability by default:** Commands prefer background delivery, require explicit target evidence for receipt-pinned routes, wait for actionable elements where supported, and fail closed on stale or ambiguous targets.
 5. **Agent awareness:** Outputs are machine-friendly (`--json`), and behaviors are documented in `docs/commands/*.md` so autonomous clients receive the same guidance as humans.
 
 **Scope:**
@@ -100,7 +100,7 @@ This shared cache is the hand-off mechanism between CLI invocations, custom scri
 
 Common helpers:
 - `AutomationServiceBridge`: click/type/scroll/sleep wrappers that add waits and error hints.
-- `ensureFocused(...)`: centralizes Space switching, retries, and no-auto-focus overrides.
+- `ensureFocused(...)`: centralizes opt-in foreground focus, Space switching, retries, and no-auto-focus overrides.
 
 ---
 
@@ -132,7 +132,7 @@ Common helpers:
 
 1. **Capture → Act loop**
    - `see` generates snapshot files + annotated PNG (optional) and prints the `snapshot_id`.
-   - Interaction commands automatically pick up the freshest snapshot (unless `--snapshot` overrides) and autofocus the relevant window.
+   - Pass the returned `snapshot_id` explicitly to interactions that consume observation state. Receipt-pinned background routes require a fresh exact-window snapshot; focus and Space switching occur only with explicit foreground delivery.
    - Logs + JSON output include timings, UI bounds, and hints for debugging (e.g., element not found suggestions).
 
 2. **Configuration & Permissions**
