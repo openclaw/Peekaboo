@@ -187,6 +187,13 @@ rg -Fq 'ee69e9516e61901c02abd1a71456d5f1fd9f1d5f' "$wrapper" || \
   fail 'terminal pipeline does not pin the package-run helper contract'
 rg -Fq 'scripts/build-terminal-artifacts.sh check-helper' "$ROOT_DIR/docs/RELEASING.md" || \
   fail 'manual release flow does not preflight the credential runner'
+releasing_docs="$ROOT_DIR/docs/RELEASING.md"
+[[ "$(grep -Fc "/bin/bash --noprofile --norc -p -c 'exec \"\$@\"'" "$releasing_docs")" == 3 ]] || \
+  fail 'manual recovery phases do not use the required non-login bash -c wrappers'
+[[ "$(grep -Fc 'peekaboo-codesign-phase' "$releasing_docs")" == 2 ]] || \
+  fail 'manual codesign recovery wrappers are incomplete'
+[[ "$(grep -Fc 'peekaboo-notary-phase' "$releasing_docs")" == 1 ]] || \
+  fail 'manual notary recovery wrapper is incomplete'
 [[ "$(grep -Fc "/bin/bash --noprofile --norc -p -c 'exec \"\$@\"'" "$wrapper")" == 2 ]] || \
   fail 'credentialed phase children do not use the required non-login bash -c wrapper'
 rg -Fq 'peekaboo-codesign-phase' "$wrapper" || fail 'codesign phase wrapper label is missing'

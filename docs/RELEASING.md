@@ -101,24 +101,40 @@ not valid here. The phase order is:
 ```bash
 scripts/build-terminal-artifacts.sh check-helper
 scripts/build-terminal-artifacts.sh build --stage /absolute/new/stage
-MAC_RELEASE_MANIFEST="$PWD/.mac-release-terminal.env" \
-  scripts/mac-release codesign-run -- \
-  scripts/build-terminal-artifacts.sh sign-code --stage /absolute/new/stage
-MAC_RELEASE_MANIFEST="$PWD/.mac-release-terminal.env" \
-  scripts/mac-release package-run -- \
+/usr/bin/env -u GH_TOKEN -u GITHUB_TOKEN -u NODE_AUTH_TOKEN -u NPM_CONFIG_USERCONFIG -u NPM_TOKEN \
+  MAC_RELEASE_MANIFEST="$PWD/.mac-release-terminal.env" \
+  "$PWD/scripts/mac-release" codesign-run -- \
   /usr/bin/env -u OP_SERVICE_ACCOUNT_TOKEN -u MOLTY_OP_SERVICE_ACCOUNT_TOKEN \
-  PATH=/usr/bin:/bin /bin/bash --noprofile --norc -p \
-  scripts/notarize-terminal-artifact.sh --kind cli-tree \
+  -u PEEKABOO_OP_SERVICE_TOKEN_FILE -u PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE \
+  -u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH -u GLOBIGNORE \
+  PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin \
+  /bin/bash --noprofile --norc -p -c 'exec "$@"' peekaboo-codesign-phase \
+  "$PWD/scripts/build-terminal-artifacts.sh" sign-code --stage /absolute/new/stage
+/usr/bin/env -u GH_TOKEN -u GITHUB_TOKEN -u NODE_AUTH_TOKEN -u NPM_CONFIG_USERCONFIG -u NPM_TOKEN \
+  MAC_RELEASE_MANIFEST="$PWD/.mac-release-terminal.env" \
+  "$PWD/scripts/mac-release" package-run -- \
+  /usr/bin/env -u OP_SERVICE_ACCOUNT_TOKEN -u MOLTY_OP_SERVICE_ACCOUNT_TOKEN \
+  -u PEEKABOO_OP_SERVICE_TOKEN_FILE -u PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE \
+  -u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH -u GLOBIGNORE \
+  -u MAC_RELEASE_CODESIGN_KEYCHAIN -u MAC_RELEASE_CODESIGN_KEYCHAIN_PASSWORD -u CODESIGN_KEYCHAIN \
+  PATH=/usr/bin:/bin /bin/bash --noprofile --norc -p -c 'exec "$@"' peekaboo-notary-phase \
+  "$PWD/scripts/notarize-terminal-artifact.sh" --kind cli-tree \
   --artifact /absolute/new/stage/signed/cli \
   --transaction /absolute/new/stage/notary/cli
-# Repeat only that direct helper shape for Peekaboo.app, Playground.app, and
+# Repeat only that protected helper shape for Peekaboo.app, Playground.app, and
 # PeekabooQualificationNode.app; app transactions contain the stapled copy,
 # receipt.json, and the exact post-staple tree.json.
 scripts/build-terminal-artifacts.sh build-dmg --stage /absolute/new/stage
-MAC_RELEASE_MANIFEST="$PWD/.mac-release-terminal.env" \
-  scripts/mac-release codesign-run -- \
-  scripts/build-terminal-artifacts.sh sign-dmg --stage /absolute/new/stage
-# Notarize the signed DMG through the same direct notary-only helper.
+/usr/bin/env -u GH_TOKEN -u GITHUB_TOKEN -u NODE_AUTH_TOKEN -u NPM_CONFIG_USERCONFIG -u NPM_TOKEN \
+  MAC_RELEASE_MANIFEST="$PWD/.mac-release-terminal.env" \
+  "$PWD/scripts/mac-release" codesign-run -- \
+  /usr/bin/env -u OP_SERVICE_ACCOUNT_TOKEN -u MOLTY_OP_SERVICE_ACCOUNT_TOKEN \
+  -u PEEKABOO_OP_SERVICE_TOKEN_FILE -u PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE \
+  -u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH -u GLOBIGNORE \
+  PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin \
+  /bin/bash --noprofile --norc -p -c 'exec "$@"' peekaboo-codesign-phase \
+  "$PWD/scripts/build-terminal-artifacts.sh" sign-dmg --stage /absolute/new/stage
+# Notarize the signed DMG through the same protected notary-only helper.
 scripts/build-terminal-artifacts.sh publish \
   --stage /absolute/new/stage --output /absolute/new/artifacts
 ```
