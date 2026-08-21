@@ -278,9 +278,10 @@ struct SeeCommandPlaygroundTests {
                     }
 
                     if identifier == "basic-text-last-submitted" {
+                        let snapshotID = try #require(result.snapshot_id)
                         let actionOutput = try SeeCommandPlaygroundHarness.run([
                             "action", "AXIncrement", "--on", element.id,
-                            "--snapshot", result.snapshot_id, "--no-remote", "--json",
+                            "--snapshot", snapshotID, "--no-remote", "--json",
                         ], allowedExitStatuses: [1])
                         let actionData = try #require(actionOutput.data(using: .utf8))
                         let failure = try JSONDecoder().decode(FailureResponse.self, from: actionData)

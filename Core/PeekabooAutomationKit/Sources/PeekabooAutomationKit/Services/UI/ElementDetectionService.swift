@@ -299,7 +299,7 @@ public final class ElementDetectionService {
         }
 
         let detachedResult = try await self.detachedAXObservationRunner(makeRequest())
-        if let cacheKey {
+        if let cacheKey, !detachedResult.isApplicationScopedFallback {
             self.axTreeCache.store(
                 detachedResult.elements,
                 truncationInfo: detachedResult.truncationInfo,

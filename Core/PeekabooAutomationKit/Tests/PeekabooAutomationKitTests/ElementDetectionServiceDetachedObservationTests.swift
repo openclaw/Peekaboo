@@ -190,7 +190,7 @@ struct ElementDetectionServiceDetachedObservationTests {
     }
 
     @Test
-    func `application scoped partial evidence is never cached as exact semantics`() async throws {
+    func `application scoped fallback is never cached without truncation metadata`() async throws {
         let cache = ElementDetectionCache()
         let cacheKey = try #require(cache.key(windowID: 42, processID: 123, allowWebFocus: false))
         let state = RunnerState()
@@ -206,7 +206,7 @@ struct ElementDetectionServiceDetachedObservationTests {
                     windowTitle: "Application-scoped partial semantics",
                     windowBounds: nil,
                     isDialog: false,
-                    truncationInfo: DetectionTruncationInfo(incompleteAccessibilityRead: true),
+                    truncationInfo: nil,
                     isApplicationScopedFallback: true)
             })
 
