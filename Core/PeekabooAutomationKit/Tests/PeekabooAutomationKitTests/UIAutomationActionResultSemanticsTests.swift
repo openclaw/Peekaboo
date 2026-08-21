@@ -126,4 +126,43 @@ struct UIAutomationActionResultSemanticsTests {
             #expect(failure.targetReceipt == nil)
         }
     }
+
+    @Test
+    func `outcome-only validation preserves failure context for consumers`() throws {
+        let receipt = DesktopActionTargetReceipt(
+            processIdentifier: 42,
+            processStartIdentity: 1001,
+            windowID: 71)
+
+        do {
+            _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                nil,
+                policy: .confirmedOrDispatched,
+                operation: "Fixture action",
+                targetReceipt: receipt)
+            Issue.record("Expected missing outcome validation to fail")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.evidence == .completionUnknown)
+            #expect(failure.message == "Fixture action returned without a canonical outcome.")
+            #expect(failure.targetReceipt == receipt)
+        }
+
+        let refusal = DesktopActionOutcome.refused(
+            route: .bridge,
+            reason: .permissionDenied)
+        do {
+            _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                refusal,
+                policy: .confirmedOrDispatched,
+                operation: "Fixture action",
+                targetReceipt: receipt,
+                rejectedOutcomeMessage: "Fixture action did not return a successful outcome.")
+            Issue.record("Expected rejected outcome validation to fail")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome == refusal)
+            #expect(failure.message == "Fixture action did not return a successful outcome.")
+            #expect(failure.targetReceipt == receipt)
+        }
+    }
 }

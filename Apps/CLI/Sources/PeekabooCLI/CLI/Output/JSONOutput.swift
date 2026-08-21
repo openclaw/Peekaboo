@@ -545,26 +545,17 @@ func validateSuccessfulActionOutcome(
     targetIdentity: DesktopTargetIdentity?,
     operation: String
 ) throws {
-    guard let outcome else {
-        let failure = DesktopActionFailure.indeterminate(
-            evidence: .completionUnknown,
-            message: "\(operation) returned without a canonical outcome.",
-            hint: "Observe the target before retrying and update the runtime host."
+    do {
+        _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+            outcome,
+            policy: .confirmedOrDispatched,
+            operation: operation,
+            targetReceipt: targetIdentity?.actionTargetReceipt,
+            rejectedOutcomeMessage: "\(operation) did not return a successful outcome."
         )
-        .attributed(to: targetIdentity?.actionTargetReceipt)
+    } catch let failure as DesktopActionFailure {
         throw ActionResultEnvelopeFailure(failure: failure, targetIdentity: targetIdentity)
     }
-    guard !outcome.isAccepted(by: .confirmedOrDispatched) else { return }
-    guard let failure = DesktopActionFailure(
-        outcome: outcome,
-        message: "\(operation) did not return a successful outcome.",
-        hint: "Follow the canonical escalation metadata before deciding whether to retry.",
-        targetReceipt: targetIdentity?.actionTargetReceipt
-    )
-    else {
-        return
-    }
-    throw ActionResultEnvelopeFailure(failure: failure, targetIdentity: targetIdentity)
 }
 
 func outputJSONCodable(_ response: ResultEnvelope<some Encodable>, logger: Logger) {

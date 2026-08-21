@@ -827,6 +827,37 @@ struct CLIActionResultConsumerTests {
     }
 
     @Test
+    func `successful result validation preserves rejected canonical outcome`() throws {
+        let target = try DesktopTargetIdentity(processIdentity: ApplicationProcessIdentity(
+            processIdentifier: 42,
+            processStartIdentity: 420
+        ))
+        let outcome = DesktopActionOutcome.partial(
+            route: .bridge,
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            unitCount: .one
+        )
+
+        do {
+            try validateSuccessfulActionOutcome(
+                outcome,
+                targetIdentity: target,
+                operation: "Result-aware mutation"
+            )
+            Issue.record("Expected rejected outcome validation failure")
+        } catch {
+            let metadata = actionErrorEnvelopeMetadata(for: error, isActionCommand: true)
+            #expect(metadata.outcome == outcome)
+            #expect(metadata.effect == outcome.effect)
+            #expect(metadata.retrySafe == false)
+            #expect(metadata.mutationDispatched == true)
+            #expect(metadata.targetIdentity == target)
+            #expect(metadata.failure?.message == "Result-aware mutation did not return a successful outcome.")
+            #expect(metadata.failure?.targetReceipt == target.actionTargetReceipt)
+        }
+    }
+
+    @Test
     func `menu Quit keeps its completed result after the application disappears`() async throws {
         let fixture = Self.menuFixture()
         let applications = StubApplicationService(applications: [fixture.application])

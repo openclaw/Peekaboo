@@ -137,6 +137,36 @@ struct ResultEnvelopeTests {
         #expect(envelope.outcome == failure.outcome.projection)
     }
 
+    @Test func `successful action validation keeps the CLI envelope wrapper`() throws {
+        let targetIdentity = try DesktopTargetIdentity(processIdentity: ApplicationProcessIdentity(
+            processIdentifier: 42,
+            processStartIdentity: 9_007_199_254_740_993
+        ))
+        let outcome = DesktopActionOutcome.refused(
+            route: .bridge,
+            reason: .permissionDenied
+        )
+
+        do {
+            try validateSuccessfulActionOutcome(
+                outcome,
+                targetIdentity: targetIdentity,
+                operation: "Fixture mutation"
+            )
+            Issue.record("Expected successful action validation to reject the refusal")
+        } catch {
+            let envelopeError = try #require(error as? any ResultEnvelopeError)
+            let failure = try #require(envelopeError.envelopeActionFailure)
+            #expect(envelopeError.envelopeCode == .INTERACTION_FAILED)
+            #expect(envelopeError.envelopeEffect == .refused)
+            #expect(envelopeError.envelopeRetrySafe == true)
+            #expect(envelopeError.envelopeMutationDispatched == false)
+            #expect(envelopeError.envelopeTargetIdentity == targetIdentity)
+            #expect(failure.outcome == outcome)
+            #expect(failure.targetReceipt == targetIdentity.actionTargetReceipt)
+        }
+    }
+
     @Test func `success and error envelopes publish process-only target receipts`() throws {
         let identity = ApplicationProcessIdentity(
             processIdentifier: 42,
