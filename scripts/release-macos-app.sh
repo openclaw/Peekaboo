@@ -103,6 +103,7 @@ EXPECTED_SIGN_REQUIREMENT="anchor apple generic and certificate leaf[subject.OU]
 SIGN_IDENTITY="${MAC_RELEASE_CODESIGN_IDENTITY:-${SIGN_IDENTITY:-$EXPECTED_SIGN_IDENTITY}}"
 CODESIGN_TIMESTAMP_URL="${CODESIGN_TIMESTAMP_URL:-http://timestamp.apple.com/ts01}"
 NOTARYTOOL_PROFILE="${NOTARYTOOL_PROFILE:-${NOTARYTOOL_KEYCHAIN_PROFILE:-}}"
+NOTARY_RESULT_PATH="${MAC_APP_NOTARY_RESULT_PATH:-}"
 APPCAST="${APPCAST:-${MAC_RELEASE_APPCAST:-appcast.xml}}"
 APPCAST_PATH="${APPCAST_PATH:-$ROOT/$APPCAST}"
 MINIMUM_SYSTEM_VERSION="${MINIMUM_SYSTEM_VERSION:-15.0}"
@@ -277,6 +278,7 @@ require_command ditto
 require_command file
 require_command realpath
 if [[ -z "$VERIFY_ONLY_ZIP" ]]; then
+  require_command jq
   require_command node
   require_command xcodebuild
   require_command shasum
@@ -389,6 +391,28 @@ verify_nested_developer_id_signatures() {
   log "Verified Foundation authority on $count nested Mach-O payloads"
 }
 
+record_notary_result() {
+  local result_json="$1"
+  local result_status submission_id
+  result_status="$(NOTARY_RESULT_JSON="$result_json" node -e \
+    'const value=JSON.parse(process.env.NOTARY_RESULT_JSON); process.stdout.write(value.status ?? "")')"
+  submission_id="$(NOTARY_RESULT_JSON="$result_json" node -e \
+    'const value=JSON.parse(process.env.NOTARY_RESULT_JSON); process.stdout.write(value.id ?? "")')"
+  [[ "$result_status" == Accepted ]] || fail "App notarization was not accepted: ${result_status:-missing status}"
+  [[ -n "$submission_id" ]] || fail 'Accepted app notarization omitted its submission ID'
+  if [[ -n "$NOTARY_RESULT_PATH" ]]; then
+    [[ "$NOTARY_RESULT_PATH" == /* ]] || NOTARY_RESULT_PATH="$ROOT/$NOTARY_RESULT_PATH"
+    [[ ! -e "$NOTARY_RESULT_PATH" && ! -L "$NOTARY_RESULT_PATH" ]] || \
+      fail "App notary result path already exists: $NOTARY_RESULT_PATH"
+    mkdir -p "$(dirname "$NOTARY_RESULT_PATH")"
+    jq -n \
+      --arg id "$submission_id" \
+      --arg status "$result_status" \
+      '{version: 1, kind: "app", id: $id, status: $status}' > "$NOTARY_RESULT_PATH"
+    chmod 444 "$NOTARY_RESULT_PATH"
+  fi
+}
+
 if [[ -z "$VERIFY_ONLY_ZIP" ]]; then
   if [[ "$NOTARIZE" == true && "$SIGN_IDENTITY" != "$EXPECTED_SIGN_IDENTITY" ]]; then
     fail "official releases must use '$EXPECTED_SIGN_IDENTITY'"
@@ -489,7 +513,14 @@ if [[ "$NOTARIZE" == true ]]; then
   ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" "$NOTARY_ZIP"
 
   if [[ -n "${NOTARYTOOL_PROFILE:-}" ]]; then
-    xcrun notarytool submit "$NOTARY_ZIP" --keychain-profile "$NOTARYTOOL_PROFILE" --no-s3-acceleration --wait
+    xcrun notarytool history \
+      --keychain-profile "$NOTARYTOOL_PROFILE" \
+      --output-format json >/dev/null
+    NOTARY_RESULT_JSON="$(xcrun notarytool submit "$NOTARY_ZIP" \
+      --keychain-profile "$NOTARYTOOL_PROFILE" \
+      --no-s3-acceleration \
+      --wait \
+      --output-format json)"
   else
     [[ -n "${APP_STORE_CONNECT_KEY_ID:-}" ]] || fail "APP_STORE_CONNECT_KEY_ID missing"
     [[ -n "${APP_STORE_CONNECT_ISSUER_ID:-}" ]] || fail "APP_STORE_CONNECT_ISSUER_ID missing"
@@ -510,14 +541,21 @@ if (!pem.includes("\n")) {
 process.stdout.write(`${pem}\n`);
 EOF
     chmod 600 "$KEY_FILE"
-    xcrun notarytool submit "$NOTARY_ZIP" \
+    xcrun notarytool history \
+      --key "$KEY_FILE" \
+      --key-id "$APP_STORE_CONNECT_KEY_ID" \
+      --issuer "$APP_STORE_CONNECT_ISSUER_ID" \
+      --output-format json >/dev/null
+    NOTARY_RESULT_JSON="$(xcrun notarytool submit "$NOTARY_ZIP" \
       --key "$KEY_FILE" \
       --key-id "$APP_STORE_CONNECT_KEY_ID" \
       --issuer "$APP_STORE_CONNECT_ISSUER_ID" \
       --no-s3-acceleration \
-      --wait
+      --wait \
+      --output-format json)"
     rm -f "$KEY_FILE"
   fi
+  record_notary_result "$NOTARY_RESULT_JSON"
 
   log "Stapling notarization ticket"
   xcrun stapler staple "$APP_BUNDLE"

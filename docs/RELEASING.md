@@ -75,6 +75,42 @@ clean, current publication commit on `main`.
 Run `pnpm run test:automation` and live provider tests when the release changes those surfaces. Before committing,
 run the repository autoreview workflow until no accepted actionable findings remain.
 
+### Terminal-only artifact set
+
+For exact-head machine qualification or fleet deployment without a public release, use the terminal artifact wrapper.
+It produces a universal CLI archive, signed/notarized Peekaboo app zip and DMG, and a signed/notarized Playground
+fixture zip. It never tags, uploads, publishes npm, or edits `appcast.xml`.
+
+The default `all` mode compiles first with notary, Sparkle, npm, signing-keychain-password, and 1Password service
+variables removed from the complete build process. Only after the unsigned inputs and canonical dependency-lock digest
+are sealed does it enter the managed Foundation credential lane for signing, notarization, stapling, and packaging:
+
+```bash
+SOURCE_COMMIT="$(git rev-parse HEAD)"
+scripts/build-terminal-artifacts.sh all \
+  --stage "/tmp/peekaboo-terminal-build-$SOURCE_COMMIT" \
+  --output "/tmp/peekaboo-terminal-artifacts-$SOURCE_COMMIT"
+```
+
+To inspect or retain the isolation boundary explicitly, run the two phases separately. `finalize` accepts only the
+same clean source commit, marketing version, tracked workspace dependency-lock digest, and unsigned executable hashes
+recorded by `build`:
+
+```bash
+scripts/build-terminal-artifacts.sh build --stage /absolute/new/stage
+scripts/mac-release codesign-run --with-package-secrets -- \
+  scripts/build-terminal-artifacts.sh finalize \
+  --stage /absolute/new/stage \
+  --output /absolute/new/artifacts
+```
+
+`Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved` is the sole dependency graph for these builds.
+Remove generated `Apps/Playground/Package.resolved` and standalone Playground Xcode-workspace locks before building;
+the helper refuses them so a local resolver cannot silently replace the graph recorded in fixture provenance.
+The build and final manifests also record and revalidate the canonicalized `DEVELOPER_DIR`, complete
+`xcodebuild -version`, macOS SDK version, and `swiftc --version`. This receipt does not make an unsupported toolchain
+supported; an Xcode 27 beta build remains visibly distinct from the documented Xcode 26.x publication baseline.
+
 ## 3. Date, commit, push, and run publication preflight
 
 Replace `Unreleased` with the actual release date, then use standard Git commands with Conventional Commits. Push

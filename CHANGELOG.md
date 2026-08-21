@@ -4,6 +4,7 @@
 
 ### Fixed
 - Let background certification pin Activity Monitor's exact source-declared window title while refusing unsafe partial, duplicate, or drifting title evidence.
+- Build terminal CLI, Peekaboo.app, and Playground artifacts in a credential-free phase before narrow Foundation signing/notarization, and bind Playground fixtures to the tracked canonical dependency graph.
 - Fail closed instead of generating or accepting a release-qualification manifest until final-cycle liveness witnesses have a cryptographic trust anchor.
 - Add receipt-required Bridge protocol 1.32 observation of exact process generations for signed liveness and absence evidence.
 - Bind certification crash, monitor, and foreground semantic evidence to exact authenticated producers and listener-signed Bridge receipts.

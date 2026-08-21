@@ -355,5 +355,10 @@ live run, leave exactly one visible key or sole window open for Safari, Calendar
 Monitor, and Finder; Activity Monitor may also retain auxiliary windows when exactly one visible window matches the
 catalog title. Add `--no-remote` when the exact CLI is team-signed and
 has local TCC grants; this prevents an installed bridge host from masking working-tree behavior. A prebuilt app must
-have a team signature and the exact current-source `PeekabooPlaygroundSource.json` manifest; ad-hoc or unstamped
-fixtures are rejected.
+have the OpenClaw Foundation team signature and the exact current-source `PeekabooPlaygroundSource.json` manifest;
+ad-hoc or unstamped fixtures are rejected. Build it with `scripts/build-playground-artifact.sh`, then use the terminal
+artifact finalizer for signing and notarization. Manifest schema v2 binds the fixture to `source_commit`, the
+`Apps/Playground` source tree, marketing version, configuration, bundle identifier, root workspace/scheme, and the path
+plus SHA-256 of the tracked canonical `Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved`. It also records
+the canonical Developer directory and exact Xcode, macOS SDK, and Swift compiler versions. Standalone Playground
+lockfiles are not accepted.

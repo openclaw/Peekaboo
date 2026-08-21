@@ -128,6 +128,9 @@ _site/
 ## Swift Package Manager
 Packages/
 Package.pins
+# The root Xcode workspace lock below is the sole canonical dependency graph for
+# Peekaboo.app, Inspector, and Playground artifact builds. Standalone Playground
+# locks stay ignored so they cannot silently fork terminal fixture provenance.
 **/Package.resolved
 **/.swiftpm/
 *.xcworkspace/xcshareddata/swiftpm/

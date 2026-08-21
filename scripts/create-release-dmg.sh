@@ -20,6 +20,7 @@ EXPECTED_SIGN_REQUIREMENT="anchor apple generic and certificate leaf[subject.OU]
 SIGN_IDENTITY="${MAC_RELEASE_CODESIGN_IDENTITY:-${SIGN_IDENTITY:-$EXPECTED_SIGN_IDENTITY}}"
 CODESIGN_TIMESTAMP_URL="${CODESIGN_TIMESTAMP_URL:-http://timestamp.apple.com/ts01}"
 NOTARYTOOL_PROFILE="${NOTARYTOOL_PROFILE:-${NOTARYTOOL_KEYCHAIN_PROFILE:-}}"
+NOTARY_RESULT_PATH="${MAC_DMG_NOTARY_RESULT_PATH:-}"
 RELEASE_DIR="${RELEASE_DIR:-$ROOT_DIR/build/release}"
 APP_ZIP="${APP_ZIP:-}"
 DMG_PATH="${DMG_PATH:-}"
@@ -235,10 +236,14 @@ submit_for_notarization() {
   local artifact="$1"
 
   if [[ -n "${NOTARYTOOL_PROFILE:-}" ]]; then
-    xcrun notarytool submit "$artifact" \
+    xcrun notarytool history \
+      --keychain-profile "$NOTARYTOOL_PROFILE" \
+      --output-format json >/dev/null
+    LAST_NOTARY_RESULT_JSON="$(xcrun notarytool submit "$artifact" \
       --keychain-profile "$NOTARYTOOL_PROFILE" \
       --no-s3-acceleration \
-      --wait
+      --wait \
+      --output-format json)"
     return
   fi
 
@@ -262,13 +267,41 @@ if (!pem.includes("\n")) {
 process.stdout.write(`${pem}\n`);
 EOF
   chmod 600 "$key_file"
-  xcrun notarytool submit "$artifact" \
+  xcrun notarytool history \
+    --key "$key_file" \
+    --key-id "$APP_STORE_CONNECT_KEY_ID" \
+    --issuer "$APP_STORE_CONNECT_ISSUER_ID" \
+    --output-format json >/dev/null
+  LAST_NOTARY_RESULT_JSON="$(xcrun notarytool submit "$artifact" \
     --key "$key_file" \
     --key-id "$APP_STORE_CONNECT_KEY_ID" \
     --issuer "$APP_STORE_CONNECT_ISSUER_ID" \
     --no-s3-acceleration \
-    --wait
+    --wait \
+    --output-format json)"
   rm -f "$key_file"
+}
+
+record_notary_result() {
+  local result_json="$1"
+  local result_status submission_id
+  result_status="$(NOTARY_RESULT_JSON="$result_json" node -e \
+    'const value=JSON.parse(process.env.NOTARY_RESULT_JSON); process.stdout.write(value.status ?? "")')"
+  submission_id="$(NOTARY_RESULT_JSON="$result_json" node -e \
+    'const value=JSON.parse(process.env.NOTARY_RESULT_JSON); process.stdout.write(value.id ?? "")')"
+  [[ "$result_status" == Accepted ]] || fail "DMG notarization was not accepted: ${result_status:-missing status}"
+  [[ -n "$submission_id" ]] || fail 'Accepted DMG notarization omitted its submission ID'
+  if [[ -n "$NOTARY_RESULT_PATH" ]]; then
+    [[ "$NOTARY_RESULT_PATH" == /* ]] || NOTARY_RESULT_PATH="$ROOT_DIR/$NOTARY_RESULT_PATH"
+    [[ ! -e "$NOTARY_RESULT_PATH" && ! -L "$NOTARY_RESULT_PATH" ]] || \
+      fail "DMG notary result path already exists: $NOTARY_RESULT_PATH"
+    mkdir -p "$(dirname "$NOTARY_RESULT_PATH")"
+    jq -n \
+      --arg id "$submission_id" \
+      --arg status "$result_status" \
+      '{version: 1, kind: "dmg", id: $id, status: $status}' > "$NOTARY_RESULT_PATH"
+    chmod 444 "$NOTARY_RESULT_PATH"
+  fi
 }
 
 if [[ -n "$VERIFY_ONLY_DMG" ]]; then
@@ -279,6 +312,8 @@ if [[ -n "$VERIFY_ONLY_DMG" ]]; then
 fi
 
 require_command ditto
+require_command jq
+require_command node
 require_command sips
 require_command shasum
 require_command uv
@@ -334,6 +369,7 @@ verify_identity "$DMG_PATH"
 if [[ "$NOTARIZE" == true ]]; then
   log "Submitting DMG to Apple notarization"
   submit_for_notarization "$DMG_PATH"
+  record_notary_result "$LAST_NOTARY_RESULT_JSON"
   log "Stapling DMG notarization ticket"
   xcrun stapler staple "$DMG_PATH"
 fi

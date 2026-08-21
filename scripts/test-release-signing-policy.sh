@@ -45,6 +45,16 @@ rg -Fq 'scripts/mac-release" codesign-run' "$ROOT_DIR/scripts/release-binaries.s
 rg -Fq 'NOTARYTOOL_KEYCHAIN_PROFILE' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq 'NOTARYTOOL_KEYCHAIN_PROFILE' "$ROOT_DIR/scripts/release-macos-app.sh"
 rg -Fq 'NOTARYTOOL_KEYCHAIN_PROFILE' "$ROOT_DIR/scripts/create-release-dmg.sh"
+for notary_surface in \
+  "$ROOT_DIR/scripts/release-macos-app.sh" \
+  "$ROOT_DIR/scripts/create-release-dmg.sh" \
+  "$ROOT_DIR/scripts/notarize-terminal-artifact.sh"; do
+  rg -Fq 'notarytool history' "$notary_surface"
+  rg -Fq -- '--no-s3-acceleration' "$notary_surface"
+  rg -Fq -- '--output-format json' "$notary_surface"
+done
+rg -Fq 'MAC_APP_NOTARY_RESULT_PATH' "$ROOT_DIR/scripts/release-macos-app.sh"
+rg -Fq 'MAC_DMG_NOTARY_RESULT_PATH' "$ROOT_DIR/scripts/create-release-dmg.sh"
 rg -Fq 'uv --no-config run --locked "$DMGBUILD_RUNNER"' "$ROOT_DIR/scripts/create-release-dmg.sh"
 rg -Fq -- '-u APP_STORE_CONNECT_API_KEY_P8' "$ROOT_DIR/scripts/create-release-dmg.sh"
 rg -Fq -- '-u NPM_TOKEN' "$ROOT_DIR/scripts/create-release-dmg.sh"

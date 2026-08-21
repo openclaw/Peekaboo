@@ -21,6 +21,17 @@ X86_64_BINARY_TEMP="$PROJECT_ROOT/${FINAL_BINARY_NAME}-x86_64"
 # Keep WMO off by default; Swift 6.3.2 can hang or crash the release build here.
 # Override SWIFT_OPTIMIZATION_FLAGS when explicitly testing a different compiler.
 SWIFT_OPTIMIZATION_FLAGS="${SWIFT_OPTIMIZATION_FLAGS:--Xswiftc -Osize -Xlinker -dead_strip}"
+SWIFT_RESOLUTION_ARGS=()
+case "${PEEKABOO_USE_RESOLVED_VERSIONS:-0}" in
+    1|true|yes|on)
+        SWIFT_RESOLUTION_ARGS=(--only-use-versions-from-resolved-file --skip-update)
+        ;;
+    0|false|no|off|'') ;;
+    *)
+        echo "ERROR: Invalid PEEKABOO_USE_RESOLVED_VERSIONS value: ${PEEKABOO_USE_RESOLVED_VERSIONS}" >&2
+        exit 1
+        ;;
+esac
 
 if command -v xcbeautify >/dev/null 2>&1; then
     USE_XCBEAUTIFY=1
@@ -148,7 +159,7 @@ generate_info_plist
 echo "🏗️ Building for arm64 (Apple Silicon)..."
 (
     cd "$SWIFT_PROJECT_PATH"
-    swift build --arch arm64 -c release $SWIFT_OPTIMIZATION_FLAGS 2>&1 | pipe_build_output
+    swift build "${SWIFT_RESOLUTION_ARGS[@]}" --arch arm64 -c release $SWIFT_OPTIMIZATION_FLAGS 2>&1 | pipe_build_output
 )
 ARM64_BUILD_BINARY=$(bash "$PROJECT_ROOT/scripts/resolve-swift-binary-path.sh" \
     "$SWIFT_PROJECT_PATH" arm64 release "$FINAL_BINARY_NAME")
@@ -158,7 +169,7 @@ echo "✅ arm64 build complete: $ARM64_BINARY_TEMP"
 echo "🏗️ Building for x86_64 (Intel)..."
 (
     cd "$SWIFT_PROJECT_PATH"
-    swift build --arch x86_64 -c release $SWIFT_OPTIMIZATION_FLAGS 2>&1 | pipe_build_output
+    swift build "${SWIFT_RESOLUTION_ARGS[@]}" --arch x86_64 -c release $SWIFT_OPTIMIZATION_FLAGS 2>&1 | pipe_build_output
 )
 X86_64_BUILD_BINARY=$(bash "$PROJECT_ROOT/scripts/resolve-swift-binary-path.sh" \
     "$SWIFT_PROJECT_PATH" x86_64 release "$FINAL_BINARY_NAME")

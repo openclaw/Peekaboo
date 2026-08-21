@@ -116,6 +116,17 @@ generate_info_plist() {
 # Keep WMO off by default; Swift 6.3.2 can hang or crash the release build here.
 # Override SWIFT_OPTIMIZATION_FLAGS when explicitly testing a different compiler.
 SWIFT_OPTIMIZATION_FLAGS="${SWIFT_OPTIMIZATION_FLAGS:--Xswiftc -Osize -Xlinker -dead_strip}"
+SWIFT_RESOLUTION_ARGS=()
+case "${PEEKABOO_USE_RESOLVED_VERSIONS:-0}" in
+    1|true|yes|on)
+        SWIFT_RESOLUTION_ARGS=(--only-use-versions-from-resolved-file --skip-update)
+        ;;
+    0|false|no|off|'') ;;
+    *)
+        echo "ERROR: Invalid PEEKABOO_USE_RESOLVED_VERSIONS value: ${PEEKABOO_USE_RESOLVED_VERSIONS}" >&2
+        exit 1
+        ;;
+esac
 
 echo "🧹 Cleaning previous build artifacts..."
 (cd "$SWIFT_PROJECT_PATH" && swift package reset) || echo "'swift package reset' encountered an issue, attempting rm -rf..."
@@ -145,7 +156,7 @@ generate_info_plist
 echo "🏗️ Building for arm64 (Apple Silicon) only..."
 (
     cd "$SWIFT_PROJECT_PATH"
-    swift build --arch arm64 -c release $SWIFT_OPTIMIZATION_FLAGS 2>&1 | pipe_build_output
+    swift build "${SWIFT_RESOLUTION_ARGS[@]}" --arch arm64 -c release $SWIFT_OPTIMIZATION_FLAGS 2>&1 | pipe_build_output
 )
 ARM64_BUILD_BINARY=$(bash "$PROJECT_ROOT/scripts/resolve-swift-binary-path.sh" \
     "$SWIFT_PROJECT_PATH" arm64 release "$FINAL_BINARY_NAME")
