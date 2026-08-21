@@ -222,6 +222,27 @@ struct WindowListIndexNormalizationTests {
     }
 
     @Test
+    func `AX minimized state overrides stale on-screen raster metadata`() {
+        let stable = SystemWindowIdentity(
+            windowID: 444,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: 7,
+            title: "Fixture",
+            bounds: CGRect(x: 40, y: 50, width: 700, height: 500),
+            layer: 0,
+            alpha: 1,
+            isOnScreen: true,
+            sharingState: .readOnly)
+
+        #expect(!ApplicationService.standaloneIsOnScreen(
+            stableWindowIdentity: stable,
+            isMinimized: true))
+        #expect(ApplicationService.standaloneIsOnScreen(
+            stableWindowIdentity: stable,
+            isMinimized: false))
+    }
+
+    @Test
     func `hybrid merge marks unmatched CG rows as pixels only with a stable reason`() throws {
         let cgWindow = ServiceWindowInfo(
             windowID: 445,

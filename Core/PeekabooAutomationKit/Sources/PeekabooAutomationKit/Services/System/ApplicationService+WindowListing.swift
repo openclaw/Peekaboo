@@ -119,7 +119,9 @@ extension ApplicationService {
             screenName: screen.name,
             isOffScreen: minimized || screen.index == nil || stableWindowIdentity?.isOnScreen == false,
             layer: stableWindowIdentity?.layer ?? 0,
-            isOnScreen: stableWindowIdentity?.isOnScreen ?? !minimized,
+            isOnScreen: Self.standaloneIsOnScreen(
+                stableWindowIdentity: stableWindowIdentity,
+                isMinimized: minimized),
             sharingState: stableWindowIdentity?.sharingState,
             observationCapability: observationCapability,
             mutationIdentity: mutationIdentity)
@@ -156,6 +158,13 @@ extension ApplicationService {
             return .unknown(reason: .rasterCaptureUnverified)
         }
         return .combinedEligible
+    }
+
+    static func standaloneIsOnScreen(
+        stableWindowIdentity: SystemWindowIdentity?,
+        isMinimized: Bool) -> Bool
+    {
+        !isMinimized && (stableWindowIdentity?.isOnScreen ?? true)
     }
 
     private func screenInfo(for bounds: CGRect) -> (index: Int?, name: String?) {
