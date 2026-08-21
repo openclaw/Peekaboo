@@ -126,7 +126,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 coordinateResolution = resolvedCoordinates
                 clickTarget = .coordinates(resolvedCoordinates.screenPoint)
                 waitResult = WaitForElementResult(found: true, element: nil, waitTime: 0)
-                if !self.usesBackgroundDelivery {
+                if !self.usesBackgroundDelivery, !self.usesModifierClick {
                     self.resolvedRuntime.beginInteractionMutation()
                 }
                 if !self.usesModifierClick {
@@ -157,7 +157,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 explicitWindowResolution = try await self.resolveExplicitWindowSelection(
                     observation: observation
                 )
-                if !self.usesBackgroundDelivery {
+                if !self.usesBackgroundDelivery, !self.usesModifierClick {
                     self.resolvedRuntime.beginInteractionMutation()
                 }
                 if !self.usesModifierClick {

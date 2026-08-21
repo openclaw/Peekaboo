@@ -907,6 +907,8 @@ extension ClickCommandTests {
         #expect(await self.automationState(context) { $0.waitForElementCalls }.isEmpty)
         #expect(await self.automationState(context) { $0.clickCalls }.isEmpty)
         #expect(await self.automationState(context) { $0.targetedClickCalls }.isEmpty)
+        #expect(try await context.snapshots.getDetectionResult(snapshotId: snapshotID) != nil)
+        #expect(await context.snapshots.getMostRecentSnapshot() == snapshotID)
     }
 
     @Test
