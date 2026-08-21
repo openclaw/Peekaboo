@@ -65,6 +65,8 @@ extension PeekabooBridgeOperation {
         .disconnectExactWindowHeldPointerOwner,
         .targetedTypeActions,
         .exactWindowTargetedTypeActions,
+        .exactWindowPixelFocusType,
+        .foregroundModifierClick,
         .targetedClick,
         .exactWindowTargetedClick,
         .swipe,

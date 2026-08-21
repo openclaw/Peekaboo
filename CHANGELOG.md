@@ -12,6 +12,8 @@
 ### Added
 - Report per-window `combined_eligible`, `pixels_only`, or `unknown` observation eligibility in CLI and MCP, including screenshot-only recovery.
 - Add an embedding-only Bridge protocol 1.32 API for signed, process-generation-bound observation.
+- Add atomic exact-window pixel-focus typing to CLI, MCP, Agent, and Bridge, keeping the focus click and every background keyboard unit under one target receipt and retry-safe prefix accounting.
+- Add explicit foreground modifier-click with exact target preflight and compare-and-swap cursor and focus restoration, preserving newer user or application state instead of overwriting it.
 
 ### Changed
 - Read `config credential set` secrets from no-echo prompts, stdin, or owner-only files; let `config provider add` also accept non-secret references; retain deprecated argv compatibility.

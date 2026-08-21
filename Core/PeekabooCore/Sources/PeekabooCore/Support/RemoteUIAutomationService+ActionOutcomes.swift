@@ -6,6 +6,33 @@ import PeekabooFoundation
 
 extension RemoteUIAutomationService: UIAutomationActionOutcomeProviding,
 UIAutomationGlobalPointerActionResultProviding {
+    public func foregroundModifierClickWithOutcome(
+        _ request: ForegroundModifierClickRequest) async throws
+        -> UIAutomationActionResult<ForegroundModifierClickResult>
+    {
+        guard self.supportsForegroundModifierClick else {
+            throw PeekabooError.serviceUnavailable(
+                self.foregroundModifierClickUnavailableReason ??
+                    "Remote Bridge host does not support foreground modifier-click")
+        }
+        return try await self.remoteAction(snapshotId: nil) {
+            try await self.client.foregroundModifierClickWithOutcome(request)
+        }
+    }
+
+    public func typeActionsByFocusingPixelWithOutcome(
+        _ request: ExactWindowPixelFocusTypeRequest) async throws -> UIAutomationActionResult<TypeResult>
+    {
+        guard self.supportsExactWindowPixelFocusTyping else {
+            throw PeekabooError.serviceUnavailable(
+                self.exactWindowPixelFocusTypingUnavailableReason ??
+                    "Remote Bridge host does not support atomic exact-window pixel-focus typing")
+        }
+        return try await self.remoteAction(snapshotId: request.snapshotID) {
+            try await self.client.typeActionsByFocusingPixelWithOutcome(request)
+        }
+    }
+
     public func clickWithOutcome(
         target: ClickTarget,
         clickType: ClickType,

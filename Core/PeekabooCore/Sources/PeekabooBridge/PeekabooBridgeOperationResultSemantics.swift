@@ -81,6 +81,7 @@ enum PeekabooBridgeOperationResultSemantics {
         case menuBarItems
         case menuExtras
         case menuStructure
+        case modifierClickResult
         case ok
         case permissionsStatus
         case processGenerationObservation
@@ -182,7 +183,9 @@ enum PeekabooBridgeOperationResultSemantics {
         let totalCharacters: Int
         let keyPresses: Int
 
-        init(actions: [TypeAction]) {
+        let additionalDispatchUnits: Int
+
+        init(actions: [TypeAction], additionalDispatchUnits: Int = 0) {
             var totalCharacters = 0
             var keyPresses = 0
             for action in actions {
@@ -198,10 +201,15 @@ enum PeekabooBridgeOperationResultSemantics {
             }
             self.totalCharacters = totalCharacters
             self.keyPresses = keyPresses
+            self.additionalDispatchUnits = additionalDispatchUnits
         }
 
         var dispatchUnits: UnitPolicy {
-            .exact(self.keyPresses)
+            .exact(self.keyPresses + self.additionalDispatchUnits)
+        }
+
+        var expectedDispatchUnitCount: DesktopActionOutcome.DispatchUnitCount? {
+            DesktopActionOutcome.DispatchUnitCount(self.keyPresses + self.additionalDispatchUnits)
         }
     }
 
@@ -535,7 +543,7 @@ enum PeekabooBridgeOperationResultSemantics {
                     throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                         "type response request counts")
                 }
-                guard let expectedUnits = DesktopActionOutcome.DispatchUnitCount(expected.keyPresses),
+                guard let expectedUnits = expected.expectedDispatchUnitCount,
                       let outcome,
                       case let .dispatched(actualUnits) = outcome.dispatchState,
                       actualUnits == expectedUnits
@@ -887,8 +895,12 @@ extension PeekabooBridgeOperationResultSemantics {
 
     private static func desktopOperationScope(for request: PeekabooBridgeRequest) -> DesktopOperationScope {
         switch request {
+        case .foregroundModifierClick:
+            .global
         case let .exactWindowTargetedTypeActions(payload):
             .process(payload.expectedWindowIdentity.processIdentity)
+        case let .exactWindowPixelFocusType(payload):
+            .process(payload.request.windowIdentity.processIdentity)
         case let .exactWindowTargetedHotkey(payload):
             .process(payload.expectedWindowIdentity.processIdentity)
         case let .beginExactWindowHeldPointer(payload):
@@ -1040,6 +1052,10 @@ extension PeekabooBridgeOperationResultSemantics {
             .typeActions(.init(actions: payload.actions))
         case let .exactWindowTargetedTypeActions(payload):
             .typeActions(.init(actions: payload.actions))
+        case let .exactWindowPixelFocusType(payload):
+            .typeActions(.init(
+                actions: payload.request.actions,
+                additionalDispatchUnits: 1))
         case let .setValue(payload):
             .setValue(
                 target: payload.target,
@@ -1073,6 +1089,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .hotkey,
              .targetedHotkey,
              .exactWindowTargetedHotkey,
+             .foregroundModifierClick,
              .createExactWindowHeldPointerOwner,
              .beginExactWindowHeldPointer,
              .releaseExactWindowHeldPointer,
@@ -1219,6 +1236,8 @@ extension PeekabooBridgeOperationResultSemantics {
              .dialogEnterText, .dialogHandleFile, .dialogDismiss:
             return []
         case .click, .type, .typeActions, .targetedTypeActions, .exactWindowTargetedTypeActions,
+             .exactWindowPixelFocusType,
+             .foregroundModifierClick,
              .setValue, .performAction, .scroll, .targetedScroll, .hotkey, .targetedHotkey,
              .exactWindowTargetedHotkey, .targetedClick, .exactWindowTargetedClick,
              .focusWindow, .moveWindow, .resizeWindow, .setWindowBounds, .closeWindow,
@@ -1316,6 +1335,7 @@ extension PeekabooBridgeOperationResultSemantics {
         let browserBackground = DesktopActionOutcome.Delivery(mechanism: .browserProtocol, mode: .background)
         let browserForeground = DesktopActionOutcome.Delivery(mechanism: .browserProtocol, mode: .foreground)
         let compositeForeground = DesktopActionOutcome.Delivery(mechanism: .composite, mode: .foreground)
+        let compositeBackground = DesktopActionOutcome.Delivery(mechanism: .composite, mode: .background)
 
         func rule(
             _ delivery: DesktopActionOutcome.Delivery,
@@ -1386,6 +1406,10 @@ extension PeekabooBridgeOperationResultSemantics {
             return [rule(processBackground, .variable), rule(axBackground, .variable)]
         case .exactWindowTargetedTypeActions:
             return [rule(windowBackground, .variable), rule(axBackground, .variable)]
+        case .exactWindowPixelFocusType:
+            return [rule(compositeBackground, .positive)]
+        case .foregroundModifierClick:
+            return [rule(compositeForeground, .positive)]
         case .typeActions, .hotkey:
             return [rule(globalForeground, .variable)]
         case .swipe, .drag, .moveMouse:

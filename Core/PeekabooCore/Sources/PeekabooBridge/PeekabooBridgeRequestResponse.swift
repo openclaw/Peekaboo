@@ -31,6 +31,8 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case typeActions(PeekabooBridgeTypeActionsRequest)
     case targetedTypeActions(PeekabooBridgeTargetedTypeActionsRequest)
     case exactWindowTargetedTypeActions(PeekabooBridgeExactWindowTypeActionsRequest)
+    case exactWindowPixelFocusType(PeekabooBridgeExactWindowPixelFocusTypeRequest)
+    case foregroundModifierClick(PeekabooBridgeForegroundModifierClickRequest)
     case setValue(PeekabooBridgeSetValueRequest)
     case performAction(PeekabooBridgePerformActionRequest)
     case scroll(PeekabooBridgeScrollRequest)
@@ -152,6 +154,8 @@ extension PeekabooBridgeRequest {
         case .typeActions: .typeActions
         case .targetedTypeActions: .targetedTypeActions
         case .exactWindowTargetedTypeActions: .exactWindowTargetedTypeActions
+        case .exactWindowPixelFocusType: .exactWindowPixelFocusType
+        case .foregroundModifierClick: .foregroundModifierClick
         case .setValue: .setValue
         case .performAction: .performAction
         case .scroll: .scroll
@@ -269,6 +273,7 @@ public enum PeekabooBridgeResponse: Codable, Sendable {
     case application(ServiceApplicationInfo)
     case bool(Bool)
     case typeResult(TypeResult)
+    case foregroundModifierClickResult(ForegroundModifierClickResult)
     case exactWindowHeldPointerOwner(ExactWindowHeldPointerOwner)
     case exactWindowHeldPointerReceipt(ExactWindowHeldPointerReceipt)
     case exactWindowHeldPointerTermination(ExactWindowHeldPointerTermination?)

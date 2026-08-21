@@ -56,6 +56,10 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         inspectAccessibilityTreeUnavailableReason: String? = nil,
         supportsExactWindowTargetedKeyboard: Bool = false,
         exactWindowTargetedKeyboardUnavailableReason: String? = nil,
+        supportsExactWindowPixelFocusTyping: Bool = false,
+        exactWindowPixelFocusTypingUnavailableReason: String? = nil,
+        supportsForegroundModifierClick: Bool = false,
+        foregroundModifierClickUnavailableReason: String? = nil,
         supportsExactWindowHeldPointerLifecycle: Bool = false,
         supportsPostEventPermissionRequest: Bool = false,
         supportsElementActions: Bool = false,
@@ -120,6 +124,10 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 inspectAccessibilityTreeUnavailableReason: inspectAccessibilityTreeUnavailableReason,
                 supportsExactWindowTargetedKeyboard: supportsExactWindowTargetedKeyboard,
                 exactWindowTargetedKeyboardUnavailableReason: exactWindowTargetedKeyboardUnavailableReason,
+                supportsExactWindowPixelFocusTyping: supportsExactWindowPixelFocusTyping,
+                exactWindowPixelFocusTypingUnavailableReason: exactWindowPixelFocusTypingUnavailableReason,
+                supportsForegroundModifierClick: supportsForegroundModifierClick,
+                foregroundModifierClickUnavailableReason: foregroundModifierClickUnavailableReason,
                 supportsExactWindowHeldPointerLifecycle: supportsExactWindowHeldPointerLifecycle)
         } else {
             RemoteUIAutomationService(
@@ -145,6 +153,10 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 inspectAccessibilityTreeUnavailableReason: inspectAccessibilityTreeUnavailableReason,
                 supportsExactWindowTargetedKeyboard: supportsExactWindowTargetedKeyboard,
                 exactWindowTargetedKeyboardUnavailableReason: exactWindowTargetedKeyboardUnavailableReason,
+                supportsExactWindowPixelFocusTyping: supportsExactWindowPixelFocusTyping,
+                exactWindowPixelFocusTypingUnavailableReason: exactWindowPixelFocusTypingUnavailableReason,
+                supportsForegroundModifierClick: supportsForegroundModifierClick,
+                foregroundModifierClickUnavailableReason: foregroundModifierClickUnavailableReason,
                 supportsExactWindowHeldPointerLifecycle: supportsExactWindowHeldPointerLifecycle)
         }
         self.windows = RemoteWindowManagementService(

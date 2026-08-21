@@ -14,6 +14,7 @@ extension PeekabooBridgeOperationResultSemantics {
         let nativeForeground = DesktopActionOutcome.Delivery(mechanism: .nativeFramework, mode: .foreground)
         let nativeBackground = DesktopActionOutcome.Delivery(mechanism: .nativeFramework, mode: .background)
         let compositeForeground = DesktopActionOutcome.Delivery(mechanism: .composite, mode: .foreground)
+        let compositeBackground = DesktopActionOutcome.Delivery(mechanism: .composite, mode: .background)
         let clipboardForeground = DesktopActionOutcome.Delivery(
             mechanism: .clipboardTransaction,
             mode: .foreground)
@@ -196,6 +197,21 @@ extension PeekabooBridgeOperationResultSemantics {
                 completion: .dispatchedUnverified(windowBackground),
                 targetPolicy: .requestPinned,
                 responseFamilies: [.typeResult])
+        case .exactWindowPixelFocusType:
+            descriptor(
+                ownership: .service,
+                typedResponse: .typeActions,
+                requiredPermissions: [.accessibility, .postEvent],
+                completion: .dispatchedUnverified(compositeBackground),
+                targetPolicy: .requestPinned,
+                responseFamilies: [.typeResult])
+        case .foregroundModifierClick:
+            descriptor(
+                ownership: .service,
+                requiredPermissions: [.accessibility, .postEvent],
+                completion: .dispatchedUnverified(compositeForeground),
+                targetPolicy: .requestPinned,
+                responseFamilies: [.modifierClickResult])
         case .setValue:
             descriptor(
                 ownership: .service,

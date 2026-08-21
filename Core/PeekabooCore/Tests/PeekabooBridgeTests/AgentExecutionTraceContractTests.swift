@@ -9,7 +9,7 @@ struct AgentExecutionTraceContractTests {
     @Test
     func `Protocol and allowlists fail closed before 1.31`() {
         let previous = PeekabooBridgeProtocolVersion(major: 1, minor: 30)
-        #expect(PeekabooBridgeConstants.protocolVersion == .init(major: 1, minor: 32))
+        #expect(PeekabooBridgeConstants.protocolVersion == .init(major: 1, minor: 33))
         #expect(!PeekabooBridgeOperation.compatible([.agentExecutionTrace], with: previous)
             .contains(.agentExecutionTrace))
         #expect(PeekabooBridgeOperation.compatible(

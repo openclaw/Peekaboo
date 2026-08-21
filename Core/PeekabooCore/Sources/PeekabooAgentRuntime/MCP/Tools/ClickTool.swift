@@ -93,6 +93,9 @@ public struct ClickTool: MCPTool {
                     """,
                     minimum: 1,
                     maximum: Int(Int32.max)),
+                "modifiers": SchemaBuilder.array(
+                    items: SchemaBuilder.string(enum: ["cmd", "shift", "option", "ctrl"]),
+                    description: "Foreground-only modifier keys. Requires foreground=true and a fresh exact snapshot."),
             ],
             required: [])
 
@@ -182,16 +185,33 @@ public struct ClickTool: MCPTool {
                 request: request,
                 resolution: resolution)
             let effectiveTargetProcessIdentifier = effectiveTargetProcessIdentity?.processIdentifier
-            let actionResult = try await self.performClick(
-                resolution: resolution,
-                intent: request.intent,
-                deliveryMode: request.deliveryMode,
-                targetProcessIdentity: effectiveTargetProcessIdentity)
+            let modifierResult: ForegroundModifierClickResult?
+            let actionResult: UIAutomationActionResult<Void>
+            if request.modifiers.isEmpty {
+                actionResult = try await self.performClick(
+                    resolution: resolution,
+                    intent: request.intent,
+                    deliveryMode: request.deliveryMode,
+                    targetProcessIdentity: effectiveTargetProcessIdentity)
+                modifierResult = nil
+            } else {
+                let result = try await self.performModifierClick(
+                    resolution: resolution,
+                    intent: request.intent,
+                    modifiers: request.modifiers)
+                actionResult = UIAutomationActionResult(
+                    payload: (),
+                    outcome: result.outcome,
+                    targetIdentity: result.targetIdentity)
+                modifierResult = result.payload
+            }
             actionTargetIdentity = actionResult.targetIdentity
             let outcome = actionResult.outcome
-            try DesktopActionFailure.requireConfirmedIfReported(
-                outcome,
-                operation: "Click")
+            if request.modifiers.isEmpty {
+                try DesktopActionFailure.requireConfirmedIfReported(
+                    outcome,
+                    operation: "Click")
+            }
 
             let invalidatedSnapshotId = await MCPDesktopActionSnapshotInvalidator.invalidate(
                 uiSnapshots: self.context.uiSnapshots,
@@ -206,7 +226,9 @@ public struct ClickTool: MCPTool {
                     executionTime: executionTime,
                     invalidatedSnapshotId: invalidatedSnapshotId,
                     outcome: outcome,
-                    targetIdentity: actionResult.targetIdentity))
+                    targetIdentity: actionResult.targetIdentity,
+                    modifiers: request.modifiers,
+                    modifierResult: modifierResult))
         } catch let error as ClickToolError {
             return try Self.preDispatchErrorResponse(error)
         } catch let failure as DesktopActionFailure {
@@ -277,6 +299,48 @@ public struct ClickTool: MCPTool {
                 expectedWindowBounds: snapshot.windowBounds,
                 snapshotId: snapshot.id)
         }
+    }
+
+    @MainActor
+    private func performModifierClick(
+        resolution: ClickResolution,
+        intent: ClickIntent,
+        modifiers: [PointerModifier]) async throws
+        -> UIAutomationActionResult<ForegroundModifierClickResult>
+    {
+        guard let snapshotID = resolution.snapshotId,
+              let identity = resolution.expectedWindowIdentity,
+              let bounds = resolution.expectedWindowBounds,
+              resolution.targetWindowID == identity.windowID,
+              bounds.contains(resolution.location)
+        else {
+            throw ClickToolError(
+                "Modifier-click requires a fresh exact-window screenshot snapshot.",
+                refusalReason: .targetUnavailable)
+        }
+        guard let service = self.context.automation as? any ForegroundModifierClickServiceProtocol,
+              service.supportsForegroundModifierClick
+        else {
+            throw ClickToolError(
+                "This automation host does not support foreground modifier-click.",
+                refusalReason: .runtimeIncompatible)
+        }
+        let result = try await service.foregroundModifierClickWithOutcome(
+            ForegroundModifierClickRequest(
+                point: resolution.location,
+                clickType: intent.automationType,
+                modifiers: modifiers,
+                windowIdentity: identity,
+                windowBounds: bounds))
+        _ = snapshotID
+        _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+            result,
+            policy: .confirmedOrDispatched(requiring: .foreground),
+            targetRequirement: .exact(DesktopTargetIdentity(exactWindow: .init(
+                identity: identity,
+                bounds: bounds))),
+            operation: "Foreground modifier-click")
+        return result
     }
 
     @MainActor
@@ -489,6 +553,13 @@ public struct ClickTool: MCPTool {
         }
         if let coordinateReference = resolution.coordinateReference {
             metaDict["coordinate_reference"] = .string(coordinateReference)
+        }
+        if !execution.modifiers.isEmpty {
+            metaDict["modifiers"] = .array(execution.modifiers.map { .string($0.rawValue) })
+        }
+        if let modifierResult = execution.modifierResult {
+            metaDict["cursor_restoration"] = .string(modifierResult.cursorRestoration.rawValue)
+            metaDict["focus_restoration"] = .string(modifierResult.focusRestoration.rawValue)
         }
 
         let summary = ToolEventSummary(
@@ -751,6 +822,7 @@ private struct ClickRequest {
     let pid: Int32?
     let coordinateSpace: CaptureCoordinateSpace?
     let coordinateReference: String?
+    let modifiers: [PointerModifier]
 
     init(arguments: ToolArguments) throws {
         let rawCoordinateSpace = Self.nonEmptyString(arguments.getString("coordinate_space"))
@@ -799,6 +871,7 @@ private struct ClickRequest {
         }
         self.coordinateSpace = coordinateSpace
         self.coordinateReference = coordinateReference
+        self.modifiers = try Self.parseModifiers(arguments)
         let isDouble = arguments.getBool("double") ?? false
         let isRight = arguments.getBool("right") ?? false
         let isMiddle = arguments.getBool("middle") ?? false
@@ -830,6 +903,46 @@ private struct ClickRequest {
             throw ClickToolError(
                 ClickTool.backgroundCoordinateReferenceMessage,
                 refusalReason: .targetUnavailable)
+        }
+        if !self.modifiers.isEmpty {
+            guard self.deliveryMode == .foreground else {
+                throw ClickToolError("modifiers require foreground=true")
+            }
+            guard self.pid == nil else {
+                throw ClickToolError("modifier-click derives its exact target from snapshot; remove pid")
+            }
+            guard let snapshotId, snapshotId.lowercased() != "latest" else {
+                throw ClickToolError(
+                    "modifier-click requires one explicit fresh screenshot snapshot",
+                    refusalReason: .targetUnavailable)
+            }
+            if let coordinateReference, coordinateReference != snapshotId {
+                throw ClickToolError("snapshot and coordinate_reference must match for modifier-click")
+            }
+        }
+    }
+
+    private static func parseModifiers(_ arguments: ToolArguments) throws -> [PointerModifier] {
+        guard let value = arguments.getValue(for: "modifiers") else { return [] }
+        guard case let .array(items) = value, !items.isEmpty else {
+            throw ClickToolError("modifiers must be a non-empty array")
+        }
+        var seen = Set<String>()
+        return try items.enumerated().map { index, item in
+            guard case let .string(raw) = item else {
+                throw ClickToolError("modifiers[\(index)] must be a string")
+            }
+            let canonical = switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "cmd", "command": PointerModifier.command
+            case "shift": PointerModifier.shift
+            case "option", "alt": PointerModifier.option
+            case "ctrl", "control": PointerModifier.control
+            default: throw ClickToolError("Unsupported modifier '\(raw)'")
+            }
+            guard seen.insert(canonical.rawValue).inserted else {
+                throw ClickToolError("Duplicate modifier '\(canonical.rawValue)'")
+            }
+            return canonical
         }
     }
 
@@ -910,6 +1023,8 @@ private struct ClickResponseExecution {
     let invalidatedSnapshotId: String?
     let outcome: DesktopActionOutcome?
     let targetIdentity: DesktopTargetIdentity?
+    let modifiers: [PointerModifier]
+    let modifierResult: ForegroundModifierClickResult?
 }
 
 private struct CapturedCoordinateSnapshot {

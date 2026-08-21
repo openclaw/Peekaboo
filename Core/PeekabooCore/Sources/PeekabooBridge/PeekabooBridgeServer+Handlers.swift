@@ -55,7 +55,8 @@ extension PeekabooBridgeServer {
             return try await self.handleDesktopObservationRequest(request)
         case .detectElements, .inspectAccessibilityTree, .getFocusedElement, .click, .type,
              .typeActions,
-             .targetedTypeActions, .exactWindowTargetedTypeActions,
+             .targetedTypeActions, .exactWindowTargetedTypeActions, .exactWindowPixelFocusType,
+             .foregroundModifierClick,
              .setValue, .performAction, .scroll, .targetedScroll, .hotkey, .targetedHotkey,
              .exactWindowTargetedHotkey, .targetedClick,
              .exactWindowTargetedClick, .swipe, .drag, .moveMouse, .waitForElement:
@@ -597,7 +598,8 @@ extension PeekabooBridgeServer {
                 },
                 fallbackTarget: .global,
                 response: PeekabooBridgeResponse.typeResult)
-        case .targetedTypeActions, .exactWindowTargetedTypeActions, .targetedHotkey,
+        case .targetedTypeActions, .exactWindowTargetedTypeActions, .exactWindowPixelFocusType,
+             .foregroundModifierClick, .targetedHotkey,
              .exactWindowTargetedHotkey, .targetedClick:
             return try await self.handleTargetedAutomationRequest(request)
         case .setValue, .performAction:
@@ -803,6 +805,10 @@ extension PeekabooBridgeServer {
             return try await self.handleTargetedTypeActions(payload, service: targetedTypeService)
         case let .exactWindowTargetedTypeActions(payload):
             return try await self.handleExactWindowTargetedTypeActions(payload)
+        case let .exactWindowPixelFocusType(payload):
+            return try await self.handleExactWindowPixelFocusType(payload)
+        case let .foregroundModifierClick(payload):
+            return try await self.handleForegroundModifierClick(payload)
         case let .targetedHotkey(payload):
             return try await self.handleTargetedHotkey(payload)
         case let .exactWindowTargetedHotkey(payload):
@@ -869,6 +875,44 @@ extension PeekabooBridgeServer {
                     expectedWindowBounds: payload.expectedWindowBounds)
             }
         return .init(response: .typeResult(result))
+    }
+
+    private func handleExactWindowPixelFocusType(
+        _ payload: PeekabooBridgeExactWindowPixelFocusTypeRequest) async throws
+        -> PeekabooBridgeHandledResponse
+    {
+        guard let service = self.services.automation as? any ExactWindowPixelFocusTypingServiceProtocol,
+              service.supportsExactWindowPixelFocusTyping
+        else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Atomic exact-window pixel-focus typing is not supported by this bridge host")
+        }
+        self.automationActivityObserver?(pid_t(payload.request.windowIdentity.ownerProcessIdentifier))
+        let result = try await service.typeActionsByFocusingPixelWithOutcome(payload.request)
+        return try Self.handledActionResponse(
+            response: .typeResult(result.payload),
+            result: result,
+            fallbackTarget: .requestPinned)
+    }
+
+    private func handleForegroundModifierClick(
+        _ payload: PeekabooBridgeForegroundModifierClickRequest) async throws
+        -> PeekabooBridgeHandledResponse
+    {
+        guard let service = self.services.automation as? any ForegroundModifierClickServiceProtocol,
+              service.supportsForegroundModifierClick
+        else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Foreground modifier-click is not supported by this bridge host")
+        }
+        self.automationActivityObserver?(pid_t(payload.request.windowIdentity.ownerProcessIdentifier))
+        let result = try await service.foregroundModifierClickWithOutcome(payload.request)
+        return try Self.handledActionResponse(
+            response: .foregroundModifierClickResult(result.payload),
+            result: result,
+            fallbackTarget: .requestPinned)
     }
 
     private func handleExactWindowTargetedHotkey(

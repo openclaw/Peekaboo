@@ -22,6 +22,16 @@ extension TypeCommand: CommanderSignatureProviding {
                     long: "snapshot"
                 ),
                 .commandOption(
+                    "at",
+                    help: "Exact-window focus point in x,y form; requires a fresh screenshot snapshot",
+                    long: "at"
+                ),
+                .commandOption(
+                    "coordinateSpaceOption",
+                    help: "Coordinate basis: global_display_points, image_pixels, or normalized",
+                    long: "coordinate-space"
+                ),
+                .commandOption(
                     "delay",
                     help: "Keystroke delay; bare values are milliseconds, or use ms/s suffixes",
                     long: "delay"

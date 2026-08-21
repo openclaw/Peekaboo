@@ -32,7 +32,8 @@ struct CommanderBinderTests {
             #expect(options.requiresAgentService, "Missing Agent service for \(commandType)")
         }
 
-        for commandType in [ToolsListSubcommand.self, SeeCommand.self] as [any ParsableCommand.Type] {
+        for commandType in [ToolsListSubcommand.self, SeeCommand.self, TypeCommand.self, ClickCommand.self]
+            as [any ParsableCommand.Type] {
             let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
             #expect(!options.requiresAgentService, "Eager Agent service for \(commandType)")
         }

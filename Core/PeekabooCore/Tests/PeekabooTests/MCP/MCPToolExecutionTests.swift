@@ -1003,7 +1003,7 @@ actor EmptyRecordingWindowService: WindowManagementServiceProtocol, WindowMutati
 
 @MainActor
 class MockAutomationService: ExactWindowTargetedClickServiceProtocol, TargetedHotkeyServiceProtocol,
-TargetedTypeServiceProtocol {
+TargetedTypeServiceProtocol, ExactWindowPixelFocusTypingServiceProtocol, ForegroundModifierClickServiceProtocol {
     struct ClickCall {
         let target: ClickTarget
         let clickType: ClickType
@@ -1066,6 +1066,12 @@ TargetedTypeServiceProtocol {
     var supportsStatelessClickVariants = true
     var pinnedClickError: ((ClickTarget) -> (any Error)?)?
     var pinnedTypeError: (([TypeAction]) -> (any Error)?)?
+    var supportsExactWindowPixelFocusTyping = true
+    var exactWindowPixelFocusTypingUnavailableReason: String?
+    var supportsForegroundModifierClick = true
+    var foregroundModifierClickUnavailableReason: String?
+    private(set) var pixelFocusTypeRequests: [ExactWindowPixelFocusTypeRequest] = []
+    private(set) var foregroundModifierClickRequests: [ForegroundModifierClickRequest] = []
 
     init(
         accessibilityGranted: Bool,
@@ -1166,6 +1172,38 @@ TargetedTypeServiceProtocol {
         return try await self.typeActions(actions, cadence: cadence, snapshotId: snapshotId)
     }
 
+    func typeActionsByFocusingPixelWithOutcome(
+        _ request: ExactWindowPixelFocusTypeRequest) async throws -> UIAutomationActionResult<TypeResult>
+    {
+        self.pixelFocusTypeRequests.append(request)
+        let result = Self.typeResult(for: request.actions)
+        return try UIAutomationActionResult(
+            payload: result,
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .composite, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .init(result.keyPresses + 1)),
+            targetIdentity: DesktopTargetIdentity(exactWindow: .init(
+                identity: request.windowIdentity,
+                bounds: request.windowBounds)))
+    }
+
+    func foregroundModifierClickWithOutcome(
+        _ request: ForegroundModifierClickRequest) async throws
+        -> UIAutomationActionResult<ForegroundModifierClickResult>
+    {
+        self.foregroundModifierClickRequests.append(request)
+        return try UIAutomationActionResult(
+            payload: .init(cursorRestoration: .restored, focusRestoration: .preservedNewerState),
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .composite, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .one),
+            targetIdentity: DesktopTargetIdentity(exactWindow: .init(
+                identity: request.windowIdentity,
+                bounds: request.windowBounds)))
+    }
+
     func scroll(_ request: ScrollRequest) async throws {
         self.scrollRequests.append(request)
     }
@@ -1222,6 +1260,23 @@ TargetedTypeServiceProtocol {
 
     func findElement(matching _: UIElementSearchCriteria, in _: String?) async throws -> DetectedElement {
         throw PeekabooError.elementNotFound("mock find element")
+    }
+
+    private static func typeResult(for actions: [TypeAction]) -> TypeResult {
+        var characters = 0
+        var keyPresses = 0
+        for action in actions {
+            switch action {
+            case let .text(text):
+                characters += text.count
+                keyPresses += text.count
+            case .key:
+                keyPresses += 1
+            case .clear:
+                keyPresses += 2
+            }
+        }
+        return TypeResult(totalCharacters: characters, keyPresses: keyPresses)
     }
 }
 

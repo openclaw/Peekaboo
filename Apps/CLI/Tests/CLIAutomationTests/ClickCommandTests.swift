@@ -881,6 +881,35 @@ struct ClickCommandTests {
 
 extension ClickCommandTests {
     @Test
+    func `modifier click never refreshes or live probes a missing snapshot element`() async throws {
+        let context = await self.makeContext()
+        let element = DetectedElement(
+            id: "B1",
+            type: .button,
+            label: "Save",
+            bounds: CGRect(x: 20, y: 30, width: 80, height: 30)
+        )
+        let snapshotID = try await self.storeSnapshot(
+            element: element,
+            windowID: 42,
+            in: context.snapshots
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "click", "--on", "MISSING", "--snapshot", snapshotID,
+                "--foreground", "--modifiers", "cmd", "--json",
+            ],
+            services: context.services
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(await self.automationState(context) { $0.waitForElementCalls }.isEmpty)
+        #expect(await self.automationState(context) { $0.clickCalls }.isEmpty)
+        #expect(await self.automationState(context) { $0.targetedClickCalls }.isEmpty)
+    }
+
+    @Test
     func `background click refuses a fuzzy application selector before dispatch`() async throws {
         let application = Self.makeApplication()
         let context = await self.makeContext(application: application)

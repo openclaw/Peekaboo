@@ -146,6 +146,7 @@ extension PeekabooBridgeResponse {
              .application,
              .bool,
              .typeResult,
+             .foregroundModifierClickResult,
              .exactWindowHeldPointerOwner,
              .exactWindowHeldPointerReceipt,
              .exactWindowHeldPointerTermination,

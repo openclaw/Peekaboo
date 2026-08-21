@@ -3,6 +3,26 @@ import PeekabooAutomationKit
 import PeekabooFoundation
 
 extension PeekabooBridgeClient {
+    public func foregroundModifierClickWithOutcome(
+        _ request: ForegroundModifierClickRequest) async throws
+        -> UIAutomationActionResult<ForegroundModifierClickResult>
+    {
+        try await self.actionResult(
+            for: .foregroundModifierClick(.init(request: request)),
+            expectedResponse: "foreground modifier-click")
+        { response in
+            guard case let .foregroundModifierClickResult(result) = response else { return nil }
+            return result
+        }
+    }
+
+    public func typeActionsByFocusingPixelWithOutcome(
+        _ request: ExactWindowPixelFocusTypeRequest) async throws -> UIAutomationActionResult<TypeResult>
+    {
+        try await self.typeActionResult(
+            for: .exactWindowPixelFocusType(.init(request: request)))
+    }
+
     public func clickWithOutcome(
         target: ClickTarget,
         clickType: ClickType,

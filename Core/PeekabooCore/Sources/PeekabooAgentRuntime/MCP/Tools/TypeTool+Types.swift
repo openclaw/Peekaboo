@@ -1,4 +1,6 @@
+import CoreGraphics
 import PeekabooAutomation
+import PeekabooAutomationKit
 import PeekabooFoundation
 
 struct TypeRequest {
@@ -11,6 +13,9 @@ struct TypeRequest {
     let clearField: Bool
     let foreground: Bool
     let target: MCPInteractionTarget
+    let coordinateText: String?
+    let coordinateSpace: CaptureCoordinateSpace?
+    let coordinateReference: String?
 
     static let defaultHumanWPM = 140
 
@@ -27,6 +32,12 @@ struct TypeRequest {
             return .fixed(milliseconds: self.delay)
         }
     }
+}
+
+struct TypePixelFocusTarget {
+    let point: CGPoint
+    let snapshotID: String
+    let exactWindow: UIAutomationTarget.ExactWindow
 }
 
 struct TypeToolValidationError: Error {

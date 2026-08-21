@@ -1245,12 +1245,32 @@ extension ClickService {
     func clickOwned(target: ClickTarget, clickType: ClickType, snapshotId: String?) async throws
         -> UIInputExecutionResult
     {
+        try await self.clickOwned(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            automationTarget: .foreground,
+            validatesProcessIdentity: false)
+    }
+
+    /// Executes a click while the caller retains the target's desktop-operation lane.
+    ///
+    /// Composite operations use this overload so exact-window preflight, dispatch, and
+    /// postvalidation remain identical to a standalone click without recursively acquiring the
+    /// same process lane.
+    func clickOwned(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        automationTarget: UIAutomationTarget,
+        validatesProcessIdentity: Bool) async throws -> UIInputExecutionResult
+    {
         try await self.executeClick(ClickExecutionRequest(
             target: target,
             clickType: clickType,
             snapshotID: snapshotId,
-            automationTarget: .foreground,
-            validatesProcessIdentity: false,
+            automationTarget: automationTarget,
+            validatesProcessIdentity: validatesProcessIdentity,
             acquireLane: false,
             lanePreparation: {},
             laneCompletion: { _ in }))

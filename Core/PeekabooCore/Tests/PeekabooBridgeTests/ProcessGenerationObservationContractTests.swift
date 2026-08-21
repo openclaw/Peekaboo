@@ -7,7 +7,7 @@ struct ProcessGenerationObservationContractTests {
     @Test
     func `Protocol and allowlist fail closed before 1.32`() {
         let previous = PeekabooBridgeProtocolVersion(major: 1, minor: 31)
-        #expect(PeekabooBridgeConstants.protocolVersion == .init(major: 1, minor: 32))
+        #expect(PeekabooBridgeConstants.protocolVersion == .init(major: 1, minor: 33))
         #expect(!PeekabooBridgeOperation.compatible([.observeProcessGeneration], with: previous)
             .contains(.observeProcessGeneration))
         #expect(PeekabooBridgeOperation.compatible(

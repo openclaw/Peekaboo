@@ -256,7 +256,7 @@ struct PeekabooBridgeProcessGenerationObservationTests {
             bundleIdentifier: "caller-claims-are-not-authority",
             teamIdentifier: "Y5PE65HELJ",
             processIdentifier: getpid()))
-        #expect(handshake.negotiatedVersion == .init(major: 1, minor: 32))
+        #expect(handshake.negotiatedVersion == .init(major: 1, minor: 33))
         #expect(handshake.supportedOperations.contains(.observeProcessGeneration))
         #expect(handshake.enabledOperations?.contains(.observeProcessGeneration) == true)
         #expect(handshake.hostCapabilities?.contains(

@@ -30,6 +30,7 @@ extension PeekabooBridgeOperationResultSemantics.ResponseFamily {
              (.menuBarItems, .menuBarItems),
              (.menuExtras, .menuExtras),
              (.menuStructure, .menuStructure),
+             (.modifierClickResult, .foregroundModifierClickResult),
              (.ok, .ok),
              (.permissionsStatus, .permissionsStatus),
              (.processGenerationObservation, .processGenerationObservation),

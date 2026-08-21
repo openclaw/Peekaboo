@@ -1981,6 +1981,14 @@ extension PeekabooBridgeRequest {
                 windowIdentity: payload.expectedWindowIdentity,
                 bounds: payload.expectedWindowBounds,
                 focusedElement: payload.expectedFocusedElement)]
+        case let .exactWindowPixelFocusType(payload):
+            [DesktopTargetEvidenceAdapter.evidence(
+                windowIdentity: payload.request.windowIdentity,
+                bounds: payload.request.windowBounds)]
+        case let .foregroundModifierClick(payload):
+            [DesktopTargetEvidenceAdapter.evidence(
+                windowIdentity: payload.request.windowIdentity,
+                bounds: payload.request.windowBounds)]
         case let .exactWindowTargetedHotkey(payload):
             [DesktopTargetEvidenceAdapter.evidence(
                 windowIdentity: payload.expectedWindowIdentity,

@@ -11,6 +11,7 @@ private struct ClickCommandOutputContext {
     let coordinateResolution: InteractionCoordinateResolution?
     let explicitWindowResolution: InteractionWindowResolution?
     let actionResult: UIAutomationActionResult<Void>
+    let modifierClickResult: ForegroundModifierClickResult?
     let startTime: Date
 }
 
@@ -55,6 +56,9 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     @Flag(help: "Press and hold for 1.2 seconds at a stationary point (requires --foreground)")
     var longPress = false
 
+    @Option(help: "Modifier keys for an exact foreground click: cmd,shift,option,ctrl")
+    var modifiers: CLIModifierList?
+
     @OptionGroup var focusOptions: FocusCommandOptions
 
     @RuntimeStorage var runtime: CommandRuntime?
@@ -72,6 +76,10 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
 
     private var usesBackgroundDelivery: Bool {
         self.deliveryMode == .background
+    }
+
+    private var usesModifierClick: Bool {
+        self.modifiers != nil
     }
 
     @MainActor
@@ -121,16 +129,18 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 if !self.usesBackgroundDelivery {
                     self.resolvedRuntime.beginInteractionMutation()
                 }
-                try await self.focusApplicationIfNeeded(
-                    snapshotId: nil,
-                    coordinateResolution: resolvedCoordinates
-                )
+                if !self.usesModifierClick {
+                    try await self.focusApplicationIfNeeded(
+                        snapshotId: nil,
+                        coordinateResolution: resolvedCoordinates
+                    )
+                }
 
                 // Verify the resolved target is actually frontmost after focus attempt.
                 // InputDriver.click() sends a CGEvent at screen-absolute coordinates,
                 // so if the target window is not frontmost, the click will land on
                 // whatever window is at that position (see #90).
-                if !self.usesBackgroundDelivery {
+                if !self.usesBackgroundDelivery, !self.usesModifierClick {
                     try await verifyFocusForCoordinateClick(coordinateResolution: resolvedCoordinates)
                 }
 
@@ -150,13 +160,15 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 if !self.usesBackgroundDelivery {
                     self.resolvedRuntime.beginInteractionMutation()
                 }
-                try await self.focusApplicationIfNeeded(snapshotId: observation.focusSnapshotId(for: self.target))
+                if !self.usesModifierClick {
+                    try await self.focusApplicationIfNeeded(snapshotId: observation.focusSnapshotId(for: self.target))
+                }
 
                 // Use whichever element ID parameter was provided
                 let elementId = self.on
 
                 if let elementId {
-                    if !self.usesBackgroundDelivery {
+                    if !self.usesBackgroundDelivery, !self.usesModifierClick {
                         let refreshRuntime = self.resolvedRuntime
                         observation = try await InteractionObservationRefresher.refreshForMissingElementsIfNeeded(
                             observation,
@@ -172,7 +184,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                     activeSnapshotId = observation.snapshotId ?? ""
 
                     clickTarget = .elementId(elementId)
-                    if self.usesBackgroundDelivery {
+                    if self.usesBackgroundDelivery || self.usesModifierClick {
                         let element = try await cachedElementById(elementId, observation: observation)
                         waitResult = WaitForElementResult(found: true, element: element, waitTime: 0)
                     } else {
@@ -190,12 +202,12 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                     }
 
                 } else if let searchQuery = query {
-                    if !self.usesBackgroundDelivery {
+                    if !self.usesBackgroundDelivery, !self.usesModifierClick {
                         observation = try await self.refreshObservationIfQueryMissing(observation, query: searchQuery)
                     }
                     activeSnapshotId = observation.snapshotId ?? ""
 
-                    if self.usesBackgroundDelivery {
+                    if self.usesBackgroundDelivery || self.usesModifierClick {
                         let element = try await cachedElementMatching(searchQuery, observation: observation)
                         clickTarget = .elementId(element.id)
                         waitResult = WaitForElementResult(found: true, element: element, waitTime: 0)
@@ -224,7 +236,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 }
             }
 
-            let actionResult = try await self.resolveAndDispatchClick(
+            let dispatchResult = try await self.resolveAndDispatchClick(
                 clickTarget,
                 snapshotId: activeSnapshotId,
                 resolvedElement: waitResult.element,
@@ -238,7 +250,8 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 snapshotId: activeSnapshotId,
                 coordinateResolution: coordinateResolution,
                 explicitWindowResolution: explicitWindowResolution,
-                actionResult: actionResult,
+                actionResult: dispatchResult.actionResult,
+                modifierClickResult: dispatchResult.modifierClickResult,
                 startTime: startTime
             ))
 
@@ -278,7 +291,10 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             screenCoordinates: coordinateResolution?.screenPoint,
             targetPoint: details.targetPointDiagnostics,
             deliveryMode: self.deliveryMode.rawValue,
-            clickType: self.requestedClickType.rawValue
+            clickType: self.requestedClickType.rawValue,
+            modifiers: self.modifiers?.values,
+            cursorRestoration: context.modifierClickResult?.cursorRestoration.rawValue,
+            focusRestoration: context.modifierClickResult?.focusRestoration.rawValue
         )
         self.output(
             result,
@@ -457,6 +473,15 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         }
         if let info = result.clickedElement {
             print("📱 Clicked: \(info)")
+        }
+        if let modifiers = result.modifiers, !modifiers.isEmpty {
+            print("⌨️  Modifiers: \(modifiers.joined(separator: ","))")
+        }
+        if let cursorRestoration = result.cursorRestoration {
+            print("🖱️  Cursor restoration: \(cursorRestoration)")
+        }
+        if let focusRestoration = result.focusRestoration {
+            print("🪟 Focus restoration: \(focusRestoration)")
         }
         let x = result.clickLocation["x"] ?? 0
         let y = result.clickLocation["y"] ?? 0
@@ -661,13 +686,25 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         let statelessWindowTarget: UIAutomationTarget.ExactWindow?
     }
 
+    private struct ClickDispatchResult {
+        let actionResult: UIAutomationActionResult<Void>
+        let modifierClickResult: ForegroundModifierClickResult?
+    }
+
     private func resolveAndDispatchClick(
         _ clickTarget: ClickTarget,
         snapshotId: String,
         resolvedElement: DetectedElement?,
         coordinateResolution: InteractionCoordinateResolution?,
         explicitWindowResolution: InteractionWindowResolution?
-    ) async throws -> UIAutomationActionResult<Void> {
+    ) async throws -> ClickDispatchResult {
+        if self.usesModifierClick {
+            return try await self.resolveAndDispatchModifierClick(
+                clickTarget,
+                snapshotId: snapshotId,
+                resolvedElement: resolvedElement
+            )
+        }
         let backgroundProcessIdentity: ApplicationProcessIdentity? = if self.usesBackgroundDelivery {
             try await self.resolveBackgroundClickProcessIdentity(
                 snapshotId: snapshotId.isEmpty ? nil : snapshotId,
@@ -695,7 +732,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 snapshotId: snapshotId
             )
         }
-        return try await SnapshotMutationCoordinator.perform(
+        let result = try await SnapshotMutationCoordinator.perform(
             snapshotId: snapshotId,
             snapshots: self.services.snapshots,
             operation: {
@@ -715,6 +752,92 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             },
             outcome: { $0.outcome }
         )
+        return ClickDispatchResult(actionResult: result, modifierClickResult: nil)
+    }
+
+    private func resolveAndDispatchModifierClick(
+        _ target: ClickTarget,
+        snapshotId: String,
+        resolvedElement: DetectedElement?
+    ) async throws -> ClickDispatchResult {
+        guard let modifiers = self.modifiers?.values.map(Self.pointerModifier),
+              !modifiers.contains(where: { $0 == nil })
+        else {
+            throw ValidationError("--modifiers accepts only cmd, shift, option, and ctrl")
+        }
+        let canonicalModifiers = modifiers.compactMap(\.self)
+        let authority: SnapshotTargetReceipt.CoordinateAuthority
+        do {
+            authority = try await SnapshotTargetReceiptPlanner(
+                snapshots: self.services.snapshots
+            ).plan(snapshotID: snapshotId).receipt.requireCoordinateAuthority()
+        } catch {
+            throw ValidationError("Modifier-click requires one fresh exact-window screenshot snapshot")
+        }
+        let point: CGPoint
+        switch target {
+        case let .coordinates(coordinates):
+            point = coordinates
+        case .elementId, .query:
+            guard let resolvedElement else {
+                throw ValidationError("Modifier-click target could not be resolved in its snapshot")
+            }
+            point = try await InteractionTargetPointResolver.elementCenterResolution(
+                element: resolvedElement,
+                elementId: resolvedElement.id,
+                snapshotId: snapshotId,
+                snapshots: self.services.snapshots
+            ).point
+        }
+        guard authority.sourceBounds.contains(point), authority.target.bounds.contains(point) else {
+            throw ValidationError("Modifier-click point is outside the captured exact window")
+        }
+        guard let service = self.services.automation as? any ForegroundModifierClickServiceProtocol,
+              service.supportsForegroundModifierClick
+        else {
+            throw ValidationError("This automation host does not support foreground modifier-click")
+        }
+        let result = try await SnapshotMutationCoordinator.perform(
+            snapshotId: snapshotId,
+            snapshots: self.services.snapshots,
+            operation: {
+                self.resolvedRuntime.beginInteractionMutation()
+                return try await service.foregroundModifierClickWithOutcome(
+                    ForegroundModifierClickRequest(
+                        point: point,
+                        clickType: self.requestedClickType,
+                        modifiers: canonicalModifiers,
+                        windowIdentity: authority.target.identity,
+                        windowBounds: authority.target.bounds
+                    )
+                )
+            },
+            outcome: { $0.outcome }
+        )
+        _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+            result,
+            policy: .confirmedOrDispatched(requiring: .foreground),
+            targetRequirement: .exact(DesktopTargetIdentity(exactWindow: authority.target)),
+            operation: "Foreground modifier-click"
+        )
+        return ClickDispatchResult(
+            actionResult: UIAutomationActionResult(
+                payload: (),
+                outcome: result.outcome,
+                targetIdentity: result.targetIdentity
+            ),
+            modifierClickResult: result.payload
+        )
+    }
+
+    private static func pointerModifier(_ value: String) -> PointerModifier? {
+        switch value {
+        case "cmd": .command
+        case "shift": .shift
+        case "option": .option
+        case "ctrl": .control
+        default: nil
+        }
     }
 
     private func performClick(

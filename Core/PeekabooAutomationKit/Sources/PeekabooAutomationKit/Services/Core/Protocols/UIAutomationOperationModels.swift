@@ -295,6 +295,83 @@ public struct ExactWindowKeyboardTarget: Sendable, Codable, Equatable {
     }
 }
 
+/// One exact-window background text operation that first establishes renderer focus at a
+/// capture-owned point, then sends the requested keyboard actions without releasing the
+/// target's desktop-operation lane.
+public struct ExactWindowPixelFocusTypeRequest: Sendable, Codable {
+    public let point: CGPoint
+    public let actions: [TypeAction]
+    public let cadence: TypingCadence
+    public let snapshotID: String
+    public let windowIdentity: WindowMutationIdentity
+    public let windowBounds: CGRect
+
+    public init(
+        point: CGPoint,
+        actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotID: String,
+        windowIdentity: WindowMutationIdentity,
+        windowBounds: CGRect)
+    {
+        self.point = point
+        self.actions = actions
+        self.cadence = cadence
+        self.snapshotID = snapshotID
+        self.windowIdentity = windowIdentity
+        self.windowBounds = windowBounds
+    }
+}
+
+public enum PointerModifier: String, Sendable, Codable, CaseIterable {
+    case command
+    case shift
+    case option
+    case control
+}
+
+public enum SharedDesktopRestorationStatus: String, Sendable, Codable, Equatable {
+    case notNeeded = "not_needed"
+    case restored
+    /// The state no longer matched Peekaboo's last write, so newer user or application state won.
+    case preservedNewerState = "preserved_newer_state"
+}
+
+public struct ForegroundModifierClickRequest: Sendable, Codable {
+    public let point: CGPoint
+    public let clickType: ClickType
+    public let modifiers: [PointerModifier]
+    public let windowIdentity: WindowMutationIdentity
+    public let windowBounds: CGRect
+
+    public init(
+        point: CGPoint,
+        clickType: ClickType,
+        modifiers: [PointerModifier],
+        windowIdentity: WindowMutationIdentity,
+        windowBounds: CGRect)
+    {
+        self.point = point
+        self.clickType = clickType
+        self.modifiers = modifiers
+        self.windowIdentity = windowIdentity
+        self.windowBounds = windowBounds
+    }
+}
+
+public struct ForegroundModifierClickResult: Sendable, Codable, Equatable {
+    public let cursorRestoration: SharedDesktopRestorationStatus
+    public let focusRestoration: SharedDesktopRestorationStatus
+
+    public init(
+        cursorRestoration: SharedDesktopRestorationStatus,
+        focusRestoration: SharedDesktopRestorationStatus)
+    {
+        self.cursorRestoration = cursorRestoration
+        self.focusRestoration = focusRestoration
+    }
+}
+
 // TypeAction is now in PeekabooFoundation
 
 // SpecialKey is now in PeekabooFoundation

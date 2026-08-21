@@ -160,6 +160,21 @@ extension UIAutomationService {
             outcome: summary.executionResult.outcome)
     }
 
+    public func typeActionsByFocusingPixelWithOutcome(
+        _ request: ExactWindowPixelFocusTypeRequest) async throws -> UIAutomationActionResult<TypeResult>
+    {
+        let validator: @MainActor @Sendable () async throws -> Void = {
+            try await self.requireExactWindowKeyboardFocus(
+                expectedWindowIdentity: request.windowIdentity,
+                expectedWindowBounds: request.windowBounds)
+        }
+        return try await self.normalizingSnapshotErrors {
+            try await self.typeService.typeActionsByFocusingPixel(
+                request,
+                deliveryValidator: validator)
+        }
+    }
+
     public func typeActions(
         _ actions: [TypeAction],
         cadence: TypingCadence,

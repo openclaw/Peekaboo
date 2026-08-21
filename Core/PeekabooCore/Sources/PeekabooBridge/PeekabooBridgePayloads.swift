@@ -144,6 +144,22 @@ public struct PeekabooBridgeExactWindowTypeActionsRequest: Codable, Sendable {
     }
 }
 
+public struct PeekabooBridgeExactWindowPixelFocusTypeRequest: Codable, Sendable {
+    public let request: ExactWindowPixelFocusTypeRequest
+
+    public init(request: ExactWindowPixelFocusTypeRequest) {
+        self.request = request
+    }
+}
+
+public struct PeekabooBridgeForegroundModifierClickRequest: Codable, Sendable {
+    public let request: ForegroundModifierClickRequest
+
+    public init(request: ForegroundModifierClickRequest) {
+        self.request = request
+    }
+}
+
 public struct PeekabooBridgeSetValueRequest: Codable, Sendable {
     public let target: String
     public let value: UIElementValue

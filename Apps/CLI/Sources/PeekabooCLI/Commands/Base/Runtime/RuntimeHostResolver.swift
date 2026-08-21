@@ -763,6 +763,14 @@ enum RuntimeHostResolver {
         let targetedType = BridgeCapabilityPolicy.targetedTypeAvailability(for: handshake)
         let targetedClick = BridgeCapabilityPolicy.targetedClickAvailability(for: handshake)
         let supportsExactKeyboard = BridgeCapabilityPolicy.supportsExactWindowTargetedKeyboard(for: handshake)
+        let supportsPixelFocusTyping = BridgeCapabilityPolicy.supportsOperation(
+            .exactWindowPixelFocusType,
+            for: handshake
+        )
+        let supportsForegroundModifierClick = BridgeCapabilityPolicy.supportsOperation(
+            .foregroundModifierClick,
+            for: handshake
+        )
         let observationCapabilities = BridgeCapabilityPolicy.observationCapabilities(
             for: handshake,
             options: options
@@ -797,6 +805,14 @@ enum RuntimeHostResolver {
             exactWindowTargetedKeyboardUnavailableReason: supportsExactKeyboard
                 ? nil
                 : "Bridge host lacks atomic exact-window keyboard delivery",
+            supportsExactWindowPixelFocusTyping: supportsPixelFocusTyping,
+            exactWindowPixelFocusTypingUnavailableReason: supportsPixelFocusTyping
+                ? nil
+                : "Bridge host lacks atomic exact-window pixel-focus typing",
+            supportsForegroundModifierClick: supportsForegroundModifierClick,
+            foregroundModifierClickUnavailableReason: supportsForegroundModifierClick
+                ? nil
+                : "Bridge host lacks foreground modifier-click",
             supportsExactWindowHeldPointerLifecycle:
             BridgeCapabilityPolicy.supportsExactWindowHeldPointerLifecycle(for: handshake),
             supportsPostEventPermissionRequest: BridgeCapabilityPolicy.supportsPostEventPermissionRequest(

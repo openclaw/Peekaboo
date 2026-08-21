@@ -49,6 +49,29 @@ extension ClickCommand: PreRuntimeValidatingCommand {
             )
         }
 
+        if self.modifiers != nil {
+            guard self.focusOptions.foreground else {
+                throw ValidationError("--modifiers requires explicit --foreground consent")
+            }
+            guard !self.target.hasAnyTarget else {
+                throw ValidationError(
+                    "--modifiers derives its exact target from --snapshot; remove app/window selectors"
+                )
+            }
+            guard let snapshot = self.snapshot?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !snapshot.isEmpty,
+                  snapshot.lowercased() != "latest"
+            else {
+                throw ValidationError("--modifiers requires one explicit fresh screenshot --snapshot ID")
+            }
+            guard self.modifiers?.values.allSatisfy({ $0 != "fn" }) == true else {
+                throw ValidationError("--modifiers supports cmd, shift, option, and ctrl")
+            }
+            guard !self.longPress else {
+                throw ValidationError("--modifiers cannot be combined with --long-press")
+            }
+        }
+
         if self.focusOptions.backgroundDeliveryExplicitlyRequested &&
             self.focusOptions.hasForegroundFocusOverrides {
             throw ValidationError("--focus-background cannot be combined with focus options")

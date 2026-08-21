@@ -43,6 +43,7 @@ extension ClickCommand: CommanderBindableCommand {
         self.middle = values.flag("middle")
         self.triple = values.flag("triple")
         self.longPress = values.flag("longPress")
+        self.modifiers = try values.decodeOption("modifiers", as: CLIModifierList.self)
         self.focusOptions = try values.makeFocusOptions(includeBackgroundDelivery: true)
     }
 }
@@ -79,6 +80,11 @@ extension ClickCommand: CommanderSignatureProviding {
                     "waitFor",
                     help: "Maximum wait; bare values are milliseconds, or use ms/s suffixes",
                     long: "wait-for"
+                ),
+                .commandOption(
+                    "modifiers",
+                    help: "Foreground modifier keys: cmd,shift,option,ctrl",
+                    long: "modifiers"
                 ),
             ],
             flags: [

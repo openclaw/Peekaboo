@@ -21,6 +21,7 @@ read_when:
 | `--wait-for <duration>` | Timeout while waiting for the element (default `5s`; bare values are milliseconds). |
 | `--double` / `--triple` / `--right` / `--middle` | Select one alternate click kind. Background middle/triple delivery requires a fresh exact-window snapshot and uses native window-routed events; `--foreground` remains available for shared-pointer behavior. Click-kind flags are mutually exclusive. |
 | `--long-press` | Send mouse-down, hold stationary for 1.2 seconds, then mouse-up. This shared-pointer gesture requires explicit `--foreground` and cannot be combined with another click-kind flag or `--focus-background`. |
+| `--modifiers <keys>` | Hold a comma-separated set of `cmd`, `shift`, `option`, and `ctrl` for one exact foreground click. Requires explicit `--foreground` and a non-`latest` screenshot snapshot; `fn`, long press, and competing app/window selectors are refused. |
 | `--foreground` | Focus target and send a foreground mouse click. Focus flags require this explicit mode. |
 | Focus flags | `--no-auto-focus`, `--focus-timeout`, `--focus-retry-count`, `--space-switch`, `--bring-to-current-space` (foreground mode only; see `FocusCommandOptions`). |
 | `--focus-background` | Legacy alias for the default background delivery. Use `--app`, `--pid`, `--window-id`, or a snapshot with process metadata. |
@@ -38,6 +39,7 @@ read_when:
 - A background `AXPress` that does not complete within the delivery grace period is a failure, not success. Generic layout/web containers are never accepted as press targets even if an app advertises `AXPress` on them.
 - Process-targeted element clicks carry the resolved app's process-generation receipt through Bridge and native dispatch. A recycled PID is refused before mutation; generation drift after dispatch is reported as retry-unsafe and requires a fresh observation. Remote process-only delivery requires Bridge protocol 1.22 or newer; exact-window receipts keep their existing protocol contract.
 - **Foreground** (`--foreground`) focuses the target first (via `ensureFocused`, hopping Spaces if needed) and then synthesizes a real mouse click at the resolved screen point — element and query targets are resolved to their adjusted center and clicked with genuine mouse events, so double, triple, right, and middle semantics match hardware clicks. If the target app is still not frontmost after the focus step, the command fails rather than clicking into whichever app is in front.
+- Modifier-click (`--modifiers ... --foreground`) is one atomic shared-desktop operation. Peekaboo preflights the snapshot's exact process generation, window ID, bounds, and point before focusing; posts one prebuilt modifier-bearing HID mouse sequence without changing shared keyboard state; then restores the prior cursor only if it still owns the click position and restores prior focus only if its target remains frontmost. Newer user or application state wins those compare-and-swap checks and is reported as `preserved_newer_state` instead of being overwritten.
 - Long press (`--long-press --foreground`) uses the foreground path and emits a stationary mouse-down/1.2-second hold/mouse-up sequence. Peekaboo rejects the gesture before focus or pointer dispatch when `--foreground` is absent. It does not synthesize drag or micro-move events, because those can cancel native long-press recognizers.
 - Background coordinate clicks require `--snapshot` from a fresh exact-window `see`. The captured PID, window ID, process generation, and bounds are matched against any `--app`/`--pid`/window selector and revalidated immediately before dispatch. PID-only/app-only coordinates, empty snapshots, same-ID replacement windows, and moved bounds are refused before mutation. Without a capture reference, use explicit `--foreground` global coordinates.
 - Right-click (`--right`) issues `AXShowMenu` without waiting for the context menu to close: a successfully opened menu runs a nested tracking runloop in the target app, so the command reports success once the menu is up instead of timing out behind it.
@@ -73,6 +75,9 @@ peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 420,180 -
 
 # Trigger a SwiftUI long-press gesture
 peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 640,420 --long-press --foreground
+
+# Command-shift-click one captured element, then restore only state Peekaboo still owns
+peekaboo click --on "$ELEMENT_ID" --snapshot "$SNAPSHOT_ID" --foreground --modifiers cmd,shift
 
 # Click 20,40 inside the freshly captured window
 peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 20,40

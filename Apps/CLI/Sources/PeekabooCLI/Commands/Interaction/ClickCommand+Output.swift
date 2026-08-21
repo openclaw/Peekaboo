@@ -15,6 +15,9 @@ struct ClickResult: Codable {
     let targetPoint: InteractionTargetPointDiagnostics?
     let deliveryMode: String?
     let clickType: String?
+    let modifiers: [String]?
+    let cursorRestoration: String?
+    let focusRestoration: String?
 
     init(
         clickedElement: String?,
@@ -29,7 +32,10 @@ struct ClickResult: Codable {
         screenCoordinates: CGPoint? = nil,
         targetPoint: InteractionTargetPointDiagnostics? = nil,
         deliveryMode: String? = nil,
-        clickType: String? = nil
+        clickType: String? = nil,
+        modifiers: [String]? = nil,
+        cursorRestoration: String? = nil,
+        focusRestoration: String? = nil
     ) {
         self.clickedElement = clickedElement
         self.clickLocation = ["x": clickLocation.x, "y": clickLocation.y]
@@ -44,5 +50,8 @@ struct ClickResult: Codable {
         self.targetPoint = targetPoint
         self.deliveryMode = deliveryMode
         self.clickType = clickType
+        self.modifiers = modifiers
+        self.cursorRestoration = cursorRestoration
+        self.focusRestoration = focusRestoration
     }
 }

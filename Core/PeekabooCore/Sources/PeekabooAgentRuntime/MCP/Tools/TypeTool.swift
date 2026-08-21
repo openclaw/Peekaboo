@@ -47,6 +47,16 @@ public struct TypeTool: MCPTool {
                 description: backgroundOnly
                     ? "Required fresh exact non-dialog snapshot ID from `see` or `inspect_ui`."
                     : "Optional snapshot ID from `see` or `inspect_ui`."),
+            "coords": SchemaBuilder.string(description: """
+            Optional exact-window focus point in x,y form. It is mutually exclusive with on and requires a fresh
+            screenshot snapshot. Peekaboo clicks this point in the background and types under one exact target lane.
+            """),
+            "coordinate_space": SchemaBuilder.string(
+                description: "Coordinate basis for coords. Defaults to global_display_points.",
+                enum: CaptureCoordinateSpace.allCases.map(\.rawValue)),
+            "coordinate_reference": SchemaBuilder.string(description: """
+            Optional capture reference from see. When supplied it must equal snapshot.
+            """),
             "delay": SchemaBuilder.integer(
                 description: "Optional. Delay between keystrokes in milliseconds (linear profile). Default: 0.",
                 default: 0),
@@ -136,6 +146,19 @@ public struct TypeTool: MCPTool {
             windowIndex: arguments.validatedInt("window_index"),
             windowId: arguments.validatedInt("window_id"))
 
+        let coordinateText = Self.nonEmpty(arguments.getString("coords"))
+        let coordinateReference = Self.nonEmpty(arguments.getString("coordinate_reference"))
+        let coordinateSpace: CaptureCoordinateSpace?
+        if let rawSpace = Self.nonEmpty(arguments.getString("coordinate_space")) {
+            guard let parsed = CaptureCoordinateSpace(rawValue: rawSpace) else {
+                throw TypeToolValidationError(
+                    "Invalid coordinate_space '\(rawSpace)'. Use global_display_points, image_pixels, or normalized.")
+            }
+            coordinateSpace = parsed
+        } else {
+            coordinateSpace = nil
+        }
+
         let request = try TypeRequest(
             text: arguments.getString("text"),
             elementId: arguments.getString("on"),
@@ -145,7 +168,10 @@ public struct TypeTool: MCPTool {
             wordsPerMinute: wordsPerMinute,
             clearField: arguments.getBool("clear") ?? false,
             foreground: arguments.getBool("foreground") ?? false,
-            target: target)
+            target: target,
+            coordinateText: coordinateText,
+            coordinateSpace: coordinateSpace,
+            coordinateReference: coordinateReference)
 
         guard request.hasActions else {
             throw TypeToolValidationError("Must specify text to type or clear=true")
@@ -159,7 +185,44 @@ public struct TypeTool: MCPTool {
             throw TypeToolValidationError("wpm is only supported with the human profile")
         }
 
+        try Self.validateCoordinateRequest(request)
+
         return request
+    }
+
+    private static func validateCoordinateRequest(_ request: TypeRequest) throws {
+        guard request.coordinateText != nil else {
+            if request.coordinateSpace != nil || request.coordinateReference != nil {
+                throw TypeToolValidationError("coordinate_space and coordinate_reference require coords")
+            }
+            return
+        }
+        guard request.elementId == nil else {
+            throw TypeToolValidationError("Use either on or coords for type, not both")
+        }
+        guard !request.foreground else {
+            throw TypeToolValidationError(
+                "Pixel-focus typing is an exact-window background operation; remove foreground=true")
+        }
+        guard !request.target.hasTarget else {
+            throw TypeToolValidationError(
+                "Pixel-focus typing derives its exact target from snapshot and cannot include app or window selectors")
+        }
+        guard let snapshotID = nonEmpty(request.snapshotId) else {
+            throw TypeToolValidationError(
+                "Pixel-focus typing requires a fresh exact-window screenshot snapshot",
+                refusalReason: .targetUnavailable)
+        }
+        if let coordinateReference = request.coordinateReference, coordinateReference != snapshotID {
+            throw TypeToolValidationError("snapshot and coordinate_reference must identify the same capture")
+        }
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !normalized.isEmpty
+        else { return nil }
+        return normalized
     }
 
     private func parseProfile(_ raw: String?, wordsPerMinute: Int?) throws -> TypingProfile {
@@ -182,13 +245,28 @@ public struct TypeTool: MCPTool {
         let snapshotContext = try await self.resolveSnapshotContext(
             for: request,
             targetContext: targetContext)
+        let actions = try self.buildActions(for: request)
+        if request.coordinateText != nil {
+            let target = try await self.resolvePixelFocusTarget(
+                request: request,
+                snapshot: snapshotContext)
+            mutationTracker.snapshotId = target.snapshotID
+            mutationTracker.targetWindowId = target.exactWindow.identity.windowID
+            mutationTracker.delivery = .init(mechanism: .composite, mode: .background)
+            mutationTracker.reportsCharactersTyped = true
+            return try await self.performPixelFocusType(
+                request: request,
+                actions: actions,
+                target: target,
+                startedAt: startTime,
+                mutationTracker: mutationTracker)
+        }
 
         let plannedTarget = try await self.backgroundKeyboardTarget(
             request: request,
             snapshot: snapshotContext)
         let targetProcessIdentifier = plannedTarget?.processIdentifier.map(Int.init)
         let targetWindowID = plannedTarget?.exactWindow?.identity.windowID
-        let actions = try self.buildActions(for: request)
         let effectiveSnapshotId = snapshotContext?.id
         mutationTracker.snapshotId = effectiveSnapshotId
         mutationTracker.targetWindowId = targetWindowID
@@ -322,6 +400,123 @@ public struct TypeTool: MCPTool {
             actionResult: typeActionResult,
             focusCompleted: focusResult.completed,
             sequenceResolution: sequenceResolution))
+    }
+
+    private func resolvePixelFocusTarget(
+        request: TypeRequest,
+        snapshot: UISnapshot?) async throws -> TypePixelFocusTarget
+    {
+        guard let rawCoordinates = request.coordinateText,
+              let snapshotID = request.snapshotId,
+              let snapshot,
+              snapshot.id == snapshotID
+        else {
+            throw TypeToolValidationError(
+                "Pixel-focus typing requires its exact screenshot snapshot",
+                refusalReason: .targetUnavailable)
+        }
+        let parts = rawCoordinates.split(separator: ",").map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard parts.count == 2,
+              let x = Double(parts[0]),
+              let y = Double(parts[1])
+        else {
+            throw TypeToolValidationError("Invalid coords. Use x,y, for example 100,200")
+        }
+        let receipt: SnapshotTargetReceipt
+        do {
+            receipt = try await SnapshotTargetReceiptPlanner(
+                snapshots: self.context.snapshots).plan(snapshotID: snapshotID).receipt
+        } catch {
+            throw TypeToolValidationError(
+                "Pixel-focus snapshot has no authoritative exact-window receipt",
+                refusalReason: .targetUnavailable)
+        }
+        let authority: SnapshotTargetReceipt.CoordinateAuthority
+        do {
+            authority = try receipt.requireCoordinateAuthority()
+        } catch {
+            throw TypeToolValidationError(
+                "Pixel-focus snapshot has no capture-owned coordinate authority",
+                refusalReason: .targetUnavailable)
+        }
+        let mirroredIdentity: DesktopTargetIdentity
+        do {
+            mirroredIdentity = try snapshot.targetReceipt().requireIdentity()
+        } catch {
+            throw TypeToolValidationError(
+                "Tool snapshot has inconsistent exact-window ownership",
+                refusalReason: .targetUnavailable)
+        }
+        guard mirroredIdentity == DesktopTargetIdentity(exactWindow: authority.target) else {
+            throw TypeToolValidationError(
+                "Tool and automation snapshots disagree about the pixel-focus target",
+                refusalReason: .targetUnavailable)
+        }
+        let point: CGPoint
+        do {
+            point = try CaptureCoordinateMapper.globalPoint(
+                for: CGPoint(x: x, y: y),
+                in: request.coordinateSpace ?? .globalDisplayPoints,
+                context: authority.context)
+        } catch {
+            throw TypeToolValidationError(error.localizedDescription)
+        }
+        guard authority.sourceBounds.contains(point), authority.target.bounds.contains(point) else {
+            throw TypeToolValidationError(
+                "Pixel-focus coordinates are outside the captured exact window",
+                refusalReason: .targetUnavailable)
+        }
+        return TypePixelFocusTarget(
+            point: point,
+            snapshotID: snapshotID,
+            exactWindow: authority.target)
+    }
+
+    @MainActor
+    private func performPixelFocusType(
+        request: TypeRequest,
+        actions: [TypeAction],
+        target: TypePixelFocusTarget,
+        startedAt: Date,
+        mutationTracker _: TypeMutationTracker) async throws -> ToolResponse
+    {
+        guard let service = self.context.automation as? any ExactWindowPixelFocusTypingServiceProtocol,
+              service.supportsExactWindowPixelFocusTyping
+        else {
+            throw TypeToolValidationError(
+                "This automation host does not support atomic exact-window pixel-focus typing.",
+                refusalReason: .runtimeIncompatible)
+        }
+        let actionResult = try await service.typeActionsByFocusingPixelWithOutcome(
+            ExactWindowPixelFocusTypeRequest(
+                point: target.point,
+                actions: actions,
+                cadence: request.cadence,
+                snapshotID: target.snapshotID,
+                windowIdentity: target.exactWindow.identity,
+                windowBounds: target.exactWindow.bounds))
+        let expectedIdentity = DesktopTargetIdentity(exactWindow: target.exactWindow)
+        _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+            actionResult,
+            policy: .confirmedOrDispatched(requiring: .background),
+            targetRequirement: .exact(expectedIdentity),
+            operation: "Pixel-focus typing")
+        var sequence = DesktopActionSequenceAccumulator()
+        if let outcome = actionResult.outcome {
+            sequence.record(.outcome(outcome))
+        }
+        return try await self.successResponse(TypeSuccessInput(
+            request: request,
+            targetContext: nil,
+            targetProcessIdentifier: Int(target.exactWindow.identity.ownerProcessIdentifier),
+            targetWindowID: target.exactWindow.identity.windowID,
+            snapshotID: target.snapshotID,
+            startedAt: startedAt,
+            actionResult: actionResult,
+            focusCompleted: true,
+            sequenceResolution: sequence.successResolution()))
     }
 
     @MainActor

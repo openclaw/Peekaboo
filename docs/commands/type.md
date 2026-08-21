@@ -17,6 +17,8 @@ that snapshot. Use `press` for standalone keys or chords.
 | --- | --- |
 | `[text]` | Optional positional string; supports escape sequences like `\n` (Return) and `\t` (Tab). |
 | `--snapshot <id>` | Target a specific snapshot. Background-only Agent/MCP requires an explicit fresh exact non-dialog ID and does not infer `latest`. |
+| `--at x,y` | Atomically focus one pixel in the exact captured window and type without activating it. Requires an explicit non-`latest` screenshot snapshot and cannot be combined with target selectors or `--foreground`. |
+| `--coordinate-space <space>` | Interpret `--at` as `global_display_points` (default), `image_pixels`, or `normalized` coordinates from that snapshot. |
 | `--delay <duration>` | Time between synthetic keystrokes (default `0`; bare values are milliseconds). |
 | `--wpm <80-220>` | Enable human-typing cadence at the chosen words per minute. |
 | `--profile <linear|human>` | Switch between linear (default, honors `--delay`) and human (honors `--wpm`). |
@@ -29,6 +31,7 @@ that snapshot. Use `press` for standalone keys or chords.
 - **Background** is the default when Peekaboo can resolve a target from flags or snapshot metadata. Exact window/snapshot routes pin the process generation, window ID/bounds, and focused element without activating the app. App/PID routes upgrade when one eligible window exists and refuse when several are eligible.
 - **Background-only Agent/MCP** requires an explicit fresh exact non-dialog `snapshot`. It refuses implicit-latest,
   targetless, app/PID/window-only, and snapshot-plus-selector requests before dispatch.
+- **Pixel-focus background typing** (`--at`) derives one exact process/window/bounds target from the named screenshot snapshot. Its background focus click and all keyboard units share one process lane and one receipt; target drift before any unit is retry-safe, while a completed click or typed prefix is retry-unsafe and requires a fresh observation.
 - **Foreground** (`--foreground`) focuses the target first and sends normal/global keyboard input. Use it for apps or fields that only accept text in the focused key window, or when focus changes are desired.
 - If no target process can be resolved, `type` fails before sending input. Add `--foreground` only when global delivery is intentional.
 
@@ -66,6 +69,9 @@ peekaboo type "status report ready" --app TextEdit --wpm 140
 
 # Linear profile with fixed 10ms delay
 peekaboo type "fast" --app TextEdit --profile linear --delay 10ms
+
+# Focus the captured pixel and type atomically without activating the window
+peekaboo type "hello" --at 320,180 --coordinate-space image_pixels --snapshot "$SNAPSHOT_ID"
 ```
 
 ## Troubleshooting

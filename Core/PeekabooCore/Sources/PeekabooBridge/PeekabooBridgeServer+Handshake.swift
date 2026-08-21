@@ -342,6 +342,16 @@ extension PeekabooBridgeServer {
             operations.remove(.exactWindowTargetedTypeActions)
             operations.remove(.exactWindowTargetedHotkey)
         }
+        if (self.services.automation as? any ExactWindowPixelFocusTypingServiceProtocol)?
+            .supportsExactWindowPixelFocusTyping != true
+        {
+            operations.remove(.exactWindowPixelFocusType)
+        }
+        if (self.services.automation as? any ForegroundModifierClickServiceProtocol)?
+            .supportsForegroundModifierClick != true
+        {
+            operations.remove(.foregroundModifierClick)
+        }
         if (self.services.automation as? any ExactWindowHeldPointerLifecycleServiceProtocol)?
             .supportsExactWindowHeldPointerLifecycle != true
         {

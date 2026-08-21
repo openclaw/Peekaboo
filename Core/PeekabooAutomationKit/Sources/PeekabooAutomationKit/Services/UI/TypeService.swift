@@ -725,3 +725,127 @@ public final class TypeService {
         try BackgroundInputDriver.typeCharacter(char, targetProcessIdentifier: targetProcessIdentifier)
     }
 }
+
+extension TypeService {
+    func typeActionsByFocusingPixel(
+        _ request: ExactWindowPixelFocusTypeRequest,
+        deliveryValidator: @escaping @MainActor @Sendable () async throws -> Void) async throws
+        -> UIAutomationActionResult<TypeResult>
+    {
+        let exactWindow = try UIAutomationTarget.ExactWindow(
+            identity: request.windowIdentity,
+            bounds: request.windowBounds)
+        let automationTarget = UIAutomationTarget.exactWindow(exactWindow)
+        let captureReceipt = DesktopOperationPlan.CaptureReceipt(
+            snapshotID: request.snapshotID,
+            target: automationTarget)
+        var payloadSummary: TypeActionPayloadSummary?
+        var sequenceResolution: DesktopActionSequenceAccumulator.Resolution?
+
+        let plan = try DesktopOperationPlan(
+            verb: .type,
+            selector: .coordinates(request.point),
+            captureReceipt: captureReceipt,
+            strategy: .synthOnly,
+            prepare: {
+                guard request.point.x.isFinite, request.point.y.isFinite else {
+                    throw PeekabooError.invalidInput("Pixel-focus coordinates must be finite")
+                }
+                guard !request.actions.isEmpty else {
+                    throw PeekabooError.invalidInput("Pixel-focus typing requires at least one typing action")
+                }
+                let receiptPlan = try await SnapshotTargetReceiptPlanner(
+                    snapshots: self.snapshotManager).plan(snapshotID: request.snapshotID)
+                let authority = try receiptPlan.receipt.requireCoordinateAuthority()
+                guard authority.target == exactWindow,
+                      authority.sourceBounds.contains(request.point),
+                      exactWindow.bounds.contains(request.point)
+                else {
+                    throw PeekabooError.snapshotStale(
+                        "Pixel-focus coordinates no longer match the exact capture-time window receipt")
+                }
+            },
+            action: nil,
+            synthesis: DesktopOperationPlan.SynthesisRoute {
+                var sequence = DesktopActionSequenceAccumulator()
+                do {
+                    let click = try await self.clickService.clickOwned(
+                        target: .coordinates(request.point),
+                        clickType: .single,
+                        snapshotId: request.snapshotID,
+                        automationTarget: automationTarget,
+                        validatesProcessIdentity: true)
+                    sequence.record(.reportedOutcome(
+                        click.outcome,
+                        defaultDispatchedUnitCount: .one))
+
+                    try await deliveryValidator()
+                    let typed = try await self.performSyntheticTypeActions(
+                        request.actions,
+                        cadence: request.cadence,
+                        snapshotId: request.snapshotID,
+                        targetProcessIdentifier: request.windowIdentity.ownerProcessIdentifier,
+                        deliveryValidator: deliveryValidator)
+                    guard let typingUnits = DesktopActionOutcome.DispatchUnitCount(typed.result.keyPresses) else {
+                        throw PeekabooError.invalidInput("Pixel-focus typing produced no keyboard input")
+                    }
+                    payloadSummary = typed
+                    sequence.record(.dispatched(
+                        route: .local,
+                        delivery: automationTarget.keyboardDelivery,
+                        unitCount: typingUnits))
+                    let resolution = sequence.successResolution()
+                    sequenceResolution = resolution
+                    guard let outcome = resolution.outcome else {
+                        throw DesktopActionFailure.indeterminate(
+                            delivery: automationTarget.keyboardDelivery,
+                            evidence: .completionUnknown,
+                            unitCount: resolution.mutationDisposition.unitCount,
+                            message: "Pixel-focus typing completed without a composable action outcome.",
+                            hint: "Observe the exact target before deciding whether to retry.")
+                    }
+                    return outcome
+                } catch is CancellationError {
+                    if let failure = sequence.cancellationFailure(
+                        fallbackRoute: .local,
+                        message: "Pixel-focus typing was cancelled after dispatch began.",
+                        hint: "Observe the exact target before deciding whether to retry.",
+                        causeDescription: "Pixel-focus typing task cancelled")
+                    {
+                        throw failure
+                    }
+                    throw CancellationError()
+                } catch let error as InputDeliveryIndeterminateError {
+                    throw sequence.failure(
+                        combining: error.desktopActionFailure(delivery: automationTarget.keyboardDelivery),
+                        message: "Pixel-focus typing stopped after a click or keyboard prefix was dispatched.",
+                        hint: "Observe the exact target before deciding whether to retry.")
+                } catch let failure as DesktopActionFailure {
+                    throw sequence.failure(
+                        combining: failure,
+                        message: "Pixel-focus typing did not complete after its focus click.",
+                        hint: "Observe the exact target before deciding whether to retry.")
+                } catch {
+                    guard sequence.mutationDisposition.mutationDispatched else { throw error }
+                    let leaf = DesktopActionFailure.preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: error.localizedDescription)
+                    throw sequence.failure(
+                        combining: leaf,
+                        message: "Pixel-focus typing could not prove its destination after clicking.",
+                        hint: "Observe the exact target before deciding whether to retry.",
+                        causeDescription: error.localizedDescription)
+                }
+            },
+            finalize: self.operationFinalizer)
+
+        _ = try await self.desktopOperationExecutor.executeWithTargetIdentity(plan)
+        guard let payloadSummary, sequenceResolution != nil else {
+            throw PeekabooError.operationError(message: "Pixel-focus typing produced no result")
+        }
+        return UIAutomationActionResult(
+            payload: payloadSummary.result,
+            outcome: sequenceResolution?.outcome,
+            targetIdentity: DesktopTargetIdentity(exactWindow: exactWindow))
+    }
+}

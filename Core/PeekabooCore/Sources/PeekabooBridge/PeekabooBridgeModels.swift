@@ -63,6 +63,8 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case typeActions
     case targetedTypeActions
     case exactWindowTargetedTypeActions
+    case exactWindowPixelFocusType
+    case foregroundModifierClick
     case setValue
     case performAction
     case scroll
@@ -198,6 +200,10 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
             compatible.remove(.relaunchApplicationWithOptions)
             compatible.remove(.invalidateImplicitLatestSnapshot)
             compatible.remove(.exactWindowTargetedClick)
+        }
+        if version < PeekabooBridgeConstants.composedInputParityVersion {
+            compatible.remove(.exactWindowPixelFocusType)
+            compatible.remove(.foregroundModifierClick)
         }
         if version < PeekabooBridgeProtocolVersion(major: 1, minor: 11) {
             compatible.remove(.targetedScroll)

@@ -416,6 +416,31 @@ public protocol ExactWindowFocusedElementServiceProtocol: UIAutomationServicePro
         expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<FocusedElementIdentity>
 }
 
+/// Atomically focuses one capture-owned pixel in an exact background window and types into it.
+///
+/// The operation never activates the application or falls back to global input. Providers must
+/// retain one exact-target lane across the focus click, focused-window proof, and every keyboard
+/// unit, and must preserve any completed prefix as retry-unsafe failure state.
+@MainActor
+public protocol ExactWindowPixelFocusTypingServiceProtocol: UIAutomationServiceProtocol {
+    var supportsExactWindowPixelFocusTyping: Bool { get }
+    var exactWindowPixelFocusTypingUnavailableReason: String? { get }
+
+    func typeActionsByFocusingPixelWithOutcome(
+        _ request: ExactWindowPixelFocusTypeRequest) async throws -> UIAutomationActionResult<TypeResult>
+}
+
+/// Explicit foreground modifier-click with exact target preflight and compare-and-swap restoration.
+@MainActor
+public protocol ForegroundModifierClickServiceProtocol: UIAutomationServiceProtocol {
+    var supportsForegroundModifierClick: Bool { get }
+    var foregroundModifierClickUnavailableReason: String? { get }
+
+    func foregroundModifierClickWithOutcome(
+        _ request: ForegroundModifierClickRequest) async throws
+        -> UIAutomationActionResult<ForegroundModifierClickResult>
+}
+
 /// Atomically validates an exact background window's focused element and dispatches keyboard input.
 @MainActor
 public protocol ExactWindowTargetedKeyboardServiceProtocol: UIAutomationServiceProtocol {

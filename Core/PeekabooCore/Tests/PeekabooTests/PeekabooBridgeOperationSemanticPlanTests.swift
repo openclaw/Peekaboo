@@ -27,7 +27,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
 
         // This count is intentionally reviewed whenever the wire enum grows. The exhaustive
         // policy switches also make a missing classification a compile error.
-        #expect(operations.count == 111)
+        #expect(operations.count == 113)
 
         func partition<Value: Equatable>(_ values: [Value], by keyPath: KeyPath<Semantics.OperationPolicy, Value>) {
             let groups = values.map { expected in
@@ -163,6 +163,113 @@ struct PeekabooBridgeOperationSemanticPlanTests {
                 evidence: .deliveryAccepted,
                 unitCount: .one),
             request: scroll))
+    }
+
+    @Test
+    func `composed input parity binds response family delivery units and exact target`() async throws {
+        let bounds = CGRect(x: 10, y: 20, width: 300, height: 200)
+        let identity = WindowMutationIdentity(
+            windowID: 71,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: 1001,
+            capturedBounds: bounds)
+        let target = PeekabooBridgeOperationTargetReceipt.window(identity)
+
+        let pixelRequest = PeekabooBridgeRequest.exactWindowPixelFocusType(.init(request: .init(
+            point: CGPoint(x: 40, y: 50),
+            actions: [.text("ab"), .key(.return)],
+            cadence: .fixed(milliseconds: 0),
+            snapshotID: "snapshot",
+            windowIdentity: identity,
+            windowBounds: bounds)))
+        let pixelResult = TypeResult(totalCharacters: 2, keyPresses: 3)
+        let pixelOutcome = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .composite, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .init(4))
+        #expect(PeekabooBridgeOperationResultSemantics.responseMatchesContract(
+            .typeResult(pixelResult),
+            request: pixelRequest))
+        #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            pixelOutcome,
+            request: pixelRequest))
+
+        let projectedPixelRequest = PeekabooBridgeRequest.projectedAction(.init(request: pixelRequest))
+        let projectedPixelResponse = PeekabooBridgeResponse.projectedAction(.init(
+            response: .typeResult(pixelResult),
+            outcome: pixelOutcome.projection))
+        let validPixel = try await Self.makeBundle(
+            request: projectedPixelRequest,
+            response: projectedPixelResponse,
+            target: target,
+            outcome: pixelOutcome.projection)
+        try validPixel.bundle.validateIntegrity()
+
+        let missingClickOutcome = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .composite, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .init(3))
+        let missingClick = try await Self.makeBundle(
+            request: projectedPixelRequest,
+            response: .projectedAction(.init(
+                response: .typeResult(pixelResult),
+                outcome: missingClickOutcome.projection)),
+            target: target,
+            outcome: missingClickOutcome.projection)
+        #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+            try missingClick.bundle.validateIntegrity()
+        }
+
+        let modifierRequest = PeekabooBridgeRequest.foregroundModifierClick(.init(request: .init(
+            point: CGPoint(x: 40, y: 50),
+            clickType: .single,
+            modifiers: [.command, .shift],
+            windowIdentity: identity,
+            windowBounds: bounds)))
+        let modifierResult = ForegroundModifierClickResult(
+            cursorRestoration: .restored,
+            focusRestoration: .preservedNewerState)
+        let modifierOutcome = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .composite, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .init(6))
+        #expect(PeekabooBridgeOperationResultSemantics.responseMatchesContract(
+            .foregroundModifierClickResult(modifierResult),
+            request: modifierRequest))
+        #expect(!PeekabooBridgeOperationResultSemantics.responseMatchesContract(
+            .typeResult(pixelResult),
+            request: modifierRequest))
+        #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            modifierOutcome,
+            request: modifierRequest))
+
+        let projectedModifierRequest = PeekabooBridgeRequest.projectedAction(.init(request: modifierRequest))
+        let projectedModifierResponse = PeekabooBridgeResponse.projectedAction(.init(
+            response: .foregroundModifierClickResult(modifierResult),
+            outcome: modifierOutcome.projection))
+        let validModifier = try await Self.makeBundle(
+            request: projectedModifierRequest,
+            response: projectedModifierResponse,
+            target: target,
+            outcome: modifierOutcome.projection)
+        try validModifier.bundle.validateIntegrity()
+
+        for (request, response, outcome) in [
+            (projectedPixelRequest, projectedPixelResponse, pixelOutcome.projection),
+            (projectedModifierRequest, projectedModifierResponse, modifierOutcome.projection),
+        ] {
+            let conflicting = try await Self.makeBundle(
+                request: request,
+                response: response,
+                target: .global,
+                outcome: outcome)
+            #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+                try conflicting.bundle.validateIntegrity()
+            }
+        }
     }
 
     @Test

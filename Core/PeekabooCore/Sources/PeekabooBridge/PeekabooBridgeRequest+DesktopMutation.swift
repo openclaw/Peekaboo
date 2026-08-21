@@ -32,6 +32,8 @@ extension PeekabooBridgeRequest {
             return PeekabooBridgeConstants.statelessClickVariantVersion
         }
         switch self.unwrappedOperationRequest.operation {
+        case .exactWindowPixelFocusType, .foregroundModifierClick:
+            return PeekabooBridgeConstants.composedInputParityVersion
         case .agentExecutionTrace:
             return PeekabooBridgeConstants.agentExecutionTraceVersion
         case .observeProcessGeneration:
