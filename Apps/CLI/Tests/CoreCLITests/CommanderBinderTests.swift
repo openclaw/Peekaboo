@@ -24,6 +24,21 @@ struct CommanderBinderTests {
     }
 
     @Test
+    func `Only dynamic Agent runtimes eagerly construct the Agent service`() throws {
+        let parsed = ParsedValues(positional: [], options: [:], flags: [])
+
+        for commandType in [AgentRunSubcommand.self, MCPCommand.Serve.self] as [any ParsableCommand.Type] {
+            let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
+            #expect(options.requiresAgentService, "Missing Agent service for \(commandType)")
+        }
+
+        for commandType in [ToolsListSubcommand.self, SeeCommand.self] as [any ParsableCommand.Type] {
+            let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
+            #expect(!options.requiresAgentService, "Eager Agent service for \(commandType)")
+        }
+    }
+
+    @Test
     func `Runtime options map log level option`() throws {
         let parsed = ParsedValues(positional: [], options: ["logLevel": ["error"]], flags: [])
         let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed)

@@ -10,7 +10,8 @@ enum RuntimeServiceFactory {
             ),
             inputPolicy: PeekabooAutomation.ConfigurationManager.shared.getUIInputPolicy(
                 cliStrategy: options.inputStrategy
-            )
+            ),
+            initializeAgentService: options.requiresAgentService
         )
     }
 }

@@ -154,6 +154,7 @@ struct AgentCommand: RuntimeBackedCommand {
         // Remote GUI bridge mode is optional and can fail to expose auth state.
         // Keep agent execution local by default unless an explicit runtime option overrides it.
         options.preferRemote = false
+        options.requiresAgentService = true
         return options
     }()
 

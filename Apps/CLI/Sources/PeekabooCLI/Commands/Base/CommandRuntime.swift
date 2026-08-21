@@ -104,6 +104,10 @@ struct CommandRuntimeOptions {
     /// Set for interactive permission-request commands, which must be able to reach a host that
     /// still lacks the permission being requested.
     var requestsHostPermissionGrant = false
+    /// Only Agent execution and the long-lived MCP server need provider discovery during
+    /// process bootstrap. Other commands construct the native service graph without eagerly
+    /// reloading provider credentials or creating an Agent that they cannot call.
+    var requiresAgentService = false
 
     func makeConfiguration() -> CommandRuntime.Configuration {
         CommandRuntime.Configuration(

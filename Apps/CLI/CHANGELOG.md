@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.2.3] - Unreleased
 
+### Changed
+- Skip provider discovery and Agent construction for caller-local commands that cannot invoke the Agent, reducing cold startup while preserving full Agent and MCP initialization.
+
 ### Fixed
 - Bind signed `set-value` results to the opaque requested element and refuse older Bridge hosts before dispatch.
 - Keep non-modal SwiftUI `AXDialog`-subrole windows eligible for exact background mutations while preserving modal, sheet, and file-dialog protections, and recognize `inspect_ui` as fresh Agent perception in recovery guidance.

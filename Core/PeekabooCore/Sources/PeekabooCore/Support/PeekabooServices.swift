@@ -126,9 +126,13 @@ public final class PeekabooServices {
     /// Lock for thread-safe agent updates
     let agentLock = NSLock()
 
-    /// Initialize with default service implementations
+    /// Initialize with default service implementations.
+    /// - Parameter initializeAgentService: When false, leaves `agent` unset until `refreshAgentService()` is called.
     @MainActor
-    public init(inputPolicy: UIInputPolicy? = nil) {
+    public init(
+        inputPolicy: UIInputPolicy? = nil,
+        initializeAgentService: Bool = true)
+    {
         self.logger.debug("🚀 Initializing PeekabooServices with default implementations")
 
         let logging = LoggingService()
@@ -218,12 +222,19 @@ public final class PeekabooServices {
         self.nativeDesktopOperationLaneOperations = PeekabooBridgeOperation.nativeDesktopOperationLaneOperations
 
         self.logger.debug("✨ PeekabooServices initialization complete")
-        self.refreshAgentService()
+        if initializeAgentService {
+            self.refreshAgentService()
+        }
     }
 
     /// Initialize with default services but a custom snapshot manager (e.g. in-memory for long-lived host apps).
+    /// - Parameter initializeAgentService: When false, leaves `agent` unset until `refreshAgentService()` is called.
     @MainActor
-    public convenience init(snapshotManager: any SnapshotManagerProtocol, inputPolicy: UIInputPolicy? = nil) {
+    public convenience init(
+        snapshotManager: any SnapshotManagerProtocol,
+        inputPolicy: UIInputPolicy? = nil,
+        initializeAgentService: Bool = true)
+    {
         let logger = SystemLogger(subsystem: "boo.peekaboo.core", category: "Services")
         logger.debug("🚀 Initializing PeekabooServices with default implementations (custom snapshots)")
 
@@ -302,7 +313,9 @@ public final class PeekabooServices {
             nativeDesktopOperationLaneOperations: PeekabooBridgeOperation.nativeDesktopOperationLaneOperations)
 
         logger.debug("✨ PeekabooServices initialization complete (custom snapshots)")
-        self.refreshAgentService()
+        if initializeAgentService {
+            self.refreshAgentService()
+        }
     }
 
     /// Initialize with custom service implementations (for testing)

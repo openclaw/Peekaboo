@@ -2,6 +2,9 @@
 
 ## [4.2.3] - Unreleased
 
+### Changed
+- Skip provider discovery and Agent construction for caller-local CLI commands that cannot invoke the Agent, reducing cold startup while preserving full Agent and MCP initialization.
+
 ### Fixed
 - Let background certification pin Activity Monitor's exact source-declared window title while refusing unsafe partial, duplicate, or drifting title evidence.
 - Fail closed instead of generating or accepting a release-qualification manifest until final-cycle liveness witnesses have a cryptographic trust anchor.

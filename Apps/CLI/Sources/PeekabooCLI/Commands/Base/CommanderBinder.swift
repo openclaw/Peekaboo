@@ -97,6 +97,7 @@ enum CommanderCLIBinder {
         options.requiresProcessGenerationPinnedClicks = commandType == ClickCommand.self && usesBackgroundInput &&
             !options.requiresExactWindowTargetedClicks
         let servesDynamicTools = Self.isAgentExecutionCommand(commandType) || commandType == MCPCommand.Serve.self
+        options.requiresAgentService = servesDynamicTools
         if servesDynamicTools {
             options.requiresSafeBackgroundApplicationLaunchNoOp = true
             options.requiresProcessGenerationPinnedApplicationActivation = true
