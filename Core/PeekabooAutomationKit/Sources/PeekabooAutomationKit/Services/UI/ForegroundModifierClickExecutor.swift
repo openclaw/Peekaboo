@@ -44,6 +44,11 @@ final class ForegroundModifierClickExecutor {
     typealias ExactWindowFocusExecutor = @MainActor (
         UIAutomationTarget.ExactWindow,
         FocusDispatchGuard) async throws -> DesktopActionOutcome
+    typealias PreparedClickExecutor = @MainActor () throws -> DesktopActionOutcome
+    typealias ClickPrepareExecutor = @MainActor (
+        CGPoint,
+        ClickType,
+        [PointerModifier]) throws -> PreparedClickExecutor
     typealias CursorRestoreExecutor = @MainActor (
         CGPoint,
         CGPoint,
@@ -61,7 +66,7 @@ final class ForegroundModifierClickExecutor {
         let moveCursor: @MainActor (CGPoint) throws -> Void
         let sharedInputActivityToken: @MainActor () -> SharedInputActivityToken
         let restoreCursor: CursorRestoreExecutor
-        let click: @MainActor (CGPoint, ClickType, [PointerModifier]) throws -> DesktopActionOutcome
+        let prepareClick: ClickPrepareExecutor
         let validateExactWindow: @Sendable (WindowMutationIdentity, CGRect) -> Bool
 
         init(
@@ -77,7 +82,8 @@ final class ForegroundModifierClickExecutor {
             validateExactWindow: @escaping @Sendable (WindowMutationIdentity, CGRect) -> Bool,
             restoreExactWindow: ExactWindowFocusExecutor? = nil,
             sharedInputActivityToken: @escaping @MainActor () -> SharedInputActivityToken = { .zero },
-            restoreCursor: CursorRestoreExecutor? = nil)
+            restoreCursor: CursorRestoreExecutor? = nil,
+            prepareClick: ClickPrepareExecutor? = nil)
         {
             self.focusExactWindow = focusExactWindow
             self.restoreExactWindow = restoreExactWindow ?? focusExactWindow
@@ -96,7 +102,9 @@ final class ForegroundModifierClickExecutor {
                     currentLocation: currentCursorLocation,
                     move: moveCursor)
             }
-            self.click = click
+            self.prepareClick = prepareClick ?? { point, clickType, modifiers in
+                { try click(point, clickType, modifiers) }
+            }
             self.validateExactWindow = validateExactWindow
         }
     }
@@ -136,6 +144,31 @@ final class ForegroundModifierClickExecutor {
         -> UIAutomationActionResult<ForegroundModifierClickResult>
     {
         try self.validate(request, exactWindow: exactWindow)
+        let preparedClick: PreparedClickExecutor
+        do {
+            preparedClick = try self.dependencies.prepareClick(
+                request.point,
+                request.clickType,
+                request.modifiers)
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch let error as PeekabooError {
+            let reason: DesktopActionOutcome.RefusalReason = switch error {
+            case .permissionDeniedEventSynthesizing: .permissionDenied
+            default: .operationUnsupported
+            }
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: reason,
+                message: "Modifier-click could not prepare its event sequence before foreground setup.",
+                hint: "Grant Event Synthesizing permission or inspect the runtime before retrying.",
+                causeDescription: error.localizedDescription)
+        } catch {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "Modifier-click could not prepare its event sequence before foreground setup.",
+                hint: "Inspect the runtime before retrying.",
+                causeDescription: error.localizedDescription)
+        }
         guard let priorFrontmost = self.dependencies.currentFrontmostIdentity() else {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .targetUnavailable,
@@ -159,15 +192,15 @@ final class ForegroundModifierClickExecutor {
         var inputActivityToken: SharedInputActivityToken? = self.dependencies.sharedInputActivityToken()
         var clickAttempted = false
         var cleanupAllowed = true
+        let priorObservation = TargetFocusObservation(
+            frontmostProcess: priorFrontmost,
+            focusedWindow: priorFocusedWindow)
+        let targetObservation = TargetFocusObservation(
+            frontmostProcess: exactWindow.identity.processIdentity,
+            focusedWindow: exactWindow)
+        let focusOwnership = TargetFocusOwnershipState(expected: priorObservation)
 
         do {
-            let priorObservation = TargetFocusObservation(
-                frontmostProcess: priorFrontmost,
-                focusedWindow: priorFocusedWindow)
-            let targetObservation = TargetFocusObservation(
-                frontmostProcess: exactWindow.identity.processIdentity,
-                focusedWindow: exactWindow)
-            let focusOwnership = TargetFocusOwnershipState(expected: priorObservation)
             let focusGuard = FocusDispatchGuard(
                 requiresStrictDispatchOwnership: true,
                 validateOwnership: { _ in
@@ -195,7 +228,8 @@ final class ForegroundModifierClickExecutor {
                     }
                     let isAllowed = switch stage {
                     case .applicationActivation:
-                        current == targetObservation
+                        current.frontmostProcess == exactWindow.identity.processIdentity &&
+                            current.focusedWindow?.identity.processIdentity == exactWindow.identity.processIdentity
                     case .setMainWindow:
                         current == focusOwnership.expected || current == targetObservation
                     case .raiseWindow:
@@ -251,10 +285,7 @@ final class ForegroundModifierClickExecutor {
                             message: "Modifier-click physical cursor activity changed before click dispatch.")
                     }
                     clickAttempted = true
-                    let clickOutcome = try self.dependencies.click(
-                        request.point,
-                        request.clickType,
-                        request.modifiers)
+                    let clickOutcome = try preparedClick()
                     sequence.record(.reportedOutcome(clickOutcome, defaultDispatchedUnitCount: .one))
                     inputActivityToken = preClickInputActivity.afterModifierClick(request.clickType)
                 } catch let barrierFailure as ModifierClickDispatchBarrierFailure {
@@ -303,6 +334,7 @@ final class ForegroundModifierClickExecutor {
                     priorProcess: priorFrontmost,
                     priorWindow: priorFocusedWindow,
                     targetWindow: exactWindow,
+                    ownedTargetFocus: focusOwnership.expected,
                     inputActivityToken: inputActivityToken,
                     sequence: &sequence)
             } catch {
@@ -427,6 +459,7 @@ final class ForegroundModifierClickExecutor {
         priorProcess: ApplicationProcessIdentity,
         priorWindow: UIAutomationTarget.ExactWindow?,
         targetWindow: UIAutomationTarget.ExactWindow,
+        ownedTargetFocus: TargetFocusObservation,
         inputActivityToken: SharedInputActivityToken,
         sequence: inout DesktopActionSequenceAccumulator) async throws -> SharedDesktopRestorationStatus
     {
@@ -435,7 +468,7 @@ final class ForegroundModifierClickExecutor {
             if currentWindow == priorWindow {
                 return .notNeeded
             }
-            guard priorWindow != targetWindow, currentWindow == targetWindow else {
+            guard priorWindow != targetWindow else {
                 return .preservedNewerState
             }
             guard let initialObservation = self.currentFocusRestorationObservation() else {
@@ -444,10 +477,15 @@ final class ForegroundModifierClickExecutor {
             let targetObservation = FocusRestorationObservation(
                 frontmostProcess: targetWindow.identity.processIdentity,
                 focusedWindow: targetWindow)
-            guard initialObservation == targetObservation else {
+            let ownedIntermediate = ownedTargetFocus.focusedWindow.map {
+                FocusRestorationObservation(
+                    frontmostProcess: ownedTargetFocus.frontmostProcess,
+                    focusedWindow: $0)
+            }
+            guard initialObservation == targetObservation || initialObservation == ownedIntermediate else {
                 return .preservedNewerState
             }
-            let ownership = FocusRestorationOwnershipState(expected: targetObservation)
+            let ownership = FocusRestorationOwnershipState(expected: initialObservation)
             let priorObservation = FocusRestorationObservation(
                 frontmostProcess: priorWindow.identity.processIdentity,
                 focusedWindow: priorWindow)

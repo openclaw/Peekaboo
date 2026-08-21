@@ -117,7 +117,8 @@ extension UIAutomationService {
                         original: original,
                         lastWritten: lastWritten,
                         activityToken: activityToken)
-                }))
+                },
+                prepareClick: Self.prepareModifierClick))
         return try await executor.execute(request)
     }
 
@@ -167,6 +168,17 @@ extension UIAutomationService {
         clickType: ClickType,
         modifiers: [PointerModifier]) throws -> DesktopActionOutcome
     {
+        try self.prepareModifierClick(
+            point: point,
+            clickType: clickType,
+            modifiers: modifiers)()
+    }
+
+    private static func prepareModifierClick(
+        point: CGPoint,
+        clickType: ClickType,
+        modifiers: [PointerModifier]) throws -> ForegroundModifierClickExecutor.PreparedClickExecutor
+    {
         guard CGPreflightPostEventAccess() else {
             throw PeekabooError.permissionDeniedEventSynthesizing
         }
@@ -189,18 +201,24 @@ extension UIAutomationService {
             throw PeekabooError.serviceUnavailable(
                 "Modifier-click could not establish a private event state table")
         }
+        // This source owns a unique state table retained by the prepared closure. AppKit/AX focus and
+        // physical HID input advance other tables, so only these retained events can change this baseline.
         let baseline = CGEventSource.counterForEventType(sourceStateID, eventType: descriptor.up)
-        events.forEach { $0.post(tap: .cghidEventTap) }
-        try ModifierClickDispatchBarrier.waitForMouseUps(
-            baseline: baseline,
-            expectedIncrement: UInt32(descriptor.count),
-            deadline: ContinuousClock.now.advanced(by: .milliseconds(500)),
-            counter: { CGEventSource.counterForEventType(sourceStateID, eventType: descriptor.up) },
-            runLoopStep: { CFRunLoopRunInMode(.defaultMode, 0.005, true) })
-        return .dispatchedUnverified(
-            delivery: .init(mechanism: .globalEvents, mode: .foreground),
-            evidence: .deliveryAccepted,
-            unitCount: .one)
+        return {
+            try withExtendedLifetime(source) {
+                events.forEach { $0.post(tap: .cghidEventTap) }
+                try ModifierClickDispatchBarrier.waitForMouseUps(
+                    baseline: baseline,
+                    expectedIncrement: UInt32(descriptor.count),
+                    deadline: ContinuousClock.now.advanced(by: .milliseconds(500)),
+                    counter: { CGEventSource.counterForEventType(sourceStateID, eventType: descriptor.up) },
+                    runLoopStep: { CFRunLoopRunInMode(.defaultMode, 0.005, true) })
+            }
+            return .dispatchedUnverified(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .one)
+        }
     }
 
     static func makeModifierClickEvents(
