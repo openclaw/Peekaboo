@@ -47,7 +47,7 @@ extension ConfigCommand {
             guard !customProviders.isEmpty else {
                 print("No custom providers configured.")
                 print("Add one with: peekaboo config provider add <id> --type <type>")
-                print("  --name <name> --base-url <url> --api-key <key>")
+                print("  --name <name> --base-url <url> --credential-ref '${API_KEY}'")
                 return
             }
 

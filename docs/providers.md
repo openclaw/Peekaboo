@@ -33,23 +33,29 @@ Other Tachikoma-supported providers also work — see the [Tachikoma docs](https
 
 ## Credentials
 
-Credentials live in `~/.peekaboo/credentials`, encrypted at rest with the macOS Keychain when available. Set them once via the CLI:
+Credentials live in the owner-only `~/.peekaboo/credentials` file. Set them once with the CLI's no-echo prompt:
 
 ```bash
-peekaboo config credential set OPENAI_API_KEY <key>
-peekaboo config credential set ANTHROPIC_API_KEY <key>
-peekaboo config credential set GEMINI_API_KEY <key>
-peekaboo config credential set MINIMAX_API_KEY <key>
-peekaboo config credential set MINIMAX_CN_API_KEY <key>
-peekaboo config credential set MOONSHOT_API_KEY <key>
-peekaboo config credential set OPENROUTER_API_KEY <key>
+peekaboo config credential set OPENAI_API_KEY
+peekaboo config credential set ANTHROPIC_API_KEY
+peekaboo config credential set GEMINI_API_KEY
+peekaboo config credential set MINIMAX_API_KEY
+peekaboo config credential set MINIMAX_CN_API_KEY
+peekaboo config credential set MOONSHOT_API_KEY
+peekaboo config credential set OPENROUTER_API_KEY
 ```
 
-Environment variables override the stored values, which is handy in CI:
+For noninteractive use, pipe one line or point to an owner-only regular file (mode `0400` or `0600`):
 
 ```bash
-OPENAI_API_KEY=sk-... peekaboo agent "open a browser"
+printenv OPENAI_API_KEY | \
+  peekaboo config credential set OPENAI_API_KEY --credential-stdin --no-input
+peekaboo config credential set ANTHROPIC_API_KEY \
+  --credential-file /secure/path/anthropic.key --no-input
 ```
+
+Environment variables still override stored values for Agent runs. Avoid placing values in argv: the legacy
+positional credential is deprecated and visible to process-listing tools.
 
 See [configuration.md](configuration.md) for the full precedence table.
 

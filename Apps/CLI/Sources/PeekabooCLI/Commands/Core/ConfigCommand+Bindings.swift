@@ -60,7 +60,10 @@ extension ConfigCommand.CredentialSetCommand: AsyncRuntimeCommand {}
 extension ConfigCommand.CredentialSetCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.keyOrProvider = try values.decodePositional(0, label: "keyOrProvider")
-        self.value = try values.decodePositional(1, label: "value")
+        self.value = try values.decodeOptionalPositional(1, label: "value")
+        self.credentialFile = values.singleOption("credentialFile")
+        self.credentialStdin = values.flag("credentialStdin")
+        self.noInput = values.flag("noInput")
         if let timeout: CLIDuration = try values.decodeOption("timeout", as: CLIDuration.self) {
             self.timeout = timeout
         }
@@ -90,7 +93,11 @@ extension ConfigCommand.AddProviderCommand: CommanderBindableCommand {
         self.type = try values.requireOption("type", as: String.self)
         self.name = try values.requireOption("name", as: String.self)
         self.baseUrl = try values.requireOption("baseUrl", as: String.self)
-        self.apiKey = try values.requireOption("apiKey", as: String.self)
+        self.credentialReference = values.singleOption("credentialReference")
+        self.credentialFile = values.singleOption("credentialFile")
+        self.credentialStdin = values.flag("credentialStdin")
+        self.noInput = values.flag("noInput")
+        self.apiKey = values.singleOption("apiKey")
         self.description = values.singleOption("description")
         self.headers = values.singleOption("headers")
         self.force = values.flag("force")

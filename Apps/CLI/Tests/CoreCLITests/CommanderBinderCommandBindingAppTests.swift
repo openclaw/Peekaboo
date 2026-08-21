@@ -386,13 +386,20 @@ struct CommanderBinderAppConfigTests {
 
     @Test
     func `Config credential set binding`() throws {
-        let parsed = ParsedValues(positional: ["OPENAI_API_KEY", "sk-123"], options: [:], flags: [])
+        let parsed = ParsedValues(
+            positional: ["OPENAI_API_KEY"],
+            options: ["credentialFile": ["/secure/key"]],
+            flags: ["noInput"]
+        )
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: ConfigCommand.CredentialSetCommand.self,
             parsedValues: parsed
         )
         #expect(command.keyOrProvider == "OPENAI_API_KEY")
-        #expect(command.value == "sk-123")
+        #expect(command.value == nil)
+        #expect(command.credentialFile == "/secure/key")
+        #expect(command.credentialStdin == false)
+        #expect(command.noInput == true)
     }
 
     @Test
@@ -403,11 +410,11 @@ struct CommanderBinderAppConfigTests {
                 "type": ["openai"],
                 "name": ["OpenRouter"],
                 "baseUrl": ["https://openrouter.ai"],
-                "apiKey": ["{env:OPENROUTER_API_KEY}"],
+                "credentialReference": ["${OPENROUTER_API_KEY}"],
                 "description": ["Multi-provider"],
                 "headers": ["x-demo:yes"],
             ],
-            flags: ["force", "dryRun"]
+            flags: ["force", "dryRun", "noInput"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: ConfigCommand.AddProviderCommand.self,
@@ -417,7 +424,9 @@ struct CommanderBinderAppConfigTests {
         #expect(command.type == "openai")
         #expect(command.name == "OpenRouter")
         #expect(command.baseUrl == "https://openrouter.ai")
-        #expect(command.apiKey == "{env:OPENROUTER_API_KEY}")
+        #expect(command.credentialReference == "${OPENROUTER_API_KEY}")
+        #expect(command.apiKey == nil)
+        #expect(command.noInput == true)
         #expect(command.description == "Multi-provider")
         #expect(command.headers == "x-demo:yes")
         #expect(command.force == true)

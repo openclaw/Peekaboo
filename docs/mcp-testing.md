@@ -85,10 +85,11 @@ Set provider selection before starting the server when testing `agent` or `analy
 PEEKABOO_AI_PROVIDERS="ollama/<model>" npx @modelcontextprotocol/inspector "$PEEKABOO_BIN" mcp
 ```
 
-Credential storage uses the normal CLI:
+Credential storage uses the normal CLI without putting the value in argv:
 
 ```bash
-"$PEEKABOO_BIN" config credential set ANTHROPIC_API_KEY <value>
+printenv ANTHROPIC_API_KEY | \
+  "$PEEKABOO_BIN" config credential set ANTHROPIC_API_KEY --credential-stdin --no-input
 ```
 
 Do not paste live credential values into test logs or committed fixtures.

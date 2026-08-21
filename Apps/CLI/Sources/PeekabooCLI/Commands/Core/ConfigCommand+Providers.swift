@@ -49,27 +49,25 @@ extension ConfigCommand {
 
             Examples:
 
-            # Add OpenRouter
+            # Store a secret outside argv, then add OpenRouter by reference
+            printenv OPENROUTER_API_KEY | peekaboo config credential set OPENROUTER_API_KEY \\
+              --credential-stdin --no-input
             peekaboo config provider add openrouter \\
               --type openai \\
               --name "OpenRouter" \\
               --base-url "https://openrouter.ai/api/v1" \\
-              --api-key '${OPENROUTER_API_KEY}' \\
+              --credential-ref '${OPENROUTER_API_KEY}' \\
               --description "Access to 300+ models via OpenRouter"
 
-            # Add local Ollama with authentication
-            peekaboo config provider add local-ollama \\
+            # Pipe a credential directly; it is never placed in argv or output
+            printf '%s\\n' 'dummy-key' | peekaboo config provider add local-ollama \\
               --type openai \\
               --name "Local Ollama" \\
               --base-url "http://localhost:11434/v1" \\
-              --api-key "dummy-key"
+              --credential-stdin --no-input
 
-            # Add Groq
-            peekaboo config provider add groq \\
-              --type openai \\
-              --name "Groq" \\
-              --base-url "https://api.groq.com/openai/v1" \\
-              --api-key '${GROQ_API_KEY}'
+            With no credential source, an interactive terminal shows a no-echo prompt. --api-key remains
+            available for compatibility, but is deprecated because process listings can expose argv.
             """
         )
 
@@ -85,13 +83,31 @@ extension ConfigCommand {
         @Option(name: .long, help: "Base URL for the API endpoint")
         var baseUrl: String
 
-        @Option(name: .long, help: "API key or credential reference (e.g., ${API_KEY})")
-        var apiKey: String
+        @Option(name: .customLong("credential-ref"), help: "Non-secret credential reference in ${NAME} form")
+        var credentialReference: String?
+
+        @Option(
+            name: .customLong("credential-file"),
+            help: "Read one line from an owner-only, ACL-free regular file (mode 0400 or 0600)"
+        )
+        var credentialFile: String?
+
+        @Flag(name: .customLong("credential-stdin"), help: "Read one credential line from stdin")
+        var credentialStdin = false
+
+        @Flag(name: .customLong("no-input"), help: "Never prompt; fail if no source supplies a credential")
+        var noInput = false
+
+        @Option(
+            name: .customLong("api-key"),
+            help: "Deprecated API key or reference in argv; use --credential-ref or secure input"
+        )
+        var apiKey: String?
 
         @Option(name: .long, help: "Optional description of the provider")
         var description: String?
 
-        @Option(name: .long, help: "Additional HTTP headers (key:value,key:value)")
+        @Option(name: .long, help: "Non-secret additional HTTP headers (key:value,key:value)")
         var headers: String?
 
         @Flag(name: .long, help: "Overwrite existing provider with same ID")
@@ -152,14 +168,6 @@ extension ConfigCommand {
                 throw ExitCode.failure
             }
 
-            guard !self.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                self.emitError(
-                    code: "INVALID_API_KEY",
-                    message: "API key must not be empty"
-                )
-                throw ExitCode.failure
-            }
-
             let manager = self.configManager
             if manager.getCustomProvider(id: self.providerId) != nil, !self.force {
                 self.emitError(
@@ -177,9 +185,26 @@ extension ConfigCommand {
                 throw ExitCode.failure
             }
 
+            let credential: ConfigCredentialInput.Resolution
+            do {
+                credential = try ConfigCredentialInput.resolve(
+                    .init(
+                        legacyValue: self.apiKey,
+                        reference: self.credentialReference,
+                        filePath: self.credentialFile,
+                        readFromStdin: self.credentialStdin,
+                        noInput: self.noInput,
+                        prompt: "Credential for custom provider \(self.providerId): "
+                    )
+                )
+            } catch {
+                self.emitError(code: "CREDENTIAL_INPUT_ERROR", message: error.localizedDescription)
+                throw ExitCode.failure
+            }
+
             let options = Configuration.ProviderOptions(
                 baseURL: validatedBaseURL,
-                apiKey: self.apiKey,
+                apiKey: credential.value,
                 headers: headerDict
             )
 
@@ -193,7 +218,11 @@ extension ConfigCommand {
             )
 
             if self.dryRun {
-                self.emitDryRunSummary(provider: provider, providerId: self.providerId)
+                self.emitDryRunSummary(
+                    provider: provider,
+                    providerId: self.providerId,
+                    credentialSource: credential.source
+                )
                 return
             }
 
@@ -223,7 +252,10 @@ extension ConfigCommand {
             } catch {
                 self.emitError(
                     code: "ADD_FAILED",
-                    message: "Failed to add provider: \(error.localizedDescription)"
+                    message: ConfigCredentialOutputRedactor.redact(
+                        "Failed to add provider: \(error.localizedDescription)",
+                        credential: credential.value
+                    )
                 )
                 throw ExitCode.failure
             }
@@ -276,12 +308,16 @@ extension ConfigCommand {
             }
         }
 
-        private func emitDryRunSummary(provider: Configuration.CustomProvider, providerId: String) {
+        private func emitDryRunSummary(
+            provider: Configuration.CustomProvider,
+            providerId: String,
+            credentialSource: ConfigCredentialInput.Resolution.Source
+        ) {
             let summary = [
                 "providerId": providerId,
                 "type": provider.type.rawValue,
                 "baseUrl": provider.options.baseURL,
-                "apiKey": provider.options.apiKey
+                "credentialSource": credentialSource.rawValue,
             ]
 
             if self.jsonOutput {

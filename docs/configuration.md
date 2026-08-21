@@ -47,8 +47,8 @@ Peekaboo resolves settings in this order (highest → lowest):
 
 ## API Key Storage
 
-1. **Environment variables** – most secure for automation: `export OPENAI_API_KEY="sk-..."`.
-2. **Credentials file** – `peekaboo config credential set OPENAI_API_KEY sk-...` stores secrets in `~/.peekaboo/credentials` (`chmod 600`).
+1. **Environment variables** – supported for existing automation, but keep values out of command arguments.
+2. **Credentials file** – `peekaboo config credential set OPENAI_API_KEY` prompts without echo and stores the value in `~/.peekaboo/credentials` (`chmod 600`). Scripts should pipe one line with `--credential-stdin --no-input` or use an owner-only `--credential-file`.
 3. **Config file** – avoid storing keys here unless absolutely necessary. OAuth tokens are never written to `config.json`.
 
 ## Provider Variables

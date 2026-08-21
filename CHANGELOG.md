@@ -4,8 +4,10 @@
 
 ### Changed
 - Skip provider discovery and Agent construction for caller-local CLI commands that cannot invoke the Agent, reducing cold startup while preserving full Agent and MCP initialization.
+- Read credentials for `config credential set` and `config provider add` from piped stdin, owner-only files, or no-echo prompts by default; keep argv input as a documented deprecated compatibility path.
 
 ### Fixed
+- Keep provider dry-run, validation, error, and JSON output free of credential values, and reject symlinked, permissive, wrong-owner, or extended-ACL credential files on the opened descriptor before reading.
 - Use the canonical MCP mutation policy for Agent visual verification, including conditional browser and foreground menu actions.
 - Let background certification pin Activity Monitor's exact source-declared window title while refusing unsafe partial, duplicate, or drifting title evidence.
 - Build terminal CLI, Peekaboo.app, Playground, and pinned Node qualification artifacts through isolated credential phases, and bind signed payload trees, notarization receipts, toolchains, and the canonical dependency graph.
