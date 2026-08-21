@@ -1310,8 +1310,8 @@ run_codesign_phase() {
     -u PEEKABOO_OP_SERVICE_TOKEN_FILE -u PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE \
     -u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH -u GLOBIGNORE \
     PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin \
-    /bin/bash --noprofile --norc -p "$ROOT_DIR/scripts/build-terminal-artifacts.sh" \
-    "$phase" --stage "$STAGE_DIR"
+    /bin/bash --noprofile --norc -p -c 'exec "$@"' peekaboo-codesign-phase \
+    "$ROOT_DIR/scripts/build-terminal-artifacts.sh" "$phase" --stage "$STAGE_DIR"
   command_result=$?
   set -e
   hide_service_tokens
@@ -1331,7 +1331,7 @@ run_notary_only() {
     -u PEEKABOO_OP_SERVICE_TOKEN_FILE -u PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE \
     -u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH -u GLOBIGNORE \
     -u MAC_RELEASE_CODESIGN_KEYCHAIN -u MAC_RELEASE_CODESIGN_KEYCHAIN_PASSWORD -u CODESIGN_KEYCHAIN \
-    PATH=/usr/bin:/bin /bin/bash --noprofile --norc -p \
+    PATH=/usr/bin:/bin /bin/bash --noprofile --norc -p -c 'exec "$@"' peekaboo-notary-phase \
     "$ROOT_DIR/scripts/notarize-terminal-artifact.sh" "$@"
   command_result=$?
   set -e

@@ -187,8 +187,22 @@ rg -Fq 'ee69e9516e61901c02abd1a71456d5f1fd9f1d5f' "$wrapper" || \
   fail 'terminal pipeline does not pin the package-run helper contract'
 rg -Fq 'scripts/build-terminal-artifacts.sh check-helper' "$ROOT_DIR/docs/RELEASING.md" || \
   fail 'manual release flow does not preflight the credential runner'
-rg -Fq 'PATH=/usr/bin:/bin /bin/bash --noprofile --norc -p' "$wrapper" || \
-  fail 'notary child does not clear shell startup injection'
+[[ "$(grep -Fc "/bin/bash --noprofile --norc -p -c 'exec \"\$@\"'" "$wrapper")" == 2 ]] || \
+  fail 'credentialed phase children do not use the required non-login bash -c wrapper'
+rg -Fq 'peekaboo-codesign-phase' "$wrapper" || fail 'codesign phase wrapper label is missing'
+rg -Fq 'peekaboo-notary-phase' "$wrapper" || fail 'notary phase wrapper label is missing'
+cat > "$TEST_DIR/phase-child-probe" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ -z "${BASH_ENV+x}" ]]
+printf '<%s>\n' "$@"
+EOF
+chmod 755 "$TEST_DIR/phase-child-probe"
+phase_child_output="$(/usr/bin/env -u BASH_ENV -u ENV PATH=/usr/bin:/bin \
+  /bin/bash --noprofile --norc -p -c 'exec "$@"' peekaboo-test-phase \
+  "$TEST_DIR/phase-child-probe" 'argument one' 'argument=two')"
+[[ "$phase_child_output" == $'<argument one>\n<argument=two>' ]] || \
+  fail 'credentialed bash -c wrapper changed phase arguments'
 if rg -Fq 'env -i APP_STORE_CONNECT_API_KEY_P8=' "$ROOT_DIR/scripts/notarize-terminal-artifact.sh"; then
   fail 'notary helper exposes the P8 through argv'
 fi
