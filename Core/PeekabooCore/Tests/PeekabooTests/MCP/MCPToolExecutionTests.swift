@@ -1070,6 +1070,10 @@ TargetedTypeServiceProtocol, ExactWindowPixelFocusTypingServiceProtocol, Foregro
     var exactWindowPixelFocusTypingUnavailableReason: String?
     var supportsForegroundModifierClick = true
     var foregroundModifierClickUnavailableReason: String?
+    var foregroundModifierClickLeaseProbe: (() async -> Bool)?
+    private(set) var foregroundModifierClickLeaseWasHeld: Bool?
+    var foregroundModifierClickRefusalReason: DesktopActionOutcome.RefusalReason?
+    var foregroundModifierClickError: (any Error)?
     private(set) var pixelFocusTypeRequests: [ExactWindowPixelFocusTypeRequest] = []
     private(set) var foregroundModifierClickRequests: [ForegroundModifierClickRequest] = []
 
@@ -1192,13 +1196,24 @@ TargetedTypeServiceProtocol, ExactWindowPixelFocusTypingServiceProtocol, Foregro
         _ request: ForegroundModifierClickRequest) async throws
         -> UIAutomationActionResult<ForegroundModifierClickResult>
     {
+        if let foregroundModifierClickLeaseProbe {
+            self.foregroundModifierClickLeaseWasHeld = await foregroundModifierClickLeaseProbe()
+        }
+        if let foregroundModifierClickError {
+            throw foregroundModifierClickError
+        }
         self.foregroundModifierClickRequests.append(request)
-        return try UIAutomationActionResult(
-            payload: .init(cursorRestoration: .restored, focusRestoration: .preservedNewerState),
-            outcome: .dispatchedUnverified(
+        let outcome: DesktopActionOutcome = if let foregroundModifierClickRefusalReason {
+            .refused(reason: foregroundModifierClickRefusalReason)
+        } else {
+            .dispatchedUnverified(
                 delivery: .init(mechanism: .composite, mode: .foreground),
                 evidence: .deliveryAccepted,
-                unitCount: .one),
+                unitCount: .one)
+        }
+        return try UIAutomationActionResult(
+            payload: .init(cursorRestoration: .restored, focusRestoration: .preservedNewerState),
+            outcome: outcome,
             targetIdentity: DesktopTargetIdentity(exactWindow: .init(
                 identity: request.windowIdentity,
                 bounds: request.windowBounds)))

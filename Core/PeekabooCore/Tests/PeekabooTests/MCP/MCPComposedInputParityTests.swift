@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 import MCP
-import PeekabooAutomationKit
+@testable import PeekabooAutomationKit
 import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import TachikomaMCP
@@ -39,6 +39,16 @@ struct MCPComposedInputParityTests {
     @Test
     func `modifier click refuses background then projects truthful foreground restoration`() async throws {
         let fixture = await Self.makeFixture()
+        await MainActor.run {
+            fixture.automation.foregroundModifierClickLeaseProbe = {
+                do {
+                    _ = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+                    return false
+                } catch {
+                    return true
+                }
+            }
+        }
         let refused = try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
             "coords": "600,300",
             "snapshot": fixture.snapshotID,
@@ -79,6 +89,92 @@ struct MCPComposedInputParityTests {
         #expect(metadata["cursor_restoration"] == .string("restored"))
         #expect(metadata["focus_restoration"] == .string("preserved_newer_state"))
         #expect(metadata["modifiers"] == .array([.string("command"), .string("shift")]))
+        #expect(await MainActor.run { fixture.automation.foregroundModifierClickLeaseWasHeld } == true)
+    }
+
+    @Test
+    func `modifier click preserves non stale lease acquisition failures`() async throws {
+        let fixture = await Self.makeFixture()
+        try await fixture.snapshots.cleanSnapshot(snapshotId: fixture.snapshotID)
+
+        let response = try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "coords": "600,300",
+            "snapshot": fixture.snapshotID,
+            "foreground": true,
+            "modifiers": ["cmd"],
+        ]))
+
+        #expect(response.isError)
+        guard case let .text(message, _, _)? = response.content.first else {
+            Issue.record("Expected a text error response")
+            return
+        }
+        #expect(message.contains("Snapshot not found or expired"))
+        #expect(!message.contains("snapshot is stale"))
+        #expect(await MainActor.run { fixture.automation.foregroundModifierClickRequests.isEmpty })
+    }
+
+    @Test
+    func `rejected modifier click result releases its snapshot lease`() async throws {
+        let fixture = await Self.makeFixture()
+        await MainActor.run {
+            fixture.automation.foregroundModifierClickRefusalReason = .targetUnavailable
+        }
+
+        let response = try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "coords": "600,300",
+            "snapshot": fixture.snapshotID,
+            "foreground": true,
+            "modifiers": ["cmd"],
+        ]))
+
+        #expect(response.isError)
+        let subsequentLease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        try await fixture.snapshots.finishSnapshotMutation(
+            subsequentLease,
+            requiresFreshObservation: false)
+    }
+
+    @Test
+    func `typed receipt refusal releases modifier click snapshot lease`() async throws {
+        let fixture = await Self.makeFixture()
+        await MainActor.run {
+            fixture.automation.foregroundModifierClickError = SnapshotTargetReceiptPreDispatchError(
+                .incompleteExactWindow)
+        }
+
+        let response = try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "coords": "600,300",
+            "snapshot": fixture.snapshotID,
+            "foreground": true,
+            "modifiers": ["cmd"],
+        ]))
+
+        #expect(response.isError)
+        let subsequentLease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        try await fixture.snapshots.finishSnapshotMutation(
+            subsequentLease,
+            requiresFreshObservation: false)
+    }
+
+    @Test
+    func `unknown modifier click failure keeps snapshot replay blocked`() async throws {
+        let fixture = await Self.makeFixture()
+        await MainActor.run {
+            fixture.automation.foregroundModifierClickError = MCPComposedInputTestError.unknownServiceFailure
+        }
+
+        let response = try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "coords": "600,300",
+            "snapshot": fixture.snapshotID,
+            "foreground": true,
+            "modifiers": ["cmd"],
+        ]))
+
+        #expect(response.isError)
+        await #expect(throws: (any Error).self) {
+            _ = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        }
     }
 
     @Test
@@ -117,7 +213,12 @@ struct MCPComposedInputParityTests {
     }
 
     private static func makeFixture() async
-        -> (context: MCPToolContext, automation: MockAutomationService, snapshotID: String, window: ServiceWindowInfo)
+        -> (
+            context: MCPToolContext,
+            automation: MockAutomationService,
+            snapshots: InMemorySnapshotManager,
+            snapshotID: String,
+            window: ServiceWindowInfo)
     {
         await self.uiSnapshots.removeAllSnapshots()
         let fixture = AutomationTestFixtures.linkedSnapshotTarget(
@@ -140,12 +241,19 @@ struct MCPComposedInputParityTests {
                 applicationInfo: application,
                 windowInfo: window))
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let snapshots = await MainActor.run {
+            InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             windows: PointerPolicyWindowService(window: window),
-            snapshots: InMemorySnapshotManager(detectionResult: fixture.detectionResult),
+            snapshots: snapshots,
             snapshotOwner: self.uiSnapshots.owner,
             executionPolicy: .unrestricted)
-        return (context, automation, snapshotID, window)
+        return (context, automation, snapshots, snapshotID, window)
     }
+}
+
+private enum MCPComposedInputTestError: Error {
+    case unknownServiceFailure
 }

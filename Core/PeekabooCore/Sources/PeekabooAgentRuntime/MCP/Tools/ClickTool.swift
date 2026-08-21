@@ -325,21 +325,59 @@ public struct ClickTool: MCPTool {
                 "This automation host does not support foreground modifier-click.",
                 refusalReason: .runtimeIncompatible)
         }
-        let result = try await service.foregroundModifierClickWithOutcome(
-            ForegroundModifierClickRequest(
-                point: resolution.location,
-                clickType: intent.automationType,
-                modifiers: modifiers,
-                windowIdentity: identity,
-                windowBounds: bounds))
-        _ = snapshotID
-        _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
-            result,
-            policy: .confirmedOrDispatched(requiring: .foreground),
-            targetRequirement: .exact(DesktopTargetIdentity(exactWindow: .init(
-                identity: identity,
-                bounds: bounds))),
-            operation: "Foreground modifier-click")
+        let lease: SnapshotMutationLease
+        do {
+            lease = try await self.context.snapshots.beginSnapshotMutation(snapshotId: snapshotID)
+        } catch let error as PeekabooError {
+            guard case .snapshotStale = error else { throw error }
+            throw ClickToolError(
+                "Modifier-click snapshot is stale; observe the exact window again before retrying.",
+                refusalReason: .targetUnavailable)
+        }
+        let result: UIAutomationActionResult<ForegroundModifierClickResult>
+        let acceptedOutcome: DesktopActionOutcome
+        do {
+            result = try await service.foregroundModifierClickWithOutcome(
+                ForegroundModifierClickRequest(
+                    point: resolution.location,
+                    clickType: intent.automationType,
+                    modifiers: modifiers,
+                    windowIdentity: identity,
+                    windowBounds: bounds))
+            acceptedOutcome = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                result,
+                policy: .confirmedOrDispatched(requiring: .foreground),
+                targetRequirement: .exact(DesktopTargetIdentity(exactWindow: .init(
+                    identity: identity,
+                    bounds: bounds))),
+                operation: "Foreground modifier-click")
+        } catch let error as SnapshotTargetReceiptPreDispatchError {
+            try? await self.context.snapshots.finishSnapshotMutation(
+                lease,
+                requiresFreshObservation: false)
+            throw ClickToolError(
+                "Modifier-click requires a fresh complete exact-window snapshot: \(error.localizedDescription)",
+                refusalReason: .targetUnavailable)
+        } catch let failure as DesktopActionFailure {
+            try? await self.context.snapshots.finishSnapshotMutation(
+                lease,
+                requiresFreshObservation: failure.outcome.projection.requiresFreshObservation)
+            throw failure
+        }
+        do {
+            try await self.context.snapshots.finishSnapshotMutation(
+                lease,
+                requiresFreshObservation: acceptedOutcome.projection.requiresFreshObservation)
+        } catch {
+            throw DesktopActionFailure.indeterminate(
+                route: result.outcome?.route ?? .local,
+                delivery: result.outcome?.delivery,
+                evidence: .completionUnknown,
+                unitCount: result.outcome?.dispatchState.unitCount,
+                message: "Modifier-click completed, but Peekaboo could not finalize its snapshot mutation lease.",
+                hint: "Observe the target before any retry and do not reuse this snapshot.",
+                causeDescription: error.localizedDescription)
+        }
         return result
     }
 
