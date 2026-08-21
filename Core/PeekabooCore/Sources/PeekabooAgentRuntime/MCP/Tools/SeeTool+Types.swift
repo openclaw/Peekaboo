@@ -8,6 +8,7 @@ struct SeeRequest {
     let appTarget: String?
     let windowIDValue: Value?
     let path: String?
+    let captureEngine: CaptureEnginePreference
     let snapshotId: String?
     let annotate: Bool
     let ocr: Bool
@@ -19,6 +20,7 @@ struct SeeRequest {
         self.appTarget = arguments.getString("app_target")
         self.windowIDValue = arguments.getValue(for: "window_id")
         self.path = arguments.getString("path")
+        self.captureEngine = try Self.captureEngine(arguments.getString("capture_engine"))
         self.snapshotId = arguments.getString("snapshot")
         self.annotate = arguments.getBool("annotate") ?? false
         self.ocr = arguments.getBool("ocr") ?? false
@@ -48,6 +50,20 @@ struct SeeRequest {
             throw PeekabooError.invalidInput("\(key) must be a positive integer")
         }
         return value
+    }
+
+    private static func captureEngine(_ rawValue: String?) throws -> CaptureEnginePreference {
+        switch rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case nil, "", "auto":
+            .auto
+        case "modern":
+            .modern
+        case "classic":
+            .legacy
+        case let value?:
+            throw PeekabooError.invalidInput(
+                "Invalid capture_engine '\(value)'. Expected auto, modern, or classic.")
+        }
     }
 }
 

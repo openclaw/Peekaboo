@@ -130,6 +130,7 @@ struct MCPToolContextTests {
 
         for (name, arguments) in [
             ("inspect_ui", ToolArguments(value: .object([:]))),
+            ("see", ToolArguments(value: .object(["capture_engine": .string(" CLASSIC ")]))),
             ("capture", ToolArguments(value: .object(["source": .string(" VIDEO ")]))),
             ("verify_state", ToolArguments(value: .object(["final_screenshot": .bool(false)]))),
         ] {
@@ -287,6 +288,7 @@ private struct MCPToolInvocationProbe: MCPTool {
         SchemaBuilder.object(
             properties: [
                 "app_target": SchemaBuilder.string(),
+                "capture_engine": SchemaBuilder.string(),
                 "capture_focus": SchemaBuilder.string(),
                 "final_screenshot": SchemaBuilder.boolean(),
                 "source": SchemaBuilder.string(),

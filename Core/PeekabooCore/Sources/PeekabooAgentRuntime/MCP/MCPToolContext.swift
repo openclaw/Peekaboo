@@ -437,7 +437,7 @@ public struct MCPToolContext: @unchecked Sendable {
         arguments: ToolArguments) -> ToolResponse?
     {
         guard let capturePreflightRefusal else { return nil }
-        guard let requiresPixels = MCPToolCaptureRequirement.requiresPixels(
+        guard let requiresOwnerPreflight = MCPToolCaptureRequirement.requiresScreenCaptureKitOwnerPreflight(
             toolName: tool.name,
             arguments: arguments)
         else {
@@ -447,7 +447,7 @@ public struct MCPToolContext: @unchecked Sendable {
                 reason: .runtimeIncompatible,
                 additionalFields: ["error_code": .string("CAPTURE_POLICY_UNCLASSIFIED")])
         }
-        guard requiresPixels else { return nil }
+        guard requiresOwnerPreflight else { return nil }
         return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
             message: capturePreflightRefusal.diagnostic,
             reason: .runtimeIncompatible,

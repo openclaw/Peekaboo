@@ -70,6 +70,11 @@ struct CommandRuntimeOptions {
     var requiresExplicitSnapshotPublication = false
     var requiresCallerDesktopMutationBarrier = false
     var usesPerToolSnapshotInvalidation = false
+    /// MCP and Agent keep one dynamic tool runtime alive across multiple calls. An explicit
+    /// Bridge route therefore owns capture preflight for that runtime's authenticated generation.
+    var usesPersistentDynamicToolRuntime: Bool {
+        self.requiresAgentService && self.usesPerToolSnapshotInvalidation
+    }
     var requiresExactWindowTargetedClicks = false
     /// Protocol 1.30 is required before encoding middle/triple click cases.
     var requiresStatelessClickVariants = false

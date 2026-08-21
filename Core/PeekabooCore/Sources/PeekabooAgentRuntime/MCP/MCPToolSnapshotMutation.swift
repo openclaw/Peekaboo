@@ -94,6 +94,22 @@ enum MCPToolCaptureRequirement: Sendable, Equatable {
             nil
         }
     }
+
+    static func requiresScreenCaptureKitOwnerPreflight(
+        toolName: String,
+        arguments: ToolArguments) -> Bool?
+    {
+        guard let requiresPixels = self.requiresPixels(toolName: toolName, arguments: arguments) else { return nil }
+        guard requiresPixels else { return false }
+        if toolName == "see",
+           arguments.getString("capture_engine")?
+               .trimmingCharacters(in: .whitespacesAndNewlines)
+               .lowercased() == "classic"
+        {
+            return false
+        }
+        return true
+    }
 }
 
 struct MCPToolPendingSnapshotInvalidation: Sendable, Equatable {

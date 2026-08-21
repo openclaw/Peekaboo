@@ -1,5 +1,8 @@
+import MCP
 import PeekabooAutomation
+import PeekabooAutomationKit
 import PeekabooCore
+import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
 
@@ -72,5 +75,41 @@ struct ToolRegistryContractTests {
         let unclassified = names.filter { MCPToolCaptureRequirement.profile(toolName: $0) == nil }
 
         #expect(unclassified.isEmpty, "MCP tools missing capture profiles: \(unclassified.sorted())")
+    }
+
+    @Test
+    func `See exposes a closed capture engine and maps classic without ScreenCaptureKit`() throws {
+        let tool = SeeTool(context: MCPToolContext(services: PeekabooServices()))
+        guard case let .object(schema) = tool.inputSchema,
+              case let .object(properties)? = schema["properties"],
+              case let .object(captureEngine)? = properties["capture_engine"],
+              case let .array(values)? = captureEngine["enum"]
+        else {
+            Issue.record("Expected see.capture_engine schema")
+            return
+        }
+
+        #expect(values == ["auto", "modern", "classic"].map(Value.string))
+        #expect(captureEngine["default"] == .string("auto"))
+
+        let automatic = try SeeRequest(arguments: ToolArguments(value: .object([:])))
+        let modern = try SeeRequest(arguments: ToolArguments(value: .object([
+            "capture_engine": .string("modern"),
+        ])))
+        let classic = try SeeRequest(arguments: ToolArguments(value: .object([
+            "capture_engine": .string("classic"),
+        ])))
+        #expect(automatic.captureEngine == .auto)
+        #expect(modern.captureEngine == .modern)
+        #expect(classic.captureEngine == .legacy)
+
+        do {
+            _ = try SeeRequest(arguments: ToolArguments(value: .object([
+                "capture_engine": .string("sckit"),
+            ])))
+            Issue.record("Expected closed capture_engine validation")
+        } catch {
+            #expect(error.localizedDescription.contains("Expected auto, modern, or classic"))
+        }
     }
 }

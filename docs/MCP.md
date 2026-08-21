@@ -16,6 +16,9 @@ Peekaboo no longer hosts or manages external MCP servers; configure your MCP cli
 By default, the MCP process owns its lifecycle and keeps support services process-local. An explicit
 `--bridge-socket <path>` instead attaches MCP tools to that existing Bridge host and skips the embedded support daemon.
 In both modes, MCP never publishes `daemon.sock`, `bridge.sock`, or another Bridge listener itself.
+The explicit route also owns capture preflight for the server lifetime: Peekaboo reuses one authenticated client bound
+to that listener's process generation and does not consult unrelated global Bridge sockets. Caller-local MCP retains
+the broader legacy-owner scan because no external Bridge generation owns its capture path.
 
 Action-oriented UI tools include:
 
@@ -160,6 +163,12 @@ real owner before using the ID. Do not combine `window_id` with a window title o
 one window selector so stale inputs cannot redirect work to a sibling window from the same process. `window_id` is a
 positive 32-bit integer; strings, fractional numbers, zero, negative values, and out-of-range values fail before
 capture or Accessibility traversal begins.
+
+`see` also accepts the closed `capture_engine` values `auto` (default), `modern`, and `classic`. The choice is carried
+in that observation request to the selected host; incapable hosts refuse it before capture. `classic` never enters
+ScreenCaptureKit, so it is the safe request-local recovery path when the selected legacy host blocks auto/modern
+capture. A selected-host owner refusal remains fixed for the MCP process lifetime; update or relaunch that exact host
+and start a fresh MCP process before retrying auto/modern capture.
 
 Every successful MCP `see` response includes the selected raw or annotated screenshot as inline image content. When
 multiple calls intentionally share the same `path`, each response still returns pixels owned by its own capture; the

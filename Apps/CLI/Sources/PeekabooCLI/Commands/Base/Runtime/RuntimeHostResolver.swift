@@ -49,7 +49,7 @@ enum RuntimeHostResolver {
             if let oldHost = try await dependencies.inspectScreenCaptureKitSafety(
                 options,
                 environment,
-                self.screenCaptureKitSafetyCandidates(from: plan),
+                self.screenCaptureKitSafetyCandidates(from: plan, options: options),
                 resolvedHandshakeCache
             ) {
                 // The live recorder installs an irreversible process-lifetime tombstone. One

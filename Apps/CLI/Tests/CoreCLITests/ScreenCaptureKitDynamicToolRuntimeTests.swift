@@ -1,6 +1,7 @@
 import Commander
 import Foundation
 import MCP
+import PeekabooBridge
 import PeekabooCore
 import TachikomaMCP
 import Testing
@@ -8,15 +9,97 @@ import Testing
 
 extension ScreenCaptureKitOwnerRuntimeTests {
     @Test
-    func `explicit dynamic host starts while unrelated legacy owner blocks only capture tools`() async throws {
+    func `explicit persistent capture safety is scoped to its selected socket`() {
+        let selectedSocket = "/tmp/persistent-selected.sock"
+        let plan = RuntimeHostResolver.RemoteCandidatePlan(
+            explicitSocket: selectedSocket,
+            daemonSocketPath: "/tmp/unrelated-daemon.sock",
+            runtimeBuildIdentity: "fixture-build",
+            buildScopedDaemonSocketPath: "/tmp/unrelated-build-daemon.sock",
+            historicalBuildScopedDaemonTargets: [],
+            historicalBuildScopedDaemonSocketPaths: ["/tmp/unrelated-historical.sock"],
+            candidates: [.init(
+                socketPath: selectedSocket,
+                requireReusableDaemon: false,
+                requiredHostKind: nil,
+                requiresValidatedHistoricalDaemon: false
+            )]
+        )
+        var options = CommandRuntimeOptions()
+        options.requiresAgentService = true
+        options.usesPerToolSnapshotInvalidation = true
+
+        let candidates = RuntimeHostResolver.screenCaptureKitSafetyCandidates(
+            from: plan,
+            options: options
+        )
+
+        #expect(candidates.map(\.socketPath) == [selectedSocket])
+    }
+
+    @Test
+    func `one-shot and implicit capture safety retain broad legacy-owner discovery`() {
+        let selectedSocket = "/tmp/one-shot-selected.sock"
+        let daemonSocket = "/tmp/one-shot-daemon.sock"
+        let buildSocket = "/tmp/one-shot-build-daemon.sock"
+        let historicalSocket = "/tmp/one-shot-historical.sock"
+        let plan = RuntimeHostResolver.RemoteCandidatePlan(
+            explicitSocket: selectedSocket,
+            daemonSocketPath: daemonSocket,
+            runtimeBuildIdentity: "fixture-build",
+            buildScopedDaemonSocketPath: buildSocket,
+            historicalBuildScopedDaemonTargets: [],
+            historicalBuildScopedDaemonSocketPaths: [historicalSocket],
+            candidates: [.init(
+                socketPath: selectedSocket,
+                requireReusableDaemon: false,
+                requiredHostKind: nil,
+                requiresValidatedHistoricalDaemon: false
+            )]
+        )
+
+        let candidates = RuntimeHostResolver.screenCaptureKitSafetyCandidates(
+            from: plan,
+            options: CommandRuntimeOptions()
+        ).map(\.socketPath)
+
+        #expect(candidates.first == selectedSocket)
+        #expect(candidates.contains(daemonSocket))
+        #expect(candidates.contains(buildSocket))
+        #expect(candidates.contains(historicalSocket))
+        #expect(candidates.contains(PeekabooBridgeConstants.peekabooSocketPath))
+        #expect(candidates.contains(PeekabooBridgeConstants.claudeSocketPath))
+        #expect(candidates.contains(PeekabooBridgeConstants.clawdbotSocketPath))
+        #expect(Set(candidates).count == candidates.count)
+    }
+
+    @Test
+    func `explicit dynamic host ignores unrelated legacy owner and reuses selected generation`() async throws {
         let selectedSocket = "/tmp/peekaboo-dynamic-selected-\(UUID().uuidString).sock"
+        let unrelatedSocket = "/tmp/peekaboo-dynamic-unrelated-\(UUID().uuidString).sock"
+        var selectedHandshakeCount = 0
+        var unrelatedHandshakeCount = 0
         let selectedHost = try await Self.startHost(
             socketPath: selectedSocket,
             processIdentifier: 4242,
             processStartIdentity: 9001,
-            codeSignatureHash: "selected-build"
+            codeSignatureHash: "selected-build",
+            permissionEvaluationObserver: { selectedHandshakeCount += 1 }
         )
-        defer { Task { await selectedHost.stop() } }
+        let unrelatedHost = try await Self.startHost(
+            socketPath: unrelatedSocket,
+            processIdentifier: 5151,
+            processStartIdentity: 6161,
+            codeSignatureHash: "legacy-build",
+            ownerAware: false,
+            permissionEvaluationObserver: { unrelatedHandshakeCount += 1 }
+        )
+        defer {
+            Task {
+                await selectedHost.stop()
+                await unrelatedHost.stop()
+            }
+        }
 
         let options = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
@@ -28,16 +111,11 @@ extension ScreenCaptureKitOwnerRuntimeTests {
         )
         #expect(options.bridgeSocketPath == selectedSocket)
         #expect(options.usesPerToolSnapshotInvalidation)
-        #expect(!options.requiresScreenCaptureKitOwnerCapability)
+        #expect(options.usesPersistentDynamicToolRuntime)
         #expect(!options.requiresScreenCaptureKitOwnerCapability)
         var inspectOwnerCalls = 0
         var localFactoryCalls = 0
-        let legacyOwner = RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
-            socketPath: "/tmp/unrelated-legacy-owner.sock",
-            processIdentifier: nil,
-            processStartIdentity: nil,
-            buildIdentity: "legacy-build"
-        )
+        var inspectedCandidates: [String] = []
 
         let resolution = try await RuntimeHostResolver.resolveServices(
             options: options,
@@ -53,7 +131,16 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                     inspectOwnerCalls += 1
                     return nil
                 },
-                inspectScreenCaptureKitSafety: { _, _, _, _ in legacyOwner },
+                inspectScreenCaptureKitSafety: { _, _, candidates, handshakeCache in
+                    let candidates = try #require(candidates)
+                    inspectedCandidates = candidates.map(\.socketPath)
+                    return try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
+                        candidates: candidates,
+                        identity: handshakeCache.identity,
+                        handshakeCache: handshakeCache,
+                        externalHostPresence: { _ in .absent }
+                    )
+                },
                 remoteCandidatePlan: { _, _ in
                     RuntimeHostResolver.RemoteCandidatePlan(
                         explicitSocket: selectedSocket,
@@ -76,13 +163,17 @@ extension ScreenCaptureKitOwnerRuntimeTests {
         #expect(resolution.selectedRemoteSocketPath == selectedSocket)
         #expect(inspectOwnerCalls == 1)
         #expect(localFactoryCalls == 0)
-        let refusal = try #require(resolution.toolCapturePreflightRefusal)
-        #expect(refusal.message.contains(selectedSocket))
-        #expect(refusal.message.contains(legacyOwner.socketPath))
-        #expect(refusal.message.contains("No capture was dispatched"))
-        #expect(refusal.hint?.contains("Do not stop any process") == true)
-        #expect(refusal.hint?.contains("start a fresh session") == true)
+        #expect(resolution.toolCapturePreflightRefusal == nil)
+        #expect(inspectedCandidates == [selectedSocket])
+        #expect(selectedHandshakeCount == 1)
+        #expect(unrelatedHandshakeCount == 0)
+
+        let permissions = try await resolution.services.permissionsStatus()
+        #expect(permissions.screenRecording)
+        #expect(selectedHandshakeCount == 2)
+        #expect(unrelatedHandshakeCount == 0)
         await selectedHost.stop()
+        await unrelatedHost.stop()
     }
 
     @Test

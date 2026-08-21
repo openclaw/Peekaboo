@@ -52,6 +52,13 @@ public struct SeeTool: MCPTool {
                     description: """
                     Optional. Path to save the screenshot. If omitted, a temporary file is used.
                     """),
+                "capture_engine": SchemaBuilder.string(
+                    description: """
+                    Optional. auto (default), modern (ScreenCaptureKit), or classic (no ScreenCaptureKit).
+                    Use classic to recover safely from a ScreenCaptureKit owner refusal.
+                    """,
+                    enum: ["auto", "modern", "classic"],
+                    default: "auto"),
                 "snapshot": SchemaBuilder.string(
                     description: """
                     Optional. Snapshot ID for UI automation tracking. A new snapshot is created when absent.
@@ -237,7 +244,10 @@ public struct SeeTool: MCPTool {
         try await self.context.desktopObservation.observeResult(
             DesktopObservationRequest(
                 target: target.observationTarget,
-                capture: DesktopCaptureOptions(visualizerMode: .none, roi: request.roi),
+                capture: DesktopCaptureOptions(
+                    engine: request.captureEngine,
+                    visualizerMode: .none,
+                    roi: request.roi),
                 detection: DesktopDetectionOptions(
                     mode: request.ocr ? .accessibilityAndOCR : .accessibility,
                     allowWebFocusFallback: request.webFocus,

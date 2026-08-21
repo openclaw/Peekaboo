@@ -65,7 +65,10 @@ extension RuntimeHostResolver {
                         options: options,
                         environment: environment
                     )
-                    resolvedCandidates = RuntimeHostResolver.screenCaptureKitSafetyCandidates(from: plan)
+                    resolvedCandidates = RuntimeHostResolver.screenCaptureKitSafetyCandidates(
+                        from: plan,
+                        options: options
+                    )
                 }
                 return try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
                     candidates: resolvedCandidates,
@@ -299,9 +302,17 @@ extension RuntimeHostResolver {
     }
 
     static func screenCaptureKitSafetyCandidates(
-        from plan: RemoteCandidatePlan
+        from plan: RemoteCandidatePlan,
+        options: CommandRuntimeOptions
     ) -> [ImplicitRemoteCandidate] {
         var paths = plan.candidates.map(\.socketPath)
+        if options.usesPersistentDynamicToolRuntime,
+           plan.explicitSocket?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            // A persistent MCP/Agent runtime with an explicit Bridge route retains the authenticated
+            // client from this handshake. Its listener generation is revalidated for every request,
+            // so unrelated global sockets cannot contribute capture authority or poison the session.
+            return self.screenCaptureKitSafetyCandidates(paths: paths)
+        }
         paths.append(plan.daemonSocketPath)
         if let buildScopedDaemonSocketPath = plan.buildScopedDaemonSocketPath {
             paths.append(buildScopedDaemonSocketPath)
@@ -313,6 +324,12 @@ extension RuntimeHostResolver {
             PeekabooBridgeConstants.clawdbotSocketPath,
         ])
 
+        return self.screenCaptureKitSafetyCandidates(paths: paths)
+    }
+
+    private static func screenCaptureKitSafetyCandidates(
+        paths: [String]
+    ) -> [ImplicitRemoteCandidate] {
         var seen = Set<String>()
         return paths.compactMap { path in
             let standardized = NSString(string: path).standardizingPath
@@ -411,7 +428,8 @@ extension RuntimeHostResolver {
     ) -> MCPToolCapturePreflightRefusal {
         let refusal = self.ownerCapabilityRefusal(host: host, selectedSocket: selectedSocket)
         let sessionGuidance = "This capture refusal is fixed for the lifetime of this MCP or Agent session; " +
-            "after the owner is updated or stopped, start a fresh session before retrying capture."
+            "after the owner is updated or stopped, start a fresh session before retrying auto or modern capture. " +
+            "The see tool can instead use capture_engine 'classic' in this session without entering ScreenCaptureKit."
         return MCPToolCapturePreflightRefusal(
             message: refusal.localizedDescription,
             hint: [refusal.hint, sessionGuidance].compactMap(\.self).joined(separator: " ")
