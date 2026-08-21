@@ -101,8 +101,7 @@ public enum ToolRegistry {
             discussion: tool.description,
             category: category,
             parameters: parameters,
-            examples: [],
-            agentGuidance: "")
+            examples: [])
     }
 
     /// Convert agent tool parameters to parameter definitions

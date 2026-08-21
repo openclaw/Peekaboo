@@ -650,6 +650,7 @@ struct CLIRuntimeSmokeTests {
         #expect(!result.standardOutput.contains("#### `shell`"))
         #expect(!result.standardOutput.contains("- **System**: shell"))
         #expect(!result.standardOutput.contains("type --app"))
+        #expect(!result.standardOutput.contains("****"))
         #expect(result.standardOutput.contains("explicit fresh exact non-dialog snapshot receipt"))
 
         let clipboardMarker = try #require(result.standardOutput.range(of: "#### `clipboard`"))
