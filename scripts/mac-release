@@ -1,5 +1,18 @@
 #!/bin/bash -p
 builtin set +vx
+# Keep service-account credentials shell-local while resolving the trusted
+# release helper. Re-export them only for the exact helper exec below.
+for raw_service_credential in OP_SERVICE_ACCOUNT_TOKEN MOLTY_OP_SERVICE_ACCOUNT_TOKEN; do
+  if [[ -n "${!raw_service_credential+x}" ]]; then
+    builtin export -n "$raw_service_credential" || builtin exit 1
+  fi
+done
+builtin unset raw_service_credential
+entry_requires_service_custody=false
+for required_entry_value in OP_SERVICE_ACCOUNT_TOKEN MOLTY_OP_SERVICE_ACCOUNT_TOKEN; do
+  [[ -z "${!required_entry_value+x}" ]] || entry_requires_service_custody=true
+done
+builtin unset required_entry_value
 PATH=/usr/bin:/bin
 builtin export PATH
 raw_function_names_file=$(/usr/bin/mktemp /tmp/peekaboo-functions.XXXXXX) || builtin exit 1
@@ -19,6 +32,10 @@ while IFS= read -r -d '' raw_function_name; do
 done < "$raw_function_names_file"
 /bin/rm -f "$raw_function_names_file"
 if (("${#raw_function_scrub_args[@]}" > 0)); then
+  if [[ "$entry_requires_service_custody" == true ]]; then
+    /bin/echo 'Service-token invocation refuses an exported-function environment.' >&2
+    builtin exit 1
+  fi
   builtin exec /usr/bin/env "${raw_function_scrub_args[@]}" \
     -u BASH_ENV -u ENV -u CDPATH -u GLOBIGNORE \
     PATH=/usr/bin:/bin \
@@ -41,15 +58,25 @@ SCRIPT_DIR=$(builtin cd "$source_directory" && builtin pwd -P)
 ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 cd "$ROOT"
 
+exec_release_helper() {
+  for raw_service_credential in OP_SERVICE_ACCOUNT_TOKEN MOLTY_OP_SERVICE_ACCOUNT_TOKEN; do
+    if [[ -n "${!raw_service_credential+x}" ]]; then
+      builtin export "$raw_service_credential"
+    fi
+  done
+  builtin unset raw_service_credential
+  builtin exec "$@"
+}
+
 if [[ -n "${MAC_RELEASE_TOOL:-}" ]]; then
-  exec "$MAC_RELEASE_TOOL" "$@"
+  exec_release_helper "$MAC_RELEASE_TOOL" "$@"
 fi
 
 for candidate in \
   "$ROOT/../agent-scripts/skills/release-mac-app/scripts/mac-release" \
   "$HOME/Projects/agent-scripts/skills/release-mac-app/scripts/mac-release"; do
   if [[ -x "$candidate" ]]; then
-    exec "$candidate" "$@"
+    exec_release_helper "$candidate" "$@"
   fi
 done
 

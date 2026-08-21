@@ -6,6 +6,29 @@
 # and final online verification succeed.
 
 builtin set +vx
+# Package credential values must remain visible only to this privileged shell
+# until the P8 is materialized from stdin. Remove their export attributes
+# before the entrypoint invokes even its trusted environment-scrub tools.
+# Include credentials that this narrow boundary will reject as well as the
+# App Store Connect fields it consumes. A malformed invocation must fail
+# without first propagating unrelated authority.
+entry_has_sensitive_environment=false
+for early_secret_name in \
+  APP_STORE_CONNECT_API_KEY_P8 APP_STORE_CONNECT_KEY_ID APP_STORE_CONNECT_ISSUER_ID \
+  ASC_PRIVATE_KEY_P8 ASC_KEY_ID ASC_ISSUER_ID BASH_ENV CDPATH CODESIGN_KEYCHAIN \
+  DYLD_INSERT_LIBRARIES DYLD_LIBRARY_PATH ENV GH_TOKEN GITHUB_TOKEN GLOBIGNORE \
+  MAC_RELEASE_CODESIGN_KEYCHAIN MAC_RELEASE_CODESIGN_KEYCHAIN_PASSWORD \
+  MAC_RELEASE_SPARKLE_KEY_FILE MAC_RELEASE_SPARKLE_OP_REF MOLTY_OP_SERVICE_ACCOUNT_TOKEN \
+  NODE_AUTH_TOKEN NODE_OPTIONS NODE_PATH NOTARYTOOL_KEY NOTARYTOOL_KEYCHAIN_PROFILE \
+  NOTARYTOOL_KEY_ID NOTARYTOOL_ISSUER NOTARYTOOL_PROFILE NPM_CONFIG_USERCONFIG NPM_TOKEN \
+  OP_SERVICE_ACCOUNT_TOKEN PERL5LIB PERL5OPT PYTHONHOME PYTHONPATH RUBYLIB RUBYOPT SIGN_IDENTITY \
+  SPARKLE_PRIVATE_KEY SPARKLE_PRIVATE_KEY_FILE ZDOTDIR; do
+  if [[ -n "${!early_secret_name+x}" ]]; then
+    entry_has_sensitive_environment=true
+    builtin export -n "$early_secret_name" || builtin exit 1
+  fi
+done
+builtin unset early_secret_name
 PATH=/usr/bin:/bin
 builtin export PATH
 raw_function_names_file=$(/usr/bin/mktemp /tmp/peekaboo-functions.XXXXXX) || builtin exit 1
@@ -25,6 +48,10 @@ while IFS= read -r -d '' raw_function_name; do
 done < "$raw_function_names_file"
 /bin/rm -f "$raw_function_names_file"
 if (("${#raw_function_scrub_args[@]}" > 0)); then
+  if [[ "$entry_has_sensitive_environment" == true ]]; then
+    /bin/echo 'Notary-credential invocation refuses an exported-function environment.' >&2
+    builtin exit 1
+  fi
   builtin exec /usr/bin/env "${raw_function_scrub_args[@]}" \
     -u BASH_ENV -u ENV -u CDPATH -u GLOBIGNORE \
     PATH=/usr/bin:/bin \

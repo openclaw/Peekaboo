@@ -69,12 +69,68 @@ printf 'printf "startup" > %q\n' "$startup_marker" > "$TEST_DIR/hostile-bash-env
 FUNCTION_MARKER="$function_marker" /bin/bash --noprofile --norc -c '
   dirname() { printf "%s\n" "${OP_SERVICE_ACCOUNT_TOKEN:-missing}" > "$FUNCTION_MARKER"; }
   export -f dirname
-  BASH_ENV="$2" OP_SERVICE_ACCOUNT_TOKEN=sentinel "$1" check-helper >/dev/null
+  if BASH_ENV="$2" OP_SERVICE_ACCOUNT_TOKEN=sentinel "$1" check-helper >/dev/null 2>&1; then
+    exit 95
+  fi
 ' bash "$ROOT_DIR/scripts/build-terminal-artifacts.sh" "$TEST_DIR/hostile-bash-env"
 [[ ! -e "$function_marker" ]] || fail 'entrypoint invoked an imported function with service authority'
 [[ ! -e "$startup_marker" ]] || fail 'entrypoint processed BASH_ENV with service authority'
 
+caller_owned_token_file="$TEST_DIR/caller-owned-token"
+printf 'caller-owned\n' > "$caller_owned_token_file"
+PEEKABOO_OP_SERVICE_TOKEN_FILE="$caller_owned_token_file" \
+  "$ROOT_DIR/scripts/build-terminal-artifacts.sh" check-helper >/dev/null
+[[ "$(cat "$caller_owned_token_file")" == caller-owned ]] || \
+  fail 'non-all child deleted or changed its caller-owned token custody file'
+
+before_token_files="$TEST_DIR/token-files-before"
+after_token_files="$TEST_DIR/token-files-after"
+find /tmp -maxdepth 1 -type f -name 'peekaboo-op-token.*' -print | sort > "$before_token_files"
+caller_owned_molty_file="$TEST_DIR/caller-owned-molty-token"
+printf 'caller-owned-molty\n' > "$caller_owned_molty_file"
+if OP_SERVICE_ACCOUNT_TOKEN=first-token MOLTY_OP_SERVICE_ACCOUNT_TOKEN=second-token \
+  PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE="$caller_owned_molty_file" \
+  "$ROOT_DIR/scripts/build-terminal-artifacts.sh" check-helper >/dev/null 2>&1; then
+  fail 'conflicting second-token custody unexpectedly succeeded'
+fi
+find /tmp -maxdepth 1 -type f -name 'peekaboo-op-token.*' -print | sort > "$after_token_files"
+[[ -z "$(comm -13 "$before_token_files" "$after_token_files")" ]] || \
+  fail 'first token file leaked after second-token custody failure'
+[[ "$(cat "$caller_owned_molty_file")" == caller-owned-molty ]] || \
+  fail 'failure cleanup changed caller-owned second-token custody'
+
+release_wrapper="$ROOT_DIR/scripts/mac-release"
+release_entry_prefix="$(awk '/^raw_function_names_file=/{exit} {print}' "$release_wrapper")"
+for secret_name in OP_SERVICE_ACCOUNT_TOKEN MOLTY_OP_SERVICE_ACCOUNT_TOKEN; do
+  grep -Fwq "$secret_name" <<< "$release_entry_prefix" || \
+    fail "release wrapper does not de-export $secret_name before its environment scan"
+done
+cat > "$TEST_DIR/release-helper-probe" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s:%s\n' "${OP_SERVICE_ACCOUNT_TOKEN:-}" "${MOLTY_OP_SERVICE_ACCOUNT_TOKEN:-}"
+EOF
+chmod 755 "$TEST_DIR/release-helper-probe"
+if /bin/bash --noprofile --norc -c '
+  hostile_release_function() { return 97; }
+  export -f hostile_release_function
+  OP_SERVICE_ACCOUNT_TOKEN=primary MOLTY_OP_SERVICE_ACCOUNT_TOKEN=legacy \
+    MAC_RELEASE_TOOL="$2" "$1" >/dev/null 2>&1
+' bash "$release_wrapper" "$TEST_DIR/release-helper-probe"; then
+  fail 'credential-bearing release wrapper accepted an exported-function environment'
+fi
+release_probe_output="$(OP_SERVICE_ACCOUNT_TOKEN=primary MOLTY_OP_SERVICE_ACCOUNT_TOKEN=legacy \
+  MAC_RELEASE_TOOL="$TEST_DIR/release-helper-probe" \
+  /usr/bin/env -u BASH_FUNC_raw_exported_probe%% "$release_wrapper")"
+[[ "$release_probe_output" == primary:legacy ]] || \
+  fail 'release wrapper did not re-export service credentials only for the selected helper'
+
 wrapper="$ROOT_DIR/scripts/build-terminal-artifacts.sh"
+entry_prefix="$(awk '/^raw_function_names_file=/{exit} {print}' "$wrapper")"
+for secret_name in "${TERMINAL_ARTIFACT_SECRET_NAMES[@]}"; do
+  grep -Fwq "$secret_name" <<< "$entry_prefix" || \
+    fail "entrypoint does not de-export $secret_name before its environment scan"
+done
 rg -Fq 'terminal_artifact_run_build /bin/bash --noprofile --norc -p' "$wrapper" || \
   fail 'all mode does not isolate its complete build process'
 rg -Fq 'MAC_RELEASE_MANIFEST="$ROOT_DIR/.mac-release-terminal.env"' "$wrapper" || \
@@ -89,7 +145,7 @@ for publication_secret in GH_TOKEN GITHUB_TOKEN NODE_AUTH_TOKEN NPM_CONFIG_USERC
     fail "finalization does not remove inherited $publication_secret"
 done
 rg -Fq 'run_notary_only --kind' "$wrapper" || fail 'notarization is not split into direct narrow children'
-if rg -n 'release-macos-app|sign_update|SPARKLE_PRIVATE_KEY' "$wrapper"; then
+if rg -n 'release-macos-app|sign_update' "$wrapper"; then
   fail 'terminal finalization still inherits public-release or Sparkle machinery'
 fi
 if rg -n 'create-github-release|publish-npm|gh release (create|upload)|npm publish' "$wrapper"; then
@@ -127,7 +183,7 @@ rg -Fq 'qualification_source_inventory_sha256' "$wrapper" || \
   fail 'build provenance omits the commit-materialized source snapshot'
 rg -Fq 'qualification_monitor:' "$wrapper" || fail 'portable manifest omits the rich monitor record'
 rg -Fq 'materialize_committed_file' "$wrapper" || fail 'published source/tools still come from the mutable worktree'
-rg -Fq '8f714f53c69ef0034263eafea036eed9714e9b5e' "$wrapper" || \
+rg -Fq 'ee69e9516e61901c02abd1a71456d5f1fd9f1d5f' "$wrapper" || \
   fail 'terminal pipeline does not pin the package-run helper contract'
 rg -Fq 'scripts/build-terminal-artifacts.sh check-helper' "$ROOT_DIR/docs/RELEASING.md" || \
   fail 'manual release flow does not preflight the credential runner'

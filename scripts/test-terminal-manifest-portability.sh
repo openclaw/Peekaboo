@@ -237,7 +237,7 @@ jq -n --arg version "$VERSION" --arg source "$SOURCE_COMMIT" --arg lockSHA "$loc
   dependency_lock_path:"Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved",dependency_lock_sha256:$lockSHA,
   toolchain:{developer_dir:"/Fixture/Xcode",xcodebuild_version:"Xcode Fixture",sdk_version:"99.0",swiftc_version:"Swift Fixture"},
   signing:{authority:"Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)",team_id:"FWJYW4S8P8",
-   release_helper:{commit:"8f714f53c69ef0034263eafea036eed9714e9b5e",executable_sha256:"0e76d72e7e2e585eb178ab5e292326362a649632b495b40740bce5fa750e0e7a",library_sha256:"6be67a85c4b83d8968bfcf3697451dc21544614a4318e49a3534b219026ee842"}},
+   release_helper:{commit:"ee69e9516e61901c02abd1a71456d5f1fd9f1d5f",executable_sha256:"e65e06ef89ec90ebfc537d28748a3c4de8ce89bd09b51e4d67ba4bdd95427255",library_sha256:"6be67a85c4b83d8968bfcf3697451dc21544614a4318e49a3534b219026ee842"}},
   notarization:{cli:$cliNotary[0],peekaboo_app:$appNotary[0],peekaboo_dmg:$dmgNotary[0],playground_app:$playgroundNotary[0],qualification_node_app:$nodeNotary[0],certification_controller:$controllerNotary[0]},
   cli:{sha256:$cliExecutableSHA,cdhash:"1111111111111111111111111111111111111111"},app:{source_commit:$source,zip_sha256:$appSHA,cdhash:"1111111111111111111111111111111111111111"},
   playground:{source_commit:$source,zip_sha256:$playgroundSHA,cdhash:"1111111111111111111111111111111111111111"},

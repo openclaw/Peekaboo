@@ -18,6 +18,20 @@ fail() {
   exit 1
 }
 
+notary_entry_prefix="$(awk '/^raw_function_names_file=/{exit} {print}' \
+  "$ROOT_DIR/scripts/notarize-terminal-artifact.sh")"
+for secret_name in \
+  APP_STORE_CONNECT_API_KEY_P8 APP_STORE_CONNECT_KEY_ID APP_STORE_CONNECT_ISSUER_ID \
+  ASC_PRIVATE_KEY_P8 ASC_KEY_ID ASC_ISSUER_ID CODESIGN_KEYCHAIN DYLD_INSERT_LIBRARIES \
+  DYLD_LIBRARY_PATH GH_TOKEN GITHUB_TOKEN MAC_RELEASE_CODESIGN_KEYCHAIN \
+  MAC_RELEASE_CODESIGN_KEYCHAIN_PASSWORD MAC_RELEASE_SPARKLE_KEY_FILE \
+  MAC_RELEASE_SPARKLE_OP_REF MOLTY_OP_SERVICE_ACCOUNT_TOKEN NODE_AUTH_TOKEN NODE_OPTIONS \
+  NODE_PATH NOTARYTOOL_KEY NOTARYTOOL_KEY_ID NOTARYTOOL_ISSUER NPM_CONFIG_USERCONFIG NPM_TOKEN \
+  OP_SERVICE_ACCOUNT_TOKEN SIGN_IDENTITY SPARKLE_PRIVATE_KEY SPARKLE_PRIVATE_KEY_FILE; do
+  grep -Fwq "$secret_name" <<< "$notary_entry_prefix" || \
+    fail "notary entrypoint does not de-export $secret_name before its environment scan"
+done
+
 mkdir -p "$CLI_TREE"
 printf 'int main(void) { return 0; }\n' > "$TEST_DIR/main.c"
 /usr/bin/clang -arch arm64 "$TEST_DIR/main.c" -o "$TEST_DIR/cli-arm64"
@@ -121,6 +135,20 @@ submit_line="$(grep -n 'xcrun notarytool submit .*--keychain-profile __peekaboo_
   "$LOG_FILE" | cut -d: -f1)"
 [[ -n "$history_line" && -n "$submit_line" && "$history_line" -lt "$submit_line" ]] || \
   fail 'profile history did not precede the exact submit command'
+
+profile_reexec_transaction="$TEST_DIR/profile-reexec-transaction"
+if (
+  hostile_notary_function() { return 97; }
+  export -f hostile_notary_function
+  export OP_SERVICE_ACCOUNT_TOKEN=unrelated-credential
+  run_notary --kind cli-tree --artifact "$CLI_TREE" \
+    --transaction "$profile_reexec_transaction" \
+    --notary-profile __peekaboo_fixture__ >/dev/null 2>&1
+); then
+  fail 'credential-bearing notary accepted an exported-function environment'
+fi
+[[ ! -e "$profile_reexec_transaction" ]] || \
+  fail 'function-environment refusal published a notary transaction'
 
 assert_cli_failure() {
   local label="$1"

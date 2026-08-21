@@ -5,6 +5,28 @@
 # phases with the narrowest environment each phase needs.
 
 builtin set +vx
+# Keep inherited secrets available only to this privileged shell until they
+# are either moved into owner-private custody or rejected below. In particular,
+# do not expose them to the entrypoint's environment/function scrub subprocesses.
+for early_secret_name in \
+  APP_STORE_CONNECT_API_KEY_P8 APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_KEY_ID \
+  ASC_ISSUER_ID ASC_KEY_ID ASC_PRIVATE_KEY_P8 BASH_ENV CDPATH DYLD_INSERT_LIBRARIES \
+  DYLD_LIBRARY_PATH ENV GH_TOKEN GITHUB_TOKEN GLOBIGNORE MAC_RELEASE_CODESIGN_KEYCHAIN_PASSWORD \
+  MAC_RELEASE_SPARKLE_KEY_FILE MAC_RELEASE_SPARKLE_OP_REF MAC_RELEASE_SIGNING_KEY_FILE \
+  MAC_RELEASE_TOOL MOLTY_OP_SERVICE_ACCOUNT_TOKEN NODE_AUTH_TOKEN NODE_OPTIONS NODE_PATH \
+  NOTARYTOOL_ISSUER NOTARYTOOL_KEY NOTARYTOOL_KEYCHAIN_PROFILE NOTARYTOOL_KEY_ID \
+  NOTARYTOOL_PROFILE NPM_CONFIG_USERCONFIG NPM_TOKEN OP_SERVICE_ACCOUNT_TOKEN PERL5LIB PERL5OPT \
+  PYTHONHOME PYTHONPATH RUBYLIB RUBYOPT SPARKLE_PRIVATE_KEY SPARKLE_PRIVATE_KEY_FILE ZDOTDIR; do
+  if [[ -n "${!early_secret_name+x}" ]]; then
+    builtin export -n "$early_secret_name" || builtin exit 1
+  fi
+done
+builtin unset early_secret_name
+entry_requires_service_custody=false
+for required_entry_value in OP_SERVICE_ACCOUNT_TOKEN MOLTY_OP_SERVICE_ACCOUNT_TOKEN; do
+  [[ -z "${!required_entry_value+x}" ]] || entry_requires_service_custody=true
+done
+builtin unset required_entry_value
 PATH=/usr/bin:/bin
 builtin export PATH
 raw_function_names_file=$(/usr/bin/mktemp /tmp/peekaboo-functions.XXXXXX) || builtin exit 1
@@ -24,6 +46,10 @@ while IFS= read -r -d '' raw_function_name; do
 done < "$raw_function_names_file"
 /bin/rm -f "$raw_function_names_file"
 if (("${#raw_function_scrub_args[@]}" > 0)); then
+  if [[ "$entry_requires_service_custody" == true ]]; then
+    /bin/echo 'Service-token invocation refuses an exported-function environment.' >&2
+    builtin exit 1
+  fi
   builtin exec /usr/bin/env "${raw_function_scrub_args[@]}" \
     -u BASH_ENV -u ENV -u CDPATH -u GLOBIGNORE \
     PATH=/usr/bin:/bin \
@@ -56,8 +82,8 @@ EXPECTED_IDENTITY='Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)'
 EXPECTED_TEAM_ID=FWJYW4S8P8
 EXPECTED_REQUIREMENT="anchor apple generic and certificate leaf[subject.OU] = \"$EXPECTED_TEAM_ID\""
 TIMESTAMP_URL=http://timestamp.apple.com/ts01
-EXPECTED_RELEASE_HELPER_COMMIT=8f714f53c69ef0034263eafea036eed9714e9b5e
-EXPECTED_RELEASE_HELPER_SHA=0e76d72e7e2e585eb178ab5e292326362a649632b495b40740bce5fa750e0e7a
+EXPECTED_RELEASE_HELPER_COMMIT=ee69e9516e61901c02abd1a71456d5f1fd9f1d5f
+EXPECTED_RELEASE_HELPER_SHA=e65e06ef89ec90ebfc537d28748a3c4de8ce89bd09b51e4d67ba4bdd95427255
 EXPECTED_RELEASE_HELPER_LIB_SHA=6be67a85c4b83d8968bfcf3697451dc21544614a4318e49a3534b219026ee842
 CANONICAL_LOCK_RELATIVE=Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved
 CANONICAL_LOCK="$ROOT_DIR/$CANONICAL_LOCK_RELATIVE"
@@ -67,12 +93,26 @@ COMMAND="${1:-}"
 STAGE_DIR=""
 OUTPUT_DIR=""
 
+builtin unset owned_op_service_token_file owned_molty_op_service_token_file 2>/dev/null || builtin exit 1
+owned_op_service_token_file=""
+owned_molty_op_service_token_file=""
+cleanup_service_token_files() {
+  if [[ -n "$owned_op_service_token_file" ]]; then
+    /bin/rm -f "$owned_op_service_token_file"
+  fi
+  if [[ -n "$owned_molty_op_service_token_file" ]]; then
+    /bin/rm -f "$owned_molty_op_service_token_file"
+  fi
+}
+trap cleanup_service_token_files EXIT
+
 if [[ -n "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]]; then
   [[ -z "${PEEKABOO_OP_SERVICE_TOKEN_FILE:-}" ]] || {
     /bin/echo 'Conflicting service-token custody.' >&2
     builtin exit 1
   }
-  PEEKABOO_OP_SERVICE_TOKEN_FILE="$(/usr/bin/mktemp /tmp/peekaboo-op-token.XXXXXX)" || builtin exit 1
+  owned_op_service_token_file="$(/usr/bin/mktemp /tmp/peekaboo-op-token.XXXXXX)" || builtin exit 1
+  PEEKABOO_OP_SERVICE_TOKEN_FILE="$owned_op_service_token_file"
   printf '%s' "$OP_SERVICE_ACCOUNT_TOKEN" > "$PEEKABOO_OP_SERVICE_TOKEN_FILE"
   /bin/chmod 600 "$PEEKABOO_OP_SERVICE_TOKEN_FILE"
   builtin export PEEKABOO_OP_SERVICE_TOKEN_FILE
@@ -83,7 +123,8 @@ if [[ -n "${MOLTY_OP_SERVICE_ACCOUNT_TOKEN:-}" ]]; then
     /bin/echo 'Conflicting legacy service-token custody.' >&2
     builtin exit 1
   }
-  PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE="$(/usr/bin/mktemp /tmp/peekaboo-molty-op-token.XXXXXX)" || builtin exit 1
+  owned_molty_op_service_token_file="$(/usr/bin/mktemp /tmp/peekaboo-molty-op-token.XXXXXX)" || builtin exit 1
+  PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE="$owned_molty_op_service_token_file"
   printf '%s' "$MOLTY_OP_SERVICE_ACCOUNT_TOKEN" > "$PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE"
   /bin/chmod 600 "$PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE"
   builtin export PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE
@@ -95,12 +136,6 @@ builtin export PATH
 fail() {
   printf 'build-terminal-artifacts: %s\n' "$*" >&2
   exit 1
-}
-
-cleanup_service_token_files() {
-  [[ -z "${PEEKABOO_OP_SERVICE_TOKEN_FILE:-}" ]] || /bin/rm -f "$PEEKABOO_OP_SERVICE_TOKEN_FILE"
-  [[ -z "${PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE:-}" ]] || \
-    /bin/rm -f "$PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE"
 }
 
 expose_service_tokens() {
@@ -117,7 +152,6 @@ expose_service_tokens() {
 hide_service_tokens() {
   builtin unset OP_SERVICE_ACCOUNT_TOKEN MOLTY_OP_SERVICE_ACCOUNT_TOKEN
 }
-trap cleanup_service_token_files EXIT
 
 usage() {
   cat <<'EOF'
@@ -371,8 +405,8 @@ verify_unsigned_stage() {
       .dependency_lock_path == $lockPath and .dependency_lock_sha256 == $lockSHA and
       .toolchain == {developer_dir: $developerDir, xcodebuild_version: $xcodebuildVersion,
         sdk_version: $sdkVersion, swiftc_version: $swiftcVersion} and
-      .release_helper == {commit: "8f714f53c69ef0034263eafea036eed9714e9b5e",
-        executable_sha256: "0e76d72e7e2e585eb178ab5e292326362a649632b495b40740bce5fa750e0e7a",
+      .release_helper == {commit: "ee69e9516e61901c02abd1a71456d5f1fd9f1d5f",
+        executable_sha256: "e65e06ef89ec90ebfc537d28748a3c4de8ce89bd09b51e4d67ba4bdd95427255",
         library_sha256: "6be67a85c4b83d8968bfcf3697451dc21544614a4318e49a3534b219026ee842"} and
       (.unsigned_inputs | keys == ["cli_inventory_sha256", "peekaboo_inventory_sha256",
         "playground_inventory_sha256", "qualification_inventory_sha256",
@@ -581,8 +615,8 @@ EOF
     --arg qualificationSourceInventory "$(/usr/bin/shasum -a 256 "$SOURCE_TREE_MANIFEST" | /usr/bin/awk '{print $1}')" '
       {version: 1, build_mode: $buildMode, source_commit: $sourceCommit, marketing_version: $version,
        dependency_lock_path: $lockPath, dependency_lock_sha256: $lockSHA,
-       release_helper: {commit: "8f714f53c69ef0034263eafea036eed9714e9b5e",
-         executable_sha256: "0e76d72e7e2e585eb178ab5e292326362a649632b495b40740bce5fa750e0e7a",
+       release_helper: {commit: "ee69e9516e61901c02abd1a71456d5f1fd9f1d5f",
+         executable_sha256: "e65e06ef89ec90ebfc537d28748a3c4de8ce89bd09b51e4d67ba4bdd95427255",
          library_sha256: "6be67a85c4b83d8968bfcf3697451dc21544614a4318e49a3534b219026ee842"},
        toolchain: {developer_dir: $developerDir, xcodebuild_version: $xcodebuildVersion,
          sdk_version: $sdkVersion, swiftc_version: $swiftcVersion},
@@ -1177,8 +1211,8 @@ publish_phase() {
        toolchain: {developer_dir: $developerDir, xcodebuild_version: $xcodebuildVersion,
          sdk_version: $sdkVersion, swiftc_version: $swiftcVersion},
        signing: {authority: "Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)", team_id: "FWJYW4S8P8",
-         release_helper: {commit: "8f714f53c69ef0034263eafea036eed9714e9b5e",
-           executable_sha256: "0e76d72e7e2e585eb178ab5e292326362a649632b495b40740bce5fa750e0e7a",
+         release_helper: {commit: "ee69e9516e61901c02abd1a71456d5f1fd9f1d5f",
+           executable_sha256: "e65e06ef89ec90ebfc537d28748a3c4de8ce89bd09b51e4d67ba4bdd95427255",
            library_sha256: "6be67a85c4b83d8968bfcf3697451dc21544614a4318e49a3534b219026ee842"}},
        notarization: {cli: $cliNotary[0], peekaboo_app: $appNotary[0],
          playground_app: $playgroundNotary[0], peekaboo_dmg: $dmgNotary[0],
