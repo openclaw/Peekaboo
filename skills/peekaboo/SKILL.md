@@ -84,10 +84,10 @@ peekaboo browser status --json
 # Browser toolbar, menus, permission prompts, and native app chrome still belong to Peekaboo.
 peekaboo menu list --app Safari --json
 
-# Management commands use noun/verb subcommands.
-peekaboo clipboard set --text "hello" --verify
-peekaboo permissions request screen-recording
-peekaboo app focus Safari
+# Routine management examples stay read-only by default.
+peekaboo clipboard get --json
+peekaboo permissions status --all-sources --json
+peekaboo app list --include-hidden --include-background --json
 peekaboo config provider list --json
 peekaboo agent sessions --json
 peekaboo press cmd+shift+t --app Safari --window-id 12345

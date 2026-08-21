@@ -46,6 +46,17 @@ test('bundled skill never advertises app-only background press', () => {
   }
 });
 
+test('bundled skill keeps routine management examples read-only', () => {
+  const skill = read('skills/peekaboo/SKILL.md');
+
+  assert.doesNotMatch(skill, /^peekaboo clipboard (?:set|clear|restore)\b/m);
+  assert.doesNotMatch(skill, /^peekaboo permissions request\b/m);
+  assert.doesNotMatch(skill, /^peekaboo app focus\b/m);
+  assert.match(skill, /^peekaboo clipboard get --json$/m);
+  assert.match(skill, /^peekaboo permissions status --all-sources --json$/m);
+  assert.match(skill, /^peekaboo app list --include-hidden --include-background --json$/m);
+});
+
 test('background Agent type guidance requires an explicit non-dialog snapshot', () => {
   for (const path of ['docs/commands/agent.md', 'docs/MCP.md']) {
     const source = read(path);
