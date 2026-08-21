@@ -30,20 +30,28 @@ test('press guidance preserves the snapshot-pinned background route', () => {
   assert.match(press, /Background-only Agent\/MCP.*explicit fresh exact non-dialog snapshot/s);
 });
 
-test('bundled skill never advertises app-only background press', () => {
-  const skill = read('skills/peekaboo/SKILL.md');
-  const appTargetedPressExamples = skill
-    .split('\n')
-    .filter((line) => /^peekaboo press\b.*--app\b/.test(line));
+const isTargetedRawPress = (line) => /^peekaboo press\b.*--(?:app|pid)\b/.test(line);
+const hasSafeRawPressRoute = (line) =>
+  /--(?:foreground|snapshot|window-(?:id|title|index))\b/.test(line);
 
-  assert.ok(appTargetedPressExamples.length > 0);
-  for (const example of appTargetedPressExamples) {
-    assert.match(
-      example,
-      /--(?:foreground|snapshot|window-(?:id|title|index))\b/,
-      `app-only background press is not a valid route: ${example}`
+test('bundled skill never advertises app/PID-only background press', () => {
+  const skill = read('skills/peekaboo/SKILL.md');
+  const targetedPressExamples = skill
+    .split('\n')
+    .filter(isTargetedRawPress);
+
+  assert.ok(targetedPressExamples.length > 0);
+  for (const example of targetedPressExamples) {
+    assert.equal(
+      hasSafeRawPressRoute(example),
+      true,
+      `app/PID-only background press is not a valid route: ${example}`
     );
   }
+
+  assert.equal(isTargetedRawPress('peekaboo press return --pid 1234'), true);
+  assert.equal(hasSafeRawPressRoute('peekaboo press return --pid 1234'), false);
+  assert.equal(hasSafeRawPressRoute('peekaboo press return --pid 1234 --window-id 42'), true);
 });
 
 test('background Agent type guidance requires an explicit non-dialog snapshot', () => {
