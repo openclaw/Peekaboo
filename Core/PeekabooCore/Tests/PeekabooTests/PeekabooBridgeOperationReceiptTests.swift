@@ -2214,10 +2214,10 @@ extension PeekabooBridgeOperationReceiptTests {
             imageData: Data(),
             metadata: .init(size: bounds.size, mode: .window))
         let observation = DesktopObservationResult(target: resolved, capture: capture, elements: nil)
-        let request = PeekabooBridgeRequest.desktopObservation(.init(target: .windowID(73)))
+        let observationRequest = PeekabooBridgeRequest.desktopObservation(.init(target: .windowID(73)))
 
         #expect(try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
-            request: request,
+            request: observationRequest,
             response: .desktopObservation(observation)).target == .window(identity))
 
         let windowInfo = ServiceWindowInfo(
@@ -2237,9 +2237,20 @@ extension PeekabooBridgeOperationReceiptTests {
                 mode: .window,
                 applicationInfo: applicationInfo,
                 windowInfo: windowInfo))
+        let captureRequest = PeekabooBridgeRequest.captureWindow(.init(
+            appIdentifier: "",
+            windowIndex: nil,
+            windowId: identity.windowID,
+            visualizerMode: .none,
+            scale: .logical1x))
         #expect(try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
-            request: request,
+            request: captureRequest,
             response: .capture(exactCapture)).target == .window(identity))
+        #expect(throws: DesktopTargetIdentityError.incompleteExactWindow) {
+            _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
+                request: observationRequest,
+                response: .capture(exactCapture))
+        }
 
         let contradictoryCapture = CaptureResult(
             imageData: Data(),
@@ -2254,7 +2265,7 @@ extension PeekabooBridgeOperationReceiptTests {
                 windowInfo: windowInfo))
         #expect(throws: DesktopTargetIdentityError.contradictoryProcessGeneration) {
             _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
-                request: request,
+                request: captureRequest,
                 response: .capture(contradictoryCapture))
         }
 
@@ -2264,7 +2275,7 @@ extension PeekabooBridgeOperationReceiptTests {
             elements: nil)
         #expect(throws: DesktopTargetIdentityError.incompleteExactWindow) {
             _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
-                request: request,
+                request: observationRequest,
                 response: .desktopObservation(processOnly))
         }
         let differentIdentity = WindowMutationIdentity(
@@ -2277,7 +2288,7 @@ extension PeekabooBridgeOperationReceiptTests {
             bounds: bounds))
         #expect(throws: DesktopTargetIdentityError.contradictoryWindowIdentifier) {
             _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
-                request: request,
+                request: observationRequest,
                 response: .desktopObservation(processOnly),
                 handledTarget: differentTarget)
         }
@@ -2305,7 +2316,7 @@ extension PeekabooBridgeOperationReceiptTests {
             elements: nil)
         #expect(throws: DesktopTargetIdentityError.incompleteExactWindow) {
             _ = try PeekabooBridgeOperationTargetAttribution.resolveReceipt(
-                request: request,
+                request: observationRequest,
                 response: .desktopObservation(unresolved))
         }
 
