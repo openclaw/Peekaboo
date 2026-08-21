@@ -396,11 +396,10 @@ verify_unsigned_stage() {
     --arg sourceCommit "$SOURCE_COMMIT" --arg version "$VERSION" \
     --arg lockPath "$CANONICAL_LOCK_RELATIVE" --arg lockSHA "$DEPENDENCY_LOCK_SHA256" \
     --arg developerDir "$EFFECTIVE_DEVELOPER_DIR" --arg xcodebuildVersion "$XCODEBUILD_VERSION" \
-    --arg sdkVersion "$SDK_VERSION" --arg swiftcVersion "$SWIFTC_VERSION" '
-      type == "object" and keys == [
-        "build_mode", "dependency_lock_path", "dependency_lock_sha256", "marketing_version", "source_commit",
-        "release_helper", "toolchain", "unsigned_inputs", "version"
-      ] and .version == 1 and (.build_mode == "production" or .build_mode == "test_fixture") and
+    --arg sdkVersion "$SDK_VERSION" --arg swiftcVersion "$SWIFTC_VERSION" \
+    --argjson manifestKeys "$TERMINAL_ARTIFACT_BUILD_MANIFEST_KEYS_JSON" '
+      type == "object" and keys == $manifestKeys and
+      .version == 1 and (.build_mode == "production" or .build_mode == "test_fixture") and
       .source_commit == $sourceCommit and .marketing_version == $version and
       .dependency_lock_path == $lockPath and .dependency_lock_sha256 == $lockSHA and
       .toolchain == {developer_dir: $developerDir, xcodebuild_version: $xcodebuildVersion,

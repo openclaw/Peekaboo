@@ -1,5 +1,17 @@
 #!/usr/bin/env bash
 
+TERMINAL_ARTIFACT_BUILD_MANIFEST_KEYS_JSON='[
+  "build_mode",
+  "dependency_lock_path",
+  "dependency_lock_sha256",
+  "marketing_version",
+  "release_helper",
+  "source_commit",
+  "toolchain",
+  "unsigned_inputs",
+  "version"
+]'
+
 terminal_artifact_assert_no_xattrs() {
   local target="$1"
   local names
