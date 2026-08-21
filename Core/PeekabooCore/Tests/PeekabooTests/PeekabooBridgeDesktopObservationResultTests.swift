@@ -291,6 +291,63 @@ struct PeekabooBridgeDesktopObservationResultTests {
         await host.stop()
     }
 
+    @Test
+    func `signed read-only precise failure keeps its reason hint and cause`() async throws {
+        let expected = DesktopActionFailure.preDispatchRefusal(
+            route: .bridge,
+            reason: .permissionDenied,
+            message: "Fixture precise read-only refusal",
+            hint: "Retain this exact recovery hint.",
+            causeDescription: "Fixture precise cause")
+        let provider = PreciseFailingObservationProvider(envelope: .init(
+            code: .permissionDenied,
+            actionFailure: expected,
+            details: "Fixture envelope details"))
+        let root = URL(fileURLWithPath: "/tmp/pb-ob-precise-error-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let socketPath = root.appendingPathComponent("bridge.sock").path
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: Self.server(provider: provider),
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
+
+        do {
+            _ = try await client.desktopObservationWithOutcome(Self.readOnlyRequest)
+            Issue.record("Expected the precise read-only refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome == expected.outcome)
+            #expect(failure.message == expected.message)
+            #expect(failure.hint == expected.hint)
+            #expect(failure.causeDescription == expected.causeDescription)
+            #expect(failure.targetReceipt == nil)
+        }
+
+        let bundle = try #require(await client.lastOperationReceiptBundle())
+        try bundle.validate()
+        #expect(bundle.receipt.payload.target == nil)
+        #expect(bundle.receipt.payload.targetAttributionFailure == nil)
+        #expect(bundle.receipt.payload.outcome == expected.outcome.projection)
+        let response = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeResponse.self,
+            from: bundle.canonicalResponse)
+        guard case let .error(envelope) = response else {
+            Issue.record("Expected the precise error response")
+            return
+        }
+        #expect(envelope.actionOutcome == expected.outcome.projection)
+        #expect(envelope.actionFailureHint == expected.hint)
+        #expect(envelope.actionFailureCauseDescription == expected.causeDescription)
+        #expect(envelope.details == "Fixture envelope details")
+        #expect(provider.actionResultCount == 1)
+        await host.stop()
+    }
+
     private static let delivery = DesktopActionOutcome.Delivery(
         mechanism: .capturePipeline,
         mode: .background)
@@ -483,5 +540,26 @@ private final class FailingObservationProvider: DesktopObservationActionResultPr
     {
         self.actionResultCount += 1
         throw OperationError.captureFailed(reason: "fixture modern owner refusal")
+    }
+}
+
+@MainActor
+private final class PreciseFailingObservationProvider: DesktopObservationActionResultProviding {
+    private let envelope: PeekabooBridgeErrorEnvelope
+    private(set) var actionResultCount = 0
+
+    init(envelope: PeekabooBridgeErrorEnvelope) {
+        self.envelope = envelope
+    }
+
+    func observe(_: DesktopObservationRequest) async throws -> DesktopObservationResult {
+        throw self.envelope
+    }
+
+    func observeActionResult(
+        _: DesktopObservationRequest) async throws -> UIAutomationActionResult<DesktopObservationResult>
+    {
+        self.actionResultCount += 1
+        throw self.envelope
     }
 }

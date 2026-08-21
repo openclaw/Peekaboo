@@ -193,6 +193,8 @@ extension PeekabooBridgeServer {
                 await self.terminalResponse(for: plan, peer: peer)
             }
         }
+        // This is the single enrichment boundary for attested read-only errors. Existing precise
+        // envelopes pass through unchanged; only metadata-less targetless failures are normalized.
         return Self.normalizingTargetlessReadOnlyFailure(handled, plan: plan)
     }
 
@@ -362,10 +364,12 @@ extension PeekabooBridgeServer {
         do {
             return try await self.route(plan, peer: peer)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
-            let envelope = Self.targetlessReadOnlyFailureEnvelope(envelope, plan: plan)
+            let responseEnvelope = PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics
+                ? envelope
+                : envelope.legacyCompatible
             return .init(
-                response: .error(envelope.legacyCompatible),
-                selectedLeafEvidence: envelope.actionSelectedLeafEvidence)
+                response: .error(responseEnvelope),
+                selectedLeafEvidence: responseEnvelope.actionSelectedLeafEvidence)
         } catch let failure as DesktopActionFailure
             where PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics
         {
@@ -377,16 +381,12 @@ extension PeekabooBridgeServer {
                     details: "\(failure)")),
                 selectedLeafEvidence: routed.selectedLeafEvidence)
         } catch is CancellationError {
-            let envelope = Self.targetlessReadOnlyFailureEnvelope(
-                .init(code: .timeout, message: "Bridge request was cancelled"),
-                plan: plan)
-            return .init(response: .error(envelope))
+            return .init(response: .error(.init(code: .timeout, message: "Bridge request was cancelled")))
         } catch {
-            let envelope = Self.targetlessReadOnlyFailureEnvelope(.init(
+            return .init(response: .error(.init(
                 code: .internalError,
                 message: error.localizedDescription,
-                details: "\(error)"), plan: plan)
-            return .init(response: .error(envelope))
+                details: "\(error)")))
         }
     }
 
