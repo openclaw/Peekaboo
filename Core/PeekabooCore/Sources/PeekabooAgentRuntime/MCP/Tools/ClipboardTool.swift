@@ -15,8 +15,23 @@ public struct ClipboardTool: MCPTool {
     }
 
     public var description: String {
-        """
+        if self.context.executionPolicy == .backgroundOnly {
+            return """
+            Read or snapshot the macOS clipboard under immutable background-only authority. Available actions are
+            `get` and `save`. The `set`, `clear`, and `restore` actions are unavailable because they persistently
+            change the user's shared clipboard state; use exact targeted transactional `paste`, or ask the human to
+            start a foreground-capable Agent session or use the standalone CLI when that user-state change is intended.
+
+            - get: read the clipboard; optionally prefer a UTI and/or write binary data to a filesystem path.
+              MCP stdout is reserved for JSON-RPC, so outputPath '-' is rejected.
+            - save: snapshot clipboard contents to a named slot without changing the shared clipboard.
+            """
+        }
+
+        return """
         Work with the macOS clipboard (pasteboard). Actions: get, set, clear, save, restore.
+        The `set`, `clear`, and `restore` actions persistently change the user's shared clipboard state. Use them only
+        when the human-authorized workflow intends that state change; prefer save/restore around temporary mutation.
         - get: read the clipboard; optionally prefer a UTI and/or write binary data to a filesystem path.
           MCP stdout is reserved for JSON-RPC, so outputPath '-' is rejected.
         - set: write text, file, image, or base64+UTI data to the clipboard (optionally also set plain text).
@@ -26,24 +41,34 @@ public struct ClipboardTool: MCPTool {
     }
 
     public var inputSchema: Value {
-        SchemaBuilder.object(
-            properties: [
-                "action": SchemaBuilder.string(
-                    description: "Action to perform",
-                    enum: ["get", "set", "clear", "save", "restore"]),
-                "text": SchemaBuilder.string(description: "Plain text to set on the clipboard"),
-                "file_path": SchemaBuilder.string(description: "Path to a file to copy (binary or text)"),
-                "data_base64": SchemaBuilder.string(description: "Base64-encoded data to copy"),
-                "uti": SchemaBuilder.string(description: "Uniform Type Identifier for data_base64 or to force type"),
-                "prefer": SchemaBuilder.string(description: "Preferred UTI when reading clipboard"),
-                "outputPath": SchemaBuilder
-                    .string(description: "When reading, filesystem path to write binary data. " +
-                        "The '-' stdout sentinel is not supported because MCP stdout carries JSON-RPC; " +
-                        "omit outputPath to receive UTF-8 text in the tool response."),
-                "slot": SchemaBuilder.string(description: "Save/restore slot name (default: \"0\")"),
-                "alsoText": SchemaBuilder.string(description: "Optional plain text companion when setting binary data"),
-                "allowLarge": SchemaBuilder.boolean(description: "Allow writes larger than the 10 MB guard"),
-            ],
+        let foregroundCapable = self.context.executionPolicy != .backgroundOnly
+        let actions = foregroundCapable ? ["get", "set", "clear", "save", "restore"] : ["get", "save"]
+        var properties: [String: Value] = [
+            "action": SchemaBuilder.string(
+                description: foregroundCapable
+                    ? "Action to perform; set, clear, and restore persistently change the user's clipboard"
+                    : "Background-safe action; persistent clipboard mutation is unavailable",
+                enum: actions),
+            "prefer": SchemaBuilder.string(description: "Preferred UTI when reading clipboard"),
+            "outputPath": SchemaBuilder
+                .string(description: "When reading, filesystem path to write binary data. " +
+                    "The '-' stdout sentinel is not supported because MCP stdout carries JSON-RPC; " +
+                    "omit outputPath to receive UTF-8 text in the tool response."),
+            "slot": SchemaBuilder.string(description: "Save/restore slot name (default: \"0\")"),
+        ]
+        if foregroundCapable {
+            properties["text"] = SchemaBuilder.string(description: "Plain text to set on the clipboard")
+            properties["file_path"] = SchemaBuilder.string(description: "Path to a file to copy (binary or text)")
+            properties["data_base64"] = SchemaBuilder.string(description: "Base64-encoded data to copy")
+            properties["uti"] = SchemaBuilder.string(
+                description: "Uniform Type Identifier for data_base64 or to force type")
+            properties["alsoText"] = SchemaBuilder.string(
+                description: "Optional plain text companion when setting binary data")
+            properties["allowLarge"] = SchemaBuilder.boolean(description: "Allow writes larger than the 10 MB guard")
+        }
+
+        return SchemaBuilder.object(
+            properties: properties,
             required: ["action"])
     }
 

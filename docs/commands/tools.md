@@ -1,5 +1,5 @@
 ---
-summary: 'List the MCP/agent tool catalog via peekaboo tools'
+summary: 'List the MCP tool catalog via peekaboo tools'
 read_when:
   - 'deciding which automation tool to call from agents or scripts'
   - 'debugging missing tool registrations'
@@ -7,7 +7,7 @@ read_when:
 
 # `peekaboo tools`
 
-`peekaboo tools` prints the MCP/agent tool catalog that `peekaboo mcp` exposes (Image, See, Click, Press, Action, Window, Browser, Inspect UI, etc.). `peekaboo tools describe <name>` prints one tool's complete JSON input schema for token-cheap, on-demand discovery. These names are the tools available to agents and MCP clients. The CLI keeps `browser` as a dedicated wrapper and exposes AX-only inspection through `peekaboo see --tree --no-screenshot`; run `peekaboo --help` for the full CLI command list.
+`peekaboo tools` prints the background-only MCP tool catalog that `peekaboo mcp` exposes (Image, See, Click, Press, Action, Window, Browser, Inspect UI, etc.). `peekaboo tools describe <name>` prints one tool's policy-aware JSON input schema for token-cheap, on-demand discovery. Guaranteed-refused foreground shapes are omitted from background-only schemas and their descriptions explain the required human-authorized foreground Agent or standalone CLI route. The public Agent catalog is a separate Shell-free surface; run `peekaboo learn` for that exact guide. The CLI keeps `browser` as a dedicated wrapper and exposes AX-only inspection through `peekaboo see --tree --no-screenshot`; run `peekaboo --help` for the full CLI command list.
 
 ## Key options
 | Flag | Description |
@@ -24,6 +24,8 @@ read_when:
 
 ## Implementation notes
 - The command and MCP server both use `MCPToolCatalog`, so tool additions only need to be registered once.
+- Tool schemas receive the same execution policy as the catalog. Background `app`/`window` descriptions omit focus and switch actions, while foreground-capable Agent schemas expose them under explicit human authority.
+- Background clipboard discovery exposes only `get` and `save`. `set`, `clear`, and `restore` persistently change the user's shared clipboard state and require a foreground-authorized workflow; prefer exact targeted transactional paste when possible.
 - Allow/deny filtering happens before formatting (`ToolFiltering.apply`), so the output matches MCP server behavior.
 - Input-strategy availability filtering also runs before formatting, so action-only tools are hidden when the current policy cannot support them.
 - The command runs locally by default because it only reports the static native catalog; use per-tool wrappers or an attached MCP client to execute tools.

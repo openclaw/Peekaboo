@@ -70,6 +70,32 @@ struct RootEarlyExitRuntimeTests {
         }
     }
 
+    @Test
+    func `default-subcommand parent help surfaces accepted leaf flags once`() async throws {
+        guard TestChildProcess.canLocatePeekabooBinary() else {
+            Issue.record("Build peekaboo before running CLI runtime tests.")
+            return
+        }
+
+        let cases: [([String], [String])] = [
+            (["agent", "--help"], ["--model <model>", "--allow-foreground", "--dry-run"]),
+            (["permissions", "--help"], ["--all-sources"]),
+            (["tools", "--help"], ["--no-sort"]),
+        ]
+        for (arguments, leafFlags) in cases {
+            let result = try await TestChildProcess.runPeekaboo(arguments, isolateFromRemoteHosts: false)
+
+            #expect(result.status == .exited(0))
+            #expect(result.standardError.isEmpty)
+            #expect(!result.standardOutput.contains("Global Runtime Flags"))
+            for flag in leafFlags {
+                #expect(self.helpEntryCount(flag, in: result.standardOutput) == 1)
+            }
+            #expect(self.helpEntryCount("--bridge-socket <bridge-socket>", in: result.standardOutput) == 1)
+            #expect(self.helpEntryCount("--no-remote", in: result.standardOutput) == 1)
+        }
+    }
+
     @Test(arguments: [
         ["--log-level", "debug", "--version"],
         ["--logLevel=debug", "-V"],

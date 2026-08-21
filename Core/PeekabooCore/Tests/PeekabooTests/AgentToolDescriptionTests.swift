@@ -167,13 +167,9 @@ struct AgentToolDescriptionTests {
 
     @Test
     @MainActor
-    func `Shell tool has quoting examples`() {
-        guard let shellTool = makeAgentTools().first(where: { $0.name == "shell" }) else {
-            Issue.record("Shell tool not found")
-            return
-        }
-
-        let discussion = shellTool.discussion
+    func `Raw privileged Shell factory retains quoting examples`() throws {
+        let service = try PeekabooAgentService(services: PeekabooServices())
+        let discussion = service.createShellTool().description
 
         // Shell tool should have examples
         #expect(discussion.contains("EXAMPLE") || discussion.contains("shell"))
@@ -362,7 +358,7 @@ struct AgentToolDescriptionTests {
 
             // Examples should demonstrate various options
             if tool.parameters.count > 2 {
-                let hasOptionExample = tool.discussion.contains("--")
+                let hasOptionExample = tool.discussion.contains("--") || tool.examples.contains { $0.contains("\"") }
                 #expect(
                     hasOptionExample,
                     "Tool '\(tool.name)' with multiple parameters should show option examples")

@@ -15,8 +15,8 @@ struct ToolsCommandTests {
         #expect(config.abstract == "List the MCP tool catalog")
         #expect(config.discussion != nil)
         let discussion = config.discussion ?? ""
-        #expect(discussion.contains("built-in Peekaboo Agent adds agent-only capabilities"))
-        #expect(discussion.contains("including `shell`"))
+        #expect(discussion.contains("public Agent catalog is a separate background-first surface"))
+        #expect(discussion.contains("never exposes `shell`"))
         #expect(discussion.contains("Examples:"))
         #expect(discussion.contains("peekaboo tools"))
         #expect(discussion.contains("--verbose"))

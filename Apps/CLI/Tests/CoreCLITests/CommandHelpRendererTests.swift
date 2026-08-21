@@ -111,6 +111,31 @@ struct CommandHelpRendererTests {
     }
 
     @Test
+    func `router parent help merges the default leaf signature without duplicates`() {
+        let cases: [(any ParsableCommand.Type, [String], [String])] = [
+            (AgentRootCommand.self, ["agent"], ["--model <model>", "--allow-foreground", "--dry-run"]),
+            (PermissionsCommand.self, ["permissions"], ["--all-sources"]),
+            (ToolsCommand.self, ["tools"], ["--no-sort"]),
+        ]
+
+        for (type, path, leafFlags) in cases {
+            let descriptor = CommanderRegistryBuilder.buildDescriptor(for: type)
+            let help = CommanderRuntimeRouter.renderCommandHelp(
+                descriptor,
+                path: path,
+                theme: HelpTheme(useColors: false)
+            )
+
+            for flag in leafFlags {
+                #expect(self.helpEntryCount(flag, in: help) == 1)
+            }
+            #expect(self.helpEntryCount("--bridge-socket <bridge-socket>", in: help) == 1)
+            #expect(self.helpEntryCount("--no-remote", in: help) == 1)
+            #expect(!help.contains("Global Runtime Flags"))
+        }
+    }
+
+    @Test
     func `root help retains one standalone global runtime section`() {
         let help = CommanderRuntimeRouter.renderGlobalFlagsSection(theme: HelpTheme(useColors: false))
 

@@ -647,6 +647,10 @@ struct CLIRuntimeSmokeTests {
         #expect(result.status == .exited(0))
         #expect(result.standardOutput.contains("# Peekaboo Comprehensive Guide"))
         #expect(result.standardOutput.contains("## Commander Command Signatures"))
+        #expect(!result.standardOutput.contains("#### `shell`"))
+        #expect(!result.standardOutput.contains("- **System**: shell"))
+        #expect(!result.standardOutput.contains("type --app"))
+        #expect(result.standardOutput.contains(#""snapshot": "$SNAPSHOT_ID""#))
 
         let registeredRoots = Set(CommandRegistry.definitions().map(\.name))
         let expression = try NSRegularExpression(pattern: #"\bpeekaboo ([a-z][a-z0-9-]*)"#)
@@ -661,6 +665,49 @@ struct CLIRuntimeSmokeTests {
 
         #expect(documentedRoots.contains("click"))
         #expect(unavailableRoots.isEmpty, "Learn documents unavailable CLI roots: \(unavailableRoots)")
+    }
+
+    @Test
+    func `tools describe emits policy-usable background schemas`() async throws {
+        guard Self.ensureLocalRuntimeAvailable() else { return }
+
+        for toolName in ["app", "window", "clipboard"] {
+            let result = try await TestChildProcess.runPeekaboo([
+                "tools",
+                "describe",
+                toolName,
+                "--json",
+                "--no-remote",
+            ])
+            #expect(result.status == .exited(0))
+            #expect(result.standardError.isEmpty)
+            let payload = try Self.jsonDataPayload(from: result.standardOutput)
+            let description = try #require(payload["description"] as? String)
+            let schema = try #require(payload["input_schema"] as? [String: Any])
+            let properties = try #require(schema["properties"] as? [String: Any])
+            let action = try #require(properties["action"] as? [String: Any])
+            let actions = try Set(#require(action["enum"] as? [String]))
+
+            switch toolName {
+            case "app":
+                #expect(actions == Set(["launch", "quit", "hide", "list"]))
+                #expect(properties["foreground"] == nil)
+                #expect(!description.contains(#""action": "focus""#))
+                #expect(!description.contains(#""action": "switch""#))
+                #expect(description.contains("foreground-capable Agent session"))
+            case "window":
+                #expect(!actions.contains("focus"))
+                #expect(properties["foreground"] == nil)
+                #expect(description.contains("focus: Unavailable under background-only authority"))
+            case "clipboard":
+                #expect(actions == Set(["get", "save"]))
+                #expect(properties["text"] == nil)
+                #expect(description.contains("persistently"))
+                #expect(description.contains("shared clipboard state"))
+            default:
+                Issue.record("Unexpected tool \(toolName)")
+            }
+        }
     }
 
     @Test

@@ -6,7 +6,7 @@ import Testing
 @MainActor
 struct ToolRegistryContractTests {
     @Test
-    func `Default services expose automation tools`() {
+    func `Default services expose the public background Agent catalog`() async throws {
         let services = PeekabooServices()
         services.installAgentRuntimeDefaults()
 
@@ -23,11 +23,17 @@ struct ToolRegistryContractTests {
             "action",
             "drag",
             "move",
-            "shell",
             "app",
             "window",
         ]))
+        #expect(!names.contains("shell"))
         #expect(names.isDisjoint(with: ["hotkey", "launch_app", "list"]))
+
+        let agent = try PeekabooAgentService(services: services)
+        let sessionNames = await Set(agent.buildToolset(for: .anthropic(.sonnet45)).map(\.name))
+        let publicFactoryNames = Set(agent.publicAgentTools().map(\.name))
+        #expect(names == sessionNames)
+        #expect(names == publicFactoryNames)
     }
 
     @Test

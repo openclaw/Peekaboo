@@ -1,5 +1,4 @@
 import Foundation
-import os.log
 import PeekabooAutomation
 import Tachikoma
 
@@ -86,24 +85,26 @@ public enum ToolRegistry {
                 "reference the new element id."),
         "type": ToolOverride(
             category: .automation,
-            abstract: "Types text into a targeted app or element with configurable cadence.",
+            abstract: "Types text through an explicit snapshot-pinned Agent target with configurable cadence.",
             discussion: """
-            Types raw text into the targeted app or focused element. Escape sequences are supported:
+            Background-only Agent typing requires a fresh exact non-dialog snapshot. An optional element ID must come
+            from that snapshot; app, PID, window-selector-only, targetless, and implicit-latest forms are refused.
+            Escape sequences are supported:
             - Use "\\n" for newline
             - Use "\\t" for tab
             - Use "\\\\" or the word "escape" to send a literal backslash
 
             EXAMPLE
-            peekaboo type \"Hello\\nWorld\" --app TextEdit
-            peekaboo type --text \"Press\\tescape\" --app TextEdit --delay 50ms
+            { "text": "Hello\\nWorld", "snapshot": "$SNAPSHOT_ID" }
+            { "text": "Name:\\tJohn", "snapshot": "$SNAPSHOT_ID", "delay": 25 }
 
             TROUBLESHOOTING
-            If the text appears in the wrong place, pass `--app`, `--pid`, `--window-id`, or `--snapshot` so
-            Peekaboo can resolve a background target process. Use `--foreground` for apps that require focused input.
+            Background-click the field, observe the exact window again, and pass that new snapshot to `type`.
+            A foreground-capable Agent session may use its separately authorized foreground targeting forms.
             """,
             examples: [
-                "peekaboo type \"Hello\\nWorld\" --app TextEdit",
-                "peekaboo type --text \"Name:\\tJohn\" --app TextEdit --delay 25ms",
+                "{ \"text\": \"Hello\\nWorld\", \"snapshot\": \"$SNAPSHOT_ID\" }",
+                "{ \"text\": \"Name:\\tJohn\", \"snapshot\": \"$SNAPSHOT_ID\", \"delay\": 25 }",
             ],
             agentGuidance: "Remember to escape newline/tab characters when providing prompts; " +
                 "literal newlines may be interpreted by the shell."),
@@ -168,19 +169,11 @@ public enum ToolRegistry {
             return []
         }
 
-        // Get all agent tools
-        let agentTools = agentService.createAgentTools()
-        let filters = ToolFiltering.currentFilters()
-        let filteredTools = ToolFiltering.apply(
-            agentTools,
-            filters: filters,
-            log: { message in
-                Logger(subsystem: "boo.peekaboo.tools", category: "registry")
-                    .notice("\(message, privacy: .public)")
-            })
+        // Use the same background-only, Shell-free catalog that a public Agent session receives.
+        let agentTools = agentService.publicAgentTools()
 
         // Convert AgentTools to PeekabooToolDefinitions
-        return filteredTools.compactMap { agentTool in
+        return agentTools.compactMap { agentTool in
             self.convertAgentToolToDefinition(agentTool)
         }
     }

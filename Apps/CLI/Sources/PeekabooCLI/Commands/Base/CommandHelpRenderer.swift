@@ -27,6 +27,21 @@ struct CommandHelpRenderer {
         )
     }
 
+    static func renderHelp(
+        for type: (some ParsableCommand).Type,
+        signature: CommandSignature,
+        theme: HelpTheme? = nil
+    ) -> String {
+        let description = type.commandDescription
+        return self.renderHelp(
+            abstract: description.abstract,
+            discussion: description.discussion,
+            signature: signature,
+            usageExamples: description.usageExamples,
+            theme: theme
+        )
+    }
+
     private static func renderHelp(
         abstract: String,
         discussion: String?,

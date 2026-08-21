@@ -31,9 +31,10 @@ extension CommanderRuntimeRouter {
     static func renderUsageCard(
         for descriptor: CommanderCommandDescriptor,
         path: [String],
+        signature: CommandSignature? = nil,
         theme: HelpTheme
     ) -> String {
-        let usageLine = self.buildUsageLine(path: path, signature: descriptor.metadata.signature)
+        let usageLine = self.buildUsageLine(path: path, signature: signature ?? descriptor.metadata.signature)
         var lines: [String] = []
         lines.append(theme.heading("Usage"))
         lines.append("  \(theme.accent(usageLine))")
@@ -56,14 +57,15 @@ extension CommanderRuntimeRouter {
         path: [String],
         theme: HelpTheme
     ) -> String {
+        let helpSignature = self.helpSignature(for: descriptor)
         var sections = [
-            self.renderUsageCard(for: descriptor, path: path, theme: theme),
-            CommandHelpRenderer.renderHelp(for: descriptor.type, theme: theme),
+            self.renderUsageCard(for: descriptor, path: path, signature: helpSignature, theme: theme),
+            CommandHelpRenderer.renderHelp(for: descriptor.type, signature: helpSignature, theme: theme),
         ]
 
         // Registry descriptors already inject the runtime signature into OPTIONS and FLAGS.
         // Keep the standalone section only for descriptors that do not expose those entries.
-        if !self.signatureContainsRuntimeOptions(descriptor.metadata.signature) {
+        if !self.signatureContainsRuntimeOptions(helpSignature) {
             sections.append(self.renderGlobalFlagsSection(theme: theme))
         }
 
@@ -78,6 +80,52 @@ extension CommanderRuntimeRouter {
         }
 
         return sections.joined(separator: "\n\n")
+    }
+
+    /// Parent help for a default-subcommand tree must describe the forms accepted by the bare parent invocation.
+    /// Merge only for presentation: parsing still resolves through Commander's normal default-subcommand path.
+    static func helpSignature(for descriptor: CommanderCommandDescriptor) -> CommandSignature {
+        guard let defaultName = descriptor.metadata.defaultSubcommandName,
+              let defaultDescriptor = descriptor.subcommands.first(where: { $0.metadata.name == defaultName })
+        else {
+            return descriptor.metadata.signature
+        }
+        return self.mergingHelpSignatures(
+            parent: descriptor.metadata.signature,
+            defaultLeaf: defaultDescriptor.metadata.signature
+        )
+    }
+
+    private static func mergingHelpSignatures(
+        parent: CommandSignature,
+        defaultLeaf: CommandSignature
+    ) -> CommandSignature {
+        let parent = parent.flattened()
+        let defaultLeaf = defaultLeaf.flattened()
+        var arguments = parent.arguments
+        var options = parent.options
+        var flags = parent.flags
+        var argumentLabels = Set(arguments.map(\.label))
+        var optionTokens = Set(options.flatMap { $0.names.map(\.commandLineToken) })
+        var flagTokens = Set(flags.flatMap { $0.names.map(\.commandLineToken) })
+
+        for argument in defaultLeaf.arguments where argumentLabels.insert(argument.label).inserted {
+            arguments.append(argument)
+        }
+        for option in defaultLeaf.options {
+            let tokens = Set(option.names.map(\.commandLineToken))
+            guard optionTokens.isDisjoint(with: tokens) else { continue }
+            options.append(option)
+            optionTokens.formUnion(tokens)
+        }
+        for flag in defaultLeaf.flags {
+            let tokens = Set(flag.names.map(\.commandLineToken))
+            guard flagTokens.isDisjoint(with: tokens) else { continue }
+            flags.append(flag)
+            flagTokens.formUnion(tokens)
+        }
+
+        return CommandSignature(arguments: arguments, options: options, flags: flags)
     }
 
     static func signatureContainsRuntimeOptions(_ signature: CommandSignature) -> Bool {

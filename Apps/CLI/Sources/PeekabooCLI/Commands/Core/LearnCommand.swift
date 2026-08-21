@@ -80,7 +80,7 @@ struct LearnCommand {
     }
 
     private func appendToolCatalog(tools: [PeekabooToolDefinition], to output: inout String) {
-        let groupedTools = ToolRegistry.toolsByCategory()
+        let groupedTools = Dictionary(grouping: tools, by: \.category)
         for category in ToolCategory.allCases {
             guard let categoryTools = groupedTools[category], !categoryTools.isEmpty else { continue }
             self.appendToolCategory(category, tools: categoryTools, to: &output)
@@ -150,7 +150,8 @@ struct LearnCommand {
         6. Common workflows:
            - Screenshot: `see --no-elements` with `--app`, `--window-id`, or `--mode screen`.
            - AX tree: `see --tree --no-screenshot` with an exact app/window target.
-           - Typing: `click` the field, then `type --app ...` the text; add `--foreground` only if needed.
+           - Typing: background-click the field, observe again, then call `type` with that fresh exact non-dialog
+             snapshot. App/PID/window-selector-only Agent typing is refused.
            - Menus: `menu click --path ...`.
            - Keyboard shortcuts: `press --snapshot <fresh-exact-snapshot> cmd+shift+t` in background, or
              `press cmd+shift+t --foreground` with explicit foreground consent.
@@ -166,7 +167,8 @@ struct LearnCommand {
         - **Applications**: app
         - **Elements**: inspect_ui, verify_state, set_value, action
         - **Menu/Dialog**: menu, dialog
-        - **System**: shell, done, need_info
+        - **System**: permissions, sleep, clipboard, paste
+        - **Completion**: done, need_info
 
         The MCP-only `image` and `inspect_ui` tools remain separate; their CLI equivalents are
         `see --no-elements` and `see --tree --no-screenshot`.

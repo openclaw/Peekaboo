@@ -13,10 +13,28 @@ public struct AppTool: MCPTool {
     public let name = "app"
 
     public var description: String {
-        """
-        Control applications - verify an already-running app in the background, or explicitly launch/open/relaunch,
-        unhide, focus, switch, quit, hide, and list apps. Cold launch, open, new-instance, relaunch, and unhide require
-        foreground=true because macOS cannot guarantee those operations will preserve the user's foreground work.
+        if self.context.executionPolicy == .backgroundOnly {
+            return """
+            Control applications under immutable background-only authority. Available actions are `list`, `quit`,
+            `hide`, and `launch`; background `launch` is only an exact already-running readiness probe and never cold
+            starts an app. Focus, switch, open, relaunch, unhide, new-instance, and `foreground=true` are unavailable
+            here because they can activate shared desktop UI. A human must start a foreground-capable Agent session or
+            use the standalone CLI with explicit foreground consent for those operations.
+
+            Process-generation chaining must use `target_identity.process_start_identity_decimal`; the numeric
+            `process_start_identity` field remains compatibility-only and can lose precision above 2^53.
+
+            Always include the `action` field in your JSON payload. Examples:
+            - { "action": "list" }
+            - { "action": "launch", "name": "Finder" }
+            - { "action": "quit", "name": "Slack", "force": false }
+            """
+        }
+
+        return """
+        Control applications with explicit foreground-capable authority. Focus and switch activate shared desktop UI;
+        cold launch, open, new-instance, relaunch, and unhide require `foreground=true` because macOS cannot guarantee
+        those operations preserve the user's foreground work. Prefer background targeting after foreground setup.
         Process-generation chaining must use `target_identity.process_start_identity_decimal`; the numeric
         `process_start_identity` field remains compatibility-only and can lose precision above 2^53.
 
@@ -24,7 +42,6 @@ public struct AppTool: MCPTool {
         - { "action": "launch", "name": "Finder" }
         - { "action": "launch", "name": "TextEdit", "newInstance": true, "foreground": true }
         - { "action": "open", "name": "Safari", "openTargets": ["https://example.com"], "foreground": true }
-        - { "action": "launch", "name": "Calendar", "foreground": true }
         - { "action": "switch", "to": "Safari" }
         - { "action": "focus", "name": "Google Chrome" }
         - { "action": "quit", "name": "Slack", "force": false }
@@ -32,46 +49,56 @@ public struct AppTool: MCPTool {
     }
 
     public var inputSchema: Value {
-        SchemaBuilder.object(
-            properties: [
-                "action": SchemaBuilder.string(
-                    description: "Action to perform",
-                    enum: ["launch", "open", "quit", "relaunch", "focus", "hide", "unhide", "switch", "list"]),
-                "name": SchemaBuilder.string(
-                    description: "App name/bundle ID/PID (e.g., 'Safari', 'com.apple.Safari', 'PID:663')"),
-                "bundleId": SchemaBuilder.string(
-                    description: "Bundle identifier when launching"),
-                "openTargets": SchemaBuilder.array(
-                    items: SchemaBuilder.string(),
-                    description: "URL or file paths to open; required for open, optional for launch"),
-                "foreground": SchemaBuilder.boolean(
-                    description: "Required for cold launch, open, new-instance, relaunch, and unhide",
-                    default: false),
-                "force": SchemaBuilder.boolean(
-                    description: "Force quit application",
-                    default: false),
-                "wait": SchemaBuilder.number(
-                    description: "Wait time (seconds) between quit/launch for relaunch",
-                    default: 2.0),
-                "waitUntilReady": SchemaBuilder.boolean(
-                    description: "Wait until LaunchServices reports startup complete",
-                    default: false),
-                "waitForWindow": SchemaBuilder.boolean(
-                    description: "Wait until the launched app exposes an exact WindowServer window",
-                    default: false),
-                "newInstance": SchemaBuilder.boolean(
-                    description: "Launch a distinct process even if the app is already running",
-                    default: false),
-                "all": SchemaBuilder.boolean(
-                    description: "Quit all applications",
-                    default: false),
-                "except": SchemaBuilder.string(
-                    description: "Comma-separated list of apps to exclude when quitting all"),
-                "to": SchemaBuilder.string(description: "Target application when switching"),
-                "cycle": SchemaBuilder.boolean(
-                    description: "Cycle to the next application (like Cmd+Tab)",
-                    default: false),
-            ],
+        let foregroundCapable = self.context.executionPolicy != .backgroundOnly
+        let actions = foregroundCapable
+            ? ["launch", "open", "quit", "relaunch", "focus", "hide", "unhide", "switch", "list"]
+            : ["launch", "quit", "hide", "list"]
+        var properties: [String: Value] = [
+            "action": SchemaBuilder.string(
+                description: foregroundCapable
+                    ? "Action to perform; focus and switch use the session's explicit foreground authority"
+                    : "Background-only action; foreground lifecycle, focus, and switch actions are unavailable",
+                enum: actions),
+            "name": SchemaBuilder.string(
+                description: "App name/bundle ID/PID (e.g., 'Safari', 'com.apple.Safari', 'PID:663')"),
+            "bundleId": SchemaBuilder.string(
+                description: "Bundle identifier when launching"),
+            "force": SchemaBuilder.boolean(
+                description: "Force quit application",
+                default: false),
+            "waitUntilReady": SchemaBuilder.boolean(
+                description: "Wait until LaunchServices reports startup complete",
+                default: false),
+            "waitForWindow": SchemaBuilder.boolean(
+                description: "Wait until the launched app exposes an exact WindowServer window",
+                default: false),
+            "all": SchemaBuilder.boolean(
+                description: "Quit all applications",
+                default: false),
+            "except": SchemaBuilder.string(
+                description: "Comma-separated list of apps to exclude when quitting all"),
+        ]
+        if foregroundCapable {
+            properties["openTargets"] = SchemaBuilder.array(
+                items: SchemaBuilder.string(),
+                description: "URL or file paths to open; required for open, optional for launch")
+            properties["foreground"] = SchemaBuilder.boolean(
+                description: "Required for cold launch, open, new-instance, relaunch, and unhide",
+                default: false)
+            properties["wait"] = SchemaBuilder.number(
+                description: "Wait time (seconds) between quit/launch for relaunch",
+                default: 2.0)
+            properties["newInstance"] = SchemaBuilder.boolean(
+                description: "Launch a distinct process even if the app is already running",
+                default: false)
+            properties["to"] = SchemaBuilder.string(description: "Target application when switching")
+            properties["cycle"] = SchemaBuilder.boolean(
+                description: "Cycle to the next application (like Cmd+Tab)",
+                default: false)
+        }
+
+        return SchemaBuilder.object(
+            properties: properties,
             required: ["action"])
     }
 

@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Treat an exact missing-window readback after `window close` as confirmed closure instead of a retry-unsafe failure.
 - Explain that locked macOS GUI sessions cannot be captured even when `screen list` still reports connected displays.
 - Show global runtime flags once in generated leaf and nested command help while retaining root-level discovery.
+- Keep `learn`, policy-aware tool schemas, and default-subcommand parent help aligned with the actual public Agent and CLI surfaces.
 
 ## [4.2.2] - 2026-08-20
 

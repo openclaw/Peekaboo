@@ -32,7 +32,7 @@ private func makeTestTool<T>(
 @MainActor
 struct MCPSpecificToolTests {
     @Test
-    func `Clipboard schema uses snake case payload names and excludes load`() {
+    func `Clipboard schemas expose only policy-usable actions and warn about user state`() {
         let tool = makeTestTool(ClipboardTool.init)
         guard case let .object(schema) = tool.inputSchema,
               case let .object(properties)? = schema["properties"],
@@ -45,15 +45,33 @@ struct MCPSpecificToolTests {
             return
         }
 
-        #expect(properties["file_path"] != nil)
-        #expect(properties["data_base64"] != nil)
+        #expect(properties["file_path"] == nil)
+        #expect(properties["data_base64"] == nil)
         #expect(properties["filePath"] == nil)
         #expect(properties["imagePath"] == nil)
         #expect(properties["dataBase64"] == nil)
         #expect(!actions.contains(.string("load")))
-        #expect(actions == ["get", "set", "clear", "save", "restore"].map(Value.string))
+        #expect(actions == ["get", "save"].map(Value.string))
         #expect(outputPathDescription.contains("'-' stdout sentinel is not supported"))
         #expect(outputPathDescription.contains("JSON-RPC"))
+        #expect(tool.description.contains("persistently"))
+        #expect(tool.description.contains("shared clipboard state"))
+
+        let foregroundTool = makeTestTool(executionPolicy: .foregroundAllowed, ClipboardTool.init)
+        guard case let .object(foregroundSchema) = foregroundTool.inputSchema,
+              case let .object(foregroundProperties)? = foregroundSchema["properties"],
+              case let .object(foregroundAction)? = foregroundProperties["action"],
+              case let .array(foregroundActions)? = foregroundAction["enum"]
+        else {
+            Issue.record("Expected foreground-capable clipboard schema")
+            return
+        }
+        #expect(foregroundActions == ["get", "set", "clear", "save", "restore"].map(Value.string))
+        #expect(foregroundProperties["file_path"] != nil)
+        #expect(foregroundProperties["data_base64"] != nil)
+        #expect(foregroundProperties["filePath"] == nil)
+        #expect(foregroundProperties["dataBase64"] == nil)
+        #expect(foregroundTool.description.contains("persistently change the user's shared clipboard state"))
     }
 
     @Test
@@ -398,7 +416,7 @@ struct MCPSpecificToolTests {
     }
 
     @Test
-    func `Window tool complex action schema`() {
+    func `Window tool schema omits background-refused focus and foreground fallback`() {
         let tool = makeTestTool(WindowTool.init)
 
         guard case let .object(schema) = tool.inputSchema,
@@ -415,7 +433,7 @@ struct MCPSpecificToolTests {
         #expect(props["index"] != nil)
         #expect(props["width"] != nil)
         #expect(props["height"] != nil)
-        #expect(props["foreground"] != nil)
+        #expect(props["foreground"] == nil)
 
         // Check action types include all window operations
         if let actionSchema = props["action"],
@@ -427,8 +445,60 @@ struct MCPSpecificToolTests {
             #expect(actions.contains(.string("close")))
             #expect(actions.contains(.string("minimize")))
             #expect(actions.contains(.string("maximize")))
-            #expect(actions.contains(.string("focus")))
+            #expect(!actions.contains(.string("focus")))
         }
+        #expect(tool.description.contains("focus: Unavailable under background-only authority"))
+
+        let foregroundTool = makeTestTool(executionPolicy: .foregroundAllowed, WindowTool.init)
+        guard case let .object(foregroundSchema) = foregroundTool.inputSchema,
+              case let .object(foregroundProperties)? = foregroundSchema["properties"],
+              case let .object(foregroundAction)? = foregroundProperties["action"],
+              case let .array(foregroundActions)? = foregroundAction["enum"]
+        else {
+            Issue.record("Expected foreground-capable window schema")
+            return
+        }
+        #expect(foregroundActions.contains(.string("focus")))
+        #expect(foregroundProperties["foreground"] != nil)
+        #expect(foregroundTool.description.contains("session's explicit foreground authority"))
+    }
+
+    @Test
+    func `App tool schema omits guaranteed-refused background lifecycle and focus actions`() {
+        let tool = makeTestTool(AppTool.init)
+        guard case let .object(schema) = tool.inputSchema,
+              case let .object(properties)? = schema["properties"],
+              case let .object(action)? = properties["action"],
+              case let .array(actions)? = action["enum"]
+        else {
+            Issue.record("Expected background app schema")
+            return
+        }
+
+        #expect(actions == ["launch", "quit", "hide", "list"].map(Value.string))
+        #expect(properties["foreground"] == nil)
+        #expect(properties["openTargets"] == nil)
+        #expect(properties["to"] == nil)
+        #expect(properties["cycle"] == nil)
+        #expect(tool.description.contains("Focus, switch, open, relaunch, unhide"))
+        #expect(tool.description.contains("foreground-capable Agent session"))
+
+        let foregroundTool = makeTestTool(executionPolicy: .foregroundAllowed, AppTool.init)
+        guard case let .object(foregroundSchema) = foregroundTool.inputSchema,
+              case let .object(foregroundProperties)? = foregroundSchema["properties"],
+              case let .object(foregroundAction)? = foregroundProperties["action"],
+              case let .array(foregroundActions)? = foregroundAction["enum"]
+        else {
+            Issue.record("Expected foreground-capable app schema")
+            return
+        }
+        #expect(foregroundActions.contains(.string("focus")))
+        #expect(foregroundActions.contains(.string("switch")))
+        #expect(foregroundActions.contains(.string("open")))
+        #expect(foregroundProperties["foreground"] != nil)
+        #expect(foregroundProperties["openTargets"] != nil)
+        #expect(foregroundProperties["to"] != nil)
+        #expect(foregroundProperties["cycle"] != nil)
     }
 
     // MARK: - Move Tool Tests

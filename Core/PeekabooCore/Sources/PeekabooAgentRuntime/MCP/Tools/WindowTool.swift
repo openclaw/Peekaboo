@@ -13,7 +13,14 @@ public struct WindowTool: MCPTool {
     public let name = "window"
 
     public var description: String {
-        """
+        let foregroundCapable = self.context.executionPolicy != .backgroundOnly
+        let focusGuidance = foregroundCapable
+            ? "- focus: Bring a window to the foreground using the session's explicit foreground authority"
+            : "- focus: Unavailable under background-only authority; use a human-authorized foreground session or CLI"
+        let focusExample = foregroundCapable
+            ? "\n- { \"action\": \"focus\", \"app\": \"Google Chrome\" }"
+            : ""
+        return """
         List and manipulate application windows.
 
         Actions:
@@ -25,7 +32,10 @@ public struct WindowTool: MCPTool {
         - move: Move a window to specific coordinates (requires x, y)
         - resize: Resize a window to specific dimensions (requires width, height)
         - set-bounds: Set both position and size (requires x, y, width, height)
-        - focus: Bring a window to the foreground
+        \(focusGuidance)
+
+        Background-only close uses Accessibility and fails rather than focusing the app for a global fallback.
+        A focused/global close fallback is available only to a foreground-capable session with `foreground=true`.
 
         Target windows by application name and optionally by window title or index.
         For deterministic targeting, prefer `window_id` (from `peekaboo window list`).
@@ -33,54 +43,63 @@ public struct WindowTool: MCPTool {
 
         JSON Examples (ALWAYS include `action`):
         - { "action": "list", "app": "Safari" }
-        - { "action": "focus", "app": "Google Chrome" }
         - { "action": "move", "app": "TextEdit", "x": 100, "y": 100 }
         - { "action": "restore", "app": "PID:1234", "window_id": 5678 }
         - { "action": "set-bounds", "app": "Terminal", "x": 0, "y": 0, "width": 1280, "height": 720 }
-        - { "action": "close", "app": "Safari", "title": "Grindr Web" }
+        - { "action": "close", "app": "Safari", "title": "Document" }\(focusExample)
         \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
         """
     }
 
     public var inputSchema: Value {
-        SchemaBuilder.object(
-            properties: [
-                "action": SchemaBuilder.string(
-                    description: "The action to perform on the window",
-                    enum: [
-                        "list",
-                        "close",
-                        "minimize",
-                        "restore",
-                        "maximize",
-                        "move",
-                        "resize",
-                        "set-bounds",
-                        "focus",
-                    ]),
-                "app": SchemaBuilder.string(
-                    description: "Target application name, bundle ID, or process ID"),
-                "title": SchemaBuilder.string(
-                    description: "Window title to target (partial matching supported)"),
-                "index": SchemaBuilder.integer(
-                    description: "Window index (0-based) for multi-window applications"),
-                "window_id": SchemaBuilder.integer(
-                    description: "Window ID (from window list); preferred stable selector"),
-                "x": SchemaBuilder.number(
-                    description: "X coordinate for move or set-bounds action"),
-                "y": SchemaBuilder.number(
-                    description: "Y coordinate for move or set-bounds action"),
-                "width": SchemaBuilder.number(
-                    description: "Width for resize or set-bounds action"),
-                "height": SchemaBuilder.number(
-                    description: "Height for resize or set-bounds action"),
-                "foreground": SchemaBuilder.boolean(
-                    description: "For close only: allow focused/global fallback after AX close fails.",
-                    default: false),
-                "include_window_details": SchemaBuilder.array(
-                    items: SchemaBuilder.string(enum: WindowDetail.allCases.map(\.rawValue)),
-                    description: "Details for list results. Defaults to ids, bounds, and off_screen."),
-            ],
+        let foregroundCapable = self.context.executionPolicy != .backgroundOnly
+        var actions = [
+            "list",
+            "close",
+            "minimize",
+            "restore",
+            "maximize",
+            "move",
+            "resize",
+            "set-bounds",
+        ]
+        if foregroundCapable {
+            actions.append("focus")
+        }
+        var properties: [String: Value] = [
+            "action": SchemaBuilder.string(
+                description: foregroundCapable
+                    ? "The action to perform; focus uses the session's explicit foreground authority"
+                    : "The background-safe action to perform; focus is unavailable",
+                enum: actions),
+            "app": SchemaBuilder.string(
+                description: "Target application name, bundle ID, or process ID"),
+            "title": SchemaBuilder.string(
+                description: "Window title to target (partial matching supported)"),
+            "index": SchemaBuilder.integer(
+                description: "Window index (0-based) for multi-window applications"),
+            "window_id": SchemaBuilder.integer(
+                description: "Window ID (from window list); preferred stable selector"),
+            "x": SchemaBuilder.number(
+                description: "X coordinate for move or set-bounds action"),
+            "y": SchemaBuilder.number(
+                description: "Y coordinate for move or set-bounds action"),
+            "width": SchemaBuilder.number(
+                description: "Width for resize or set-bounds action"),
+            "height": SchemaBuilder.number(
+                description: "Height for resize or set-bounds action"),
+            "include_window_details": SchemaBuilder.array(
+                items: SchemaBuilder.string(enum: WindowDetail.allCases.map(\.rawValue)),
+                description: "Details for list results. Defaults to ids, bounds, and off_screen."),
+        ]
+        if foregroundCapable {
+            properties["foreground"] = SchemaBuilder.boolean(
+                description: "For close only: allow focused/global fallback after AX close fails.",
+                default: false)
+        }
+
+        return SchemaBuilder.object(
+            properties: properties,
             required: ["action"])
     }
 

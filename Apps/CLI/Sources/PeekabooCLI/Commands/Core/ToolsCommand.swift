@@ -12,8 +12,9 @@ struct ToolsCommand: ParsableCommand {
         abstract: "List the MCP tool catalog",
         discussion: """
         Display the native tools exposed to `peekaboo mcp` clients (e.g. Codex,
-        Claude Code, Cursor). The built-in Peekaboo Agent adds agent-only capabilities,
-        including `shell`; run `peekaboo learn` for the combined guidance. Some MCP
+        Claude Code, Cursor). The public Agent catalog is a separate background-first surface
+        derived from the same implementations and never exposes `shell`; run `peekaboo learn`
+        for its exact policy-aware guidance. Some MCP
         tools also have dedicated CLI wrappers, such as `peekaboo browser`.
         Run `peekaboo --help` for the CLI command list.
 
