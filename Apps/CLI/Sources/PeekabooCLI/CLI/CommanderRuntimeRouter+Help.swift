@@ -22,9 +22,6 @@ extension CommanderRuntimeRouter {
         var lines: [String] = []
         lines.append(theme.heading("Usage"))
         lines.append("  \(theme.accent("peekaboo <command> [options] [runtime flags]"))")
-        lines.append("")
-        lines.append(theme.heading("Tip"))
-        lines.append("  When developing locally, rebuild via \(theme.accent("pnpm run build:cli")) to test fresh bits.")
         return lines.joined(separator: "\n")
     }
 
@@ -46,9 +43,6 @@ extension CommanderRuntimeRouter {
             lines.append("  \(abstract)")
         }
 
-        lines.append("")
-        lines.append(theme.heading("Tip"))
-        lines.append("  When developing locally, rebuild via \(theme.accent("pnpm run build:cli")) to test fresh bits.")
         return lines.joined(separator: "\n")
     }
 

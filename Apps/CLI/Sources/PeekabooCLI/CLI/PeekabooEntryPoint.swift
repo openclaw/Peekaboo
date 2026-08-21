@@ -59,17 +59,32 @@ func commanderErrorMessage(_ error: CommanderProgramError) -> String {
     error.description
 }
 
+func commanderErrorHint(_ error: CommanderProgramError) -> String? {
+    switch error {
+    case .missingCommand, .unknownCommand:
+        "Run 'peekaboo --help' to list current commands."
+    case let .missingSubcommand(command), let .unknownSubcommand(command, _):
+        "Run 'peekaboo help \(command)' to list current subcommands."
+    default:
+        nil
+    }
+}
+
 private func printCommanderError(_ error: CommanderProgramError, jsonOutput: Bool) {
     let message = commanderErrorMessage(error)
+    let hint = commanderErrorHint(error)
     guard jsonOutput else {
         fputs("Error: \(message)\n", stderr)
+        if let hint {
+            fputs("Hint: \(hint)\n", stderr)
+        }
         return
     }
 
     let logger = Logger.shared
     logger.setJsonOutputMode(true)
     ResultEnvelopeContext.$isPreDispatchFailure.withValue(true) {
-        outputError(message: message, code: .INVALID_ARGUMENT, logger: logger)
+        outputError(message: message, code: .INVALID_ARGUMENT, hint: hint, logger: logger)
     }
 }
 

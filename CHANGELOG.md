@@ -12,6 +12,7 @@
 ### Fixed
 - Restore terminal echo around credential-prompt job-control stops and common termination signals, then re-disable echo only after a stopped prompt continues.
 - Let exact-window background mutations ignore unrelated incomplete application rows while still refusing ambiguous, incomplete, stale, or mismatched selected owners.
+- Give unknown CLI commands a current-help recovery hint and remove source-checkout rebuild advice from installed help.
 - Keep provider dry-run, validation, error, and JSON output free of credential values, and reject special, symlinked, permissive, wrong-owner, or extended-ACL credential files on the opened descriptor before reading.
 - Use the canonical MCP mutation policy for Agent visual verification, including conditional browser and foreground menu actions.
 - Let background certification pin Activity Monitor's exact source-declared window title while refusing unsafe partial, duplicate, or drifting title evidence.

@@ -28,6 +28,23 @@ struct CommanderBinderProgramResolutionTests {
     }
 
     @Test
+    func `Commander path failures retain current help recovery`() {
+        #expect(
+            commanderErrorHint(.unknownCommand("frobnicate")) ==
+                "Run 'peekaboo --help' to list current commands."
+        )
+        #expect(
+            commanderErrorHint(.missingSubcommand(command: "window")) ==
+                "Run 'peekaboo help window' to list current subcommands."
+        )
+        #expect(
+            commanderErrorHint(.unknownSubcommand(command: "window", name: "frobnicate")) ==
+                "Run 'peekaboo help window' to list current subcommands."
+        )
+        #expect(commanderErrorHint(.duplicateCommand("see")) == nil)
+    }
+
+    @Test
     @MainActor
     func `Commander program resolves screenshot-only see options`() throws {
         let descriptors = CommanderRegistryBuilder.buildDescriptors()

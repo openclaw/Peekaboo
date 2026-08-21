@@ -96,6 +96,59 @@ struct RootEarlyExitRuntimeTests {
         }
     }
 
+    @Test
+    func `release-style help omits source checkout rebuild advice`() async throws {
+        guard TestChildProcess.canLocatePeekabooBinary() else {
+            Issue.record("Build peekaboo before running CLI runtime tests.")
+            return
+        }
+
+        let workingDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-help-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workingDirectory) }
+
+        for arguments in [[], ["--help"], ["click", "--help"], ["window", "list", "--help"]] {
+            let result = try await TestChildProcess.runPeekaboo(
+                arguments,
+                workingDirectory: workingDirectory,
+                isolateFromRemoteHosts: false
+            )
+
+            #expect(result.status == .exited(0))
+            #expect(result.standardError.isEmpty)
+            #expect(!result.standardOutput.contains("When developing locally"))
+            #expect(!result.standardOutput.contains("pnpm run build:cli"))
+        }
+    }
+
+    @Test
+    func `unknown command includes current help recovery in text and JSON`() async throws {
+        guard TestChildProcess.canLocatePeekabooBinary() else {
+            Issue.record("Build peekaboo before running CLI runtime tests.")
+            return
+        }
+
+        let human = try await TestChildProcess.runPeekaboo(["frobnicate"], isolateFromRemoteHosts: false)
+        #expect(human.status == .exited(1))
+        #expect(human.standardOutput.isEmpty)
+        #expect(human.standardError.contains("Error: Unknown command 'frobnicate'"))
+        #expect(human.standardError.contains("Hint: Run 'peekaboo --help' to list current commands."))
+
+        let json = try await TestChildProcess.runPeekaboo(
+            ["frobnicate", "--json"],
+            isolateFromRemoteHosts: false
+        )
+        #expect(json.status == .exited(1))
+        #expect(json.standardError.isEmpty)
+        let object = try JSONSerialization.jsonObject(with: Data(json.standardOutput.utf8))
+        let envelope = try #require(object as? [String: Any])
+        let error = try #require(envelope["error"] as? [String: Any])
+        #expect(error["code"] as? String == "INVALID_ARGUMENT")
+        #expect(error["message"] as? String == "Unknown command 'frobnicate'")
+        #expect(error["hint"] as? String == "Run 'peekaboo --help' to list current commands.")
+    }
+
     @Test(arguments: [
         ["--log-level", "debug", "--version"],
         ["--logLevel=debug", "-V"],
