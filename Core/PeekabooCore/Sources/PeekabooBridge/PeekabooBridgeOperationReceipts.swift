@@ -1977,23 +1977,23 @@ extension PeekabooBridgeRequest {
         case let .attestedOperation(payload):
             payload.request.operationTargetEvidence
         case let .exactWindowTargetedTypeActions(payload):
-            [PeekabooBridgeOperationTargetEvidenceAdapter.exactWindow(
-                identity: payload.expectedWindowIdentity,
+            [DesktopTargetEvidenceAdapter.evidence(
+                windowIdentity: payload.expectedWindowIdentity,
                 bounds: payload.expectedWindowBounds,
                 focusedElement: payload.expectedFocusedElement)]
         case let .exactWindowTargetedHotkey(payload):
-            [PeekabooBridgeOperationTargetEvidenceAdapter.exactWindow(
-                identity: payload.expectedWindowIdentity,
+            [DesktopTargetEvidenceAdapter.evidence(
+                windowIdentity: payload.expectedWindowIdentity,
                 bounds: payload.expectedWindowBounds,
                 focusedElement: payload.expectedFocusedElement)]
         case let .beginExactWindowHeldPointer(payload):
-            [PeekabooBridgeOperationTargetEvidenceAdapter.exactWindow(
-                identity: payload.request.windowIdentity,
+            [DesktopTargetEvidenceAdapter.evidence(
+                windowIdentity: payload.request.windowIdentity,
                 bounds: payload.request.windowBounds)]
         case let .releaseExactWindowHeldPointer(payload),
              let .revokeExactWindowHeldPointer(payload):
-            [PeekabooBridgeOperationTargetEvidenceAdapter.exactWindow(
-                identity: payload.receipt.windowIdentity,
+            [DesktopTargetEvidenceAdapter.evidence(
+                windowIdentity: payload.receipt.windowIdentity,
                 bounds: payload.receipt.windowBounds)]
         case let .targetedTypeActions(payload):
             [.init(
@@ -2015,26 +2015,26 @@ extension PeekabooBridgeRequest {
                 windowIdentity: payload.expectedWindowIdentity,
                 windowBounds: payload.expectedWindowBounds)]
         case let .moveWindow(payload):
-            [PeekabooBridgeOperationTargetEvidenceAdapter.window(
-                target: payload.target,
-                identity: payload.expectedIdentity)]
+            [DesktopTargetEvidenceAdapter.evidence(
+                windowTarget: payload.target,
+                windowIdentity: payload.expectedIdentity)]
         case let .resizeWindow(payload):
-            [PeekabooBridgeOperationTargetEvidenceAdapter.window(
-                target: payload.target,
-                identity: payload.expectedIdentity)]
+            [DesktopTargetEvidenceAdapter.evidence(
+                windowTarget: payload.target,
+                windowIdentity: payload.expectedIdentity)]
         case let .setWindowBounds(payload):
-            [PeekabooBridgeOperationTargetEvidenceAdapter.window(
-                target: payload.target,
-                identity: payload.expectedIdentity)]
+            [DesktopTargetEvidenceAdapter.evidence(
+                windowTarget: payload.target,
+                windowIdentity: payload.expectedIdentity)]
         case let .focusWindow(payload),
              let .closeWindow(payload),
              let .backgroundCloseWindow(payload),
              let .minimizeWindow(payload),
              let .restoreWindow(payload),
              let .maximizeWindow(payload):
-            [PeekabooBridgeOperationTargetEvidenceAdapter.window(
-                target: payload.target,
-                identity: payload.expectedIdentity)]
+            [DesktopTargetEvidenceAdapter.evidence(
+                windowTarget: payload.target,
+                windowIdentity: payload.expectedIdentity)]
         case let .quitApplication(payload):
             payload.expectedIdentity.map {
                 [.init(processIdentifier: $0.processIdentifier, processIdentity: $0)]
@@ -2064,53 +2064,10 @@ extension PeekabooBridgeRequest {
         case let .exactDialogClickButton(receipt), let .exactDialogDismiss(receipt):
             [.init(target: DesktopTargetIdentity(exactWindow: receipt.target))]
         case let .inspectAccessibilityTree(payload):
-            payload.windowContext.map(PeekabooBridgeOperationTargetEvidenceAdapter.windowContext).map { [$0] } ?? []
+            payload.windowContext.map(DesktopTargetEvidenceAdapter.evidence(selectorContext:)).map { [$0] } ?? []
         default:
             []
         }
-    }
-}
-
-enum PeekabooBridgeOperationTargetEvidenceAdapter {
-    static func exactWindow(
-        identity: WindowMutationIdentity,
-        bounds: CGRect,
-        focusedElement: FocusedElementIdentity? = nil) -> DesktopTargetIdentity.Evidence
-    {
-        .init(
-            processIdentifier: identity.ownerProcessIdentifier,
-            processIdentity: identity.processIdentity,
-            windowID: identity.windowID,
-            windowIdentity: identity,
-            windowBounds: bounds,
-            focusedElement: focusedElement)
-    }
-
-    static func window(
-        target: WindowTarget,
-        identity: WindowMutationIdentity?) -> DesktopTargetIdentity.Evidence
-    {
-        let targetWindowID: Int? = if case let .windowId(windowID) = target {
-            windowID
-        } else {
-            nil
-        }
-        return .init(
-            processIdentifier: identity?.ownerProcessIdentifier,
-            processIdentity: identity?.processIdentity,
-            windowID: targetWindowID ?? identity?.windowID,
-            windowIdentity: identity,
-            windowBounds: identity?.capturedBounds)
-    }
-
-    static func windowContext(_ context: WindowContext) -> DesktopTargetIdentity.Evidence {
-        .init(
-            processIdentifier: context.applicationProcessId,
-            processIdentity: context.windowMutationIdentity?.processIdentity,
-            windowID: context.windowID,
-            windowIdentity: context.windowMutationIdentity,
-            windowBounds: context.windowBounds,
-            focusedElement: context.focusedElement)
     }
 }
 

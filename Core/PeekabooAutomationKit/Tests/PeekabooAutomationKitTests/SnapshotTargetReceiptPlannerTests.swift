@@ -55,6 +55,50 @@ struct SnapshotTargetReceiptPlannerTests {
     }
 
     @Test
+    func `window target evidence preserves exact receipts and selector-only identifiers`() {
+        let fixture = AutomationTestFixtures.linkedSnapshotTarget()
+        let identity = fixture.desktopTarget.windowIdentity
+
+        let exact = DesktopTargetEvidenceAdapter.evidence(
+            windowTarget: .windowId(identity.windowID),
+            windowIdentity: identity)
+        let selectorOnly = DesktopTargetEvidenceAdapter.evidence(
+            windowTarget: .title("Editor"),
+            windowIdentity: nil)
+        let identifierOnly = DesktopTargetEvidenceAdapter.evidence(
+            windowTarget: .windowId(identity.windowID),
+            windowIdentity: nil)
+
+        #expect(exact.processIdentifier == identity.ownerProcessIdentifier)
+        #expect(exact.processIdentity == identity.processIdentity)
+        #expect(exact.windowID == identity.windowID)
+        #expect(exact.windowIdentity == identity)
+        #expect(exact.windowBounds == identity.capturedBounds)
+        #expect(selectorOnly == .init())
+        #expect(identifierOnly == .init(windowID: identity.windowID))
+    }
+
+    @Test
+    func `selector context evidence retains constraints without changing stable context policy`() {
+        let context = WindowContext(
+            applicationProcessId: 42,
+            applicationProcessStartIdentity: 1001,
+            windowID: 73,
+            windowBounds: .init(x: 20, y: 30, width: 640, height: 480))
+
+        let selectorEvidence = DesktopTargetEvidenceAdapter.evidence(selectorContext: context)
+        let stableEvidence = DesktopTargetEvidenceAdapter.evidence(context: context)
+
+        #expect(selectorEvidence.processIdentifier == 42)
+        #expect(selectorEvidence.processIdentity == nil)
+        #expect(selectorEvidence.windowID == 73)
+        #expect(selectorEvidence.windowBounds == context.windowBounds)
+        #expect(stableEvidence.processIdentity == .init(processIdentifier: 42, processStartIdentity: 1001))
+        #expect(stableEvidence.windowID == nil)
+        #expect(stableEvidence.windowBounds == nil)
+    }
+
+    @Test
     func `planner merges linked sources and preserves coordinate authority`() throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
 

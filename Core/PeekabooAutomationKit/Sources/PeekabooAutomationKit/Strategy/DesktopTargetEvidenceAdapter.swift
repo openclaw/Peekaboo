@@ -30,6 +30,23 @@ public enum DesktopTargetEvidenceAdapter {
     }
 
     public static func evidence(
+        windowTarget: WindowTarget,
+        windowIdentity: WindowMutationIdentity?) -> DesktopTargetIdentity.Evidence
+    {
+        let requestedWindowID: Int? = if case let .windowId(windowID) = windowTarget {
+            windowID
+        } else {
+            nil
+        }
+        return .init(
+            processIdentifier: windowIdentity?.ownerProcessIdentifier,
+            processIdentity: windowIdentity?.processIdentity,
+            windowID: requestedWindowID ?? windowIdentity?.windowID,
+            windowIdentity: windowIdentity,
+            windowBounds: windowIdentity?.capturedBounds)
+    }
+
+    public static func evidence(
         windowIdentity: WindowMutationIdentity,
         bounds: CGRect? = nil,
         focusedElement: FocusedElementIdentity? = nil) -> DesktopTargetIdentity.Evidence
@@ -55,6 +72,20 @@ public enum DesktopTargetEvidenceAdapter {
             windowIdentity: exactWindowIdentity,
             windowBounds: exactWindowIdentity.flatMap { context.windowBounds ?? $0.capturedBounds },
             focusedElement: exactWindowIdentity == nil ? nil : context.focusedElement)
+    }
+
+    /// Converts request selector constraints without promoting them to stable mutation authority.
+    ///
+    /// Unlike `evidence(context:)`, this preserves unreceipted window hints so a response-resolved
+    /// operation can reject a response that contradicts the signed request.
+    public static func evidence(selectorContext context: WindowContext) -> DesktopTargetIdentity.Evidence {
+        .init(
+            processIdentifier: context.applicationProcessId,
+            processIdentity: context.windowMutationIdentity?.processIdentity,
+            windowID: context.windowID,
+            windowIdentity: context.windowMutationIdentity,
+            windowBounds: context.windowBounds,
+            focusedElement: context.focusedElement)
     }
 
     public static func evidence(snapshot: UIAutomationSnapshot) -> DesktopTargetIdentity.Evidence {

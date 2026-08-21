@@ -2148,6 +2148,42 @@ extension PeekabooBridgeOperationReceiptTests {
     }
 
     @Test
+    func `request target evidence delegates without changing selector constraints`() throws {
+        let bounds = CGRect(x: 20, y: 30, width: 640, height: 480)
+        let identity = WindowMutationIdentity(
+            windowID: 73,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: 1001,
+            capturedBounds: bounds)
+        let moveRequest = PeekabooBridgeRequest.moveWindow(.init(
+            target: .windowId(identity.windowID),
+            expectedIdentity: identity,
+            position: .zero))
+        #expect(moveRequest.operationTargetEvidence == [DesktopTargetEvidenceAdapter.evidence(
+            windowTarget: .windowId(identity.windowID),
+            windowIdentity: identity)])
+        #expect(try PeekabooBridgeOperationTargetAttribution.resolveRequest(moveRequest)?.exactWindow?
+            .identity == identity)
+
+        let selectorContext = WindowContext(
+            applicationProcessId: identity.ownerProcessIdentifier,
+            applicationProcessStartIdentity: identity.ownerProcessStartIdentity,
+            windowID: identity.windowID,
+            windowBounds: bounds)
+        let inspectRequest = PeekabooBridgeRequest.inspectAccessibilityTree(.init(windowContext: selectorContext))
+        let selectorEvidence = try #require(inspectRequest.operationTargetEvidence.first)
+
+        #expect(inspectRequest.operationTargetEvidence == [
+            DesktopTargetEvidenceAdapter.evidence(selectorContext: selectorContext),
+        ])
+        #expect(selectorEvidence.processIdentifier == identity.ownerProcessIdentifier)
+        #expect(selectorEvidence.processIdentity == nil)
+        #expect(selectorEvidence.windowID == identity.windowID)
+        #expect(selectorEvidence.windowBounds == bounds)
+        #expect(try PeekabooBridgeOperationTargetAttribution.resolveRequest(inspectRequest) == nil)
+    }
+
+    @Test
     func `observation and capture receipts use resolved stable targets without widening`() throws {
         let bounds = CGRect(x: 20, y: 30, width: 640, height: 480)
         let identity = WindowMutationIdentity(

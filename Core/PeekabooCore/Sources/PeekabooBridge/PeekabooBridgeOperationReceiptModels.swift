@@ -270,8 +270,8 @@ public struct PeekabooBridgeOperationReceiptPayload: Codable, Equatable, Sendabl
             return try DesktopTargetIdentity(processIdentity: process)
         case let .window(window):
             return try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
-                PeekabooBridgeOperationTargetEvidenceAdapter.exactWindow(
-                    identity: window,
+                DesktopTargetEvidenceAdapter.evidence(
+                    windowIdentity: window,
                     bounds: window.capturedBounds ?? .null,
                     focusedElement: self.focusedElement),
             ])
