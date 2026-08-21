@@ -216,7 +216,32 @@ struct AgentEnhancementIntegrationTests {
         #expect(ActionVerifier.shouldVerify(toolName: "space", arguments: ["action": "switch"], options: options))
         #expect(!ActionVerifier.shouldVerify(toolName: "browser", arguments: ["action": "snapshot"], options: options))
         #expect(!ActionVerifier.shouldVerify(toolName: "browser", arguments: ["action": "wait_for"], options: options))
+        #expect(ActionVerifier.shouldVerify(toolName: "browser", arguments: ["action": "connect"], options: options))
+        #expect(!ActionVerifier.shouldVerify(
+            toolName: "browser",
+            arguments: ["action": "select_page", "bring_to_front": "false"],
+            options: options))
+        #expect(ActionVerifier.shouldVerify(
+            toolName: "browser",
+            arguments: ["action": "select_page", "bring_to_front": "true"],
+            options: options))
+        #expect(!ActionVerifier.shouldVerify(
+            toolName: "browser",
+            arguments: ["action": "performance_trace", "trace_action": "start", "reload": "false"],
+            options: options))
+        #expect(ActionVerifier.shouldVerify(
+            toolName: "browser",
+            arguments: ["action": "performance_trace", "trace_action": "start", "reload": "true"],
+            options: options))
         #expect(ActionVerifier.shouldVerify(toolName: "browser", arguments: ["action": "click"], options: options))
+        #expect(ActionVerifier.shouldVerify(
+            toolName: "menu",
+            arguments: ["action": "list", "foreground": "true"],
+            options: options))
+        #expect(ActionVerifier.shouldVerify(
+            toolName: "launch_app",
+            arguments: ["foreground": "false"],
+            options: options))
     }
 
     @Test

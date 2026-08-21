@@ -283,6 +283,22 @@ extension MCPToolSnapshotMutationCoordinating {
 }
 
 enum MCPToolSnapshotMutationPolicy {
+    static func isMutating(toolName: String, stringArguments: [String: String]) -> Bool {
+        // Verification historically treats a tool without invocation details as broadly mutating.
+        guard !stringArguments.isEmpty else { return true }
+
+        let mappedToolName = toolName == "launch_app" ? "app" : toolName
+        var arguments = stringArguments
+        if let action = arguments["action"] {
+            arguments["action"] = action.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        } else if toolName == "launch_app" {
+            arguments["action"] = "launch"
+        }
+        return self.effect(
+            toolName: mappedToolName,
+            arguments: ToolArguments(raw: arguments)) != .none
+    }
+
     static func effect(toolName: String, arguments: ToolArguments) -> MCPToolSnapshotEffect {
         self.explicitEffect(toolName: toolName, arguments: arguments) ?? .none
     }

@@ -112,25 +112,6 @@ public enum VerifiableActionType: String, Sendable, Hashable, CaseIterable {
     case type
     case window
 
-    private static let appReadOnlyActions: Set<String> = ["list"]
-    private static let browserReadOnlyActions: Set<String> = [
-        "status",
-        "connect",
-        "disconnect",
-        "list_pages",
-        "snapshot",
-        "console",
-        "network",
-        "screenshot",
-        "performance_trace",
-        "wait_for",
-    ]
-    private static let dialogReadOnlyActions: Set<String> = ["list"]
-    private static let dockReadOnlyActions: Set<String> = ["list"]
-    private static let menuReadOnlyActions: Set<String> = ["list"]
-    private static let spaceReadOnlyActions: Set<String> = ["list"]
-    private static let windowReadOnlyActions: Set<String> = ["list"]
-
     /// Whether this tool can modify state and should be verified by default when action details are unavailable.
     public var isMutating: Bool {
         true
@@ -138,27 +119,8 @@ public enum VerifiableActionType: String, Sendable, Hashable, CaseIterable {
 
     /// Whether this invocation modifies state and should be verified by default.
     public func isMutating(arguments: [String: String]) -> Bool {
-        switch self {
-        case .app:
-            !Self.appReadOnlyActions.contains(Self.actionName(in: arguments))
-        case .browser:
-            !Self.browserReadOnlyActions.contains(Self.actionName(in: arguments))
-        case .dialog:
-            !Self.dialogReadOnlyActions.contains(Self.actionName(in: arguments))
-        case .dock:
-            !Self.dockReadOnlyActions.contains(Self.actionName(in: arguments))
-        case .menu:
-            !Self.menuReadOnlyActions.contains(Self.actionName(in: arguments))
-        case .space:
-            !Self.spaceReadOnlyActions.contains(Self.actionName(in: arguments))
-        case .window:
-            !Self.windowReadOnlyActions.contains(Self.actionName(in: arguments))
-        default:
-            true
-        }
-    }
-
-    private static func actionName(in arguments: [String: String]) -> String {
-        arguments["action"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        MCPToolSnapshotMutationPolicy.isMutating(
+            toolName: self.rawValue,
+            stringArguments: arguments)
     }
 }

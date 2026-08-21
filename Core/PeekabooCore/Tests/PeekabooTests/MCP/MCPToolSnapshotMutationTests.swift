@@ -52,6 +52,31 @@ struct MCPToolSnapshotMutationTests {
     }
 
     @Test
+    func `Verification string arguments delegate to canonical mutation semantics`() {
+        #expect(!MCPToolSnapshotMutationPolicy.isMutating(
+            toolName: "app",
+            stringArguments: ["action": " LIST "]))
+        #expect(MCPToolSnapshotMutationPolicy.isMutating(
+            toolName: "launch_app",
+            stringArguments: ["foreground": "false"]))
+        #expect(MCPToolSnapshotMutationPolicy.isMutating(
+            toolName: "browser",
+            stringArguments: ["action": "connect"]))
+        #expect(!MCPToolSnapshotMutationPolicy.isMutating(
+            toolName: "browser",
+            stringArguments: ["action": "select_page", "bring_to_front": "false"]))
+        #expect(MCPToolSnapshotMutationPolicy.isMutating(
+            toolName: "browser",
+            stringArguments: ["action": "select_page", "bring_to_front": "true"]))
+        #expect(MCPToolSnapshotMutationPolicy.isMutating(
+            toolName: "menu",
+            stringArguments: ["action": "list", "foreground": "true"]))
+        #expect(MCPToolSnapshotMutationPolicy.isMutating(
+            toolName: "browser",
+            stringArguments: [:]))
+    }
+
+    @Test
     func `Every cataloged MCP tool has an explicit snapshot effect classification`() {
         let context = MCPToolContext(services: PeekabooServices())
         let tools = MCPToolCatalog.unfilteredTools(context: context)
