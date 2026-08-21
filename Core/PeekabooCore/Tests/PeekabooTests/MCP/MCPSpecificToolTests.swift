@@ -448,6 +448,7 @@ struct MCPSpecificToolTests {
             #expect(!actions.contains(.string("focus")))
         }
         #expect(tool.description.contains("focus: Unavailable under background-only authority"))
+        #expect(tool.description.contains("combined-observation eligibility"))
 
         let foregroundTool = makeTestTool(executionPolicy: .foregroundAllowed, WindowTool.init)
         guard case let .object(foregroundSchema) = foregroundTool.inputSchema,
@@ -461,6 +462,7 @@ struct MCPSpecificToolTests {
         #expect(foregroundActions.contains(.string("focus")))
         #expect(foregroundProperties["foreground"] != nil)
         #expect(foregroundTool.description.contains("session's explicit foreground authority"))
+        #expect(foregroundTool.description.contains("combined-observation eligibility"))
     }
 
     @Test
