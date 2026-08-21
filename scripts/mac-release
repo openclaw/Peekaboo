@@ -1,7 +1,43 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash -p
+builtin set +vx
+PATH=/usr/bin:/bin
+builtin export PATH
+raw_function_names_file=$(/usr/bin/mktemp /tmp/peekaboo-functions.XXXXXX) || builtin exit 1
+/usr/bin/env -0 | /usr/bin/env -i /usr/bin/perl -0ne '
+  if (index($_, "BASH_FUNC_") == 0) { my ($name) = split(/=/, $_, 2); print $name, chr(0); }
+' > "$raw_function_names_file"
+raw_function_scan_status=("${PIPESTATUS[@]}")
+if [[ ${raw_function_scan_status[0]} -ne 0 || ${raw_function_scan_status[1]} -ne 0 ]]; then
+  /bin/rm -f "$raw_function_names_file"
+  /bin/echo 'Could not inspect exported-function environment safely.' >&2
+  builtin exit 1
+fi
+raw_function_scrub_args=()
+while IFS= read -r -d '' raw_function_name; do
+  [[ -n "$raw_function_name" ]] || { /bin/rm -f "$raw_function_names_file"; builtin exit 1; }
+  raw_function_scrub_args+=(-u "$raw_function_name")
+done < "$raw_function_names_file"
+/bin/rm -f "$raw_function_names_file"
+if (("${#raw_function_scrub_args[@]}" > 0)); then
+  builtin exec /usr/bin/env "${raw_function_scrub_args[@]}" \
+    -u BASH_ENV -u ENV -u CDPATH -u GLOBIGNORE \
+    PATH=/usr/bin:/bin \
+    /bin/bash -p "${BASH_SOURCE[0]}" "$@"
+fi
+for imported_function in $(builtin compgen -A function); do
+  builtin unset -f -- "$imported_function"
+done
+builtin unset BASH_ENV ENV CDPATH GLOBIGNORE 2>/dev/null || true
+builtin set +p
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+builtin set -euo pipefail
+
+source_path=${BASH_SOURCE[0]}
+case "$source_path" in
+  */*) source_directory=${source_path%/*}; [[ -n "$source_directory" ]] || source_directory=/ ;;
+  *) source_directory=. ;;
+esac
+SCRIPT_DIR=$(builtin cd "$source_directory" && builtin pwd -P)
 ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 cd "$ROOT"
 

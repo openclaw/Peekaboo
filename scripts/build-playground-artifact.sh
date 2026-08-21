@@ -12,6 +12,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/source-provenance.sh"
 # shellcheck source=scripts/terminal-artifact-env.sh
 source "$ROOT_DIR/scripts/terminal-artifact-env.sh"
+terminal_artifact_assert_build_env_is_clean || {
+  printf 'build-playground-artifact: credentialed build environment\n' >&2
+  exit 1
+}
 
 WORKSPACE="$ROOT_DIR/Apps/Peekaboo.xcworkspace"
 WORKSPACE_RELATIVE="Apps/Peekaboo.xcworkspace"
@@ -21,22 +25,38 @@ SCHEME=Playground
 CONFIGURATION=Debug
 DESTINATION="platform=macOS,arch=arm64"
 EXPECTED_BUNDLE_ID=boo.peekaboo.playground.debug
-MARKETING_VERSION="$(node -p "require('$ROOT_DIR/package.json').version")"
+MARKETING_VERSION="$(/usr/bin/plutil -extract version raw -o - "$ROOT_DIR/package.json")"
 DERIVED_DATA_PATH=""
 OUTPUT_APP=""
 KEEP_DERIVED_DATA=false
 PRINT_CONTRACT=false
 
-XCODEBUILD_BIN="${PLAYGROUND_XCODEBUILD_BIN:-/usr/bin/xcodebuild}"
-DITTO_BIN="${PLAYGROUND_DITTO_BIN:-/usr/bin/ditto}"
-PLISTBUDDY_BIN="${PLAYGROUND_PLISTBUDDY_BIN:-/usr/libexec/PlistBuddy}"
-XCRUN_BIN="${PLAYGROUND_XCRUN_BIN:-/usr/bin/xcrun}"
-XCODE_SELECT_BIN="${PLAYGROUND_XCODE_SELECT_BIN:-/usr/bin/xcode-select}"
-
 fail() {
   printf 'build-playground-artifact: %s\n' "$*" >&2
   exit 1
 }
+
+case "${PEEKABOO_TERMINAL_TEST_MODE:-0}" in
+  1|true|yes|on)
+    XCODEBUILD_BIN="${PLAYGROUND_XCODEBUILD_BIN:?test xcodebuild required}"
+    DITTO_BIN="${PLAYGROUND_DITTO_BIN:-/usr/bin/ditto}"
+    PLISTBUDDY_BIN="${PLAYGROUND_PLISTBUDDY_BIN:-/usr/libexec/PlistBuddy}"
+    XCRUN_BIN="${PLAYGROUND_XCRUN_BIN:-/usr/bin/xcrun}"
+    XCODE_SELECT_BIN="${PLAYGROUND_XCODE_SELECT_BIN:-/usr/bin/xcode-select}"
+    ;;
+  0|false|no|off|'')
+    for override_name in PLAYGROUND_XCODEBUILD_BIN PLAYGROUND_DITTO_BIN PLAYGROUND_PLISTBUDDY_BIN \
+      PLAYGROUND_XCRUN_BIN PLAYGROUND_XCODE_SELECT_BIN; do
+      [[ -z "${!override_name+x}" ]] || fail "$override_name is test-only"
+    done
+    XCODEBUILD_BIN=/usr/bin/xcodebuild
+    DITTO_BIN=/usr/bin/ditto
+    PLISTBUDDY_BIN=/usr/libexec/PlistBuddy
+    XCRUN_BIN=/usr/bin/xcrun
+    XCODE_SELECT_BIN=/usr/bin/xcode-select
+    ;;
+  *) fail 'PEEKABOO_TERMINAL_TEST_MODE must be boolean' ;;
+esac
 
 usage() {
   cat <<'EOF'
@@ -123,7 +143,7 @@ XCODEBUILD_VERSION="$(terminal_artifact_run_build env DEVELOPER_DIR="$EFFECTIVE_
 SDK_VERSION="$(terminal_artifact_run_build env DEVELOPER_DIR="$EFFECTIVE_DEVELOPER_DIR" \
   "$XCRUN_BIN" --sdk macosx --show-sdk-version)"
 SWIFTC_VERSION="$(terminal_artifact_run_build env DEVELOPER_DIR="$EFFECTIVE_DEVELOPER_DIR" \
-  "$XCRUN_BIN" swiftc --version)"
+  "$XCRUN_BIN" swiftc --version 2>&1)"
 
 contract_json() {
   jq -n \
@@ -179,6 +199,7 @@ else
   [[ ! -e "$DERIVED_DATA_PATH" && ! -L "$DERIVED_DATA_PATH" ]] || \
     fail "DerivedData path already exists: $DERIVED_DATA_PATH"
   mkdir -p "$DERIVED_DATA_PATH"
+  CREATED_DERIVED_DATA=true
 fi
 
 cleanup() {

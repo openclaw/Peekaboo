@@ -3,6 +3,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/terminal-artifact-env.sh
+source "$ROOT_DIR/scripts/terminal-artifact-env.sh"
+for secret_name in "${TERMINAL_ARTIFACT_SECRET_NAMES[@]}"; do unset "$secret_name"; done
 TEST_DIR="$(mktemp -d /tmp/peekaboo-playground-artifact-test.XXXXXX)"
 trap 'rm -rf "$TEST_DIR"' EXIT
 FIXTURE_ROOT="$TEST_DIR/repo"
@@ -71,9 +74,18 @@ export FIXTURE_ROOT ARG_LOG
 export APP_STORE_CONNECT_API_KEY_P8=secret
 export MAC_RELEASE_SPARKLE_OP_REF=secret
 export OP_SERVICE_ACCOUNT_TOKEN=secret
-PLAYGROUND_XCODEBUILD_BIN="$TEST_DIR/xcodebuild" \
+if PLAYGROUND_XCODEBUILD_BIN="$TEST_DIR/xcodebuild" \
+  PEEKABOO_TERMINAL_TEST_MODE=1 \
+  "$FIXTURE_ROOT/scripts/build-playground-artifact.sh" \
+  --output-app "$OUTPUT_APP" >/dev/null 2>&1; then
+  fail 'direct credentialed build unexpectedly succeeded'
+fi
+terminal_artifact_run_build env \
+  PLAYGROUND_XCODEBUILD_BIN="$TEST_DIR/xcodebuild" \
+  PEEKABOO_TERMINAL_TEST_MODE=1 \
   "$FIXTURE_ROOT/scripts/build-playground-artifact.sh" \
   --output-app "$OUTPUT_APP" >/dev/null
+for secret_name in "${TERMINAL_ARTIFACT_SECRET_NAMES[@]}"; do unset "$secret_name"; done
 
 manifest="$OUTPUT_APP/Contents/Resources/PeekabooPlaygroundSource.json"
 lock_sha="$(shasum -a 256 \
@@ -104,6 +116,12 @@ for required_arg in \
   CODE_SIGNING_ALLOWED=NO; do
   grep -Fxq -- "$required_arg" "$ARG_LOG" || fail "xcodebuild omitted $required_arg"
 done
+
+caller_derived="$TEST_DIR/caller-derived"
+PLAYGROUND_XCODEBUILD_BIN="$TEST_DIR/xcodebuild" PEEKABOO_TERMINAL_TEST_MODE=1 \
+  "$FIXTURE_ROOT/scripts/build-playground-artifact.sh" \
+  --derived-data "$caller_derived" --output-app "$TEST_DIR/output-two/Playground.app" >/dev/null
+[[ ! -e "$caller_derived" ]] || fail 'caller-provided DerivedData was retained without --keep-derived-data'
 
 mkdir -p "$FIXTURE_ROOT/Apps/Playground/Playground.xcodeproj/project.xcworkspace/xcshareddata/swiftpm"
 printf '{}\n' > \

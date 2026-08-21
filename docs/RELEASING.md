@@ -78,12 +78,14 @@ run the repository autoreview workflow until no accepted actionable findings rem
 ### Terminal-only artifact set
 
 For exact-head machine qualification or fleet deployment without a public release, use the terminal artifact wrapper.
-It produces a universal CLI archive, signed/notarized Peekaboo app zip and DMG, and a signed/notarized Playground
-fixture zip. It never tags, uploads, publishes npm, or edits `appcast.xml`.
+It produces a universal CLI archive, signed/notarized Peekaboo app zip and DMG, a signed/notarized Playground fixture,
+and the pinned signed/notarized `PeekabooQualificationNode.app` used to run every qualification JavaScript program. It
+never tags, uploads, publishes npm, signs Sparkle metadata, or edits `appcast.xml`.
 
-The default `all` mode compiles first with notary, Sparkle, npm, signing-keychain-password, and 1Password service
-variables removed from the complete build process. Only after the unsigned inputs and canonical dependency-lock digest
-are sealed does it enter the managed Foundation credential lane for signing, notarization, stapling, and packaging:
+The default `all` mode compiles with notary, Sparkle, npm, signing-keychain-password, and 1Password service variables
+removed. It then creates a private verified snapshot, uses a codesign-only keychain lane, submits each code object through
+the single notary-only helper, constructs the DMG without credentials, and atomically publishes only fully verified
+artifacts and receipts:
 
 ```bash
 SOURCE_COMMIT="$(git rev-parse HEAD)"
@@ -92,17 +94,45 @@ scripts/build-terminal-artifacts.sh all \
   --output "/tmp/peekaboo-terminal-artifacts-$SOURCE_COMMIT"
 ```
 
-To inspect or retain the isolation boundary explicitly, run the two phases separately. `finalize` accepts only the
-same clean source commit, marketing version, tracked workspace dependency-lock digest, and unsigned executable hashes
-recorded by `build`:
+For failure recovery, rerun the individual phase that has no completed output. The tracked terminal manifest must be
+selected for every credentialed command; the ordinary release manifest also imports npm and Sparkle credentials and is
+not valid here. The phase order is:
 
 ```bash
+scripts/build-terminal-artifacts.sh check-helper
 scripts/build-terminal-artifacts.sh build --stage /absolute/new/stage
-scripts/mac-release codesign-run --with-package-secrets -- \
-  scripts/build-terminal-artifacts.sh finalize \
-  --stage /absolute/new/stage \
-  --output /absolute/new/artifacts
+MAC_RELEASE_MANIFEST="$PWD/.mac-release-terminal.env" \
+  scripts/mac-release codesign-run -- \
+  scripts/build-terminal-artifacts.sh sign-code --stage /absolute/new/stage
+MAC_RELEASE_MANIFEST="$PWD/.mac-release-terminal.env" \
+  scripts/mac-release package-run -- \
+  /usr/bin/env -u OP_SERVICE_ACCOUNT_TOKEN -u MOLTY_OP_SERVICE_ACCOUNT_TOKEN \
+  PATH=/usr/bin:/bin /bin/bash --noprofile --norc -p \
+  scripts/notarize-terminal-artifact.sh --kind cli-tree \
+  --artifact /absolute/new/stage/signed/cli \
+  --transaction /absolute/new/stage/notary/cli
+# Repeat only that direct helper shape for Peekaboo.app, Playground.app, and
+# PeekabooQualificationNode.app; app transactions contain the stapled copy,
+# receipt.json, and the exact post-staple tree.json.
+scripts/build-terminal-artifacts.sh build-dmg --stage /absolute/new/stage
+MAC_RELEASE_MANIFEST="$PWD/.mac-release-terminal.env" \
+  scripts/mac-release codesign-run -- \
+  scripts/build-terminal-artifacts.sh sign-dmg --stage /absolute/new/stage
+# Notarize the signed DMG through the same direct notary-only helper.
+scripts/build-terminal-artifacts.sh publish \
+  --stage /absolute/new/stage --output /absolute/new/artifacts
 ```
+
+The simplest and least error-prone command remains `all`; it owns those exact transitions. `package-run` resolves only
+the notarization fields and never prepares or unlocks the Developer ID keychain. Non-notary phases reject raw ASC,
+Sparkle, npm, GitHub, and service-account variables. Notary receipts bind submission bytes, Foundation code
+identity for every universal architecture, and the post-staple output, and appear only after staple/online verification
+succeeds. Exact submitted bytes are retained under `notary/submissions/`; the DMG additionally carries a mounted payload
+receipt that binds its exact notarized `Peekaboo.app`, Applications link, and allowed metadata before signing.
+The orchestrator stores inherited 1Password service tokens in owner-private temporary files and exposes them only to the
+pinned credential helper; build/sign/notary children never inherit them. The pinned Node runtime is re-signed with the
+tracked JIT entitlement policy, verifies both architecture entitlements, and must execute generated JavaScript after
+notarization before publication.
 
 `Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved` is the sole dependency graph for these builds.
 Remove generated `Apps/Playground/Package.resolved` and standalone Playground Xcode-workspace locks before building;
@@ -110,6 +140,10 @@ the helper refuses them so a local resolver cannot silently replace the graph re
 The build and final manifests also record and revalidate the canonicalized `DEVELOPER_DIR`, complete
 `xcodebuild -version`, macOS SDK version, and `swiftc --version`. This receipt does not make an unsupported toolchain
 supported; an Xcode 27 beta build remains visibly distinct from the documented Xcode 26.x publication baseline.
+The published `terminal-artifacts.json` is portable schema 7 with `root:"."`; every path is relative to its own
+directory. It retains its validator, canonical tree generator, commit-materialized controller/monitor/lock snapshot,
+rich universal Foundation-signed controller and monitor records, and pinned Node runtime. Copying the sealed directory to another absolute
+path must leave every byte and manifest hash unchanged and validate without a Peekaboo or OpenClaw checkout.
 
 ## 3. Date, commit, push, and run publication preflight
 

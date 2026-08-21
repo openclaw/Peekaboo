@@ -127,6 +127,14 @@ generate_info_plist() {
     set_plist_value "$output" "PeekabooGitCommitDate" "$GIT_COMMIT_DATE"
     set_plist_value "$output" "PeekabooGitBranch" "$GIT_BRANCH"
     set_plist_value "$output" "PeekabooBuildDate" "$BUILD_DATE"
+    if [[ -n "${PEEKABOO_CERTIFICATION_SOURCE_MANIFEST_SHA256:-}" ]]; then
+        set_plist_value "$output" "PeekabooCertificationSourceManifestSHA256" \
+            "$PEEKABOO_CERTIFICATION_SOURCE_MANIFEST_SHA256"
+    fi
+    if [[ -n "${PEEKABOO_CERTIFICATION_CATALOG_SHA256:-}" ]]; then
+        set_plist_value "$output" "PeekabooCertificationCatalogSHA256" \
+            "$PEEKABOO_CERTIFICATION_CATALOG_SHA256"
+    fi
 
     export PEEKABOO_CLI_INFO_PLIST_PATH="$output"
 }

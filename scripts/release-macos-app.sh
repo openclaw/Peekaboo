@@ -8,6 +8,8 @@ ROOT="${ROOT:-$ROOT_DIR}"
 ROOT="$(cd "$ROOT" && pwd)"
 # shellcheck source=scripts/source-provenance.sh
 source "$ROOT/scripts/source-provenance.sh"
+# shellcheck source=scripts/release-version.sh
+source "$ROOT/scripts/release-version.sh"
 SOURCE_COMMIT=""
 MAC_RELEASE_MANIFEST="${MAC_RELEASE_MANIFEST:-$ROOT/.mac-release.env}"
 MAC_RELEASE_MANIFEST_LOADED=false
@@ -36,59 +38,8 @@ else
   MAC_RELEASE_HELPER_LOADED=false
 fi
 
-version_to_build_number() {
-  if declare -F mac_release_build_number >/dev/null; then
-    mac_release_build_number "$1"
-    return
-  fi
-
-  local version=${1:?"version required"} core prerelease major minor patch suffix prerelease_label prerelease_number
-  core=${version%%-*}
-  prerelease=
-  if [[ "$version" == *-* ]]; then
-    prerelease=${version#*-}
-  fi
-  IFS=. read -r major minor patch <<<"$core"
-  if [[ ! "$major" =~ ^[0-9]+$ || ! "$minor" =~ ^[0-9]+$ || ! "$patch" =~ ^[0-9]+$ ]]; then
-    echo "ERROR: Version must be numeric semver: $version" >&2
-    exit 1
-  fi
-  if ((10#$minor > 99 || 10#$patch > 99)); then
-    echo "ERROR: Minor and patch versions must be <= 99 for generated build numbers: $version" >&2
-    exit 1
-  fi
-
-  suffix=99
-  if [[ -n "$prerelease" ]]; then
-    prerelease_label=${prerelease%%.*}
-    prerelease_label=${prerelease_label%%-*}
-    prerelease_label=${prerelease_label%%[0-9]*}
-    prerelease_label=${prerelease_label,,}
-    if [[ "$prerelease" =~ ([0-9]+)$ ]]; then
-      prerelease_number=${BASH_REMATCH[1]}
-    else
-      prerelease_number=1
-    fi
-    if ((10#$prerelease_number < 1 || 10#$prerelease_number > 29)); then
-      echo "ERROR: Prerelease number must be 1..29 for generated build numbers: $version" >&2
-      exit 1
-    fi
-    case "$prerelease_label" in
-      alpha | a) suffix=$((10#$prerelease_number)) ;;
-      beta | b) suffix=$((30 + 10#$prerelease_number)) ;;
-      rc) suffix=$((60 + 10#$prerelease_number)) ;;
-      *)
-        echo "ERROR: Prerelease label must be alpha, beta, or rc for generated build numbers: $version" >&2
-        exit 1
-        ;;
-    esac
-  fi
-
-  printf '%d\n' $((((10#$major * 100 + 10#$minor) * 100 + 10#$patch) * 100 + 10#$suffix))
-}
-
 MARKETING_VERSION="${MARKETING_VERSION:-$(node -p "require('$ROOT/package.json').version")}"
-BUILD_NUMBER="${BUILD_NUMBER:-$(version_to_build_number "$MARKETING_VERSION")}"
+BUILD_NUMBER="${BUILD_NUMBER:-$(peekaboo_release_build_number "$MARKETING_VERSION")}"
 
 WORKSPACE="${WORKSPACE:-$ROOT/Apps/Peekaboo.xcworkspace}"
 SCHEME="${SCHEME:-Peekaboo}"
@@ -103,7 +54,6 @@ EXPECTED_SIGN_REQUIREMENT="anchor apple generic and certificate leaf[subject.OU]
 SIGN_IDENTITY="${MAC_RELEASE_CODESIGN_IDENTITY:-${SIGN_IDENTITY:-$EXPECTED_SIGN_IDENTITY}}"
 CODESIGN_TIMESTAMP_URL="${CODESIGN_TIMESTAMP_URL:-http://timestamp.apple.com/ts01}"
 NOTARYTOOL_PROFILE="${NOTARYTOOL_PROFILE:-${NOTARYTOOL_KEYCHAIN_PROFILE:-}}"
-NOTARY_RESULT_PATH="${MAC_APP_NOTARY_RESULT_PATH:-}"
 APPCAST="${APPCAST:-${MAC_RELEASE_APPCAST:-appcast.xml}}"
 APPCAST_PATH="${APPCAST_PATH:-$ROOT/$APPCAST}"
 MINIMUM_SYSTEM_VERSION="${MINIMUM_SYSTEM_VERSION:-15.0}"
@@ -157,7 +107,7 @@ while [[ $# -gt 0 ]]; do
     --version)
       VERSION="$2"
       TAG="v${VERSION}"
-      BUILD_NUMBER="$(version_to_build_number "$VERSION")"
+      BUILD_NUMBER="$(peekaboo_release_build_number "$VERSION")"
       shift 2
       ;;
     --tag)
@@ -278,7 +228,6 @@ require_command ditto
 require_command file
 require_command realpath
 if [[ -z "$VERIFY_ONLY_ZIP" ]]; then
-  require_command jq
   require_command node
   require_command xcodebuild
   require_command shasum
@@ -391,28 +340,6 @@ verify_nested_developer_id_signatures() {
   log "Verified Foundation authority on $count nested Mach-O payloads"
 }
 
-record_notary_result() {
-  local result_json="$1"
-  local result_status submission_id
-  result_status="$(NOTARY_RESULT_JSON="$result_json" node -e \
-    'const value=JSON.parse(process.env.NOTARY_RESULT_JSON); process.stdout.write(value.status ?? "")')"
-  submission_id="$(NOTARY_RESULT_JSON="$result_json" node -e \
-    'const value=JSON.parse(process.env.NOTARY_RESULT_JSON); process.stdout.write(value.id ?? "")')"
-  [[ "$result_status" == Accepted ]] || fail "App notarization was not accepted: ${result_status:-missing status}"
-  [[ -n "$submission_id" ]] || fail 'Accepted app notarization omitted its submission ID'
-  if [[ -n "$NOTARY_RESULT_PATH" ]]; then
-    [[ "$NOTARY_RESULT_PATH" == /* ]] || NOTARY_RESULT_PATH="$ROOT/$NOTARY_RESULT_PATH"
-    [[ ! -e "$NOTARY_RESULT_PATH" && ! -L "$NOTARY_RESULT_PATH" ]] || \
-      fail "App notary result path already exists: $NOTARY_RESULT_PATH"
-    mkdir -p "$(dirname "$NOTARY_RESULT_PATH")"
-    jq -n \
-      --arg id "$submission_id" \
-      --arg status "$result_status" \
-      '{version: 1, kind: "app", id: $id, status: $status}' > "$NOTARY_RESULT_PATH"
-    chmod 444 "$NOTARY_RESULT_PATH"
-  fi
-}
-
 if [[ -z "$VERIFY_ONLY_ZIP" ]]; then
   if [[ "$NOTARIZE" == true && "$SIGN_IDENTITY" != "$EXPECTED_SIGN_IDENTITY" ]]; then
     fail "official releases must use '$EXPECTED_SIGN_IDENTITY'"
@@ -513,14 +440,7 @@ if [[ "$NOTARIZE" == true ]]; then
   ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" "$NOTARY_ZIP"
 
   if [[ -n "${NOTARYTOOL_PROFILE:-}" ]]; then
-    xcrun notarytool history \
-      --keychain-profile "$NOTARYTOOL_PROFILE" \
-      --output-format json >/dev/null
-    NOTARY_RESULT_JSON="$(xcrun notarytool submit "$NOTARY_ZIP" \
-      --keychain-profile "$NOTARYTOOL_PROFILE" \
-      --no-s3-acceleration \
-      --wait \
-      --output-format json)"
+    xcrun notarytool submit "$NOTARY_ZIP" --keychain-profile "$NOTARYTOOL_PROFILE" --no-s3-acceleration --wait
   else
     [[ -n "${APP_STORE_CONNECT_KEY_ID:-}" ]] || fail "APP_STORE_CONNECT_KEY_ID missing"
     [[ -n "${APP_STORE_CONNECT_ISSUER_ID:-}" ]] || fail "APP_STORE_CONNECT_ISSUER_ID missing"
@@ -541,21 +461,14 @@ if (!pem.includes("\n")) {
 process.stdout.write(`${pem}\n`);
 EOF
     chmod 600 "$KEY_FILE"
-    xcrun notarytool history \
-      --key "$KEY_FILE" \
-      --key-id "$APP_STORE_CONNECT_KEY_ID" \
-      --issuer "$APP_STORE_CONNECT_ISSUER_ID" \
-      --output-format json >/dev/null
-    NOTARY_RESULT_JSON="$(xcrun notarytool submit "$NOTARY_ZIP" \
+    xcrun notarytool submit "$NOTARY_ZIP" \
       --key "$KEY_FILE" \
       --key-id "$APP_STORE_CONNECT_KEY_ID" \
       --issuer "$APP_STORE_CONNECT_ISSUER_ID" \
       --no-s3-acceleration \
-      --wait \
-      --output-format json)"
+      --wait
     rm -f "$KEY_FILE"
   fi
-  record_notary_result "$NOTARY_RESULT_JSON"
 
   log "Stapling notarization ticket"
   xcrun stapler staple "$APP_BUNDLE"

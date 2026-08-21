@@ -362,3 +362,13 @@ artifact finalizer for signing and notarization. Manifest schema v2 binds the fi
 plus SHA-256 of the tracked canonical `Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved`. It also records
 the canonical Developer directory and exact Xcode, macOS SDK, and Swift compiler versions. Standalone Playground
 lockfiles are not accepted.
+
+Final terminal qualification also requires `--terminal-artifact-manifest` beside the prebuilt Playground. Portable schema 7
+binds the zipped app, its exact post-staple tree receipt, Foundation identity/notary receipt, and the pinned universal
+Node 24.15.0 qualification app. The harness extracts and verifies that Node app before any candidate action and runs
+qualification JavaScript only with `PeekabooQualificationNode.app/Contents/MacOS/node`; ambient `node`, PATH, and an
+OpenClaw installation are not fallbacks. Terminal app payloads permit no extended attributes, `__MACOSX`, or `._*`
+AppleDouble entries, and every ZIP must reproduce the retained canonical tree byte-for-byte.
+The retained receipts also preserve the exact notarization submissions, bind every universal Mach-O architecture,
+anchor the controller/monitor source aggregate inside signed code, and require the final DMG to remount with the exact
+notarized Peekaboo app and no unapproved root payloads.
