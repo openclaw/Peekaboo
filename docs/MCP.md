@@ -17,8 +17,10 @@ By default, the MCP process owns its lifecycle and keeps support services proces
 `--bridge-socket <path>` instead attaches MCP tools to that existing Bridge host and skips the embedded support daemon.
 In both modes, MCP never publishes `daemon.sock`, `bridge.sock`, or another Bridge listener itself.
 The explicit route also owns capture preflight for the server lifetime: Peekaboo reuses one authenticated client bound
-to that listener's process generation and does not consult unrelated global Bridge sockets. Caller-local MCP retains
-the broader legacy-owner scan because no external Bridge generation owns its capture path.
+to that listener's process generation and does not consult unrelated auxiliary Bridge sockets during caller routing.
+The selected host independently enforces the canonical ScreenCaptureKit lease: first acquisition still refuses live
+owner-unaware processes, while an exact generation that already holds the lease retains it across later process
+discovery. Caller-local MCP retains the broader legacy-owner scan because no external Bridge generation owns its path.
 
 Action-oriented UI tools include:
 

@@ -685,6 +685,7 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
     public let message: String
     public let hint: String?
     public let causeDescription: String?
+    public let standardErrorCode: StandardErrorCode?
     public let targetReceipt: DesktopActionTargetReceipt?
     public let selectedLeafEvidence: [DesktopSelectedLeafEvidence]?
 
@@ -693,6 +694,7 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
         message: String,
         hint: String? = nil,
         causeDescription: String? = nil,
+        standardErrorCode: StandardErrorCode? = nil,
         targetReceipt: DesktopActionTargetReceipt? = nil,
         selectedLeafEvidence: [DesktopSelectedLeafEvidence]? = nil)
     {
@@ -705,6 +707,7 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
         self.message = message
         self.hint = hint
         self.causeDescription = causeDescription
+        self.standardErrorCode = standardErrorCode
         self.targetReceipt = targetReceipt
         self.selectedLeafEvidence = selectedLeafEvidence
     }
@@ -830,6 +833,7 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
         message: String,
         hint: String?,
         causeDescription: String?,
+        standardErrorCode: StandardErrorCode? = nil,
         targetReceipt: DesktopActionTargetReceipt? = nil,
         selectedLeafEvidence: [DesktopSelectedLeafEvidence]? = nil)
     {
@@ -837,6 +841,7 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
         self.message = message
         self.hint = hint
         self.causeDescription = causeDescription
+        self.standardErrorCode = standardErrorCode
         self.targetReceipt = targetReceipt
         self.selectedLeafEvidence = outcome.dispatchState.mutationDispatched ? selectedLeafEvidence : nil
     }
@@ -860,6 +865,7 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
             message: self.message,
             hint: self.hint,
             causeDescription: self.causeDescription,
+            standardErrorCode: self.standardErrorCode,
             targetReceipt: self.targetReceipt,
             selectedLeafEvidence: self.selectedLeafEvidence)
     }
@@ -872,6 +878,7 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
             message: self.message,
             hint: self.hint,
             causeDescription: self.causeDescription,
+            standardErrorCode: self.standardErrorCode,
             targetReceipt: targetReceipt,
             selectedLeafEvidence: self.selectedLeafEvidence)
     }
@@ -888,6 +895,7 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
             message: self.message,
             hint: self.hint,
             causeDescription: self.causeDescription,
+            standardErrorCode: self.standardErrorCode,
             targetReceipt: self.targetReceipt,
             selectedLeafEvidence: evidence)
     }
@@ -897,6 +905,7 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
         case message
         case hint
         case causeDescription = "cause_description"
+        case standardErrorCode = "standard_error_code"
         case targetReceipt = "target_receipt"
         case selectedLeafEvidence = "selected_leaf_evidence"
     }
@@ -914,6 +923,7 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
         self.message = try container.decode(String.self, forKey: .message)
         self.hint = try container.decodeIfPresent(String.self, forKey: .hint)
         self.causeDescription = try container.decodeIfPresent(String.self, forKey: .causeDescription)
+        self.standardErrorCode = try container.decodeIfPresent(StandardErrorCode.self, forKey: .standardErrorCode)
         self.targetReceipt = try container.decodeIfPresent(DesktopActionTargetReceipt.self, forKey: .targetReceipt)
         self.selectedLeafEvidence = try container.decodeIfPresent(
             [DesktopSelectedLeafEvidence].self,

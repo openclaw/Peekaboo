@@ -30,6 +30,11 @@ enum ObservationActionResultSupport {
     }
 
     static func standardErrorFields(_ error: any Error) -> [String: Value] {
+        if let error = error as? DesktopActionFailure,
+           let code = error.standardErrorCode
+        {
+            return ["error_code": .string(code.rawValue)]
+        }
         guard let error = error as? PeekabooError else { return [:] }
         let code: StandardErrorCode? = switch error {
         case .accessibilityIncomplete:

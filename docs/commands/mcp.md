@@ -25,12 +25,14 @@ read_when:
 - HTTP/SSE server transports are reserved but not implemented. Selecting either fails before daemon startup and emits a structured error in JSON mode.
 - The MCP process owns its stdio lifecycle and never hosts a Bridge listener. Support stays process-local by default;
   an explicit `--bridge-socket <path>` uses that existing Bridge host and skips the embedded daemon.
-- An explicit `--bridge-socket` binds capture preflight and every later request to that socket's authenticated process
-  generation. Unrelated Claude, OpenClaw, or other global Bridge sockets cannot poison the persistent session. If the
-  selected host itself predates safe ScreenCaptureKit ownership, auto/modern pixel calls fail before dispatch with its
-  exact owner diagnostic; `see` can use `capture_engine: "classic"` without entering ScreenCaptureKit. After updating
-  or relaunching the selected owner, start a fresh MCP process before retrying auto/modern capture. Caller-local MCP
-  keeps the broader process-owner scan because it has no external Bridge generation to own capture.
+- An explicit `--bridge-socket` binds caller-side capture preflight and every later request to that socket's
+  authenticated process generation; unrelated auxiliary sockets cannot freeze the MCP session. The selected host still
+  enforces the canonical process-lifetime ScreenCaptureKit lease. Its first modern acquisition refuses any live
+  owner-unaware process, while an exact generation that already holds the lease keeps that authority across processes
+  discovered later. Modern refusal remains a signed `CAPTURE_FAILED` / `runtime_incompatible`, retry-safe,
+  not-dispatched result instead of being rewritten as a target-attribution error. `see` can use
+  `capture_engine: "classic"` without entering ScreenCaptureKit. Caller-local MCP keeps the broader startup scan because
+  it has no external Bridge generation to own capture.
 - The native tool catalog includes bounded `capture` for live screen/window/region recording or video ingest. It writes retained frames, `contact.png`, `metadata.json`, and optional MP4 output, so use tool allow/deny filters when exposing MCP to untrusted clients.
 - UI automation tools include action-first additions: `set_value` directly mutates a settable accessibility value, and `action` invokes a named accessibility action on an element from `see`.
 - `verify_state` replaces fixed sleeps with bounded native polling. It resolves an app or PID to one exact window, evaluates 1–8 AND predicates for window existence/bounds or exact AX element existence/value/enabled/selected state every 100 ms, and reports `satisfied`, `unsatisfied`, or conservative `unknown` after at most 10 seconds. Explicit PIDs and app-name selectors are pinned to the first resolved PID/process-start generation for the whole invocation; relaunch, PID reuse, and selector drift are `unknown`. Exact-window ownership is rechecked on every sample and before an optional screenshot, whose capture metadata must confirm the same PID and window ID. A directly read value matching a unique exact AX identifier can satisfy an `element_value` predicate when unrelated AX siblings are unreadable; missing, mismatched, non-identifier, or ambiguous partial-tree evidence remains `unknown`. A WindowServer miss is corroborated with a complete app-scoped window inventory before Peekaboo reports absence, preserving minimized AX windows. Ownership ambiguity, partial enumeration, or identity changes are `unknown`. It never focuses or replays actions.

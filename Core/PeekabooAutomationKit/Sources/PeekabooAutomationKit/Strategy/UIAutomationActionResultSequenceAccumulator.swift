@@ -493,6 +493,7 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
             message: composed.message,
             hint: composed.hint,
             causeDescription: composed.causeDescription,
+            standardErrorCode: leafFailure.standardErrorCode,
             targetReceipt: targetReceipt,
             selectedLeafEvidence: evidence)
         else {
@@ -510,7 +511,8 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
                 outcome: failure.outcome,
                 message: failure.message,
                 hint: failure.hint,
-                causeDescription: failure.causeDescription)
+                causeDescription: failure.causeDescription,
+                standardErrorCode: failure.standardErrorCode)
             else {
                 preconditionFailure("A reconciled desktop action failure must remain non-confirmed")
             }

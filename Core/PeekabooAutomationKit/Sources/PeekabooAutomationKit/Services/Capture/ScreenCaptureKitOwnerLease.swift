@@ -325,6 +325,9 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
 
     /// Makes exactly one nonblocking `flock` attempt. A live contender is reported immediately.
     public func claim() throws -> ClaimResult {
+        if let receipt = try Self.currentProcessHeldReceipt(path: self.lockPath) {
+            return .alreadyOwnedByCurrentProcess(receipt)
+        }
         let uncoordinatedHosts = self.uncoordinatedHosts()
         guard uncoordinatedHosts.isEmpty else {
             throw LeaseError.uncoordinatedHosts(uncoordinatedHosts)
@@ -332,9 +335,6 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
         let uncoordinatedProcesses = try self.uncoordinatedProcesses()
         guard uncoordinatedProcesses.isEmpty else {
             throw LeaseError.uncoordinatedProcesses(uncoordinatedProcesses)
-        }
-        if let receipt = try Self.currentProcessHeldReceipt(path: self.lockPath) {
-            return .alreadyOwnedByCurrentProcess(receipt)
         }
         if let receipt = try Self.currentOwnerReceiptIfHeld(
             lockURL: URL(fileURLWithPath: self.lockPath),

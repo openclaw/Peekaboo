@@ -235,6 +235,62 @@ struct PeekabooBridgeDesktopObservationResultTests {
         await host.stop()
     }
 
+    @Test
+    func `signed read-only handler error keeps targetless refusal metadata`() async throws {
+        let provider = FailingObservationProvider()
+        let root = URL(fileURLWithPath: "/tmp/pb-ob-targetless-error-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let socketPath = root.appendingPathComponent("bridge.sock").path
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: Self.server(provider: provider),
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
+        let request = DesktopObservationRequest(
+            target: .app(identifier: "Fixture", window: .automatic),
+            capture: .init(engine: .modern, focus: .background),
+            detection: .init(mode: .accessibility))
+
+        do {
+            _ = try await client.desktopObservationWithOutcome(request)
+            Issue.record("Expected the read-only capture failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.message.contains("fixture modern owner refusal"))
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .runtimeIncompatible)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+            #expect(failure.standardErrorCode == .captureFailed)
+            #expect(failure.targetReceipt == nil)
+        }
+
+        let bundle = try #require(await client.lastOperationReceiptBundle())
+        try bundle.validate()
+        #expect(bundle.receipt.payload.target == nil)
+        #expect(bundle.receipt.payload.targetAttributionFailure == nil)
+        #expect(bundle.receipt.payload.targetAttributionEvidence == nil)
+        #expect(bundle.receipt.payload.outcome?.outcome.state == .refused)
+        let response = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeResponse.self,
+            from: bundle.canonicalResponse)
+        guard case let .error(envelope) = response else {
+            Issue.record("Expected the original error response")
+            return
+        }
+        #expect(envelope.context == "standard_error:CAPTURE_FAILED")
+        #expect(envelope.message.contains("fixture modern owner refusal"))
+        #expect(!envelope.operationMayHaveCompleted)
+        #expect(envelope.actionOutcome?.outcome.refusalReason == .runtimeIncompatible)
+        #expect(envelope.actionTargetReceipt == nil)
+        #expect(provider.actionResultCount == 1)
+        await host.stop()
+    }
+
     private static let delivery = DesktopActionOutcome.Delivery(
         mechanism: .capturePipeline,
         mode: .background)
@@ -411,5 +467,21 @@ private final class LegacyObservationProvider: DesktopObservationServiceProtocol
     func observe(_: DesktopObservationRequest) async throws -> DesktopObservationResult {
         self.observeCount += 1
         return self.result
+    }
+}
+
+@MainActor
+private final class FailingObservationProvider: DesktopObservationActionResultProviding {
+    private(set) var actionResultCount = 0
+
+    func observe(_: DesktopObservationRequest) async throws -> DesktopObservationResult {
+        throw OperationError.captureFailed(reason: "fixture modern owner refusal")
+    }
+
+    func observeActionResult(
+        _: DesktopObservationRequest) async throws -> UIAutomationActionResult<DesktopObservationResult>
+    {
+        self.actionResultCount += 1
+        throw OperationError.captureFailed(reason: "fixture modern owner refusal")
     }
 }

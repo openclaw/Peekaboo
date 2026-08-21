@@ -116,13 +116,7 @@ extension PeekabooBridgeServer {
                 context: encodingContext)
         }
 
-        let handled = await PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(
-            claim.negotiatedCapabilities)
-        {
-            await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(true) {
-                await self.terminalResponse(for: plan, peer: peer)
-            }
-        }
+        let handled = await self.executeAttestedOperation(plan: plan, claim: claim, peer: peer)
         let response: PeekabooBridgeResponse
         let target: PeekabooBridgeOperationTargetReceipt?
         let focusedElement: FocusedElementIdentity?
@@ -185,6 +179,21 @@ extension PeekabooBridgeServer {
                 failureEvidence: targetFailureEvidence),
             selectedLeafEvidence: targetFailure == nil ? handled.selectedLeafEvidence : nil,
             context: encodingContext)
+    }
+
+    private func executeAttestedOperation(
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
+        claim: PeekabooBridgeOperationSessionClaim,
+        peer: PeekabooBridgePeer) async -> PeekabooBridgeHandledResponse
+    {
+        let handled = await PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(
+            claim.negotiatedCapabilities)
+        {
+            await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(true) {
+                await self.terminalResponse(for: plan, peer: peer)
+            }
+        }
+        return Self.normalizingTargetlessReadOnlyFailure(handled, plan: plan)
     }
 
     static func operationReceiptClaimErrorCode(
@@ -353,6 +362,7 @@ extension PeekabooBridgeServer {
         do {
             return try await self.route(plan, peer: peer)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
+            let envelope = Self.targetlessReadOnlyFailureEnvelope(envelope, plan: plan)
             return .init(
                 response: .error(envelope.legacyCompatible),
                 selectedLeafEvidence: envelope.actionSelectedLeafEvidence)
@@ -367,12 +377,72 @@ extension PeekabooBridgeServer {
                     details: "\(failure)")),
                 selectedLeafEvidence: routed.selectedLeafEvidence)
         } catch is CancellationError {
-            return .init(response: .error(.init(code: .timeout, message: "Bridge request was cancelled")))
+            let envelope = Self.targetlessReadOnlyFailureEnvelope(
+                .init(code: .timeout, message: "Bridge request was cancelled"),
+                plan: plan)
+            return .init(response: .error(envelope))
         } catch {
-            return .init(response: .error(.init(
+            let envelope = Self.targetlessReadOnlyFailureEnvelope(.init(
                 code: .internalError,
                 message: error.localizedDescription,
-                details: "\(error)")))
+                details: "\(error)"), plan: plan)
+            return .init(response: .error(envelope))
+        }
+    }
+
+    private static func targetlessReadOnlyFailureEnvelope(
+        _ envelope: PeekabooBridgeErrorEnvelope,
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan) -> PeekabooBridgeErrorEnvelope
+    {
+        guard !plan.result.completion.mutatesDesktop,
+              !envelope.operationMayHaveCompleted,
+              envelope.actionOutcome == nil,
+              envelope.actionTargetReceipt == nil,
+              envelope.actionSelectedLeafEvidence == nil
+        else {
+            return envelope
+        }
+        let failure = DesktopActionFailure.preDispatchRefusal(
+            route: .bridge,
+            reason: self.readOnlyFailureReason(envelope.code),
+            message: envelope.message,
+            hint: envelope.actionFailureHint,
+            causeDescription: envelope.details)
+        return PeekabooBridgeErrorEnvelope(
+            code: envelope.code,
+            actionFailure: failure,
+            details: envelope.details,
+            permission: envelope.permission,
+            kind: envelope.kind,
+            context: envelope.context)
+    }
+
+    private static func normalizingTargetlessReadOnlyFailure(
+        _ handled: PeekabooBridgeHandledResponse,
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan) -> PeekabooBridgeHandledResponse
+    {
+        guard case let .error(envelope) = handled.response else { return handled }
+        return handled.replacingResponse(.error(self.targetlessReadOnlyFailureEnvelope(envelope, plan: plan)))
+    }
+
+    private static func readOnlyFailureReason(
+        _ code: PeekabooBridgeErrorCode) -> DesktopActionOutcome.RefusalReason
+    {
+        switch code {
+        case .permissionDenied:
+            .permissionDenied
+        case .notFound:
+            .targetUnavailable
+        case .timeout:
+            .requestCancelled
+        case .invalidRequest, .decodingFailed:
+            .invalidRequest
+        case .operationNotSupported:
+            .operationUnsupported
+        case .serverBusy, .unauthorizedClient:
+            .transportSessionUnavailable
+        case .versionMismatch, .internalError:
+            .runtimeIncompatible
         }
     }
 

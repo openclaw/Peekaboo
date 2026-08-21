@@ -687,6 +687,7 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
             message: self.message,
             hint: self.actionFailureHint,
             causeDescription: self.actionFailureCauseDescription,
+            standardErrorCode: self.standardizedErrorCode,
             targetReceipt: self.actionTargetReceipt,
             selectedLeafEvidence: self.actionSelectedLeafEvidence)
     }

@@ -6,6 +6,7 @@ import Testing
 @testable import PeekabooAgentRuntime
 @testable import PeekabooBridge
 @testable import PeekabooCore
+@testable import PeekabooFoundation
 
 @Suite(.serialized)
 struct MCPToolContextTests {
@@ -164,6 +165,22 @@ struct MCPToolContextTests {
 
         #expect(refusedContext.capturePreflightRefusal == refusal)
         #expect(agent.makeToolContext().capturePreflightRefusal == nil)
+    }
+
+    @Test
+    func `Bridge action failure preserves its standardized capture code for MCP metadata`() throws {
+        let failure = try #require(DesktopActionFailure(
+            outcome: .refused(route: .bridge, reason: .runtimeIncompatible),
+            message: "Capture failed before dispatch",
+            standardErrorCode: .captureFailed))
+
+        #expect(ObservationActionResultSupport.standardErrorFields(failure) == [
+            "error_code": .string("CAPTURE_FAILED"),
+        ])
+        let roundTrip = try JSONDecoder().decode(
+            DesktopActionFailure.self,
+            from: JSONEncoder().encode(failure))
+        #expect(roundTrip == failure)
     }
 
     @Test

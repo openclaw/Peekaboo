@@ -3,7 +3,7 @@ import Foundation
 // MARK: - Error Code Protocol
 
 /// Standard error codes used across Peekaboo
-public enum StandardErrorCode: String, Sendable, Equatable {
+public enum StandardErrorCode: String, Codable, Sendable, Equatable {
     // Permission errors
     case screenRecordingPermissionDenied = "PERMISSION_DENIED_SCREEN_RECORDING"
     case accessibilityPermissionDenied = "PERMISSION_DENIED_ACCESSIBILITY"
