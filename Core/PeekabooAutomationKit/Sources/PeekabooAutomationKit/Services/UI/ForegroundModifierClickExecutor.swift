@@ -39,6 +39,10 @@ struct ModifierClickPointerRouteLossFailure: Error {
     let failure: DesktopActionFailure
 }
 
+struct ModifierClickInputActivityLossFailure: Error {
+    let failure: DesktopActionFailure
+}
+
 struct ModifierClickFocusOwnershipLossFailure: Error {
     let failure: DesktopActionFailure
 }
@@ -313,35 +317,25 @@ final class ForegroundModifierClickExecutor {
                                 reason: .targetUnavailable,
                                 message: "Modifier-click exact foreground ownership changed before click dispatch.")
                         }
-                        guard self.dependencies.validateExactWindow(
-                            request.windowIdentity,
-                            request.windowBounds)
-                        else {
-                            throw ModifierClickPointerRouteLossFailure(failure: .preDispatchRefusal(
-                                reason: .targetUnavailable,
-                                message: "Modifier-click exact-window identity changed before event dispatch.",
-                                hint: "Observe the exact target again before retrying."))
-                        }
                         guard self.dependencies.sharedInputActivityToken() == preClickInputActivity else {
-                            throw DesktopActionFailure.preDispatchRefusal(
+                            throw ModifierClickInputActivityLossFailure(failure: .preDispatchRefusal(
                                 reason: .targetUnavailable,
-                                message: "Modifier-click physical cursor activity changed before click dispatch.")
+                                message: "Modifier-click physical cursor activity changed before click dispatch."))
                         }
-                        guard let pointerRoute = self.dependencies.pointerRouteAtPoint(request.point),
-                              pointerRoute.windowID == CGWindowID(request.windowIdentity.windowID),
-                              pointerRoute.processIdentifier == request.windowIdentity.ownerProcessIdentifier,
-                              pointerRoute.bounds == request.windowBounds
-                        else {
-                            throw ModifierClickPointerRouteLossFailure(failure: .preDispatchRefusal(
+                        try self.validateFinalPointerRoute(request)
+                        guard self.dependencies.sharedInputActivityToken() == preClickInputActivity else {
+                            throw ModifierClickInputActivityLossFailure(failure: .preDispatchRefusal(
                                 reason: .targetUnavailable,
-                                message: "Modifier-click point is occluded or no longer routes to its exact window.",
-                                hint: "Observe the exact target again before retrying."))
+                                message: "Modifier-click physical input changed during final route validation."))
                         }
                         try Task.checkCancellation()
                         clickAttempted = true
                         let clickOutcome = try preparedClick()
                         sequence.record(.reportedOutcome(clickOutcome, defaultDispatchedUnitCount: .one))
                         inputActivityToken = preClickInputActivity.afterModifierClick(request.clickType)
+                    } catch let inputFailure as ModifierClickInputActivityLossFailure {
+                        primaryFailure = inputFailure.failure
+                        cleanupAllowed = false
                     } catch let routeFailure as ModifierClickPointerRouteLossFailure {
                         primaryFailure = routeFailure.failure
                         cleanupAllowed = false
@@ -478,6 +472,25 @@ final class ForegroundModifierClickExecutor {
                 focusRestoration: focusRestoration),
             outcome: outcome,
             targetIdentity: targetIdentity)
+    }
+
+    private func validateFinalPointerRoute(_ request: ForegroundModifierClickRequest) throws {
+        guard self.dependencies.validateExactWindow(request.windowIdentity, request.windowBounds) else {
+            throw ModifierClickPointerRouteLossFailure(failure: .preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Modifier-click exact-window identity changed before event dispatch.",
+                hint: "Observe the exact target again before retrying."))
+        }
+        guard let pointerRoute = self.dependencies.pointerRouteAtPoint(request.point),
+              pointerRoute.windowID == CGWindowID(request.windowIdentity.windowID),
+              pointerRoute.processIdentifier == request.windowIdentity.ownerProcessIdentifier,
+              pointerRoute.bounds == request.windowBounds
+        else {
+            throw ModifierClickPointerRouteLossFailure(failure: .preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Modifier-click point is occluded or no longer routes to its exact window.",
+                hint: "Observe the exact target again before retrying."))
+        }
     }
 
     private func validate(
