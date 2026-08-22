@@ -309,7 +309,9 @@ final class ForegroundModifierClickExecutor {
                         clickAttempted = true
                         let clickOutcome = try preparedClick()
                         sequence.record(.reportedOutcome(clickOutcome, defaultDispatchedUnitCount: .one))
-                        inputActivityToken = preClickInputActivity.afterModifierClick(request.clickType)
+                        inputActivityToken = preClickInputActivity.afterModifierClick(
+                            request.clickType,
+                            modifiers: request.modifiers)
                     } catch let inputFailure as ModifierClickInputActivityLossFailure {
                         primaryFailure = inputFailure.failure
                         cleanupAllowed = false

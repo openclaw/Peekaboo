@@ -119,14 +119,17 @@ struct SharedInputActivityToken: Equatable, Sendable {
         return self.with(heldMouseButtons: self.heldMouseButtons | (UInt32(1) << button.rawValue))
     }
 
-    func afterModifierClick(_ clickType: ClickType) -> Self {
+    func afterModifierClick(
+        _ clickType: ClickType,
+        modifiers: [PointerModifier] = []) -> Self
+    {
         guard self.tracksActivity else { return self }
         let count: UInt32 = switch clickType {
         case .double: 2
         case .triple: 3
         default: 1
         }
-        return switch clickType {
+        let mouseActivity = switch clickType {
         case .right:
             self.with(rightDown: self.rightDown &+ count, rightUp: self.rightUp &+ count)
         case .middle:
@@ -134,6 +137,9 @@ struct SharedInputActivityToken: Equatable, Sendable {
         case .single, .double, .triple, .longPress:
             self.with(leftDown: self.leftDown &+ count, leftUp: self.leftUp &+ count)
         }
+        let modifierCount = UInt32(modifiers.count)
+        return mouseActivity.with(
+            flagsChanged: mouseActivity.flagsChanged &+ (modifierCount &* 2))
     }
 
     func afterMouseMove() -> Self {

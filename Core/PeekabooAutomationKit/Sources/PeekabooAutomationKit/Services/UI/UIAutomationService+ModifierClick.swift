@@ -5,29 +5,51 @@ import PeekabooFoundation
 
 @MainActor
 enum ModifierClickDispatchBarrier {
-    static func waitForMouseUps(
-        baseline: UInt32,
-        expectedIncrement: UInt32,
+    struct Counters: Equatable {
+        let mouseUp: UInt32
+        let modifierTransitions: UInt32
+    }
+
+    static func waitForCompletion(
+        baseline: Counters,
+        expectedIncrement: Counters,
         deadline: ContinuousClock.Instant,
         now: () -> ContinuousClock.Instant = { ContinuousClock.now },
-        counter: () -> UInt32,
+        counters: () -> Counters,
         runLoopStep: () -> Void) throws
     {
         while now() < deadline {
-            if counter() &- baseline >= expectedIncrement {
+            if self.isComplete(
+                counters(),
+                baseline: baseline,
+                expectedIncrement: expectedIncrement)
+            {
                 return
             }
             runLoopStep()
         }
-        if counter() &- baseline >= expectedIncrement {
+        if self.isComplete(
+            counters(),
+            baseline: baseline,
+            expectedIncrement: expectedIncrement)
+        {
             return
         }
         throw ModifierClickDispatchBarrierFailure(failure: .indeterminate(
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
             evidence: .completionUnknown,
             unitCount: .one,
-            message: "Modifier-click mouse-up delivery did not reach the session before cleanup.",
+            message: "Modifier-click mouse-up or modifier key-up delivery did not reach the session.",
             hint: "Inspect the shared desktop state before taking another input action."))
+    }
+
+    private static func isComplete(
+        _ current: Counters,
+        baseline: Counters,
+        expectedIncrement: Counters) -> Bool
+    {
+        current.mouseUp &- baseline.mouseUp >= expectedIncrement.mouseUp &&
+            current.modifierTransitions &- baseline.modifierTransitions >= expectedIncrement.modifierTransitions
     }
 }
 
@@ -241,15 +263,28 @@ extension UIAutomationService {
         }
         // This source owns a unique state table retained by the prepared closure. AppKit/AX focus and
         // physical HID input advance other tables, so only these retained events can change this baseline.
-        let baseline = CGEventSource.counterForEventType(sourceStateID, eventType: descriptor.up)
+        let baseline = ModifierClickDispatchBarrier.Counters(
+            mouseUp: CGEventSource.counterForEventType(sourceStateID, eventType: descriptor.up),
+            modifierTransitions: CGEventSource.counterForEventType(
+                sourceStateID,
+                eventType: .flagsChanged))
         return {
             try withExtendedLifetime(source) {
                 events.forEach { $0.post(tap: .cghidEventTap) }
-                try ModifierClickDispatchBarrier.waitForMouseUps(
+                try ModifierClickDispatchBarrier.waitForCompletion(
                     baseline: baseline,
-                    expectedIncrement: UInt32(descriptor.count),
+                    // Modifier virtual-key down/up events are `.flagsChanged` in CoreGraphics.
+                    expectedIncrement: .init(
+                        mouseUp: UInt32(descriptor.count),
+                        modifierTransitions: UInt32(modifiers.count * 2)),
                     deadline: ContinuousClock.now.advanced(by: .milliseconds(500)),
-                    counter: { CGEventSource.counterForEventType(sourceStateID, eventType: descriptor.up) },
+                    counters: {
+                        .init(
+                            mouseUp: CGEventSource.counterForEventType(sourceStateID, eventType: descriptor.up),
+                            modifierTransitions: CGEventSource.counterForEventType(
+                                sourceStateID,
+                                eventType: .flagsChanged))
+                    },
                     runLoopStep: { CFRunLoopRunInMode(.defaultMode, 0.005, true) })
             }
             return .dispatchedUnverified(
@@ -267,9 +302,25 @@ extension UIAutomationService {
         eventSourceUserData: Int64? = nil) throws -> [CGEvent]
     {
         let descriptor = self.mouseEventDescriptor(for: clickType)
-        let flags = self.flags(for: modifiers)
+        let modifierKeys = try modifiers.map { try self.modifierKeyDescriptor(for: $0) }
         var events: [CGEvent] = []
-        events.reserveCapacity(descriptor.count * 2)
+        events.reserveCapacity(descriptor.count * 2 + modifierKeys.count * 2)
+        var cumulativeFlags = CGEventFlags()
+        for modifierKey in modifierKeys {
+            guard let keyDown = CGEvent(
+                keyboardEventSource: source,
+                virtualKey: modifierKey.keyCode,
+                keyDown: true)
+            else {
+                throw PeekabooError.invalidInput("Could not create modifier key-down event")
+            }
+            cumulativeFlags.insert(modifierKey.flag)
+            keyDown.flags = cumulativeFlags
+            if let eventSourceUserData {
+                keyDown.setIntegerValueField(.eventSourceUserData, value: eventSourceUserData)
+            }
+            events.append(keyDown)
+        }
         for clickState in 1...descriptor.count {
             guard let down = CGEvent(
                 mouseEventSource: source,
@@ -285,7 +336,7 @@ extension UIAutomationService {
                 throw PeekabooError.invalidInput("Could not create modifier-click mouse events")
             }
             for event in [down, up] {
-                event.flags = flags
+                event.flags = cumulativeFlags
                 event.setIntegerValueField(.mouseEventClickState, value: Int64(clickState))
                 if let eventSourceUserData {
                     event.setIntegerValueField(.eventSourceUserData, value: eventSourceUserData)
@@ -293,19 +344,35 @@ extension UIAutomationService {
                 events.append(event)
             }
         }
+        for modifierKey in modifierKeys.reversed() {
+            guard let keyUp = CGEvent(
+                keyboardEventSource: source,
+                virtualKey: modifierKey.keyCode,
+                keyDown: false)
+            else {
+                throw PeekabooError.invalidInput("Could not create modifier key-up event")
+            }
+            cumulativeFlags.remove(modifierKey.flag)
+            keyUp.flags = cumulativeFlags
+            if let eventSourceUserData {
+                keyUp.setIntegerValueField(.eventSourceUserData, value: eventSourceUserData)
+            }
+            events.append(keyUp)
+        }
         return events
     }
 
-    private static func flags(for modifiers: [PointerModifier]) -> CGEventFlags {
-        modifiers.reduce(into: CGEventFlags()) { $0.insert(self.flag(for: $1)) }
-    }
-
-    private static func flag(for modifier: PointerModifier) -> CGEventFlags {
+    private static func modifierKeyDescriptor(for modifier: PointerModifier) throws -> (
+        keyCode: CGKeyCode,
+        flag: CGEventFlags)
+    {
         switch modifier {
-        case .command: .maskCommand
-        case .shift: .maskShift
-        case .option: .maskAlternate
-        case .control: .maskControl
+        case .command: (0x37, .maskCommand)
+        case .shift: (0x38, .maskShift)
+        case .option: (0x3A, .maskAlternate)
+        case .control:
+            throw PeekabooError.invalidInput(
+                "Modifier-click does not support Control-click restoration")
         }
     }
 

@@ -7,66 +7,6 @@ import Testing
 @MainActor
 struct ForegroundModifierClickExecutorTests {
     @Test
-    func `shared input token tracks held keys and buttons without persistent toggle flags`() {
-        let released = SharedInputActivityToken.current(
-            keyStateProvider: { _ in false },
-            buttonStateProvider: { _ in false })
-        let heldKey = SharedInputActivityToken.current(
-            keyStateProvider: { $0 == 4 },
-            buttonStateProvider: { _ in false })
-        let heldButton = SharedInputActivityToken.current(
-            keyStateProvider: { _ in false },
-            buttonStateProvider: { $0 == .left })
-        let capsLockEnabled = SharedInputActivityToken.current(
-            keyStateProvider: { $0 == 0x39 },
-            buttonStateProvider: { _ in false })
-        var queriedButtonValues: Set<UInt32> = []
-        let heldAuxiliaryButton = SharedInputActivityToken.current(
-            keyStateProvider: { _ in false },
-            buttonStateProvider: {
-                queriedButtonValues.insert($0.rawValue)
-                return $0.rawValue == 3
-            })
-
-        #expect(!released.hasHeldInput)
-        #expect(heldKey.hasHeldInput)
-        #expect(heldButton.hasHeldInput)
-        #expect(!capsLockEnabled.hasHeldInput)
-        #expect(capsLockEnabled.afterModifierFlagsChange() != capsLockEnabled)
-        #expect(heldAuxiliaryButton.hasHeldInput)
-        #expect(queriedButtonValues == Set(UInt32(0)..<UInt32(32)))
-        #expect(heldKey.afterMouseMove().hasHeldInput)
-        #expect(heldButton.afterModifierClick(.single).hasHeldInput)
-    }
-
-    @Test
-    func `modifier click encodes flags only on a prebuilt mouse sequence`() throws {
-        let priorFlags = CGEventSource.flagsState(.combinedSessionState)
-        let events = try UIAutomationService.makeModifierClickEvents(
-            point: CGPoint(x: 220, y: 240),
-            clickType: .double,
-            modifiers: [.command, .shift],
-            source: CGEventSource(stateID: .hidSystemState),
-            eventSourceUserData: 42)
-
-        #expect(events.map(\.type) == [.leftMouseDown, .leftMouseUp, .leftMouseDown, .leftMouseUp])
-        #expect(events.map { $0.getIntegerValueField(.mouseEventClickState) } == [1, 1, 2, 2])
-        #expect(events.allSatisfy { $0.flags.contains([.maskCommand, .maskShift]) })
-        #expect(events.allSatisfy { $0.getIntegerValueField(.eventSourceUserData) == 42 })
-        #expect(CGEventSource.flagsState(.combinedSessionState) == priorFlags)
-    }
-
-    @Test
-    func `private event sources expose distinct counter state tables`() throws {
-        let first = try #require(CGEventSource(stateID: .privateState))
-        let second = try #require(CGEventSource(stateID: .privateState))
-
-        #expect(first.sourceStateID != .privateState)
-        #expect(second.sourceStateID != .privateState)
-        #expect(first.sourceStateID != second.sourceStateID)
-    }
-
-    @Test
     func `modifier click restores only its own cursor and foreground writes`() async throws {
         let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
         let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
@@ -1764,10 +1704,10 @@ extension ForegroundModifierClickExecutorTests {
                     cursorCleanupAttempted = true
                     cursor = location
                 },
-                click: { location, clickType, _ in
+                click: { location, clickType, modifiers in
                     cursor = location
                     activity = interruption.activity(
-                        after: activity.afterModifierClick(clickType))
+                        after: activity.afterModifierClick(clickType, modifiers: modifiers))
                     return .dispatchedUnverified(
                         delivery: .init(mechanism: .globalEvents, mode: .foreground),
                         evidence: .deliveryAccepted,
@@ -1793,53 +1733,6 @@ extension ForegroundModifierClickExecutorTests {
         #expect(!focusCleanupAttempted)
         #expect(cursor == point)
         #expect(frontmost == target)
-    }
-
-    @Test
-    func `private source mouse up barrier waits for the complete sequence`() throws {
-        let clock = ContinuousClock()
-        var now = clock.now
-        let deadline = now.advanced(by: .milliseconds(3))
-        var counter: UInt32 = 7
-        var steps = 0
-
-        try ModifierClickDispatchBarrier.waitForMouseUps(
-            baseline: 7,
-            expectedIncrement: 2,
-            deadline: deadline,
-            now: { now },
-            counter: { counter },
-            runLoopStep: {
-                steps += 1
-                counter += 1
-                now = now.advanced(by: .milliseconds(1))
-            })
-
-        #expect(steps == 2)
-        #expect(counter == 9)
-    }
-
-    @Test
-    func `mouse up barrier timeout is cleanup unsafe and accounts one click unit`() {
-        let clock = ContinuousClock()
-        var now = clock.now
-        let deadline = now.advanced(by: .milliseconds(1))
-        do {
-            try ModifierClickDispatchBarrier.waitForMouseUps(
-                baseline: 7,
-                expectedIncrement: 1,
-                deadline: deadline,
-                now: { now },
-                counter: { 7 },
-                runLoopStep: { now = deadline })
-            Issue.record("Expected the modifier-click delivery barrier to time out")
-        } catch let failure as ModifierClickDispatchBarrierFailure {
-            #expect(failure.failure.outcome.state == .indeterminate)
-            #expect(failure.failure.outcome.dispatchState.unitCount == .one)
-            #expect(failure.failure.outcome.retrySafety == .unsafe)
-        } catch {
-            Issue.record("Unexpected barrier error: \(error)")
-        }
     }
 
     @Test

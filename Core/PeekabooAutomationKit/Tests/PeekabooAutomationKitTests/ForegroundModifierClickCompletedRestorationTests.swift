@@ -33,8 +33,8 @@ struct ForegroundModifierClickCompletedRestorationTests {
                 activate: { _, _ in false },
                 currentCursorLocation: { CGPoint(x: 10, y: 10) },
                 moveCursor: { _ in },
-                click: { _, clickType, _ in
-                    inputActivity = inputActivity.afterModifierClick(clickType)
+                click: { _, clickType, modifiers in
+                    inputActivity = inputActivity.afterModifierClick(clickType, modifiers: modifiers)
                     return .confirmedChange(
                         delivery: .init(mechanism: .globalEvents, mode: .foreground),
                         unitCount: .one)
@@ -100,8 +100,8 @@ struct ForegroundModifierClickCompletedRestorationTests {
                 activate: { _, _ in false },
                 currentCursorLocation: { CGPoint(x: 10, y: 10) },
                 moveCursor: { _ in },
-                click: { _, clickType, _ in
-                    inputActivity = inputActivity.afterModifierClick(clickType)
+                click: { _, clickType, modifiers in
+                    inputActivity = inputActivity.afterModifierClick(clickType, modifiers: modifiers)
                     return .confirmedChange(
                         delivery: .init(mechanism: .globalEvents, mode: .foreground),
                         unitCount: .one)
@@ -158,8 +158,8 @@ struct ForegroundModifierClickCompletedRestorationTests {
                 activate: { _, _ in false },
                 currentCursorLocation: { CGPoint(x: 10, y: 10) },
                 moveCursor: { _ in },
-                click: { _, clickType, _ in
-                    inputActivity = inputActivity.afterModifierClick(clickType)
+                click: { _, clickType, modifiers in
+                    inputActivity = inputActivity.afterModifierClick(clickType, modifiers: modifiers)
                     return .confirmedChange(
                         delivery: .init(mechanism: .globalEvents, mode: .foreground),
                         unitCount: .one)
@@ -324,8 +324,8 @@ struct ForegroundModifierClickCompletedRestorationTests {
                 activate: { _, _ in false },
                 currentCursorLocation: { CGPoint(x: 10, y: 10) },
                 moveCursor: { _ in },
-                click: { _, clickType, _ in
-                    inputActivity = inputActivity.afterModifierClick(clickType)
+                click: { _, clickType, modifiers in
+                    inputActivity = inputActivity.afterModifierClick(clickType, modifiers: modifiers)
                     withUnsafeCurrentTask { $0?.cancel() }
                     return .confirmedChange(
                         delivery: .init(mechanism: .globalEvents, mode: .foreground),
