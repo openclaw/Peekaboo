@@ -406,6 +406,17 @@ public struct ClickTool: MCPTool {
                 lease,
                 requiresFreshObservation: failure.outcome.projection.requiresFreshObservation)
             throw failure
+        } catch {
+            try? await self.context.snapshots.finishSnapshotMutation(
+                lease,
+                requiresFreshObservation: true)
+            throw DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .composite, mode: .foreground),
+                evidence: .completionUnknown,
+                message: "Modifier-click failed without a canonical action outcome.",
+                hint: "Observe the exact target before any retry and do not reuse this snapshot.",
+                causeDescription: error.localizedDescription)
+                .attributed(to: DesktopTargetIdentity(exactWindow: exactTarget).actionTargetReceipt)
         }
         do {
             try await self.context.snapshots.finishSnapshotMutation(

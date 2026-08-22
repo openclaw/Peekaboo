@@ -342,7 +342,7 @@ struct MCPComposedInputParityTests {
     }
 
     @Test
-    func `unknown modifier click failure keeps snapshot replay blocked`() async throws {
+    func `unknown modifier click failure finalizes snapshot as retry unsafe`() async throws {
         let fixture = await Self.makeFixture()
         await MainActor.run {
             fixture.automation.foregroundModifierClickError = MCPComposedInputTestError.unknownServiceFailure
@@ -356,6 +356,16 @@ struct MCPComposedInputParityTests {
         ]))
 
         #expect(response.isError)
+        let metadata = try #require(response.meta?.objectValue)
+        #expect(metadata["state"] == .string("indeterminate"))
+        #expect(metadata["mutation_dispatched"] == .bool(true))
+        #expect(metadata["retry_safe"] == .bool(false))
+        #expect(metadata["requires_fresh_observation"] == .bool(true))
+        let finishCalls = await MainActor.run { fixture.snapshots.finishCalls }
+        #expect(finishCalls.count == 1)
+        let finishCall = try #require(finishCalls.first)
+        #expect(finishCall.lease.snapshotId == fixture.snapshotID)
+        #expect(finishCall.requiresFreshObservation)
         await #expect(throws: (any Error).self) {
             _ = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
         }
@@ -411,7 +421,7 @@ struct MCPComposedInputParityTests {
         -> (
             context: MCPToolContext,
             automation: MockAutomationService,
-            snapshots: InMemorySnapshotManager,
+            snapshots: SnapshotMutationRecordingManager,
             snapshotID: String,
             window: ServiceWindowInfo)
     {
@@ -451,7 +461,8 @@ struct MCPComposedInputParityTests {
             fixture.detectionResult
         }
         let snapshots = await MainActor.run {
-            InMemorySnapshotManager(detectionResult: automationDetectionResult)
+            SnapshotMutationRecordingManager(wrapping: InMemorySnapshotManager(
+                detectionResult: automationDetectionResult))
         }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,

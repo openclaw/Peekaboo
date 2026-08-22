@@ -825,6 +825,16 @@ extension TypeService {
                 lease,
                 requiresFreshObservation: failure.outcome.projection.requiresFreshObservation)
             throw failure
+        } catch {
+            try? await self.snapshotManager.finishSnapshotMutation(
+                lease,
+                requiresFreshObservation: true)
+            throw DesktopActionFailure.indeterminate(
+                evidence: .completionUnknown,
+                message: "Pixel-focus typing failed without a canonical action outcome.",
+                hint: "Observe the exact target before any retry and do not reuse this snapshot.",
+                causeDescription: error.localizedDescription)
+                .attributed(to: DesktopTargetIdentity(exactWindow: exactWindow).actionTargetReceipt)
         }
         do {
             try await self.snapshotManager.finishSnapshotMutation(

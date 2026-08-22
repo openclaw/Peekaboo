@@ -294,9 +294,10 @@ struct TypeServicePixelFocusTests {
     }
 
     @Test
-    func `unknown pixel focus failure keeps snapshot replay blocked`() async throws {
+    func `unknown pixel focus failure finalizes snapshot as retry unsafe`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let storage = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let manager = SnapshotMutationRecordingManager(wrapping: storage)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         let service = TypeService(
             snapshotManager: manager,
@@ -309,7 +310,7 @@ struct TypeServicePixelFocusTests {
                 }),
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly))
 
-        await #expect(throws: PixelFocusFixtureError.self) {
+        do {
             _ = try await service.typeActionsByFocusingPixel(
                 ExactWindowPixelFocusTypeRequest(
                     point: CGPoint(x: 40, y: 50),
@@ -319,6 +320,21 @@ struct TypeServicePixelFocusTests {
                     windowIdentity: exactWindow.identity,
                     windowBounds: exactWindow.bounds),
                 deliveryValidator: { _ in })
+            Issue.record("Expected an indeterminate pixel-focus failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.evidence == .completionUnknown)
+            #expect(failure.targetReceipt == DesktopTargetIdentity(exactWindow: exactWindow).actionTargetReceipt)
+        }
+
+        #expect(manager.finishCalls.count == 1)
+        let finishCall = try #require(manager.finishCalls.first)
+        #expect(finishCall.lease.snapshotId == fixture.snapshotID)
+        #expect(finishCall.requiresFreshObservation)
+        guard case .requiresFreshObservation? = storage.mutationLeases[fixture.snapshotID] else {
+            Issue.record("Expected the unknown service failure to consume the snapshot")
+            return
         }
         await #expect(throws: (any Error).self) {
             _ = try await manager.beginSnapshotMutation(snapshotId: fixture.snapshotID)
