@@ -166,6 +166,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
     }
 
     @Test
+    // swiftlint:disable:next function_body_length
     func `composed input parity binds response family delivery units and exact target`() async throws {
         let bounds = CGRect(x: 10, y: 20, width: 300, height: 200)
         let identity = WindowMutationIdentity(
@@ -276,6 +277,51 @@ struct PeekabooBridgeOperationSemanticPlanTests {
             target: target,
             outcome: modifierOutcome.projection)
         try validModifier.bundle.validateIntegrity()
+
+        let focusPrefixDeliveries = [
+            DesktopActionOutcome.Delivery(mechanism: .nativeFramework, mode: .foreground),
+            DesktopActionOutcome.Delivery(mechanism: .accessibilityValue, mode: .foreground),
+            DesktopActionOutcome.Delivery(mechanism: .accessibilityAction, mode: .foreground),
+        ]
+        for delivery in focusPrefixDeliveries {
+            let focusFailure = DesktopActionFailure.indeterminate(
+                route: .bridge,
+                delivery: delivery,
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "Modifier-click focus stopped after an accepted foreground dispatch.")
+            #expect(PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
+                focusFailure.outcome,
+                request: modifierRequest))
+            let projectedFocusFailure = PeekabooBridgeResponse.projectedAction(.init(
+                response: .error(.init(code: .internalError, actionFailure: focusFailure)),
+                outcome: focusFailure.outcome.projection))
+            let signedFocusFailure = try await Self.makeBundle(
+                request: projectedModifierRequest,
+                response: projectedFocusFailure,
+                target: target,
+                outcome: focusFailure.outcome.projection)
+            try signedFocusFailure.bundle.validateIntegrity()
+
+            let focusOnlySuccess = DesktopActionOutcome.dispatchedUnverified(
+                route: .bridge,
+                delivery: delivery,
+                evidence: .deliveryAccepted,
+                unitCount: .one)
+            #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                focusOnlySuccess,
+                request: modifierRequest))
+            let signedFocusOnlySuccess = try await Self.makeBundle(
+                request: projectedModifierRequest,
+                response: .projectedAction(.init(
+                    response: .foregroundModifierClickResult(alreadyFocusedResult),
+                    outcome: focusOnlySuccess.projection)),
+                target: target,
+                outcome: focusOnlySuccess.projection)
+            #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+                try signedFocusOnlySuccess.bundle.validateIntegrity()
+            }
+        }
 
         for (request, response, outcome) in [
             (projectedPixelRequest, projectedPixelResponse, pixelOutcome.projection),

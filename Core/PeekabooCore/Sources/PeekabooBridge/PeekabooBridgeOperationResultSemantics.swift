@@ -1412,6 +1412,18 @@ extension PeekabooBridgeOperationResultSemantics {
             return [
                 rule(globalForeground, .positive),
                 rule(compositeForeground, .positive),
+                DeliveryRule(
+                    delivery: nativeForeground,
+                    units: .positive,
+                    allowsSuccessfulOutcome: false),
+                DeliveryRule(
+                    delivery: valueForeground,
+                    units: .positive,
+                    allowsSuccessfulOutcome: false),
+                DeliveryRule(
+                    delivery: axForeground,
+                    units: .positive,
+                    allowsSuccessfulOutcome: false),
             ]
         case .typeActions, .hotkey:
             return [rule(globalForeground, .variable)]
