@@ -207,6 +207,43 @@ struct PeekabooBridgeOperationSemanticPlanTests {
             outcome: pixelOutcome.projection)
         try validPixel.bundle.validateIntegrity()
 
+        let pixelFocusFailure = DesktopActionFailure.indeterminate(
+            route: .bridge,
+            delivery: .init(mechanism: .accessibilityValue, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: "Pixel-focus typing stopped after its focus write.")
+        #expect(PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
+            pixelFocusFailure.outcome,
+            request: pixelRequest))
+        let signedPixelFocusFailure = try await Self.makeBundle(
+            request: projectedPixelRequest,
+            response: .projectedAction(.init(
+                response: .error(.init(code: .internalError, actionFailure: pixelFocusFailure)),
+                outcome: pixelFocusFailure.outcome.projection)),
+            target: target,
+            outcome: pixelFocusFailure.outcome.projection)
+        try signedPixelFocusFailure.bundle.validateIntegrity()
+
+        let pixelFocusOnlySuccess = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .accessibilityValue, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            pixelFocusOnlySuccess,
+            request: pixelRequest))
+        let signedPixelFocusOnlySuccess = try await Self.makeBundle(
+            request: projectedPixelRequest,
+            response: .projectedAction(.init(
+                response: .typeResult(pixelResult),
+                outcome: pixelFocusOnlySuccess.projection)),
+            target: target,
+            outcome: pixelFocusOnlySuccess.projection)
+        #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+            try signedPixelFocusOnlySuccess.bundle.validateIntegrity()
+        }
+
         let missingClickOutcome = DesktopActionOutcome.dispatchedUnverified(
             route: .bridge,
             delivery: .init(mechanism: .composite, mode: .background),

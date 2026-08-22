@@ -267,6 +267,11 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             guard !self.focusOptions.foreground else {
                 throw ValidationError("--at typing is an exact-window background operation; remove --foreground")
             }
+            guard !self.focusOptions.hasForegroundFocusOverrides else {
+                throw ValidationError(
+                    "--at pixel typing owns exact-window background focus; remove foreground focus overrides"
+                )
+            }
             guard !self.target.hasAnyTarget else {
                 throw ValidationError("--at derives its exact target from --snapshot; remove app/window selectors")
             }

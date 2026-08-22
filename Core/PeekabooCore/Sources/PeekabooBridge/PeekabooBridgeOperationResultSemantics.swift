@@ -528,7 +528,7 @@ enum PeekabooBridgeOperationResultSemantics {
                 return
             case let (.certificationProducerAttestation(request), .certificationProducerAttestation(result)):
                 try result.validateEnvelope(request: request)
-            case (.setValue, .error):
+            case (.typeActions, .error), (.setValue, .error):
                 // A canonical failure has no success payload to bind. Its outcome, target receipt,
                 // and dispatch count are validated by the failure and receipt contracts instead.
                 return
@@ -1407,7 +1407,13 @@ extension PeekabooBridgeOperationResultSemantics {
         case .exactWindowTargetedTypeActions:
             return [rule(windowBackground, .variable), rule(axBackground, .variable)]
         case .exactWindowPixelFocusType:
-            return [rule(compositeBackground, .positive)]
+            return [
+                rule(compositeBackground, .positive),
+                DeliveryRule(
+                    delivery: valueBackground,
+                    units: .positive,
+                    allowsSuccessfulOutcome: false),
+            ]
         case .foregroundModifierClick:
             return [
                 rule(globalForeground, .positive),

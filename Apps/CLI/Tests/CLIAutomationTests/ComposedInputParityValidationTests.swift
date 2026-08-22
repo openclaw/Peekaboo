@@ -37,8 +37,28 @@ struct ComposedInputParityValidationTests {
 
         var accepted = try TypeCommand.parse([
             "hello", "--at", "10,20", "--coordinate-space", "image_pixels", "--snapshot", "snap",
+            "--focus-background",
         ])
         try accepted.validate()
+    }
+
+    @Test(arguments: [
+        ["--no-auto-focus"],
+        ["--focus-timeout", "1s"],
+        ["--focus-retry-count", "2"],
+        ["--space-switch"],
+        ["--bring-to-current-space"],
+    ])
+    func `pixel focus type rejects foreground focus overrides`(_ focusArguments: [String]) throws {
+        var command = try TypeCommand.parse([
+            "hello", "--at", "10,20", "--snapshot", "snap",
+        ] + focusArguments)
+
+        let error = #expect(throws: ValidationError.self) {
+            try command.validate()
+        }
+        #expect(error?.localizedDescription ==
+            "--at pixel typing owns exact-window background focus; remove foreground focus overrides")
     }
 
     @Test
