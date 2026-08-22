@@ -11,6 +11,44 @@ import Testing
 @Suite(.serialized)
 struct PeekabooBridgeClientTransportOutcomeTests {
     @Test
+    @MainActor
+    func `receiptless composed exact input refuses before an operation connection`() async throws {
+        let peer = try ScriptedBridgePeer(scripts: [
+            [.respond(.handshake(Self.receiptlessHandshake))],
+            [.idle(seconds: 1)],
+        ])
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 0.1)
+        try await Self.negotiateReceiptless(client)
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let identity = WindowMutationIdentity(
+            windowID: 77,
+            ownerProcessIdentifier: 420,
+            ownerProcessStartIdentity: 9001,
+            capturedBounds: bounds)
+
+        await Self.expectRuntimeIncompatible {
+            try await client.foregroundModifierClickWithOutcome(.init(
+                point: CGPoint(x: 20, y: 20),
+                clickType: .single,
+                modifiers: [.command],
+                windowIdentity: identity,
+                windowBounds: bounds))
+        }
+        await Self.expectRuntimeIncompatible {
+            try await client.typeActionsByFocusingPixelWithOutcome(.init(
+                point: CGPoint(x: 20, y: 20),
+                actions: [.text("x")],
+                cadence: .fixed(milliseconds: 0),
+                snapshotID: "snapshot",
+                windowIdentity: identity,
+                windowBounds: bounds))
+        }
+
+        #expect(await peer.acceptedConnectionCount == 1)
+        await peer.stop()
+    }
+
+    @Test
     func `mutation response timeout is indeterminate and retry unsafe`() async throws {
         let peer = try Self.receiptlessPeer(steps: [.idle(seconds: 0.15)])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 0.05)
@@ -649,6 +687,23 @@ struct PeekabooBridgeClientTransportOutcomeTests {
         #expect(failure.message.contains("indeterminate"))
         #expect(failure.message.contains("do not retry"))
         #expect(PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: failure))
+    }
+
+    private static func expectRuntimeIncompatible(
+        _ operation: () async throws -> some Any) async
+    {
+        do {
+            _ = try await operation()
+            Issue.record("Expected receiptless exact-target mutation to refuse before transport")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.route == .bridge)
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .runtimeIncompatible)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        } catch {
+            Issue.record("Unexpected receiptless exact-target error: \(error)")
+        }
     }
 
     enum ReceiptlessProjectedMismatch: CaseIterable {
