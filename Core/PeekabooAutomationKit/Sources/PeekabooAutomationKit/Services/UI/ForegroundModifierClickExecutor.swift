@@ -710,11 +710,9 @@ final class ForegroundModifierClickExecutor {
             let targetObservation = FocusRestorationObservation(
                 frontmostProcess: targetWindow.identity.processIdentity,
                 focusedWindow: targetWindow)
-            let ownedIntermediate = ownedTargetFocus.focusedWindow.map {
-                FocusRestorationObservation(
-                    frontmostProcess: ownedTargetFocus.frontmostProcess,
-                    focusedWindow: $0)
-            }
+            let ownedIntermediate = FocusRestorationObservation(
+                frontmostProcess: ownedTargetFocus.frontmostProcess,
+                focusedWindow: ownedTargetFocus.focusedWindow)
             guard initialObservation == targetObservation || initialObservation == ownedIntermediate else {
                 return .preservedNewerState
             }
