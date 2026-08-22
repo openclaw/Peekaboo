@@ -70,6 +70,7 @@ extension UIAutomationService {
                 click: Self.postModifierClick,
                 validateExactWindow: self.exactWindowIdentityValidator,
                 pointerRouteAtPoint: { BackgroundInputDriver.pointerReceivingWindowRoute(at: $0) },
+                pointerReceiverAtPoint: { BackgroundInputDriver.accessibilityPointerReceiver(at: $0) },
                 restoreExactWindow: { target, dispatchGuard in
                     var sequence = DesktopActionSequenceAccumulator()
                     do {

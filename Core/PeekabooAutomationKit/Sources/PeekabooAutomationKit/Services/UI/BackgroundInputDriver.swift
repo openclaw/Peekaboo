@@ -36,6 +36,22 @@ enum BackgroundInputDriver {
         }
     }
 
+    struct PointerReceiverIdentity: Equatable {
+        let processIdentifier: pid_t
+        let windowID: CGWindowID
+        let accessibilityProcessIdentifier: pid_t
+
+        init(
+            processIdentifier: pid_t,
+            windowID: CGWindowID,
+            accessibilityProcessIdentifier: pid_t? = nil)
+        {
+            self.processIdentifier = processIdentifier
+            self.windowID = windowID
+            self.accessibilityProcessIdentifier = accessibilityProcessIdentifier ?? processIdentifier
+        }
+    }
+
     struct KeyboardEventPlan {
         let modifierKeyDownEvents: [CGEvent]
         let primaryKeyDownEvent: CGEvent
@@ -884,6 +900,42 @@ enum BackgroundInputDriver {
         self.pointerReceivingWindowRoute(
             at: point,
             candidates: self.mouseWindowRouteCandidates(exactWindowID: nil))
+    }
+
+    /// Resolves the system-wide Accessibility hit-test receiver and its exact containing window.
+    @MainActor
+    static func accessibilityPointerReceiver(at point: CGPoint) -> PointerReceiverIdentity? {
+        guard point.x.isFinite,
+              point.y.isFinite,
+              let element = Element.elementAtPoint(point)
+        else { return nil }
+        let axElement = element.underlyingElement
+        guard let windowID = AXWindowResolver().windowID(from: axElement) else { return nil }
+        var processIdentifier: pid_t = 0
+        guard AXUIElementGetPid(axElement, &processIdentifier) == .success else { return nil }
+        return self.pointerReceiverIdentity(
+            accessibilityProcessIdentifier: processIdentifier,
+            windowID: windowID,
+            windowIdentity: SystemIdentityResolver.windowIdentity(windowID))
+    }
+
+    static func pointerReceiverIdentity(
+        accessibilityProcessIdentifier: pid_t?,
+        windowID: CGWindowID?,
+        windowIdentity: SystemWindowIdentity?) -> PointerReceiverIdentity?
+    {
+        guard let accessibilityProcessIdentifier,
+              accessibilityProcessIdentifier > 0,
+              let windowID,
+              windowID != kCGNullWindowID,
+              let windowIdentity,
+              windowIdentity.windowID == windowID,
+              windowIdentity.ownerProcessIdentifier > 0
+        else { return nil }
+        return PointerReceiverIdentity(
+            processIdentifier: windowIdentity.ownerProcessIdentifier,
+            windowID: windowID,
+            accessibilityProcessIdentifier: accessibilityProcessIdentifier)
     }
 
     private static func windowID(from value: Any?) -> CGWindowID? {

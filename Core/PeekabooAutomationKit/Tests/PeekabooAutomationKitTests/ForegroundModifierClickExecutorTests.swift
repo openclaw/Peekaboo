@@ -931,6 +931,139 @@ struct ForegroundModifierClickExecutorTests {
 
 extension ForegroundModifierClickExecutorTests {
     @Test
+    func `AX receiver derives authoritative window owner from a remote leaf`() throws {
+        let window = SystemWindowIdentity(
+            windowID: 7,
+            ownerProcessIdentifier: 22,
+            title: "",
+            bounds: CGRect(x: 0, y: 0, width: 100, height: 100),
+            layer: 0,
+            alpha: 1,
+            isOnScreen: true,
+            sharingState: nil)
+
+        let receiver = try #require(BackgroundInputDriver.pointerReceiverIdentity(
+            accessibilityProcessIdentifier: 2200,
+            windowID: 7,
+            windowIdentity: window))
+
+        #expect(receiver.processIdentifier == 22)
+        #expect(receiver.windowID == 7)
+        #expect(receiver.accessibilityProcessIdentifier == 2200)
+    }
+
+    @Test
+    func `AX receiver refuses incomplete leaf and window identity`() {
+        let window = SystemWindowIdentity(
+            windowID: 7,
+            ownerProcessIdentifier: 22,
+            title: "",
+            bounds: CGRect(x: 0, y: 0, width: 100, height: 100),
+            layer: 0,
+            alpha: 1,
+            isOnScreen: true,
+            sharingState: nil)
+
+        #expect(BackgroundInputDriver.pointerReceiverIdentity(
+            accessibilityProcessIdentifier: nil,
+            windowID: 7,
+            windowIdentity: window) == nil)
+        #expect(BackgroundInputDriver.pointerReceiverIdentity(
+            accessibilityProcessIdentifier: 0,
+            windowID: 7,
+            windowIdentity: window) == nil)
+        #expect(BackgroundInputDriver.pointerReceiverIdentity(
+            accessibilityProcessIdentifier: 2200,
+            windowID: nil,
+            windowIdentity: window) == nil)
+        #expect(BackgroundInputDriver.pointerReceiverIdentity(
+            accessibilityProcessIdentifier: 2200,
+            windowID: 7,
+            windowIdentity: nil) == nil)
+    }
+
+    @Test(arguments: ModifierClickPointerReceiverCase.allCases)
+    func `system wide AX receiver must match the exact modifier click window`(
+        _ receiverCase: ModifierClickPointerReceiverCase) async throws
+    {
+        let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let exactWindow = try UIAutomationTarget.ExactWindow(
+            identity: WindowMutationIdentity(
+                windowID: 7,
+                ownerProcessIdentifier: target.processIdentifier,
+                ownerProcessStartIdentity: target.processStartIdentity,
+                capturedBounds: bounds),
+            bounds: bounds)
+        let targetRoute = BackgroundInputDriver.MouseWindowRouteCandidate(
+            windowID: 7,
+            processIdentifier: target.processIdentifier,
+            layer: 0,
+            bounds: bounds)
+        let targetReceiver = BackgroundInputDriver.PointerReceiverIdentity(
+            processIdentifier: target.processIdentifier,
+            windowID: 7,
+            accessibilityProcessIdentifier: 2200)
+        var cursor = CGPoint(x: 10, y: 10)
+        var clickAttempted = false
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { _, dispatchGuard in
+                    do {
+                        try dispatchGuard.validate(.setMainWindow)
+                    } catch ForegroundModifierClickError.focusTargetSatisfied {
+                        return .confirmedNoChange()
+                    }
+                    Issue.record("Already-focused receiver fixture must not dispatch focus")
+                    return .confirmedNoChange()
+                },
+                currentFrontmostIdentity: { target },
+                currentFocusedExactWindow: { exactWindow },
+                activate: { _, _ in false },
+                currentCursorLocation: { cursor },
+                moveCursor: { cursor = $0 },
+                click: { point, _, _ in
+                    clickAttempted = true
+                    cursor = point
+                    return .dispatchedUnverified(
+                        delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                        evidence: .deliveryAccepted,
+                        unitCount: .one)
+                },
+                validateExactWindow: { _, _ in true },
+                pointerRouteAtPoint: { _ in targetRoute },
+                pointerReceiverAtPoint: { _ in
+                    switch receiverCase {
+                    case .matching: targetReceiver
+                    case .underlyingWindow: BackgroundInputDriver.PointerReceiverIdentity(
+                            processIdentifier: 33,
+                            windowID: 8)
+                    case .unavailable: nil
+                    }
+                }))
+        let request = ForegroundModifierClickRequest(
+            point: CGPoint(x: 20, y: 20),
+            clickType: .single,
+            modifiers: [.command],
+            windowIdentity: exactWindow.identity,
+            windowBounds: bounds)
+
+        if receiverCase == .matching {
+            _ = try await executor.execute(request)
+            #expect(clickAttempted)
+            #expect(cursor == CGPoint(x: 10, y: 10))
+        } else {
+            await #expect(throws: DesktopActionFailure.self) {
+                _ = try await executor.execute(request)
+            }
+            #expect(!clickAttempted)
+        }
+    }
+
+    @Test
     func `pointer route drift before event post blocks click and cleanup`() async throws {
         let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
         let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
@@ -2260,6 +2393,12 @@ private final class ModifierClickValidationCounter: @unchecked Sendable {
     var count = 0
     var routeQueryCount = 0
     var identityIsCurrent = true
+}
+
+enum ModifierClickPointerReceiverCase: CaseIterable, Sendable {
+    case matching
+    case underlyingWindow
+    case unavailable
 }
 
 enum SharedDesktopInterruption: CaseIterable, Sendable {
