@@ -931,6 +931,161 @@ struct ForegroundModifierClickExecutorTests {
 
 extension ForegroundModifierClickExecutorTests {
     @Test
+    func `pointer route drift before event post blocks click and cleanup`() async throws {
+        let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
+        let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let exactWindow = try UIAutomationTarget.ExactWindow(
+            identity: WindowMutationIdentity(
+                windowID: 7,
+                ownerProcessIdentifier: target.processIdentifier,
+                ownerProcessStartIdentity: target.processStartIdentity,
+                capturedBounds: bounds),
+            bounds: bounds)
+        let targetRoute = BackgroundInputDriver.MouseWindowRouteCandidate(
+            windowID: 7,
+            processIdentifier: target.processIdentifier,
+            layer: 0,
+            bounds: bounds)
+        let overlayRoute = BackgroundInputDriver.MouseWindowRouteCandidate(
+            windowID: 70,
+            processIdentifier: 700,
+            layer: 8,
+            bounds: CGRect(x: 10, y: 10, width: 50, height: 50))
+        var pointerRoute = targetRoute
+        var frontmost = prior
+        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var cursorReads = 0
+        var clickAttempted = false
+        var cleanupAttempted = false
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { window, dispatchGuard in
+                    try dispatchGuard()
+                    frontmost = target
+                    focusedWindow = window
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                        unitCount: .one)
+                },
+                currentFrontmostIdentity: { frontmost },
+                currentFocusedExactWindow: { focusedWindow },
+                activate: { _, _ in
+                    cleanupAttempted = true
+                    return true
+                },
+                currentCursorLocation: {
+                    cursorReads += 1
+                    if cursorReads == 2 {
+                        pointerRoute = overlayRoute
+                    }
+                    return CGPoint(x: 20, y: 20)
+                },
+                moveCursor: { _ in },
+                click: { _, _, _ in
+                    clickAttempted = true
+                    return .confirmedNoChange()
+                },
+                validateExactWindow: { _, _ in true },
+                pointerRouteAtPoint: { _ in pointerRoute }))
+
+        do {
+            _ = try await executor.execute(ForegroundModifierClickRequest(
+                point: CGPoint(x: 20, y: 20),
+                clickType: .single,
+                modifiers: [.command],
+                windowIdentity: exactWindow.identity,
+                windowBounds: bounds))
+            Issue.record("Expected an occluding route to block the prepared click")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.dispatchState.unitCount == .one)
+        }
+        #expect(pointerRoute == overlayRoute)
+        #expect(!clickAttempted)
+        #expect(!cleanupAttempted)
+        #expect(frontmost == target)
+        #expect(focusedWindow == exactWindow)
+    }
+
+    @Test
+    func `exact window replacement before event post blocks click and cleanup`() async throws {
+        let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
+        let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let exactWindow = try UIAutomationTarget.ExactWindow(
+            identity: WindowMutationIdentity(
+                windowID: 7,
+                ownerProcessIdentifier: target.processIdentifier,
+                ownerProcessStartIdentity: target.processStartIdentity,
+                capturedBounds: bounds),
+            bounds: bounds)
+        let targetRoute = BackgroundInputDriver.MouseWindowRouteCandidate(
+            windowID: 7,
+            processIdentifier: target.processIdentifier,
+            layer: 0,
+            bounds: bounds)
+        var frontmost = prior
+        var focusedWindow: UIAutomationTarget.ExactWindow?
+        let validationState = ModifierClickValidationCounter()
+        var clickAttempted = false
+        var cleanupAttempted = false
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { window, dispatchGuard in
+                    try dispatchGuard()
+                    frontmost = target
+                    focusedWindow = window
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                        unitCount: .one)
+                },
+                currentFrontmostIdentity: { frontmost },
+                currentFocusedExactWindow: { focusedWindow },
+                activate: { _, _ in
+                    cleanupAttempted = true
+                    return true
+                },
+                currentCursorLocation: { CGPoint(x: 20, y: 20) },
+                moveCursor: { _ in },
+                click: { _, _, _ in
+                    clickAttempted = true
+                    return .confirmedNoChange()
+                },
+                validateExactWindow: { _, _ in
+                    validationState.count += 1
+                    return validationState.count < 3
+                },
+                pointerRouteAtPoint: { _ in targetRoute }))
+
+        do {
+            _ = try await executor.execute(ForegroundModifierClickRequest(
+                point: CGPoint(x: 20, y: 20),
+                clickType: .single,
+                modifiers: [.command],
+                windowIdentity: exactWindow.identity,
+                windowBounds: bounds))
+            Issue.record("Expected final exact-window replacement to block the prepared click")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.dispatchState.unitCount == .one)
+        }
+        #expect(validationState.count == 3)
+        #expect(!clickAttempted)
+        #expect(!cleanupAttempted)
+        #expect(frontmost == target)
+        #expect(focusedWindow == exactWindow)
+    }
+
+    @Test
     func `cancellation after target focus refuses the click and restores only owned focus`() async throws {
         let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
         let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
@@ -2021,6 +2176,10 @@ private final class ModifierClickDispatchGuardState {
     var expectedState = 0
     var intermediateState = 1
     var finalState = 2
+}
+
+private final class ModifierClickValidationCounter: @unchecked Sendable {
+    var count = 0
 }
 
 enum SharedDesktopInterruption: CaseIterable, Sendable {

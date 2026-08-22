@@ -19,6 +19,21 @@ enum BackgroundInputDriver {
         let processIdentifier: pid_t
         let layer: Int
         let bounds: CGRect
+        let alpha: CGFloat
+
+        init(
+            windowID: CGWindowID,
+            processIdentifier: pid_t,
+            layer: Int,
+            bounds: CGRect,
+            alpha: CGFloat = 1)
+        {
+            self.windowID = windowID
+            self.processIdentifier = processIdentifier
+            self.layer = layer
+            self.bounds = bounds
+            self.alpha = alpha
+        }
     }
 
     struct KeyboardEventPlan {
@@ -842,8 +857,33 @@ enum BackgroundInputDriver {
                 windowID: windowID,
                 processIdentifier: processIdentifier,
                 layer: layer,
-                bounds: bounds)
+                bounds: bounds,
+                alpha: (window[kCGWindowAlpha as String] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 1)
         }
+    }
+
+    /// Resolves the front-to-back WindowServer route for one global pointer location.
+    ///
+    /// The on-screen catalog is already ordered frontmost first. Any visible non-desktop window at
+    /// the point is treated conservatively as the receiver; Peekaboo does not guess that an overlay
+    /// is click-through when WindowServer does not expose that contract here.
+    static func pointerReceivingWindowRoute(
+        at point: CGPoint,
+        candidates: [MouseWindowRouteCandidate]) -> MouseWindowRouteCandidate?
+    {
+        guard point.x.isFinite, point.y.isFinite else { return nil }
+        return candidates.first { candidate in
+            candidate.alpha > 0 &&
+                candidate.bounds.width > 0 &&
+                candidate.bounds.height > 0 &&
+                candidate.bounds.contains(point)
+        }
+    }
+
+    static func pointerReceivingWindowRoute(at point: CGPoint) -> MouseWindowRouteCandidate? {
+        self.pointerReceivingWindowRoute(
+            at: point,
+            candidates: self.mouseWindowRouteCandidates(exactWindowID: nil))
     }
 
     private static func windowID(from value: Any?) -> CGWindowID? {

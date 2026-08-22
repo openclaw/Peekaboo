@@ -69,6 +69,7 @@ extension UIAutomationService {
                 moveCursor: { try self.syntheticInputDriver.move(to: $0) },
                 click: Self.postModifierClick,
                 validateExactWindow: self.exactWindowIdentityValidator,
+                pointerRouteAtPoint: { BackgroundInputDriver.pointerReceivingWindowRoute(at: $0) },
                 restoreExactWindow: { target, dispatchGuard in
                     var sequence = DesktopActionSequenceAccumulator()
                     do {

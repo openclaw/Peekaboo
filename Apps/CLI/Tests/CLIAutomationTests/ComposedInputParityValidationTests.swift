@@ -1,4 +1,5 @@
 import Commander
+import PeekabooCore
 import Testing
 @testable import PeekabooCLI
 
@@ -50,5 +51,41 @@ struct ComposedInputParityValidationTests {
             "--on", "B1", "--modifiers", "cmd,shift", "--foreground", "--snapshot", "snap",
         ])
         try accepted.validate()
+    }
+
+    @Test
+    @MainActor
+    func `pixel focus receipt planning preserves cancellation without consuming snapshot`() async throws {
+        let snapshots = StubSnapshotManager()
+        let snapshotID = try await snapshots.createSnapshot()
+        snapshots.uiAutomationSnapshotCancellation = true
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await TypeCommand.planPixelFocusReceipt(
+                snapshotID: snapshotID,
+                snapshots: snapshots
+            )
+        }
+        #expect(snapshots.invalidationCutoffs.isEmpty)
+        let lease = try await snapshots.beginSnapshotMutation(snapshotId: snapshotID)
+        try await snapshots.finishSnapshotMutation(lease, requiresFreshObservation: false)
+    }
+
+    @Test
+    @MainActor
+    func `modifier click receipt planning preserves cancellation without consuming snapshot`() async throws {
+        let snapshots = StubSnapshotManager()
+        let snapshotID = try await snapshots.createSnapshot()
+        snapshots.uiAutomationSnapshotCancellation = true
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await ClickCommand.modifierClickCoordinateAuthority(
+                snapshotID: snapshotID,
+                snapshots: snapshots
+            )
+        }
+        #expect(snapshots.invalidationCutoffs.isEmpty)
+        let lease = try await snapshots.beginSnapshotMutation(snapshotId: snapshotID)
+        try await snapshots.finishSnapshotMutation(lease, requiresFreshObservation: false)
     }
 }

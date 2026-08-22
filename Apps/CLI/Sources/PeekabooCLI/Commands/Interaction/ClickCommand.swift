@@ -769,14 +769,10 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         guard !canonicalModifiers.contains(.control), self.requestedClickType != .right else {
             throw ValidationError("Modifier-click cannot use Control or right-click contextual input")
         }
-        let authority: SnapshotTargetReceipt.CoordinateAuthority
-        do {
-            authority = try await SnapshotTargetReceiptPlanner(
-                snapshots: self.services.snapshots
-            ).plan(snapshotID: snapshotId).receipt.requireCoordinateAuthority()
-        } catch {
-            throw ValidationError("Modifier-click requires one fresh exact-window screenshot snapshot")
-        }
+        let authority = try await Self.modifierClickCoordinateAuthority(
+            snapshotID: snapshotId,
+            snapshots: self.services.snapshots
+        )
         let point: CGPoint
         switch target {
         case let .coordinates(coordinates):
@@ -832,6 +828,21 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             ),
             modifierClickResult: result.payload
         )
+    }
+
+    static func modifierClickCoordinateAuthority(
+        snapshotID: String,
+        snapshots: any SnapshotManagerProtocol
+    ) async throws -> SnapshotTargetReceipt.CoordinateAuthority {
+        do {
+            return try await SnapshotTargetReceiptPlanner(
+                snapshots: snapshots
+            ).plan(snapshotID: snapshotID).receipt.requireCoordinateAuthority()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw ValidationError("Modifier-click requires one fresh exact-window screenshot snapshot")
+        }
     }
 
     private static func pointerModifier(_ value: String) -> PointerModifier? {

@@ -125,16 +125,79 @@ struct BackgroundInputDriverWindowRoutingTests {
         }
     }
 
+    @Test
+    func `pointer route treats a visible overlay as the receiver`() throws {
+        let point = CGPoint(x: 50, y: 50)
+        let overlay = Self.candidate(
+            windowID: 99,
+            processIdentifier: 999,
+            bounds: CGRect(x: 20, y: 20, width: 80, height: 80),
+            layer: 8)
+        let target = Self.candidate(
+            windowID: 42,
+            processIdentifier: 123,
+            bounds: CGRect(x: 0, y: 0, width: 200, height: 200))
+
+        let route = try #require(BackgroundInputDriver.pointerReceivingWindowRoute(
+            at: point,
+            candidates: [overlay, target]))
+
+        #expect(route == overlay)
+    }
+
+    @Test
+    func `pointer route preserves an overlapping sibling ahead of the target`() throws {
+        let point = CGPoint(x: 50, y: 50)
+        let sibling = Self.candidate(
+            windowID: 41,
+            processIdentifier: 123,
+            bounds: CGRect(x: 0, y: 0, width: 120, height: 120))
+        let target = Self.candidate(
+            windowID: 42,
+            processIdentifier: 123,
+            bounds: CGRect(x: 0, y: 0, width: 200, height: 200))
+
+        let route = try #require(BackgroundInputDriver.pointerReceivingWindowRoute(
+            at: point,
+            candidates: [sibling, target]))
+
+        #expect(route == sibling)
+    }
+
+    @Test
+    func `pointer route admits the exact target behind only transparent rows`() throws {
+        let point = CGPoint(x: 50, y: 50)
+        let transparent = Self.candidate(
+            windowID: 99,
+            processIdentifier: 999,
+            bounds: CGRect(x: 20, y: 20, width: 80, height: 80),
+            layer: 8,
+            alpha: 0)
+        let target = Self.candidate(
+            windowID: 42,
+            processIdentifier: 123,
+            bounds: CGRect(x: 0, y: 0, width: 200, height: 200))
+
+        let route = try #require(BackgroundInputDriver.pointerReceivingWindowRoute(
+            at: point,
+            candidates: [transparent, target]))
+
+        #expect(route == target)
+    }
+
     private static func candidate(
         windowID: CGWindowID,
         processIdentifier: pid_t,
-        bounds: CGRect) -> BackgroundInputDriver.MouseWindowRouteCandidate
+        bounds: CGRect,
+        layer: Int = 0,
+        alpha: CGFloat = 1) -> BackgroundInputDriver.MouseWindowRouteCandidate
     {
         BackgroundInputDriver.MouseWindowRouteCandidate(
             windowID: windowID,
             processIdentifier: processIdentifier,
-            layer: 0,
-            bounds: bounds)
+            layer: layer,
+            bounds: bounds,
+            alpha: alpha)
     }
 
     private static func windowDictionary(

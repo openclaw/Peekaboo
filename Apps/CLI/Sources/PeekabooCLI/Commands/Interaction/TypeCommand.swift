@@ -293,14 +293,10 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                 "This automation host cannot run atomic exact-window pixel-focus typing"
             )
         }
-        let receipt: SnapshotTargetReceipt
-        do {
-            receipt = try await SnapshotTargetReceiptPlanner(
-                snapshots: self.services.snapshots
-            ).plan(snapshotID: snapshotID).receipt
-        } catch {
-            throw ValidationError("Snapshot '\(snapshotID)' is stale or has inconsistent target metadata")
-        }
+        let receipt = try await Self.planPixelFocusReceipt(
+            snapshotID: snapshotID,
+            snapshots: self.services.snapshots
+        )
         let authority: SnapshotTargetReceipt.CoordinateAuthority
         do {
             authority = try receipt.requireCoordinateAuthority()
@@ -353,6 +349,21 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             startTime: startTime,
             target: .exactWindow(authority.target)
         )
+    }
+
+    static func planPixelFocusReceipt(
+        snapshotID: String,
+        snapshots: any SnapshotManagerProtocol
+    ) async throws -> SnapshotTargetReceipt {
+        do {
+            return try await SnapshotTargetReceiptPlanner(
+                snapshots: snapshots
+            ).plan(snapshotID: snapshotID).receipt
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw ValidationError("Snapshot '\(snapshotID)' is stale or has inconsistent target metadata")
+        }
     }
 
     private static func parsePoint(_ value: String) -> CGPoint? {

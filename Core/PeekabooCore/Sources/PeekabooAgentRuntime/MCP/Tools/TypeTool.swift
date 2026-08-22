@@ -102,6 +102,8 @@ public struct TypeTool: MCPTool {
         do {
             let request = try self.parseRequest(arguments: arguments)
             return try await self.performType(request: request, mutationTracker: mutationTracker)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch let error as TypeToolValidationError {
             return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
                 message: error.message,
@@ -424,15 +426,9 @@ public struct TypeTool: MCPTool {
         else {
             throw TypeToolValidationError("Invalid coords. Use x,y, for example 100,200")
         }
-        let receipt: SnapshotTargetReceipt
-        do {
-            receipt = try await SnapshotTargetReceiptPlanner(
-                snapshots: self.context.snapshots).plan(snapshotID: snapshotID).receipt
-        } catch {
-            throw TypeToolValidationError(
-                "Pixel-focus snapshot has no authoritative exact-window receipt",
-                refusalReason: .targetUnavailable)
-        }
+        let receipt = try await Self.planPixelFocusReceipt(
+            snapshotID: snapshotID,
+            snapshots: self.context.snapshots)
         let authority: SnapshotTargetReceipt.CoordinateAuthority
         do {
             authority = try receipt.requireCoordinateAuthority()
@@ -472,6 +468,22 @@ public struct TypeTool: MCPTool {
             point: point,
             snapshotID: snapshotID,
             exactWindow: authority.target)
+    }
+
+    static func planPixelFocusReceipt(
+        snapshotID: String,
+        snapshots: any SnapshotManagerProtocol) async throws -> SnapshotTargetReceipt
+    {
+        do {
+            return try await SnapshotTargetReceiptPlanner(
+                snapshots: snapshots).plan(snapshotID: snapshotID).receipt
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw TypeToolValidationError(
+                "Pixel-focus snapshot has no authoritative exact-window receipt",
+                refusalReason: .targetUnavailable)
+        }
     }
 
     @MainActor

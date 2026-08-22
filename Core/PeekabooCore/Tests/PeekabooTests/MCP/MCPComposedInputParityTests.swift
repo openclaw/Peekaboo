@@ -37,6 +37,45 @@ struct MCPComposedInputParityTests {
     }
 
     @Test
+    func `pixel focus receipt planning preserves cancellation before dispatch or lease consumption`() async throws {
+        let fixture = await Self.makeFixture()
+        let operation = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await TypeTool.planPixelFocusReceipt(
+                snapshotID: fixture.snapshotID,
+                snapshots: fixture.snapshots)
+        }
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await operation.value
+        }
+        #expect(await MainActor.run { fixture.automation.pixelFocusTypeRequests.isEmpty })
+        let lease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        try await fixture.snapshots.finishSnapshotMutation(lease, requiresFreshObservation: false)
+    }
+
+    @Test
+    func `pixel focus execution propagates receipt cancellation before dispatch`() async throws {
+        let fixture = await Self.makeFixture()
+        let operation = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await TypeTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+                "coords": "500,250",
+                "coordinate_space": "image_pixels",
+                "snapshot": fixture.snapshotID,
+                "text": "hi",
+            ]))
+        }
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await operation.value
+        }
+        #expect(await MainActor.run { fixture.automation.pixelFocusTypeRequests.isEmpty })
+        let lease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        try await fixture.snapshots.finishSnapshotMutation(lease, requiresFreshObservation: false)
+    }
+
+    @Test
     func `modifier click refuses background then projects truthful foreground restoration`() async throws {
         let fixture = await Self.makeFixture()
         await MainActor.run {
