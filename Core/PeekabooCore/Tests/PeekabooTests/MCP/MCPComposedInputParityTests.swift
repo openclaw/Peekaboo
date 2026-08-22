@@ -115,6 +115,49 @@ struct MCPComposedInputParityTests {
     }
 
     @Test
+    func `modifier click binds leased automation authority to its tool snapshot`() async throws {
+        let fixture = await Self.makeFixture(automationWindowID: 43)
+
+        let response = try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "coords": "600,300",
+            "snapshot": fixture.snapshotID,
+            "foreground": true,
+            "modifiers": ["cmd"],
+        ]))
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+        #expect(await MainActor.run { fixture.automation.foregroundModifierClickRequests.isEmpty })
+        let subsequentLease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        try await fixture.snapshots.finishSnapshotMutation(
+            subsequentLease,
+            requiresFreshObservation: false)
+    }
+
+    @Test
+    func `modifier click authority replan preserves canonical cancellation and releases its lease`() async throws {
+        let fixture = await Self.makeFixture()
+        let operation = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+                "coords": "600,300",
+                "snapshot": fixture.snapshotID,
+                "foreground": true,
+                "modifiers": ["cmd"],
+            ]))
+        }
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await operation.value
+        }
+        #expect(await MainActor.run { fixture.automation.foregroundModifierClickRequests.isEmpty })
+        let subsequentLease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        try await fixture.snapshots.finishSnapshotMutation(
+            subsequentLease,
+            requiresFreshObservation: false)
+    }
+
+    @Test
     func `rejected modifier click result releases its snapshot lease`() async throws {
         let fixture = await Self.makeFixture()
         await MainActor.run {
@@ -153,6 +196,47 @@ struct MCPComposedInputParityTests {
 
         #expect(response.isError)
         #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+        let lease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        try await fixture.snapshots.finishSnapshotMutation(lease, requiresFreshObservation: false)
+    }
+
+    @Test
+    func `already focused pre click cancellation refuses without consuming snapshot`() async throws {
+        let automation = await MainActor.run { AlreadyFocusedCancellingModifierClickService() }
+        let fixture = await Self.makeFixture(automation: automation)
+        let operation = Task {
+            try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+                "coords": "600,300",
+                "snapshot": fixture.snapshotID,
+                "foreground": true,
+                "modifiers": ["cmd"],
+            ]))
+        }
+        let response = try await operation.value
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+        #expect(response.meta?.objectValue?["refusal_reason"] == .string("request_cancelled"))
+        #expect(await MainActor.run { !automation.clickAttempted })
+        let lease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        try await fixture.snapshots.finishSnapshotMutation(lease, requiresFreshObservation: false)
+    }
+
+    @Test
+    func `input drift before first focus write refuses without consuming snapshot`() async throws {
+        let automation = await MainActor.run { PreFocusInputDriftModifierClickService() }
+        let fixture = await Self.makeFixture(automation: automation)
+        let response = try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "coords": "600,300",
+            "snapshot": fixture.snapshotID,
+            "foreground": true,
+            "modifiers": ["cmd"],
+        ]))
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+        #expect(await MainActor.run { !automation.focusMutationAttempted && !automation.clickAttempted })
+        #expect(await MainActor.run { automation.priorStatePreserved })
         let lease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
         try await fixture.snapshots.finishSnapshotMutation(lease, requiresFreshObservation: false)
     }
@@ -259,7 +343,9 @@ struct MCPComposedInputParityTests {
         ]))
     }
 
-    private static func makeFixture() async
+    private static func makeFixture(
+        automationWindowID: Int? = nil,
+        automation providedAutomation: MockAutomationService? = nil) async
         -> (
             context: MCPToolContext,
             automation: MockAutomationService,
@@ -287,9 +373,23 @@ struct MCPComposedInputParityTests {
                 mode: .window,
                 applicationInfo: application,
                 windowInfo: window))
-        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let automation = await MainActor.run {
+            providedAutomation ?? MockAutomationService(accessibilityGranted: true)
+        }
+        let automationDetectionResult: ElementDetectionResult = if let automationWindowID {
+            AutomationTestFixtures.linkedSnapshotTarget(
+                snapshotID: fixture.snapshotID,
+                processIdentity: .init(processIdentifier: 111, processStartIdentity: 7),
+                bundleIdentifier: "com.example.composed-input",
+                applicationName: "ComposedInput",
+                windowID: automationWindowID,
+                windowTitle: "Composed Input Window",
+                bounds: window.bounds).detectionResult
+        } else {
+            fixture.detectionResult
+        }
         let snapshots = await MainActor.run {
-            InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+            InMemorySnapshotManager(detectionResult: automationDetectionResult)
         }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
@@ -303,4 +403,107 @@ struct MCPComposedInputParityTests {
 
 private enum MCPComposedInputTestError: Error {
     case unknownServiceFailure
+}
+
+@MainActor
+private final class AlreadyFocusedCancellingModifierClickService: MockAutomationService {
+    private(set) var clickAttempted = false
+
+    init() {
+        super.init(accessibilityGranted: true)
+    }
+
+    override func foregroundModifierClickWithOutcome(
+        _ request: ForegroundModifierClickRequest) async throws
+        -> UIAutomationActionResult<ForegroundModifierClickResult>
+    {
+        let exactWindow = try UIAutomationTarget.ExactWindow(
+            identity: request.windowIdentity,
+            bounds: request.windowBounds)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "peekaboo-already-focused-cancel-\(UUID().uuidString)",
+            isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { _, dispatchGuard in
+                    do {
+                        try dispatchGuard.validate(.setMainWindow)
+                    } catch ForegroundModifierClickError.focusTargetSatisfied {
+                        withUnsafeCurrentTask { $0?.cancel() }
+                        return .confirmedNoChange()
+                    }
+                    Issue.record("Already-focused target must not dispatch another focus write")
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                        unitCount: .one)
+                },
+                currentFrontmostIdentity: { exactWindow.identity.processIdentity },
+                currentFocusedExactWindow: { exactWindow },
+                activate: { _, _ in false },
+                currentCursorLocation: { CGPoint(x: 10, y: 10) },
+                moveCursor: { _ in },
+                click: { [weak self] _, _, _ in
+                    self?.clickAttempted = true
+                    return .confirmedNoChange()
+                },
+                validateExactWindow: { _, _ in true }))
+        return try await executor.execute(request)
+    }
+}
+
+@MainActor
+private final class PreFocusInputDriftModifierClickService: MockAutomationService {
+    private(set) var focusMutationAttempted = false
+    private(set) var clickAttempted = false
+    private(set) var priorStatePreserved = false
+
+    init() {
+        super.init(accessibilityGranted: true)
+    }
+
+    override func foregroundModifierClickWithOutcome(
+        _ request: ForegroundModifierClickRequest) async throws
+        -> UIAutomationActionResult<ForegroundModifierClickResult>
+    {
+        let prior = ApplicationProcessIdentity(processIdentifier: 900, processStartIdentity: 9000)
+        var frontmost = prior
+        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var activity = SharedInputActivityToken.trackedZero
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "peekaboo-prefocus-input-drift-\(UUID().uuidString)",
+            isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer {
+            self.priorStatePreserved = frontmost == prior && focusedWindow == nil
+            try? FileManager.default.removeItem(at: root)
+        }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { window, dispatchGuard in
+                    activity = activity.afterMouseMove()
+                    try dispatchGuard.validate(.applicationActivation)
+                    self.focusMutationAttempted = true
+                    frontmost = window.identity.processIdentity
+                    focusedWindow = window
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                        unitCount: .one)
+                },
+                currentFrontmostIdentity: { frontmost },
+                currentFocusedExactWindow: { focusedWindow },
+                activate: { _, _ in false },
+                currentCursorLocation: { CGPoint(x: 10, y: 10) },
+                moveCursor: { _ in },
+                click: { [weak self] _, _, _ in
+                    self?.clickAttempted = true
+                    return .confirmedNoChange()
+                },
+                validateExactWindow: { _, _ in true },
+                sharedInputActivityToken: { activity }))
+        return try await executor.execute(request)
+    }
 }

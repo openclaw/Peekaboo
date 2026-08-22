@@ -7,6 +7,7 @@ enum SnapshotMutationCoordinator {
     static func perform<Value>(
         snapshotId: String?,
         snapshots: any SnapshotManagerProtocol,
+        targetIdentity: DesktopTargetIdentity? = nil,
         operation: () async throws -> Value,
         outcome: (Value) -> DesktopActionOutcome?
     ) async throws -> Value {
@@ -72,7 +73,7 @@ enum SnapshotMutationCoordinator {
                 message: "Action completed, but Peekaboo could not finalize its snapshot mutation lease.",
                 hint: "Observe the target before any retry and do not reuse this snapshot.",
                 causeDescription: error.localizedDescription
-            )
+            ).attributed(to: targetIdentity?.actionTargetReceipt)
         }
         return value
     }

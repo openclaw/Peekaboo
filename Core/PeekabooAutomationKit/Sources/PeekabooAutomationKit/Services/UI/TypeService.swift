@@ -17,6 +17,11 @@ private struct PixelFocusActionPreDispatchFailure: Error {
     let causeDescription: String
 }
 
+@MainActor
+private final class PixelFocusPlanEntryState {
+    var entered = false
+}
+
 /// Service for handling typing and text input operations
 @MainActor
 public final class TypeService {
@@ -49,6 +54,7 @@ public final class TypeService {
     private let desktopOperationExecutor: DesktopOperationExecutor
     private let operationFinalizer: @MainActor () -> Void
     private let pixelFocusReceiptPlanner: @MainActor @Sendable (String) async throws -> SnapshotTargetReceiptPlan
+    private let pixelFocusPlanEntryHook: @MainActor @Sendable () async throws -> Void
 
     public convenience init(
         snapshotManager: (any SnapshotManagerProtocol)? = nil,
@@ -100,7 +106,8 @@ public final class TypeService {
             .typeTargetedCharacter,
         desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
         operationFinalizer: @escaping @MainActor () -> Void = {},
-        pixelFocusReceiptPlanner: (@MainActor @Sendable (String) async throws -> SnapshotTargetReceiptPlan)? = nil)
+        pixelFocusReceiptPlanner: (@MainActor @Sendable (String) async throws -> SnapshotTargetReceiptPlan)? = nil,
+        pixelFocusPlanEntryHook: @escaping @MainActor @Sendable () async throws -> Void = {})
     {
         let manager = snapshotManager ?? SnapshotManager()
         self.snapshotManager = manager
@@ -124,6 +131,7 @@ public final class TypeService {
         self.pixelFocusReceiptPlanner = pixelFocusReceiptPlanner ?? { snapshotID in
             try await SnapshotTargetReceiptPlanner(snapshots: manager).plan(snapshotID: snapshotID)
         }
+        self.pixelFocusPlanEntryHook = pixelFocusPlanEntryHook
     }
 
     /// Type text with optional target and settings
@@ -764,12 +772,14 @@ extension TypeService {
             bounds: request.windowBounds)
 
         let lease = try await self.snapshotManager.beginSnapshotMutation(snapshotId: request.snapshotID)
+        let planEntryState = PixelFocusPlanEntryState()
         let result: UIAutomationActionResult<TypeResult>
         do {
             result = try await self.executePixelFocusType(
                 request,
                 exactWindow: exactWindow,
-                deliveryValidator: deliveryValidator)
+                deliveryValidator: deliveryValidator,
+                planDidEnter: { planEntryState.entered = true })
         } catch let error as SnapshotTargetReceiptPreDispatchError {
             try? await self.snapshotManager.finishSnapshotMutation(
                 lease,
@@ -790,6 +800,12 @@ extension TypeService {
                 requiresFreshObservation: false)
             throw CancellationError()
         } catch is PixelFocusActionPreDispatchCancellation {
+            try? await self.snapshotManager.finishSnapshotMutation(
+                lease,
+                requiresFreshObservation: false)
+            throw CancellationError()
+        } catch is CancellationError {
+            guard !planEntryState.entered else { throw CancellationError() }
             try? await self.snapshotManager.finishSnapshotMutation(
                 lease,
                 requiresFreshObservation: false)
@@ -823,6 +839,7 @@ extension TypeService {
                 message: "Pixel-focus typing completed, but its snapshot mutation lease could not be finalized.",
                 hint: "Observe the exact target before any retry and do not reuse this snapshot.",
                 causeDescription: error.localizedDescription)
+                .attributed(to: DesktopTargetIdentity(exactWindow: exactWindow).actionTargetReceipt)
         }
         return result
     }
@@ -831,7 +848,8 @@ extension TypeService {
         _ request: ExactWindowPixelFocusTypeRequest,
         exactWindow: UIAutomationTarget.ExactWindow,
         deliveryValidator: @escaping @MainActor @Sendable (
-            FocusedElementIdentity) async throws -> Void) async throws
+            FocusedElementIdentity) async throws -> Void,
+        planDidEnter: @escaping @MainActor @Sendable () -> Void) async throws
         -> UIAutomationActionResult<TypeResult>
     {
         let automationTarget = UIAutomationTarget.exactWindow(exactWindow)
@@ -847,6 +865,8 @@ extension TypeService {
             captureReceipt: captureReceipt,
             strategy: .synthOnly,
             prepare: {
+                planDidEnter()
+                try await self.pixelFocusPlanEntryHook()
                 do {
                     let receiptPlan = try await self.pixelFocusReceiptPlanner(request.snapshotID)
                     let authority = try receiptPlan.receipt.requireCoordinateAuthority()

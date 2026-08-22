@@ -265,6 +265,35 @@ struct BackgroundInputDriverPositionalTargetTests {
 
     @Test
     @MainActor
+    func `pixel focus revalidates exact identity immediately before its AX write`() async throws {
+        let bounds = CGRect(x: 20, y: 30, width: 200, height: 80)
+        let exactWindow = try UIAutomationTarget.ExactWindow(
+            identity: WindowMutationIdentity(
+                windowID: 71,
+                ownerProcessIdentifier: 701,
+                ownerProcessStartIdentity: 7001,
+                capturedBounds: bounds),
+            bounds: bounds)
+        let textField = PositionalMockElement(
+            role: "AXTextField",
+            frame: bounds,
+            isFocusedSettable: true)
+
+        await #expect(throws: PeekabooError.self) {
+            _ = try await BackgroundInputDriver.performExactWindowFocusAction(
+                on: textField,
+                exactWindow: exactWindow,
+                exactWindowIdentityValidator: { identity, currentBounds in
+                    #expect(identity == exactWindow.identity)
+                    #expect(currentBounds == exactWindow.bounds)
+                    return false
+                })
+        }
+        #expect(textField.setFocusedValues.isEmpty)
+    }
+
+    @Test
+    @MainActor
     func `value settable web group does not masquerade as a focused click`() {
         // Chromium exposes full-page AXGroup containers as value/focus-settable. Setting focus on
         // that container returns success but delivers no click.

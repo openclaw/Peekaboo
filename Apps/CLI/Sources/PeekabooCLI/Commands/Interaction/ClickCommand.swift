@@ -803,6 +803,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         let result = try await SnapshotMutationCoordinator.perform(
             snapshotId: snapshotId,
             snapshots: self.services.snapshots,
+            targetIdentity: DesktopTargetIdentity(exactWindow: authority.target),
             operation: {
                 self.resolvedRuntime.beginInteractionMutation()
                 return try await service.foregroundModifierClickWithOutcome(

@@ -944,6 +944,28 @@ extension BackgroundInputDriver {
         }
         try self.assertBelongsToTargetWindow(element, targetWindowID: targetWindowID, at: point)
 
+        return try await self.performExactWindowFocusAction(
+            on: element,
+            exactWindow: exactWindow)
+    }
+
+    /// Revalidates the complete capture-time identity immediately before the AX focus write.
+    ///
+    /// The earlier point/window lookup proves where the hit test ran, but a process generation or
+    /// window bounds can still change while Accessibility resolves the editable element.
+    @MainActor
+    static func performExactWindowFocusAction(
+        on element: any AutomationElementRepresenting,
+        exactWindow: UIAutomationTarget.ExactWindow,
+        exactWindowIdentityValidator: (WindowMutationIdentity, CGRect) -> Bool = {
+            SystemIdentityResolver.validateWindowMutationIdentity($0, expectedBounds: $1)
+        }) async throws -> UIInputExecutionResult.Action
+    {
+        guard exactWindowIdentityValidator(exactWindow.identity, exactWindow.bounds) else {
+            throw PeekabooError.snapshotStale(
+                "Exact-window pixel-focus receipt changed before the Accessibility focus write")
+        }
+
         let outcome = try await self.performPositionalClickAction(.focus, on: element)
         guard element.focusedState == true,
               let focusedElement = element.focusedElementIdentity

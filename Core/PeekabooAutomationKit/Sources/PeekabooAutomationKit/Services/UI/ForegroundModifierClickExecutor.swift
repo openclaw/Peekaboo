@@ -195,11 +195,12 @@ final class ForegroundModifierClickExecutor {
                 reason: .targetUnavailable,
                 message: "Modifier-click could not capture the physical cursor for restoration.")
         }
+        let initialInputActivityToken = self.dependencies.sharedInputActivityToken()
         var sequence = DesktopActionSequenceAccumulator()
         var primaryFailure: (any Error)?
         var cleanupFailures: [(phase: String, failure: DesktopActionFailure)] = []
         var originalCursor: CGPoint?
-        var inputActivityToken: SharedInputActivityToken? = self.dependencies.sharedInputActivityToken()
+        var inputActivityToken: SharedInputActivityToken? = initialInputActivityToken
         var clickAttempted = false
         var cleanupAllowed = true
         let priorObservation = TargetFocusObservation(
@@ -214,10 +215,18 @@ final class ForegroundModifierClickExecutor {
             let focusGuard = FocusDispatchGuard(
                 requiresStrictDispatchOwnership: true,
                 validateOwnership: { _ in
+                    guard self.dependencies.sharedInputActivityToken() == initialInputActivityToken else {
+                        throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                            reason: .targetUnavailable,
+                            message: "Modifier-click shared input changed before target focus dispatch."))
+                    }
                     guard let current = self.currentTargetFocusObservation() else {
                         throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
                             reason: .targetUnavailable,
                             message: "Modifier-click prior foreground state changed before target focus dispatch."))
+                    }
+                    if current == targetObservation, focusOwnership.expected == targetObservation {
+                        throw ForegroundModifierClickError.focusTargetSatisfied
                     }
                     if current == targetObservation {
                         throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
@@ -277,37 +286,48 @@ final class ForegroundModifierClickExecutor {
 
         if primaryFailure == nil {
             let preClickInputActivity = self.dependencies.sharedInputActivityToken()
-            if let currentCursor = self.dependencies.currentCursorLocation() {
-                originalCursor = currentCursor
-                inputActivityToken = preClickInputActivity
-                do {
-                    guard self.dependencies.currentFrontmostIdentity() == request.windowIdentity.processIdentity,
-                          self.dependencies.currentFocusedExactWindow() == exactWindow,
-                          self.dependencies.validateExactWindow(request.windowIdentity, request.windowBounds)
-                    else {
-                        throw DesktopActionFailure.preDispatchRefusal(
-                            reason: .targetUnavailable,
-                            message: "Modifier-click exact foreground ownership changed before click dispatch.")
+            if let ownedPreFocusActivity = inputActivityToken,
+               preClickInputActivity == ownedPreFocusActivity
+            {
+                if let currentCursor = self.dependencies.currentCursorLocation() {
+                    originalCursor = currentCursor
+                    do {
+                        guard self.dependencies.currentFrontmostIdentity() == request.windowIdentity.processIdentity,
+                              self.dependencies.currentFocusedExactWindow() == exactWindow,
+                              self.dependencies.validateExactWindow(request.windowIdentity, request.windowBounds)
+                        else {
+                            throw DesktopActionFailure.preDispatchRefusal(
+                                reason: .targetUnavailable,
+                                message: "Modifier-click exact foreground ownership changed before click dispatch.")
+                        }
+                        guard self.dependencies.sharedInputActivityToken() == preClickInputActivity else {
+                            throw DesktopActionFailure.preDispatchRefusal(
+                                reason: .targetUnavailable,
+                                message: "Modifier-click physical cursor activity changed before click dispatch.")
+                        }
+                        try Task.checkCancellation()
+                        clickAttempted = true
+                        let clickOutcome = try preparedClick()
+                        sequence.record(.reportedOutcome(clickOutcome, defaultDispatchedUnitCount: .one))
+                        inputActivityToken = preClickInputActivity.afterModifierClick(request.clickType)
+                    } catch let barrierFailure as ModifierClickDispatchBarrierFailure {
+                        primaryFailure = barrierFailure.failure
+                        cleanupAllowed = false
+                    } catch {
+                        primaryFailure = error
                     }
-                    guard self.dependencies.sharedInputActivityToken() == preClickInputActivity else {
-                        throw DesktopActionFailure.preDispatchRefusal(
-                            reason: .targetUnavailable,
-                            message: "Modifier-click physical cursor activity changed before click dispatch.")
-                    }
-                    clickAttempted = true
-                    let clickOutcome = try preparedClick()
-                    sequence.record(.reportedOutcome(clickOutcome, defaultDispatchedUnitCount: .one))
-                    inputActivityToken = preClickInputActivity.afterModifierClick(request.clickType)
-                } catch let barrierFailure as ModifierClickDispatchBarrierFailure {
-                    primaryFailure = barrierFailure.failure
-                    cleanupAllowed = false
-                } catch {
-                    primaryFailure = error
+                } else {
+                    primaryFailure = DesktopActionFailure.preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "Modifier-click could not recapture the physical cursor immediately before clicking.")
                 }
             } else {
                 primaryFailure = DesktopActionFailure.preDispatchRefusal(
                     reason: .targetUnavailable,
-                    message: "Modifier-click could not recapture the physical cursor immediately before clicking.")
+                    message: "Modifier-click detected newer shared input while focusing its target.",
+                    hint: "Observe the shared desktop before deciding whether to retry.")
+                cleanupAllowed = false
+                inputActivityToken = nil
             }
         }
 
@@ -380,6 +400,13 @@ final class ForegroundModifierClickExecutor {
         }
 
         if let primaryFailure {
+            if primaryFailure is CancellationError,
+               sequence.mutationDisposition == .none
+            {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .requestCancelled,
+                    message: "Modifier-click was cancelled before click dispatch.")
+            }
             if let failure = primaryFailure as? DesktopActionFailure {
                 throw sequence.failure(
                     combining: failure,
