@@ -374,7 +374,16 @@ struct MCPComposedInputParityTests {
         let clickProperties = try #require(ClickTool(context: fixture.context).inputSchema
             .objectValue?["properties"]?.objectValue)
 
-        #expect(typeProperties["coords"] != nil)
+        let coords = try #require(typeProperties["coords"]?.objectValue)
+        guard case let .string(coordsDescription)? = coords["description"] else {
+            Issue.record("Expected a pixel-focus coordinate description")
+            return
+        }
+        let normalizedCoordsDescription = coordsDescription
+            .split(whereSeparator: \Character.isWhitespace)
+            .joined(separator: " ")
+        #expect(normalizedCoordsDescription.contains("focus-only Accessibility targeting"))
+        #expect(normalizedCoordsDescription.contains("never clicks, presses, or selects"))
         #expect(typeProperties["coordinate_space"]?.objectValue?["enum"] == .array(
             CaptureCoordinateSpace.allCases.map { .string($0.rawValue) }))
         #expect(clickProperties["modifiers"]?.objectValue?["items"]?.objectValue?["enum"] == .array([

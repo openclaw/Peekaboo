@@ -5,6 +5,18 @@ import Testing
 
 @Suite(.tags(.safe))
 struct ComposedInputParityValidationTests {
+    @Test(arguments: ["invalid", "10", "10,20,30", "nan,20", "10,inf"])
+    func `pixel focus type requires one finite coordinate pair`(_ point: String) throws {
+        var command = try TypeCommand.parse([
+            "hello", "--at", point, "--snapshot", "snap",
+        ])
+
+        let error = #expect(throws: ValidationError.self) {
+            try command.validate()
+        }
+        #expect(error?.localizedDescription == "Invalid coordinates format. Use: x,y")
+    }
+
     @Test
     func `pixel focus type requires one explicit background snapshot target`() throws {
         let invalidArguments = [

@@ -49,7 +49,8 @@ public struct TypeTool: MCPTool {
                     : "Optional snapshot ID from `see` or `inspect_ui`."),
             "coords": SchemaBuilder.string(description: """
             Optional exact-window focus point in x,y form. It is mutually exclusive with on and requires a fresh
-            screenshot snapshot. Peekaboo clicks this point in the background and types under one exact target lane.
+            screenshot snapshot. Peekaboo performs focus-only Accessibility targeting at this point, never clicks,
+            presses, or selects the hit element, and types under one exact target lane.
             """),
             "coordinate_space": SchemaBuilder.string(
                 description: "Coordinate basis for coords. Defaults to global_display_points.",

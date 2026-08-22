@@ -260,7 +260,10 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         if self.at == nil, self.coordinateSpaceOption != nil {
             throw ValidationError("--coordinate-space requires --at")
         }
-        if self.at != nil {
+        if let at = self.at {
+            guard Self.parsePoint(at) != nil else {
+                throw ValidationError("Invalid coordinates format. Use: x,y")
+            }
             guard !self.focusOptions.foreground else {
                 throw ValidationError("--at typing is an exact-window background operation; remove --foreground")
             }
@@ -284,9 +287,14 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
 
     private func runPixelFocusType(actions: [TypeAction], startTime: Date) async throws {
         guard let rawPoint = self.at,
-              let point = Self.parsePoint(rawPoint),
-              let snapshotID = self.snapshot,
-              let service = self.services.automation as? any ExactWindowPixelFocusTypingServiceProtocol,
+              let point = Self.parsePoint(rawPoint)
+        else {
+            throw ValidationError("Invalid coordinates format. Use: x,y")
+        }
+        guard let snapshotID = self.snapshot else {
+            throw ValidationError("--at requires one explicit fresh screenshot --snapshot ID")
+        }
+        guard let service = self.services.automation as? any ExactWindowPixelFocusTypingServiceProtocol,
               service.supportsExactWindowPixelFocusTyping
         else {
             throw ValidationError(

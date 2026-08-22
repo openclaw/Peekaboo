@@ -86,6 +86,14 @@ struct InvalidInputOrderingCLITests {
             hint: "Use --foreground for intentional global input."
         ),
         JSONCase(
+            arguments: [
+                "type", "alpha", "--at", "nan,20", "--snapshot", "snapshot-1", "--json",
+            ],
+            code: "VALIDATION_ERROR",
+            message: "Invalid coordinates format. Use: x,y",
+            hint: nil
+        ),
+        JSONCase(
             arguments: ["browser", "frobnicate", "--json"],
             code: "VALIDATION_ERROR",
             message: "Unsupported browser action 'frobnicate'",
