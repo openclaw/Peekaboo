@@ -18,6 +18,7 @@
 ### Changed
 - Read `config credential set` secrets from no-echo prompts, stdin, or owner-only files; let `config provider add` also accept non-secret references; retain deprecated argv compatibility.
 - Skip provider discovery and Agent construction for caller-local commands that cannot invoke the Agent.
+- Skip the ScreenCaptureKit post-capture settlement delay for classic captures that never enter ScreenCaptureKit.
 
 ### Fixed
 - Bound exclusive ScreenCaptureKit transaction-lock waits inside the Bridge request envelope so a wedged peer fails clearly instead of hanging capture indefinitely. Thanks @SebTardif for #599.
