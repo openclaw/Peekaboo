@@ -36,6 +36,26 @@ struct MCPComposedInputParityTests {
         #expect(metadata["target_window_id"] == .int(fixture.window.windowID))
     }
 
+    @Test
+    func `pixel focus coordinate authority ignores capture focused element sidecar`() async throws {
+        let focusedElement = AutomationTestFixtures.focusedElement(
+            processIdentity: .init(processIdentifier: 111, processStartIdentity: 7),
+            windowID: 42)
+        let fixture = await Self.makeFixture(focusedElement: focusedElement)
+
+        let response = try await TypeTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "coords": "500,250",
+            "coordinate_space": "image_pixels",
+            "snapshot": fixture.snapshotID,
+            "text": "hi",
+        ]))
+
+        #expect(!response.isError)
+        let request = try #require(await MainActor.run { fixture.automation.pixelFocusTypeRequests.first })
+        #expect(request.windowIdentity == fixture.window.mutationIdentity)
+        #expect(request.windowBounds == fixture.window.bounds)
+    }
+
     @Test(arguments: [",10,20", "10,,20", "10,20,", "nan,20", "10,inf"])
     func `pixel focus type rejects malformed coordinate tuples before dispatch`(_ coords: String) async throws {
         let fixture = await Self.makeFixture()
@@ -417,7 +437,8 @@ struct MCPComposedInputParityTests {
 
     private static func makeFixture(
         automationWindowID: Int? = nil,
-        automation providedAutomation: MockAutomationService? = nil) async
+        automation providedAutomation: MockAutomationService? = nil,
+        focusedElement: FocusedElementIdentity? = nil) async
         -> (
             context: MCPToolContext,
             automation: MockAutomationService,
@@ -433,7 +454,8 @@ struct MCPComposedInputParityTests {
             applicationName: "ComposedInput",
             windowID: 42,
             windowTitle: "Composed Input Window",
-            bounds: CGRect(x: 100, y: 50, width: 1000, height: 500))
+            bounds: CGRect(x: 100, y: 50, width: 1000, height: 500),
+            focusedElement: focusedElement)
         let window = fixture.desktopTarget.window
         let snapshot = await self.uiSnapshots.createSnapshot(id: fixture.snapshotID)
         let snapshotID = fixture.snapshotID
@@ -444,7 +466,8 @@ struct MCPComposedInputParityTests {
                 size: window.bounds.size,
                 mode: .window,
                 applicationInfo: application,
-                windowInfo: window))
+                windowInfo: window),
+            context: fixture.desktopTarget.windowContext)
         let automation = await MainActor.run {
             providedAutomation ?? MockAutomationService(accessibilityGranted: true)
         }
@@ -456,7 +479,8 @@ struct MCPComposedInputParityTests {
                 applicationName: "ComposedInput",
                 windowID: automationWindowID,
                 windowTitle: "Composed Input Window",
-                bounds: window.bounds).detectionResult
+                bounds: window.bounds,
+                focusedElement: focusedElement).detectionResult
         } else {
             fixture.detectionResult
         }

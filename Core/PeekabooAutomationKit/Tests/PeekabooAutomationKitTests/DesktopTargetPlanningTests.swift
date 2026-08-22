@@ -225,21 +225,30 @@ struct DesktopTargetPlanningTests {
         let snapshotID = "snapshot-1"
         let window = AutomationTestFixtures.window()
         let identity = try #require(window.mutationIdentity)
+        let focusedElement = AutomationTestFixtures.focusedElement(
+            processIdentity: identity.processIdentity,
+            windowID: identity.windowID)
         let receipt = try SnapshotTargetReceipt(
             snapshotID: snapshotID,
             evidence: [.init(
                 processIdentifier: identity.ownerProcessIdentifier,
                 windowID: window.windowID,
                 windowIdentity: identity,
-                windowBounds: window.bounds)],
+                windowBounds: window.bounds,
+                focusedElement: focusedElement)],
             coordinateContext: AutomationTestFixtures.captureCoordinateContext(
                 snapshotID: snapshotID,
                 window: window))
 
+        let retainedTarget = try #require(receipt.requireIdentity().exactWindow)
         let authority = try receipt.requireCoordinateAuthority()
+        #expect(retainedTarget.focusedElement == focusedElement)
         #expect(authority.snapshotID == snapshotID)
-        #expect(authority.target.identity.hasSameStableReceipt(as: identity))
+        #expect(authority.target.identity == retainedTarget.identity)
+        #expect(authority.target.bounds == retainedTarget.bounds)
+        #expect(authority.target.focusedElement == nil)
         #expect(authority.sourceBounds == window.bounds)
+        #expect(authority.context == receipt.coordinateContext)
 
         let wrongReference = try SnapshotTargetReceipt(
             snapshotID: snapshotID,

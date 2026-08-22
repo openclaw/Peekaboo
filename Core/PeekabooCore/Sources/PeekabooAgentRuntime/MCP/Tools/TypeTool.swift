@@ -448,7 +448,10 @@ public struct TypeTool: MCPTool {
                 "Tool snapshot has inconsistent exact-window ownership",
                 refusalReason: .targetUnavailable)
         }
-        guard mirroredIdentity == DesktopTargetIdentity(exactWindow: authority.target) else {
+        guard let mirroredWindow = mirroredIdentity.exactWindow,
+              mirroredWindow.identity.hasSameStableReceipt(as: authority.target.identity),
+              mirroredWindow.bounds == authority.target.bounds
+        else {
             throw TypeToolValidationError(
                 "Tool and automation snapshots disagree about the pixel-focus target",
                 refusalReason: .targetUnavailable)

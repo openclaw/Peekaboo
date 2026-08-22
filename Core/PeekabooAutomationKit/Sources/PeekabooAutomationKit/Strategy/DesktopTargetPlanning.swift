@@ -262,9 +262,12 @@ public struct SnapshotTargetReceipt: Equatable, Sendable {
         else {
             throw DesktopTargetIdentityError.coordinateBoundsMismatch
         }
+        let coordinateTarget = try UIAutomationTarget.ExactWindow(
+            identity: exactWindow.identity,
+            bounds: exactWindow.bounds)
         return CoordinateAuthority(
             snapshotID: self.snapshotID,
-            target: exactWindow,
+            target: coordinateTarget,
             sourceBounds: sourceBounds,
             context: context)
     }

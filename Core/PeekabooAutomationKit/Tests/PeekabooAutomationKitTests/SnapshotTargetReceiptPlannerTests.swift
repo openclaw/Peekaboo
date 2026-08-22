@@ -100,7 +100,8 @@ struct SnapshotTargetReceiptPlannerTests {
 
     @Test
     func `planner merges linked sources and preserves coordinate authority`() throws {
-        let fixture = AutomationTestFixtures.linkedSnapshotTarget()
+        let focusedElement = AutomationTestFixtures.focusedElement()
+        let fixture = AutomationTestFixtures.linkedSnapshotTarget(focusedElement: focusedElement)
 
         let plan = try fixture.receiptPlan
         let identity = try plan.receipt.requireIdentity()
@@ -109,10 +110,13 @@ struct SnapshotTargetReceiptPlannerTests {
         #expect(plan.sourceEvidence.count == 2)
         #expect(plan.hasProcessIdentifierEvidence)
         #expect(identity.exactWindow?.identity == fixture.desktopTarget.windowIdentity)
+        #expect(identity.exactWindow?.focusedElement == focusedElement)
         #expect(plan.receipt.applicationBundleIdentifier == fixture.desktopTarget.application.bundleIdentifier)
         #expect(plan.receipt.applicationName == fixture.desktopTarget.application.name)
         #expect(authority.snapshotID == fixture.snapshotID)
         #expect(authority.target.identity == fixture.desktopTarget.windowIdentity)
+        #expect(authority.target.bounds == fixture.desktopTarget.window.bounds)
+        #expect(authority.target.focusedElement == nil)
         #expect(authority.sourceBounds == fixture.desktopTarget.window.bounds)
         #expect(authority.context == fixture.coordinateContext)
     }
