@@ -8,6 +8,8 @@ import Testing
 
 @Suite(.tags(.safe))
 struct ComposedInputParityValidationTests {
+    private typealias Fixture = (services: PeekabooServices, snapshots: StubSnapshotManager, snapshotID: String)
+
     @Test(arguments: [
         "invalid", "10", "10,20,30", "nan,20", "10,inf", ",10,20", "10,,20", "10,20,",
     ])
@@ -128,6 +130,73 @@ struct ComposedInputParityValidationTests {
 
     @Test
     @MainActor
+    func `pixel focus pre-dispatch refusal preserves explicit snapshot`() async throws {
+        let fixture = try await Self.makePixelFocusFixture(
+            behavior: .failure(.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Snapshot lease admission refused before dispatch."
+            ))
+        )
+
+        for _ in 0..<2 {
+            let result = try await Self.runPixelFocusType(fixture)
+            let object = try Self.jsonObject(result.stdout)
+            let error = try #require(object["error"] as? [String: Any])
+
+            #expect(result.exitStatus == 1)
+            #expect(error["retry_safe"] as? Bool == true)
+            #expect(error["mutation_dispatched"] as? Bool == false)
+            #expect(try await fixture.snapshots.getDetectionResult(snapshotId: fixture.snapshotID) != nil)
+            #expect(await fixture.snapshots.getMostRecentSnapshot() == fixture.snapshotID)
+            #expect(fixture.snapshots.invalidationCutoffs.isEmpty)
+        }
+
+        let lease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        try await fixture.snapshots.finishSnapshotMutation(lease, requiresFreshObservation: false)
+    }
+
+    @Test
+    @MainActor
+    func `pixel focus dispatched result invalidates explicit snapshot`() async throws {
+        let fixture = try await Self.makePixelFocusFixture(
+            behavior: .result(.dispatchedUnverified(
+                delivery: Self.backgroundPixelFocusDelivery,
+                evidence: .deliveryAccepted,
+                unitCount: .one
+            ))
+        )
+
+        let result = try await Self.runPixelFocusType(fixture)
+        #expect(result.exitStatus == 0)
+        #expect(await fixture.snapshots.getMostRecentSnapshot() == nil)
+        #expect(fixture.snapshots.invalidationCutoffs.count == 1)
+    }
+
+    @Test
+    @MainActor
+    func `pixel focus indeterminate failure invalidates explicit snapshot`() async throws {
+        let fixture = try await Self.makePixelFocusFixture(
+            behavior: .failure(.indeterminate(
+                delivery: Self.backgroundPixelFocusDelivery,
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "Pixel-focus typing completion is unknown."
+            ))
+        )
+
+        let result = try await Self.runPixelFocusType(fixture)
+        let object = try Self.jsonObject(result.stdout)
+        let error = try #require(object["error"] as? [String: Any])
+
+        #expect(result.exitStatus == 1)
+        #expect(error["retry_safe"] as? Bool == false)
+        #expect(error["mutation_dispatched"] as? Bool == true)
+        #expect(await fixture.snapshots.getMostRecentSnapshot() == nil)
+        #expect(fixture.snapshots.invalidationCutoffs.count == 1)
+    }
+
+    @Test
+    @MainActor
     func `modifier click pre-dispatch refusal preserves explicit snapshot`() async throws {
         let fixture = try await Self.makeModifierClickFixture(
             behavior: .failure(.preDispatchRefusal(
@@ -195,8 +264,26 @@ struct ComposedInputParityValidationTests {
 
     @MainActor
     private static func makeModifierClickFixture(
-        behavior: ModifierClickStubAutomationService.Behavior
-    ) async throws -> (services: PeekabooServices, snapshots: StubSnapshotManager, snapshotID: String) {
+        behavior: ComposedInputStubBehavior
+    ) async throws -> Fixture {
+        try await self.makeComposedInputFixture(
+            automation: ModifierClickStubAutomationService(behavior: behavior)
+        )
+    }
+
+    @MainActor
+    private static func makePixelFocusFixture(
+        behavior: ComposedInputStubBehavior
+    ) async throws -> Fixture {
+        try await self.makeComposedInputFixture(
+            automation: PixelFocusStubAutomationService(behavior: behavior)
+        )
+    }
+
+    @MainActor
+    private static func makeComposedInputFixture(
+        automation: StubAutomationService
+    ) async throws -> Fixture {
         let processIdentifier: pid_t = 12345
         let processStartIdentity: UInt64 = 7
         let windowID = 42
@@ -223,7 +310,6 @@ struct ComposedInputParityValidationTests {
             mutationIdentity: windowIdentity
         )
         let windowsByApp = [application.name: [window]]
-        let automation = ModifierClickStubAutomationService(behavior: behavior)
         let context = TestServicesFactory.makeAutomationTestContext(
             automation: automation,
             applications: StubApplicationService(applications: [application], windowsByApp: windowsByApp),
@@ -272,7 +358,7 @@ struct ComposedInputParityValidationTests {
 
     @MainActor
     private static func runModifierClick(
-        _ fixture: (services: PeekabooServices, snapshots: StubSnapshotManager, snapshotID: String)
+        _ fixture: Fixture
     ) async throws -> CommandRunResult {
         try await InProcessCommandRunner.run(
             [
@@ -281,6 +367,23 @@ struct ComposedInputParityValidationTests {
             ],
             services: fixture.services
         )
+    }
+
+    @MainActor
+    private static func runPixelFocusType(
+        _ fixture: Fixture
+    ) async throws -> CommandRunResult {
+        try await InProcessCommandRunner.run(
+            [
+                "type", "hello", "--at", "60,45", "--snapshot", fixture.snapshotID,
+                "--json", "--no-remote",
+            ],
+            services: fixture.services
+        )
+    }
+
+    private static var backgroundPixelFocusDelivery: DesktopActionOutcome.Delivery {
+        .init(mechanism: .windowTargetedEvents, mode: .background)
     }
 
     private static var foregroundModifierDelivery: DesktopActionOutcome.Delivery {
@@ -292,20 +395,20 @@ struct ComposedInputParityValidationTests {
     }
 }
 
+private enum ComposedInputStubBehavior {
+    case result(DesktopActionOutcome)
+    case failure(DesktopActionFailure)
+}
+
 @MainActor
 private final class ModifierClickStubAutomationService: StubAutomationService,
 ForegroundModifierClickServiceProtocol {
-    enum Behavior {
-        case result(DesktopActionOutcome)
-        case failure(DesktopActionFailure)
-    }
-
-    let behavior: Behavior
+    let behavior: ComposedInputStubBehavior
     let supportsForegroundModifierClick = true
     let supportsForegroundModifierClickSnapshotLease = true
     let foregroundModifierClickUnavailableReason: String? = nil
 
-    init(behavior: Behavior) {
+    init(behavior: ComposedInputStubBehavior) {
         self.behavior = behavior
     }
 
@@ -325,6 +428,37 @@ ForegroundModifierClickServiceProtocol {
                     cursorRestoration: .notNeeded,
                     focusRestoration: .notNeeded
                 ),
+                outcome: outcome,
+                targetIdentity: DesktopTargetIdentity(exactWindow: exactWindow)
+            )
+        }
+    }
+}
+
+@MainActor
+private final class PixelFocusStubAutomationService: StubAutomationService,
+ExactWindowPixelFocusTypingServiceProtocol {
+    let behavior: ComposedInputStubBehavior
+    let supportsExactWindowPixelFocusTyping = true
+    let exactWindowPixelFocusTypingUnavailableReason: String? = nil
+
+    init(behavior: ComposedInputStubBehavior) {
+        self.behavior = behavior
+    }
+
+    func typeActionsByFocusingPixelWithOutcome(
+        _ request: ExactWindowPixelFocusTypeRequest
+    ) async throws -> UIAutomationActionResult<TypeResult> {
+        switch self.behavior {
+        case let .failure(failure):
+            throw failure
+        case let .result(outcome):
+            let exactWindow = try UIAutomationTarget.ExactWindow(
+                identity: request.windowIdentity,
+                bounds: request.windowBounds
+            )
+            return UIAutomationActionResult(
+                payload: TypeResult(totalCharacters: 5, keyPresses: 5),
                 outcome: outcome,
                 targetIdentity: DesktopTargetIdentity(exactWindow: exactWindow)
             )

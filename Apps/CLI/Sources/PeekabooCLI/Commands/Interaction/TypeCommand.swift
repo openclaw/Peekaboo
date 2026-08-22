@@ -331,24 +331,34 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             throw ValidationError("--at is outside the captured exact window")
         }
 
-        self.resolvedRuntime.beginInteractionMutation()
-        let result = try await service.typeActionsByFocusingPixelWithOutcome(
-            ExactWindowPixelFocusTypeRequest(
-                point: mappedPoint,
-                actions: actions,
-                cadence: self.typingCadence,
-                snapshotID: snapshotID,
-                windowIdentity: authority.target.identity,
-                windowBounds: authority.target.bounds
-            )
-        )
         let expectedTarget = DesktopTargetIdentity(exactWindow: authority.target)
-        _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
-            result,
-            policy: .confirmedOrDispatched(requiring: .background),
-            targetRequirement: .exact(expectedTarget),
-            operation: "Pixel-focus typing"
-        )
+        let result: UIAutomationActionResult<TypeResult>
+        do {
+            result = try await service.typeActionsByFocusingPixelWithOutcome(
+                ExactWindowPixelFocusTypeRequest(
+                    point: mappedPoint,
+                    actions: actions,
+                    cadence: self.typingCadence,
+                    snapshotID: snapshotID,
+                    windowIdentity: authority.target.identity,
+                    windowBounds: authority.target.bounds
+                )
+            )
+            _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                result,
+                policy: .confirmedOrDispatched(requiring: .background),
+                targetRequirement: .exact(expectedTarget),
+                operation: "Pixel-focus typing"
+            )
+            if result.outcome?.dispatchState.mutationDispatched == true {
+                self.resolvedRuntime.beginInteractionMutation()
+            }
+        } catch let failure as DesktopActionFailure {
+            if failure.outcome.dispatchState.mutationDispatched {
+                self.resolvedRuntime.beginInteractionMutation()
+            }
+            throw failure
+        }
         await InteractionObservationInvalidator.invalidateAfterMutation(
             targets: self.resolvedRuntime.interactionMutationTargets,
             logger: self.logger,
