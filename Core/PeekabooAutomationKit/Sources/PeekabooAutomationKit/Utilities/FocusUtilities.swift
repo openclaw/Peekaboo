@@ -130,23 +130,28 @@ enum FocusDispatchStage: Equatable, Sendable {
 @MainActor
 final class FocusDispatchGuard {
     private let validateOwnership: @MainActor (FocusDispatchStage) throws -> Void
+    private let acceptedDispatch: @MainActor (FocusDispatchStage) throws -> Void
     private let completeDispatch: @MainActor (FocusDispatchStage) throws -> Void
     let requiresStrictDispatchOwnership: Bool
+    private(set) var acceptedApplicationActivationDispatch = false
     private(set) var completedStrictTerminalDispatch = false
 
     init(validateOwnership: @escaping @MainActor () throws -> Void = {}) {
         self.requiresStrictDispatchOwnership = false
         self.validateOwnership = { _ in try validateOwnership() }
+        self.acceptedDispatch = { _ in }
         self.completeDispatch = { _ in }
     }
 
     init(
         requiresStrictDispatchOwnership: Bool,
         validateOwnership: @escaping @MainActor (FocusDispatchStage) throws -> Void,
+        acceptedDispatch: @escaping @MainActor (FocusDispatchStage) throws -> Void = { _ in },
         completeDispatch: @escaping @MainActor (FocusDispatchStage) throws -> Void)
     {
         self.requiresStrictDispatchOwnership = requiresStrictDispatchOwnership
         self.validateOwnership = validateOwnership
+        self.acceptedDispatch = acceptedDispatch
         self.completeDispatch = completeDispatch
     }
 
@@ -156,6 +161,13 @@ final class FocusDispatchGuard {
 
     func callAsFunction() throws {
         try self.validate()
+    }
+
+    func didAcceptDispatch(_ stage: FocusDispatchStage) throws {
+        if stage == .applicationActivation {
+            self.acceptedApplicationActivationDispatch = true
+        }
+        try self.acceptedDispatch(stage)
     }
 
     func didCompleteDispatch(_ stage: FocusDispatchStage = .unspecified) throws {
@@ -741,6 +753,9 @@ public final class FocusManagementService {
                 delivery: .init(mechanism: .nativeFramework, mode: .foreground),
                 onDispatch: onDispatch,
                 operation: { runningApp.activate() })
+            if activationAccepted {
+                try dispatchGuard?.didAcceptDispatch(.applicationActivation)
+            }
         }
 
         try await self.waitForCondition(

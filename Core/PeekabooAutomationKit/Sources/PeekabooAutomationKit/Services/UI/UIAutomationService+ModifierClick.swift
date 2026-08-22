@@ -186,12 +186,15 @@ extension UIAutomationService {
         guard SystemIdentityResolver.processStartIdentity(identity.processIdentifier) == identity.processStartIdentity,
               let application = NSRunningApplication(processIdentifier: identity.processIdentifier)
         else { return false }
-        try dispatchGuard.validate()
+        try dispatchGuard.validate(.applicationActivation)
         guard application.activate() else { return false }
+        try dispatchGuard.didAcceptDispatch(.applicationActivation)
         for _ in 0..<20 {
             if self.currentFrontmostProcessIdentity() == identity {
+                try dispatchGuard.didCompleteDispatch(.applicationActivation)
                 return true
             }
+            try dispatchGuard.validate(.applicationActivation)
             try await Task.sleep(for: .milliseconds(25))
         }
         return false

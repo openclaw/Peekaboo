@@ -20,15 +20,38 @@ private final class FocusRestorationOwnershipState {
 @MainActor
 private final class TargetFocusOwnershipState {
     var expected: TargetFocusObservation
+    var hasAcceptedApplicationActivation = false
+    var hasPendingApplicationActivation = false
 
     init(expected: TargetFocusObservation) {
         self.expected = expected
     }
 }
 
+private struct ModifierClickFocusRestorationAttempt: Sendable {
+    let status: SharedDesktopRestorationStatus?
+    let error: (any Error)?
+    let sequence: DesktopActionSequenceAccumulator
+}
+
+@MainActor
+private struct ModifierClickFocusRestorationContext {
+    let priorProcess: ApplicationProcessIdentity
+    let priorWindow: UIAutomationTarget.ExactWindow?
+    let targetWindow: UIAutomationTarget.ExactWindow
+    let ownedTargetFocus: TargetFocusObservation
+    let inputActivityToken: SharedInputActivityToken
+    let sequence: DesktopActionSequenceAccumulator
+}
+
 private struct TargetFocusObservation: Equatable {
     let frontmostProcess: ApplicationProcessIdentity
     let focusedWindow: UIAutomationTarget.ExactWindow?
+
+    init(_ frontmost: ApplicationProcessIdentity, _ window: UIAutomationTarget.ExactWindow?) {
+        self.frontmostProcess = frontmost
+        self.focusedWindow = window
+    }
 }
 
 struct ModifierClickDispatchBarrierFailure: Error {
@@ -187,31 +210,7 @@ final class ForegroundModifierClickExecutor {
         -> UIAutomationActionResult<ForegroundModifierClickResult>
     {
         try self.validate(request, exactWindow: exactWindow)
-        let preparedClick: PreparedClickExecutor
-        do {
-            preparedClick = try self.dependencies.prepareClick(
-                request.point,
-                request.clickType,
-                request.modifiers)
-        } catch let failure as DesktopActionFailure {
-            throw failure
-        } catch let error as PeekabooError {
-            let reason: DesktopActionOutcome.RefusalReason = switch error {
-            case .permissionDeniedEventSynthesizing: .permissionDenied
-            default: .operationUnsupported
-            }
-            throw DesktopActionFailure.preDispatchRefusal(
-                reason: reason,
-                message: "Modifier-click could not prepare its event sequence before foreground setup.",
-                hint: "Grant Event Synthesizing permission or inspect the runtime before retrying.",
-                causeDescription: error.localizedDescription)
-        } catch {
-            throw DesktopActionFailure.preDispatchRefusal(
-                reason: .operationUnsupported,
-                message: "Modifier-click could not prepare its event sequence before foreground setup.",
-                hint: "Inspect the runtime before retrying.",
-                causeDescription: error.localizedDescription)
-        }
+        let preparedClick = try self.prepareClickBeforeForegroundSetup(request)
         guard let priorFrontmost = self.dependencies.currentFrontmostIdentity() else {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .targetUnavailable,
@@ -228,13 +227,7 @@ final class ForegroundModifierClickExecutor {
                 reason: .targetUnavailable,
                 message: "Modifier-click could not capture the physical cursor for restoration.")
         }
-        let initialInputActivityToken = self.dependencies.sharedInputActivityToken()
-        guard !initialInputActivityToken.hasHeldInput else {
-            throw DesktopActionFailure.preDispatchRefusal(
-                reason: .targetUnavailable,
-                message: "Modifier-click requires every autorepeating key or held mouse button to be released before focus.",
-                hint: "Release held input and retry from a fresh observation.")
-        }
+        let initialInputActivityToken = try self.requireReleasedInputActivity()
         var sequence = DesktopActionSequenceAccumulator()
         var primaryFailure: (any Error)?
         var cleanupFailures: [(phase: String, failure: DesktopActionFailure)] = []
@@ -242,12 +235,8 @@ final class ForegroundModifierClickExecutor {
         var inputActivityToken: SharedInputActivityToken? = initialInputActivityToken
         var clickAttempted = false
         var cleanupAllowed = true
-        let priorObservation = TargetFocusObservation(
-            frontmostProcess: priorFrontmost,
-            focusedWindow: priorFocusedWindow)
-        let targetObservation = TargetFocusObservation(
-            frontmostProcess: exactWindow.identity.processIdentity,
-            focusedWindow: exactWindow)
+        let priorObservation = TargetFocusObservation(priorFrontmost, priorFocusedWindow)
+        let targetObservation = TargetFocusObservation(exactWindow.identity.processIdentity, exactWindow)
         let focusOwnership = TargetFocusOwnershipState(expected: priorObservation)
 
         do {
@@ -278,6 +267,16 @@ final class ForegroundModifierClickExecutor {
                             message: "Modifier-click foreground ownership changed during target focus."))
                     }
                 },
+                acceptedDispatch: { stage in
+                    guard stage == .applicationActivation else { return }
+                    focusOwnership.hasAcceptedApplicationActivation = true
+                    focusOwnership.hasPendingApplicationActivation = true
+                    guard self.dependencies.sharedInputActivityToken() == initialInputActivityToken else {
+                        throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                            reason: .targetUnavailable,
+                            message: "Modifier-click shared input changed during target activation."))
+                    }
+                },
                 completeDispatch: { stage in
                     guard let current = self.currentTargetFocusObservation() else {
                         throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
@@ -287,7 +286,8 @@ final class ForegroundModifierClickExecutor {
                     let isAllowed = switch stage {
                     case .applicationActivation:
                         current.frontmostProcess == exactWindow.identity.processIdentity &&
-                            current.focusedWindow?.identity.processIdentity == exactWindow.identity.processIdentity
+                            (current.focusedWindow == nil ||
+                                current.focusedWindow?.identity.processIdentity == exactWindow.identity.processIdentity)
                     case .setMainWindow:
                         current == focusOwnership.expected || current == targetObservation
                     case .raiseWindow:
@@ -300,7 +300,11 @@ final class ForegroundModifierClickExecutor {
                             reason: .targetUnavailable,
                             message: "Modifier-click target focus produced an ambiguous foreground state."))
                     }
+                    if stage == .applicationActivation {
+                        focusOwnership.hasPendingApplicationActivation = false
+                    }
                     if current == targetObservation {
+                        focusOwnership.hasPendingApplicationActivation = false
                         throw ForegroundModifierClickError.focusTargetSatisfied
                     }
                     focusOwnership.expected = current
@@ -317,10 +321,27 @@ final class ForegroundModifierClickExecutor {
                     message: "Modifier-click could not confirm the exact foreground window.")
             }
         } catch let ownershipLoss as ModifierClickFocusOwnershipLossFailure {
-            primaryFailure = ownershipLoss.failure
+            if focusOwnership.hasAcceptedApplicationActivation {
+                primaryFailure = self.acceptedActivationFailure(
+                    ownershipLoss.failure,
+                    sequence: &sequence)
+            } else {
+                primaryFailure = ownershipLoss.failure
+            }
             cleanupAllowed = false
+            if focusOwnership.hasPendingApplicationActivation {
+                inputActivityToken = nil
+            }
         } catch {
-            primaryFailure = error
+            if focusOwnership.hasAcceptedApplicationActivation {
+                primaryFailure = self.acceptedActivationFailure(error, sequence: &sequence)
+            } else {
+                primaryFailure = error
+            }
+            if focusOwnership.hasPendingApplicationActivation {
+                cleanupAllowed = false
+                inputActivityToken = nil
+            }
         }
 
         if primaryFailure == nil {
@@ -409,15 +430,17 @@ final class ForegroundModifierClickExecutor {
            self.dependencies.sharedInputActivityToken() == inputActivityToken
         {
             let focusRestorationPrefixCount = sequence.completedStepCount
-            do {
-                focusRestoration = try await self.restoreFocusIfOwned(
-                    priorProcess: priorFrontmost,
-                    priorWindow: priorFocusedWindow,
-                    targetWindow: exactWindow,
-                    ownedTargetFocus: focusOwnership.expected,
-                    inputActivityToken: inputActivityToken,
-                    sequence: &sequence)
-            } catch {
+            let attempt = await self.restoreFocusAcrossCancellationBoundary(.init(
+                priorProcess: priorFrontmost,
+                priorWindow: priorFocusedWindow,
+                targetWindow: exactWindow,
+                ownedTargetFocus: focusOwnership.expected,
+                inputActivityToken: inputActivityToken,
+                sequence: sequence))
+            sequence = attempt.sequence
+            if let status = attempt.status {
+                focusRestoration = status
+            } else if let error = attempt.error {
                 cleanupFailures.append((
                     phase: "Focus restoration",
                     failure: self.restorationFailure(
@@ -493,6 +516,47 @@ final class ForegroundModifierClickExecutor {
                 focusRestoration: focusRestoration),
             outcome: outcome,
             targetIdentity: targetIdentity)
+    }
+
+    private func prepareClickBeforeForegroundSetup(
+        _ request: ForegroundModifierClickRequest) throws -> PreparedClickExecutor
+    {
+        do {
+            return try self.dependencies.prepareClick(
+                request.point,
+                request.clickType,
+                request.modifiers)
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch let error as PeekabooError {
+            let reason: DesktopActionOutcome.RefusalReason = switch error {
+            case .permissionDeniedEventSynthesizing: .permissionDenied
+            default: .operationUnsupported
+            }
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: reason,
+                message: "Modifier-click could not prepare its event sequence before foreground setup.",
+                hint: "Grant Event Synthesizing permission or inspect the runtime before retrying.",
+                causeDescription: error.localizedDescription)
+        } catch {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "Modifier-click could not prepare its event sequence before foreground setup.",
+                hint: "Inspect the runtime before retrying.",
+                causeDescription: error.localizedDescription)
+        }
+    }
+
+    private func requireReleasedInputActivity() throws -> SharedInputActivityToken {
+        let inputActivity = self.dependencies.sharedInputActivityToken()
+        guard !inputActivity.hasHeldInput else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Modifier-click requires every autorepeating key or held mouse button " +
+                    "to be released before focus.",
+                hint: "Release held input and retry from a fresh observation.")
+        }
+        return inputActivity
     }
 
     private func validateFinalPointerRoute(_ request: ForegroundModifierClickRequest) throws {
@@ -572,9 +636,7 @@ final class ForegroundModifierClickExecutor {
         guard focusedWindow == nil || focusedWindow?.identity.processIdentity == frontmostProcess else {
             return nil
         }
-        return TargetFocusObservation(
-            frontmostProcess: frontmostProcess,
-            focusedWindow: focusedWindow)
+        return TargetFocusObservation(frontmostProcess, focusedWindow)
     }
 
     private func restoreFocusIfOwned(
@@ -684,32 +746,94 @@ final class ForegroundModifierClickExecutor {
         guard current == targetWindow.identity.processIdentity else {
             return .preservedNewerState
         }
-        do {
-            let dispatchGuard = FocusDispatchGuard {
+        var activationAccepted = false
+        let dispatchGuard = FocusDispatchGuard(
+            requiresStrictDispatchOwnership: false,
+            validateOwnership: { _ in
                 guard self.dependencies.sharedInputActivityToken() == inputActivityToken else {
                     throw ForegroundModifierClickError.focusRestorationOwnershipLost
                 }
                 let dispatchCurrent = self.dependencies.currentFrontmostIdentity()
                 if dispatchCurrent == priorProcess {
+                    if activationAccepted {
+                        return
+                    }
                     throw ForegroundModifierClickError.focusRestorationBecameUnnecessary
                 }
                 guard dispatchCurrent == targetWindow.identity.processIdentity else {
                     throw ForegroundModifierClickError.focusRestorationOwnershipLost
                 }
-            }
-            guard try await self.dependencies.activate(priorProcess, dispatchGuard) else {
-                throw ForegroundModifierClickError.focusRestorationUnverified
+            },
+            acceptedDispatch: { stage in
+                if stage == .applicationActivation {
+                    activationAccepted = true
+                }
+            },
+            completeDispatch: { _ in
+                guard self.dependencies.sharedInputActivityToken() == inputActivityToken,
+                      self.dependencies.currentFrontmostIdentity() == priorProcess
+                else {
+                    throw ForegroundModifierClickError.focusRestorationOwnershipLost
+                }
+            })
+        do {
+            let verified = try await self.dependencies.activate(priorProcess, dispatchGuard)
+            guard verified else {
+                if dispatchGuard.acceptedApplicationActivationDispatch {
+                    sequence.record(.dispatched(route: .local, delivery: Self.nativeForeground, unitCount: .one))
+                    throw ForegroundModifierClickError.focusRestorationUnverified
+                }
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "Modifier-click focus restoration activation was rejected before dispatch.")
             }
         } catch ForegroundModifierClickError.focusRestorationBecameUnnecessary {
             return .notNeeded
         } catch ForegroundModifierClickError.focusRestorationOwnershipLost {
+            if dispatchGuard.acceptedApplicationActivationDispatch {
+                sequence.record(.dispatched(route: .local, delivery: Self.nativeForeground, unitCount: .one))
+                throw ForegroundModifierClickError.focusRestorationUnverified
+            }
             return .preservedNewerState
+        } catch is CancellationError where !dispatchGuard.acceptedApplicationActivationDispatch {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .requestCancelled,
+                message: "Modifier-click focus restoration was cancelled before activation dispatch.")
         }
         sequence.record(.dispatched(route: .local, delivery: Self.nativeForeground, unitCount: .one))
         guard self.dependencies.currentFrontmostIdentity() == priorProcess else {
             throw ForegroundModifierClickError.focusRestorationUnverified
         }
         return .restored
+    }
+
+    private func restoreFocusAcrossCancellationBoundary(
+        _ context: ModifierClickFocusRestorationContext) async -> ModifierClickFocusRestorationAttempt
+    {
+        // Accepted foreground work must be restored even when the requesting task was cancelled.
+        // This task is awaited while the caller continues to own the global desktop operation lane.
+        let restorationTask = Task { @MainActor in
+            var sequence = context.sequence
+            do {
+                let status = try await self.restoreFocusIfOwned(
+                    priorProcess: context.priorProcess,
+                    priorWindow: context.priorWindow,
+                    targetWindow: context.targetWindow,
+                    ownedTargetFocus: context.ownedTargetFocus,
+                    inputActivityToken: context.inputActivityToken,
+                    sequence: &sequence)
+                return ModifierClickFocusRestorationAttempt(
+                    status: status,
+                    error: nil,
+                    sequence: sequence)
+            } catch {
+                return ModifierClickFocusRestorationAttempt(
+                    status: nil,
+                    error: error,
+                    sequence: sequence)
+            }
+        }
+        return await restorationTask.value
     }
 
     private func currentFocusRestorationObservation() -> FocusRestorationObservation? {
@@ -734,6 +858,25 @@ final class ForegroundModifierClickExecutor {
             causeDescription: error.localizedDescription)
     }
 
+    private func acceptedActivationFailure(
+        _ error: any Error,
+        sequence: inout DesktopActionSequenceAccumulator) -> DesktopActionFailure
+    {
+        if let failure = error as? DesktopActionFailure,
+           failure.outcome.dispatchState.mutationDispatched
+        {
+            return failure
+        }
+        if sequence.mutationDisposition == .none {
+            sequence.record(.dispatched(route: .local, delivery: Self.nativeForeground, unitCount: .one))
+        }
+        return .preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "Modifier-click target activation was accepted but did not observably complete.",
+            hint: "Observe the shared desktop before deciding whether to retry.",
+            causeDescription: error.localizedDescription)
+    }
+
     private func restorationFailure(
         _ error: any Error,
         stepWasRecorded: Bool,
@@ -742,6 +885,12 @@ final class ForegroundModifierClickExecutor {
     {
         if let failure = error as? DesktopActionFailure {
             return failure
+        }
+        if error is CancellationError, !stepWasRecorded {
+            return .preDispatchRefusal(
+                reason: .requestCancelled,
+                message: message,
+                causeDescription: error.localizedDescription)
         }
         if stepWasRecorded {
             return .preDispatchRefusal(

@@ -667,6 +667,7 @@ struct ForegroundModifierClickExecutorTests {
             dependencies: .init(
                 focusExactWindow: { window, dispatchGuard in
                     try dispatchGuard.validate(.applicationActivation)
+                    try dispatchGuard.didAcceptDispatch(.applicationActivation)
                     frontmost = targetProcess
                     focusedWindow = intermediateWindow
                     try dispatchGuard.didCompleteDispatch(.applicationActivation)
