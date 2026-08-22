@@ -1014,6 +1014,7 @@ extension BackgroundInputDriver {
                 delivery: .init(mechanism: .accessibilityValue, mode: .background),
                 evidence: .deliveryAccepted)
         case .focus:
+            try Task.checkCancellation()
             try element.setAutomationFocused(true)
             return .dispatchedUnverified(
                 delivery: .init(mechanism: .accessibilityValue, mode: .background),

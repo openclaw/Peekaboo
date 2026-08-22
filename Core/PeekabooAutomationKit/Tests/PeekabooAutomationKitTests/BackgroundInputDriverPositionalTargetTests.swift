@@ -294,6 +294,24 @@ struct BackgroundInputDriverPositionalTargetTests {
 
     @Test
     @MainActor
+    func `cancelled pixel focus performs no AX focused write`() async throws {
+        let textField = PositionalMockElement(
+            role: "AXTextField",
+            frame: CGRect(x: 20, y: 30, width: 200, height: 80),
+            isFocusedSettable: true)
+        let operation = Task { @MainActor in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await BackgroundInputDriver.performPositionalClickAction(.focus, on: textField)
+        }
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await operation.value
+        }
+        #expect(textField.setFocusedValues.isEmpty)
+    }
+
+    @Test
+    @MainActor
     func `value settable web group does not masquerade as a focused click`() {
         // Chromium exposes full-page AXGroup containers as value/focus-settable. Setting focus on
         // that container returns success but delivers no click.
