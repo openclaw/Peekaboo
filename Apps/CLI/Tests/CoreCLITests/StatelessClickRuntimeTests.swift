@@ -153,4 +153,55 @@ struct StatelessClickRuntimeTests {
             buildScopedDaemonSocketPath: "/tmp/daemon-current.sock"
         ))
     }
+
+    @Test
+    func `pixel focus typing requires its exact host operation`() throws {
+        let runtimeOptions = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(
+                positional: ["hello"],
+                options: ["at": ["10,20"], "snapshot": ["snapshot"]],
+                flags: []
+            ),
+            commandType: TypeCommand.self
+        )
+        #expect(runtimeOptions.requiresExactWindowPixelFocusTyping)
+
+        let operation = PeekabooBridgeOperation.exactWindowPixelFocusType
+        let previous = BridgeTestFixtures.handshake(
+            negotiatedVersion: .init(major: 1, minor: 32),
+            supportedOperations: [operation],
+            enabledOperations: [operation]
+        )
+        let missing = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.composedInputParityVersion,
+            supportedOperations: [],
+            enabledOperations: []
+        )
+        let disabled = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.composedInputParityVersion,
+            supportedOperations: [operation],
+            enabledOperations: []
+        )
+        let capable = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.composedInputParityVersion,
+            supportedOperations: [operation],
+            enabledOperations: [operation]
+        )
+
+        #expect(!BridgeCapabilityPolicy.supportsExactWindowPixelFocusTyping(for: previous))
+        #expect(!BridgeCapabilityPolicy.supportsExactWindowPixelFocusTyping(for: missing))
+        #expect(!BridgeCapabilityPolicy.supportsExactWindowPixelFocusTyping(for: disabled))
+        #expect(BridgeCapabilityPolicy.supportsExactWindowPixelFocusTyping(for: capable))
+
+        var required = CommandRuntimeOptions()
+        required.requiresExactWindowPixelFocusTyping = true
+        #expect(!BridgeCapabilityPolicy.supportsRemoteRequirements(for: previous, options: required))
+        #expect(!BridgeCapabilityPolicy.supportsRemoteRequirements(for: missing, options: required))
+        #expect(BridgeCapabilityPolicy.supportsRemoteRequirements(for: capable, options: required))
+        #expect(RuntimeHostResolver.prefersExactBuildScopedHost(
+            options: required,
+            explicitSocket: nil,
+            buildScopedDaemonSocketPath: "/tmp/daemon-current.sock"
+        ))
+    }
 }

@@ -361,6 +361,8 @@ public struct ClickTool: MCPTool {
                 refusalReason: .targetUnavailable)
         } catch let failure as DesktopActionFailure {
             throw failure
+        } catch let cancellation as CancellationError {
+            throw cancellation
         } catch {
             throw DesktopActionFailure.indeterminate(
                 delivery: .init(mechanism: .composite, mode: .foreground),

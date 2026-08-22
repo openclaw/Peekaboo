@@ -364,6 +364,32 @@ struct MCPComposedInputParityTests {
     }
 
     @Test
+    func `raw prelease modifier click cancellation remains canonical cancellation`() async throws {
+        let fixture = await Self.makeFixture()
+        await MainActor.run {
+            fixture.automation.foregroundModifierClickError = CancellationError()
+        }
+        let operation = Task {
+            try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+                "coords": "600,300",
+                "snapshot": fixture.snapshotID,
+                "foreground": true,
+                "modifiers": ["cmd"],
+            ]))
+        }
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await operation.value
+        }
+        #expect(await MainActor.run { fixture.automation.foregroundModifierClickRequests.isEmpty })
+        let adapterLeaseCalls = await MainActor.run {
+            (fixture.snapshots.beginCalls, fixture.snapshots.finishCalls)
+        }
+        #expect(adapterLeaseCalls.0.isEmpty)
+        #expect(adapterLeaseCalls.1.isEmpty)
+    }
+
+    @Test
     func `pixel focus type rejects ambiguous authority before dispatch`() async throws {
         let fixture = await Self.makeFixture()
         let invalidArguments: [[String: Any]] = [
