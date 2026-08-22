@@ -475,14 +475,19 @@ final class ForegroundModifierClickExecutor {
     }
 
     private func validateFinalPointerRoute(_ request: ForegroundModifierClickRequest) throws {
+        guard let pointerRoute = self.dependencies.pointerRouteAtPoint(request.point) else {
+            throw ModifierClickPointerRouteLossFailure(failure: .preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Modifier-click point has no provable WindowServer route.",
+                hint: "Observe the exact target again before retrying."))
+        }
         guard self.dependencies.validateExactWindow(request.windowIdentity, request.windowBounds) else {
             throw ModifierClickPointerRouteLossFailure(failure: .preDispatchRefusal(
                 reason: .targetUnavailable,
                 message: "Modifier-click exact-window identity changed before event dispatch.",
                 hint: "Observe the exact target again before retrying."))
         }
-        guard let pointerRoute = self.dependencies.pointerRouteAtPoint(request.point),
-              pointerRoute.windowID == CGWindowID(request.windowIdentity.windowID),
+        guard pointerRoute.windowID == CGWindowID(request.windowIdentity.windowID),
               pointerRoute.processIdentifier == request.windowIdentity.ownerProcessIdentifier,
               pointerRoute.bounds == request.windowBounds
         else {

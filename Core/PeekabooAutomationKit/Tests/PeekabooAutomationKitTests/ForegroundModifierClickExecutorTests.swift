@@ -1134,9 +1134,13 @@ extension ForegroundModifierClickExecutorTests {
                 },
                 validateExactWindow: { _, _ in
                     validationState.count += 1
-                    return validationState.count < 3
+                    return validationState.identityIsCurrent
                 },
-                pointerRouteAtPoint: { _ in targetRoute }))
+                pointerRouteAtPoint: { _ in
+                    validationState.routeQueryCount += 1
+                    validationState.identityIsCurrent = false
+                    return targetRoute
+                }))
 
         do {
             _ = try await executor.execute(ForegroundModifierClickRequest(
@@ -1152,6 +1156,7 @@ extension ForegroundModifierClickExecutorTests {
             #expect(failure.outcome.dispatchState.unitCount == .one)
         }
         #expect(validationState.count == 3)
+        #expect(validationState.routeQueryCount == 1)
         #expect(!clickAttempted)
         #expect(!cleanupAttempted)
         #expect(frontmost == target)
@@ -2253,6 +2258,8 @@ private final class ModifierClickDispatchGuardState {
 
 private final class ModifierClickValidationCounter: @unchecked Sendable {
     var count = 0
+    var routeQueryCount = 0
+    var identityIsCurrent = true
 }
 
 enum SharedDesktopInterruption: CaseIterable, Sendable {
