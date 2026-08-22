@@ -1044,8 +1044,8 @@ export function makeControllerReceipts(fixture) {
         host: {
           process: structuredClone(fixture.contract.listener.host),
           bundle_identifier: 'boo.peekaboo.mac',
-          bundle_short_version: '4.2.2',
-          bundle_version: '1',
+          bundle_short_version: '4.2.3',
+          bundle_version: '4020399',
           source_commit: fixture.contract.listener.source_commit,
         },
         session: {

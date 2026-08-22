@@ -5,26 +5,38 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [4.2.3] - Unreleased
+## [4.2.3] - 2026-08-21
+
+### Highlights
+
+- **Credentials and provider authentication are safer.** Secure prompts, stdin, and owner-only files keep secrets out of process lists, with additional Gemini, OAuth, clipboard, and editor hardening.
+- **Window inspection explains the available observation route.** Per-window results distinguish combined Accessibility capture, screenshot-only recovery, and evidence that needs refreshing.
+- **Background automation is more capable and predictable.** Verified non-modal SwiftUI actions, exact-target isolation, and policy-filtered Agent and MCP tools avoid unsafe foreground interference.
+- **Everyday commands start faster and recover more clearly.** Deferred Agent startup, Bridge-bound capture, and actionable browser, help, locked-session, and window-close guidance reduce surprises.
+
+### Added
+- Report per-window `combined_eligible`, `pixels_only`, or `unknown` observation eligibility, including screenshot-only recovery.
 
 ### Changed
-- Skip provider discovery and Agent construction for caller-local commands that cannot invoke the Agent, reducing cold startup while preserving full Agent and MCP initialization.
+- Read `config credential set` and `config provider add` secrets from no-echo prompts, stdin, owner-only files, or non-secret references; retain deprecated argv compatibility.
+- Skip provider discovery and Agent construction for caller-local commands that cannot invoke the Agent.
 
 ### Fixed
-- Hide shared-pointer-only tools from background MCP and Agent catalogs, and keep CLI follow-up guidance explicit about foreground consent.
-- Let exact-window background mutations ignore unrelated incomplete application rows while still refusing ambiguous, incomplete, stale, or mismatched selected owners.
-- Give unknown commands a current-help recovery hint and remove source-checkout rebuild advice from installed help.
-- Return explicitly application-scoped, observation-only AX semantics for tree-only reads of exact pixel-only windows while withholding snapshot and mutation authority.
-- Use the canonical MCP mutation policy for Agent visual verification, including conditional browser and foreground menu actions.
-- Bind signed `set-value` results to the opaque requested element and refuse older Bridge hosts before dispatch.
-- Keep non-modal SwiftUI `AXDialog`-subrole windows eligible for exact background mutations while preserving modal, sheet, and file-dialog protections, and recognize `inspect_ui` as fresh Agent perception in recovery guidance.
-- Keep legacy Agent JSON tool-call arguments privacy-safe and deterministic instead of exposing Swift implementation details and runtime addresses.
-- Report `retry_safe: false` whenever an Agent trace cannot prove whether a mutation dispatched.
-- Replace arbitrary provider-authored Agent trace field names with deterministic ordinal placeholders at every argument nesting level.
-- Treat an exact missing-window readback after `window close` as confirmed closure instead of a retry-unsafe failure.
-- Explain that locked macOS GUI sessions cannot be captured even when `screen list` still reports connected displays.
-- Show global runtime flags once in generated leaf and nested command help while retaining root-level discovery.
-- Keep `learn`, policy-aware tool schemas, and default-subcommand parent help aligned with the actual public Agent and CLI surfaces.
+- Send Gemini API keys in request headers, require HTTPS OAuth endpoints, and redact OAuth state. Thanks Vincent Koc for #575 and Tachikoma #73.
+- Enforce a race-safe 10 MiB limit for clipboard and paste file payloads. Thanks @SebTardif for #561.
+- Prevent configured editors from injecting command-line options. Thanks @SebTardif for #562.
+- Keep Agent traces privacy-safe and deterministic, and mark unknown mutation dispatch as unsafe to retry.
+- Hide foreground-only pointer tools and unsupported input shapes from background Agent and MCP catalogs while preserving explicit CLI foreground consent.
+- Keep verified non-modal SwiftUI actions available, isolate exact targets from unrelated incomplete inventory, and recognize fresh `inspect_ui` observations.
+- Preserve process-scoped Accessibility evidence and expose safe read-only application-level tree context without mutation authority.
+- Bind MCP capture to its selected Bridge, keep classic capture request-local, and preserve precise refusal and recovery messages.
+- Bind `set-value` results to the exact requested element and refuse incompatible Bridge hosts before dispatch.
+- Treat confirmed window disappearance after `window close` as success.
+- Fail MCP `see` when element detection did not run while accepting genuine empty scans. Thanks @SebTardif for #563.
+- Require HTTP 200 responses when testing provider connectivity. Thanks @SebTardif for #560.
+- Explain why locked macOS sessions cannot be captured even when `screen list` still reports connected displays.
+- Restore terminal echo when credential prompts receive signals and reject background prompts or insecure credential files.
+- Deduplicate runtime flags and improve unknown-command, browser reconnect, help, `learn`, schema, and background-automation guidance.
 
 ## [4.2.2] - 2026-08-20
 

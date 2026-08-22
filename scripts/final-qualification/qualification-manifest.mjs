@@ -264,7 +264,7 @@ function semanticPeekabooArtifactManifest(filePath, label, expectedSourceCommit)
   requireCondition(Number.isSafeInteger(value.schema) && value.schema >= 6
     && value.phase === 'candidate_verified_not_installed'
     && value.source_commit === expectedSourceCommit
-    && value.version === '4.2.2'
+    && value.version === '4.2.3'
     && value.app?.source_commit === expectedSourceCommit
     && value.playground?.source_commit === expectedSourceCommit
     && SHA256.test(value.cli?.sha256 ?? '')

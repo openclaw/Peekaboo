@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -188,8 +189,9 @@ test('npm version availability accepts valid registry lists and rejects an alrea
 });
 
 test('repository release source surfaces remain internally consistent', () => {
+  const packageVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
   const versionResult = validateVersionConsistency(projectRoot);
-  assert.equal(versionResult.version, '4.2.2');
+  assert.equal(versionResult.version, packageVersion);
   assert.deepEqual(versionResult.failures, []);
   assert.deepEqual(validateSourceDocumentationContracts(projectRoot), []);
 });

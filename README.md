@@ -51,9 +51,9 @@ peekaboo see --app Finder --json
 
 That is the core loop: observe the current screen, choose an element from the result, and act on it.
 
-## What's new in 4.2.2
+## What's new in 4.2.3
 
-Peekaboo 4.2.2 adds exact-window background middle and triple clicks, restores editable TextEdit controls and minimized or off-Space targets, and makes Agent dry runs explain their requested and effective foreground authority. Keyboard, menu, window, and app actions refuse ambiguous targets, while bounded Accessibility work, Bridge handshake reuse, reliable SSH input, and explicitly signed deployment builds keep long-running automation predictable.
+Peekaboo 4.2.3 keeps credentials out of process lists with secure prompts, stdin, and owner-only files while hardening Gemini, OAuth, clipboard, and editor workflows. Window inventory now explains whether combined Accessibility capture, screenshot-only recovery, or refreshed evidence is available. Background automation supports verified non-modal SwiftUI windows, isolates exact targets, and exposes only policy-safe Agent and MCP tools. Faster caller-local startup, Bridge-bound capture, and clearer browser, help, locked-session, and window-close recovery make everyday automation more predictable.
 
 ## Automate an app
 
