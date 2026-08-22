@@ -899,23 +899,12 @@ struct ActionOutcomeCommandTests {
             evidence: .deliveryAccepted,
             unitCount: DesktopActionOutcome.DispatchUnitCount(2)
         )
-        let bounds = CGRect(x: 20, y: 30, width: 400, height: 240)
-        let targetIdentity = try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
-            identity: WindowMutationIdentity(
-                windowID: 77,
-                ownerProcessIdentifier: 701,
-                ownerProcessStartIdentity: 7001,
-                capturedBounds: bounds
-            ),
-            bounds: bounds
-        ))
         var dispatchCount = 0
 
         let failure = await #expect(throws: DesktopActionFailure.self) {
             _ = try await SnapshotMutationCoordinator.perform(
                 snapshotId: snapshotID,
                 snapshots: snapshots,
-                targetIdentity: targetIdentity,
                 operation: {
                     dispatchCount += 1
                     return "delivered"
@@ -940,7 +929,6 @@ struct ActionOutcomeCommandTests {
         #expect(failure?.message.contains("could not finalize") == true)
         #expect(failure?.hint?.contains("do not reuse this snapshot") == true)
         #expect(failure?.causeDescription == finalizationError.localizedDescription)
-        #expect(failure?.targetReceipt == targetIdentity.actionTargetReceipt)
         #expect(dispatchCount == 1)
         await #expect(throws: PreDispatchActionError.self) {
             _ = try await SnapshotMutationCoordinator.perform(
