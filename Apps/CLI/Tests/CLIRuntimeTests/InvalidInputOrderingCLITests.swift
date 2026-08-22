@@ -94,6 +94,14 @@ struct InvalidInputOrderingCLITests {
             hint: nil
         ),
         JSONCase(
+            arguments: [
+                "type", "alpha", "--at", "10,,20", "--snapshot", "snapshot-1", "--json",
+            ],
+            code: "VALIDATION_ERROR",
+            message: "Invalid coordinates format. Use: x,y",
+            hint: nil
+        ),
+        JSONCase(
             arguments: ["browser", "frobnicate", "--json"],
             code: "VALIDATION_ERROR",
             message: "Unsupported browser action 'frobnicate'",

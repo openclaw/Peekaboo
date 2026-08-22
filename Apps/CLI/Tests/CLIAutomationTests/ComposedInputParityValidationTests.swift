@@ -5,7 +5,9 @@ import Testing
 
 @Suite(.tags(.safe))
 struct ComposedInputParityValidationTests {
-    @Test(arguments: ["invalid", "10", "10,20,30", "nan,20", "10,inf"])
+    @Test(arguments: [
+        "invalid", "10", "10,20,30", "nan,20", "10,inf", ",10,20", "10,,20", "10,20,",
+    ])
     func `pixel focus type requires one finite coordinate pair`(_ point: String) throws {
         var command = try TypeCommand.parse([
             "hello", "--at", point, "--snapshot", "snap",

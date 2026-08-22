@@ -229,6 +229,12 @@ final class ForegroundModifierClickExecutor {
                 message: "Modifier-click could not capture the physical cursor for restoration.")
         }
         let initialInputActivityToken = self.dependencies.sharedInputActivityToken()
+        guard !initialInputActivityToken.hasHeldInput else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Modifier-click requires every autorepeating key or held mouse button to be released before focus.",
+                hint: "Release held input and retry from a fresh observation.")
+        }
         var sequence = DesktopActionSequenceAccumulator()
         var primaryFailure: (any Error)?
         var cleanupFailures: [(phase: String, failure: DesktopActionFailure)] = []

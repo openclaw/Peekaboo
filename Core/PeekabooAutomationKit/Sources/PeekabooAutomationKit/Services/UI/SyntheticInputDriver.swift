@@ -12,6 +12,7 @@ struct ExactWindowPointerTarget: Sendable {
 }
 
 struct SharedInputActivityToken: Equatable, Sendable {
+    private static let capsLockVirtualKeyCode: CGKeyCode = 0x39
     private let tracksActivity: Bool
     let moved: UInt32
     let leftDragged: UInt32
@@ -27,6 +28,13 @@ struct SharedInputActivityToken: Equatable, Sendable {
     let keyUp: UInt32
     let flagsChanged: UInt32
     let scrollWheel: UInt32
+    let heldKeysLow: UInt64
+    let heldKeysHigh: UInt64
+    let heldMouseButtons: UInt32
+
+    var hasHeldInput: Bool {
+        self.heldKeysLow != 0 || self.heldKeysHigh != 0 || self.heldMouseButtons != 0
+    }
 
     static let zero = Self(
         tracksActivity: false,
@@ -43,7 +51,10 @@ struct SharedInputActivityToken: Equatable, Sendable {
         keyDown: 0,
         keyUp: 0,
         flagsChanged: 0,
-        scrollWheel: 0)
+        scrollWheel: 0,
+        heldKeysLow: 0,
+        heldKeysHigh: 0,
+        heldMouseButtons: 0)
     static let trackedZero = Self(
         tracksActivity: true,
         moved: 0,
@@ -59,10 +70,22 @@ struct SharedInputActivityToken: Equatable, Sendable {
         keyDown: 0,
         keyUp: 0,
         flagsChanged: 0,
-        scrollWheel: 0)
+        scrollWheel: 0,
+        heldKeysLow: 0,
+        heldKeysHigh: 0,
+        heldMouseButtons: 0)
 
-    static func current() -> Self {
-        Self(
+    static func current(
+        keyStateProvider: (CGKeyCode) -> Bool = {
+            CGEventSource.keyState(.combinedSessionState, key: $0)
+        },
+        buttonStateProvider: (CGMouseButton) -> Bool = {
+            CGEventSource.buttonState(.combinedSessionState, button: $0)
+        }) -> Self
+    {
+        let heldKeys = self.heldKeyBitmap(keyStateProvider: keyStateProvider)
+        let heldMouseButtons = self.heldMouseButtonBitmap(buttonStateProvider: buttonStateProvider)
+        return Self(
             tracksActivity: true,
             moved: CGEventSource.counterForEventType(.combinedSessionState, eventType: .mouseMoved),
             leftDragged: CGEventSource.counterForEventType(.combinedSessionState, eventType: .leftMouseDragged),
@@ -77,7 +100,23 @@ struct SharedInputActivityToken: Equatable, Sendable {
             keyDown: CGEventSource.counterForEventType(.combinedSessionState, eventType: .keyDown),
             keyUp: CGEventSource.counterForEventType(.combinedSessionState, eventType: .keyUp),
             flagsChanged: CGEventSource.counterForEventType(.combinedSessionState, eventType: .flagsChanged),
-            scrollWheel: CGEventSource.counterForEventType(.combinedSessionState, eventType: .scrollWheel))
+            scrollWheel: CGEventSource.counterForEventType(.combinedSessionState, eventType: .scrollWheel),
+            heldKeysLow: heldKeys.low,
+            heldKeysHigh: heldKeys.high,
+            heldMouseButtons: heldMouseButtons)
+    }
+
+    func withHeldKey(_ key: CGKeyCode) -> Self {
+        guard key < 128 else { return self }
+        if key < 64 {
+            return self.with(heldKeysLow: self.heldKeysLow | (UInt64(1) << UInt64(key)))
+        }
+        return self.with(heldKeysHigh: self.heldKeysHigh | (UInt64(1) << UInt64(key - 64)))
+    }
+
+    func withHeldMouseButton(_ button: CGMouseButton) -> Self {
+        guard button.rawValue < 32 else { return self }
+        return self.with(heldMouseButtons: self.heldMouseButtons | (UInt32(1) << button.rawValue))
     }
 
     func afterModifierClick(_ clickType: ClickType) -> Self {
@@ -107,6 +146,11 @@ struct SharedInputActivityToken: Equatable, Sendable {
         return self.with(keyDown: self.keyDown &+ 1)
     }
 
+    func afterModifierFlagsChange() -> Self {
+        guard self.tracksActivity else { return self }
+        return self.with(flagsChanged: self.flagsChanged &+ 1)
+    }
+
     func afterScrollInput() -> Self {
         guard self.tracksActivity else { return self }
         return self.with(scrollWheel: self.scrollWheel &+ 1)
@@ -123,7 +167,10 @@ struct SharedInputActivityToken: Equatable, Sendable {
         keyDown: UInt32? = nil,
         keyUp: UInt32? = nil,
         flagsChanged: UInt32? = nil,
-        scrollWheel: UInt32? = nil) -> Self
+        scrollWheel: UInt32? = nil,
+        heldKeysLow: UInt64? = nil,
+        heldKeysHigh: UInt64? = nil,
+        heldMouseButtons: UInt32? = nil) -> Self
     {
         Self(
             tracksActivity: self.tracksActivity,
@@ -140,7 +187,43 @@ struct SharedInputActivityToken: Equatable, Sendable {
             keyDown: keyDown ?? self.keyDown,
             keyUp: keyUp ?? self.keyUp,
             flagsChanged: flagsChanged ?? self.flagsChanged,
-            scrollWheel: scrollWheel ?? self.scrollWheel)
+            scrollWheel: scrollWheel ?? self.scrollWheel,
+            heldKeysLow: heldKeysLow ?? self.heldKeysLow,
+            heldKeysHigh: heldKeysHigh ?? self.heldKeysHigh,
+            heldMouseButtons: heldMouseButtons ?? self.heldMouseButtons)
+    }
+
+    private static func heldKeyBitmap(
+        keyStateProvider: (CGKeyCode) -> Bool) -> (low: UInt64, high: UInt64)
+    {
+        var low: UInt64 = 0
+        var high: UInt64 = 0
+        // Caps Lock's key state is the persistent latch, not physical-down state. Exclude it from
+        // the held bitmap: it never autorepeats, while every down/up transition still changes the
+        // flagsChanged counter already bound into this token and therefore revokes ownership.
+        for key in CGKeyCode(0)..<CGKeyCode(128)
+            where key != self.capsLockVirtualKeyCode && keyStateProvider(key)
+        {
+            if key < 64 {
+                low |= UInt64(1) << UInt64(key)
+            } else {
+                high |= UInt64(1) << UInt64(key - 64)
+            }
+        }
+        return (low, high)
+    }
+
+    private static func heldMouseButtonBitmap(
+        buttonStateProvider: (CGMouseButton) -> Bool) -> UInt32
+    {
+        var bitmap: UInt32 = 0
+        // CGMouseButton is an extensible raw-value type on macOS: 3...31 represent auxiliary
+        // hardware buttons even though only left/right/center have named constants.
+        for rawValue in UInt32(0)..<UInt32(32) {
+            guard let button = CGMouseButton(rawValue: rawValue), buttonStateProvider(button) else { continue }
+            bitmap |= UInt32(1) << rawValue
+        }
+        return bitmap
     }
 }
 

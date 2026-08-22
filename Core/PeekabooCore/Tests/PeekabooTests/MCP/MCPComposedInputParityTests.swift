@@ -36,6 +36,20 @@ struct MCPComposedInputParityTests {
         #expect(metadata["target_window_id"] == .int(fixture.window.windowID))
     }
 
+    @Test(arguments: [",10,20", "10,,20", "10,20,", "nan,20", "10,inf"])
+    func `pixel focus type rejects malformed coordinate tuples before dispatch`(_ coords: String) async throws {
+        let fixture = await Self.makeFixture()
+        let response = try await TypeTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "coords": coords,
+            "snapshot": fixture.snapshotID,
+            "text": "hi",
+        ]))
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+        #expect(await MainActor.run { fixture.automation.pixelFocusTypeRequests.isEmpty })
+    }
+
     @Test
     func `pixel focus receipt planning preserves cancellation before dispatch or lease consumption`() async throws {
         let fixture = await Self.makeFixture()

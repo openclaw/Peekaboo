@@ -7,6 +7,39 @@ import Testing
 @MainActor
 struct ForegroundModifierClickExecutorTests {
     @Test
+    func `shared input token tracks held keys and buttons without persistent toggle flags`() {
+        let released = SharedInputActivityToken.current(
+            keyStateProvider: { _ in false },
+            buttonStateProvider: { _ in false })
+        let heldKey = SharedInputActivityToken.current(
+            keyStateProvider: { $0 == 4 },
+            buttonStateProvider: { _ in false })
+        let heldButton = SharedInputActivityToken.current(
+            keyStateProvider: { _ in false },
+            buttonStateProvider: { $0 == .left })
+        let capsLockEnabled = SharedInputActivityToken.current(
+            keyStateProvider: { $0 == 0x39 },
+            buttonStateProvider: { _ in false })
+        var queriedButtonValues: Set<UInt32> = []
+        let heldAuxiliaryButton = SharedInputActivityToken.current(
+            keyStateProvider: { _ in false },
+            buttonStateProvider: {
+                queriedButtonValues.insert($0.rawValue)
+                return $0.rawValue == 3
+            })
+
+        #expect(!released.hasHeldInput)
+        #expect(heldKey.hasHeldInput)
+        #expect(heldButton.hasHeldInput)
+        #expect(!capsLockEnabled.hasHeldInput)
+        #expect(capsLockEnabled.afterModifierFlagsChange() != capsLockEnabled)
+        #expect(heldAuxiliaryButton.hasHeldInput)
+        #expect(queriedButtonValues == Set(UInt32(0)..<UInt32(32)))
+        #expect(heldKey.afterMouseMove().hasHeldInput)
+        #expect(heldButton.afterModifierClick(.single).hasHeldInput)
+    }
+
+    @Test
     func `modifier click encodes flags only on a prebuilt mouse sequence`() throws {
         let priorFlags = CGEventSource.flagsState(.combinedSessionState)
         let events = try UIAutomationService.makeModifierClickEvents(
@@ -1375,8 +1408,10 @@ extension ForegroundModifierClickExecutorTests {
         #expect(focusedWindow == nil)
     }
 
-    @Test
-    func `shared input during target focus blocks click and all cleanup writes`() async throws {
+    @Test(arguments: FocusInputTransition.allCases)
+    func `input transition during target focus blocks click and all cleanup writes`(
+        _ transition: FocusInputTransition) async throws
+    {
         let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
         let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
         let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
@@ -1401,7 +1436,7 @@ extension ForegroundModifierClickExecutorTests {
                     try dispatchGuard()
                     frontmost = target
                     focusedWindow = window
-                    activity = activity.afterMouseMove()
+                    activity = transition.activity(after: activity)
                     return .confirmedChange(
                         delivery: .init(mechanism: .nativeFramework, mode: .foreground),
                         unitCount: .one)
@@ -1438,6 +1473,60 @@ extension ForegroundModifierClickExecutorTests {
         #expect(!focusCleanupAttempted)
         #expect(frontmost == target)
         #expect(focusedWindow == exactWindow)
+    }
+
+    @Test(arguments: HeldInputCase.allCases)
+    func `initial held key autorepeat or mouse button refuses before focus`(
+        _ heldInput: HeldInputCase) async throws
+    {
+        let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
+        let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let exactWindow = try UIAutomationTarget.ExactWindow(
+            identity: WindowMutationIdentity(
+                windowID: 7,
+                ownerProcessIdentifier: target.processIdentifier,
+                ownerProcessStartIdentity: target.processStartIdentity,
+                capturedBounds: bounds),
+            bounds: bounds)
+        let activity = heldInput.activity(after: .trackedZero)
+        var focusAttempted = false
+        var clickAttempted = false
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { _, _ in
+                    focusAttempted = true
+                    return .confirmedNoChange()
+                },
+                currentFrontmostIdentity: { prior },
+                currentFocusedExactWindow: { nil },
+                activate: { _, _ in false },
+                currentCursorLocation: { CGPoint(x: 10, y: 10) },
+                moveCursor: { _ in },
+                click: { _, _, _ in
+                    clickAttempted = true
+                    return .confirmedNoChange()
+                },
+                validateExactWindow: { _, _ in true },
+                sharedInputActivityToken: { activity }))
+
+        do {
+            _ = try await executor.execute(ForegroundModifierClickRequest(
+                point: CGPoint(x: 20, y: 20),
+                clickType: .single,
+                modifiers: [.command],
+                windowIdentity: exactWindow.identity,
+                windowBounds: bounds))
+            Issue.record("Expected held physical input to refuse before focus")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.dispatchState == .none)
+        }
+        #expect(!focusAttempted)
+        #expect(!clickAttempted)
     }
 
     @Test
@@ -2411,10 +2500,42 @@ enum ModifierClickPointerReceiverCase: CaseIterable, Sendable {
     case unavailable
 }
 
+enum HeldInputCase: CaseIterable, Sendable {
+    case keyAutorepeat
+    case mouseButton
+
+    func activity(after token: SharedInputActivityToken) -> SharedInputActivityToken {
+        switch self {
+        case .keyAutorepeat:
+            token.withHeldKey(4)
+        case .mouseButton:
+            token.withHeldMouseButton(.left)
+        }
+    }
+}
+
+enum FocusInputTransition: CaseIterable, Sendable {
+    case key
+    case mouseButton
+    case modifierFlags
+
+    func activity(after token: SharedInputActivityToken) -> SharedInputActivityToken {
+        switch self {
+        case .key:
+            token.withHeldKey(4)
+        case .mouseButton:
+            token.withHeldMouseButton(.left)
+        case .modifierFlags:
+            token.afterModifierFlagsChange()
+        }
+    }
+}
+
 enum SharedDesktopInterruption: CaseIterable, Sendable {
     case stationaryClick
     case keyboard
     case scroll
+    case modifierFlags
 
     func activity(after token: SharedInputActivityToken) -> SharedInputActivityToken {
         switch self {
@@ -2424,6 +2545,8 @@ enum SharedDesktopInterruption: CaseIterable, Sendable {
             token.afterKeyboardInput()
         case .scroll:
             token.afterScrollInput()
+        case .modifierFlags:
+            token.afterModifierFlagsChange()
         }
     }
 }

@@ -375,7 +375,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
     }
 
     private static func parsePoint(_ value: String) -> CGPoint? {
-        let components = value.split(separator: ",").map {
+        let components = value.split(separator: ",", omittingEmptySubsequences: false).map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         guard components.count == 2,

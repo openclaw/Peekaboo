@@ -418,12 +418,14 @@ public struct TypeTool: MCPTool {
                 "Pixel-focus typing requires its exact screenshot snapshot",
                 refusalReason: .targetUnavailable)
         }
-        let parts = rawCoordinates.split(separator: ",").map {
+        let parts = rawCoordinates.split(separator: ",", omittingEmptySubsequences: false).map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         guard parts.count == 2,
               let x = Double(parts[0]),
-              let y = Double(parts[1])
+              let y = Double(parts[1]),
+              x.isFinite,
+              y.isFinite
         else {
             throw TypeToolValidationError("Invalid coords. Use x,y, for example 100,200")
         }
