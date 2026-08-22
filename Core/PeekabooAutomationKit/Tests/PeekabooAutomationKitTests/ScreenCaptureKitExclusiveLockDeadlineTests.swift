@@ -31,13 +31,19 @@ struct ScreenCaptureKitExclusiveLockDeadlineTests {
         }
 
         var leafCalls = 0
+        var settleCalls = 0
+        let settle: @MainActor @Sendable () async -> Void = {
+            settleCalls += 1
+        }
         do {
-            _ = try await ScreenCaptureKitCaptureGate.withExclusiveCaptureOperation(
-                operationName: "exclusiveLockDeadline",
-                exclusiveWaitNanoseconds: 80_000_000)
-            {
-                leafCalls += 1
-                return 1
+            _ = try await ScreenCaptureKitCaptureGate.$postCaptureSettleOverride.withValue(settle) {
+                try await ScreenCaptureKitCaptureGate.withExclusiveCaptureOperation(
+                    operationName: "exclusiveLockDeadline",
+                    exclusiveWaitNanoseconds: 80_000_000)
+                {
+                    leafCalls += 1
+                    return 1
+                }
             }
             Issue.record("A live exclusive holder should time out the waiter")
         } catch let error as PeekabooError {
@@ -47,5 +53,6 @@ struct ScreenCaptureKitExclusiveLockDeadlineTests {
             Issue.record("Unexpected error: \(error)")
         }
         #expect(leafCalls == 0)
+        #expect(settleCalls == 0)
     }
 }
