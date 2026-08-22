@@ -383,6 +383,7 @@ public enum PeekabooBridgeHostCapability {
     public static let processGenerationObservation = "processGenerationObservation"
     public static let certificationProducerAttestation = "certificationProducerAttestation"
     public static let setValueResultTargetBinding = "setValueResultTargetBinding"
+    public static let foregroundModifierClickSnapshotLease = "foregroundModifierClickSnapshotLease"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {

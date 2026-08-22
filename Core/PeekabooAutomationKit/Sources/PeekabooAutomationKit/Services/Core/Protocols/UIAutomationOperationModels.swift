@@ -338,9 +338,19 @@ public enum SharedDesktopRestorationStatus: String, Sendable, Codable, Equatable
 }
 
 public struct ForegroundModifierClickRequest: Sendable, Codable {
+    private enum CodingKeys: String, CodingKey {
+        case point
+        case clickType
+        case modifiers
+        case snapshotID
+        case windowIdentity
+        case windowBounds
+    }
+
     public let point: CGPoint
     public let clickType: ClickType
     public let modifiers: [PointerModifier]
+    public let snapshotID: String
     public let windowIdentity: WindowMutationIdentity
     public let windowBounds: CGRect
 
@@ -348,14 +358,28 @@ public struct ForegroundModifierClickRequest: Sendable, Codable {
         point: CGPoint,
         clickType: ClickType,
         modifiers: [PointerModifier],
+        snapshotID: String,
         windowIdentity: WindowMutationIdentity,
         windowBounds: CGRect)
     {
         self.point = point
         self.clickType = clickType
         self.modifiers = modifiers
+        self.snapshotID = snapshotID
         self.windowIdentity = windowIdentity
         self.windowBounds = windowBounds
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.point = try container.decode(CGPoint.self, forKey: .point)
+        self.clickType = try container.decode(ClickType.self, forKey: .clickType)
+        self.modifiers = try container.decode([PointerModifier].self, forKey: .modifiers)
+        // Pre-fix protocol 1.33 clients omitted this field. Preserve wire decoding so the
+        // host leaf can refuse the empty authority before focus or input instead of dropping the response.
+        self.snapshotID = try container.decodeIfPresent(String.self, forKey: .snapshotID) ?? ""
+        self.windowIdentity = try container.decode(WindowMutationIdentity.self, forKey: .windowIdentity)
+        self.windowBounds = try container.decode(CGRect.self, forKey: .windowBounds)
     }
 }
 

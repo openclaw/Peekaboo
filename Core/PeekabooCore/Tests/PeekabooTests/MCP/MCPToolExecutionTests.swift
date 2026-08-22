@@ -1069,9 +1069,8 @@ TargetedTypeServiceProtocol, ExactWindowPixelFocusTypingServiceProtocol, Foregro
     var supportsExactWindowPixelFocusTyping = true
     var exactWindowPixelFocusTypingUnavailableReason: String?
     var supportsForegroundModifierClick = true
+    var supportsForegroundModifierClickSnapshotLease = true
     var foregroundModifierClickUnavailableReason: String?
-    var foregroundModifierClickLeaseProbe: (() async -> Bool)?
-    private(set) var foregroundModifierClickLeaseWasHeld: Bool?
     var foregroundModifierClickRefusalReason: DesktopActionOutcome.RefusalReason?
     var foregroundModifierClickError: (any Error)?
     private(set) var pixelFocusTypeRequests: [ExactWindowPixelFocusTypeRequest] = []
@@ -1196,9 +1195,6 @@ TargetedTypeServiceProtocol, ExactWindowPixelFocusTypingServiceProtocol, Foregro
         _ request: ForegroundModifierClickRequest) async throws
         -> UIAutomationActionResult<ForegroundModifierClickResult>
     {
-        if let foregroundModifierClickLeaseProbe {
-            self.foregroundModifierClickLeaseWasHeld = await foregroundModifierClickLeaseProbe()
-        }
         if let foregroundModifierClickError {
             throw foregroundModifierClickError
         }

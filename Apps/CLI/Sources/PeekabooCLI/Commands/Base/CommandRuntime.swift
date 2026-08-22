@@ -81,6 +81,8 @@ struct CommandRuntimeOptions {
     var requiresStatelessClickVariants = false
     /// Background middle/triple clicks additionally require exact-window targeted-click support.
     var requiresBackgroundStatelessClickVariants = false
+    /// Modifier-click must execute in the host that owns and leases its exact snapshot.
+    var requiresForegroundModifierClickSnapshotLease = false
     var requiresTargetedScroll = false
     var requiresPostEventPermission = false
     var requiresAccessibilityPermission = false

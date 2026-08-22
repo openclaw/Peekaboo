@@ -58,6 +58,7 @@ public actor PeekabooBridgeClient {
     var processGenerationObservationEnabled = false
     var certificationProducerAttestationEnabled = false
     var setValueResultTargetBindingEnabled = false
+    var foregroundModifierClickSnapshotLeaseEnabled = false
     var operationAttestation: PeekabooBridgeListenerAttestation?
     var latestVerifiedOperationReceipt: PeekabooBridgeOperationReceipt?
     var latestVerifiedOperationReceiptBundle: PeekabooBridgeOperationReceiptBundle?
@@ -448,6 +449,7 @@ public actor PeekabooBridgeClient {
         self.processGenerationObservationEnabled = false
         self.certificationProducerAttestationEnabled = false
         self.setValueResultTargetBindingEnabled = false
+        self.foregroundModifierClickSnapshotLeaseEnabled = false
     }
 
     /// Creates or joins one successor-session handshake using the most recent successful public inputs.
@@ -881,6 +883,8 @@ public actor PeekabooBridgeClient {
             processGenerationObservationEnabled: Self.supportsProcessGenerationObservation(handshake),
             certificationProducerAttestationEnabled: Self.supportsCertificationProducerAttestation(handshake),
             setValueResultTargetBindingEnabled: Self.supportsSetValueResultTargetBinding(handshake),
+            foregroundModifierClickSnapshotLeaseEnabled:
+            Self.supportsForegroundModifierClickSnapshotLease(handshake),
             listenerAttestation: listenerAttestation,
             listenerLiveIdentity: listenerLiveIdentity,
             sessionAttestation: sessionAttestation,
@@ -925,6 +929,16 @@ public actor PeekabooBridgeClient {
             handshake.hostCapabilities?.contains(
                 PeekabooBridgeHostCapability.setValueResultTargetBinding) == true &&
             handshake.supportedOperations.contains(.setValue)
+    }
+
+    private static func supportsForegroundModifierClickSnapshotLease(
+        _ handshake: PeekabooBridgeHandshakeResponse) -> Bool
+    {
+        handshake.negotiatedVersion >= PeekabooBridgeConstants.composedInputParityVersion &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.foregroundModifierClickSnapshotLease) == true &&
+            handshake.supportedOperations.contains(.foregroundModifierClick) &&
+            (handshake.enabledOperations?.contains(.foregroundModifierClick) ?? true)
     }
 
     private func installHandshakeCandidate(
@@ -973,6 +987,8 @@ public actor PeekabooBridgeClient {
         self.processGenerationObservationEnabled = candidate.processGenerationObservationEnabled
         self.certificationProducerAttestationEnabled = candidate.certificationProducerAttestationEnabled
         self.setValueResultTargetBindingEnabled = candidate.setValueResultTargetBindingEnabled
+        self.foregroundModifierClickSnapshotLeaseEnabled =
+            candidate.foregroundModifierClickSnapshotLeaseEnabled
         self.operationAttestation = candidate.listenerAttestation
         self.installReceiptlessAuthenticatedHost(candidate.receiptlessAuthenticatedHost)
         if let listenerAttestation = candidate.listenerAttestation,
@@ -1261,6 +1277,7 @@ private struct PeekabooBridgeClientHandshakeCandidate: Sendable {
     let processGenerationObservationEnabled: Bool
     let certificationProducerAttestationEnabled: Bool
     let setValueResultTargetBindingEnabled: Bool
+    let foregroundModifierClickSnapshotLeaseEnabled: Bool
     let listenerAttestation: PeekabooBridgeListenerAttestation?
     let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity?
     let sessionAttestation: PeekabooBridgeOperationSessionAttestation?

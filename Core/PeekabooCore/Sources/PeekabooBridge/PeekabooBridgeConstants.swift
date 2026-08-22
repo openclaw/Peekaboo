@@ -67,7 +67,7 @@ public enum PeekabooBridgeConstants {
     /// Current protocol version supported by this build.
     public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 33)
 
-    /// First protocol with host-atomic exact-window pixel-focus typing and foreground modifier clicks.
+    /// First protocol with host-atomic exact-window pixel-focus typing and modifier-click payloads.
     public static let composedInputParityVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 33)
 
     /// First protocol with a receipt-required, host-derived exact process-generation observation.

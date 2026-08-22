@@ -434,11 +434,18 @@ public protocol ExactWindowPixelFocusTypingServiceProtocol: UIAutomationServiceP
 @MainActor
 public protocol ForegroundModifierClickServiceProtocol: UIAutomationServiceProtocol {
     var supportsForegroundModifierClick: Bool { get }
+    var supportsForegroundModifierClickSnapshotLease: Bool { get }
     var foregroundModifierClickUnavailableReason: String? { get }
 
     func foregroundModifierClickWithOutcome(
         _ request: ForegroundModifierClickRequest) async throws
         -> UIAutomationActionResult<ForegroundModifierClickResult>
+}
+
+extension ForegroundModifierClickServiceProtocol {
+    public var supportsForegroundModifierClickSnapshotLease: Bool {
+        false
+    }
 }
 
 /// Atomically validates an exact background window's focused element and dispatches keyboard input.

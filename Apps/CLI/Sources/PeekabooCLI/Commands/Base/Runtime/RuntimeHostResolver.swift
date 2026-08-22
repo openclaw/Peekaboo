@@ -299,6 +299,7 @@ enum RuntimeHostResolver {
         if let explicitSocket,
            !options.permitsExplicitSocketDiagnosticFallback,
            options.requiresStatelessClickVariants ||
+           options.requiresForegroundModifierClickSnapshotLease ||
            self.requiredHostFailure(explicitSocket: explicitSocket, options: options) == nil {
             throw BridgeExplicitSocketUnavailableError(
                 socketPath: NSString(string: explicitSocket).standardizingPath
@@ -368,6 +369,10 @@ enum RuntimeHostResolver {
     }
 
     static func requiredHostFailure(explicitSocket: String?, options: CommandRuntimeOptions) -> String? {
+        if options.requiresForegroundModifierClickSnapshotLease {
+            return "No compatible Bridge host advertises host-leased foreground modifier-click. " +
+                "Update and relaunch Peekaboo, then observe the exact target again before retrying."
+        }
         if options.requiresStatelessClickVariants {
             if !options.requiresBackgroundStatelessClickVariants {
                 return "No compatible Bridge host negotiates protocol 1.30 middle/triple-click payloads. " +
@@ -587,7 +592,8 @@ enum RuntimeHostResolver {
             options.requiresInspectAccessibilityTree ||
             options.requiresBrowserMCP ||
             options.requiresImplicitSnapshotInvalidation ||
-            options.usesPerToolSnapshotInvalidation
+            options.usesPerToolSnapshotInvalidation ||
+            options.requiresForegroundModifierClickSnapshotLease
     }
 
     static func inputPolicyRequiresLocal(
@@ -767,10 +773,7 @@ enum RuntimeHostResolver {
             .exactWindowPixelFocusType,
             for: handshake
         )
-        let supportsForegroundModifierClick = BridgeCapabilityPolicy.supportsOperation(
-            .foregroundModifierClick,
-            for: handshake
-        )
+        let supportsForegroundModifierClick = BridgeCapabilityPolicy.supportsForegroundModifierClick(for: handshake)
         let observationCapabilities = BridgeCapabilityPolicy.observationCapabilities(
             for: handshake,
             options: options

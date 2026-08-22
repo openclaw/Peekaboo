@@ -901,11 +901,13 @@ extension PeekabooBridgeServer {
         -> PeekabooBridgeHandledResponse
     {
         guard let service = self.services.automation as? any ForegroundModifierClickServiceProtocol,
-              service.supportsForegroundModifierClick
+              service.supportsForegroundModifierClick,
+              service.supportsForegroundModifierClickSnapshotLease,
+              self.services.snapshots.supportsSnapshotMutationLeases
         else {
             throw PeekabooBridgeErrorEnvelope(
                 code: .operationNotSupported,
-                message: "Foreground modifier-click is not supported by this bridge host")
+                message: "Host-leased foreground modifier-click is not supported by this bridge host")
         }
         self.automationActivityObserver?(pid_t(payload.request.windowIdentity.ownerProcessIdentifier))
         let result = try await service.foregroundModifierClickWithOutcome(payload.request)

@@ -31,6 +31,7 @@ struct PeekabooBridgeClientTransportOutcomeTests {
                 point: CGPoint(x: 20, y: 20),
                 clickType: .single,
                 modifiers: [.command],
+                snapshotID: "snapshot",
                 windowIdentity: identity,
                 windowBounds: bounds))
         }

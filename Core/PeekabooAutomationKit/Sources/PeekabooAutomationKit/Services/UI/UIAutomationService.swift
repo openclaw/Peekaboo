@@ -60,6 +60,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
     public let supportsExactWindowFocusedElementFocus = true
     public let supportsExactWindowPixelFocusTyping = true
     public let supportsForegroundModifierClick = true
+    public let supportsForegroundModifierClickSnapshotLease = true
     public let exactWindowTargetedKeyboardUnavailableReason: String? = nil
     public let exactWindowPixelFocusTypingUnavailableReason: String? = nil
     public let foregroundModifierClickUnavailableReason: String? = nil

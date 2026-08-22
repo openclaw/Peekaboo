@@ -15,7 +15,9 @@ public final class SnapshotMutationRecordingManager: SnapshotManagerProtocol {
         }
     }
 
+    public private(set) var beginCalls: [String] = []
     public private(set) var finishCalls: [FinishCall] = []
+    public var failFinish = false
 
     private let wrapped: any SnapshotManagerProtocol
 
@@ -147,7 +149,8 @@ public final class SnapshotMutationRecordingManager: SnapshotManagerProtocol {
     }
 
     public func beginSnapshotMutation(snapshotId: String) async throws -> SnapshotMutationLease {
-        try await self.wrapped.beginSnapshotMutation(snapshotId: snapshotId)
+        self.beginCalls.append(snapshotId)
+        return try await self.wrapped.beginSnapshotMutation(snapshotId: snapshotId)
     }
 
     public func finishSnapshotMutation(
@@ -157,6 +160,9 @@ public final class SnapshotMutationRecordingManager: SnapshotManagerProtocol {
         self.finishCalls.append(FinishCall(
             lease: lease,
             requiresFreshObservation: requiresFreshObservation))
+        if self.failFinish {
+            throw SnapshotError.storageError("Injected snapshot mutation finalization failure")
+        }
         try await self.wrapped.finishSnapshotMutation(
             lease,
             requiresFreshObservation: requiresFreshObservation)

@@ -264,6 +264,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
             point: CGPoint(x: 40, y: 50),
             clickType: .single,
             modifiers: [.command, .shift],
+            snapshotID: "snapshot",
             windowIdentity: identity,
             windowBounds: bounds)))
         let modifierResult = ForegroundModifierClickResult(

@@ -15,7 +15,7 @@ UIAutomationGlobalPointerActionResultProviding {
                 self.foregroundModifierClickUnavailableReason ??
                     "Remote Bridge host does not support foreground modifier-click")
         }
-        return try await self.remoteAction(snapshotId: nil) {
+        return try await self.remoteAction(snapshotId: request.snapshotID) {
             try await self.client.foregroundModifierClickWithOutcome(request)
         }
     }

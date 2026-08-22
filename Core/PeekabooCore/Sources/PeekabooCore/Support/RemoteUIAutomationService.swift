@@ -38,6 +38,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public let supportsExactWindowPixelFocusTyping: Bool
     public let exactWindowPixelFocusTypingUnavailableReason: String?
     public let supportsForegroundModifierClick: Bool
+    public let supportsForegroundModifierClickSnapshotLease: Bool
     public let foregroundModifierClickUnavailableReason: String?
     public let supportsExactWindowHeldPointerLifecycle: Bool
 
@@ -91,6 +92,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         self.supportsExactWindowPixelFocusTyping = supportsExactWindowPixelFocusTyping
         self.exactWindowPixelFocusTypingUnavailableReason = exactWindowPixelFocusTypingUnavailableReason
         self.supportsForegroundModifierClick = supportsForegroundModifierClick
+        self.supportsForegroundModifierClickSnapshotLease = supportsForegroundModifierClick
         self.foregroundModifierClickUnavailableReason = foregroundModifierClickUnavailableReason
         self.supportsExactWindowHeldPointerLifecycle = supportsExactWindowHeldPointerLifecycle
     }

@@ -191,6 +191,16 @@ public final class PeekabooBridgeServer {
         } else {
             resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.certificationProducerAttestation)
         }
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.composedInputParityVersion,
+           self.allowedOperations.contains(.foregroundModifierClick),
+           services.snapshots.supportsSnapshotMutationLeases,
+           (services.automation as? any ForegroundModifierClickServiceProtocol)?
+               .supportsForegroundModifierClickSnapshotLease == true
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.foregroundModifierClickSnapshotLease)
+        } else {
+            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.foregroundModifierClickSnapshotLease)
+        }
         if self.allowedOperations.contains(.launchApplicationWithOptions),
            services.applications.supportsSafeBackgroundApplicationLaunchNoOp
         {

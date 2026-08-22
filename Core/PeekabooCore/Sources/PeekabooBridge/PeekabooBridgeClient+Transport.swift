@@ -195,6 +195,15 @@ extension PeekabooBridgeClient {
     }
 
     private func requireNegotiatedInputCapabilities(for request: PeekabooBridgeRequest) throws {
+        if request.unwrappedOperationRequest.operation == .foregroundModifierClick,
+           !self.foregroundModifierClickSnapshotLeaseEnabled
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "This Bridge host cannot lease modifier-click snapshots at the execution leaf.",
+                hint: "Update and relaunch Peekaboo before retrying modifier-click.")
+        }
         if request.unwrappedOperationRequest.operation == .setValue,
            !self.setValueResultTargetBindingEnabled
         {

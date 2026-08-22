@@ -792,27 +792,21 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             throw ValidationError("Modifier-click point is outside the captured exact window")
         }
         guard let service = self.services.automation as? any ForegroundModifierClickServiceProtocol,
-              service.supportsForegroundModifierClick
+              service.supportsForegroundModifierClick,
+              service.supportsForegroundModifierClickSnapshotLease
         else {
-            throw ValidationError("This automation host does not support foreground modifier-click")
+            throw ValidationError("This automation host does not support host-leased foreground modifier-click")
         }
-        let result = try await SnapshotMutationCoordinator.perform(
-            snapshotId: snapshotId,
-            snapshots: self.services.snapshots,
-            targetIdentity: DesktopTargetIdentity(exactWindow: authority.target),
-            operation: {
-                self.resolvedRuntime.beginInteractionMutation()
-                return try await service.foregroundModifierClickWithOutcome(
-                    ForegroundModifierClickRequest(
-                        point: point,
-                        clickType: self.requestedClickType,
-                        modifiers: canonicalModifiers,
-                        windowIdentity: authority.target.identity,
-                        windowBounds: authority.target.bounds
-                    )
-                )
-            },
-            outcome: { $0.outcome }
+        self.resolvedRuntime.beginInteractionMutation()
+        let result = try await service.foregroundModifierClickWithOutcome(
+            ForegroundModifierClickRequest(
+                point: point,
+                clickType: self.requestedClickType,
+                modifiers: canonicalModifiers,
+                snapshotID: snapshotId,
+                windowIdentity: authority.target.identity,
+                windowBounds: authority.target.bounds
+            )
         )
         _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
             result,

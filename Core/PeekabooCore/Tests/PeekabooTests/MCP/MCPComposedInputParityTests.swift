@@ -112,16 +112,6 @@ struct MCPComposedInputParityTests {
     @Test
     func `modifier click refuses background then projects truthful foreground restoration`() async throws {
         let fixture = await Self.makeFixture()
-        await MainActor.run {
-            fixture.automation.foregroundModifierClickLeaseProbe = {
-                do {
-                    _ = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
-                    return false
-                } catch {
-                    return true
-                }
-            }
-        }
         let refused = try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
             "coords": "600,300",
             "snapshot": fixture.snapshotID,
@@ -156,82 +146,22 @@ struct MCPComposedInputParityTests {
         let request = try #require(await MainActor.run { fixture.automation.foregroundModifierClickRequests.first })
         #expect(request.point == CGPoint(x: 600, y: 300))
         #expect(request.modifiers == [.command, .shift])
+        #expect(request.snapshotID == fixture.snapshotID)
         #expect(request.windowIdentity == fixture.window.mutationIdentity)
         let metadata = try #require(response.meta?.objectValue)
         #expect(metadata["delivery_mode"] == .string("foreground"))
         #expect(metadata["cursor_restoration"] == .string("restored"))
         #expect(metadata["focus_restoration"] == .string("preserved_newer_state"))
         #expect(metadata["modifiers"] == .array([.string("command"), .string("shift")]))
-        #expect(await MainActor.run { fixture.automation.foregroundModifierClickLeaseWasHeld } == true)
-    }
-
-    @Test
-    func `modifier click preserves non stale lease acquisition failures`() async throws {
-        let fixture = await Self.makeFixture()
-        try await fixture.snapshots.cleanSnapshot(snapshotId: fixture.snapshotID)
-
-        let response = try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
-            "coords": "600,300",
-            "snapshot": fixture.snapshotID,
-            "foreground": true,
-            "modifiers": ["cmd"],
-        ]))
-
-        #expect(response.isError)
-        guard case let .text(message, _, _)? = response.content.first else {
-            Issue.record("Expected a text error response")
-            return
+        let adapterLeaseCalls = await MainActor.run {
+            (fixture.snapshots.beginCalls, fixture.snapshots.finishCalls)
         }
-        #expect(message.contains("Snapshot not found or expired"))
-        #expect(!message.contains("snapshot is stale"))
-        #expect(await MainActor.run { fixture.automation.foregroundModifierClickRequests.isEmpty })
+        #expect(adapterLeaseCalls.0.isEmpty)
+        #expect(adapterLeaseCalls.1.isEmpty)
     }
 
     @Test
-    func `modifier click binds leased automation authority to its tool snapshot`() async throws {
-        let fixture = await Self.makeFixture(automationWindowID: 43)
-
-        let response = try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
-            "coords": "600,300",
-            "snapshot": fixture.snapshotID,
-            "foreground": true,
-            "modifiers": ["cmd"],
-        ]))
-
-        #expect(response.isError)
-        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
-        #expect(await MainActor.run { fixture.automation.foregroundModifierClickRequests.isEmpty })
-        let subsequentLease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
-        try await fixture.snapshots.finishSnapshotMutation(
-            subsequentLease,
-            requiresFreshObservation: false)
-    }
-
-    @Test
-    func `modifier click authority replan preserves canonical cancellation and releases its lease`() async throws {
-        let fixture = await Self.makeFixture()
-        let operation = Task {
-            withUnsafeCurrentTask { $0?.cancel() }
-            return try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
-                "coords": "600,300",
-                "snapshot": fixture.snapshotID,
-                "foreground": true,
-                "modifiers": ["cmd"],
-            ]))
-        }
-
-        await #expect(throws: CancellationError.self) {
-            _ = try await operation.value
-        }
-        #expect(await MainActor.run { fixture.automation.foregroundModifierClickRequests.isEmpty })
-        let subsequentLease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
-        try await fixture.snapshots.finishSnapshotMutation(
-            subsequentLease,
-            requiresFreshObservation: false)
-    }
-
-    @Test
-    func `rejected modifier click result releases its snapshot lease`() async throws {
+    func `modifier click adapter forwards typed refusal without owning the host lease`() async throws {
         let fixture = await Self.makeFixture()
         await MainActor.run {
             fixture.automation.foregroundModifierClickRefusalReason = .targetUnavailable
@@ -245,6 +175,11 @@ struct MCPComposedInputParityTests {
         ]))
 
         #expect(response.isError)
+        let adapterLeaseCalls = await MainActor.run {
+            (fixture.snapshots.beginCalls, fixture.snapshots.finishCalls)
+        }
+        #expect(adapterLeaseCalls.0.isEmpty)
+        #expect(adapterLeaseCalls.1.isEmpty)
         let subsequentLease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
         try await fixture.snapshots.finishSnapshotMutation(
             subsequentLease,
@@ -252,7 +187,31 @@ struct MCPComposedInputParityTests {
     }
 
     @Test
-    func `prelane modifier click cancellation releases snapshot lease`() async throws {
+    func `modifier click adapter refuses a service without host leaf leasing`() async throws {
+        let fixture = await Self.makeFixture()
+        await MainActor.run {
+            fixture.automation.supportsForegroundModifierClickSnapshotLease = false
+        }
+
+        let response = try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "coords": "600,300",
+            "snapshot": fixture.snapshotID,
+            "foreground": true,
+            "modifiers": ["cmd"],
+        ]))
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+        #expect(await MainActor.run { fixture.automation.foregroundModifierClickRequests.isEmpty })
+        let adapterLeaseCalls = await MainActor.run {
+            (fixture.snapshots.beginCalls, fixture.snapshots.finishCalls)
+        }
+        #expect(adapterLeaseCalls.0.isEmpty)
+        #expect(adapterLeaseCalls.1.isEmpty)
+    }
+
+    @Test
+    func `modifier click adapter preserves prelane cancellation without a client lease`() async throws {
         let fixture = await Self.makeFixture()
         await MainActor.run {
             fixture.automation.foregroundModifierClickError = DesktopActionFailure.preDispatchRefusal(
@@ -269,6 +228,11 @@ struct MCPComposedInputParityTests {
 
         #expect(response.isError)
         #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+        let adapterLeaseCalls = await MainActor.run {
+            (fixture.snapshots.beginCalls, fixture.snapshots.finishCalls)
+        }
+        #expect(adapterLeaseCalls.0.isEmpty)
+        #expect(adapterLeaseCalls.1.isEmpty)
         let lease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
         try await fixture.snapshots.finishSnapshotMutation(lease, requiresFreshObservation: false)
     }
@@ -315,7 +279,7 @@ struct MCPComposedInputParityTests {
     }
 
     @Test
-    func `postdispatch modifier click cancellation keeps snapshot replay blocked`() async throws {
+    func `modifier click adapter preserves postdispatch failure without owning the host lease`() async throws {
         let fixture = await Self.makeFixture()
         await MainActor.run {
             fixture.automation.foregroundModifierClickError = DesktopActionFailure.indeterminate(
@@ -334,13 +298,17 @@ struct MCPComposedInputParityTests {
 
         #expect(response.isError)
         #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(true))
-        await #expect(throws: (any Error).self) {
-            _ = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        let adapterLeaseCalls = await MainActor.run {
+            (fixture.snapshots.beginCalls, fixture.snapshots.finishCalls)
         }
+        #expect(adapterLeaseCalls.0.isEmpty)
+        #expect(adapterLeaseCalls.1.isEmpty)
+        let hostLease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        try await fixture.snapshots.finishSnapshotMutation(hostLease, requiresFreshObservation: false)
     }
 
     @Test
-    func `typed receipt refusal releases modifier click snapshot lease`() async throws {
+    func `modifier click adapter preserves typed receipt refusal without a client lease`() async throws {
         let fixture = await Self.makeFixture()
         await MainActor.run {
             fixture.automation.foregroundModifierClickError = SnapshotTargetReceiptPreDispatchError(
@@ -355,6 +323,11 @@ struct MCPComposedInputParityTests {
         ]))
 
         #expect(response.isError)
+        let adapterLeaseCalls = await MainActor.run {
+            (fixture.snapshots.beginCalls, fixture.snapshots.finishCalls)
+        }
+        #expect(adapterLeaseCalls.0.isEmpty)
+        #expect(adapterLeaseCalls.1.isEmpty)
         let subsequentLease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
         try await fixture.snapshots.finishSnapshotMutation(
             subsequentLease,
@@ -362,7 +335,7 @@ struct MCPComposedInputParityTests {
     }
 
     @Test
-    func `unknown modifier click failure finalizes snapshot as retry unsafe`() async throws {
+    func `unknown modifier click failure is retry unsafe without a client lease`() async throws {
         let fixture = await Self.makeFixture()
         await MainActor.run {
             fixture.automation.foregroundModifierClickError = MCPComposedInputTestError.unknownServiceFailure
@@ -381,14 +354,13 @@ struct MCPComposedInputParityTests {
         #expect(metadata["mutation_dispatched"] == .bool(true))
         #expect(metadata["retry_safe"] == .bool(false))
         #expect(metadata["requires_fresh_observation"] == .bool(true))
-        let finishCalls = await MainActor.run { fixture.snapshots.finishCalls }
-        #expect(finishCalls.count == 1)
-        let finishCall = try #require(finishCalls.first)
-        #expect(finishCall.lease.snapshotId == fixture.snapshotID)
-        #expect(finishCall.requiresFreshObservation)
-        await #expect(throws: (any Error).self) {
-            _ = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        let adapterLeaseCalls = await MainActor.run {
+            (fixture.snapshots.beginCalls, fixture.snapshots.finishCalls)
         }
+        #expect(adapterLeaseCalls.0.isEmpty)
+        #expect(adapterLeaseCalls.1.isEmpty)
+        let hostLease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        try await fixture.snapshots.finishSnapshotMutation(hostLease, requiresFreshObservation: false)
     }
 
     @Test
@@ -436,7 +408,6 @@ struct MCPComposedInputParityTests {
     }
 
     private static func makeFixture(
-        automationWindowID: Int? = nil,
         automation providedAutomation: MockAutomationService? = nil,
         focusedElement: FocusedElementIdentity? = nil) async
         -> (
@@ -471,22 +442,9 @@ struct MCPComposedInputParityTests {
         let automation = await MainActor.run {
             providedAutomation ?? MockAutomationService(accessibilityGranted: true)
         }
-        let automationDetectionResult: ElementDetectionResult = if let automationWindowID {
-            AutomationTestFixtures.linkedSnapshotTarget(
-                snapshotID: fixture.snapshotID,
-                processIdentity: .init(processIdentifier: 111, processStartIdentity: 7),
-                bundleIdentifier: "com.example.composed-input",
-                applicationName: "ComposedInput",
-                windowID: automationWindowID,
-                windowTitle: "Composed Input Window",
-                bounds: window.bounds,
-                focusedElement: focusedElement).detectionResult
-        } else {
-            fixture.detectionResult
-        }
         let snapshots = await MainActor.run {
             SnapshotMutationRecordingManager(wrapping: InMemorySnapshotManager(
-                detectionResult: automationDetectionResult))
+                detectionResult: fixture.detectionResult))
         }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,

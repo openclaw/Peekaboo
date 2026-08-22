@@ -58,6 +58,137 @@ extension UIAutomationService {
         _ request: ForegroundModifierClickRequest) async throws
         -> UIAutomationActionResult<ForegroundModifierClickResult>
     {
+        try await self.withModifierClickSnapshotLease(request) {
+            try await self.executeForegroundModifierClickWithOutcome(request)
+        }
+    }
+
+    func withModifierClickSnapshotLease(
+        _ request: ForegroundModifierClickRequest,
+        operation: @MainActor () async throws -> UIAutomationActionResult<ForegroundModifierClickResult>) async throws
+        -> UIAutomationActionResult<ForegroundModifierClickResult>
+    {
+        let exactWindow = try UIAutomationTarget.ExactWindow(
+            identity: request.windowIdentity,
+            bounds: request.windowBounds)
+        let targetIdentity = DesktopTargetIdentity(exactWindow: exactWindow)
+        let snapshotID = request.snapshotID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !snapshotID.isEmpty, snapshotID == request.snapshotID else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "Modifier-click requires one explicit screenshot snapshot identifier.")
+                .attributed(to: targetIdentity.actionTargetReceipt)
+        }
+
+        let lease: SnapshotMutationLease
+        do {
+            lease = try await self.snapshotManager.beginSnapshotMutation(snapshotId: snapshotID)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Modifier-click could not lease its screenshot snapshot.",
+                hint: "Observe the exact target again before retrying.",
+                causeDescription: error.localizedDescription)
+                .attributed(to: targetIdentity.actionTargetReceipt)
+        }
+
+        do {
+            let authority = try await SnapshotTargetReceiptPlanner(
+                snapshots: self.snapshotManager).plan(snapshotID: snapshotID).receipt.requireCoordinateAuthority()
+            guard authority.target == exactWindow,
+                  authority.sourceBounds.contains(request.point),
+                  authority.target.bounds.contains(request.point)
+            else {
+                throw DesktopTargetIdentityError.coordinateWindowMismatch
+            }
+        } catch let cancellation as CancellationError {
+            try await self.requireModifierClickLeaseFinalization(
+                lease,
+                requiresFreshObservation: false,
+                targetIdentity: targetIdentity,
+                priorError: cancellation)
+            throw cancellation
+        } catch {
+            try await self.requireModifierClickLeaseFinalization(
+                lease,
+                requiresFreshObservation: false,
+                targetIdentity: targetIdentity,
+                priorError: error)
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Modifier-click snapshot does not authorize its exact window and point.",
+                hint: "Observe the exact target again before retrying.",
+                causeDescription: error.localizedDescription)
+                .attributed(to: targetIdentity.actionTargetReceipt)
+        }
+
+        let result: UIAutomationActionResult<ForegroundModifierClickResult>
+        do {
+            result = try await operation()
+        } catch let failure as DesktopActionFailure {
+            try await self.requireModifierClickLeaseFinalization(
+                lease,
+                requiresFreshObservation: failure.outcome.projection.requiresFreshObservation,
+                targetIdentity: targetIdentity,
+                outcome: failure.outcome,
+                priorError: failure)
+            throw failure
+        } catch {
+            try await self.requireModifierClickLeaseFinalization(
+                lease,
+                requiresFreshObservation: true,
+                targetIdentity: targetIdentity,
+                priorError: error)
+            throw DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .composite, mode: .foreground),
+                evidence: .completionUnknown,
+                message: "Modifier-click failed without a canonical action outcome.",
+                hint: "Observe the exact target before any retry and do not reuse this snapshot.",
+                causeDescription: error.localizedDescription)
+                .attributed(to: targetIdentity.actionTargetReceipt)
+        }
+
+        try await self.requireModifierClickLeaseFinalization(
+            lease,
+            requiresFreshObservation: result.outcome?.projection.requiresFreshObservation ?? true,
+            targetIdentity: targetIdentity,
+            outcome: result.outcome)
+        return result
+    }
+
+    private func requireModifierClickLeaseFinalization(
+        _ lease: SnapshotMutationLease,
+        requiresFreshObservation: Bool,
+        targetIdentity: DesktopTargetIdentity,
+        outcome: DesktopActionOutcome? = nil,
+        priorError: (any Error)? = nil) async throws
+    {
+        do {
+            try await self.snapshotManager.finishSnapshotMutation(
+                lease,
+                requiresFreshObservation: requiresFreshObservation)
+        } catch {
+            let causeDescription = [priorError?.localizedDescription, error.localizedDescription]
+                .compactMap(\.self)
+                .joined(separator: "; lease finalization: ")
+            throw DesktopActionFailure.indeterminate(
+                route: outcome?.route ?? .local,
+                delivery: outcome?.delivery,
+                evidence: .completionUnknown,
+                unitCount: outcome?.dispatchState.unitCount,
+                message: "Modifier-click ended, but its snapshot mutation lease could not be finalized.",
+                hint: "Observe the target before any retry and do not reuse this snapshot.",
+                causeDescription: causeDescription)
+                .attributed(to: targetIdentity.actionTargetReceipt)
+        }
+    }
+
+    private func executeForegroundModifierClickWithOutcome(
+        _ request: ForegroundModifierClickRequest) async throws
+        -> UIAutomationActionResult<ForegroundModifierClickResult>
+    {
         let focusService = FocusManagementService(operationLaneCoordinator: self.operationLaneCoordinator)
         let executor = ForegroundModifierClickExecutor(
             laneCoordinator: self.operationLaneCoordinator,
