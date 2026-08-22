@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Report per-window `combined_eligible`, `pixels_only`, or `unknown` observation eligibility, including screenshot-only recovery.
 
 ### Changed
-- Read `config credential set` and `config provider add` secrets from no-echo prompts, stdin, owner-only files, or non-secret references; retain deprecated argv compatibility.
+- Read `config credential set` secrets from no-echo prompts, stdin, or owner-only files; let `config provider add` also accept non-secret references; retain deprecated argv compatibility.
 - Skip provider discovery and Agent construction for caller-local commands that cannot invoke the Agent.
 
 ### Fixed

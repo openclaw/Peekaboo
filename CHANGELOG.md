@@ -14,7 +14,7 @@
 - Add an embedding-only Bridge protocol 1.32 API for signed, process-generation-bound observation.
 
 ### Changed
-- Read `config credential set` and `config provider add` secrets from no-echo prompts, stdin, owner-only files, or non-secret references; retain deprecated argv compatibility.
+- Read `config credential set` secrets from no-echo prompts, stdin, or owner-only files; let `config provider add` also accept non-secret references; retain deprecated argv compatibility.
 - Skip provider discovery and Agent construction for caller-local commands that cannot invoke the Agent.
 
 ### Fixed
