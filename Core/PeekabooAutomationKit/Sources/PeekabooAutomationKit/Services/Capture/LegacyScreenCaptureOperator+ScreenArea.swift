@@ -35,9 +35,9 @@ extension LegacyScreenCaptureOperator {
             screenBackingScaleFactor: targetScreen.backingScaleFactor,
             fallbackPixelWidth: Int(screenBounds.width * targetScreen.backingScaleFactor),
             frameWidth: screenBounds.width)
-        let image: CGImage
+        let raster: LegacyCapturedRaster
         do {
-            image = try await self.captureScreenWithSystemScreencapture(
+            raster = try await self.captureScreenWithSystemScreencapture(
                 screen: targetScreen,
                 correlationId: correlationId)
         } catch {
@@ -48,6 +48,7 @@ extension LegacyScreenCaptureOperator {
             throw error
         }
 
+        let image = raster.image
         let scaledImage = ScreenCaptureImageScaler.maybeDownscale(
             image,
             scale: scale,
@@ -55,7 +56,7 @@ extension LegacyScreenCaptureOperator {
 
         let imageData: Data
         do {
-            imageData = try scaledImage.pngData()
+            imageData = try raster.pngData(for: scaledImage)
         } catch {
             throw OperationError.captureFailed(reason: "Failed to convert image to PNG format")
         }
@@ -103,14 +104,15 @@ extension LegacyScreenCaptureOperator {
             displayID: display.id,
             fallbackPixelWidth: CGDisplayPixelsWide(display.id),
             frameWidth: display.bounds.width)
-        let image = try await self.captureAreaWithSystemScreencapture(
+        let raster = try await self.captureAreaWithSystemScreencapture(
             rect,
             correlationId: correlationId)
+        let image = raster.image
         let scaledImage = ScreenCaptureImageScaler.maybeDownscale(
             image,
             scale: scale,
             fallbackScale: scalePlan.nativeScale)
-        let imageData = try scaledImage.pngData()
+        let imageData = try raster.pngData(for: scaledImage)
         let metadata = CaptureMetadata(
             size: CGSize(width: scaledImage.width, height: scaledImage.height),
             mode: .area,

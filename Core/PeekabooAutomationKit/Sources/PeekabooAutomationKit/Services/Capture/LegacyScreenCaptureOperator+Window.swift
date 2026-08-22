@@ -73,10 +73,11 @@ extension LegacyScreenCaptureOperator {
             ],
             correlationId: correlationId)
 
-        let image = try await self.captureWindowImage(
+        let raster = try await self.captureWindowImage(
             windowID: windowID,
             correlationId: correlationId,
             scale: scale)
+        let image = raster.image
         let mutationIdentity: WindowMutationIdentity? = mutationSnapshot.flatMap { snapshot in
             guard snapshot.ownerProcessStartIdentity == app.processStartIdentity else { return nil }
             return Self.validatedMutationIdentity(snapshot)
@@ -97,7 +98,7 @@ extension LegacyScreenCaptureOperator {
             scale: scale,
             fallbackScale: scalePlan.nativeScale)
         do {
-            imageData = try scaledImage.pngData()
+            imageData = try raster.pngData(for: scaledImage)
         } catch {
             throw OperationError.captureFailed(reason: "Failed to convert image to PNG format")
         }
@@ -184,10 +185,11 @@ extension LegacyScreenCaptureOperator {
             ],
             correlationId: correlationId)
 
-        let image = try await self.captureWindowImage(
+        let raster = try await self.captureWindowImage(
             windowID: windowID,
             correlationId: correlationId,
             scale: scale)
+        let image = raster.image
         let mutationIdentity = mutationSnapshot.flatMap(Self.validatedMutationIdentity)
 
         let bounds = Self.windowBounds(from: targetWindow, fallbackImage: image)
@@ -198,7 +200,7 @@ extension LegacyScreenCaptureOperator {
             scale: scale,
             fallbackScale: scalePlan.nativeScale)
         do {
-            imageData = try scaledImage.pngData()
+            imageData = try raster.pngData(for: scaledImage)
         } catch {
             throw OperationError.captureFailed(reason: "Failed to convert image to PNG format")
         }
@@ -286,9 +288,9 @@ extension LegacyScreenCaptureOperator {
     private func captureWindowImage(
         windowID: CGWindowID,
         correlationId: String,
-        scale: CaptureScalePreference) async throws -> CGImage
+        scale: CaptureScalePreference) async throws -> LegacyCapturedRaster
     {
-        let image = try await self.captureWindowWithCGWindowList(
+        let raster = try await self.captureWindowWithCGWindowList(
             windowID: windowID,
             correlationId: correlationId,
             scale: scale)
@@ -296,7 +298,7 @@ extension LegacyScreenCaptureOperator {
             "Captured window via isolated legacy path",
             metadata: ["windowID": String(windowID)],
             correlationId: correlationId)
-        return image
+        return raster
     }
 
     private static func windowBounds(

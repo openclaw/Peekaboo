@@ -4,10 +4,39 @@ import Foundation
 import ImageIO
 import PeekabooFoundation
 
+struct LegacyCapturedRaster {
+    let image: CGImage
+    let sourcePNG: Data?
+
+    init(image: CGImage) {
+        self.image = image
+        self.sourcePNG = nil
+    }
+
+    init(systemScreencapturePNG data: Data) throws {
+        guard
+            let source = CGImageSourceCreateWithData(data as CFData, nil),
+            let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else {
+            throw OperationError.captureFailed(reason: "Failed to decode screencapture output")
+        }
+        self.image = image
+        self.sourcePNG = data
+    }
+
+    func pngData(for deliveredImage: CGImage) throws -> Data {
+        // Object identity is the scaler's no-transform receipt; pixel equality alone is insufficient.
+        if deliveredImage === self.image, let sourcePNG {
+            return sourcePNG
+        }
+        return try deliveredImage.pngData()
+    }
+}
+
 extension LegacyScreenCaptureOperator {
     func captureScreenWithSystemScreencapture(
         screen: NSScreen,
-        correlationId: String) async throws -> CGImage
+        correlationId: String) async throws -> LegacyCapturedRaster
     {
         guard let displayID = self.displayID(for: screen) else {
             throw OperationError.captureFailed(reason: "Could not resolve the selected NSScreen display ID")
@@ -44,7 +73,7 @@ extension LegacyScreenCaptureOperator {
 
     func captureAreaWithSystemScreencapture(
         _ rect: CGRect,
-        correlationId: String) async throws -> CGImage
+        correlationId: String) async throws -> LegacyCapturedRaster
     {
         try await self.captureImageWithSystemScreencapture(
             arguments: [
@@ -59,7 +88,7 @@ extension LegacyScreenCaptureOperator {
 
     func captureWindowWithSystemScreencapture(
         windowID: CGWindowID,
-        correlationId: String) async throws -> CGImage
+        correlationId: String) async throws -> LegacyCapturedRaster
     {
         // Match Apple's native window capture path; Hopper shows `screencapture -l` using
         // private window-id lookup before building its SCScreenshotManager content filter.
@@ -81,7 +110,7 @@ extension LegacyScreenCaptureOperator {
         outputPrefix: String,
         logMessage: String,
         metadata: [String: String],
-        correlationId: String) async throws -> CGImage
+        correlationId: String) async throws -> LegacyCapturedRaster
     {
         let url = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("\(outputPrefix)-\(UUID().uuidString).png")
@@ -106,21 +135,15 @@ extension LegacyScreenCaptureOperator {
                 reason: "screencapture exited with \(process.terminationStatus)\(detail)")
         }
 
-        let data = try Data(contentsOf: url)
-        guard
-            let source = CGImageSourceCreateWithData(data as CFData, nil),
-            let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
-        else {
-            throw OperationError.captureFailed(reason: "Failed to decode screencapture output")
-        }
+        let raster = try LegacyCapturedRaster(systemScreencapturePNG: Data(contentsOf: url))
 
         var logMetadata = metadata
-        logMetadata["imageSize"] = "\(image.width)x\(image.height)"
+        logMetadata["imageSize"] = "\(raster.image.width)x\(raster.image.height)"
         self.logger.debug(
             logMessage,
             metadata: logMetadata,
             correlationId: correlationId)
-        return image
+        return raster
     }
 
     nonisolated static func waitForSystemScreencaptureExit(
