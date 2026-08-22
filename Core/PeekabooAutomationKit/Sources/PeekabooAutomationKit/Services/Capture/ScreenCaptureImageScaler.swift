@@ -15,6 +15,7 @@ enum ScreenCaptureImageScaler {
             width: CGFloat(image.width) / fallbackScale,
             height: CGFloat(image.height) / fallbackScale)
         let colorSpace = image.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = Self.contextBitmapInfo(for: image)
         guard let context = CGContext(
             data: nil,
             width: Int(targetSize.width.rounded()),
@@ -22,12 +23,26 @@ enum ScreenCaptureImageScaler {
             bitsPerComponent: image.bitsPerComponent,
             bytesPerRow: 0,
             space: colorSpace,
-            bitmapInfo: image.bitmapInfo.rawValue)
+            bitmapInfo: bitmapInfo.rawValue)
         else {
             return image
         }
         context.interpolationQuality = .high
         context.draw(image, in: CGRect(origin: .zero, size: targetSize))
         return context.makeImage() ?? image
+    }
+
+    private static func contextBitmapInfo(for image: CGImage) -> CGBitmapInfo {
+        let alphaInfo: CGImageAlphaInfo = switch image.alphaInfo {
+        case .first: .premultipliedFirst
+        case .last: .premultipliedLast
+        default: image.alphaInfo
+        }
+        guard alphaInfo != image.alphaInfo else { return image.bitmapInfo }
+
+        // ImageIO can decode PNGs with straight alpha, which is invalid as a bitmap-context destination format.
+        let alphaInfoMask: UInt32 = 0x1F
+        let rawValue = (image.bitmapInfo.rawValue & ~alphaInfoMask) | alphaInfo.rawValue
+        return CGBitmapInfo(rawValue: rawValue)
     }
 }
