@@ -797,23 +797,33 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         else {
             throw ValidationError("This automation host does not support host-leased foreground modifier-click")
         }
-        self.resolvedRuntime.beginInteractionMutation()
-        let result = try await service.foregroundModifierClickWithOutcome(
-            ForegroundModifierClickRequest(
-                point: point,
-                clickType: self.requestedClickType,
-                modifiers: canonicalModifiers,
-                snapshotID: snapshotId,
-                windowIdentity: authority.target.identity,
-                windowBounds: authority.target.bounds
+        let result: UIAutomationActionResult<ForegroundModifierClickResult>
+        do {
+            result = try await service.foregroundModifierClickWithOutcome(
+                ForegroundModifierClickRequest(
+                    point: point,
+                    clickType: self.requestedClickType,
+                    modifiers: canonicalModifiers,
+                    snapshotID: snapshotId,
+                    windowIdentity: authority.target.identity,
+                    windowBounds: authority.target.bounds
+                )
             )
-        )
-        _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
-            result,
-            policy: .confirmedOrDispatched(requiring: .foreground),
-            targetRequirement: .exact(DesktopTargetIdentity(exactWindow: authority.target)),
-            operation: "Foreground modifier-click"
-        )
+            _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                result,
+                policy: .confirmedOrDispatched(requiring: .foreground),
+                targetRequirement: .exact(DesktopTargetIdentity(exactWindow: authority.target)),
+                operation: "Foreground modifier-click"
+            )
+            if result.outcome?.dispatchState.mutationDispatched == true {
+                self.resolvedRuntime.beginInteractionMutation()
+            }
+        } catch let failure as DesktopActionFailure {
+            if failure.outcome.dispatchState.mutationDispatched {
+                self.resolvedRuntime.beginInteractionMutation()
+            }
+            throw failure
+        }
         return ClickDispatchResult(
             actionResult: UIAutomationActionResult(
                 payload: (),

@@ -1,5 +1,8 @@
 import Commander
+import CoreGraphics
+import Foundation
 import PeekabooCore
+import PeekabooFoundation
 import Testing
 @testable import PeekabooCLI
 
@@ -121,5 +124,210 @@ struct ComposedInputParityValidationTests {
         #expect(snapshots.invalidationCutoffs.isEmpty)
         let lease = try await snapshots.beginSnapshotMutation(snapshotId: snapshotID)
         try await snapshots.finishSnapshotMutation(lease, requiresFreshObservation: false)
+    }
+
+    @Test
+    @MainActor
+    func `modifier click pre-dispatch refusal preserves explicit snapshot`() async throws {
+        let fixture = try await Self.makeModifierClickFixture(
+            behavior: .failure(.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Snapshot lease admission refused before dispatch."
+            ))
+        )
+
+        for _ in 0..<2 {
+            let result = try await Self.runModifierClick(fixture)
+            let object = try Self.jsonObject(result.stdout)
+            let error = try #require(object["error"] as? [String: Any])
+
+            #expect(result.exitStatus == 1)
+            #expect(error["retry_safe"] as? Bool == true)
+            #expect(error["mutation_dispatched"] as? Bool == false)
+            #expect(try await fixture.snapshots.getDetectionResult(snapshotId: fixture.snapshotID) != nil)
+            #expect(await fixture.snapshots.getMostRecentSnapshot() == fixture.snapshotID)
+            #expect(fixture.snapshots.invalidationCutoffs.isEmpty)
+        }
+
+        let lease = try await fixture.snapshots.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        try await fixture.snapshots.finishSnapshotMutation(lease, requiresFreshObservation: false)
+    }
+
+    @Test
+    @MainActor
+    func `modifier click dispatched result invalidates explicit snapshot`() async throws {
+        let fixture = try await Self.makeModifierClickFixture(
+            behavior: .result(.dispatchedUnverified(
+                delivery: Self.foregroundModifierDelivery,
+                evidence: .deliveryAccepted,
+                unitCount: .one
+            ))
+        )
+
+        let result = try await Self.runModifierClick(fixture)
+        #expect(result.exitStatus == 0)
+        #expect(await fixture.snapshots.getMostRecentSnapshot() == nil)
+        #expect(fixture.snapshots.invalidationCutoffs.count == 1)
+    }
+
+    @Test
+    @MainActor
+    func `modifier click indeterminate failure invalidates explicit snapshot`() async throws {
+        let fixture = try await Self.makeModifierClickFixture(
+            behavior: .failure(.indeterminate(
+                delivery: Self.foregroundModifierDelivery,
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "Modifier-click completion is unknown."
+            ))
+        )
+
+        let result = try await Self.runModifierClick(fixture)
+        let object = try Self.jsonObject(result.stdout)
+        let error = try #require(object["error"] as? [String: Any])
+
+        #expect(result.exitStatus == 1)
+        #expect(error["retry_safe"] as? Bool == false)
+        #expect(error["mutation_dispatched"] as? Bool == true)
+        #expect(await fixture.snapshots.getMostRecentSnapshot() == nil)
+        #expect(fixture.snapshots.invalidationCutoffs.count == 1)
+    }
+
+    @MainActor
+    private static func makeModifierClickFixture(
+        behavior: ModifierClickStubAutomationService.Behavior
+    ) async throws -> (services: PeekabooServices, snapshots: StubSnapshotManager, snapshotID: String) {
+        let processIdentifier: pid_t = 12345
+        let processStartIdentity: UInt64 = 7
+        let windowID = 42
+        let windowBounds = CGRect(x: 10, y: 20, width: 400, height: 300)
+        let windowIdentity = WindowMutationIdentity(
+            windowID: windowID,
+            ownerProcessIdentifier: processIdentifier,
+            ownerProcessStartIdentity: processStartIdentity,
+            capturedBounds: windowBounds
+        )
+        let application = ServiceApplicationInfo(
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity,
+            bundleIdentifier: "com.example.test",
+            name: "TestApp",
+            activationPolicy: .regular
+        )
+        let window = ServiceWindowInfo(
+            windowID: windowID,
+            title: "Editor",
+            bounds: windowBounds,
+            isMainWindow: true,
+            index: 0,
+            mutationIdentity: windowIdentity
+        )
+        let windowsByApp = [application.name: [window]]
+        let automation = ModifierClickStubAutomationService(behavior: behavior)
+        let context = TestServicesFactory.makeAutomationTestContext(
+            automation: automation,
+            applications: StubApplicationService(applications: [application], windowsByApp: windowsByApp),
+            windows: StubWindowService(windowsByApp: windowsByApp)
+        )
+        let snapshotID = try await context.snapshots.createSnapshot()
+        let button = DetectedElement(
+            id: "B1",
+            type: .button,
+            label: "Save",
+            bounds: CGRect(x: 20, y: 30, width: 80, height: 30)
+        )
+        try await context.snapshots.storeDetectionResult(
+            snapshotId: snapshotID,
+            result: ElementDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: "/tmp/modifier-click.png",
+                elements: DetectedElements(buttons: [button]),
+                metadata: DetectionMetadata(
+                    detectionTime: 0,
+                    elementCount: 1,
+                    method: "stub",
+                    windowContext: WindowContext(
+                        applicationName: application.name,
+                        applicationBundleId: application.bundleIdentifier,
+                        applicationProcessId: processIdentifier,
+                        windowTitle: window.title,
+                        windowID: windowID,
+                        windowBounds: windowBounds,
+                        windowMutationIdentity: windowIdentity
+                    ),
+                    truncationInfo: nil,
+                    captureCoordinateContext: CaptureCoordinateContext(
+                        metadata: CaptureMetadata(
+                            size: windowBounds.size,
+                            mode: .window,
+                            windowInfo: window
+                        ),
+                        referenceID: snapshotID
+                    )
+                )
+            )
+        )
+        return (context.services, context.snapshots, snapshotID)
+    }
+
+    @MainActor
+    private static func runModifierClick(
+        _ fixture: (services: PeekabooServices, snapshots: StubSnapshotManager, snapshotID: String)
+    ) async throws -> CommandRunResult {
+        try await InProcessCommandRunner.run(
+            [
+                "click", "--on", "B1", "--snapshot", fixture.snapshotID,
+                "--foreground", "--modifiers", "cmd", "--json", "--no-remote",
+            ],
+            services: fixture.services
+        )
+    }
+
+    private static var foregroundModifierDelivery: DesktopActionOutcome.Delivery {
+        .init(mechanism: .composite, mode: .foreground)
+    }
+
+    private static func jsonObject(_ output: String) throws -> [String: Any] {
+        try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+    }
+}
+
+@MainActor
+private final class ModifierClickStubAutomationService: StubAutomationService,
+ForegroundModifierClickServiceProtocol {
+    enum Behavior {
+        case result(DesktopActionOutcome)
+        case failure(DesktopActionFailure)
+    }
+
+    let behavior: Behavior
+    let supportsForegroundModifierClick = true
+    let supportsForegroundModifierClickSnapshotLease = true
+    let foregroundModifierClickUnavailableReason: String? = nil
+
+    init(behavior: Behavior) {
+        self.behavior = behavior
+    }
+
+    func foregroundModifierClickWithOutcome(
+        _ request: ForegroundModifierClickRequest
+    ) async throws -> UIAutomationActionResult<ForegroundModifierClickResult> {
+        switch self.behavior {
+        case let .failure(failure):
+            throw failure
+        case let .result(outcome):
+            let exactWindow = try UIAutomationTarget.ExactWindow(
+                identity: request.windowIdentity,
+                bounds: request.windowBounds
+            )
+            return UIAutomationActionResult(
+                payload: ForegroundModifierClickResult(
+                    cursorRestoration: .notNeeded,
+                    focusRestoration: .notNeeded
+                ),
+                outcome: outcome,
+                targetIdentity: DesktopTargetIdentity(exactWindow: exactWindow)
+            )
+        }
     }
 }
