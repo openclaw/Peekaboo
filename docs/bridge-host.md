@@ -15,9 +15,13 @@ This replaces the previous XPC-based helper approach.
 ## Hosts and discovery
 
 Most CLI automation commands first reuse a healthy Peekaboo daemon. If none can satisfy the operation, they try a
-capable Peekaboo.app GUI Bridge host before starting a daemon on demand. Operations that permit process-local fallback
-can use it when no compatible host is available. Application inventory and launch prefer the GUI host, while relaunch
-and quit require a reusable daemon that survives the caller.
+capable Peekaboo.app GUI Bridge host before starting a daemon on demand. Implicit screen-capture observation, AX-tree
+inspection, browser, and snapshot-state commands additionally prefer the current CLI build's deterministic
+`daemon-<build>.sock` and may start that exact-build daemon before considering the GUI host. This keeps in-memory state
+and host capabilities on the same executable generation. An explicit Bridge socket, a custom daemon socket, and
+`--no-remote` bypass that preference.
+Operations that permit process-local fallback can use it when no compatible host is available. Application inventory
+and launch prefer the GUI host, while relaunch and quit require a reusable daemon that survives the caller.
 
 Bridge diagnostics inspect sockets in this order:
 
@@ -360,7 +364,10 @@ Bridge hosts are intended to be long-lived and keep automation state **in memory
 ## CLI behavior
 
 - By default, automation-oriented CLI commands use a healthy reusable daemon, then a capable Peekaboo.app GUI host,
-  then auto-start a daemon, with process-local execution as the final operation-dependent fallback.
+  then auto-start a daemon, with process-local execution as the final operation-dependent fallback. Implicit
+  screen-capture observation, AX-tree inspection, browser, and snapshot-state work first prefers—and may auto-start—the
+  current CLI build's build-scoped daemon so an older compatible host does not become the owner of build-sensitive
+  in-memory state.
 - Use `--no-remote` to force local execution.
 - Use `--bridge-socket <path>` or `PEEKABOO_BRIDGE_SOCKET` to override host discovery.
 - Use `PEEKABOO_DAEMON_SOCKET` only to change the auto-start daemon socket without treating it as an explicit Bridge override.

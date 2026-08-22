@@ -14,13 +14,16 @@ read_when:
 ## Subcommands
 | Name | Purpose |
 | --- | --- |
-| `status` (default) | Probes configured sockets and reports the selected reusable daemon, healthy Peekaboo.app GUI host, auto-start daemon plan, or final operation-dependent local fallback. |
+| `status` (default) | Probes configured sockets and reports reusable and build-scoped daemons, the healthy Peekaboo.app GUI host, auto-start plans, or final operation-dependent local fallback. |
 | `receipt validate` | Authenticates one exact live listener and verifies one private exported protocol 1.29 terminal bundle against it. |
 
 ## Notes
 - Normal automation routing reuses a healthy daemon, then tries a capable Peekaboo.app host before starting a daemon
   on demand; operation-specific requirements can prefer the GUI host or require a surviving daemon. The complete host
   discovery order is documented in `docs/bridge-host.md`.
+- Implicit screen-capture observation, AX-tree inspection, browser, and snapshot-state commands first prefer the exact
+  CLI build's build-scoped daemon and may auto-start it before considering the GUI host. Use the command's actual
+  requirements—not the generic status ordering—to interpret which reported host it will select.
 - `--no-remote` (or `PEEKABOO_NO_REMOTE`) skips remote probing and forces local execution.
 - `--bridge-socket <path>` (or `PEEKABOO_BRIDGE_SOCKET`) overrides host discovery and probes only that socket.
   The override is strict: an unavailable or incompatible host fails non-zero instead of silently using the local

@@ -10,6 +10,10 @@ read_when:
 `peekaboo see` captures the current macOS UI, extracts accessibility metadata, and (optionally) saves annotated screenshots. CLI and agent flows rely on these UI maps to find fresh element IDs, bounds, labels, and snapshot IDs.
 
 Observation is read-only with respect to focus: targeting a background app does not activate it or move its windows.
+With implicit host discovery and the standard daemon path, `see` prefers the current CLI build's deterministic
+build-scoped daemon and may auto-start it before considering a healthy Peekaboo.app host. This applies to pixel and
+AX-tree-only forms because their snapshots and capability decisions are host-memory state. An explicit
+`--bridge-socket`, a custom daemon socket, or `--no-remote` remains authoritative.
 
 ```bash
 # Capture frontmost window, print JSON, and save an annotated PNG

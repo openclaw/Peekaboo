@@ -18,8 +18,12 @@ commands detect that legacy daemon by its daemon status. Peekaboo.app is never t
 Normal automation commands migrate legacy auto or manual daemons that advertise atomic conditional stop. The daemon
 keeps its prior lifecycle mode, poll interval, and auto idle timeout, so a manually started daemon remains manual after
 migration. MCP sessions remain process-owned and are never migrated.
-When `bridge.sock` belongs to a healthy Peekaboo.app GUI host instead, normal commands keep using that app-held TCC
-context and start the reusable daemon only if the app host is unavailable or lacks the required capability.
+When `bridge.sock` belongs to a healthy Peekaboo.app GUI host instead, commands outside the exact-build preference keep
+using that app-held TCC context and start the reusable daemon only if the app host is unavailable or lacks the required
+capability. Implicit commands that require screen capture, inspect the AX tree, use browser MCP, or consume/invalidate
+snapshot state first prefer the current CLI build's deterministic `daemon-<build>.sock` and may auto-start it before
+considering the GUI host. Explicit Bridge paths, custom daemon paths, application inventory or launch, and local-only
+execution bypass that preference.
 Automatic migration defers while operational requests are active and keeps using the legacy daemon for that invocation.
 Older daemons without conditional stop remain on `bridge.sock` until they exit or are explicitly stopped. Explicit
 `daemon start` asks the user to stop those older daemons first, and asks for a retry when supported daemons are busy.
@@ -60,7 +64,9 @@ Options:
 - `--wait <duration>` how long to wait for shutdown (default `12s`, above the Bridge request deadline).
 
 ## Notes
-- Normal automation commands auto-start the daemon in `auto` mode when the default daemon socket is unavailable.
+- Normal automation commands auto-start the daemon in `auto` mode when the selected reusable socket is unavailable;
+  exact-build routing for the command categories above can select `daemon-<build>.sock` before the default socket or
+  GUI host.
 - Auto-started daemons exit after an idle timeout (default 300 seconds), while explicit `peekaboo daemon start` remains manual and stays up until stopped.
 - The daemon uses an in-memory snapshot store for speed.
 - Set `PEEKABOO_DAEMON_IDLE_TIMEOUT_SECONDS` to tune the auto-start idle timeout.

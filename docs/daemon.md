@@ -30,11 +30,17 @@ Normal automation commands prefer the reusable daemon when it is healthy. If it 
 Peekaboo.app host with the required capability before auto-starting a daemon. If no remote host is usable, the command
 falls back to process-local services when that operation permits it.
 
-If another build owns `daemon.sock` but lacks a required capability, the current universal binary reuses a deterministic
-`daemon-<build>.sock` fallback shared by native and Rosetta invocations. Daemon status prefers the compatible host and
-warns when another daemon also exists; explicit daemon start safely promotes a compatible auto fallback to manual mode.
-After executable upgrades, implicit routing rediscovers compatible same-user fallback sockets and validates their
-daemon identity before reuse. Explicit Bridge paths and custom daemon paths do not scan sibling sockets.
+Implicit commands that require screen capture, inspect the AX tree, use browser MCP, or consume/invalidate snapshot
+state first prefer the current CLI build's deterministic `daemon-<build>.sock`. They may auto-start that exact-build
+daemon before considering an otherwise healthy Peekaboo.app host, because protocol compatibility alone does not make
+build-sensitive in-memory state interchangeable. This preference does not apply to explicit Bridge paths, custom
+daemon paths, application inventory or launch, or local-only execution.
+
+The same build-scoped socket is the compatibility fallback when another build owns `daemon.sock` but lacks a required
+capability. Native and Rosetta invocations of the same universal binary share it. Daemon status prefers the compatible
+host and warns when another daemon also exists; explicit daemon start safely promotes a compatible auto fallback to
+manual mode. After executable upgrades, implicit routing rediscovers compatible same-user fallback sockets and validates
+their daemon identity before reuse. Explicit Bridge paths and custom daemon paths do not scan sibling sockets.
 
 Explicit `--bridge-socket` or `PEEKABOO_BRIDGE_SOCKET` selects only that Bridge path and disables daemon auto-start.
 `PEEKABOO_DAEMON_SOCKET` changes the reusable daemon path without becoming an explicit Bridge override.
