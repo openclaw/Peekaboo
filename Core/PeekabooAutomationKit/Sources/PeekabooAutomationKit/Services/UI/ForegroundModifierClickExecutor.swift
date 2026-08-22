@@ -76,7 +76,9 @@ final class ForegroundModifierClickExecutor {
         let restoreCursor: CursorRestoreExecutor
         let prepareClick: ClickPrepareExecutor
         let validateExactWindow: @Sendable (WindowMutationIdentity, CGRect) -> Bool
-        let pointerRouteAtPoint: @MainActor (CGPoint) -> BackgroundInputDriver.MouseWindowRouteCandidate?
+        let exactWindowRouteAtPoint: @MainActor (
+            CGPoint,
+            CGWindowID) -> BackgroundInputDriver.MouseWindowRouteCandidate?
         let pointerReceiverAtPoint: @MainActor (CGPoint) -> BackgroundInputDriver.PointerReceiverIdentity?
 
         init(
@@ -90,7 +92,9 @@ final class ForegroundModifierClickExecutor {
             moveCursor: @escaping @MainActor (CGPoint) throws -> Void,
             click: @escaping @MainActor (CGPoint, ClickType, [PointerModifier]) throws -> DesktopActionOutcome,
             validateExactWindow: @escaping @Sendable (WindowMutationIdentity, CGRect) -> Bool,
-            pointerRouteAtPoint: (@MainActor (CGPoint) -> BackgroundInputDriver.MouseWindowRouteCandidate?)? = nil,
+            exactWindowRouteAtPoint: (@MainActor (
+                CGPoint,
+                CGWindowID) -> BackgroundInputDriver.MouseWindowRouteCandidate?)? = nil,
             pointerReceiverAtPoint: (@MainActor (CGPoint) -> BackgroundInputDriver.PointerReceiverIdentity?)? = nil,
             restoreExactWindow: ExactWindowFocusExecutor? = nil,
             sharedInputActivityToken: @escaping @MainActor () -> SharedInputActivityToken = { .zero },
@@ -118,10 +122,13 @@ final class ForegroundModifierClickExecutor {
                 { try click(point, clickType, modifiers) }
             }
             self.validateExactWindow = validateExactWindow
-            self.pointerRouteAtPoint = pointerRouteAtPoint ?? { point in
-                guard let window = currentFocusedExactWindow(), window.bounds.contains(point) else { return nil }
+            self.exactWindowRouteAtPoint = exactWindowRouteAtPoint ?? { point, windowID in
+                guard let window = currentFocusedExactWindow(),
+                      CGWindowID(window.identity.windowID) == windowID,
+                      window.bounds.contains(point)
+                else { return nil }
                 return BackgroundInputDriver.MouseWindowRouteCandidate(
-                    windowID: CGWindowID(window.identity.windowID),
+                    windowID: windowID,
                     processIdentifier: window.identity.ownerProcessIdentifier,
                     layer: Int(CGWindowLevelForKey(.normalWindow)),
                     bounds: window.bounds)
@@ -483,10 +490,13 @@ final class ForegroundModifierClickExecutor {
     }
 
     private func validateFinalPointerRoute(_ request: ForegroundModifierClickRequest) throws {
-        guard let pointerRoute = self.dependencies.pointerRouteAtPoint(request.point) else {
+        guard let exactWindowRoute = self.dependencies.exactWindowRouteAtPoint(
+            request.point,
+            CGWindowID(request.windowIdentity.windowID))
+        else {
             throw ModifierClickPointerRouteLossFailure(failure: .preDispatchRefusal(
                 reason: .targetUnavailable,
-                message: "Modifier-click point has no provable WindowServer route.",
+                message: "Modifier-click exact target has no provable on-screen WindowServer row.",
                 hint: "Observe the exact target again before retrying."))
         }
         guard let pointerReceiver = self.dependencies.pointerReceiverAtPoint(request.point) else {
@@ -501,15 +511,15 @@ final class ForegroundModifierClickExecutor {
                 message: "Modifier-click exact-window identity changed before event dispatch.",
                 hint: "Observe the exact target again before retrying."))
         }
-        guard pointerRoute.windowID == CGWindowID(request.windowIdentity.windowID),
-              pointerRoute.processIdentifier == request.windowIdentity.ownerProcessIdentifier,
-              pointerRoute.bounds == request.windowBounds,
+        guard exactWindowRoute.windowID == CGWindowID(request.windowIdentity.windowID),
+              exactWindowRoute.processIdentifier == request.windowIdentity.ownerProcessIdentifier,
+              exactWindowRoute.bounds == request.windowBounds,
               pointerReceiver.processIdentifier == request.windowIdentity.ownerProcessIdentifier,
               pointerReceiver.windowID == CGWindowID(request.windowIdentity.windowID)
         else {
             throw ModifierClickPointerRouteLossFailure(failure: .preDispatchRefusal(
                 reason: .targetUnavailable,
-                message: "Modifier-click point is occluded or no longer routes to its exact window.",
+                message: "Modifier-click exact target or Accessibility receiver changed before dispatch.",
                 hint: "Observe the exact target again before retrying."))
         }
     }

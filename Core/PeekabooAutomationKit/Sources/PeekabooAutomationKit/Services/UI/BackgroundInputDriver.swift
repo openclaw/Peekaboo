@@ -20,19 +20,22 @@ enum BackgroundInputDriver {
         let layer: Int
         let bounds: CGRect
         let alpha: CGFloat
+        let isOnScreen: Bool
 
         init(
             windowID: CGWindowID,
             processIdentifier: pid_t,
             layer: Int,
             bounds: CGRect,
-            alpha: CGFloat = 1)
+            alpha: CGFloat = 1,
+            isOnScreen: Bool = true)
         {
             self.windowID = windowID
             self.processIdentifier = processIdentifier
             self.layer = layer
             self.bounds = bounds
             self.alpha = alpha
+            self.isOnScreen = isOnScreen
         }
     }
 
@@ -874,31 +877,48 @@ enum BackgroundInputDriver {
                 processIdentifier: processIdentifier,
                 layer: layer,
                 bounds: bounds,
-                alpha: (window[kCGWindowAlpha as String] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 1)
+                alpha: (window[kCGWindowAlpha as String] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 1,
+                isOnScreen: (window[kCGWindowIsOnscreen as String] as? Bool) ?? (exactWindowID == nil))
         }
     }
 
-    /// Resolves the front-to-back WindowServer route for one global pointer location.
+    /// Finds the requested exact target in the current on-screen WindowServer catalog.
     ///
-    /// The on-screen catalog is already ordered frontmost first. Any visible non-desktop window at
-    /// the point is treated conservatively as the receiver; Peekaboo does not guess that an overlay
-    /// is click-through when WindowServer does not expose that contract here.
-    static func pointerReceivingWindowRoute(
+    /// Catalog order cannot identify the pointer receiver: macOS publishes click-through Dock and
+    /// Nameplate rows ahead of ordinary application windows. The system-wide Accessibility hit test
+    /// is authoritative for receiver identity; this lookup independently proves only that the exact
+    /// requested WindowServer row remains visible and contains the dispatch point.
+    static func exactOnScreenWindowRoute(
         at point: CGPoint,
+        windowID: CGWindowID,
         candidates: [MouseWindowRouteCandidate]) -> MouseWindowRouteCandidate?
     {
-        guard point.x.isFinite, point.y.isFinite else { return nil }
+        guard point.x.isFinite,
+              point.y.isFinite,
+              windowID != kCGNullWindowID
+        else { return nil }
         return candidates.first { candidate in
-            candidate.alpha > 0 &&
+            candidate.windowID == windowID &&
+                candidate.isOnScreen &&
+                candidate.alpha.isFinite &&
+                candidate.alpha > 0 &&
+                candidate.bounds.minX.isFinite &&
+                candidate.bounds.minY.isFinite &&
+                candidate.bounds.maxX.isFinite &&
+                candidate.bounds.maxY.isFinite &&
                 candidate.bounds.width > 0 &&
                 candidate.bounds.height > 0 &&
                 candidate.bounds.contains(point)
         }
     }
 
-    static func pointerReceivingWindowRoute(at point: CGPoint) -> MouseWindowRouteCandidate? {
-        self.pointerReceivingWindowRoute(
+    static func exactOnScreenWindowRoute(
+        at point: CGPoint,
+        windowID: CGWindowID) -> MouseWindowRouteCandidate?
+    {
+        self.exactOnScreenWindowRoute(
             at: point,
+            windowID: windowID,
             candidates: self.mouseWindowRouteCandidates(exactWindowID: nil))
     }
 

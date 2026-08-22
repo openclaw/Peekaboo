@@ -126,63 +126,68 @@ struct BackgroundInputDriverWindowRoutingTests {
     }
 
     @Test
-    func `pointer route treats a visible overlay as the receiver`() throws {
+    func `exact on screen route finds target behind full screen system rows`() throws {
         let point = CGPoint(x: 50, y: 50)
-        let overlay = Self.candidate(
+        let dock = Self.candidate(
             windowID: 99,
             processIdentifier: 999,
-            bounds: CGRect(x: 20, y: 20, width: 80, height: 80),
-            layer: 8)
+            bounds: CGRect(x: 0, y: 0, width: 200, height: 200),
+            layer: 20)
+        let nameplate = Self.candidate(
+            windowID: 98,
+            processIdentifier: 998,
+            bounds: CGRect(x: 0, y: 0, width: 200, height: 200),
+            layer: 3)
         let target = Self.candidate(
             windowID: 42,
             processIdentifier: 123,
             bounds: CGRect(x: 0, y: 0, width: 200, height: 200))
 
-        let route = try #require(BackgroundInputDriver.pointerReceivingWindowRoute(
+        let route = try #require(BackgroundInputDriver.exactOnScreenWindowRoute(
             at: point,
-            candidates: [overlay, target]))
-
-        #expect(route == overlay)
-    }
-
-    @Test
-    func `pointer route preserves an overlapping sibling ahead of the target`() throws {
-        let point = CGPoint(x: 50, y: 50)
-        let sibling = Self.candidate(
-            windowID: 41,
-            processIdentifier: 123,
-            bounds: CGRect(x: 0, y: 0, width: 120, height: 120))
-        let target = Self.candidate(
-            windowID: 42,
-            processIdentifier: 123,
-            bounds: CGRect(x: 0, y: 0, width: 200, height: 200))
-
-        let route = try #require(BackgroundInputDriver.pointerReceivingWindowRoute(
-            at: point,
-            candidates: [sibling, target]))
-
-        #expect(route == sibling)
-    }
-
-    @Test
-    func `pointer route admits the exact target behind only transparent rows`() throws {
-        let point = CGPoint(x: 50, y: 50)
-        let transparent = Self.candidate(
-            windowID: 99,
-            processIdentifier: 999,
-            bounds: CGRect(x: 20, y: 20, width: 80, height: 80),
-            layer: 8,
-            alpha: 0)
-        let target = Self.candidate(
-            windowID: 42,
-            processIdentifier: 123,
-            bounds: CGRect(x: 0, y: 0, width: 200, height: 200))
-
-        let route = try #require(BackgroundInputDriver.pointerReceivingWindowRoute(
-            at: point,
-            candidates: [transparent, target]))
+            windowID: target.windowID,
+            candidates: [dock, nameplate, target]))
 
         #expect(route == target)
+    }
+
+    @Test
+    func `exact on screen route refuses an absent target`() {
+        let point = CGPoint(x: 50, y: 50)
+        let dock = Self.candidate(
+            windowID: 99,
+            processIdentifier: 999,
+            bounds: CGRect(x: 0, y: 0, width: 200, height: 200),
+            layer: 20)
+
+        #expect(BackgroundInputDriver.exactOnScreenWindowRoute(
+            at: point,
+            windowID: 42,
+            candidates: [dock]) == nil)
+    }
+
+    @Test
+    func `exact on screen route refuses offscreen and transparent targets`() {
+        let point = CGPoint(x: 50, y: 50)
+        let offscreen = Self.candidate(
+            windowID: 42,
+            processIdentifier: 123,
+            bounds: CGRect(x: 0, y: 0, width: 200, height: 200),
+            isOnScreen: false)
+        let transparent = Self.candidate(
+            windowID: 42,
+            processIdentifier: 123,
+            bounds: CGRect(x: 0, y: 0, width: 200, height: 200),
+            alpha: 0)
+
+        #expect(BackgroundInputDriver.exactOnScreenWindowRoute(
+            at: point,
+            windowID: 42,
+            candidates: [offscreen]) == nil)
+        #expect(BackgroundInputDriver.exactOnScreenWindowRoute(
+            at: point,
+            windowID: 42,
+            candidates: [transparent]) == nil)
     }
 
     private static func candidate(
@@ -190,14 +195,16 @@ struct BackgroundInputDriverWindowRoutingTests {
         processIdentifier: pid_t,
         bounds: CGRect,
         layer: Int = 0,
-        alpha: CGFloat = 1) -> BackgroundInputDriver.MouseWindowRouteCandidate
+        alpha: CGFloat = 1,
+        isOnScreen: Bool = true) -> BackgroundInputDriver.MouseWindowRouteCandidate
     {
         BackgroundInputDriver.MouseWindowRouteCandidate(
             windowID: windowID,
             processIdentifier: processIdentifier,
             layer: layer,
             bounds: bounds,
-            alpha: alpha)
+            alpha: alpha,
+            isOnScreen: isOnScreen)
     }
 
     private static func windowDictionary(

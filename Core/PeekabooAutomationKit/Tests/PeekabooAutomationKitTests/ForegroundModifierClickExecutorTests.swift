@@ -983,7 +983,7 @@ extension ForegroundModifierClickExecutorTests {
     }
 
     @Test(arguments: ModifierClickPointerReceiverCase.allCases)
-    func `system wide AX receiver must match the exact modifier click window`(
+    func `AX receiver owns click through routing behind system rows and rejects overlays`(
         _ receiverCase: ModifierClickPointerReceiverCase) async throws
     {
         let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
@@ -999,6 +999,16 @@ extension ForegroundModifierClickExecutorTests {
             windowID: 7,
             processIdentifier: target.processIdentifier,
             layer: 0,
+            bounds: bounds)
+        let dockRoute = BackgroundInputDriver.MouseWindowRouteCandidate(
+            windowID: 70,
+            processIdentifier: 700,
+            layer: 20,
+            bounds: bounds)
+        let nameplateRoute = BackgroundInputDriver.MouseWindowRouteCandidate(
+            windowID: 71,
+            processIdentifier: 701,
+            layer: 3,
             bounds: bounds)
         let targetReceiver = BackgroundInputDriver.PointerReceiverIdentity(
             processIdentifier: target.processIdentifier,
@@ -1034,11 +1044,16 @@ extension ForegroundModifierClickExecutorTests {
                         unitCount: .one)
                 },
                 validateExactWindow: { _, _ in true },
-                pointerRouteAtPoint: { _ in targetRoute },
+                exactWindowRouteAtPoint: { point, windowID in
+                    BackgroundInputDriver.exactOnScreenWindowRoute(
+                        at: point,
+                        windowID: windowID,
+                        candidates: [dockRoute, nameplateRoute, targetRoute])
+                },
                 pointerReceiverAtPoint: { _ in
                     switch receiverCase {
                     case .matching: targetReceiver
-                    case .underlyingWindow: BackgroundInputDriver.PointerReceiverIdentity(
+                    case .overlayReceiver: BackgroundInputDriver.PointerReceiverIdentity(
                             processIdentifier: 33,
                             windowID: 8)
                     case .unavailable: nil
@@ -1064,7 +1079,7 @@ extension ForegroundModifierClickExecutorTests {
     }
 
     @Test
-    func `pointer route drift before event post blocks click and cleanup`() async throws {
+    func `exact target disappearance before event post blocks click and cleanup`() async throws {
         let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
         let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
         let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
@@ -1080,12 +1095,7 @@ extension ForegroundModifierClickExecutorTests {
             processIdentifier: target.processIdentifier,
             layer: 0,
             bounds: bounds)
-        let overlayRoute = BackgroundInputDriver.MouseWindowRouteCandidate(
-            windowID: 70,
-            processIdentifier: 700,
-            layer: 8,
-            bounds: CGRect(x: 10, y: 10, width: 50, height: 50))
-        var pointerRoute = targetRoute
+        var exactWindowRoute: BackgroundInputDriver.MouseWindowRouteCandidate? = targetRoute
         var frontmost = prior
         var focusedWindow: UIAutomationTarget.ExactWindow?
         var cursorReads = 0
@@ -1113,7 +1123,7 @@ extension ForegroundModifierClickExecutorTests {
                 currentCursorLocation: {
                     cursorReads += 1
                     if cursorReads == 2 {
-                        pointerRoute = overlayRoute
+                        exactWindowRoute = nil
                     }
                     return CGPoint(x: 20, y: 20)
                 },
@@ -1123,7 +1133,7 @@ extension ForegroundModifierClickExecutorTests {
                     return .confirmedNoChange()
                 },
                 validateExactWindow: { _, _ in true },
-                pointerRouteAtPoint: { _ in pointerRoute }))
+                exactWindowRouteAtPoint: { _, _ in exactWindowRoute }))
 
         do {
             _ = try await executor.execute(ForegroundModifierClickRequest(
@@ -1132,13 +1142,13 @@ extension ForegroundModifierClickExecutorTests {
                 modifiers: [.command],
                 windowIdentity: exactWindow.identity,
                 windowBounds: bounds))
-            Issue.record("Expected an occluding route to block the prepared click")
+            Issue.record("Expected a missing exact target row to block the prepared click")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .indeterminate)
             #expect(failure.outcome.retrySafety == .unsafe)
             #expect(failure.outcome.dispatchState.unitCount == .one)
         }
-        #expect(pointerRoute == overlayRoute)
+        #expect(exactWindowRoute == nil)
         #expect(!clickAttempted)
         #expect(!cleanupAttempted)
         #expect(frontmost == target)
@@ -1193,7 +1203,7 @@ extension ForegroundModifierClickExecutorTests {
                     return .confirmedNoChange()
                 },
                 validateExactWindow: { _, _ in true },
-                pointerRouteAtPoint: { _ in
+                exactWindowRouteAtPoint: { _, _ in
                     defer { activity = activity.afterMouseMove() }
                     return targetRoute
                 },
@@ -1269,7 +1279,7 @@ extension ForegroundModifierClickExecutorTests {
                     validationState.count += 1
                     return validationState.identityIsCurrent
                 },
-                pointerRouteAtPoint: { _ in
+                exactWindowRouteAtPoint: { _, _ in
                     validationState.routeQueryCount += 1
                     validationState.identityIsCurrent = false
                     return targetRoute
@@ -2397,7 +2407,7 @@ private final class ModifierClickValidationCounter: @unchecked Sendable {
 
 enum ModifierClickPointerReceiverCase: CaseIterable, Sendable {
     case matching
-    case underlyingWindow
+    case overlayReceiver
     case unavailable
 }
 
