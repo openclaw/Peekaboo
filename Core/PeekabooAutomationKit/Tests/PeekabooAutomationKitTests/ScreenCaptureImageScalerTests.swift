@@ -117,7 +117,6 @@ struct ScreenCaptureImageScalerTests {
 
     private static let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!
     private static let displayP3 = CGColorSpace(name: CGColorSpace.displayP3)!
-    private static let alphaInfoMask: UInt32 = 0x1F
     private static let byteOrderMask: UInt32 = 0x7000
 
     private static func makeImage(
@@ -201,7 +200,8 @@ struct ScreenCaptureImageScalerTests {
         case .last: .premultipliedLast
         default: image.alphaInfo
         }
-        let rawBitmapInfo = (image.bitmapInfo.rawValue & ~Self.alphaInfoMask) | normalizedAlpha.rawValue
+        let rawBitmapInfo =
+            (image.bitmapInfo.rawValue & ~CGBitmapInfo.alphaInfoMask.rawValue) | normalizedAlpha.rawValue
         let context = try #require(CGContext(
             data: nil,
             width: Int(targetSize.width.rounded()),

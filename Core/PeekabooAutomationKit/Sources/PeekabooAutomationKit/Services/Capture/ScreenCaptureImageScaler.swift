@@ -41,8 +41,7 @@ enum ScreenCaptureImageScaler {
         guard alphaInfo != image.alphaInfo else { return image.bitmapInfo }
 
         // ImageIO can decode PNGs with straight alpha, which is invalid as a bitmap-context destination format.
-        let alphaInfoMask: UInt32 = 0x1F
-        let rawValue = (image.bitmapInfo.rawValue & ~alphaInfoMask) | alphaInfo.rawValue
+        let rawValue = (image.bitmapInfo.rawValue & ~CGBitmapInfo.alphaInfoMask.rawValue) | alphaInfo.rawValue
         return CGBitmapInfo(rawValue: rawValue)
     }
 }
