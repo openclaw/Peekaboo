@@ -5,7 +5,7 @@ import PeekabooFoundation
 
 private struct FocusRestorationObservation: Equatable {
     let frontmostProcess: ApplicationProcessIdentity
-    let focusedWindow: UIAutomationTarget.ExactWindow
+    let focusedWindow: UIAutomationTarget.ExactWindow?
 }
 
 @MainActor
@@ -240,75 +240,11 @@ final class ForegroundModifierClickExecutor {
         let focusOwnership = TargetFocusOwnershipState(expected: priorObservation)
 
         do {
-            let focusGuard = FocusDispatchGuard(
-                requiresStrictDispatchOwnership: true,
-                validateOwnership: { _ in
-                    guard self.dependencies.sharedInputActivityToken() == initialInputActivityToken else {
-                        throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
-                            reason: .targetUnavailable,
-                            message: "Modifier-click shared input changed before target focus dispatch."))
-                    }
-                    guard let current = self.currentTargetFocusObservation() else {
-                        throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
-                            reason: .targetUnavailable,
-                            message: "Modifier-click prior foreground state changed before target focus dispatch."))
-                    }
-                    if current == targetObservation, focusOwnership.expected == targetObservation {
-                        throw ForegroundModifierClickError.focusTargetSatisfied
-                    }
-                    if current == targetObservation {
-                        throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
-                            reason: .targetUnavailable,
-                            message: "Modifier-click target was focused by newer external state."))
-                    }
-                    guard current == focusOwnership.expected else {
-                        throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
-                            reason: .targetUnavailable,
-                            message: "Modifier-click foreground ownership changed during target focus."))
-                    }
-                },
-                acceptedDispatch: { stage in
-                    guard stage == .applicationActivation else { return }
-                    focusOwnership.hasAcceptedApplicationActivation = true
-                    focusOwnership.hasPendingApplicationActivation = true
-                    guard self.dependencies.sharedInputActivityToken() == initialInputActivityToken else {
-                        throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
-                            reason: .targetUnavailable,
-                            message: "Modifier-click shared input changed during target activation."))
-                    }
-                },
-                completeDispatch: { stage in
-                    guard let current = self.currentTargetFocusObservation() else {
-                        throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
-                            reason: .targetUnavailable,
-                            message: "Modifier-click could not verify target-focus ownership after dispatch."))
-                    }
-                    let isAllowed = switch stage {
-                    case .applicationActivation:
-                        current.frontmostProcess == exactWindow.identity.processIdentity &&
-                            (current.focusedWindow == nil ||
-                                current.focusedWindow?.identity.processIdentity == exactWindow.identity.processIdentity)
-                    case .setMainWindow:
-                        current == focusOwnership.expected || current == targetObservation
-                    case .raiseWindow:
-                        current == targetObservation
-                    case .spaceTransition, .unspecified:
-                        false
-                    }
-                    guard isAllowed else {
-                        throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
-                            reason: .targetUnavailable,
-                            message: "Modifier-click target focus produced an ambiguous foreground state."))
-                    }
-                    if stage == .applicationActivation {
-                        focusOwnership.hasPendingApplicationActivation = false
-                    }
-                    if current == targetObservation {
-                        focusOwnership.hasPendingApplicationActivation = false
-                        throw ForegroundModifierClickError.focusTargetSatisfied
-                    }
-                    focusOwnership.expected = current
-                })
+            let focusGuard = self.makeTargetFocusGuard(
+                exactWindow: exactWindow,
+                targetObservation: targetObservation,
+                inputActivityToken: initialInputActivityToken,
+                ownership: focusOwnership)
             let focusOutcome = try await self.dependencies.focusExactWindow(exactWindow, focusGuard)
             sequence.record(.reportedOutcome(focusOutcome, defaultDispatchedUnitCount: .one))
             guard focusOutcome.isConfirmed,
@@ -639,6 +575,119 @@ final class ForegroundModifierClickExecutor {
         return TargetFocusObservation(frontmostProcess, focusedWindow)
     }
 
+    private func makeTargetFocusGuard(
+        exactWindow: UIAutomationTarget.ExactWindow,
+        targetObservation: TargetFocusObservation,
+        inputActivityToken: SharedInputActivityToken,
+        ownership: TargetFocusOwnershipState) -> FocusDispatchGuard
+    {
+        FocusDispatchGuard(
+            requiresStrictDispatchOwnership: true,
+            validateOwnership: { _ in
+                guard self.dependencies.sharedInputActivityToken() == inputActivityToken else {
+                    throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "Modifier-click shared input changed before target focus dispatch."))
+                }
+                guard let current = self.currentTargetFocusObservation() else {
+                    throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "Modifier-click prior foreground state changed before target focus dispatch."))
+                }
+                guard self.dependencies.sharedInputActivityToken() == inputActivityToken else {
+                    throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "Modifier-click shared input changed while observing target focus ownership."))
+                }
+                if current == targetObservation, ownership.expected == targetObservation {
+                    throw ForegroundModifierClickError.focusTargetSatisfied
+                }
+                if current == targetObservation {
+                    throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "Modifier-click target was focused by newer external state."))
+                }
+                guard current == ownership.expected else {
+                    throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "Modifier-click foreground ownership changed during target focus."))
+                }
+            },
+            validateAcceptedActivation: {
+                guard self.dependencies.sharedInputActivityToken() == inputActivityToken,
+                      let current = self.currentTargetFocusObservation(),
+                      self.dependencies.sharedInputActivityToken() == inputActivityToken
+                else {
+                    throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "Modifier-click foreground ownership changed during target activation."))
+                }
+                if current == ownership.expected {
+                    return
+                }
+                if current.frontmostProcess == exactWindow.identity.processIdentity,
+                   current.frontmostProcess != ownership.expected.frontmostProcess
+                {
+                    return
+                }
+                throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "Modifier-click source focus changed during target activation."))
+            },
+            acceptedDispatch: { stage in
+                guard stage == .applicationActivation else { return }
+                ownership.hasAcceptedApplicationActivation = true
+                ownership.hasPendingApplicationActivation = true
+                guard self.dependencies.sharedInputActivityToken() == inputActivityToken else {
+                    throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "Modifier-click shared input changed during target activation."))
+                }
+            },
+            completeDispatch: { stage in
+                guard self.dependencies.sharedInputActivityToken() == inputActivityToken else {
+                    throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "Modifier-click shared input changed before verifying target focus ownership."))
+                }
+                guard let current = self.currentTargetFocusObservation() else {
+                    throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "Modifier-click could not verify target-focus ownership after dispatch."))
+                }
+                guard self.dependencies.sharedInputActivityToken() == inputActivityToken else {
+                    throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "Modifier-click shared input changed while verifying target focus ownership."))
+                }
+                let isAllowed = switch stage {
+                case .applicationActivation:
+                    current.frontmostProcess == exactWindow.identity.processIdentity &&
+                        (current.focusedWindow == nil ||
+                            current.focusedWindow?.identity.processIdentity == exactWindow.identity.processIdentity)
+                case .setMainWindow:
+                    current == ownership.expected || current == targetObservation
+                case .raiseWindow:
+                    current == targetObservation
+                case .spaceTransition, .unspecified:
+                    false
+                }
+                guard isAllowed else {
+                    throw ModifierClickFocusOwnershipLossFailure(failure: .preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "Modifier-click target focus produced an ambiguous foreground state."))
+                }
+                if stage == .applicationActivation {
+                    ownership.hasPendingApplicationActivation = false
+                }
+                if current == targetObservation {
+                    ownership.hasPendingApplicationActivation = false
+                    throw ForegroundModifierClickError.focusTargetSatisfied
+                }
+                ownership.expected = current
+            })
+    }
+
     private func restoreFocusIfOwned(
         priorProcess: ApplicationProcessIdentity,
         priorWindow: UIAutomationTarget.ExactWindow?,
@@ -684,12 +733,33 @@ final class ForegroundModifierClickExecutor {
                         guard let current = self.currentFocusRestorationObservation() else {
                             throw ForegroundModifierClickError.focusRestorationOwnershipLost
                         }
+                        guard self.dependencies.sharedInputActivityToken() == inputActivityToken else {
+                            throw ForegroundModifierClickError.focusRestorationOwnershipLost
+                        }
                         if current == priorObservation {
                             throw ForegroundModifierClickError.focusRestorationSatisfied
                         }
                         guard current == ownership.expected else {
                             throw ForegroundModifierClickError.focusRestorationOwnershipLost
                         }
+                    },
+                    validateAcceptedActivation: {
+                        guard self.dependencies.sharedInputActivityToken() == inputActivityToken,
+                              let current = self.currentFocusRestorationObservation(),
+                              self.dependencies.sharedInputActivityToken() == inputActivityToken
+                        else {
+                            throw ForegroundModifierClickError.focusRestorationOwnershipLost
+                        }
+                        if current == ownership.expected {
+                            return
+                        }
+                        if current.frontmostProcess == priorProcess,
+                           current.frontmostProcess != ownership.expected.frontmostProcess,
+                           current.focusedWindow == nil || current == priorObservation
+                        {
+                            return
+                        }
+                        throw ForegroundModifierClickError.focusRestorationOwnershipLost
                     },
                     completeDispatch: { stage in
                         guard self.dependencies.sharedInputActivityToken() == inputActivityToken else {
@@ -698,11 +768,14 @@ final class ForegroundModifierClickExecutor {
                         guard let current = self.currentFocusRestorationObservation() else {
                             throw ForegroundModifierClickError.focusRestorationOwnershipLost
                         }
+                        guard self.dependencies.sharedInputActivityToken() == inputActivityToken else {
+                            throw ForegroundModifierClickError.focusRestorationOwnershipLost
+                        }
                         let isAllowed = switch stage {
                         case .applicationActivation:
-                            // The exact pre-click window is the only attributable activation result.
-                            // Another window in the prior app may be newer user or application state.
-                            current == priorObservation
+                            current.frontmostProcess == priorProcess &&
+                                current.frontmostProcess != ownership.expected.frontmostProcess &&
+                                (current.focusedWindow == nil || current == priorObservation)
                         case .setMainWindow:
                             current == ownership.expected || current == priorObservation
                         case .raiseWindow:
@@ -837,10 +910,9 @@ final class ForegroundModifierClickExecutor {
     }
 
     private func currentFocusRestorationObservation() -> FocusRestorationObservation? {
-        guard let frontmostProcess = self.dependencies.currentFrontmostIdentity(),
-              let focusedWindow = self.dependencies.currentFocusedExactWindow(),
-              focusedWindow.identity.processIdentity == frontmostProcess
-        else { return nil }
+        guard let frontmostProcess = self.dependencies.currentFrontmostIdentity() else { return nil }
+        let focusedWindow = self.dependencies.currentFocusedExactWindow()
+        guard focusedWindow == nil || focusedWindow?.identity.processIdentity == frontmostProcess else { return nil }
         return FocusRestorationObservation(
             frontmostProcess: frontmostProcess,
             focusedWindow: focusedWindow)

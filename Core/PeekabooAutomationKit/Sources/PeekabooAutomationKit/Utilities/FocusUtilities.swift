@@ -130,6 +130,7 @@ enum FocusDispatchStage: Equatable, Sendable {
 @MainActor
 final class FocusDispatchGuard {
     private let validateOwnership: @MainActor (FocusDispatchStage) throws -> Void
+    private let validateAcceptedActivation: @MainActor () throws -> Void
     private let acceptedDispatch: @MainActor (FocusDispatchStage) throws -> Void
     private let completeDispatch: @MainActor (FocusDispatchStage) throws -> Void
     let requiresStrictDispatchOwnership: Bool
@@ -139,6 +140,7 @@ final class FocusDispatchGuard {
     init(validateOwnership: @escaping @MainActor () throws -> Void = {}) {
         self.requiresStrictDispatchOwnership = false
         self.validateOwnership = { _ in try validateOwnership() }
+        self.validateAcceptedActivation = validateOwnership
         self.acceptedDispatch = { _ in }
         self.completeDispatch = { _ in }
     }
@@ -146,11 +148,15 @@ final class FocusDispatchGuard {
     init(
         requiresStrictDispatchOwnership: Bool,
         validateOwnership: @escaping @MainActor (FocusDispatchStage) throws -> Void,
+        validateAcceptedActivation: (@MainActor () throws -> Void)? = nil,
         acceptedDispatch: @escaping @MainActor (FocusDispatchStage) throws -> Void = { _ in },
         completeDispatch: @escaping @MainActor (FocusDispatchStage) throws -> Void)
     {
         self.requiresStrictDispatchOwnership = requiresStrictDispatchOwnership
         self.validateOwnership = validateOwnership
+        self.validateAcceptedActivation = validateAcceptedActivation ?? {
+            try validateOwnership(.applicationActivation)
+        }
         self.acceptedDispatch = acceptedDispatch
         self.completeDispatch = completeDispatch
     }
@@ -161,6 +167,10 @@ final class FocusDispatchGuard {
 
     func callAsFunction() throws {
         try self.validate()
+    }
+
+    func validateAcceptedActivationSettlement() throws {
+        try self.validateAcceptedActivation()
     }
 
     func didAcceptDispatch(_ stage: FocusDispatchStage) throws {
@@ -175,6 +185,34 @@ final class FocusDispatchGuard {
         if self.requiresStrictDispatchOwnership, stage == .raiseWindow {
             self.completedStrictTerminalDispatch = true
         }
+    }
+}
+
+@MainActor
+enum FocusAcceptedActivationSettlement {
+    typealias Sleep = @MainActor (Duration) async throws -> Void
+
+    static func wait(
+        dispatchGuard: FocusDispatchGuard?,
+        pollCount: Int,
+        interval: Duration,
+        isSettled: @MainActor () -> Bool,
+        sleep: Sleep = { try await Task.sleep(for: $0) }) async throws -> Bool
+    {
+        guard pollCount > 0 else { return false }
+
+        for _ in 0..<pollCount {
+            if isSettled() {
+                return true
+            }
+            try dispatchGuard?.validateAcceptedActivationSettlement()
+            try await sleep(interval)
+        }
+        if isSettled() {
+            return true
+        }
+        try dispatchGuard?.validateAcceptedActivationSettlement()
+        return false
     }
 }
 
@@ -758,13 +796,29 @@ public final class FocusManagementService {
             }
         }
 
-        try await self.waitForCondition(
-            timeout: 3.0,
-            interval: 0.1,
-            condition: {
-                runningApp.isActive ||
-                    NSWorkspace.shared.frontmostApplication?.processIdentifier == runningApp.processIdentifier
-            })
+        let activationSettled: Bool
+        if activationAccepted {
+            activationSettled = try await FocusAcceptedActivationSettlement.wait(
+                dispatchGuard: dispatchGuard,
+                pollCount: 30,
+                interval: .milliseconds(100),
+                isSettled: {
+                    runningApp.isActive ||
+                        NSWorkspace.shared.frontmostApplication?.processIdentifier == runningApp.processIdentifier
+                })
+        } else {
+            try await self.waitForCondition(
+                timeout: 3.0,
+                interval: 0.1,
+                condition: {
+                    runningApp.isActive ||
+                        NSWorkspace.shared.frontmostApplication?.processIdentifier == runningApp.processIdentifier
+                })
+            activationSettled = true
+        }
+        guard activationSettled else {
+            throw FocusError.timeoutWaitingForCondition
+        }
         if activationAccepted {
             try dispatchGuard?.didCompleteDispatch(.applicationActivation)
         }

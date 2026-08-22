@@ -670,6 +670,7 @@ struct ForegroundModifierClickExecutorTests {
                     try dispatchGuard.didAcceptDispatch(.applicationActivation)
                     frontmost = targetProcess
                     focusedWindow = intermediateWindow
+                    try dispatchGuard.validateAcceptedActivationSettlement()
                     try dispatchGuard.didCompleteDispatch(.applicationActivation)
                     try dispatchGuard.validate(.setMainWindow)
                     try dispatchGuard.didCompleteDispatch(.setMainWindow)

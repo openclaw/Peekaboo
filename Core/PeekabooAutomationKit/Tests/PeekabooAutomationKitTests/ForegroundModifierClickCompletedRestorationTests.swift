@@ -7,6 +7,188 @@ import Testing
 @MainActor
 struct ForegroundModifierClickCompletedRestorationTests {
     @Test
+    func `pending restoration adopts missing destination window until exact terminal window`() async throws {
+        let priorProcess = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
+        let targetProcess = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
+        let priorWindow = try Self.window(id: 6, process: priorProcess, x: 0)
+        let targetWindow = try Self.window(id: 7, process: targetProcess, x: 100)
+        var frontmost = priorProcess
+        var focusedWindow: UIAutomationTarget.ExactWindow? = priorWindow
+        var inputActivity = SharedInputActivityToken.trackedZero
+        var destinationIntermediateAccepted = false
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { window, _ in
+                    frontmost = targetProcess
+                    focusedWindow = window
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                        unitCount: .one)
+                },
+                currentFrontmostIdentity: { frontmost },
+                currentFocusedExactWindow: { focusedWindow },
+                activate: { _, _ in false },
+                currentCursorLocation: { CGPoint(x: 10, y: 10) },
+                moveCursor: { _ in },
+                click: { _, clickType, _ in
+                    inputActivity = inputActivity.afterModifierClick(clickType)
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                        unitCount: .one)
+                },
+                validateExactWindow: { _, _ in true },
+                restoreExactWindow: { _, dispatchGuard in
+                    try dispatchGuard.validate(.applicationActivation)
+                    try dispatchGuard.didAcceptDispatch(.applicationActivation)
+                    frontmost = priorProcess
+                    focusedWindow = nil
+                    destinationIntermediateAccepted = true
+                    try dispatchGuard.didCompleteDispatch(.applicationActivation)
+                    try dispatchGuard.validate(.setMainWindow)
+                    try dispatchGuard.didCompleteDispatch(.setMainWindow)
+                    try dispatchGuard.validate(.raiseWindow)
+                    focusedWindow = priorWindow
+                    do {
+                        try dispatchGuard.didCompleteDispatch(.raiseWindow)
+                    } catch ForegroundModifierClickError.focusRestorationSatisfied {
+                        return .confirmedChange(
+                            delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                            unitCount: .one)
+                    }
+                    Issue.record("Strict restoration completion should terminate at the exact prior window")
+                    return .confirmedNoChange()
+                },
+                sharedInputActivityToken: { inputActivity },
+                restoreCursor: { _, _, _ in .notNeeded }))
+
+        let result = try await executor.execute(Self.request(for: targetWindow))
+
+        #expect(destinationIntermediateAccepted)
+        #expect(result.payload.focusRestoration == .restored)
+        #expect(frontmost == priorProcess)
+        #expect(focusedWindow == priorWindow)
+    }
+
+    @Test
+    func `pending restoration preserves a different destination window`() async throws {
+        let priorProcess = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
+        let targetProcess = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
+        let priorWindow = try Self.window(id: 6, process: priorProcess, x: 0)
+        let targetWindow = try Self.window(id: 7, process: targetProcess, x: 100)
+        let newerDestinationWindow = try Self.window(id: 9, process: priorProcess, x: 340)
+        var frontmost = priorProcess
+        var focusedWindow: UIAutomationTarget.ExactWindow? = priorWindow
+        var inputActivity = SharedInputActivityToken.trackedZero
+        var laterMutationAttempted = false
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { window, _ in
+                    frontmost = targetProcess
+                    focusedWindow = window
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                        unitCount: .one)
+                },
+                currentFrontmostIdentity: { frontmost },
+                currentFocusedExactWindow: { focusedWindow },
+                activate: { _, _ in false },
+                currentCursorLocation: { CGPoint(x: 10, y: 10) },
+                moveCursor: { _ in },
+                click: { _, clickType, _ in
+                    inputActivity = inputActivity.afterModifierClick(clickType)
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                        unitCount: .one)
+                },
+                validateExactWindow: { _, _ in true },
+                restoreExactWindow: { _, dispatchGuard in
+                    try dispatchGuard.validate(.applicationActivation)
+                    try dispatchGuard.didAcceptDispatch(.applicationActivation)
+                    frontmost = priorProcess
+                    focusedWindow = newerDestinationWindow
+                    try dispatchGuard.didCompleteDispatch(.applicationActivation)
+                    laterMutationAttempted = true
+                    focusedWindow = priorWindow
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                        unitCount: .one)
+                },
+                sharedInputActivityToken: { inputActivity },
+                restoreCursor: { _, _, _ in .notNeeded }))
+
+        let result = try await executor.execute(Self.request(for: targetWindow))
+
+        #expect(result.payload.focusRestoration == .preservedNewerState)
+        #expect(frontmost == priorProcess)
+        #expect(focusedWindow == newerDestinationWindow)
+        #expect(!laterMutationAttempted)
+    }
+
+    @Test
+    func `pending restoration rejects a different window in the source process`() async throws {
+        let priorProcess = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
+        let targetProcess = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
+        let priorWindow = try Self.window(id: 6, process: priorProcess, x: 0)
+        let targetWindow = try Self.window(id: 7, process: targetProcess, x: 100)
+        let newerSourceWindow = try Self.window(id: 8, process: targetProcess, x: 220)
+        var frontmost = priorProcess
+        var focusedWindow: UIAutomationTarget.ExactWindow? = priorWindow
+        var inputActivity = SharedInputActivityToken.trackedZero
+        var destinationMutationAttempted = false
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = ForegroundModifierClickExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            dependencies: .init(
+                focusExactWindow: { window, _ in
+                    frontmost = targetProcess
+                    focusedWindow = window
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                        unitCount: .one)
+                },
+                currentFrontmostIdentity: { frontmost },
+                currentFocusedExactWindow: { focusedWindow },
+                activate: { _, _ in false },
+                currentCursorLocation: { CGPoint(x: 10, y: 10) },
+                moveCursor: { _ in },
+                click: { _, clickType, _ in
+                    inputActivity = inputActivity.afterModifierClick(clickType)
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                        unitCount: .one)
+                },
+                validateExactWindow: { _, _ in true },
+                restoreExactWindow: { _, dispatchGuard in
+                    try dispatchGuard.validate(.applicationActivation)
+                    try dispatchGuard.didAcceptDispatch(.applicationActivation)
+                    focusedWindow = newerSourceWindow
+                    try dispatchGuard.validateAcceptedActivationSettlement()
+                    destinationMutationAttempted = true
+                    frontmost = priorProcess
+                    focusedWindow = priorWindow
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                        unitCount: .one)
+                },
+                sharedInputActivityToken: { inputActivity },
+                restoreCursor: { _, _, _ in .notNeeded }))
+
+        let result = try await executor.execute(Self.request(for: targetWindow))
+
+        #expect(result.payload.focusRestoration == .preservedNewerState)
+        #expect(frontmost == targetProcess)
+        #expect(focusedWindow == newerSourceWindow)
+        #expect(!destinationMutationAttempted)
+    }
+
+    @Test
     func `app-only accepted restoration losing CAS is counted once and not retried`() async throws {
         let priorProcess = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
         let targetProcess = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)

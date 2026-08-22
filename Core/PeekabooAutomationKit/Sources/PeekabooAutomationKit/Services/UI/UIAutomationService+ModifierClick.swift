@@ -189,15 +189,16 @@ extension UIAutomationService {
         try dispatchGuard.validate(.applicationActivation)
         guard application.activate() else { return false }
         try dispatchGuard.didAcceptDispatch(.applicationActivation)
-        for _ in 0..<20 {
-            if self.currentFrontmostProcessIdentity() == identity {
-                try dispatchGuard.didCompleteDispatch(.applicationActivation)
-                return true
-            }
-            try dispatchGuard.validate(.applicationActivation)
-            try await Task.sleep(for: .milliseconds(25))
+        let activationSettled = try await FocusAcceptedActivationSettlement.wait(
+            dispatchGuard: dispatchGuard,
+            pollCount: 20,
+            interval: .milliseconds(25),
+            isSettled: { self.currentFrontmostProcessIdentity() == identity })
+        guard activationSettled else {
+            return false
         }
-        return false
+        try dispatchGuard.didCompleteDispatch(.applicationActivation)
+        return true
     }
 
     private static func postModifierClick(
