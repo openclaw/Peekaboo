@@ -216,8 +216,7 @@ final class ForegroundModifierClickExecutor {
                 reason: .targetUnavailable,
                 message: "Modifier-click could not capture the prior foreground application for restoration.")
         }
-        let priorFocusedWindow = self.dependencies.currentFocusedExactWindow()
-        guard priorFrontmost != exactWindow.identity.processIdentity || priorFocusedWindow != nil else {
+        guard let priorFocusedWindow = self.dependencies.currentFocusedExactWindow() else {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .targetUnavailable,
                 message: "Modifier-click could not capture the exact prior focused window for restoration.")

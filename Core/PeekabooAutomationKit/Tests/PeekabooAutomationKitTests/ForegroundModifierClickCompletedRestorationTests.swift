@@ -243,63 +243,58 @@ struct ForegroundModifierClickCompletedRestorationTests {
     }
 
     @Test
-    func `app-only accepted restoration losing CAS is counted once and not retried`() async throws {
+    func `cross application missing prior exact window refuses every write`() async throws {
         let priorProcess = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
         let targetProcess = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
         let targetWindow = try Self.window(id: 7, process: targetProcess, x: 100)
-        var frontmost = priorProcess
-        var focusedWindow: UIAutomationTarget.ExactWindow?
-        var inputActivity = SharedInputActivityToken.trackedZero
-        var activationAttempted = false
+        var focusAttempted = false
+        var clickAttempted = false
+        var cursorWriteAttempted = false
+        var restorationActivationAttempted = false
         var exactRestoreAttempted = false
+        var cursorRestoreAttempted = false
         let root = self.temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let executor = ForegroundModifierClickExecutor(
             laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
             dependencies: .init(
-                focusExactWindow: { window, _ in
-                    frontmost = targetProcess
-                    focusedWindow = window
-                    return .confirmedChange(
-                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
-                        unitCount: .one)
+                focusExactWindow: { _, _ in
+                    focusAttempted = true
+                    return .confirmedNoChange()
                 },
-                currentFrontmostIdentity: { frontmost },
-                currentFocusedExactWindow: { focusedWindow },
-                activate: { process, dispatchGuard in
-                    #expect(process == priorProcess)
-                    try dispatchGuard.validate(.applicationActivation)
-                    try dispatchGuard.didAcceptDispatch(.applicationActivation)
-                    activationAttempted = true
-                    frontmost = priorProcess
-                    try dispatchGuard.validate(.applicationActivation)
-                    inputActivity = inputActivity.afterKeyboardInput()
-                    try dispatchGuard.didCompleteDispatch(.applicationActivation)
-                    return true
+                currentFrontmostIdentity: { priorProcess },
+                currentFocusedExactWindow: { nil },
+                activate: { _, _ in
+                    restorationActivationAttempted = true
+                    return false
                 },
                 currentCursorLocation: { CGPoint(x: 10, y: 10) },
-                moveCursor: { _ in },
-                click: { _, clickType, _ in
-                    inputActivity = inputActivity.afterModifierClick(clickType)
-                    return .confirmedChange(
-                        delivery: .init(mechanism: .globalEvents, mode: .foreground),
-                        unitCount: .one)
+                moveCursor: { _ in cursorWriteAttempted = true },
+                click: { _, _, _ in
+                    clickAttempted = true
+                    return .confirmedNoChange()
                 },
                 validateExactWindow: { _, _ in true },
                 restoreExactWindow: { _, _ in
                     exactRestoreAttempted = true
                     return .confirmedNoChange()
                 },
-                sharedInputActivityToken: { inputActivity },
-                restoreCursor: { _, _, _ in .notNeeded }))
+                restoreCursor: { _, _, _ in
+                    cursorRestoreAttempted = true
+                    return .notNeeded
+                }))
 
         let failure = await self.failure(from: executor, targetWindow: targetWindow)
 
-        #expect(activationAttempted)
+        #expect(failure?.outcome.state == .refused)
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.message.contains("exact prior focused window") == true)
+        #expect(!focusAttempted)
+        #expect(!clickAttempted)
+        #expect(!cursorWriteAttempted)
+        #expect(!restorationActivationAttempted)
         #expect(!exactRestoreAttempted)
-        #expect(failure?.outcome.state == .indeterminate)
-        #expect(failure?.outcome.dispatchState.unitCount?.rawValue == 3)
-        #expect(failure?.outcome.retrySafety == .unsafe)
+        #expect(!cursorRestoreAttempted)
     }
 
     @Test

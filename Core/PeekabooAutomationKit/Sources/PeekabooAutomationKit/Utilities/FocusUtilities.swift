@@ -216,6 +216,68 @@ enum FocusAcceptedActivationSettlement {
     }
 }
 
+@MainActor
+enum FocusRaiseSettlement {
+    static func run(
+        attemptCount: Int,
+        requiresStrictDispatchOwnership: Bool,
+        prepareAttempt: () throws -> Void,
+        dispatchRaise: () throws -> Void,
+        verifyFocus: () async throws -> Void,
+        completeRaise: () throws -> Void,
+        sleepBeforeRetry: () async throws -> Void,
+        fallbackError: @autoclosure () -> any Error) async throws
+    {
+        guard attemptCount > 0 else { throw fallbackError() }
+        var lastError: (any Error)?
+
+        for attempt in 1...attemptCount {
+            try prepareAttempt()
+            var raiseDefinitelyReturned = false
+            do {
+                try dispatchRaise()
+                raiseDefinitelyReturned = true
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                if requiresStrictDispatchOwnership {
+                    throw error
+                }
+            }
+
+            if raiseDefinitelyReturned, !requiresStrictDispatchOwnership {
+                do {
+                    try completeRaise()
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    // Non-strict completion errors historically defer to focus verification.
+                }
+            }
+
+            do {
+                try await verifyFocus()
+            } catch {
+                lastError = error
+                if requiresStrictDispatchOwnership, raiseDefinitelyReturned {
+                    throw error
+                }
+                if attempt < attemptCount {
+                    try await sleepBeforeRetry()
+                }
+                continue
+            }
+
+            if raiseDefinitelyReturned, requiresStrictDispatchOwnership {
+                try completeRaise()
+            }
+            return
+        }
+
+        throw lastError ?? fallbackError()
+    }
+}
+
 enum FocusDispatchRecord: Equatable, Sendable {
     case accepted(DesktopActionOutcome.Delivery)
     case mayHaveDispatched(DesktopActionOutcome.Delivery)
@@ -955,28 +1017,30 @@ public final class FocusManagementService {
         options: FocusOptions,
         context: FocusWindowDispatchContext) async throws
     {
-        var lastError: (any Error)?
-
-        for attempt in 1...options.retryCount {
-            // Chrome and other multi-window apps can raise a window without updating AXFocusedWindow.
-            // Ask AX to make it main as well, then require both AX and Workspace to confirm the result.
-            try self.requireExpectedFocusIdentity(
-                context.expectedIdentity,
-                windowID: windowID,
-                element: windowElement)
-            try context.dispatchGuard?.validate(.setMainWindow)
-            let madeMain = try FocusDispatchAccounting.acceptingBool(
-                delivery: .init(mechanism: .accessibilityValue, mode: .foreground),
-                onDispatch: context.onDispatch,
-                operation: {
-                    windowElement.setValue(true, forAttribute: AXAttributeNames.kAXMainAttribute)
-                })
-            if madeMain {
-                // This sits outside the verification retry catch: strict completion/ownership
-                // sentinels must escape immediately after an accepted set-main dispatch.
-                try context.dispatchGuard?.didCompleteDispatch(.setMainWindow)
-            }
-            do {
+        try await FocusRaiseSettlement.run(
+            attemptCount: options.retryCount,
+            requiresStrictDispatchOwnership: context.dispatchGuard?.requiresStrictDispatchOwnership == true,
+            prepareAttempt: {
+                // Chrome and other multi-window apps can raise a window without updating AXFocusedWindow.
+                // Ask AX to make it main as well, then require both AX and Workspace to confirm the result.
+                try self.requireExpectedFocusIdentity(
+                    context.expectedIdentity,
+                    windowID: windowID,
+                    element: windowElement)
+                try context.dispatchGuard?.validate(.setMainWindow)
+                let madeMain = try FocusDispatchAccounting.acceptingBool(
+                    delivery: .init(mechanism: .accessibilityValue, mode: .foreground),
+                    onDispatch: context.onDispatch,
+                    operation: {
+                        windowElement.setValue(true, forAttribute: AXAttributeNames.kAXMainAttribute)
+                    })
+                if madeMain {
+                    // Strict completion/ownership sentinels must escape immediately after an accepted
+                    // set-main dispatch.
+                    try context.dispatchGuard?.didCompleteDispatch(.setMainWindow)
+                }
+            },
+            dispatchRaise: {
                 try self.requireExpectedFocusIdentity(
                     context.expectedIdentity,
                     windowID: windowID,
@@ -986,46 +1050,24 @@ public final class FocusManagementService {
                     delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
                     onDispatch: context.onDispatch,
                     operation: { try windowElement.performAction(.raise) })
-                try context.dispatchGuard?.didCompleteDispatch(.raiseWindow)
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                if context.dispatchGuard?.requiresStrictDispatchOwnership == true {
-                    // Includes strict completion/ownership sentinels from the accepted raise.
-                    throw error
-                }
-                // If raise action fails, try to make it main
-                // Note: Setting main window through AX API requires finding parent app
-                // This is handled by the activate() call above
-            }
-
-            // Verify focus
-            do {
+            },
+            verifyFocus: {
                 try await self.verifyWindowFocus(
                     windowElement,
                     windowID: windowID,
                     timeout: options.timeout,
                     attachedDialog: context.attachedDialog,
                     expectedIdentity: context.expectedIdentity)
-
-                // Successfully focused window
-                return
-            } catch {
-                // Only verification errors reach this catch; strict dispatch-guard errors above
-                // have already escaped the retry loop.
-                lastError = error
-                // Focus attempt failed: \(error.localizedDescription)
-
-                if context.dispatchGuard?.completedStrictTerminalDispatch == true {
-                    throw error
-                }
-                if attempt < options.retryCount {
-                    try await Task.sleep(nanoseconds: 500_000_000) // 0.5s between retries
-                }
-            }
-        }
-
-        throw lastError ?? FocusError.focusVerificationFailed(windowID)
+            },
+            completeRaise: {
+                // Accepted AXRaise is terminal only after the exact focus observation settles.
+                // Keeping this outside verification handling lets strict sentinels escape.
+                try context.dispatchGuard?.didCompleteDispatch(.raiseWindow)
+            },
+            sleepBeforeRetry: {
+                try await Task.sleep(nanoseconds: 500_000_000) // 0.5s between retries
+            },
+            fallbackError: FocusError.focusVerificationFailed(windowID))
     }
 
     private func verifyWindowFocus(

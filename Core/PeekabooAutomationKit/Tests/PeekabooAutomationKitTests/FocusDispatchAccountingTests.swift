@@ -122,6 +122,127 @@ struct FocusDispatchAccountingTests {
     }
 
     @Test
+    @MainActor
+    func `strict accepted raise completes after asynchronous exact focus settlement`() async throws {
+        var exactFocusSettled = false
+        var raiseCount = 0
+        var verificationCount = 0
+        var completionCount = 0
+        var retryCount = 0
+
+        try await FocusRaiseSettlement.run(
+            attemptCount: 2,
+            requiresStrictDispatchOwnership: true,
+            prepareAttempt: {},
+            dispatchRaise: { raiseCount += 1 },
+            verifyFocus: {
+                verificationCount += 1
+                #expect(!exactFocusSettled)
+                await Task.yield()
+                exactFocusSettled = true
+            },
+            completeRaise: {
+                #expect(exactFocusSettled)
+                completionCount += 1
+            },
+            sleepBeforeRetry: { retryCount += 1 },
+            fallbackError: FocusDispatchProbeError.rejected)
+
+        #expect(raiseCount == 1)
+        #expect(verificationCount == 1)
+        #expect(completionCount == 1)
+        #expect(retryCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `strict accepted raise that never settles does not complete or retry`() async {
+        var raiseCount = 0
+        var verificationCount = 0
+        var completionCount = 0
+        var retryCount = 0
+
+        await #expect(throws: FocusDispatchProbeError.self) {
+            try await FocusRaiseSettlement.run(
+                attemptCount: 3,
+                requiresStrictDispatchOwnership: true,
+                prepareAttempt: {},
+                dispatchRaise: { raiseCount += 1 },
+                verifyFocus: {
+                    verificationCount += 1
+                    throw FocusDispatchProbeError.rejected
+                },
+                completeRaise: { completionCount += 1 },
+                sleepBeforeRetry: { retryCount += 1 },
+                fallbackError: FocusDispatchProbeError.rejected)
+        }
+
+        #expect(raiseCount == 1)
+        #expect(verificationCount == 1)
+        #expect(completionCount == 0)
+        #expect(retryCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `non strict accepted raises complete before transient verification retry`() async throws {
+        var attempt = 0
+        var events: [String] = []
+
+        try await FocusRaiseSettlement.run(
+            attemptCount: 2,
+            requiresStrictDispatchOwnership: false,
+            prepareAttempt: {},
+            dispatchRaise: {
+                attempt += 1
+                events.append("raise\(attempt)")
+            },
+            verifyFocus: {
+                events.append("verify\(attempt)")
+                if attempt == 1 {
+                    throw FocusDispatchProbeError.rejected
+                }
+            },
+            completeRaise: { events.append("complete\(attempt)") },
+            sleepBeforeRetry: { events.append("retry\(attempt)") },
+            fallbackError: FocusDispatchProbeError.rejected)
+
+        #expect(events == [
+            "raise1", "complete1", "verify1", "retry1",
+            "raise2", "complete2", "verify2",
+        ])
+    }
+
+    @Test
+    @MainActor
+    func `non strict exhausted verification retries retain every accepted completion`() async {
+        var raiseCount = 0
+        var completionCount = 0
+        var verificationCount = 0
+        var retryCount = 0
+
+        await #expect(throws: FocusDispatchProbeError.self) {
+            try await FocusRaiseSettlement.run(
+                attemptCount: 3,
+                requiresStrictDispatchOwnership: false,
+                prepareAttempt: {},
+                dispatchRaise: { raiseCount += 1 },
+                verifyFocus: {
+                    verificationCount += 1
+                    throw FocusDispatchProbeError.rejected
+                },
+                completeRaise: { completionCount += 1 },
+                sleepBeforeRetry: { retryCount += 1 },
+                fallbackError: FocusDispatchProbeError.rejected)
+        }
+
+        #expect(raiseCount == 3)
+        #expect(completionCount == 3)
+        #expect(verificationCount == 3)
+        #expect(retryCount == 2)
+    }
+
+    @Test
     func `unknown Space success is accounted while active Space is skipped`() async throws {
         #expect(FocusDispatchAccounting.shouldAccountSpaceSwitch(isActive: nil))
         #expect(FocusDispatchAccounting.shouldAccountSpaceSwitch(isActive: false))

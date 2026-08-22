@@ -73,8 +73,9 @@ struct ForegroundModifierClickExecutorTests {
         let bounds = CGRect(x: 100, y: 100, width: 600, height: 400)
         let point = CGPoint(x: 220, y: 240)
         let originalCursor = CGPoint(x: 20, y: 30)
+        let priorWindow = try Self.priorWindow(process: prior)
         var frontmost = prior
-        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var focusedWindow: UIAutomationTarget.ExactWindow? = priorWindow
         var cursor = originalCursor
         var clickedModifiers: [PointerModifier] = []
         let root = self.temporaryRoot()
@@ -84,7 +85,7 @@ struct ForegroundModifierClickExecutorTests {
             dependencies: .init(
                 focusExactWindow: { window, beforeDispatch in
                     try beforeDispatch()
-                    frontmost = target
+                    frontmost = window.identity.processIdentity
                     focusedWindow = window
                     return .confirmedChange(
                         delivery: .init(mechanism: .nativeFramework, mode: .foreground),
@@ -200,7 +201,7 @@ struct ForegroundModifierClickExecutorTests {
         let preflightCursor = CGPoint(x: 20, y: 30)
         let cursorAfterFocus = CGPoint(x: 740, y: 520)
         var frontmost = prior
-        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var focusedWindow: UIAutomationTarget.ExactWindow? = try Self.priorWindow(process: prior)
         var cursor = preflightCursor
         let root = self.temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -209,7 +210,7 @@ struct ForegroundModifierClickExecutorTests {
             dependencies: .init(
                 focusExactWindow: { window, beforeDispatch in
                     try beforeDispatch()
-                    frontmost = target
+                    frontmost = window.identity.processIdentity
                     focusedWindow = window
                     cursor = cursorAfterFocus
                     return .confirmedChange(
@@ -350,7 +351,7 @@ struct ForegroundModifierClickExecutorTests {
         let point = CGPoint(x: 220, y: 240)
         let userCursor = CGPoint(x: 900, y: 700)
         var frontmost = prior
-        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var focusedWindow: UIAutomationTarget.ExactWindow? = try Self.priorWindow(process: prior)
         var cursor = CGPoint(x: 20, y: 30)
         var didMoveCursor = false
         var didReactivate = false
@@ -383,6 +384,8 @@ struct ForegroundModifierClickExecutorTests {
                 },
                 click: { _, _, _ in
                     cursor = userCursor
+                    frontmost = newer
+                    focusedWindow = nil
                     return .dispatchedUnverified(
                         delivery: .init(mechanism: .globalEvents, mode: .foreground),
                         evidence: .deliveryAccepted,
@@ -499,6 +502,7 @@ struct ForegroundModifierClickExecutorTests {
     func `missing original cursor refuses before focus or click dispatch`() async throws {
         let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
         let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let priorWindow = try Self.priorWindow(process: prior)
         var dispatched = false
         let root = self.temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -510,7 +514,7 @@ struct ForegroundModifierClickExecutorTests {
                     return .confirmedNoChange()
                 },
                 currentFrontmostIdentity: { prior },
-                currentFocusedExactWindow: { nil },
+                currentFocusedExactWindow: { priorWindow },
                 activate: { _, _ in
                     dispatched = true
                     return true
@@ -549,6 +553,7 @@ struct ForegroundModifierClickExecutorTests {
         let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
         let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
         let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let priorWindow = try Self.priorWindow(process: prior)
         var clickAttempted = false
         let root = self.temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -557,7 +562,7 @@ struct ForegroundModifierClickExecutorTests {
             dependencies: .init(
                 focusExactWindow: { _, _ in throw ModifierClickTestError.focusRestoreFailed },
                 currentFrontmostIdentity: { prior },
-                currentFocusedExactWindow: { nil },
+                currentFocusedExactWindow: { priorWindow },
                 activate: { _, _ in false },
                 currentCursorLocation: { CGPoint(x: 10, y: 10) },
                 moveCursor: { _ in },
@@ -588,6 +593,7 @@ struct ForegroundModifierClickExecutorTests {
         let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
         let newer = ApplicationProcessIdentity(processIdentifier: 33, processStartIdentity: 330)
         let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let priorWindow = try Self.priorWindow(process: prior)
         var frontmost = prior
         var clickAttempted = false
         let root = self.temporaryRoot()
@@ -602,7 +608,7 @@ struct ForegroundModifierClickExecutorTests {
                     return .confirmedNoChange()
                 },
                 currentFrontmostIdentity: { frontmost },
-                currentFocusedExactWindow: { nil },
+                currentFocusedExactWindow: { priorWindow },
                 activate: { _, _ in false },
                 currentCursorLocation: { CGPoint(x: 10, y: 10) },
                 moveCursor: { _ in },
@@ -913,8 +919,9 @@ struct ForegroundModifierClickExecutorTests {
         let prior = ApplicationProcessIdentity(processIdentifier: 11, processStartIdentity: 110)
         let target = ApplicationProcessIdentity(processIdentifier: 22, processStartIdentity: 220)
         let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let priorWindow = try Self.priorWindow(process: prior)
         var frontmost = prior
-        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var focusedWindow: UIAutomationTarget.ExactWindow? = priorWindow
         var clickAttempted = false
         let root = self.temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1132,7 +1139,7 @@ extension ForegroundModifierClickExecutorTests {
             bounds: bounds)
         var exactWindowRoute: BackgroundInputDriver.MouseWindowRouteCandidate? = targetRoute
         var frontmost = prior
-        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var focusedWindow: UIAutomationTarget.ExactWindow? = try Self.priorWindow(process: prior)
         var cursorReads = 0
         var clickAttempted = false
         var cleanupAttempted = false
@@ -1208,7 +1215,7 @@ extension ForegroundModifierClickExecutorTests {
             layer: 0,
             bounds: bounds)
         var frontmost = prior
-        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var focusedWindow: UIAutomationTarget.ExactWindow? = try Self.priorWindow(process: prior)
         var activity = SharedInputActivityToken.trackedZero
         var clickAttempted = false
         var cleanupAttempted = false
@@ -1281,7 +1288,7 @@ extension ForegroundModifierClickExecutorTests {
             layer: 0,
             bounds: bounds)
         var frontmost = prior
-        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var focusedWindow: UIAutomationTarget.ExactWindow? = try Self.priorWindow(process: prior)
         let validationState = ModifierClickValidationCounter()
         var clickAttempted = false
         var cleanupAttempted = false
@@ -1353,8 +1360,9 @@ extension ForegroundModifierClickExecutorTests {
                 ownerProcessStartIdentity: target.processStartIdentity,
                 capturedBounds: bounds),
             bounds: bounds)
+        let priorWindow = try Self.priorWindow(process: prior)
         var frontmost = prior
-        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var focusedWindow: UIAutomationTarget.ExactWindow? = priorWindow
         var clickAttempted = false
         var focusCleanupAttempted = false
         let root = self.temporaryRoot()
@@ -1375,7 +1383,6 @@ extension ForegroundModifierClickExecutorTests {
                 currentFocusedExactWindow: { focusedWindow },
                 activate: { identity, dispatchGuard in
                     try dispatchGuard()
-                    focusCleanupAttempted = true
                     frontmost = identity
                     focusedWindow = nil
                     return true
@@ -1386,7 +1393,16 @@ extension ForegroundModifierClickExecutorTests {
                     clickAttempted = true
                     return .confirmedNoChange()
                 },
-                validateExactWindow: { _, _ in true }))
+                validateExactWindow: { _, _ in true },
+                restoreExactWindow: { window, dispatchGuard in
+                    try dispatchGuard()
+                    focusCleanupAttempted = true
+                    frontmost = window.identity.processIdentity
+                    focusedWindow = window
+                    return .confirmedChange(
+                        delivery: .init(mechanism: .nativeFramework, mode: .foreground),
+                        unitCount: .one)
+                }))
         let operation = Task { @MainActor in
             try await executor.execute(ForegroundModifierClickRequest(
                 point: CGPoint(x: 20, y: 20),
@@ -1407,7 +1423,7 @@ extension ForegroundModifierClickExecutorTests {
         #expect(!clickAttempted)
         #expect(focusCleanupAttempted)
         #expect(frontmost == prior)
-        #expect(focusedWindow == nil)
+        #expect(focusedWindow == priorWindow)
     }
 
     @Test(arguments: FocusInputTransition.allCases)
@@ -1425,7 +1441,7 @@ extension ForegroundModifierClickExecutorTests {
                 capturedBounds: bounds),
             bounds: bounds)
         var frontmost = prior
-        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var focusedWindow: UIAutomationTarget.ExactWindow? = try Self.priorWindow(process: prior)
         var activity = SharedInputActivityToken.trackedZero
         var clickAttempted = false
         var focusCleanupAttempted = false
@@ -1491,6 +1507,7 @@ extension ForegroundModifierClickExecutorTests {
                 ownerProcessStartIdentity: target.processStartIdentity,
                 capturedBounds: bounds),
             bounds: bounds)
+        let priorWindow = try Self.priorWindow(process: prior)
         let activity = heldInput.activity(after: .trackedZero)
         var focusAttempted = false
         var clickAttempted = false
@@ -1504,7 +1521,7 @@ extension ForegroundModifierClickExecutorTests {
                     return .confirmedNoChange()
                 },
                 currentFrontmostIdentity: { prior },
-                currentFocusedExactWindow: { nil },
+                currentFocusedExactWindow: { priorWindow },
                 activate: { _, _ in false },
                 currentCursorLocation: { CGPoint(x: 10, y: 10) },
                 moveCursor: { _ in },
@@ -1552,7 +1569,7 @@ extension ForegroundModifierClickExecutorTests {
                 capturedBounds: intermediateBounds),
             bounds: intermediateBounds)
         var frontmost = prior
-        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var focusedWindow: UIAutomationTarget.ExactWindow? = try Self.priorWindow(process: prior)
         var activity = SharedInputActivityToken.trackedZero
         var focusWriteCount = 0
         var clickAttempted = false
@@ -1633,7 +1650,7 @@ extension ForegroundModifierClickExecutorTests {
                 capturedBounds: bounds),
             bounds: bounds)
         var frontmost = prior
-        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var focusedWindow: UIAutomationTarget.ExactWindow? = try Self.priorWindow(process: prior)
         var cursorReads = 0
         var clickAttempted = false
         let root = self.temporaryRoot()
@@ -1643,7 +1660,7 @@ extension ForegroundModifierClickExecutorTests {
             dependencies: .init(
                 focusExactWindow: { window, beforeDispatch in
                     try beforeDispatch()
-                    frontmost = target
+                    frontmost = window.identity.processIdentity
                     focusedWindow = window
                     return .confirmedChange(
                         delivery: .init(mechanism: .nativeFramework, mode: .foreground),
@@ -1718,7 +1735,7 @@ extension ForegroundModifierClickExecutorTests {
         let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
         let point = CGPoint(x: 20, y: 20)
         var frontmost = prior
-        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var focusedWindow: UIAutomationTarget.ExactWindow? = try Self.priorWindow(process: prior)
         var cursor = CGPoint(x: 10, y: 10)
         var activity = SharedInputActivityToken.trackedZero
         var cursorCleanupAttempted = false
@@ -1832,7 +1849,7 @@ extension ForegroundModifierClickExecutorTests {
         let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
         let point = CGPoint(x: 20, y: 20)
         var frontmost = prior
-        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var focusedWindow: UIAutomationTarget.ExactWindow? = try Self.priorWindow(process: prior)
         var cursor = CGPoint(x: 10, y: 10)
         var cursorCleanupAttempted = false
         var focusCleanupAttempted = false
@@ -1843,7 +1860,7 @@ extension ForegroundModifierClickExecutorTests {
             dependencies: .init(
                 focusExactWindow: { window, beforeDispatch in
                     try beforeDispatch()
-                    frontmost = target
+                    frontmost = window.identity.processIdentity
                     focusedWindow = window
                     return .confirmedChange(
                         delivery: .init(mechanism: .nativeFramework, mode: .foreground),
@@ -1900,7 +1917,7 @@ extension ForegroundModifierClickExecutorTests {
         let point = CGPoint(x: 220, y: 240)
         let originalCursor = CGPoint(x: 20, y: 30)
         var frontmost = prior
-        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var focusedWindow: UIAutomationTarget.ExactWindow? = try Self.priorWindow(process: prior)
         var cursor = originalCursor
         var cursorRestoreAttempted = false
         var focusRestoreAttempted = false
@@ -1911,8 +1928,11 @@ extension ForegroundModifierClickExecutorTests {
             dependencies: .init(
                 focusExactWindow: { window, beforeDispatch in
                     try beforeDispatch()
-                    frontmost = target
+                    frontmost = window.identity.processIdentity
                     focusedWindow = window
+                    if window.identity.processIdentity == prior {
+                        focusRestoreAttempted = true
+                    }
                     return .confirmedChange(
                         delivery: .init(mechanism: .nativeFramework, mode: .foreground),
                         unitCount: .one)
@@ -1921,7 +1941,6 @@ extension ForegroundModifierClickExecutorTests {
                 currentFocusedExactWindow: { focusedWindow },
                 activate: { identity, beforeDispatch in
                     try beforeDispatch()
-                    focusRestoreAttempted = true
                     frontmost = identity
                     focusedWindow = nil
                     return true
@@ -1972,7 +1991,7 @@ extension ForegroundModifierClickExecutorTests {
         let bounds = CGRect(x: 100, y: 100, width: 600, height: 400)
         let point = CGPoint(x: 220, y: 240)
         var frontmost = prior
-        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var focusedWindow: UIAutomationTarget.ExactWindow? = try Self.priorWindow(process: prior)
         var cursor: CGPoint? = CGPoint(x: 20, y: 30)
         var focusRestoreAttempted = false
         let root = self.temporaryRoot()
@@ -1982,8 +2001,11 @@ extension ForegroundModifierClickExecutorTests {
             dependencies: .init(
                 focusExactWindow: { window, beforeDispatch in
                     try beforeDispatch()
-                    frontmost = target
+                    frontmost = window.identity.processIdentity
                     focusedWindow = window
+                    if window.identity.processIdentity == prior {
+                        focusRestoreAttempted = true
+                    }
                     return .confirmedChange(
                         delivery: .init(mechanism: .nativeFramework, mode: .foreground),
                         unitCount: .one)
@@ -1992,7 +2014,6 @@ extension ForegroundModifierClickExecutorTests {
                 currentFocusedExactWindow: { focusedWindow },
                 activate: { identity, beforeDispatch in
                     try beforeDispatch()
-                    focusRestoreAttempted = true
                     frontmost = identity
                     focusedWindow = nil
                     return true
@@ -2038,7 +2059,7 @@ extension ForegroundModifierClickExecutorTests {
         let point = CGPoint(x: 220, y: 240)
         let originalCursor = CGPoint(x: 20, y: 30)
         var frontmost = prior
-        var focusedWindow: UIAutomationTarget.ExactWindow?
+        var focusedWindow: UIAutomationTarget.ExactWindow? = try Self.priorWindow(process: prior)
         var cursor = originalCursor
         let root = self.temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -2047,7 +2068,7 @@ extension ForegroundModifierClickExecutorTests {
             dependencies: .init(
                 focusExactWindow: { window, beforeDispatch in
                     try beforeDispatch()
-                    frontmost = target
+                    frontmost = window.identity.processIdentity
                     focusedWindow = window
                     return .confirmedChange(
                         delivery: .init(mechanism: .nativeFramework, mode: .foreground),
@@ -2476,6 +2497,17 @@ extension ForegroundModifierClickExecutorTests {
             .appendingPathComponent("peekaboo-modifier-click-tests-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
+    }
+
+    private static func priorWindow(process: ApplicationProcessIdentity) throws -> UIAutomationTarget.ExactWindow {
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        return try UIAutomationTarget.ExactWindow(
+            identity: WindowMutationIdentity(
+                windowID: 6,
+                ownerProcessIdentifier: process.processIdentifier,
+                ownerProcessStartIdentity: process.processStartIdentity,
+                capturedBounds: bounds),
+            bounds: bounds)
     }
 }
 
