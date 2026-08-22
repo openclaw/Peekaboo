@@ -26,9 +26,9 @@ Each long-lived host has one distinct role and socket:
 | Peekaboo.app Bridge | `~/Library/Application Support/Peekaboo/bridge.sock` | Owned by the GUI app and its TCC grants. |
 | MCP server | stdio | Owned by the MCP client; no Bridge listener or published socket. |
 
-Normal automation commands prefer the reusable daemon when it is healthy. If it is unavailable, they use a healthy
-Peekaboo.app host with the required capability before auto-starting a daemon. If no remote host is usable, the command
-falls back to process-local services when that operation permits it.
+Commands outside the exact-build preference below prefer the reusable daemon when it is healthy. If it is unavailable,
+they use a healthy Peekaboo.app host with the required capability before auto-starting a daemon. If no remote host is
+usable, the command falls back to process-local services when that operation permits it.
 
 Implicit commands that require screen capture, inspect the AX tree, use browser MCP, or consume/invalidate snapshot
 state first prefer the current CLI build's deterministic `daemon-<build>.sock`. They may auto-start that exact-build
