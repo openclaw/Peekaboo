@@ -81,51 +81,77 @@ PLAYGROUND=boo.peekaboo.playground.debug
 "$PB" window list --app "$PLAYGROUND" --json
 ```
 
-Choose the canonical window ID from `window list`, then observe that exact
-window without activating it:
+Resolve exactly one Click Fixture window, observe it without activation, and
+extract the opaque element ID for `single-click-button` from that same snapshot:
 
 ```bash
-WINDOW_ID=12345
-"$PB" see \
+CLICK_WINDOW_ID=$("$PB" window list --app "$PLAYGROUND" --json | jq -er '
+  [.data.windows[] | select(.window_title == "Click Fixture") | .window_id]
+  | select(length == 1) | .[0]')
+CLICK_SEE=$("$PB" see \
   --app "$PLAYGROUND" \
-  --window-id "$WINDOW_ID" \
+  --window-id "$CLICK_WINDOW_ID" \
   --annotate \
   --path /tmp/peekaboo-playground-see.png \
-  --json
-```
-
-Copy the returned `snapshot_id` and element ID into one background mutation.
-For example, the Click Fixture exposes `single-click-button`:
-
-```bash
-SNAPSHOT_ID=replace-with-fresh-snapshot-id
-ELEMENT_ID=replace-with-returned-element-id
+  --json)
+CLICK_SNAPSHOT_ID=$(printf '%s\n' "$CLICK_SEE" | jq -er '.data.snapshot_id')
+SINGLE_CLICK_ID=$(printf '%s\n' "$CLICK_SEE" | jq -er '
+  [.data.ui_elements[] | select(.identifier == "single-click-button") | .id]
+  | select(length == 1) | .[0]')
 
 "$PB" click \
-  --window-id "$WINDOW_ID" \
-  --snapshot "$SNAPSHOT_ID" \
-  --on "$ELEMENT_ID" \
+  --window-id "$CLICK_WINDOW_ID" \
+  --snapshot "$CLICK_SNAPSHOT_ID" \
+  --on "$SINGLE_CLICK_ID" \
   --json
 ```
 
-For text input, observe the exact Text Fixture, click its
-`basic-text-field` element in the background, observe again to capture the
-focused-element receipt, then type. Observe once more before sending Return:
+For text input, independently resolve and observe the Text Fixture. Click the
+returned `basic-text-field`, observe its focused state, type, then observe once
+more before sending Return:
 
 ```bash
-"$PB" type "Peekaboo v4 background text" --snapshot "$SNAPSHOT_ID" --clear --json
-"$PB" press Return --snapshot "$NEXT_SNAPSHOT_ID" --json
+TEXT_WINDOW_ID=$("$PB" window list --app "$PLAYGROUND" --json | jq -er '
+  [.data.windows[] | select(.window_title == "Text Fixture") | .window_id]
+  | select(length == 1) | .[0]')
+TEXT_SEE=$("$PB" see --app "$PLAYGROUND" --window-id "$TEXT_WINDOW_ID" --json)
+TEXT_SNAPSHOT_ID=$(printf '%s\n' "$TEXT_SEE" | jq -er '.data.snapshot_id')
+BASIC_TEXT_ID=$(printf '%s\n' "$TEXT_SEE" | jq -er '
+  [.data.ui_elements[] | select(.identifier == "basic-text-field") | .id]
+  | select(length == 1) | .[0]')
+
+"$PB" click --window-id "$TEXT_WINDOW_ID" \
+  --snapshot "$TEXT_SNAPSHOT_ID" --on "$BASIC_TEXT_ID" --json
+TEXT_FOCUSED_SEE=$("$PB" see --app "$PLAYGROUND" --window-id "$TEXT_WINDOW_ID" --json)
+TEXT_FOCUSED_SNAPSHOT_ID=$(printf '%s\n' "$TEXT_FOCUSED_SEE" | jq -er '.data.snapshot_id')
+
+"$PB" type "Peekaboo v4 background text" --window-id "$TEXT_WINDOW_ID" \
+  --snapshot "$TEXT_FOCUSED_SNAPSHOT_ID" --clear --json
+TEXT_TYPED_SEE=$("$PB" see --app "$PLAYGROUND" --window-id "$TEXT_WINDOW_ID" --json)
+TEXT_TYPED_SNAPSHOT_ID=$(printf '%s\n' "$TEXT_TYPED_SEE" | jq -er '.data.snapshot_id')
+"$PB" press Return --window-id "$TEXT_WINDOW_ID" \
+  --snapshot "$TEXT_TYPED_SNAPSHOT_ID" --json
 ```
 
-For the Scroll Fixture, use the fresh `vertical-scroll` element rather than a
-targetless wheel event:
+For scrolling, independently resolve and observe the Scroll Fixture and use
+its fresh `vertical-scroll` element rather than a targetless wheel event:
 
 ```bash
+SCROLL_WINDOW_ID=$("$PB" window list --app "$PLAYGROUND" --json | jq -er '
+  [.data.windows[] | select(.window_title == "Scroll Fixture") | .window_id]
+  | select(length == 1) | .[0]')
+SCROLL_SEE=$("$PB" see --app "$PLAYGROUND" --window-id "$SCROLL_WINDOW_ID" --json)
+SCROLL_SNAPSHOT_ID=$(printf '%s\n' "$SCROLL_SEE" | jq -er '.data.snapshot_id')
+VERTICAL_SCROLL_ID=$(printf '%s\n' "$SCROLL_SEE" | jq -er '
+  [.data.ui_elements[] | select(.identifier == "vertical-scroll") | .id]
+  | select(length == 1) | .[0]')
+
 "$PB" scroll \
   --direction down \
   --amount 2 \
-  --on "$ELEMENT_ID" \
-  --snapshot "$SNAPSHOT_ID" \
+  --window-id "$SCROLL_WINDOW_ID" \
+  --on "$VERTICAL_SCROLL_ID" \
+  --snapshot "$SCROLL_SNAPSHOT_ID" \
   --json
 ```
 
