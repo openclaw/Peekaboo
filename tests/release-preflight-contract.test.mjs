@@ -188,6 +188,19 @@ test('npm version availability accepts valid registry lists and rejects an alrea
   }
 });
 
+test('publication preflight isolates tests from live signing authority', () => {
+  const source = readFileSync(new URL('../scripts/prepare-release.js', import.meta.url), 'utf8');
+  for (const variable of [
+    'MAC_RELEASE_CODESIGN_KEYCHAIN',
+    'MAC_RELEASE_CODESIGN_KEYCHAIN_PASSWORD',
+    'CODESIGN_KEYCHAIN',
+    'CODESIGN_IDENTITY'
+  ]) {
+    assert.match(source, new RegExp(`-u ${variable}`));
+  }
+  assert.match(source, /pnpm test/);
+});
+
 test('repository release source surfaces remain internally consistent', () => {
   const packageVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
   const versionResult = validateVersionConsistency(projectRoot);

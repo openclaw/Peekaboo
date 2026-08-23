@@ -286,8 +286,16 @@ function checkSwift() {
     logSuccess('No Swift compiler warnings found');
   }
 
-  // Run Swift tests
-  if (!execWithOutput('pnpm test', 'Swift CLI tests (safe)')) {
+  // Tests include fixture modes that must never inherit live signing authority.
+  const testCommand = [
+    '/usr/bin/env',
+    '-u MAC_RELEASE_CODESIGN_KEYCHAIN',
+    '-u MAC_RELEASE_CODESIGN_KEYCHAIN_PASSWORD',
+    '-u CODESIGN_KEYCHAIN',
+    '-u CODESIGN_IDENTITY',
+    'pnpm test'
+  ].join(' ');
+  if (!execWithOutput(testCommand, 'Swift CLI tests (safe)')) {
     logError('Swift tests failed');
     return false;
   }
