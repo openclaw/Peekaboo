@@ -134,12 +134,18 @@ BASIC_TEXT_ID=$(printf '%s\n' "$TEXT_SEE" | jq -er '
 TEXT_FOCUSED_SEE=$("$PB" see --app "$PLAYGROUND" --window-id "$TEXT_WINDOW_ID" --json)
 TEXT_FOCUSED_SNAPSHOT_ID=$(printf '%s\n' "$TEXT_FOCUSED_SEE" | jq -er '.data.snapshot_id')
 
-"$PB" type "Peekaboo v4 background text" --window-id "$TEXT_WINDOW_ID" \
+TEXT_TOKEN='Peekaboo v4 background text'
+"$PB" type "$TEXT_TOKEN" --window-id "$TEXT_WINDOW_ID" \
   --snapshot "$TEXT_FOCUSED_SNAPSHOT_ID" --clear --json
 TEXT_TYPED_SEE=$("$PB" see --app "$PLAYGROUND" --window-id "$TEXT_WINDOW_ID" --json)
 TEXT_TYPED_SNAPSHOT_ID=$(printf '%s\n' "$TEXT_TYPED_SEE" | jq -er '.data.snapshot_id')
 "$PB" press Return --window-id "$TEXT_WINDOW_ID" \
   --snapshot "$TEXT_TYPED_SNAPSHOT_ID" --json
+TEXT_SUBMITTED_SEE=$("$PB" see --tree --no-screenshot \
+  --app "$PLAYGROUND" --window-id "$TEXT_WINDOW_ID" --json)
+printf '%s\n' "$TEXT_SUBMITTED_SEE" | jq -e --arg expected "$TEXT_TOKEN" '
+  [.data.ui_elements[] | select(.identifier == "basic-text-last-submitted") | .value]
+  | select(length == 1 and .[0] == $expected) | .[0]' >/dev/null
 ```
 
 For scrolling, independently resolve and observe the Scroll Fixture and use
