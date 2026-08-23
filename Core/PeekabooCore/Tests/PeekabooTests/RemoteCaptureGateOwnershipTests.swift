@@ -258,6 +258,46 @@ extension RemoteCaptureGateOwnershipTests {
     }
 
     @Test
+    func `non ROI remote observation retains use time artifact verification`() async throws {
+        let root = URL(
+            fileURLWithPath: "/tmp/pb-remote-content-\(UUID().uuidString.prefix(8))",
+            isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let socketPath = root.appendingPathComponent("bridge.sock").path
+        let artifactURL = root.appendingPathComponent("capture.png")
+        let observation = NonROIFileObservationService()
+        let server = self.makeROIServer(services: StubServices(desktopObservation: observation))
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let remote = try await RemoteDesktopObservationService(
+            client: self.makeNegotiatedClient(socketPath: socketPath, requestTimeoutSec: 2))
+
+        let result = try await remote.observe(DesktopObservationRequest(
+            target: .screen(index: 0),
+            detection: DesktopDetectionOptions(mode: .none),
+            output: DesktopObservationOutputOptions(
+                path: artifactURL.path,
+                saveRawScreenshot: true)))
+
+        #expect(result.capture.imageData.isEmpty)
+        #expect(result.captureContentDigest != nil)
+        #expect(try result.verifiedRawScreenshotData(requirement: .requireDigest) == observation.imageData)
+        var replacement = observation.imageData
+        replacement[replacement.startIndex] ^= 0x01
+        try replacement.write(to: artifactURL, options: .atomic)
+        #expect(throws: DesktopObservationContentVerificationError.digestMismatch) {
+            try result.verifiedRawScreenshotData(requirement: .requireDigest)
+        }
+        await host.stop()
+    }
+
+    @Test
     func `remote ROI rejects an exhausted overall deadline before transport`() async {
         let remote = RemoteDesktopObservationService(
             client: PeekabooBridgeClient(
@@ -905,6 +945,39 @@ private final class PathlessTrackingObservationService: DesktopObservationServic
                 imageData: StubScreenCaptureService.sampleData,
                 metadata: CaptureMetadata(size: .init(width: 1, height: 1), mode: .screen)),
             elements: nil)
+    }
+}
+
+@MainActor
+private final class NonROIFileObservationService: DesktopObservationServiceProtocol {
+    let imageData = makeROITestImageData(width: 1, height: 1, red: 0.2, green: 0.4, blue: 0.8)
+
+    func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
+        let path = try #require(request.output.path)
+        try self.imageData.write(to: URL(fileURLWithPath: path), options: .atomic)
+        let size = CGSize(width: 1, height: 1)
+        return DesktopObservationResult(
+            target: ResolvedObservationTarget(kind: .screen(index: 0)),
+            capture: CaptureResult(
+                imageData: self.imageData,
+                savedPath: path,
+                metadata: CaptureMetadata(
+                    size: size,
+                    mode: .screen,
+                    displayInfo: DisplayInfo(
+                        index: 0,
+                        name: "Fixture",
+                        bounds: CGRect(origin: .zero, size: size),
+                        scaleFactor: 1),
+                    diagnostics: CaptureDiagnostics(
+                        requestedScale: request.capture.scale,
+                        nativeScale: 1,
+                        outputScale: 1,
+                        scaleSource: "fixture",
+                        finalPixelSize: size,
+                        engine: "ScreenCaptureKit"))),
+            elements: nil,
+            files: DesktopObservationFiles(rawScreenshotPath: path))
     }
 }
 

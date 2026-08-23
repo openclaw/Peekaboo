@@ -93,12 +93,10 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
         guard request.capture.roi != nil else {
             let actionResult = try await self.client.desktopObservationWithOutcome(request)
             do {
-                if actionResult.payload.files.rawScreenshotPath != nil {
-                    _ = try actionResult.payload.verifiedRawScreenshotData()
-                }
-                if actionResult.payload.files.annotatedScreenshotPath != nil {
-                    _ = try actionResult.payload.verifiedAnnotatedScreenshotData()
-                }
+                // The Bridge client verifies every returned artifact under the negotiated content
+                // policy before it yields the result. Consumers still revalidate the file at the
+                // point where they use or publish its pixels; reopening it here only repeated the
+                // same whole-file I/O.
                 try DesktopObservationEvidencePolicy.requireUsableAccessibilityEvidence(
                     actionResult.payload.elements,
                     target: actionResult.payload.target,

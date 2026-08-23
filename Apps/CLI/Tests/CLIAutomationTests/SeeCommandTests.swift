@@ -9,6 +9,34 @@ import Testing
 @Suite(.serialized, .tags(.safe))
 struct SeeCommandTests {
     @Test
+    @MainActor
+    func `pixel publication rejects an artifact replaced after capture verification`() throws {
+        let artifactURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-see-publication-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: artifactURL) }
+        let verifiedData = Data("verified-pixels".utf8)
+        let replacement = Data("replaced-pixels".utf8)
+        #expect(verifiedData.count == replacement.count)
+        try verifiedData.write(to: artifactURL, options: .atomic)
+        let capture = ImageCapturedFile(
+            file: SavedFile(path: artifactURL.path, mime_type: "image/png"),
+            imageData: verifiedData,
+            observation: ImageObservationDiagnostics(
+                timings: ObservationTimings(),
+                diagnostics: DesktopObservationDiagnostics()
+            ),
+            snapshotID: nil,
+            receipt: .none
+        )
+
+        try replacement.write(to: artifactURL, options: .atomic)
+
+        #expect(throws: DesktopObservationContentVerificationError.digestMismatch) {
+            try SeeCommand.requireCurrentCaptureArtifacts([capture])
+        }
+    }
+
+    @Test
     func `CLI truncation output includes deadline reached explicitly`() throws {
         let metadata = DetectionMetadata(
             detectionTime: 0,
