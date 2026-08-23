@@ -98,12 +98,21 @@ CLICK_SNAPSHOT_ID=$(printf '%s\n' "$CLICK_SEE" | jq -er '.data.snapshot_id')
 SINGLE_CLICK_ID=$(printf '%s\n' "$CLICK_SEE" | jq -er '
   [.data.ui_elements[] | select(.identifier == "single-click-button") | .id]
   | select(length == 1) | .[0]')
+CLICK_COUNT_BEFORE=$(printf '%s\n' "$CLICK_SEE" | jq -er '
+  [.data.ui_elements[] | select(.identifier == "single-click-count") | (.value | tonumber)]
+  | select(length == 1) | .[0]')
 
 "$PB" click \
   --window-id "$CLICK_WINDOW_ID" \
   --snapshot "$CLICK_SNAPSHOT_ID" \
   --on "$SINGLE_CLICK_ID" \
   --json
+CLICK_AFTER_SEE=$("$PB" see --tree --no-screenshot \
+  --app "$PLAYGROUND" --window-id "$CLICK_WINDOW_ID" --json)
+CLICK_COUNT_AFTER=$(printf '%s\n' "$CLICK_AFTER_SEE" | jq -er '
+  [.data.ui_elements[] | select(.identifier == "single-click-count") | (.value | tonumber)]
+  | select(length == 1) | .[0]')
+test "$CLICK_COUNT_AFTER" -eq "$((CLICK_COUNT_BEFORE + 1))"
 ```
 
 For text input, independently resolve and observe the Text Fixture. Click the
@@ -145,6 +154,9 @@ SCROLL_SNAPSHOT_ID=$(printf '%s\n' "$SCROLL_SEE" | jq -er '.data.snapshot_id')
 VERTICAL_SCROLL_ID=$(printf '%s\n' "$SCROLL_SEE" | jq -er '
   [.data.ui_elements[] | select(.identifier == "vertical-scroll") | .id]
   | select(length == 1) | .[0]')
+SCROLL_OFFSET_BEFORE=$(printf '%s\n' "$SCROLL_SEE" | jq -er '
+  [.data.ui_elements[] | select(.identifier == "vertical-scroll-offset") | (.value | tonumber)]
+  | select(length == 1) | .[0]')
 
 "$PB" scroll \
   --direction down \
@@ -153,9 +165,19 @@ VERTICAL_SCROLL_ID=$(printf '%s\n' "$SCROLL_SEE" | jq -er '
   --on "$VERTICAL_SCROLL_ID" \
   --snapshot "$SCROLL_SNAPSHOT_ID" \
   --json
+/bin/sleep 0.3
+SCROLL_AFTER_SEE=$("$PB" see --tree --no-screenshot \
+  --app "$PLAYGROUND" --window-id "$SCROLL_WINDOW_ID" --json)
+SCROLL_OFFSET_AFTER=$(printf '%s\n' "$SCROLL_AFTER_SEE" | jq -er '
+  [.data.ui_elements[] | select(.identifier == "vertical-scroll-offset") | (.value | tonumber)]
+  | select(length == 1) | .[0]')
+jq -en --arg before "$SCROLL_OFFSET_BEFORE" --arg after "$SCROLL_OFFSET_AFTER" \
+  '($before | tonumber) != ($after | tonumber)' >/dev/null
 ```
 
-Verify each effect with a new `see` and the PID-scoped Playground OSLog oracle:
+The fresh exact-window reads above prove the Click and Scroll effects through
+their fixture-owned semantic witnesses. Use the PID-scoped Playground OSLog
+oracle as independent corroboration:
 
 ```bash
 ./Apps/Playground/scripts/playground-log.sh --last 10m --all --json
