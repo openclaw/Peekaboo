@@ -1,4 +1,4 @@
-## [4.2.3] - 2026-08-21
+## [4.2.3] - 2026-08-23
 
 ### Highlights
 
@@ -10,12 +10,19 @@
 ### Added
 - Report per-window `combined_eligible`, `pixels_only`, or `unknown` observation eligibility in CLI and MCP, including screenshot-only recovery.
 - Add an embedding-only Bridge protocol 1.32 API for signed, process-generation-bound observation.
+- Add atomic exact-window pixel-focus typing to CLI, MCP, Agent, and Bridge, keeping the focus-only Accessibility write and every background keyboard unit under one target receipt and retry-safe prefix accounting.
+- Add explicit foreground modifier-click with exact target preflight and compare-and-swap cursor and focus restoration, preserving newer user or application state instead of overwriting it.
 
 ### Changed
 - Read `config credential set` secrets from no-echo prompts, stdin, or owner-only files; let `config provider add` also accept non-secret references; retain deprecated argv compatibility.
 - Skip provider discovery and Agent construction for caller-local commands that cannot invoke the Agent.
+- Avoid reopening and hashing Bridge screenshot artifacts twice before CLI or MCP consumption while retaining signed client verification and use-time publication checks.
+- Skip the ScreenCaptureKit post-capture settlement delay for classic captures that never enter ScreenCaptureKit.
+- Reuse validated classic PNG bytes when capture performs no transform instead of encoding the same image twice.
 
 ### Fixed
+- Downscale straight-alpha legacy screenshots to logical 1x instead of silently returning Retina-sized pixels.
+- Bound exclusive ScreenCaptureKit transaction-lock waits inside the Bridge request envelope so a wedged peer fails clearly instead of hanging capture indefinitely. Thanks @SebTardif for #599.
 - Send Gemini API keys in request headers, require HTTPS OAuth endpoints, and redact OAuth state. Thanks Vincent Koc for #575 and Tachikoma #73.
 - Enforce a 10 MiB clipboard and paste file payload limit on the opened descriptor to prevent file-replacement races. Thanks @SebTardif for #561.
 - Prevent configured editors from injecting command-line options. Thanks @SebTardif for #562.
