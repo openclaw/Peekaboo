@@ -2342,7 +2342,7 @@ test('marker publication is run-bound, readback-gated, atomic, and no-overwrite'
     const restoreReadback = writeJSON(path.join(root, 'restore-readback.json'), {
       version: 1, execution_nonce: NONCE, monitor_instance_id: UUID, phase: 'restore',
       window_path: windowPath, emitter: emitter(), target: target(203, '203001', 303),
-      observed_at_milliseconds: now, passed: true,
+      observed_at_milliseconds: Date.now(), passed: true,
       baseline_value_sha256: sha256(Buffer.from(baseline)),
       observed_value_sha256: sha256(Buffer.from(baseline)),
       sentinel,
