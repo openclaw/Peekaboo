@@ -18,8 +18,8 @@ extension MCPCommand {
             discussion: """
             Starts Peekaboo as an MCP server, exposing all its tools via the
             Model Context Protocol. This allows AI clients like Claude to use
-            Peekaboo's automation capabilities. The server is always background-only:
-            foreground actions and ambient browser auto-connect are refused before dispatch.
+            Peekaboo's automation capabilities. The server is background-only by default;
+            pass --allow-foreground to authorize foreground actions for this server process.
 
             USAGE WITH CLAUDE CODE:
               claude mcp add peekaboo -- peekaboo mcp
@@ -34,6 +34,12 @@ extension MCPCommand {
 
         @Option(help: "Reserved port for future HTTP/SSE transport support")
         var port: Int = 8080
+
+        @Flag(
+            name: .customLong("allow-foreground"),
+            help: "Authorize foreground/global UI for this MCP server"
+        )
+        var allowForeground = false
 
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
@@ -73,6 +79,7 @@ extension MCPCommand {
                 let toolContext = Self.makeToolContext(
                     services: runtime.services,
                     snapshotMutationCoordinator: mutationCoordinator,
+                    executionPolicy: self.allowForeground ? .foregroundAllowed : .backgroundOnly,
                     capturePreflightRefusal: runtime.toolCapturePreflightRefusal
                 )
                 let server = try await PeekabooMCPServer(toolContext: toolContext)
@@ -96,6 +103,7 @@ extension MCPCommand {
         static func makeToolContext(
             services: any PeekabooServiceProviding,
             snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?,
+            executionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
             capturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil
         ) -> MCPToolContext {
             let snapshotExecutionGate: MCPToolSnapshotExecutionGate
@@ -111,7 +119,7 @@ extension MCPCommand {
                 services: services,
                 snapshotMutationCoordinator: snapshotMutationCoordinator,
                 snapshotExecutionGate: snapshotExecutionGate,
-                executionPolicy: .backgroundOnly,
+                executionPolicy: executionPolicy,
                 capturePreflightRefusal: capturePreflightRefusal
             )
         }
@@ -139,5 +147,6 @@ extension MCPCommand.Serve: CommanderBindableCommand {
         if let portOption = try values.decodeOption("port", as: Int.self) {
             self.port = portOption
         }
+        self.allowForeground = values.flag("allowForeground")
     }
 }
