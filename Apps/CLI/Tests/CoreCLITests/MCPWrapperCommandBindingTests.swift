@@ -144,5 +144,12 @@ struct MCPWrapperCommandBindingTests {
         #expect(context.executionPolicy == .backgroundOnly)
         #expect(nestedAgentContext.capturePreflightRefusal == refusal)
         #expect(nestedAgentContext.executionPolicy == .backgroundOnly)
+
+        let foregroundContext = MCPCommand.Serve.makeToolContext(
+            services: services,
+            snapshotMutationCoordinator: nil,
+            executionPolicy: .foregroundAllowed
+        )
+        #expect(foregroundContext.executionPolicy == .foregroundAllowed)
     }
 }

@@ -26,14 +26,16 @@ struct MCPCommandTests {
 
         #expect(serve.transport == "stdio")
         #expect(serve.port == 8080)
+        #expect(serve.allowForeground == false)
     }
 
     @Test
     func `MCP serve command custom options`() throws {
-        let serve = try MCPCommand.Serve.parse(["--transport", "http", "--port", "9000"])
+        let serve = try MCPCommand.Serve.parse(["--transport", "http", "--port", "9000", "--allow-foreground"])
 
         #expect(serve.transport == "http")
         #expect(serve.port == 9000)
+        #expect(serve.allowForeground == true)
     }
 
     // MARK: - Help Text Tests
@@ -55,6 +57,7 @@ struct MCPCommandTests {
         #expect(helpText.contains("npx @modelcontextprotocol/inspector"))
         #expect(helpText.contains("--transport"))
         #expect(helpText.contains("--port"))
+        #expect(helpText.contains("--allow-foreground"))
         #expect(helpText.contains("reserved but not implemented"))
     }
 
