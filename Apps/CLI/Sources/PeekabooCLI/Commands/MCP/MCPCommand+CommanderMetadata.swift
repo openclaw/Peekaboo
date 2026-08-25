@@ -14,6 +14,13 @@ extension MCPCommand.Serve: CommanderSignatureProviding {
                     help: "Reserved port for future HTTP/SSE transport support",
                     long: "port"
                 ),
+            ],
+            flags: [
+                .commandFlag(
+                    "allowForeground",
+                    help: "Authorize foreground/global UI for this MCP server",
+                    long: "allow-foreground"
+                ),
             ]
         )
     }
