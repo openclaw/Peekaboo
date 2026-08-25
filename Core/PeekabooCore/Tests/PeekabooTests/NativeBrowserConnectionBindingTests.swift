@@ -288,6 +288,39 @@ struct NativeBrowserConnectionBindingTests {
 
     @Test
     @MainActor
+    func `raw receiptless read refuses in handler before provider entry`() async throws {
+        let versions = [Self.protocol133Capabilities, PeekabooBridgeNegotiatedSessionCapabilities.current]
+        let tools = ["list_pages", "take_snapshot"]
+
+        for capabilities in versions {
+            for toolName in tools {
+                let services = StubServices()
+                let server = Self.server(services: services)
+                do {
+                    _ = try await PeekabooBridgeRequestContext.$negotiatedSessionCapabilities
+                        .withValue(capabilities) {
+                            try await server.handleAuthorized(
+                                .browserExecute(.init(
+                                    toolName: toolName,
+                                    arguments: [:],
+                                    channel: "stable")),
+                                peer: nil,
+                                permissions: Self.permissions)
+                        }
+                    Issue.record("Expected unbound read-only execute refusal")
+                } catch let failure as DesktopActionFailure {
+                    #expect(failure.outcome.state == .refused)
+                    #expect(failure.outcome.refusalReason == .invalidRequest)
+                    #expect(failure.outcome.dispatchState == .none)
+                }
+                #expect(services.lastBrowserStatusChannel == nil)
+                #expect(services.lastBrowserExecute == nil)
+            }
+        }
+    }
+
+    @Test
+    @MainActor
     func `protocol 1 33 executes against an explicit endpoint receipt`() async throws {
         let protocol133 = PeekabooBridgeProtocolVersion(major: 1, minor: 33)
         let socketPath = "/tmp/peekaboo-browser-execute-external-\(UUID().uuidString).sock"

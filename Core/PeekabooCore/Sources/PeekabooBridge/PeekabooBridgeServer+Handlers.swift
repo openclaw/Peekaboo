@@ -3,8 +3,10 @@ import Foundation
 import PeekabooAutomationKit
 import PeekabooFoundation
 
+// swiftlint:disable file_length
 @MainActor
 extension PeekabooBridgeServer {
+    // swiftlint:disable:next cyclomatic_complexity
     func handleAuthorized(
         _ request: PeekabooBridgeRequest,
         peer: PeekabooBridgePeer?,
@@ -43,6 +45,7 @@ extension PeekabooBridgeServer {
             guard case let .browserExecute(payload) = request else {
                 throw Self.invalidRequest(for: request)
             }
+            _ = try Self.validatedBrowserExecutionReceipt(payload)
             guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
                   !payload.isReadOnly
             else {
@@ -1581,3 +1584,5 @@ extension PeekabooBridgeServer {
             && self.windowBoundsProvider(windowID) == capturedBounds
     }
 }
+
+// swiftlint:enable file_length

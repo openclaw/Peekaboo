@@ -155,12 +155,13 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
                 processIdentifier == 42 ? 10042 : nil
             })
 
+        let request = PeekabooBridgeBrowserExecuteRequest(
+            toolName: "click",
+            arguments: [:],
+            channel: "stable",
+            expectedConnectionReceipt: Self.externalBrowserReceipt)
         let handled = try await server.handleAuthorized(
-            .browserExecute(.init(
-                toolName: "click",
-                arguments: [:],
-                channel: "stable",
-                expectedConnectionReceipt: Self.externalBrowserReceipt)),
+            .browserExecute(request.binding(to: Self.externalBrowserReceipt)),
             peer: nil,
             permissions: Self.permissions)
 
@@ -740,12 +741,13 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
     func `unattested browser provider error remains the raw legacy response`() async throws {
         let services = StubServices()
         services.browserRawIsError = true
+        let request = PeekabooBridgeBrowserExecuteRequest(
+            toolName: "click",
+            arguments: [:],
+            channel: "stable",
+            expectedConnectionReceipt: Self.externalBrowserReceipt)
         let handled = try await Self.server(services: services).handleAuthorized(
-            .browserExecute(.init(
-                toolName: "click",
-                arguments: [:],
-                channel: "stable",
-                expectedConnectionReceipt: Self.externalBrowserReceipt)),
+            .browserExecute(request.binding(to: Self.externalBrowserReceipt)),
             peer: nil,
             permissions: Self.permissions)
 

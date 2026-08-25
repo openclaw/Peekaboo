@@ -222,7 +222,9 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
                 },
                 revalidate: { _, _ in }),
             environment: [:])
-        _ = try await session.connect(channel: .stable, browserURL: "http://127.0.0.1:9222")
+        let original = try #require(try await session.connect(
+            channel: .stable,
+            browserURL: "http://127.0.0.1:9222").connectionReceipt)
         manager.executedTools.removeAll()
 
         await #expect(throws: DesktopActionFailure.self) {
@@ -232,11 +234,12 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
         #expect(nativeResolutions.value == 0)
         #expect(manager.addServerCount == 1)
         #expect(manager.executedTools.isEmpty)
-        #expect(manager.removeServerCount == 1)
+        #expect(manager.removeServerCount == 0)
+        #expect(await (session.status(channel: .stable)).connectionReceipt == original)
     }
 
     @Test
-    func `isolated receipt cannot satisfy a later native channel connect`() async throws {
+    func `repeated isolated connect reuses the exact isolated session`() async throws {
         let manager = AuthorityBrowserMCPManager()
         let session = BrowserMCPSessionManager(
             serverName: "test-browser",
@@ -248,13 +251,79 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
         _ = try await session.connect(channel: .stable)
         manager.executedTools.removeAll()
 
+        let repeated = try await session.connectWithOutcome(channel: .stable)
+
+        #expect(repeated.payload.isConnected)
+        #expect(repeated.outcome?.state == .confirmedNoChange)
+        #expect(manager.addServerCount == 1)
+        #expect(manager.executedTools.isEmpty)
+        #expect(manager.removeServerCount == 0)
+    }
+
+    @Test
+    func `isolated session cannot satisfy a later native channel request`() async throws {
+        let manager = AuthorityBrowserMCPManager()
+        let isolated = AuthorityBoolBox(true)
+        let session = BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: manager,
+            detectedBrowsers: { _ in [Self.browser(bundleIdentifier: "com.google.Chrome")] },
+            processStartIdentity: { _ in 2050 },
+            processBundleIdentifier: { _ in "com.google.Chrome" },
+            isolatedConnectionRequested: { isolated.value },
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
+            channelEndpointResolver: BrowserMCPChannelEndpointResolver(
+                resolveInitial: { _, attempt in
+                    attempt.state.markPermissionDispatchStarted()
+                    return Self.endpoint()
+                },
+                revalidate: { _, _ in }),
+            environment: [:])
+        let original = try #require(try await session.connect(channel: .stable).connectionReceipt)
+        manager.executedTools.removeAll()
+        isolated.value = false
+
         await #expect(throws: DesktopActionFailure.self) {
             _ = try await session.connect(channel: .stable)
         }
 
         #expect(manager.addServerCount == 1)
+        #expect(manager.removeServerCount == 0)
         #expect(manager.executedTools.isEmpty)
-        #expect(manager.removeServerCount == 1)
+        #expect(await (session.status(channel: .stable)).connectionReceipt == original)
+    }
+
+    @Test
+    func `targetless native reconnect retains the existing exact channel`() async throws {
+        let manager = AuthorityBrowserMCPManager()
+        let initialResolutions = AuthorityCounter()
+        let session = BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: manager,
+            detectedBrowsers: { _ in [Self.browser(bundleIdentifier: "com.google.Chrome")] },
+            processStartIdentity: { _ in 2050 },
+            processBundleIdentifier: { _ in "com.google.Chrome" },
+            preferredChannel: { .canary },
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
+            channelEndpointResolver: BrowserMCPChannelEndpointResolver(
+                resolveInitial: { _, attempt in
+                    initialResolutions.increment()
+                    attempt.state.markPermissionDispatchStarted()
+                    return Self.endpoint()
+                },
+                revalidate: { _, _ in }),
+            environment: [:])
+        let original = try #require(try await session.connect(channel: .stable).connectionReceipt)
+        manager.executedTools.removeAll()
+
+        let repeated = try await session.connectWithOutcome(channel: nil)
+
+        #expect(repeated.payload.connectionReceipt == original)
+        #expect(repeated.outcome?.state == .confirmedNoChange)
+        #expect(initialResolutions.value == 1)
+        #expect(manager.addServerCount == 1)
+        #expect(manager.removeServerCount == 0)
+        #expect(manager.executedTools.isEmpty)
     }
 
     @Test
@@ -472,6 +541,20 @@ private final class AuthorityListenerBox: @unchecked Sendable {
     }
 
     var value: DarwinProcessLoopbackListenerIdentity {
+        get { self.lock.withLock { self.storedValue } }
+        set { self.lock.withLock { self.storedValue = newValue } }
+    }
+}
+
+private final class AuthorityBoolBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: Bool
+
+    init(_ value: Bool) {
+        self.storedValue = value
+    }
+
+    var value: Bool {
         get { self.lock.withLock { self.storedValue } }
         set { self.lock.withLock { self.storedValue = newValue } }
     }

@@ -1,10 +1,10 @@
 import Foundation
 import MCP
-import PeekabooAgentRuntime
 import PeekabooAutomationKit
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
+@testable import PeekabooAgentRuntime
 @testable import PeekabooBridge
 @testable import PeekabooCore
 
@@ -58,6 +58,102 @@ struct PeekabooServicesBrowserBridgeTests {
             }
         }
         #expect(browser.connectCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `configured nonnative browser omits capability but retains explicit endpoint connect`() async throws {
+        let environments = [
+            ["PEEKABOO_BROWSER_MCP_ISOLATED": "1"],
+            ["PEEKABOO_BROWSER_MCP_BROWSER_URL": "http://127.0.0.1:9222"],
+        ]
+
+        for environment in environments {
+            let manager = ConfiguredBrowserMCPManager()
+            let session = BrowserMCPSessionManager(
+                serverName: "test-browser",
+                manager: manager,
+                detectedBrowsers: { _ in [] },
+                processStartIdentity: { _ in nil },
+                endpointResolver: BrowserMCPDevToolsEndpointResolver { rawURL in
+                    guard let port = URL(string: rawURL)?.port else {
+                        throw BrowserMCPConnectionError.invalidEndpoint("missing fixture port")
+                    }
+                    return BrowserMCPDevToolsEndpoint(
+                        browserURL: "http://127.0.0.1:\(port)/",
+                        webSocketDebuggerURL: "ws://127.0.0.1:\(port)/devtools/browser/browser-a",
+                        browserID: "browser-a",
+                        browserVersion: "Chrome/151.0",
+                        protocolVersion: "1.3")
+                },
+                environment: environment)
+            let browser = BrowserMCPService(sessionManager: session)
+            let services = Self.services(browser: browser)
+            let server = PeekabooBridgeServer(
+                services: services,
+                hostKind: .onDemand,
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                permissionStatusEvaluator: { _ in Self.permissions })
+            let handshakeRequest = PeekabooBridgeRequest.handshake(.init(
+                protocolVersion: PeekabooBridgeConstants.protocolVersion,
+                client: .init(
+                    bundleIdentifier: "dev.peekaboo.configured-browser-capability",
+                    teamIdentifier: nil,
+                    processIdentifier: getpid()),
+                requestedHostKind: .onDemand))
+            let responseData = try await server.decodeAndHandle(
+                JSONEncoder.peekabooBridgeEncoder().encode(handshakeRequest),
+                peer: nil)
+            let response = try JSONDecoder.peekabooBridgeDecoder().decode(
+                PeekabooBridgeResponse.self,
+                from: responseData)
+            guard case let .handshake(handshake) = response else {
+                Issue.record("Expected handshake response")
+                continue
+            }
+            #expect(handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.nativeBrowserConnectionBinding) != true)
+
+            let capabilities = PeekabooBridgeNegotiatedSessionCapabilities(
+                protocolVersion: PeekabooBridgeConstants.protocolVersion,
+                statelessClickVariants: true,
+                exactWindowHeldPointerLifecycle: true,
+                nativeBrowserConnectionBinding: false)
+            #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+                try PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(capabilities) {
+                    try server.validateOperationAccess(
+                        for: .browserConnect(.init(channel: "stable")),
+                        permissions: Self.permissions,
+                        effectiveOps: [.browserConnect])
+                }
+            }
+            #expect(manager.addServerCount == 0)
+
+            let explicitRequest = PeekabooBridgeRequest.browserConnect(.init(
+                channel: "stable",
+                browserURL: "http://127.0.0.1:9333"))
+            let handled = try await PeekabooBridgeRequestContext.$negotiatedSessionCapabilities
+                .withValue(capabilities) {
+                    try await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(true) {
+                        try server.validateOperationAccess(
+                            for: explicitRequest,
+                            permissions: Self.permissions,
+                            effectiveOps: [.browserConnect])
+                        return try await server.handleAuthorized(
+                            explicitRequest,
+                            peer: nil,
+                            permissions: Self.permissions)
+                    }
+                }
+            guard case let .browserStatus(status) = handled.response else {
+                Issue.record("Expected explicit endpoint status")
+                continue
+            }
+            #expect(status.connectionReceipt?.browserURL == "http://127.0.0.1:9333/")
+            #expect(manager.addServerCount == 1)
+            await browser.disconnect()
+        }
     }
 
     @Test
@@ -517,5 +613,40 @@ private final class AdapterBrowserMCPClient: BrowserMCPClientProviding, BrowserM
     {
         self.connectionPolicies.append(connectionPolicy)
         return DesktopActionResult(payload: self.result.response, outcome: nil)
+    }
+}
+
+@MainActor
+private final class ConfiguredBrowserMCPManager: BrowserMCPManaging {
+    var addServerCount = 0
+    private var connected = false
+
+    func hasServer(name _: String) -> Bool {
+        self.connected
+    }
+
+    func isServerConnected(name _: String) async -> Bool {
+        self.connected
+    }
+
+    func serverToolCount(name _: String) async -> Int {
+        self.connected ? 29 : 0
+    }
+
+    func addServer(name _: String, config _: MCPServerConfig) async throws {
+        self.addServerCount += 1
+        self.connected = true
+    }
+
+    func removeServer(name _: String) async {
+        self.connected = false
+    }
+
+    func executeTool(
+        serverName _: String,
+        toolName _: String,
+        arguments _: [String: Any]) async throws -> ToolResponse
+    {
+        .text("ok")
     }
 }

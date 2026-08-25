@@ -1036,6 +1036,7 @@ extension BrowserMCPSessionManagerTests {
         let status = try await session.connect(
             channel: .stable,
             browserURL: "http://127.0.0.1:9222")
+        let originalReceipt = try #require(status.connectionReceipt)
         #expect(status.connectionReceipt?.browserURL == "http://127.0.0.1:9222/")
         #expect(status.connectionReceipt?.devToolsBrowserID == "browser-a")
         #expect(manager.addedConfigs[0].args.contains(
@@ -1046,6 +1047,10 @@ extension BrowserMCPSessionManagerTests {
                 channel: .stable,
                 browserURL: "http://127.0.0.1:9333")
         }
+        #expect(manager.addedConfigs.count == 1)
+        #expect(manager.removeCount == 0)
+        #expect(manager.connected)
+        #expect(await (session.status(channel: .stable)).connectionReceipt == originalReceipt)
     }
 
     @Test

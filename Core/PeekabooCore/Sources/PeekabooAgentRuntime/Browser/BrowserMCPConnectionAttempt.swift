@@ -4,13 +4,26 @@ import PeekabooFoundation
 final class BrowserMCPConnectionAttemptState: @unchecked Sendable {
     private let lock = NSLock()
     private var permissionDispatchStarted = false
+    private var connectionDispatchStarted = false
 
     var didStartPermissionDispatch: Bool {
         self.lock.withLock { self.permissionDispatchStarted }
     }
 
+    var didStartConnectionDispatch: Bool {
+        self.lock.withLock { self.connectionDispatchStarted }
+    }
+
+    var didStartAnyDispatch: Bool {
+        self.lock.withLock { self.permissionDispatchStarted || self.connectionDispatchStarted }
+    }
+
     func markPermissionDispatchStarted() {
         self.lock.withLock { self.permissionDispatchStarted = true }
+    }
+
+    func markConnectionDispatchStarted() {
+        self.lock.withLock { self.connectionDispatchStarted = true }
     }
 }
 

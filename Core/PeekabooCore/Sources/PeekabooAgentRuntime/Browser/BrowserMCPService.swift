@@ -282,25 +282,28 @@ extension BrowserMCPClientProviding {
 public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActionResultProviding,
     BrowserMCPConnectionResultProviding, @unchecked Sendable
 {
-    public var supportsNativeBrowserConnectionBinding: Bool {
-        true
-    }
+    public let supportsNativeBrowserConnectionBinding: Bool
 
     private static let serverName = "chrome-devtools"
 
     @MainActor private var sessionManager: BrowserMCPSessionManager?
 
     public init() {
+        self.supportsNativeBrowserConnectionBinding = BrowserMCPEnvironmentOptions(
+            environment: ProcessInfo.processInfo.environment).supportsNativeBrowserConnectionBinding
         self.sessionManager = nil
     }
 
     @MainActor
     public init(manager: TachikomaMCPClientManager) {
-        self.sessionManager = BrowserMCPSessionManager(serverName: Self.serverName, manager: manager)
+        let sessionManager = BrowserMCPSessionManager(serverName: Self.serverName, manager: manager)
+        self.supportsNativeBrowserConnectionBinding = sessionManager.supportsNativeBrowserConnectionBinding
+        self.sessionManager = sessionManager
     }
 
     @MainActor
     init(sessionManager: BrowserMCPSessionManager) {
+        self.supportsNativeBrowserConnectionBinding = sessionManager.supportsNativeBrowserConnectionBinding
         self.sessionManager = sessionManager
     }
 
