@@ -100,7 +100,9 @@ struct SeeCommandTests {
 
         #expect(!summary.deadline_reached)
         #expect(summary.incomplete_accessibility_read)
-        #expect(summary.warning.contains("may not expose a readable Accessibility tree"))
+        #expect(summary.warning.contains("transient sheet"))
+        #expect(summary.warning.contains("owning process or app tree"))
+        #expect(summary.warning.contains("does not provide a reusable snapshot or mutation authority"))
         #expect(summary.warning.contains("increase the timeout only when the app is slow"))
     }
 
@@ -1228,7 +1230,14 @@ extension SeeCommandRuntimeTests {
             #expect(error["retry_safe"] as? Bool == true)
             #expect(error["mutation_dispatched"] as? Bool == false)
             #expect((error["message"] as? String)?.contains("fresh observation") == true)
+            #expect((error["message"] as? String)?.contains("transient sheet") == true)
+            #expect((error["message"] as? String)?.contains("owning process or app tree") == true)
+            #expect((error["message"] as? String)?.contains("read-only dialog elements") == true)
+            #expect((error["message"] as? String)?.contains(
+                "does not provide a reusable snapshot or mutation authority"
+            ) == true)
             #expect((error["hint"] as? String)?.contains("screenshot/OCR") == true)
+            #expect((error["hint"] as? String)?.contains("increase the timeout only when the app is slow") == true)
             #expect(!result.stdout.contains("snapshot_id"))
             #expect(try await context.snapshots.listSnapshots().isEmpty)
         }

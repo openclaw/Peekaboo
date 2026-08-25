@@ -144,10 +144,30 @@ final class AXTreeCollectorBudgetTests: XCTestCase {
 
         let message = info.automationToolRemediationMessage(budget: nil)
 
+        XCTAssertTrue(message.contains("Retry once"))
         XCTAssertTrue(message.contains("app_target"))
         XCTAssertTrue(message.contains("window_id"))
+        XCTAssertTrue(message.contains("transient sheet"))
+        XCTAssertTrue(message.contains("without window_id"))
+        XCTAssertTrue(message.contains("read-only dialog elements"))
+        XCTAssertTrue(message.contains("does not provide a reusable snapshot or mutation authority"))
+        XCTAssertTrue(message.contains("screenshot/OCR evidence"))
         XCTAssertFalse(message.contains("increase the timeout"))
         XCTAssertFalse(message.contains("--"))
+    }
+
+    func testCommandLineIncompleteRemediationDistinguishesTransientSheetsFromOtherFailures() {
+        let info = DetectionTruncationInfo(incompleteAccessibilityRead: true)
+
+        let message = info.remediationMessage(budget: nil)
+
+        XCTAssertTrue(message.contains("Retry once"))
+        XCTAssertTrue(message.contains("transient sheet"))
+        XCTAssertTrue(message.contains("owning process or app tree"))
+        XCTAssertTrue(message.contains("read-only dialog elements"))
+        XCTAssertTrue(message.contains("does not provide a reusable snapshot or mutation authority"))
+        XCTAssertTrue(message.contains("screenshot/OCR evidence"))
+        XCTAssertTrue(message.contains("increase the timeout only when the app is slow"))
     }
 
     func testMaxDepthOneStopsAtRoot() throws {

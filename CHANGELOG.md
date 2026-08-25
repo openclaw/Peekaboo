@@ -42,6 +42,7 @@
 - Restore terminal echo when credential prompts receive signals and reject background prompts or insecure credential files.
 - Deduplicate runtime flags and improve unknown-command, browser reconnect, help, `learn`, schema, and background-automation guidance.
 - Validate contradictory window and Space selectors before runtime-host discovery so malformed requests cannot start support services or mask the actionable error.
+- Explain that exact transient sheets may require read-only owning-process Accessibility inspection before screenshot/OCR fallback, without granting partial app trees mutation authority.
 
 ## [4.2.2] - 2026-08-20
 

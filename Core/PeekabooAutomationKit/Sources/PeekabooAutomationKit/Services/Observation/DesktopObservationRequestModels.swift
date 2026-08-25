@@ -196,15 +196,18 @@ extension DetectionTruncationInfo {
         if self.incompleteAccessibilityRead {
             return switch style {
             case .commandLine:
-                "Warning: AX tree incomplete at \(limitSummary). Retry once to obtain a fresh observation; " +
-                    "if this persists, the target may " +
-                    "not expose a readable Accessibility tree. Use a narrower window target or screenshot/OCR; " +
+                "Warning: AX tree incomplete at \(limitSummary). Retry once to obtain a fresh observation. " +
+                    "If the exact target is a transient sheet without an independent AX-window identity, " +
+                    "inspect its owning process or app tree for read-only dialog elements. Partial app-tree " +
+                    "evidence does not provide a reusable snapshot or mutation authority. Use screenshot/OCR " +
+                    "evidence for other persistent failures; " +
                     "increase the timeout only when the app is slow to respond."
             case .automationTool:
-                "Warning: AX tree incomplete at \(limitSummary). Retry once with an exact app_target and " +
-                    "window_id to obtain a fresh observation. If this persists, the target may not expose a " +
-                    "readable Accessibility tree; " +
-                    "use screenshot/OCR evidence instead."
+                "Warning: AX tree incomplete at \(limitSummary). Retry once with the same exact app_target and " +
+                    "window_id. If the exact target is a transient sheet without an independent AX-window " +
+                    "identity, inspect the owning app_target without window_id for read-only dialog elements. " +
+                    "Partial app-tree evidence does not provide a reusable snapshot or mutation authority. " +
+                    "Use screenshot/OCR evidence for other persistent failures."
             }
         }
         if self.deadlineReached {

@@ -445,8 +445,13 @@ extension InspectUIToolExecutionTests {
             Issue.record("Expected structured inspect_ui failure")
             return
         }
-        #expect(output.contains("fresh observation"))
+        #expect(output.contains("Retry once"))
+        #expect(output.contains("transient sheet"))
+        #expect(output.contains("app_target without window_id"))
+        #expect(output.contains("read-only dialog elements"))
+        #expect(output.contains("does not provide a reusable snapshot or mutation authority"))
         #expect(output.contains("screenshot/OCR"))
+        #expect(!output.contains("increase the timeout"))
         #expect(meta["error_code"] == .string("ACCESSIBILITY_INCOMPLETE"))
         #expect(meta["retry_safe"] == .bool(true))
         #expect(meta["mutation_dispatched"] == .bool(false))
