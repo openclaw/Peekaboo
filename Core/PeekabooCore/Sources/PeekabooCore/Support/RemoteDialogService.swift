@@ -255,7 +255,13 @@ public final class RemoteDialogService: DialogServiceProtocol {
             throw Self.capabilityRefusal(
                 "Remote host does not advertise uniquely targeted dialog listing; update the host.")
         }
-        return try await self.client.targetedDialogListElements(target: target)
+        do {
+            return try await self.client.targetedDialogListElements(target: target)
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.preDispatchFailure(for: envelope)
+        }
     }
 
     private func supportsAction(_ kind: DialogPreparedActionKind) -> Bool {
@@ -277,6 +283,12 @@ public final class RemoteDialogService: DialogServiceProtocol {
     }
 
     static func preDispatchFailure(for envelope: PeekabooBridgeErrorEnvelope) -> DesktopActionFailure {
+        if let failure = envelope.desktopActionFailure,
+           failure.outcome.state == .refused,
+           !failure.outcome.dispatchState.mutationDispatched
+        {
+            return failure.routed(to: .bridge)
+        }
         let reason: DesktopActionOutcome.RefusalReason = switch envelope.code {
         case .permissionDenied:
             .permissionDenied

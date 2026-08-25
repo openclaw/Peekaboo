@@ -287,6 +287,28 @@ struct BridgeStrictBackgroundOperationTests {
     }
 
     @Test
+    func `remote blank child recovery hint survives structured bridge refusal`() {
+        let hint = "Window ID 21723 did not retain a structural dialog. " +
+            "If it is a blank-title transient sheet CGWindow, use the titled parent AX window ID for PID 42 " +
+            "from window list."
+        let localFailure = DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "No dialog matched the selected target.",
+            hint: hint)
+        let envelope = PeekabooBridgeErrorEnvelope(
+            code: .internalError,
+            actionFailure: localFailure)
+
+        let failure = RemoteDialogService.preDispatchFailure(for: envelope)
+
+        #expect(failure.outcome.route == .bridge)
+        #expect(failure.outcome.state == .refused)
+        #expect(failure.outcome.refusalReason == .targetUnavailable)
+        #expect(failure.outcome.dispatchState == .none)
+        #expect(failure.hint == hint)
+    }
+
+    @Test
     func `remote authority errors retain transport-session refusal semantics`() {
         for code in [PeekabooBridgeErrorCode.unauthorizedClient, .serverBusy, .timeout] {
             let failure = RemoteDialogService.preDispatchFailure(for: .init(
