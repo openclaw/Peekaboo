@@ -65,7 +65,11 @@ public enum PeekabooBridgeConstants {
     }
 
     /// Current protocol version supported by this build.
-    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 33)
+    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 34)
+
+    /// First protocol that can attest one exact Chrome bundle, process generation, listener, and DevTools identity.
+    public static let nativeBrowserConnectionBindingVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 34)
 
     /// First protocol with host-atomic exact-window pixel-focus typing and modifier-click payloads.
     public static let composedInputParityVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 33)

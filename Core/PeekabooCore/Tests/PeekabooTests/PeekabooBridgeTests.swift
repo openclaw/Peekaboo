@@ -9,6 +9,8 @@ import PeekabooFoundation
 import Testing
 @testable import PeekabooBridge
 
+// swiftlint:disable file_length
+// swiftlint:disable:next type_body_length
 struct PeekabooBridgeTests {
     private struct BridgeDateEnvelope: Codable {
         let date: Date
@@ -1986,6 +1988,7 @@ final class StubServices: PeekabooBridgeServiceProviding {
     var browserActionFailure: DesktopActionFailure?
     var browserRawIsError = false
     var browserStatusError: (any Error)?
+    var browserConnectFailure: DesktopActionFailure?
     var browserExecutionError: (any Error)?
     var browserExecutionErrorAfterDispatch: (any Error)?
     var browserCompletedCallCount: Int?

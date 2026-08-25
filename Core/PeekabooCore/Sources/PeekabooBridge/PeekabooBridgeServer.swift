@@ -63,6 +63,7 @@ struct PeekabooBridgeReceiptlessNegotiation {
 }
 
 @MainActor
+// swiftlint:disable:next type_body_length
 public final class PeekabooBridgeServer {
     let services: any PeekabooBridgeServiceProviding
     let hostKind: PeekabooBridgeHostKind
@@ -150,6 +151,18 @@ public final class PeekabooBridgeServer {
            ])
         {
             resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.browserConnectionReceipts)
+        }
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.nativeBrowserConnectionBindingVersion,
+           (services as? any PeekabooBridgeBrowserConnectionResultProviding)?
+               .supportsNativeBrowserConnectionBinding == true,
+               self.allowedOperations.isSuperset(of: [
+                   .browserStatus,
+                   .browserConnect,
+                   .browserDisconnect,
+                   .browserExecute,
+               ])
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.nativeBrowserConnectionBinding)
         }
         let registeredScreenCaptureKitOwnership = services.supportsScreenCaptureKitProcessOwnership &&
             (try? ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()) != nil
@@ -887,6 +900,8 @@ public final class PeekabooBridgeServer {
             let session = PeekabooBridgeRequestContext.negotiatedSessionCapabilities
             let negotiatedVersion = session?.protocolVersion ?? self.receiptlessProtocolVersion(for: peer)
             guard (negotiatedVersion ?? .init(major: 0, minor: 0)) >= minimumVersion,
+                  !request.requiresNativeBrowserConnectionBinding ||
+                  session?.nativeBrowserConnectionBinding == true,
                   !request.requiresBackgroundStatelessClickVariantSupport || session?.statelessClickVariants == true,
                   !request.requiresExactWindowHeldPointerLifecycleSupport ||
                   session?.exactWindowHeldPointerLifecycle == true

@@ -5,11 +5,12 @@ import Testing
 @testable import PeekabooBridge
 
 @Suite("Bridge Agent execution trace contract")
+// swiftlint:disable:next type_body_length
 struct AgentExecutionTraceContractTests {
     @Test
     func `Protocol and allowlists fail closed before 1.31`() {
         let previous = PeekabooBridgeProtocolVersion(major: 1, minor: 30)
-        #expect(PeekabooBridgeConstants.protocolVersion == .init(major: 1, minor: 33))
+        #expect(PeekabooBridgeConstants.protocolVersion == .init(major: 1, minor: 34))
         #expect(!PeekabooBridgeOperation.compatible([.agentExecutionTrace], with: previous)
             .contains(.agentExecutionTrace))
         #expect(PeekabooBridgeOperation.compatible(

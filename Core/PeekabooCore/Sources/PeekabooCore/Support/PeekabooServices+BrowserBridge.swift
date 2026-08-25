@@ -8,6 +8,10 @@ import TachikomaMCP
 
 @MainActor
 extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
+    public var supportsNativeBrowserConnectionBinding: Bool {
+        true
+    }
+
     public func browserStatus(channel: String?) async throws -> PeekabooBridgeBrowserStatus {
         let status = try await self.browser.status(channel: Self.browserChannel(from: channel))
         return Self.bridgeStatus(from: status)

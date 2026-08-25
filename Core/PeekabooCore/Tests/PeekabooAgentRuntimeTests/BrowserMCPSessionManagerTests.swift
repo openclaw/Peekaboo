@@ -6,6 +6,8 @@ import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
 
+// swiftlint:disable file_length
+
 @MainActor
 struct BrowserMCPSessionManagerTests {
     @Test
@@ -17,7 +19,7 @@ struct BrowserMCPSessionManagerTests {
         ]
         let session = Self.session(manager: manager, browsers: browsers)
 
-        await #expect(throws: BrowserMCPConnectionError.ambiguousBrowsers(.stable, [41, 42])) {
+        await #expect(throws: DesktopActionFailure.self) {
             _ = try await session.connect(channel: .stable)
         }
         #expect(manager.addedConfigs.isEmpty)
@@ -154,6 +156,7 @@ struct BrowserMCPSessionManagerTests {
             manager: manager,
             detectedBrowsers: { _ in [browser] },
             processStartIdentity: { _ in currentGeneration.get() },
+            processBundleIdentifier: { _ in "com.google.Chrome" },
             endpointResolver: Self.endpointResolver(),
             channelEndpointResolver: Self.channelEndpointResolver())
         _ = try await session.connect(channel: .stable)
@@ -583,18 +586,22 @@ extension BrowserMCPSessionManagerTests {
             browsers: [Self.browser(pid: 830, generation: 5830)])
         let service = BrowserMCPService(sessionManager: session)
 
-        let result = try await Task { @MainActor in
-            try await service.executeSequenceWithOutcome(
-                [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "7_1"])],
-                channel: .stable,
-                connectionPolicy: .allowAutoConnect)
-        }.value
-
-        #expect(result.payload.isError)
-        #expect(result.outcome?.state == .indeterminate)
-        #expect(result.outcome?.delivery == .init(mechanism: .browserProtocol, mode: .foreground))
-        #expect(result.outcome?.dispatchState.unitCount == .one)
-        #expect(result.outcome?.retrySafety == .unsafe)
+        do {
+            _ = try await Task { @MainActor in
+                try await service.executeSequenceWithOutcome(
+                    [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "7_1"])],
+                    channel: .stable,
+                    connectionPolicy: .allowAutoConnect)
+            }.value
+            Issue.record("Expected connection cancellation")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.delivery == .init(mechanism: .browserProtocol, mode: .foreground))
+            #expect(failure.outcome.dispatchState.unitCount == .one)
+            #expect(failure.outcome.retrySafety == .unsafe)
+        } catch {
+            Issue.record("Expected canonical connection failure, got \(error)")
+        }
         #expect(manager.executedTools == ["list_pages"])
     }
 
@@ -994,6 +1001,9 @@ extension BrowserMCPSessionManagerTests {
                 browsers.get(channel: channel)
             },
             processStartIdentity: { generations[$0] },
+            processBundleIdentifier: { processIdentifier in
+                processIdentifier == 84 ? "com.google.Chrome.canary" : "com.google.Chrome"
+            },
             endpointResolver: Self.endpointResolver(),
             channelEndpointResolver: Self.channelEndpointResolver())
         let connected = try await session.connect(channel: .stable)
@@ -1031,7 +1041,7 @@ extension BrowserMCPSessionManagerTests {
         #expect(manager.addedConfigs[0].args.contains(
             "--wsEndpoint=ws://127.0.0.1:9222/devtools/browser/browser-a"))
 
-        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+        await #expect(throws: DesktopActionFailure.self) {
             _ = try await session.connect(
                 channel: .stable,
                 browserURL: "http://127.0.0.1:9333")
@@ -1447,6 +1457,9 @@ extension BrowserMCPSessionManagerTests {
         let generations = Dictionary(uniqueKeysWithValues: browsers.compactMap { browser in
             browser.processStartIdentity.map { (browser.processIdentifier, $0) }
         })
+        let bundles = Dictionary(uniqueKeysWithValues: browsers.map { browser in
+            (browser.processIdentifier, browser.bundleIdentifier)
+        })
         return BrowserMCPSessionManager(
             serverName: "test-browser",
             manager: manager,
@@ -1454,6 +1467,7 @@ extension BrowserMCPSessionManagerTests {
                 browsers.filter { channel == nil || $0.channel == channel }
             },
             processStartIdentity: { generations[$0] },
+            processBundleIdentifier: { bundles[$0] },
             endpointResolver: self.endpointResolver(),
             channelEndpointResolver: self.channelEndpointResolver(),
             uploadStager: uploadStager,

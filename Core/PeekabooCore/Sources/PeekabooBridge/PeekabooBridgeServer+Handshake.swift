@@ -10,6 +10,7 @@ extension PeekabooBridgeServer {
             message: "Unexpected request for operation \(request.operation.rawValue)")
     }
 
+    // swiftlint:disable:next cyclomatic_complexity function_body_length
     func handleHandshake(
         _ payload: PeekabooBridgeHandshake,
         peer: PeekabooBridgePeer?,
@@ -139,6 +140,20 @@ extension PeekabooBridgeServer {
             """)
 
         var advertisedCapabilities = self.hostCapabilities
+        let browserOperations: Set<PeekabooBridgeOperation> = [
+            .browserStatus,
+            .browserConnect,
+            .browserDisconnect,
+            .browserExecute,
+        ]
+        if !supportsAttestedOperationReceipts ||
+            negotiated < PeekabooBridgeConstants.nativeBrowserConnectionBindingVersion ||
+            (self.services as? any PeekabooBridgeBrowserConnectionResultProviding)?
+            .supportsNativeBrowserConnectionBinding != true ||
+            !browserOperations.isSubset(of: Set(advertisedOps))
+        {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.nativeBrowserConnectionBinding)
+        }
         if !supportsAttestedOperationReceipts ||
             negotiated < PeekabooBridgeConstants.statelessClickVariantVersion ||
             (self.services.automation as? any TargetedClickServiceProtocol)?.supportsStatelessClickVariants != true ||
@@ -215,7 +230,9 @@ extension PeekabooBridgeServer {
                         statelessClickVariants: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.statelessClickVariants),
                         exactWindowHeldPointerLifecycle: advertisedCapabilities.contains(
-                            PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle)),
+                            PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle),
+                        nativeBrowserConnectionBinding: advertisedCapabilities.contains(
+                            PeekabooBridgeHostCapability.nativeBrowserConnectionBinding)),
                     replacing: payload.replacingOperationSessionID)
                 self.clearReceiptlessNegotiation(peer: peer)
             } catch let error as PeekabooBridgeOperationReceiptError {

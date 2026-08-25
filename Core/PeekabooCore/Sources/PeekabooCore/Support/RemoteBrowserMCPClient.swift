@@ -45,7 +45,7 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         let result = try await self.client.browserConnectResult(
             channel: channel?.rawValue,
             browserURL: browserURL)
-        return DesktopActionResult(
+        return try DesktopActionResult(
             payload: Self.status(from: result.payload),
             outcome: result.outcome)
     }
@@ -137,32 +137,35 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         return DesktopActionResult(payload: response, outcome: result.outcome)
     }
 
-    private static func status(from bridgeStatus: PeekabooBridgeBrowserStatus) -> BrowserMCPStatus {
-        BrowserMCPStatus(
+    private static func status(from bridgeStatus: PeekabooBridgeBrowserStatus) throws -> BrowserMCPStatus {
+        let detectedBrowsers = try bridgeStatus.detectedBrowsers.map { browser in
+            guard let channel = BrowserMCPChannel(rawValue: browser.channel),
+                  let identity = ChromeChannelIdentity(rawValue: channel.rawValue),
+                  identity.matches(bundleIdentifier: browser.bundleIdentifier)
+            else {
+                throw BrowserMCPConnectionError.connectionLost(
+                    "Bridge reported a browser with a noncanonical channel bundle")
+            }
+            return DetectedBrowser(
+                name: browser.name,
+                bundleIdentifier: identity.bundleIdentifier,
+                processIdentifier: browser.processIdentifier,
+                processStartIdentity: browser.processStartIdentity,
+                version: browser.version,
+                channel: channel)
+        }
+        let connectionReceipt = try bridgeStatus.connectionReceipt.map { receipt in
+            guard receipt.isCanonicalTarget else {
+                throw BrowserMCPConnectionError.connectionLost(
+                    "Bridge reported a noncanonical browser connection receipt")
+            }
+            return Self.runtimeReceipt(from: receipt)
+        }
+        return BrowserMCPStatus(
             isConnected: bridgeStatus.isConnected,
             toolCount: bridgeStatus.toolCount,
-            detectedBrowsers: bridgeStatus.detectedBrowsers.compactMap { browser in
-                guard let channel = BrowserMCPChannel(rawValue: browser.channel) else { return nil }
-                return DetectedBrowser(
-                    name: browser.name,
-                    bundleIdentifier: browser.bundleIdentifier,
-                    processIdentifier: browser.processIdentifier,
-                    processStartIdentity: browser.processStartIdentity,
-                    version: browser.version,
-                    channel: channel)
-            },
-            connectionReceipt: bridgeStatus.connectionReceipt.map { receipt in
-                BrowserMCPConnectionReceipt(
-                    channel: receipt.channel.flatMap(BrowserMCPChannel.init(rawValue:)),
-                    processIdentifier: receipt.processIdentifier,
-                    processStartIdentity: receipt.processStartIdentity,
-                    bundleIdentifier: receipt.bundleIdentifier,
-                    browserURL: receipt.browserURL,
-                    webSocketDebuggerURL: receipt.webSocketDebuggerURL,
-                    devToolsBrowserID: receipt.devToolsBrowserID,
-                    browserVersion: receipt.browserVersion,
-                    protocolVersion: receipt.protocolVersion)
-            },
+            detectedBrowsers: detectedBrowsers,
+            connectionReceipt: connectionReceipt,
             error: bridgeStatus.error)
     }
 

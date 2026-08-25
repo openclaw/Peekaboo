@@ -1,5 +1,6 @@
 import Foundation
 import PeekabooAutomationKit
+import PeekabooFoundation
 
 struct BrowserMCPChannelProcessTarget: Sendable, Equatable {
     let channel: BrowserMCPChannel
@@ -8,48 +9,181 @@ struct BrowserMCPChannelProcessTarget: Sendable, Equatable {
     let bundleIdentifier: String
 }
 
+private struct BrowserMCPChannelEndpointAuthority: Sendable, Equatable {
+    let browserURL: String
+    let webSocketDebuggerURL: String
+    let browserID: String
+    let listener: DarwinProcessLoopbackListenerIdentity
+}
+
 struct BrowserMCPChannelEndpointResolver: Sendable {
     typealias Resolve = @Sendable (BrowserMCPChannelProcessTarget) async throws -> BrowserMCPDevToolsEndpoint
+    typealias ResolveInitial = @Sendable (
+        BrowserMCPChannelProcessTarget,
+        BrowserMCPConnectionAttempt) async throws -> BrowserMCPDevToolsEndpoint
+    typealias Revalidate = @Sendable (
+        BrowserMCPChannelProcessTarget,
+        BrowserMCPDevToolsEndpoint) async throws -> Void
 
-    let resolve: Resolve
+    private let resolveInitial: ResolveInitial
+    private let revalidateAuthority: Revalidate
 
-    static let live = BrowserMCPChannelEndpointResolver { target in
-        let activePortURL = Self.activePortURL(
-            channel: target.channel,
-            homeDirectory: FileManager.default.homeDirectoryForCurrentUser)
-        return try await Self.resolveEndpoint(
-            target: target,
-            activePortURL: activePortURL,
-            readActivePort: { url in
-                try StableRegularFileReader.live.read(url, 1024)
-            },
-            inspectListener: DarwinProcessLoopbackListenerInspector.live.inspect,
-            probeWebSocket: BrowserMCPDevToolsWebSocketProber.live.probe)
+    init(_ resolve: @escaping Resolve, revalidate: @escaping Revalidate) {
+        self.resolveInitial = { target, _ in try await resolve(target) }
+        self.revalidateAuthority = revalidate
     }
+
+    init(resolveInitial: @escaping ResolveInitial, revalidate: @escaping Revalidate) {
+        self.resolveInitial = resolveInitial
+        self.revalidateAuthority = revalidate
+    }
+
+    func resolve(
+        _ target: BrowserMCPChannelProcessTarget,
+        attempt: BrowserMCPConnectionAttempt = .standalone()) async throws -> BrowserMCPDevToolsEndpoint
+    {
+        try await self.resolveInitial(target, attempt)
+    }
+
+    func revalidate(
+        _ target: BrowserMCPChannelProcessTarget,
+        expected: BrowserMCPDevToolsEndpoint) async throws
+    {
+        try await self.revalidateAuthority(target, expected)
+    }
+
+    static let live = BrowserMCPChannelEndpointResolver(
+        resolveInitial: { target, attempt in
+            try await Self.resolveEndpoint(
+                target: target,
+                attempt: attempt,
+                activePortURL: Self.activePortURL(
+                    channel: target.channel,
+                    homeDirectory: FileManager.default.homeDirectoryForCurrentUser),
+                readActivePort: { url in
+                    try StableRegularFileReader.live.read(url, 1024)
+                },
+                inspectListener: DarwinProcessLoopbackListenerInspector.live.inspect,
+                probeWebSocket: BrowserMCPDevToolsWebSocketProber.live.probe)
+        },
+        revalidate: { target, expected in
+            try Self.revalidateEndpoint(
+                target: target,
+                expected: expected,
+                activePortURL: Self.activePortURL(
+                    channel: target.channel,
+                    homeDirectory: FileManager.default.homeDirectoryForCurrentUser),
+                readActivePort: { url in
+                    try StableRegularFileReader.live.read(url, 1024)
+                },
+                inspectListener: DarwinProcessLoopbackListenerInspector.live.inspect)
+        })
 
     static func resolveEndpoint(
         target: BrowserMCPChannelProcessTarget,
+        attempt: BrowserMCPConnectionAttempt = .standalone(),
         activePortURL: URL,
         readActivePort: @Sendable (URL) throws -> Data,
         inspectListener: DarwinProcessLoopbackListenerInspector.Inspect,
         probeWebSocket: BrowserMCPDevToolsWebSocketProber.Probe) async throws
         -> BrowserMCPDevToolsEndpoint
     {
+        let before = try self.resolveAuthority(
+            target: target,
+            activePortURL: activePortURL,
+            readActivePort: readActivePort,
+            inspectListener: inspectListener)
+
+        guard let webSocketURL = URL(string: before.webSocketDebuggerURL),
+              webSocketURL.absoluteString == before.webSocketDebuggerURL
+        else {
+            throw BrowserMCPConnectionError.channelEndpointUnavailable(
+                target.channel,
+                "Chrome's DevToolsActivePort published a malformed WebSocket identity")
+        }
+        let version: BrowserMCPDevToolsVersion
+        do {
+            version = try await probeWebSocket(
+                webSocketURL,
+                before.browserID,
+                attempt.deadline,
+                attempt.state.markPermissionDispatchStarted)
+        } catch BrowserMCPDevToolsWebSocketProbeFailure.cancelled {
+            throw BrowserMCPConnectionError.permissionBearingConnectionCancelled
+        } catch let BrowserMCPDevToolsWebSocketProbeFailure.failed(error) {
+            throw BrowserMCPConnectionError.permissionBearingConnectionFailed(error.localizedDescription)
+        }
+
+        let after: BrowserMCPChannelEndpointAuthority
+        do {
+            after = try self.resolveAuthority(
+                target: target,
+                activePortURL: activePortURL,
+                readActivePort: readActivePort,
+                inspectListener: inspectListener)
+        } catch {
+            throw BrowserMCPConnectionError.permissionBearingConnectionFailed(
+                "Chrome's DevTools authority changed after Browser.getVersion: \(error.localizedDescription)")
+        }
+        guard after == before else {
+            throw BrowserMCPConnectionError.permissionBearingConnectionFailed(
+                "Chrome's DevTools authority changed during Browser.getVersion")
+        }
+        return BrowserMCPDevToolsEndpoint(
+            browserURL: before.browserURL,
+            webSocketDebuggerURL: before.webSocketDebuggerURL,
+            browserID: before.browserID,
+            browserVersion: version.browserVersion,
+            protocolVersion: version.protocolVersion)
+    }
+
+    static func revalidateEndpoint(
+        target: BrowserMCPChannelProcessTarget,
+        expected: BrowserMCPDevToolsEndpoint,
+        activePortURL: URL,
+        readActivePort: @Sendable (URL) throws -> Data,
+        inspectListener: DarwinProcessLoopbackListenerInspector.Inspect) throws
+    {
+        let authority = try self.resolveAuthority(
+            target: target,
+            activePortURL: activePortURL,
+            readActivePort: readActivePort,
+            inspectListener: inspectListener)
+        guard authority.browserURL == expected.browserURL,
+              authority.webSocketDebuggerURL == expected.webSocketDebuggerURL,
+              authority.browserID == expected.browserID
+        else {
+            throw BrowserMCPConnectionError.connectionLost(
+                "the process-bound DevTools browser endpoint changed identity")
+        }
+    }
+
+    private static func resolveAuthority(
+        target: BrowserMCPChannelProcessTarget,
+        activePortURL: URL,
+        readActivePort: @Sendable (URL) throws -> Data,
+        inspectListener: DarwinProcessLoopbackListenerInspector.Inspect) throws
+        -> BrowserMCPChannelEndpointAuthority
+    {
+        guard ChromeChannelIdentity(rawValue: target.channel.rawValue)?
+            .matches(bundleIdentifier: target.bundleIdentifier) == true
+        else {
+            throw BrowserMCPConnectionError.channelEndpointUnavailable(
+                target.channel,
+                "the detected process bundle does not exactly match the requested Chrome channel")
+        }
         let activePort: ActivePortRecord
         do {
-            activePort = try Self.parseActivePort(readActivePort(activePortURL))
-        } catch is CancellationError {
-            throw CancellationError()
+            activePort = try self.parseActivePort(readActivePort(activePortURL))
         } catch {
             throw BrowserMCPConnectionError.channelEndpointUnavailable(
                 target.channel,
                 "Chrome's standard-profile DevToolsActivePort could not be read safely: " +
                     error.localizedDescription)
         }
-
-        let before: DarwinProcessLoopbackListenerIdentity
+        let listener: DarwinProcessLoopbackListenerIdentity
         do {
-            before = try inspectListener(
+            listener = try inspectListener(
                 target.processIdentifier,
                 target.processStartIdentity,
                 activePort.port)
@@ -59,66 +193,29 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
                 "Chrome's DevTools listener could not be bound to PID \(target.processIdentifier): " +
                     error.localizedDescription)
         }
-        guard before.processIdentifier == target.processIdentifier,
-              before.processStartIdentity == target.processStartIdentity,
-              before.port == activePort.port
+        guard listener.processIdentifier == target.processIdentifier,
+              listener.processStartIdentity == target.processStartIdentity,
+              listener.port == activePort.port
         else {
             throw BrowserMCPConnectionError.channelEndpointUnavailable(
                 target.channel,
                 "Chrome's DevTools listener inspection returned a different process, generation, or port")
         }
-
-        let browserURL = "http://\(before.addressFamily.httpHost):\(activePort.port)"
-        let webSocketDebuggerURL = "ws://\(before.addressFamily.httpHost):\(activePort.port)\(activePort.path)"
-        guard let webSocketURL = URL(string: webSocketDebuggerURL),
-              webSocketURL.absoluteString == webSocketDebuggerURL
-        else {
-            throw BrowserMCPConnectionError.channelEndpointUnavailable(
-                target.channel,
-                "Chrome's DevToolsActivePort published a malformed WebSocket identity")
-        }
-        let version: BrowserMCPDevToolsVersion
-        do {
-            version = try await probeWebSocket(webSocketURL, activePort.browserID)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            throw BrowserMCPConnectionError.channelEndpointUnavailable(
-                target.channel,
-                error.localizedDescription)
-        }
-
-        let after: DarwinProcessLoopbackListenerIdentity
-        do {
-            after = try inspectListener(
-                target.processIdentifier,
-                target.processStartIdentity,
-                activePort.port)
-        } catch {
-            throw BrowserMCPConnectionError.channelEndpointUnavailable(
-                target.channel,
-                "Chrome's DevTools listener changed during Browser.getVersion: \(error.localizedDescription)")
-        }
-        guard after == before else {
-            throw BrowserMCPConnectionError.channelEndpointUnavailable(
-                target.channel,
-                "Chrome's DevTools listener changed during Browser.getVersion")
-        }
-        return BrowserMCPDevToolsEndpoint(
-            browserURL: "\(browserURL)/",
+        let browserURL = "http://\(listener.addressFamily.httpHost):\(activePort.port)/"
+        let webSocketDebuggerURL =
+            "ws://\(listener.addressFamily.httpHost):\(activePort.port)\(activePort.path)"
+        return BrowserMCPChannelEndpointAuthority(
+            browserURL: browserURL,
             webSocketDebuggerURL: webSocketDebuggerURL,
             browserID: activePort.browserID,
-            browserVersion: version.browserVersion,
-            protocolVersion: version.protocolVersion)
+            listener: listener)
     }
 
     static func activePortURL(channel: BrowserMCPChannel, homeDirectory: URL) -> URL {
-        let directoryName = switch channel {
-        case .stable: "Chrome"
-        case .beta: "Chrome Beta"
-        case .dev: "Chrome Dev"
-        case .canary: "Chrome Canary"
+        guard let channelIdentity = ChromeChannelIdentity(rawValue: channel.rawValue) else {
+            preconditionFailure("Browser channel has no canonical Chrome identity")
         }
+        let directoryName = channelIdentity.profileDirectoryName
         return homeDirectory
             .appending(path: "Library/Application Support/Google", directoryHint: .isDirectory)
             .appending(path: directoryName, directoryHint: .isDirectory)

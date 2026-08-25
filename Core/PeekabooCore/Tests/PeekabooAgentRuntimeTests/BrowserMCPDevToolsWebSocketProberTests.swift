@@ -14,8 +14,9 @@ struct BrowserMCPDevToolsWebSocketProberTests {
             return try await BrowserMCPDevToolsWebSocketProber.probeVersion(
                 Self.webSocketURL,
                 expectedBrowserID: "browser-a",
-                timeout: .seconds(2),
-                exchange: { request, command, requestID in
+                deadline: Self.deadline(seconds: 2),
+                exchange: { request, command, requestID, onDispatch in
+                    onDispatch()
                     exchanges.increment()
                     #expect(request.url == Self.webSocketURL)
                     #expect(command == #"{"id":1,"method":"Browser.getVersion"}"#)
@@ -40,12 +41,13 @@ struct BrowserMCPDevToolsWebSocketProberTests {
     func `WebSocket refusal does not fall back or retry`() async {
         let exchanges = SynchronizedCounter()
 
-        await #expect(throws: BrowserMCPDevToolsWebSocketProbeError.connectionRefused("HTTP 403")) {
+        await #expect(throws: BrowserMCPDevToolsWebSocketProbeFailure.failed(.connectionRefused("HTTP 403"))) {
             _ = try await BrowserMCPDevToolsWebSocketProber.probeVersion(
                 Self.webSocketURL,
                 expectedBrowserID: "browser-a",
-                timeout: .seconds(1),
-                exchange: { _, _, _ in
+                deadline: Self.deadline(seconds: 1),
+                exchange: { _, _, _, onDispatch in
+                    onDispatch()
                     exchanges.increment()
                     throw WebSocketProbeFixtureError.forbidden
                 })
@@ -57,12 +59,13 @@ struct BrowserMCPDevToolsWebSocketProberTests {
     func `approval timeout cancels the pending exchange exactly once`() async {
         let cancellations = SynchronizedCounter()
 
-        await #expect(throws: BrowserMCPDevToolsWebSocketProbeError.timedOut) {
+        await #expect(throws: BrowserMCPDevToolsWebSocketProbeFailure.failed(.timedOut)) {
             _ = try await BrowserMCPDevToolsWebSocketProber.probeVersion(
                 Self.webSocketURL,
                 expectedBrowserID: "browser-a",
-                timeout: .milliseconds(20),
-                exchange: { _, _, _ in
+                deadline: Self.deadline(milliseconds: 20),
+                exchange: { _, _, _, onDispatch in
+                    onDispatch()
                     do {
                         try await Task.sleep(for: .seconds(30))
                         return Self.successResponse()
@@ -83,8 +86,9 @@ struct BrowserMCPDevToolsWebSocketProberTests {
             try await BrowserMCPDevToolsWebSocketProber.probeVersion(
                 Self.webSocketURL,
                 expectedBrowserID: "browser-a",
-                timeout: .seconds(30),
-                exchange: { _, _, _ in
+                deadline: Self.deadline(seconds: 30),
+                exchange: { _, _, _, onDispatch in
+                    onDispatch()
                     await barrier.noteBlocked()
                     do {
                         try await Task.sleep(for: .seconds(30))
@@ -101,12 +105,35 @@ struct BrowserMCPDevToolsWebSocketProberTests {
         do {
             _ = try await probe.value
             Issue.record("Expected caller cancellation")
-        } catch is CancellationError {
+        } catch BrowserMCPDevToolsWebSocketProbeFailure.cancelled {
             // Expected.
         } catch {
             Issue.record("Expected CancellationError, got \(error)")
         }
         #expect(cancellations.value == 1)
+    }
+
+    @Test
+    func `cancellation before WebSocket resume stays pre dispatch`() async {
+        let dispatches = SynchronizedCounter()
+        let probe = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await BrowserMCPDevToolsWebSocketProber.probeVersion(
+                Self.webSocketURL,
+                expectedBrowserID: "browser-a",
+                deadline: Self.deadline(seconds: 30),
+                onDispatch: { dispatches.increment() },
+                exchange: { _, _, _, onDispatch in
+                    try Task.checkCancellation()
+                    onDispatch()
+                    return Self.successResponse()
+                })
+        }
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await probe.value
+        }
+        #expect(dispatches.value == 0)
     }
 
     @Test
@@ -124,10 +151,13 @@ struct BrowserMCPDevToolsWebSocketProberTests {
                 _ = try await BrowserMCPDevToolsWebSocketProber.probeVersion(
                     Self.webSocketURL,
                     expectedBrowserID: "browser-a",
-                    timeout: .seconds(1),
-                    exchange: { _, _, _ in response })
+                    deadline: Self.deadline(seconds: 1),
+                    exchange: { _, _, _, onDispatch in
+                        onDispatch()
+                        return response
+                    })
                 Issue.record("Expected malformed CDP to be refused")
-            } catch is BrowserMCPDevToolsWebSocketProbeError {
+            } catch is BrowserMCPDevToolsWebSocketProbeFailure {
                 // Expected.
             } catch {
                 Issue.record("Expected a typed WebSocket probe error, got \(error)")
@@ -137,13 +167,14 @@ struct BrowserMCPDevToolsWebSocketProberTests {
 
     @Test
     func `CDP error response is a typed refusal`() async {
-        await #expect(throws: BrowserMCPDevToolsWebSocketProbeError.connectionRefused("denied")) {
+        await #expect(throws: BrowserMCPDevToolsWebSocketProbeFailure.failed(.connectionRefused("denied"))) {
             _ = try await BrowserMCPDevToolsWebSocketProber.probeVersion(
                 Self.webSocketURL,
                 expectedBrowserID: "browser-a",
-                timeout: .seconds(1),
-                exchange: { _, _, _ in
-                    Data(#"{"id":1,"error":{"code":-32000,"message":"denied"}}"#.utf8)
+                deadline: Self.deadline(seconds: 1),
+                exchange: { _, _, _, onDispatch in
+                    onDispatch()
+                    return Data(#"{"id":1,"error":{"code":-32000,"message":"denied"}}"#.utf8)
                 })
         }
     }
@@ -157,8 +188,8 @@ struct BrowserMCPDevToolsWebSocketProberTests {
             _ = try await BrowserMCPDevToolsWebSocketProber.probeVersion(
                 wrongURL,
                 expectedBrowserID: "browser-a",
-                timeout: .seconds(1),
-                exchange: { _, _, _ in
+                deadline: Self.deadline(seconds: 1),
+                exchange: { _, _, _, _ in
                     exchanges.increment()
                     return Self.successResponse()
                 })
@@ -171,6 +202,14 @@ struct BrowserMCPDevToolsWebSocketProberTests {
 
     private static func successResponse() -> Data {
         Data(#"{"id":1,"result":{"product":"Chrome/151.0","protocolVersion":"1.3"}}"#.utf8)
+    }
+
+    private static func deadline(seconds: TimeInterval) -> ContinuousClock.Instant {
+        ContinuousClock.now.advanced(by: .seconds(seconds))
+    }
+
+    private static func deadline(milliseconds: Int) -> ContinuousClock.Instant {
+        ContinuousClock.now.advanced(by: .milliseconds(milliseconds))
     }
 }
 

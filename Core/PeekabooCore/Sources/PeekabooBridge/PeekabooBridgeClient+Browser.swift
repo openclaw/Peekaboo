@@ -1,13 +1,13 @@
 import Foundation
+import PeekabooAutomationKit
 import PeekabooFoundation
 
 extension PeekabooBridgeClient {
-    static let browserConnectApprovalTimeoutSeconds: TimeInterval = 65
-
     public func browserStatus(channel: String?) async throws -> PeekabooBridgeBrowserStatus {
         let response = try await self.send(.browserStatus(PeekabooBridgeBrowserChannelRequest(channel: channel)))
         switch response {
         case let .browserStatus(status):
+            try self.validateBrowserStatus(status)
             return status
         case let .error(envelope):
             throw envelope
@@ -20,6 +20,13 @@ extension PeekabooBridgeClient {
         channel: String?,
         browserURL: String? = nil) async throws -> PeekabooBridgeBrowserStatus
     {
+        if browserURL == nil, !self.nativeBrowserConnectionBindingEnabled {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "Channel browser connect requires native browser connection binding.",
+                hint: "Update and relaunch the Peekaboo Bridge host before retrying.")
+        }
         if self.operationAttestation == nil {
             do {
                 return try await self.directBrowserConnect(.browserConnect(.init(
@@ -38,6 +45,13 @@ extension PeekabooBridgeClient {
         channel: String?,
         browserURL: String? = nil) async throws -> DesktopActionResult<PeekabooBridgeBrowserStatus>
     {
+        if browserURL == nil, !self.nativeBrowserConnectionBindingEnabled {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "Channel browser connect requires native browser connection binding.",
+                hint: "Update and relaunch the Peekaboo Bridge host before retrying.")
+        }
         let request = PeekabooBridgeRequest.browserConnect(PeekabooBridgeBrowserChannelRequest(
             channel: channel,
             browserURL: browserURL))
@@ -75,15 +89,17 @@ extension PeekabooBridgeClient {
                     causeDescription: error.localizedDescription)
             }
         }
-        return try await self.actionResult(
+        let result: UIAutomationActionResult<PeekabooBridgeBrowserStatus> = try await self.actionResult(
             for: request,
             expectedResponse: "browser connect",
-            timeoutSec: Self.browserConnectApprovalTimeoutSeconds,
+            timeoutSec: BrowserConnectionTiming.bridgeTransportTimeoutSeconds,
             operationReceiptRequirement: .required)
         { response in
             guard case let .browserStatus(status) = response else { return nil }
             return status
-        }.desktopActionResult
+        }
+        try self.validateBrowserStatus(result.payload)
+        return result.desktopActionResult
     }
 
     private func directBrowserConnect(
@@ -91,9 +107,10 @@ extension PeekabooBridgeClient {
     {
         let response = try await self.sendWithoutActionProjection(
             request,
-            timeoutSec: Self.browserConnectApprovalTimeoutSeconds)
+            timeoutSec: BrowserConnectionTiming.bridgeTransportTimeoutSeconds)
         switch response {
         case let .browserStatus(status):
+            try self.validateBrowserStatus(status)
             return status
         case let .error(envelope):
             throw envelope
@@ -109,6 +126,15 @@ extension PeekabooBridgeClient {
     public func browserExecute(_ request: PeekabooBridgeBrowserExecuteRequest) async throws
         -> PeekabooBridgeBrowserToolResponse
     {
+        if request.expectedConnectionReceipt?.isCanonicalProcessBoundTarget == true,
+           !self.nativeBrowserConnectionBindingEnabled
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "Process-bound browser execution requires native browser connection binding.",
+                hint: "Update and relaunch the Peekaboo Bridge host before retrying.")
+        }
         if self.operationAttestation == nil {
             return try await self.directBrowserExecute(request)
         }
@@ -126,6 +152,15 @@ extension PeekabooBridgeClient {
     public func browserExecuteResult(_ request: PeekabooBridgeBrowserExecuteRequest) async throws
         -> DesktopActionResult<PeekabooBridgeBrowserToolResponse>
     {
+        if request.expectedConnectionReceipt?.isCanonicalProcessBoundTarget == true,
+           !self.nativeBrowserConnectionBindingEnabled
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "Process-bound browser execution requires native browser connection binding.",
+                hint: "Update and relaunch the Peekaboo Bridge host before retrying.")
+        }
         if request.isReadOnly {
             return try await DesktopActionResult(payload: self.directBrowserExecute(request), outcome: nil)
         }
@@ -160,6 +195,15 @@ extension PeekabooBridgeClient {
                     message: "Result-aware browser mutation requires one complete target receipt.",
                     hint: "Refresh browser status and bind its complete receipt before retrying.")
             }
+            if expectedReceipt.isCanonicalProcessBoundTarget,
+               !self.nativeBrowserConnectionBindingEnabled
+            {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    route: .bridge,
+                    reason: .runtimeIncompatible,
+                    message: "Process-bound browser execution requires native browser connection binding.",
+                    hint: "Update and relaunch the Peekaboo Bridge host before retrying.")
+            }
             return request
         }
         let status = try await self.browserStatus(channel: request.channel)
@@ -173,6 +217,15 @@ extension PeekabooBridgeClient {
                 reason: .targetUnavailable,
                 message: "Browser execution requires one exact live connection receipt.",
                 hint: "Reconnect the intended browser and retry.")
+        }
+        if receipt.isCanonicalProcessBoundTarget,
+           !self.nativeBrowserConnectionBindingEnabled
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "Process-bound browser execution requires native browser connection binding.",
+                hint: "Update and relaunch the Peekaboo Bridge host before retrying.")
         }
         return request.binding(to: receipt)
     }
@@ -193,6 +246,26 @@ extension PeekabooBridgeClient {
             throw PeekabooBridgeErrorEnvelope(
                 code: .invalidRequest,
                 message: "Unexpected browser tool response")
+        }
+    }
+
+    private func validateBrowserStatus(_ status: PeekabooBridgeBrowserStatus) throws {
+        guard let receipt = status.connectionReceipt else { return }
+        guard receipt.isCanonicalTarget else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .targetUnavailable,
+                message: "Bridge returned a noncanonical browser connection receipt.",
+                hint: "Update the Bridge host and reconnect the intended browser.")
+        }
+        if receipt.isCanonicalProcessBoundTarget,
+           !self.nativeBrowserConnectionBindingEnabled
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "Process-bound browser status requires native browser connection binding.",
+                hint: "Update and relaunch the Peekaboo Bridge host before retrying.")
         }
     }
 }

@@ -33,6 +33,7 @@ struct PeekabooBridgeConnectedHostIdentity: Equatable, Sendable {
     let signingIdentity: PeekabooBridgeHost.PeerSigningIdentity?
 }
 
+// swiftlint:disable:next type_body_length
 public actor PeekabooBridgeClient {
     let socketPath: String
     let maxResponseBytes: Int
@@ -59,6 +60,7 @@ public actor PeekabooBridgeClient {
     var certificationProducerAttestationEnabled = false
     var setValueResultTargetBindingEnabled = false
     var foregroundModifierClickSnapshotLeaseEnabled = false
+    var nativeBrowserConnectionBindingEnabled = false
     var operationAttestation: PeekabooBridgeListenerAttestation?
     var latestVerifiedOperationReceipt: PeekabooBridgeOperationReceipt?
     var latestVerifiedOperationReceiptBundle: PeekabooBridgeOperationReceiptBundle?
@@ -450,6 +452,7 @@ public actor PeekabooBridgeClient {
         self.certificationProducerAttestationEnabled = false
         self.setValueResultTargetBindingEnabled = false
         self.foregroundModifierClickSnapshotLeaseEnabled = false
+        self.nativeBrowserConnectionBindingEnabled = false
     }
 
     /// Creates or joins one successor-session handshake using the most recent successful public inputs.
@@ -885,6 +888,8 @@ public actor PeekabooBridgeClient {
             setValueResultTargetBindingEnabled: Self.supportsSetValueResultTargetBinding(handshake),
             foregroundModifierClickSnapshotLeaseEnabled:
             Self.supportsForegroundModifierClickSnapshotLease(handshake),
+            nativeBrowserConnectionBindingEnabled:
+            Self.supportsNativeBrowserConnectionBinding(handshake),
             listenerAttestation: listenerAttestation,
             listenerLiveIdentity: listenerLiveIdentity,
             sessionAttestation: sessionAttestation,
@@ -941,6 +946,21 @@ public actor PeekabooBridgeClient {
             (handshake.enabledOperations?.contains(.foregroundModifierClick) ?? true)
     }
 
+    private static func supportsNativeBrowserConnectionBinding(
+        _ handshake: PeekabooBridgeHandshakeResponse) -> Bool
+    {
+        let operations: Set<PeekabooBridgeOperation> = [
+            .browserStatus,
+            .browserConnect,
+            .browserDisconnect,
+            .browserExecute,
+        ]
+        return handshake.negotiatedVersion >= PeekabooBridgeConstants.nativeBrowserConnectionBindingVersion &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.nativeBrowserConnectionBinding) == true &&
+            operations.isSubset(of: Set(handshake.supportedOperations))
+    }
+
     private func installHandshakeCandidate(
         _ candidate: PeekabooBridgeClientHandshakeCandidate,
         inputs: PeekabooBridgeClientHandshakeInputs?,
@@ -989,6 +1009,7 @@ public actor PeekabooBridgeClient {
         self.setValueResultTargetBindingEnabled = candidate.setValueResultTargetBindingEnabled
         self.foregroundModifierClickSnapshotLeaseEnabled =
             candidate.foregroundModifierClickSnapshotLeaseEnabled
+        self.nativeBrowserConnectionBindingEnabled = candidate.nativeBrowserConnectionBindingEnabled
         self.operationAttestation = candidate.listenerAttestation
         self.installReceiptlessAuthenticatedHost(candidate.receiptlessAuthenticatedHost)
         if let listenerAttestation = candidate.listenerAttestation,
@@ -1278,6 +1299,7 @@ private struct PeekabooBridgeClientHandshakeCandidate: Sendable {
     let certificationProducerAttestationEnabled: Bool
     let setValueResultTargetBindingEnabled: Bool
     let foregroundModifierClickSnapshotLeaseEnabled: Bool
+    let nativeBrowserConnectionBindingEnabled: Bool
     let listenerAttestation: PeekabooBridgeListenerAttestation?
     let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity?
     let sessionAttestation: PeekabooBridgeOperationSessionAttestation?

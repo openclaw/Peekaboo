@@ -154,26 +154,9 @@ public enum BrowserMCPChannel: String, Sendable, CaseIterable, Codable {
     case dev
     case canary
 
-    static func infer(bundleIdentifier: String, applicationName: String) -> Self? {
-        let bundle = bundleIdentifier.lowercased()
-        let name = applicationName.lowercased()
-
-        if !bundle.isEmpty {
-            return switch bundle {
-            case "com.google.chrome": .stable
-            case "com.google.chrome.beta": .beta
-            case "com.google.chrome.dev": .dev
-            case "com.google.chrome.canary": .canary
-            default: nil
-            }
-        }
-        return switch name {
-        case "google chrome": .stable
-        case "google chrome beta": .beta
-        case "google chrome dev": .dev
-        case "google chrome canary": .canary
-        default: nil
-        }
+    static func infer(bundleIdentifier: String?, applicationName _: String) -> Self? {
+        guard let identity = ChromeChannelIdentity(exactBundleIdentifier: bundleIdentifier) else { return nil }
+        return Self(rawValue: identity.rawValue)
     }
 }
 
@@ -711,6 +694,8 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
     case explicitEndpointUnsupported
     case invalidEndpoint(String)
     case channelEndpointUnavailable(BrowserMCPChannel, String)
+    case permissionBearingConnectionFailed(String)
+    case permissionBearingConnectionCancelled
     case connectionProbeFailed(String)
     case connectionLost(String)
     case expectedConnectionReceiptMismatch
@@ -735,6 +720,10 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
             "The running \(channel.rawValue) Chrome channel did not expose a usable standard-profile DevTools " +
                 "WebSocket: \(reason). Enable remote debugging and approve Chrome's prompt, or use one exact " +
                 "loopback browser_url for a custom profile."
+        case let .permissionBearingConnectionFailed(reason):
+            "The permission-bearing Chrome connection did not complete: \(reason)"
+        case .permissionBearingConnectionCancelled:
+            "The permission-bearing Chrome connection was cancelled after it started."
         case let .connectionProbeFailed(reason):
             "Chrome DevTools MCP started, but its exact read-only connection probe failed: \(reason)"
         case let .connectionLost(reason):

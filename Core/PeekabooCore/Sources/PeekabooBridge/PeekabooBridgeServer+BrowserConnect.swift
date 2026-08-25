@@ -60,6 +60,15 @@ extension PeekabooBridgeServer {
         _ receipt: PeekabooBridgeBrowserConnectionReceipt) throws
         -> PeekabooBridgeHandledResponse.Mutation.TargetDisposition
     {
+        if receipt.isCanonicalProcessBoundTarget,
+           PeekabooBridgeRequestContext.negotiatedSessionCapabilities?
+               .nativeBrowserConnectionBinding != true
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .runtimeIncompatible,
+                message: "Process-bound browser receipts require native browser connection binding.",
+                hint: "Update both Peekaboo client and Bridge host before retrying.")
+        }
         if let processIdentity = receipt.localProcessIdentity {
             guard receipt.isCanonicalLocalProcessTarget || receipt.isCanonicalProcessBoundTarget else {
                 throw DesktopActionFailure.preDispatchRefusal(

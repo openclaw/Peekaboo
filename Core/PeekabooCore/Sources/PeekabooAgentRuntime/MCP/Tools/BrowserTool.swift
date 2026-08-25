@@ -203,6 +203,8 @@ public struct BrowserTool: MCPTool {
             return try MCPToolResponseMetadataProjector.errorResponse(
                 for: failure,
                 invalidatedSnapshotID: nil)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             return ToolResponse.error(self.permissionHelp(error: error))
         }

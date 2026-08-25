@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Bind Chrome channel connections to an exact recognized Chrome bundle, native process-owned DevTools listener, and approval-gated WebSocket, verifying `Browser.getVersion` without relying on legacy HTTP discovery and failing closed on helper-service names, file, socket, generation, or endpoint drift.
+- Bind Bridge 1.34 Chrome channel connections to an exact live Chrome bundle, native process-owned DevTools listener, and approval-gated WebSocket under one 90-second deadline, verifying `Browser.getVersion` once without legacy HTTP discovery or repeated permission probes and failing closed on helper-service names, file, socket, generation, or endpoint drift.
 
 ## [4.2.3] - 2026-08-23
 

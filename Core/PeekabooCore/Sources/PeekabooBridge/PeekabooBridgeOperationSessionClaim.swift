@@ -4,11 +4,25 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
     let protocolVersion: PeekabooBridgeProtocolVersion
     let statelessClickVariants: Bool
     let exactWindowHeldPointerLifecycle: Bool
+    let nativeBrowserConnectionBinding: Bool
 
     static let current = Self(
         protocolVersion: PeekabooBridgeConstants.protocolVersion,
         statelessClickVariants: true,
-        exactWindowHeldPointerLifecycle: true)
+        exactWindowHeldPointerLifecycle: true,
+        nativeBrowserConnectionBinding: true)
+
+    init(
+        protocolVersion: PeekabooBridgeProtocolVersion,
+        statelessClickVariants: Bool,
+        exactWindowHeldPointerLifecycle: Bool,
+        nativeBrowserConnectionBinding: Bool = false)
+    {
+        self.protocolVersion = protocolVersion
+        self.statelessClickVariants = statelessClickVariants
+        self.exactWindowHeldPointerLifecycle = exactWindowHeldPointerLifecycle
+        self.nativeBrowserConnectionBinding = nativeBrowserConnectionBinding
+    }
 }
 
 /// One accepted sequence claim. It retains everything required to complete a receipt after its

@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import MCP
 import PeekabooAgentRuntime
+import PeekabooAutomationKit
 import PeekabooBridgeTestSupport
 import PeekabooFoundation
 import TachikomaMCP
@@ -396,7 +397,19 @@ struct PeekabooBridgeBrowserClientTests {
     func `current remote browser connect carries signed foreground outcome and target receipt`() async throws {
         let socketPath = "/tmp/peekaboo-remote-browser-connect-\(UUID().uuidString).sock"
         let services = StubServices()
-        services.browserConnectionReceipt = Self.browserReceipt
+        let processIdentifier = getpid()
+        let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(processIdentifier))
+        let processReceipt = PeekabooBridgeBrowserConnectionReceipt(
+            channel: "stable",
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity,
+            bundleIdentifier: "com.google.Chrome",
+            browserURL: "http://127.0.0.1:9222",
+            webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/fixture",
+            devToolsBrowserID: "fixture",
+            browserVersion: "Chrome/151.0",
+            protocolVersion: "1.3")
+        services.browserConnectionReceipt = processReceipt
         let server = PeekabooBridgeServer(
             services: services,
             hostKind: .gui,
@@ -427,7 +440,11 @@ struct PeekabooBridgeBrowserClientTests {
         #expect(result.outcome?.dispatchState.unitCount == .one)
         let receipt = try #require(await bridge.lastOperationReceipt())
         #expect(receipt.payload.operation == .browserConnect)
-        #expect(receipt.payload.target == .browser(Self.browserReceipt))
+        #expect(receipt.payload.target == .process(.init(
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity)))
+        #expect(result.payload.connectionReceipt?.webSocketDebuggerURL ==
+            processReceipt.webSocketDebuggerURL)
         await host.stop()
     }
 
@@ -454,7 +471,9 @@ struct PeekabooBridgeBrowserClientTests {
             protocolVersion: version)
         let client = RemoteBrowserMCPClient(client: bridge)
 
-        let result = try await client.connectWithOutcome(channel: .stable, browserURL: nil)
+        let result = try await client.connectWithOutcome(
+            channel: .stable,
+            browserURL: "http://127.0.0.1:9222")
 
         #expect(result.payload.isConnected)
         #expect(result.outcome?.state == .dispatchedUnverified)
@@ -486,10 +505,12 @@ struct PeekabooBridgeBrowserClientTests {
                 processIdentifier: getpid()),
             protocolVersion: Self.legacyBrowserConnectVersion)
 
-        let status = try await client.browserConnect(channel: "stable")
+        let status = try await client.browserConnect(
+            channel: "stable",
+            browserURL: "http://127.0.0.1:9222")
 
         #expect(status.isConnected)
-        #expect(PeekabooBridgeClient.browserConnectApprovalTimeoutSeconds == 65)
+        #expect(BrowserConnectionTiming.bridgeTransportTimeoutSeconds == 95)
         await peer.waitUntilFinished()
     }
 
@@ -500,7 +521,9 @@ struct PeekabooBridgeBrowserClientTests {
             requestTimeoutSec: 1)
 
         do {
-            _ = try await client.browserConnectResult(channel: "stable")
+            _ = try await client.browserConnectResult(
+                channel: "stable",
+                browserURL: "http://127.0.0.1:9222")
             Issue.record("Expected missing handshake to refuse before browser transport")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .refused)
@@ -516,7 +539,9 @@ struct PeekabooBridgeBrowserClientTests {
         let client = try await Self.legacyBrowserConnectClient(peer)
         let task = Task {
             withUnsafeCurrentTask { $0?.cancel() }
-            return try await client.browserConnectResult(channel: "stable")
+            return try await client.browserConnectResult(
+                channel: "stable",
+                browserURL: "http://127.0.0.1:9222")
         }
 
         await #expect(throws: CancellationError.self) {
@@ -541,7 +566,9 @@ struct PeekabooBridgeBrowserClientTests {
         let client = try await Self.legacyBrowserConnectClient(peer)
 
         do {
-            _ = try await client.browserConnectResult(channel: "stable")
+            _ = try await client.browserConnectResult(
+                channel: "stable",
+                browserURL: "http://127.0.0.1:9222")
             Issue.record("Expected typed browser preparation refusal")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome == expected.outcome)
@@ -561,7 +588,9 @@ struct PeekabooBridgeBrowserClientTests {
         let client = try await Self.legacyBrowserConnectClient(peer)
 
         do {
-            _ = try await client.browserConnectResult(channel: "stable")
+            _ = try await client.browserConnectResult(
+                channel: "stable",
+                browserURL: "http://127.0.0.1:9222")
             Issue.record("Expected browser response loss")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .indeterminate)
@@ -583,7 +612,9 @@ struct PeekabooBridgeBrowserClientTests {
         let client = try await Self.legacyBrowserConnectClient(peer)
 
         do {
-            _ = try await client.browserConnectResult(channel: "stable")
+            _ = try await client.browserConnectResult(
+                channel: "stable",
+                browserURL: "http://127.0.0.1:9222")
             Issue.record("Expected unexpected browser response to be treated as response loss")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .indeterminate)
@@ -772,11 +803,18 @@ struct PeekabooBridgeBrowserClientTests {
 }
 
 extension StubServices: PeekabooBridgeBrowserConnectionResultProviding {
+    var supportsNativeBrowserConnectionBinding: Bool {
+        true
+    }
+
     func browserConnectResult(
         channel: String?,
         browserURL: String?) async throws -> DesktopActionResult<PeekabooBridgeBrowserStatus>
     {
-        try await DesktopActionResult(
+        if let browserConnectFailure {
+            throw browserConnectFailure
+        }
+        return try await DesktopActionResult(
             payload: self.browserConnect(channel: channel, browserURL: browserURL),
             outcome: .dispatchedUnverified(
                 delivery: .init(mechanism: .browserProtocol, mode: .foreground),

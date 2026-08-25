@@ -108,6 +108,7 @@ extension PeekabooBridgeBrowserConnectionReceipt {
               self.processStartIdentity == nil,
               self.processStartIdentityDecimal == nil,
               self.bundleIdentifier == nil,
+              self.channel == nil || self.canonicalChannelIdentity != nil,
               self.hasCanonicalDevToolsIdentity
         else {
             return false
@@ -116,8 +117,9 @@ extension PeekabooBridgeBrowserConnectionReceipt {
     }
 
     var isCanonicalProcessBoundTarget: Bool {
-        guard self.localProcessIdentity != nil,
-              Self.isNonEmpty(self.bundleIdentifier),
+        guard let channelIdentity = self.canonicalChannelIdentity,
+              self.localProcessIdentity != nil,
+              self.bundleIdentifier == channelIdentity.bundleIdentifier,
               self.hasCanonicalDevToolsIdentity
         else {
             return false
@@ -126,7 +128,9 @@ extension PeekabooBridgeBrowserConnectionReceipt {
     }
 
     var isCanonicalLocalProcessTarget: Bool {
-        self.localProcessIdentity != nil &&
+        guard let channelIdentity = self.canonicalChannelIdentity else { return false }
+        return self.localProcessIdentity != nil &&
+            self.bundleIdentifier == channelIdentity.bundleIdentifier &&
             self.browserURL == nil &&
             self.webSocketDebuggerURL == nil &&
             self.devToolsBrowserID == nil &&
@@ -151,7 +155,7 @@ extension PeekabooBridgeBrowserConnectionReceipt {
         return true
     }
 
-    var isCanonicalTarget: Bool {
+    public var isCanonicalTarget: Bool {
         self.isCanonicalProcessBoundTarget || self.isCanonicalExternalTarget ||
             self.isCanonicalLocalProcessTarget
     }
@@ -159,7 +163,7 @@ extension PeekabooBridgeBrowserConnectionReceipt {
     func matchesConnectRequest(_ request: PeekabooBridgeBrowserChannelRequest) -> Bool {
         guard request.channel.map({ $0 == self.channel }) ?? true else { return false }
         guard let requestedBrowserURL = request.browserURL else {
-            return self.isCanonicalTarget
+            return self.isCanonicalProcessBoundTarget
         }
         guard self.isCanonicalExternalTarget,
               let requestedEndpoint = BrowserLoopbackEndpoint(
@@ -175,6 +179,14 @@ extension PeekabooBridgeBrowserConnectionReceipt {
 
     private static func isNonEmpty(_ value: String?) -> Bool {
         value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    private var canonicalChannelIdentity: ChromeChannelIdentity? {
+        guard let channel,
+              let identity = ChromeChannelIdentity(rawValue: channel),
+              channel == identity.rawValue
+        else { return nil }
+        return identity
     }
 }
 

@@ -253,6 +253,8 @@ struct PeekabooBridgeCapabilityTests {
         let currentHandshake = try await self.handshake(server: current, hostKind: .onDemand)
         #expect(currentHandshake.hostCapabilities?.contains(
             PeekabooBridgeHostCapability.browserConnectionReceipts) == true)
+        #expect(currentHandshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.nativeBrowserConnectionBinding) != true)
 
         let legacyRequest = PeekabooBridgeRequest.handshake(.init(
             protocolVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 25),
@@ -274,6 +276,39 @@ struct PeekabooBridgeCapabilityTests {
         }
         #expect(legacyHandshake.hostCapabilities?.contains(
             PeekabooBridgeHostCapability.browserConnectionReceipts) != true)
+
+        let protocol133 = PeekabooBridgeProtocolVersion(major: 1, minor: 33)
+        let downgraded = await MainActor.run {
+            PeekabooBridgeServer(
+                services: StubServices(),
+                hostKind: .onDemand,
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                supportedVersions: PeekabooBridgeConstants.minimumProtocolVersion...protocol133,
+                allowedOperations: browserOperations)
+        }
+        let downgradedRequest = PeekabooBridgeRequest.handshake(.init(
+            protocolVersion: protocol133,
+            client: .init(
+                bundleIdentifier: "dev.peeka.browser-1-33",
+                teamIdentifier: "TEAMID",
+                processIdentifier: getpid(),
+                hostname: Host.current().name),
+            requestedHostKind: .onDemand))
+        let downgradedData = try await downgraded.decodeAndHandle(
+            JSONEncoder.peekabooBridgeEncoder().encode(downgradedRequest),
+            peer: nil)
+        let downgradedResponse = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeResponse.self,
+            from: downgradedData)
+        guard case let .handshake(downgradedHandshake) = downgradedResponse else {
+            Issue.record("Expected downgraded handshake")
+            return
+        }
+        #expect(downgradedHandshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.browserConnectionReceipts) == true)
+        #expect(downgradedHandshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.nativeBrowserConnectionBinding) != true)
     }
 
     private func handshake(

@@ -1,0 +1,290 @@
+import Foundation
+import MCP
+import PeekabooFoundation
+import TachikomaMCP
+import Testing
+@testable import PeekabooAgentRuntime
+
+@MainActor
+struct BrowserMCPSessionManagerAuthorityValidationTests {
+    @Test
+    func `one deadline spans approval and MCP startup then clears late state`() async throws {
+        let manager = DeadlineBrowserMCPManager()
+        let browser = Self.browser(bundleIdentifier: "com.google.Chrome")
+        let session = BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: manager,
+            detectedBrowsers: { _ in [browser] },
+            processStartIdentity: { _ in 2050 },
+            processBundleIdentifier: { _ in "com.google.Chrome" },
+            connectionAttempt: { .standalone(timeout: .milliseconds(40)) },
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
+            channelEndpointResolver: BrowserMCPChannelEndpointResolver(
+                resolveInitial: { _, attempt in
+                    attempt.state.markPermissionDispatchStarted()
+                    try await Task.sleep(for: .milliseconds(25))
+                    return Self.endpoint()
+                },
+                revalidate: { _, _ in }),
+            environment: [:])
+        let clock = ContinuousClock()
+        let started = clock.now
+
+        do {
+            _ = try await session.connect(channel: .stable)
+            Issue.record("Expected shared deadline")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: .one))
+        } catch {
+            Issue.record("Expected canonical deadline failure, got \(error)")
+        }
+
+        #expect(started.duration(to: clock.now) < .seconds(1))
+        #expect(manager.addServerCancellationCount == 1)
+        #expect(manager.removeServerCount == 1)
+        #expect(await (session.status(channel: .stable)).connectionReceipt == nil)
+    }
+
+    @Test
+    func `one permission probe connects while every later check is authority only`() async throws {
+        let manager = AuthorityBrowserMCPManager()
+        let initialResolutions = AuthorityCounter()
+        let revalidations = AuthorityCounter()
+        let resolver = BrowserMCPChannelEndpointResolver(
+            resolveInitial: { _, attempt in
+                initialResolutions.increment()
+                attempt.state.markPermissionDispatchStarted()
+                return Self.endpoint()
+            },
+            revalidate: { _, expected in
+                revalidations.increment()
+                #expect(expected == Self.endpoint())
+            })
+        let session = Self.session(manager: manager, resolver: resolver)
+
+        _ = try await session.connect(channel: .stable)
+        #expect(initialResolutions.value == 1)
+        #expect(revalidations.value == 2)
+
+        _ = await session.status(channel: .stable)
+        _ = try await session.connect(channel: .stable)
+        let receipt = try #require(await (session.status(channel: .stable)).connectionReceipt)
+        _ = try await session.executeSequence(
+            [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: [:])],
+            channel: .stable,
+            expectedConnectionReceipt: receipt)
+
+        #expect(initialResolutions.value == 1)
+        #expect(revalidations.value >= 5)
+        #expect(manager.addServerCount == 1)
+        #expect(manager.executedTools == ["list_pages", "take_snapshot"])
+    }
+
+    @Test
+    func `non Chrome detected bundle refuses before resolver or MCP`() async {
+        let manager = AuthorityBrowserMCPManager()
+        let initialResolutions = AuthorityCounter()
+        let browser = Self.browser(bundleIdentifier: "com.apple.SafariPlatformSupport.Helper")
+        let resolve: BrowserMCPChannelEndpointResolver.Resolve = { _ in
+            initialResolutions.increment()
+            return Self.endpoint()
+        }
+        let revalidate: BrowserMCPChannelEndpointResolver.Revalidate = { _, _ in }
+        let session = BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: manager,
+            detectedBrowsers: { _ in [browser] },
+            processStartIdentity: { _ in 2050 },
+            processBundleIdentifier: { _ in browser.bundleIdentifier },
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
+            channelEndpointResolver: BrowserMCPChannelEndpointResolver(resolve, revalidate: revalidate),
+            environment: [:])
+
+        do {
+            _ = try await session.connect(channel: .stable)
+            Issue.record("Expected bundle refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.dispatchState == .none)
+        } catch {
+            Issue.record("Expected canonical refusal, got \(error)")
+        }
+        #expect(initialResolutions.value == 0)
+        #expect(manager.addServerCount == 0)
+        #expect(manager.executedTools.isEmpty)
+    }
+
+    @Test
+    func `same PID live bundle drift clears receipt and refuses leaf dispatch`() async throws {
+        let manager = AuthorityBrowserMCPManager()
+        let bundle = AuthorityBundleBox("com.google.Chrome")
+        let session = Self.session(
+            manager: manager,
+            resolver: BrowserMCPChannelEndpointResolver(
+                resolveInitial: { _, attempt in
+                    attempt.state.markPermissionDispatchStarted()
+                    return Self.endpoint()
+                },
+                revalidate: { _, _ in }),
+            liveBundle: { _ in bundle.value })
+        let receipt = try #require(try await session.connect(channel: .stable).connectionReceipt)
+        manager.executedTools.removeAll()
+        bundle.value = "com.apple.SafariPlatformSupport.Helper"
+
+        await #expect(throws: BrowserMCPConnectionError.self) {
+            _ = try await session.executeSequence(
+                [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: [:])],
+                channel: .stable,
+                expectedConnectionReceipt: receipt)
+        }
+        #expect(manager.executedTools.isEmpty)
+        #expect(manager.removeServerCount == 1)
+        #expect(await (session.status(channel: .stable)).connectionReceipt == nil)
+    }
+
+    private static func session(
+        manager: AuthorityBrowserMCPManager,
+        resolver: BrowserMCPChannelEndpointResolver,
+        liveBundle: @escaping BrowserMCPSessionManager.ProcessBundleIdentifierProvider = { _ in
+            "com.google.Chrome"
+        }) -> BrowserMCPSessionManager
+    {
+        let browser = Self.browser(bundleIdentifier: "com.google.Chrome")
+        return BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: manager,
+            detectedBrowsers: { _ in [browser] },
+            processStartIdentity: { _ in 2050 },
+            processBundleIdentifier: liveBundle,
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
+            channelEndpointResolver: resolver,
+            environment: [:])
+    }
+
+    private static func browser(bundleIdentifier: String) -> DetectedBrowser {
+        DetectedBrowser(
+            name: "Google Chrome",
+            bundleIdentifier: bundleIdentifier,
+            processIdentifier: 50,
+            processStartIdentity: 2050,
+            version: "151.0",
+            channel: .stable)
+    }
+
+    private nonisolated static func endpoint() -> BrowserMCPDevToolsEndpoint {
+        BrowserMCPDevToolsEndpoint(
+            browserURL: "http://127.0.0.1:9222/",
+            webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
+            browserID: "browser-a",
+            browserVersion: "Chrome/151.0",
+            protocolVersion: "1.3")
+    }
+}
+
+@MainActor
+private final class DeadlineBrowserMCPManager: BrowserMCPManaging {
+    var connected = false
+    var addServerCancellationCount = 0
+    var removeServerCount = 0
+
+    func hasServer(name _: String) -> Bool {
+        self.connected
+    }
+
+    func isServerConnected(name _: String) async -> Bool {
+        self.connected
+    }
+
+    func serverToolCount(name _: String) async -> Int {
+        0
+    }
+
+    func addServer(name _: String, config _: MCPServerConfig) async throws {
+        self.connected = true
+        do {
+            try await Task.sleep(for: .seconds(30))
+        } catch is CancellationError {
+            self.addServerCancellationCount += 1
+            throw CancellationError()
+        }
+    }
+
+    func removeServer(name _: String) async {
+        self.removeServerCount += 1
+        self.connected = false
+    }
+
+    func executeTool(
+        serverName _: String,
+        toolName _: String,
+        arguments _: [String: Any]) async throws -> ToolResponse
+    {
+        .text("unexpected")
+    }
+}
+
+@MainActor
+private final class AuthorityBrowserMCPManager: BrowserMCPManaging {
+    var connected = false
+    var addServerCount = 0
+    var removeServerCount = 0
+    var executedTools: [String] = []
+
+    func hasServer(name _: String) -> Bool {
+        self.connected
+    }
+
+    func isServerConnected(name _: String) async -> Bool {
+        self.connected
+    }
+
+    func serverToolCount(name _: String) async -> Int {
+        self.connected ? 29 : 0
+    }
+
+    func addServer(name _: String, config _: MCPServerConfig) async throws {
+        self.addServerCount += 1
+        self.connected = true
+    }
+
+    func removeServer(name _: String) async {
+        self.removeServerCount += 1
+        self.connected = false
+    }
+
+    func executeTool(
+        serverName _: String,
+        toolName: String,
+        arguments _: [String: Any]) async throws -> ToolResponse
+    {
+        self.executedTools.append(toolName)
+        return .text("ok")
+    }
+}
+
+private final class AuthorityCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int {
+        self.lock.withLock { self.count }
+    }
+
+    func increment() {
+        self.lock.withLock { self.count += 1 }
+    }
+}
+
+private final class AuthorityBundleBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: String?
+
+    init(_ value: String?) {
+        self.storedValue = value
+    }
+
+    var value: String? {
+        get { self.lock.withLock { self.storedValue } }
+        set { self.lock.withLock { self.storedValue = newValue } }
+    }
+}

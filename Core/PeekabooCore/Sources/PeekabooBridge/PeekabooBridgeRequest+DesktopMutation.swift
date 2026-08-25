@@ -28,6 +28,9 @@ extension PeekabooBridgeRequest {
     }
 
     var minimumNegotiatedProtocolVersion: PeekabooBridgeProtocolVersion? {
+        if self.requiresNativeBrowserConnectionBinding {
+            return PeekabooBridgeConstants.nativeBrowserConnectionBindingVersion
+        }
         if self.requiresStatelessClickVariantSupport {
             return PeekabooBridgeConstants.statelessClickVariantVersion
         }
@@ -48,6 +51,17 @@ extension PeekabooBridgeRequest {
             return PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion
         default:
             return nil
+        }
+    }
+
+    var requiresNativeBrowserConnectionBinding: Bool {
+        switch self.unwrappedOperationRequest {
+        case let .browserConnect(payload):
+            payload.browserURL == nil
+        case let .browserExecute(payload):
+            payload.expectedConnectionReceipt?.isCanonicalProcessBoundTarget == true
+        default:
+            false
         }
     }
 

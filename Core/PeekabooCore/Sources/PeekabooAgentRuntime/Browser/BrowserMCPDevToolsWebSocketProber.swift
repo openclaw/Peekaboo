@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooFoundation
 
 struct BrowserMCPDevToolsVersion: Sendable, Equatable {
     let browserVersion: String
@@ -22,51 +23,95 @@ enum BrowserMCPDevToolsWebSocketProbeError: LocalizedError, Equatable {
     }
 }
 
+enum BrowserMCPDevToolsWebSocketProbeFailure: LocalizedError, Equatable {
+    case cancelled
+    case failed(BrowserMCPDevToolsWebSocketProbeError)
+
+    var errorDescription: String? {
+        switch self {
+        case .cancelled:
+            "the permission-bearing DevTools WebSocket exchange was cancelled after it started"
+        case let .failed(error):
+            error.localizedDescription
+        }
+    }
+}
+
 struct BrowserMCPDevToolsWebSocketProber: Sendable {
-    typealias Exchange = @Sendable (URLRequest, String, Int) async throws -> Data
-    typealias Probe = @Sendable (URL, String) async throws -> BrowserMCPDevToolsVersion
+    typealias Exchange = @Sendable (
+        URLRequest,
+        String,
+        Int,
+        @escaping @Sendable () -> Void) async throws -> Data
+    typealias Probe = @Sendable (
+        URL,
+        String,
+        ContinuousClock.Instant,
+        @escaping @Sendable () -> Void) async throws -> BrowserMCPDevToolsVersion
 
     let probe: Probe
 
-    static let live = BrowserMCPDevToolsWebSocketProber { url, browserID in
+    static let live = BrowserMCPDevToolsWebSocketProber { url, browserID, deadline, onDispatch in
         try await Self.probeVersion(
             url,
             expectedBrowserID: browserID,
-            timeout: .seconds(60),
+            deadline: deadline,
+            onDispatch: onDispatch,
             exchange: Self.liveExchange)
     }
 
     static func probeVersion(
         _ webSocketURL: URL,
         expectedBrowserID: String,
-        timeout: Duration,
+        deadline: ContinuousClock.Instant,
+        onDispatch: @escaping @Sendable () -> Void = {},
         exchange: @escaping Exchange) async throws -> BrowserMCPDevToolsVersion
     {
         try self.validate(webSocketURL, expectedBrowserID: expectedBrowserID)
-        guard timeout > .zero else {
+        let clock = ContinuousClock()
+        let approvalDeadline = min(
+            deadline,
+            clock.now.advanced(by: .seconds(BrowserConnectionTiming.approvalTimeoutSeconds)))
+        let remaining = clock.now.duration(to: approvalDeadline)
+        guard remaining > .zero else {
             throw BrowserMCPDevToolsWebSocketProbeError.timedOut
         }
 
         let requestID = 1
         var mutableRequest = URLRequest(url: webSocketURL)
         mutableRequest.cachePolicy = .reloadIgnoringLocalCacheData
-        mutableRequest.timeoutInterval = 60
+        mutableRequest.timeoutInterval = self.timeInterval(remaining)
         let request = mutableRequest
         let command = #"{"id":1,"method":"Browser.getVersion"}"#
+        let dispatchMarker = BrowserMCPWebSocketDispatchMarker(onDispatch: onDispatch)
 
-        let data: Data
         do {
-            data = try await Self.withTimeout(timeout) {
-                try await exchange(request, command, requestID)
+            let data = try await Self.withTimeout(remaining) {
+                try await exchange(request, command, requestID, dispatchMarker.markDispatched)
             }
+            return try self.parseVersion(data, requestID: requestID)
         } catch is CancellationError {
+            if dispatchMarker.didDispatch {
+                throw BrowserMCPDevToolsWebSocketProbeFailure.cancelled
+            }
             throw CancellationError()
+        } catch let failure as BrowserMCPDevToolsWebSocketProbeFailure {
+            throw failure
         } catch let error as BrowserMCPDevToolsWebSocketProbeError {
+            if dispatchMarker.didDispatch {
+                throw BrowserMCPDevToolsWebSocketProbeFailure.failed(error)
+            }
             throw error
         } catch {
-            throw BrowserMCPDevToolsWebSocketProbeError.connectionRefused(error.localizedDescription)
+            let error = BrowserMCPDevToolsWebSocketProbeError.connectionRefused(error.localizedDescription)
+            if dispatchMarker.didDispatch {
+                throw BrowserMCPDevToolsWebSocketProbeFailure.failed(error)
+            }
+            throw error
         }
+    }
 
+    private static func parseVersion(_ data: Data, requestID: Int) throws -> BrowserMCPDevToolsVersion {
         guard data.count <= 64 * 1024 else {
             throw BrowserMCPDevToolsWebSocketProbeError.malformedResponse("the response exceeded 64 KiB")
         }
@@ -90,9 +135,12 @@ struct BrowserMCPDevToolsWebSocketProber: Sendable {
             throw BrowserMCPDevToolsWebSocketProbeError.malformedResponse(
                 "Chrome product and protocolVersion were not both present")
         }
-        return BrowserMCPDevToolsVersion(
-            browserVersion: product,
-            protocolVersion: protocolVersion)
+        return BrowserMCPDevToolsVersion(browserVersion: product, protocolVersion: protocolVersion)
+    }
+
+    private static func timeInterval(_ duration: Duration) -> TimeInterval {
+        let components = duration.components
+        return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1e18
     }
 
     private static func validate(_ url: URL, expectedBrowserID: String) throws {
@@ -114,11 +162,14 @@ struct BrowserMCPDevToolsWebSocketProber: Sendable {
     private static func liveExchange(
         _ request: URLRequest,
         _ command: String,
-        _ requestID: Int) async throws -> Data
+        _ requestID: Int,
+        _ onDispatch: @escaping @Sendable () -> Void) async throws -> Data
     {
         let task = BrowserMCPNoRedirectURLSession.shared.webSocketTask(with: request)
         return try await withTaskCancellationHandler {
             defer { task.cancel(with: .normalClosure, reason: nil) }
+            try Task.checkCancellation()
+            onDispatch()
             task.resume()
             try await task.send(.string(command))
             while true {
@@ -170,6 +221,31 @@ struct BrowserMCPDevToolsWebSocketProber: Sendable {
             }
             group.cancelAll()
             return result
+        }
+    }
+}
+
+private final class BrowserMCPWebSocketDispatchMarker: @unchecked Sendable {
+    private let lock = NSLock()
+    private let onDispatch: @Sendable () -> Void
+    private var dispatched = false
+
+    init(onDispatch: @escaping @Sendable () -> Void) {
+        self.onDispatch = onDispatch
+    }
+
+    var didDispatch: Bool {
+        self.lock.withLock { self.dispatched }
+    }
+
+    func markDispatched() {
+        let shouldNotify = self.lock.withLock {
+            guard !self.dispatched else { return false }
+            self.dispatched = true
+            return true
+        }
+        if shouldNotify {
+            self.onDispatch()
         }
     }
 }

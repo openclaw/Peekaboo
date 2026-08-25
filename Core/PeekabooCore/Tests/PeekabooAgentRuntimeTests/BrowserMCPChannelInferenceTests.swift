@@ -52,12 +52,15 @@ struct BrowserMCPChannelInferenceTests {
     }
 
     @Test
-    func `exact name fallback is available only when bundle identity is absent`() {
+    func `missing bundle identity cannot fall back to an exact or substring name`() {
         #expect(BrowserMCPChannel.infer(
             bundleIdentifier: "",
-            applicationName: "Google Chrome Canary") == .canary)
+            applicationName: "Google Chrome Canary") == nil)
         #expect(BrowserMCPChannel.infer(
-            bundleIdentifier: "",
+            bundleIdentifier: nil,
+            applicationName: "Google Chrome Canary") == nil)
+        #expect(BrowserMCPChannel.infer(
+            bundleIdentifier: nil,
             applicationName: "AutoFill (Google Chrome Canary)") == nil)
     }
 }

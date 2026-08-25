@@ -17,7 +17,8 @@ struct BrowserMCPChannelEndpointResolverTests {
             activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
             readActivePort: { _ in Self.activePortData() },
             inspectListener: { _, _, _ in try inspections.next() },
-            probeWebSocket: { webSocketURL, browserID in
+            probeWebSocket: { webSocketURL, browserID, _, onDispatch in
+                onDispatch()
                 #expect(webSocketURL.absoluteString ==
                     "ws://127.0.0.1:9222/devtools/browser/browser-a")
                 #expect(browserID == "browser-a")
@@ -41,7 +42,10 @@ struct BrowserMCPChannelEndpointResolverTests {
                 activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
                 readActivePort: { _ in Self.activePortData() },
                 inspectListener: { _, _, _ in try inspections.next() },
-                probeWebSocket: { _, _ in Self.version() })
+                probeWebSocket: { _, _, _, onDispatch in
+                    onDispatch()
+                    return Self.version()
+                })
         }
     }
 
@@ -57,7 +61,8 @@ struct BrowserMCPChannelEndpointResolverTests {
             activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
             readActivePort: { _ in Self.activePortData() },
             inspectListener: { _, _, _ in try inspections.next() },
-            probeWebSocket: { webSocketURL, browserID in
+            probeWebSocket: { webSocketURL, browserID, _, onDispatch in
+                onDispatch()
                 #expect(webSocketURL.absoluteString == "ws://[::1]:9222/devtools/browser/browser-a")
                 #expect(browserID == "browser-a")
                 return Self.version()
@@ -79,7 +84,10 @@ struct BrowserMCPChannelEndpointResolverTests {
                 activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
                 readActivePort: { _ in Self.activePortData() },
                 inspectListener: { _, _, _ in try inspections.next() },
-                probeWebSocket: { _, _ in Self.version() })
+                probeWebSocket: { _, _, _, onDispatch in
+                    onDispatch()
+                    return Self.version()
+                })
         }
     }
 
@@ -101,7 +109,7 @@ struct BrowserMCPChannelEndpointResolverTests {
                 activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
                 readActivePort: { _ in Self.activePortData() },
                 inspectListener: { _, _, _ in wrongListener },
-                probeWebSocket: { _, _ in
+                probeWebSocket: { _, _, _, _ in
                     probes.increment()
                     return Self.version()
                 })
@@ -135,7 +143,7 @@ struct BrowserMCPChannelEndpointResolverTests {
                         listenerInspections.increment()
                         return Self.listener(socket: 100)
                     },
-                    probeWebSocket: { _, _ in
+                    probeWebSocket: { _, _, _, _ in
                         probes.increment()
                         return Self.version()
                     })

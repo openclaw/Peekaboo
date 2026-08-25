@@ -38,9 +38,17 @@ public protocol PeekabooBridgeServiceProviding: AnyObject, Sendable {
 
 @MainActor
 public protocol PeekabooBridgeBrowserConnectionResultProviding: PeekabooBridgeServiceProviding {
+    var supportsNativeBrowserConnectionBinding: Bool { get }
+
     func browserConnectResult(
         channel: String?,
         browserURL: String?) async throws -> DesktopActionResult<PeekabooBridgeBrowserStatus>
+}
+
+extension PeekabooBridgeBrowserConnectionResultProviding {
+    public var supportsNativeBrowserConnectionBinding: Bool {
+        false
+    }
 }
 
 @MainActor

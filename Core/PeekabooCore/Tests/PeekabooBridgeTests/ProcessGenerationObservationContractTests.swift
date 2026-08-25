@@ -7,7 +7,7 @@ struct ProcessGenerationObservationContractTests {
     @Test
     func `Protocol and allowlist fail closed before 1.32`() {
         let previous = PeekabooBridgeProtocolVersion(major: 1, minor: 31)
-        #expect(PeekabooBridgeConstants.protocolVersion == .init(major: 1, minor: 33))
+        #expect(PeekabooBridgeConstants.protocolVersion == .init(major: 1, minor: 34))
         #expect(!PeekabooBridgeOperation.compatible([.observeProcessGeneration], with: previous)
             .contains(.observeProcessGeneration))
         #expect(PeekabooBridgeOperation.compatible(
@@ -57,9 +57,9 @@ struct ProcessGenerationObservationContractTests {
             _ = try decoder.decode(PeekabooBridgeProcessGenerationObservationRequest.self, from: outer)
         }
 
-        let nested = Data(
-            #"{"schemaVersion":1,"expected":{"processIdentifier":42,"processStartIdentity":"99","teamIdentifier":"FWJYW4S8P8"}}"#
-                .utf8)
+        let nestedJSON = #"{"schemaVersion":1,"expected":{"processIdentifier":42,"# +
+            #""processStartIdentity":"99","teamIdentifier":"FWJYW4S8P8"}}"#
+        let nested = Data(nestedJSON.utf8)
         #expect(throws: DecodingError.self) {
             _ = try decoder.decode(PeekabooBridgeProcessGenerationObservationRequest.self, from: nested)
         }

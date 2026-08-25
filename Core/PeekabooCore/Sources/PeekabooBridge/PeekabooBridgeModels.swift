@@ -372,6 +372,7 @@ public enum PeekabooBridgeHostCapability {
     public static let desktopActionOutcomeProjection = "desktopActionOutcomeProjection"
     public static let explicitSnapshotPublication = "explicitSnapshotPublication"
     public static let browserConnectionReceipts = "browserConnectionReceipts"
+    public static let nativeBrowserConnectionBinding = "nativeBrowserConnectionBinding"
     public static let exactDialogInputExecution = "exactDialogInputExecution"
     public static let exactForcedDialogDismissExecution = "exactForcedDialogDismissExecution"
     public static let dialogInputFocusPolicy = "dialogInputFocusPolicy"

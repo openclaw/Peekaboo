@@ -97,8 +97,9 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
   never silently rediscovers another same-channel profile.
 - Receipt-bound execution resolves a complete WebSocket browser identity and compares that identity inside the browser
   execution gate before the first call. Channel receipts additionally carry the owning PID, process generation, and
-  bundle identity. Protocol 1.29 already carries all of these fields, so the stronger combined receipt needs no wire
-  version or capability bump.
+  exact Chrome bundle identity. Bridge protocol 1.34 and the `nativeBrowserConnectionBinding` capability gate this
+  combined process-and-DevTools contract; downgraded hosts may still use an explicit loopback `browser_url` but cannot
+  perform channel discovery or accept a process-bound browser receipt.
   Multi-call responses retain exact completed and dispatched-or-accepted counts;
   a later failure returns a typed retry-unsafe outcome so callers resume only after observation, never by replaying the
   whole batch.
