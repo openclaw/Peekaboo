@@ -466,6 +466,34 @@ struct PeekabooBridgeBrowserClientTests {
     }
 
     @Test
+    func `browser connect transport outlives the ordinary request timeout for Chrome approval`() async throws {
+        let peer = try ScriptedBridgePeer(scripts: [
+            [.respond(Self.legacyBrowserConnectHandshake)],
+            [
+                .delay(seconds: 0.1),
+                .respond(.browserStatus(PeekabooBridgeBrowserStatus(
+                    isConnected: true,
+                    toolCount: 29,
+                    detectedBrowsers: [],
+                    connectionReceipt: Self.browserReceipt))),
+            ],
+        ])
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 0.05)
+        _ = try await client.handshake(
+            client: .init(
+                bundleIdentifier: "dev.peekaboo.tests",
+                teamIdentifier: nil,
+                processIdentifier: getpid()),
+            protocolVersion: Self.legacyBrowserConnectVersion)
+
+        let status = try await client.browserConnect(channel: "stable")
+
+        #expect(status.isConnected)
+        #expect(PeekabooBridgeClient.browserConnectApprovalTimeoutSeconds == 65)
+        await peer.waitUntilFinished()
+    }
+
+    @Test
     func `legacy result connect refuses before transport without a handshake`() async throws {
         let client = PeekabooBridgeClient(
             socketPath: "/tmp/missing-browser-connect-\(UUID().uuidString).sock",

@@ -24,7 +24,7 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
                 try StableRegularFileReader.live.read(url, 1024)
             },
             inspectListener: DarwinProcessLoopbackListenerInspector.live.inspect,
-            resolveDevToolsEndpoint: BrowserMCPDevToolsEndpointResolver.live.resolve)
+            probeWebSocket: BrowserMCPDevToolsWebSocketProber.live.probe)
     }
 
     static func resolveEndpoint(
@@ -32,17 +32,19 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
         activePortURL: URL,
         readActivePort: @Sendable (URL) throws -> Data,
         inspectListener: DarwinProcessLoopbackListenerInspector.Inspect,
-        resolveDevToolsEndpoint: BrowserMCPDevToolsEndpointResolver.Resolve) async throws
+        probeWebSocket: BrowserMCPDevToolsWebSocketProber.Probe) async throws
         -> BrowserMCPDevToolsEndpoint
     {
         let activePort: ActivePortRecord
         do {
             activePort = try Self.parseActivePort(readActivePort(activePortURL))
-        } catch let error as BrowserMCPConnectionError {
-            throw error
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
-            throw BrowserMCPConnectionError.invalidEndpoint(
-                "Chrome's DevToolsActivePort could not be read safely: \(error.localizedDescription)")
+            throw BrowserMCPConnectionError.channelEndpointUnavailable(
+                target.channel,
+                "Chrome's standard-profile DevToolsActivePort could not be read safely: " +
+                    error.localizedDescription)
         }
 
         let before: DarwinProcessLoopbackListenerIdentity
@@ -52,16 +54,38 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
                 target.processStartIdentity,
                 activePort.port)
         } catch {
-            throw BrowserMCPConnectionError.invalidEndpoint(
+            throw BrowserMCPConnectionError.channelEndpointUnavailable(
+                target.channel,
                 "Chrome's DevTools listener could not be bound to PID \(target.processIdentifier): " +
                     error.localizedDescription)
         }
+        guard before.processIdentifier == target.processIdentifier,
+              before.processStartIdentity == target.processStartIdentity,
+              before.port == activePort.port
+        else {
+            throw BrowserMCPConnectionError.channelEndpointUnavailable(
+                target.channel,
+                "Chrome's DevTools listener inspection returned a different process, generation, or port")
+        }
 
         let browserURL = "http://\(before.addressFamily.httpHost):\(activePort.port)"
-        let endpoint = try await resolveDevToolsEndpoint(browserURL)
-        guard endpoint.browserID == activePort.browserID else {
-            throw BrowserMCPConnectionError.invalidEndpoint(
-                "DevToolsActivePort and /json/version reported different browser identities")
+        let webSocketDebuggerURL = "ws://\(before.addressFamily.httpHost):\(activePort.port)\(activePort.path)"
+        guard let webSocketURL = URL(string: webSocketDebuggerURL),
+              webSocketURL.absoluteString == webSocketDebuggerURL
+        else {
+            throw BrowserMCPConnectionError.channelEndpointUnavailable(
+                target.channel,
+                "Chrome's DevToolsActivePort published a malformed WebSocket identity")
+        }
+        let version: BrowserMCPDevToolsVersion
+        do {
+            version = try await probeWebSocket(webSocketURL, activePort.browserID)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw BrowserMCPConnectionError.channelEndpointUnavailable(
+                target.channel,
+                error.localizedDescription)
         }
 
         let after: DarwinProcessLoopbackListenerIdentity
@@ -71,14 +95,21 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
                 target.processStartIdentity,
                 activePort.port)
         } catch {
-            throw BrowserMCPConnectionError.invalidEndpoint(
-                "Chrome's DevTools listener changed during /json/version: \(error.localizedDescription)")
+            throw BrowserMCPConnectionError.channelEndpointUnavailable(
+                target.channel,
+                "Chrome's DevTools listener changed during Browser.getVersion: \(error.localizedDescription)")
         }
         guard after == before else {
-            throw BrowserMCPConnectionError.invalidEndpoint(
-                "Chrome's DevTools listener changed during /json/version")
+            throw BrowserMCPConnectionError.channelEndpointUnavailable(
+                target.channel,
+                "Chrome's DevTools listener changed during Browser.getVersion")
         }
-        return endpoint
+        return BrowserMCPDevToolsEndpoint(
+            browserURL: "\(browserURL)/",
+            webSocketDebuggerURL: webSocketDebuggerURL,
+            browserID: activePort.browserID,
+            browserVersion: version.browserVersion,
+            protocolVersion: version.protocolVersion)
     }
 
     static func activePortURL(channel: BrowserMCPChannel, homeDirectory: URL) -> URL {
@@ -96,6 +127,7 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
 
     private struct ActivePortRecord {
         let port: UInt16
+        let path: String
         let browserID: String
     }
 
@@ -104,7 +136,7 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
               let value = String(data: data, encoding: .utf8),
               !value.contains("\0")
         else {
-            throw BrowserMCPConnectionError.invalidEndpoint(
+            throw BrowserMCPChannelEndpointError.invalidActivePort(
                 "Chrome's DevToolsActivePort is not non-empty UTF-8 text")
         }
         var lines = value.split(
@@ -119,24 +151,45 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
               let parsedPort = UInt16(lines[0]),
               parsedPort > 0
         else {
-            throw BrowserMCPConnectionError.invalidEndpoint(
+            throw BrowserMCPChannelEndpointError.invalidActivePort(
                 "Chrome's DevToolsActivePort does not contain one valid TCP port and browser path")
         }
         let prefix = "/devtools/browser/"
         guard lines[1].hasPrefix(prefix) else {
-            throw BrowserMCPConnectionError.invalidEndpoint(
+            throw BrowserMCPChannelEndpointError.invalidActivePort(
                 "Chrome's DevToolsActivePort browser path is malformed")
         }
         let browserID = String(lines[1].dropFirst(prefix.count))
         guard !browserID.isEmpty,
+              browserID != ".",
+              browserID != "..",
               !browserID.contains("/"),
               !browserID.contains("?"),
               !browserID.contains("#"),
-              browserID.allSatisfy({ $0.isASCII && !$0.isWhitespace })
+              browserID.utf8.allSatisfy(Self.isUnreservedPathByte)
         else {
-            throw BrowserMCPConnectionError.invalidEndpoint(
+            throw BrowserMCPChannelEndpointError.invalidActivePort(
                 "Chrome's DevToolsActivePort browser identity is malformed")
         }
-        return ActivePortRecord(port: parsedPort, browserID: browserID)
+        return ActivePortRecord(port: parsedPort, path: lines[1], browserID: browserID)
+    }
+
+    private static func isUnreservedPathByte(_ byte: UInt8) -> Bool {
+        switch byte {
+        case 48...57, 65...90, 97...122, 45, 46, 95, 126:
+            true
+        default:
+            false
+        }
+    }
+}
+
+private enum BrowserMCPChannelEndpointError: LocalizedError {
+    case invalidActivePort(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .invalidActivePort(reason): reason
+        }
     }
 }

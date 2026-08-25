@@ -29,8 +29,10 @@ Peekaboo attaches to an already-running Chrome profile. It requires:
 
 Peekaboo does not approve that prompt automatically. Once Chrome publishes `DevToolsActivePort`, channel connect reads
 that owner-controlled file without following symlinks, proves that its one exact loopback listener belongs to the
-detected Chrome PID and process generation before and after `/json/version`, and passes the returned exact
-`--wsEndpoint` to Chrome DevTools MCP. It never asks the MCP child to rediscover an ambient browser.
+detected Chrome PID and process generation, and opens the exact published WebSocket. That native connection remains
+pending while Chrome shows its approval prompt, has a bounded 60-second wait, sends CDP `Browser.getVersion`, and then
+revalidates the process-owned listener before passing that same WebSocket identity as `--wsEndpoint` to Chrome DevTools
+MCP. It never uses legacy HTTP discovery for channel mode or asks the MCP child to rediscover an ambient browser.
 
 ## Privacy defaults
 
@@ -59,7 +61,7 @@ The CLI exposes the safer request-carried equivalent:
 peekaboo browser connect --browser-url http://127.0.0.1:9222 --foreground --json
 ```
 
-Only loopback HTTP endpoints are accepted. Peekaboo resolves `/json/version`, pins the returned browser WebSocket
+Only loopback HTTP endpoints are accepted. This explicit-URL mode resolves `/json/version`, pins the returned browser WebSocket
 identity, probes `list_pages` before reporting connected, and revalidates that identity before every later tool call.
 When multiple Chrome processes share one channel, channel-only connection refuses and requires this exact endpoint.
 Channel discovery reads only the standard current-user profile for the chosen Chrome channel; a headless or custom

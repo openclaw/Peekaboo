@@ -87,7 +87,7 @@ final class BrowserMCPNoRedirectURLSessionDelegate: NSObject, URLSessionTaskDele
     }
 }
 
-private enum BrowserMCPNoRedirectURLSession {
+enum BrowserMCPNoRedirectURLSession {
     static let shared: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData

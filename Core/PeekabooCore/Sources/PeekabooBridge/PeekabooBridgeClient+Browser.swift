@@ -2,6 +2,8 @@ import Foundation
 import PeekabooFoundation
 
 extension PeekabooBridgeClient {
+    static let browserConnectApprovalTimeoutSeconds: TimeInterval = 65
+
     public func browserStatus(channel: String?) async throws -> PeekabooBridgeBrowserStatus {
         let response = try await self.send(.browserStatus(PeekabooBridgeBrowserChannelRequest(channel: channel)))
         switch response {
@@ -76,6 +78,7 @@ extension PeekabooBridgeClient {
         return try await self.actionResult(
             for: request,
             expectedResponse: "browser connect",
+            timeoutSec: Self.browserConnectApprovalTimeoutSeconds,
             operationReceiptRequirement: .required)
         { response in
             guard case let .browserStatus(status) = response else { return nil }
@@ -86,7 +89,9 @@ extension PeekabooBridgeClient {
     private func directBrowserConnect(
         _ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeBrowserStatus
     {
-        let response = try await self.sendWithoutActionProjection(request)
+        let response = try await self.sendWithoutActionProjection(
+            request,
+            timeoutSec: Self.browserConnectApprovalTimeoutSeconds)
         switch response {
         case let .browserStatus(status):
             return status

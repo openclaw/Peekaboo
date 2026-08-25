@@ -31,8 +31,9 @@ tool-specific consumers.
 
 Browser state is owned by one current-build reusable daemon across CLI invocations. Channel connection requires exactly
 one running browser process. Peekaboo safely reads that channel's standard `DevToolsActivePort`, proves its unique
-loopback listener belongs to the detected PID/process generation around `/json/version`, and gives Chrome DevTools MCP
-only the exact returned WebSocket. When more than one process shares a channel, use `--browser-url` with one loopback
+loopback listener belongs to the detected PID/process generation, keeps the exact WebSocket pending through Chrome's
+approval prompt, verifies it with CDP `Browser.getVersion`, rechecks listener ownership, and gives Chrome DevTools MCP
+only that same WebSocket identity. When more than one process shares a channel, use `--browser-url` with one loopback
 DevTools HTTP endpoint. Connection output includes the combined process and DevTools identity receipt. If the daemon,
 Chrome generation, listening socket, or endpoint changes, later calls fail and require an explicit reconnect.
 

@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Bind Chrome channel connections to the exact native process-owned DevTools listener and WebSocket, failing closed on file, socket, generation, or endpoint drift.
+- Bind Chrome channel connections to the exact native process-owned DevTools listener and approval-gated WebSocket, verifying `Browser.getVersion` without relying on legacy HTTP discovery and failing closed on file, socket, generation, or endpoint drift.
 
 ## [4.2.3] - 2026-08-23
 

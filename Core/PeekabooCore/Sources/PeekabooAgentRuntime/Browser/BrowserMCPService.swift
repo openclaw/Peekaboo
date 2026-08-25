@@ -707,6 +707,7 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
     case processIdentityUnavailable(Int32)
     case explicitEndpointUnsupported
     case invalidEndpoint(String)
+    case channelEndpointUnavailable(BrowserMCPChannel, String)
     case connectionProbeFailed(String)
     case connectionLost(String)
     case expectedConnectionReceiptMismatch
@@ -727,6 +728,10 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
             "This browser client cannot carry an explicit DevTools endpoint."
         case let .invalidEndpoint(reason):
             "Invalid browser_url: \(reason)"
+        case let .channelEndpointUnavailable(channel, reason):
+            "The running \(channel.rawValue) Chrome channel did not expose a usable standard-profile DevTools " +
+                "WebSocket: \(reason). Enable remote debugging and approve Chrome's prompt, or use one exact " +
+                "loopback browser_url for a custom profile."
         case let .connectionProbeFailed(reason):
             "Chrome DevTools MCP started, but its exact read-only connection probe failed: \(reason)"
         case let .connectionLost(reason):

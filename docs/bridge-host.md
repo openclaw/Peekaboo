@@ -310,8 +310,9 @@ target or a window ID that contradicts the request is rejected. Screen and area 
 Browser execution is bound atomically to the connection receipt observed before dispatch. Protocol 1.29 carries the
 complete normalized browser URL, WebSocket debugger URL, DevTools browser ID, browser version, protocol version, and
 channel. Native channel resolution additionally carries the owning PID, process generation, and bundle identity after
-binding Chrome's stable authority file to one exact loopback listening socket. The existing receipt schema already
-carries the combined identity, so no protocol or capability bump is required. Isolated-profile children remain
+binding Chrome's stable authority file to one exact loopback listening socket, opening its approval-gated WebSocket,
+verifying CDP `Browser.getVersion`, and rechecking listener ownership before publication. The existing receipt schema
+already carries the combined identity, so no protocol or capability bump is required. Isolated-profile children remain
 unbound. The response carries the same endpoint receipt, and any process, listener, endpoint, or channel drift refuses
 before the first tool call. Browser batches also sign separate completed and dispatched-or-accepted call
 counts. If a later call fails, the typed partial or indeterminate outcome preserves that exact prefix and is
