@@ -368,65 +368,81 @@ enum ExactWindowSelectorResolver {
                 )
             }
             return window
-
-        case let .id(windowID):
-            let matches = windows.filter { $0.windowID == windowID }
-            guard matches.count == 1, let window = matches.first else {
-                let detail = matches.isEmpty ? "does not identify a window" : "identifies multiple windows"
-                throw ExactWindowSelectorResolutionError(
-                    message: "\(operation) --window-id \(windowID) \(detail). " +
-                        "Refresh the window inventory before retrying."
-                )
+        case let selection?:
+            do {
+                return try DesktopTargetPlanning.WindowCandidateSelector.selectExplicitCandidate(
+                    candidates: windows,
+                    selector: selection)
+            } catch let error as DesktopTargetPlanningError {
+                throw Self.presentationError(
+                    error,
+                    selection: selection,
+                    windows: windows,
+                    operation: operation)
             }
-            return window
-
-        case let .title(title):
-            let exactMatches = windows.filter {
-                $0.title.compare(title, options: .caseInsensitive) == .orderedSame
-            }
-            if exactMatches.count == 1, let window = exactMatches.first {
-                return window
-            }
-            if exactMatches.count > 1 {
-                throw Self.ambiguousTitle(title, matches: exactMatches, operation: operation)
-            }
-
-            let partialMatches = windows.filter { $0.title.localizedCaseInsensitiveContains(title) }
-            guard partialMatches.count == 1, let window = partialMatches.first else {
-                if partialMatches.isEmpty {
-                    throw ExactWindowSelectorResolutionError(
-                        message: "\(operation) found no window whose title matches '\(title)'. " +
-                            "Refresh the inventory and select a --window-id or valid --window-index."
-                    )
-                }
-                throw Self.ambiguousTitle(title, matches: partialMatches, operation: operation)
-            }
-            return window
-
-        case let .index(index):
-            let matches = windows.filter { $0.index == index }
-            guard matches.count == 1, let window = matches.first else {
-                let detail = matches.isEmpty ? "is not present" : "is ambiguous"
-                throw ExactWindowSelectorResolutionError(
-                    message: "\(operation) --window-index \(index) \(detail). " +
-                        "Refresh the inventory and select a --window-id."
-                )
-            }
-            return window
         }
     }
 
-    private static func ambiguousTitle(
-        _ title: String,
-        matches: [ServiceWindowInfo],
-        operation: String
-    ) -> ExactWindowSelectorResolutionError {
-        let candidates = matches.prefix(5).map { "id=\($0.windowID) index=\($0.index) '\($0.title)'" }
+    private static func presentationError(
+        _ error: DesktopTargetPlanningError,
+        selection: InteractionTargetSelector.WindowSelector,
+        windows: [ServiceWindowInfo],
+        operation: String) -> ExactWindowSelectorResolutionError
+    {
+        switch (selection, error) {
+        case let (.id(windowID), .windowNotFound):
+            ExactWindowSelectorResolutionError(
+                message: "\(operation) --window-id \(windowID) does not identify a window. " +
+                    "Refresh the window inventory before retrying.")
+        case let (.id(windowID), .ambiguousWindow),
+             let (.id(windowID), .conflictingWindowEntries):
+            ExactWindowSelectorResolutionError(
+                message: "\(operation) --window-id \(windowID) identifies multiple windows. " +
+                    "Refresh the window inventory before retrying.")
+        case let (.title(title), .windowNotFound):
+            ExactWindowSelectorResolutionError(
+                message: "\(operation) found no window whose title matches '\(title)'. " +
+                    "Refresh the inventory and select a --window-id or valid --window-index.")
+        case let (.title(title), .ambiguousWindow(_, windowIDs)):
+            self.titleAmbiguityError(
+                title: title,
+                windowIDs: windowIDs,
+                windows: windows,
+                operation: operation)
+        case let (.title(title), .conflictingWindowEntries(windowID)):
+            self.titleAmbiguityError(
+                title: title,
+                windowIDs: [windowID],
+                windows: windows,
+                operation: operation)
+        case let (.index(index), .windowNotFound):
+            ExactWindowSelectorResolutionError(
+                message: "\(operation) --window-index \(index) is not present. " +
+                    "Refresh the inventory and select a --window-id.")
+        case let (.index(index), .ambiguousWindow),
+             let (.index(index), .conflictingWindowEntries):
+            ExactWindowSelectorResolutionError(
+                message: "\(operation) --window-index \(index) is ambiguous. " +
+                    "Refresh the inventory and select a --window-id.")
+        default:
+            ExactWindowSelectorResolutionError(
+                message: "\(operation) could not resolve one exact window. \(error.localizedDescription)")
+        }
+    }
+
+    private static func titleAmbiguityError(
+        title: String,
+        windowIDs: [Int],
+        windows: [ServiceWindowInfo],
+        operation: String) -> ExactWindowSelectorResolutionError
+    {
+        let candidateIDs = Set(windowIDs)
+        let candidates = windows.lazy.filter { candidateIDs.contains($0.windowID) }.prefix(5)
+            .map { "id=\($0.windowID) index=\($0.index) '\($0.title)'" }
             .joined(separator: "; ")
         return ExactWindowSelectorResolutionError(
             message: "\(operation) window title '\(title)' is ambiguous (\(candidates)). " +
-                "Select one --window-id or --window-index explicitly."
-        )
+                "Select one --window-id or --window-index explicitly.")
     }
 }
 

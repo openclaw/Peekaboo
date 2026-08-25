@@ -1,5 +1,6 @@
 import Foundation
 import PeekabooAutomationKit
+import PeekabooFoundation
 
 struct ExactWindowSelectorResolutionError: Error, LocalizedError, Sendable, Equatable {
     let message: String
@@ -16,6 +17,15 @@ enum ExactWindowSelectorResolver {
         case id(Int)
         case title(String)
         case index(Int)
+
+        var explicitSelector: InteractionTargetSelector.WindowSelector? {
+            switch self {
+            case .automatic: nil
+            case let .id(windowID): .id(windowID)
+            case let .title(title): .title(title)
+            case let .index(index): .index(index)
+            }
+        }
     }
 
     static func select(
@@ -23,59 +33,27 @@ enum ExactWindowSelectorResolver {
         selection: Selection,
         operation: String) throws -> ServiceWindowInfo
     {
-        switch selection {
-        case .automatic:
+        guard let explicitSelector = selection.explicitSelector else {
             guard let window = ObservationTargetResolver.bestWindow(from: windows) else {
                 throw ExactWindowSelectorResolutionError(
                     message: "\(operation) found no eligible window. Refresh the window inventory before retrying.")
             }
             return window
-
-        case let .id(windowID):
-            let matches = windows.filter { $0.windowID == windowID }
-            guard matches.count == 1, let window = matches.first else {
-                let detail = matches.isEmpty ? "does not identify a window" : "identifies multiple windows"
-                throw ExactWindowSelectorResolutionError(
-                    message: "\(operation) window_id \(windowID) \(detail). " +
-                        "Refresh the window inventory before retrying.")
-            }
-            return window
-
-        case let .title(title):
-            let exactMatches = windows.filter {
-                $0.title.compare(title, options: .caseInsensitive) == .orderedSame
-            }
-            if exactMatches.count == 1, let window = exactMatches.first {
-                return window
-            }
-            if exactMatches.count > 1 {
-                throw self.ambiguousTitle(title, matches: exactMatches, operation: operation)
-            }
-
-            let partialMatches = windows.filter { $0.title.localizedCaseInsensitiveContains(title) }
-            guard partialMatches.count == 1, let window = partialMatches.first else {
-                if partialMatches.isEmpty {
-                    throw ExactWindowSelectorResolutionError(
-                        message: "\(operation) found no window whose title matches '\(title)'. " +
-                            "Refresh the inventory and select a window_id or valid index.")
-                }
-                throw self.ambiguousTitle(title, matches: partialMatches, operation: operation)
-            }
-            return window
-
-        case let .index(index):
-            guard index >= 0 else {
-                throw ExactWindowSelectorResolutionError(
-                    message: "\(operation) window index must be zero or greater.")
-            }
-            let matches = windows.filter { $0.index == index }
-            guard matches.count == 1, let window = matches.first else {
-                let detail = matches.isEmpty ? "is not present" : "is ambiguous"
-                throw ExactWindowSelectorResolutionError(
-                    message: "\(operation) window index \(index) \(detail). " +
-                        "Refresh the inventory and select a window_id.")
-            }
-            return window
+        }
+        if case let .index(index) = explicitSelector, index < 0 {
+            throw ExactWindowSelectorResolutionError(
+                message: "\(operation) window index must be zero or greater.")
+        }
+        do {
+            return try DesktopTargetPlanning.WindowCandidateSelector.selectExplicitCandidate(
+                candidates: windows,
+                selector: explicitSelector)
+        } catch let error as DesktopTargetPlanningError {
+            throw self.presentationError(
+                error,
+                selector: explicitSelector,
+                windows: windows,
+                operation: operation)
         }
     }
 
@@ -92,12 +70,62 @@ enum ExactWindowSelectorResolver {
         }
     }
 
-    private static func ambiguousTitle(
-        _ title: String,
-        matches: [ServiceWindowInfo],
+    private static func presentationError(
+        _ error: DesktopTargetPlanningError,
+        selector: InteractionTargetSelector.WindowSelector,
+        windows: [ServiceWindowInfo],
         operation: String) -> ExactWindowSelectorResolutionError
     {
-        let candidates = matches.prefix(5).map { "id=\($0.windowID) index=\($0.index) '\($0.title)'" }
+        switch (selector, error) {
+        case let (.id(windowID), .windowNotFound):
+            ExactWindowSelectorResolutionError(
+                message: "\(operation) window_id \(windowID) does not identify a window. " +
+                    "Refresh the window inventory before retrying.")
+        case let (.id(windowID), .ambiguousWindow),
+             let (.id(windowID), .conflictingWindowEntries):
+            ExactWindowSelectorResolutionError(
+                message: "\(operation) window_id \(windowID) identifies multiple windows. " +
+                    "Refresh the window inventory before retrying.")
+        case let (.title(title), .windowNotFound):
+            ExactWindowSelectorResolutionError(
+                message: "\(operation) found no window whose title matches '\(title)'. " +
+                    "Refresh the inventory and select a window_id or valid index.")
+        case let (.title(title), .ambiguousWindow(_, windowIDs)):
+            self.titleAmbiguityError(
+                title: title,
+                windowIDs: windowIDs,
+                windows: windows,
+                operation: operation)
+        case let (.title(title), .conflictingWindowEntries(windowID)):
+            self.titleAmbiguityError(
+                title: title,
+                windowIDs: [windowID],
+                windows: windows,
+                operation: operation)
+        case let (.index(index), .windowNotFound):
+            ExactWindowSelectorResolutionError(
+                message: "\(operation) window index \(index) is not present. " +
+                    "Refresh the inventory and select a window_id.")
+        case let (.index(index), .ambiguousWindow),
+             let (.index(index), .conflictingWindowEntries):
+            ExactWindowSelectorResolutionError(
+                message: "\(operation) window index \(index) is ambiguous. " +
+                    "Refresh the inventory and select a window_id.")
+        default:
+            ExactWindowSelectorResolutionError(
+                message: "\(operation) could not resolve one exact window. \(error.localizedDescription)")
+        }
+    }
+
+    private static func titleAmbiguityError(
+        title: String,
+        windowIDs: [Int],
+        windows: [ServiceWindowInfo],
+        operation: String) -> ExactWindowSelectorResolutionError
+    {
+        let candidateIDs = Set(windowIDs)
+        let candidates = windows.lazy.filter { candidateIDs.contains($0.windowID) }.prefix(5)
+            .map { "id=\($0.windowID) index=\($0.index) '\($0.title)'" }
             .joined(separator: "; ")
         return ExactWindowSelectorResolutionError(
             message: "\(operation) window title '\(title)' is ambiguous (\(candidates)). " +

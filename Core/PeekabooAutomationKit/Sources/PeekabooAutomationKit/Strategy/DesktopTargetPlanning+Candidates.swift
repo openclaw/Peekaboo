@@ -288,6 +288,19 @@ extension DesktopTargetPlanning {
     }
 
     public enum WindowCandidateSelector {
+        /// Selects one explicit compatibility candidate without requiring a mutation receipt.
+        ///
+        /// Read-only surfaces use the same deterministic ID, title, index, and duplicate-row
+        /// semantics as mutation planning, then apply their own capability requirements.
+        public static func selectExplicitCandidate(
+            candidates: [ServiceWindowInfo],
+            selector: InteractionTargetSelector.WindowSelector) throws -> ServiceWindowInfo
+        {
+            try self.selectExplicit(
+                selector,
+                from: self.canonicalizedCandidates(candidates))
+        }
+
         public static func select(
             candidates: [ServiceWindowInfo],
             selector: InteractionTargetSelector.WindowSelector?,
@@ -296,17 +309,9 @@ extension DesktopTargetPlanning {
         {
             let canonical = try self.canonicalizedCandidates(candidates)
             let selected: ServiceWindowInfo
-            switch selector {
-            case let .id(windowID):
-                selected = try self.selectUniqueID(
-                    windowID,
-                    from: canonical,
-                    selector: "window ID \(windowID)")
-            case let .title(title):
-                selected = try self.selectTitle(title, from: canonical)
-            case let .index(index):
-                selected = try self.selectIndex(index, from: canonical)
-            case nil:
+            if let selector {
+                selected = try self.selectExplicit(selector, from: canonical)
+            } else {
                 guard case let .preferredMutationWindow(intent) = policy else {
                     throw DesktopTargetPlanningError.windowNotFound(
                         selector: "an explicit window selector",
@@ -323,6 +328,23 @@ extension DesktopTargetPlanning {
             }
             try self.validate(selected, expectedOwner: expectedOwner)
             return selected
+        }
+
+        private static func selectExplicit(
+            _ selector: InteractionTargetSelector.WindowSelector,
+            from candidates: [ServiceWindowInfo]) throws -> ServiceWindowInfo
+        {
+            switch selector {
+            case let .id(windowID):
+                try self.selectUniqueID(
+                    windowID,
+                    from: candidates,
+                    selector: "window ID \(windowID)")
+            case let .title(title):
+                try self.selectTitle(title, from: candidates)
+            case let .index(index):
+                try self.selectIndex(index, from: candidates)
+            }
         }
 
         private static func selectTitle(

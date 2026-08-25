@@ -6,6 +6,23 @@ import Testing
 
 struct WindowCandidateSelectorTests {
     @Test
+    func `explicit compatibility selection does not require a mutation receipt`() throws {
+        let receiptless = AutomationTestFixtures.window(includesMutationIdentity: false)
+
+        let selected = try DesktopTargetPlanning.WindowCandidateSelector.selectExplicitCandidate(
+            candidates: [receiptless],
+            selector: .id(receiptless.windowID))
+
+        #expect(selected == receiptless)
+        #expect(throws: DesktopTargetPlanningError.missingWindowIdentity(windowID: receiptless.windowID)) {
+            _ = try DesktopTargetPlanning.WindowCandidateSelector.select(
+                candidates: [receiptless],
+                selector: .id(receiptless.windowID),
+                policy: .explicit)
+        }
+    }
+
+    @Test
     func `unique exact title wins before partial while duplicate exact refuses deterministically`() throws {
         let windows = AutomationTestFixtures.duplicateTitleWindows()
         let selected = try DesktopTargetPlanning.WindowCandidateSelector.select(

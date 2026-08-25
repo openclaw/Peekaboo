@@ -246,19 +246,41 @@ struct CaptureToolPathResolverTests {
     }
 
     @Test
+    func `window resolver canonicalizes repeated stable inventory rows`() async throws {
+        let window = Self.window(id: 99, title: "Inspector", index: 4)
+        let windows = CaptureWindowResolverWindowService(windows: [window, window])
+
+        let scope = try await CaptureToolWindowResolver.scope(
+            app: "Preview",
+            pid: nil,
+            windowTitle: "Inspector",
+            windowIndex: nil,
+            windows: windows)
+
+        #expect(scope.windowId == 99)
+        #expect(scope.windowMutationIdentity == window.mutationIdentity)
+    }
+
+    @Test
     func `window resolver refuses ambiguous partial titles instead of pinning the first result`() async {
         let windows = CaptureWindowResolverWindowService(windows: [
             Self.window(id: 41, title: "Project Notes", index: 0),
             Self.window(id: 42, title: "Project Plan", index: 1),
         ])
 
-        await #expect(throws: PeekabooError.self) {
+        do {
             _ = try await CaptureToolWindowResolver.scope(
                 app: "Preview",
                 pid: nil,
                 windowTitle: "Project",
                 windowIndex: nil,
                 windows: windows)
+            Issue.record("Expected ambiguous partial title selection to fail")
+        } catch let error as PeekabooError {
+            #expect(error.localizedDescription.contains(
+                "Select one window_id or index explicitly."))
+        } catch {
+            Issue.record("Expected PeekabooError, received \(error)")
         }
         #expect(windows.requestedTargets.map(\.description) == ["application(Preview)"])
     }

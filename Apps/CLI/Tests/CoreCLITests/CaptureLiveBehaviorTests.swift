@@ -97,12 +97,17 @@ struct CaptureLiveBehaviorTests {
 
         for surface in SelectorSurface.allCases {
             let selector = try Self.selector(for: surface, title: "Draft")
-            #expect(throws: ExactWindowSelectorResolutionError.self) {
+            do {
                 _ = try ExactWindowSelectorResolver.select(
                     from: windows,
                     selector: selector,
-                    operation: "Capture selector test"
-                )
+                    operation: "Capture selector test")
+                Issue.record("Expected duplicate exact title selection to fail")
+            } catch let error as ExactWindowSelectorResolutionError {
+                #expect(error.message ==
+                    "Capture selector test window title 'Draft' is ambiguous " +
+                    "(id=101 index=0 'Draft'; id=102 index=1 'Draft'). " +
+                    "Select one --window-id or --window-index explicitly.")
             }
         }
     }
@@ -117,13 +122,33 @@ struct CaptureLiveBehaviorTests {
 
         for surface in SelectorSurface.allCases {
             let selector = try Self.selector(for: surface, title: "Draft")
-            #expect(throws: ExactWindowSelectorResolutionError.self) {
+            do {
                 _ = try ExactWindowSelectorResolver.select(
                     from: windows,
                     selector: selector,
-                    operation: "Capture selector test"
-                )
+                    operation: "Capture selector test")
+                Issue.record("Expected duplicate partial title selection to fail")
+            } catch let error as ExactWindowSelectorResolutionError {
+                #expect(error.message ==
+                    "Capture selector test window title 'Draft' is ambiguous " +
+                    "(id=101 index=0 'Draft One'; id=102 index=1 'Draft Two'). " +
+                    "Select one --window-id or --window-index explicitly.")
             }
+        }
+    }
+
+    @Test
+    @MainActor
+    func `capture selectors canonicalize repeated stable inventory rows`() throws {
+        let window = Self.window(id: 101, title: "Draft", index: 0)
+
+        for surface in SelectorSurface.allCases {
+            let selector = try Self.selector(for: surface, title: "Draft")
+            let selected = try ExactWindowSelectorResolver.select(
+                from: [window, window],
+                selector: selector,
+                operation: "Capture selector test")
+            #expect(selected == window)
         }
     }
 

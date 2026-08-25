@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Resolve repeated stable window inventory rows consistently across CLI and MCP instead of falsely reporting ambiguity.
+
 ## [4.2.3] - 2026-08-23
 
 ### Highlights
