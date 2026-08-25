@@ -609,14 +609,13 @@ extension TypeCommand: ParsableCommand {
 
                     EXAMPLES:
                       peekaboo type "Hello World" --snapshot "$SNAPSHOT_ID" --clear
-                      peekaboo type "user@example.com" --foreground # Dispatch, then observe
-                      peekaboo type "text" --app TextEdit --delay 0ms
+                      peekaboo type "text" --snapshot "$SNAPSHOT_ID" --clear
+
+                    DISPATCH-ONLY EXAMPLES (NON-SUCCESS UNTIL FRESH OBSERVATION):
+                      peekaboo type "user@example.com" --foreground
                       peekaboo type "text" --app TextEdit --delay 50ms
                       peekaboo type "text" --app TextEdit --wpm 150
-                      peekaboo type "text" --snapshot "$SNAPSHOT_ID" --clear
                       peekaboo type "Line 1\nLine 2" --app TextEdit
-                      peekaboo type "Name:\tJohn" --app TextEdit
-                      peekaboo type "Path: C:\\data" --app TextEdit
 
                     KEY PRESSES:
                       Chain `type` with `press` for Return, Tab, Escape, Delete, or chords.

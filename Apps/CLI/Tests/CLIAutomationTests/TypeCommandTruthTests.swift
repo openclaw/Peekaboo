@@ -54,6 +54,34 @@ struct TypeCommandTruthTests {
     }
 
     @Test
+    func `Every non-confirmed typing state is CLI non-success without typed fields`() async throws {
+        let delivery = DesktopActionOutcome.Delivery(mechanism: .globalEvents, mode: .foreground)
+        let outcomes: [DesktopActionOutcome?] = [
+            nil,
+            .confirmedNoChange(),
+            .dispatchedUnverified(delivery: delivery, evidence: .deliveryAccepted),
+            .suspectedNoop(delivery: delivery),
+            .partial(delivery: delivery),
+            .refused(reason: .targetUnavailable),
+            .indeterminate(delivery: delivery, evidence: .completionUnknown),
+        ]
+
+        for outcome in outcomes {
+            let automation = OutcomeStubAutomationService()
+            automation.actionOutcome = outcome
+            let services = TestServicesFactory.makePeekabooServices(automation: automation)
+            let result = try await InProcessCommandRunner.run(
+                ["type", "Hello", "--foreground", "--json"],
+                services: services
+            )
+
+            #expect(result.exitStatus != 0)
+            #expect(!result.combinedOutput.contains("typedText"))
+            #expect(!result.combinedOutput.contains("totalCharacters"))
+        }
+    }
+
+    @Test
     func `Type revalidates matching snapshot focus before exact-window dispatch`() async throws {
         let focused = self.textFocus()
         let automation = self.automation(focused: focused)

@@ -231,6 +231,64 @@ struct ExactLiteralTypingEffectConfirmationTests {
         #expect(baseline == "after preparation")
     }
 
+    @Test
+    @MainActor
+    func `full exact literal pipeline confirms only the typing leaf value transition`() async throws {
+        let target = try self.target()
+        let value = TypingLockedValue("before preparation")
+        let service = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            targetedCharacterTyper: { character, _ in value.set(value.get() + String(character)) },
+            targetedTextReplacer: { text, _ in
+                value.set(text)
+                return true
+            },
+            exactFocusedElementValueReader: { focusedElement in
+                .success(Self.focusSnapshot(focusedElement, value: value.get()))
+            },
+            processStartIdentityProvider: { _ in 33 })
+
+        let summary = try await service.typeActionsTrackingSecureInput(
+            [.clear, .text("safe")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: .exactWindow(target),
+            deliveryValidator: {},
+            lanePreparation: { value.set("after preparation") })
+
+        #expect(value.get() == "safe")
+        #expect(summary.executionResult.outcome.state == .confirmedChange)
+        #expect(summary.result.totalCharacters == 4)
+    }
+
+    @Test
+    @MainActor
+    func `full exact literal pipeline rejects setup-only change when typing is dropped`() async throws {
+        let target = try self.target()
+        let value = TypingLockedValue("before preparation")
+        let service = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            targetedCharacterTyper: { _, _ in },
+            targetedTextReplacer: { _, _ in true },
+            exactFocusedElementValueReader: { focusedElement in
+                .success(Self.focusSnapshot(focusedElement, value: value.get()))
+            },
+            processStartIdentityProvider: { _ in 33 })
+
+        let summary = try await service.typeActionsTrackingSecureInput(
+            [.clear, .text("safe")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: .exactWindow(target),
+            deliveryValidator: {},
+            lanePreparation: { value.set("safe") })
+
+        #expect(value.get() == "safe")
+        #expect(summary.executionResult.outcome.state == .dispatchedUnverified)
+    }
+
     private func target(role: String = "AXTextField") throws -> UIAutomationTarget.ExactWindow {
         let bounds = CGRect(x: 0, y: 0, width: 500, height: 400)
         let identity = WindowMutationIdentity(
@@ -247,6 +305,19 @@ struct ExactLiteralTypingEffectConfirmationTests {
                 role: role,
                 identifier: "editor",
                 frame: CGRect(x: 20, y: 20, width: 200, height: 30)))
+    }
+
+    private static func focusSnapshot(
+        _ focusedElement: FocusedElementIdentity,
+        value: String) -> ExactWindowFocusSnapshot
+    {
+        ExactWindowFocusSnapshot(
+            processIdentifier: focusedElement.processIdentifier,
+            windowID: focusedElement.windowID,
+            frame: focusedElement.frame,
+            role: focusedElement.role,
+            identifier: focusedElement.identifier,
+            value: value)
     }
 }
 

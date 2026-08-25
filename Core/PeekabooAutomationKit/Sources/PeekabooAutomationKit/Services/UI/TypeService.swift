@@ -51,6 +51,7 @@ public final class TypeService {
     private let automationElementResolver: any AutomationElementResolving
     private let focusedElementSecurityProbe: @MainActor (pid_t?) -> Bool
     private let targetedCharacterTyper: @MainActor (Character, pid_t) throws -> Void
+    private let targetedTextReplacer: @MainActor (String, pid_t) throws -> Bool
     private let desktopOperationExecutor: DesktopOperationExecutor
     private let operationFinalizer: @MainActor () -> Void
     private let pixelFocusReceiptPlanner: @MainActor @Sendable (String) async throws -> SnapshotTargetReceiptPlan
@@ -113,6 +114,11 @@ public final class TypeService {
         focusedElementSecurityProbe: @escaping @MainActor (pid_t?) -> Bool = TypeService.focusedElementIsSecureField,
         targetedCharacterTyper: @escaping @MainActor (Character, pid_t) throws -> Void = TypeService
             .typeTargetedCharacter,
+        targetedTextReplacer: @escaping @MainActor (String, pid_t) throws -> Bool = { text, processIdentifier in
+            try BackgroundInputDriver.replaceFocusedText(
+                with: text,
+                targetProcessIdentifier: processIdentifier)
+        },
         exactFocusedElementValueReader: @escaping @Sendable (FocusedElementIdentity)
             -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError> = DetachedExactWindowFocusReader.readValue,
         processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? =
@@ -139,6 +145,7 @@ public final class TypeService {
         self.cadenceRandom = randomSource
         self.focusedElementSecurityProbe = focusedElementSecurityProbe
         self.targetedCharacterTyper = targetedCharacterTyper
+        self.targetedTextReplacer = targetedTextReplacer
         self.exactFocusedElementValueReader = exactFocusedElementValueReader
         self.processStartIdentityProvider = processStartIdentityProvider
         self.desktopOperationExecutor = desktopOperationExecutor
@@ -676,10 +683,7 @@ public final class TypeService {
 
         if let targetProcessIdentifier {
             do {
-                if try BackgroundInputDriver.replaceFocusedText(
-                    with: "",
-                    targetProcessIdentifier: targetProcessIdentifier)
-                {
+                if try self.targetedTextReplacer("", targetProcessIdentifier) {
                     do {
                         try await Task.sleep(nanoseconds: 50_000_000) // 50ms
                     } catch {

@@ -124,7 +124,7 @@ public struct TypeTool: MCPTool {
                 additionalFields: mutationTracker.compatibilityFields)
         } catch let error as InputDeliveryIndeterminateError {
             var additionalFields = mutationTracker.targetFields
-            additionalFields["characters_typed"] = mutationTracker.charactersTyped.map(Value.int) ?? .null
+            additionalFields["characters_typed"] = .null
             return try await MCPDesktopActionFailureHandler.response(
                 for: error.desktopActionFailure(delivery: mutationTracker.delivery),
                 uiSnapshots: self.context.uiSnapshots,
@@ -353,7 +353,6 @@ extension TypeTool {
                 message: "Typing failed after its element focus action completed.",
                 hint: "Observe the target before deciding whether to retry typing."))
         } catch let error as InputDeliveryIndeterminateError {
-            mutationTracker.charactersTyped = error.emittedUnitCount
             if sequence.mutationDisposition.mutationDispatched {
                 mutationTracker.delivery = nil
             }
@@ -1012,7 +1011,6 @@ extension TypeTool {
 private final class TypeMutationTracker {
     var snapshotId: String?
     var delivery: DesktopActionOutcome.Delivery?
-    var charactersTyped: Int?
     var reportsCharactersTyped = false
     var targetWindowId: Int?
 
@@ -1023,7 +1021,7 @@ private final class TypeMutationTracker {
     var compatibilityFields: [String: Value] {
         var fields = self.targetFields
         if self.reportsCharactersTyped {
-            fields["characters_typed"] = self.charactersTyped.map(Value.int) ?? .null
+            fields["characters_typed"] = .null
         }
         return fields
     }

@@ -797,6 +797,34 @@ extension MCPDesktopActionOutcomeProjectionTests {
     }
 
     @Test
+    @MainActor
+    func `every non-confirmed typing state is MCP error without typed-character claims`() async throws {
+        let delivery = DesktopActionOutcome.Delivery(mechanism: .globalEvents, mode: .foreground)
+        let outcomes: [DesktopActionOutcome?] = [
+            nil,
+            .confirmedNoChange(),
+            .dispatchedUnverified(delivery: delivery, evidence: .deliveryAccepted),
+            .suspectedNoop(delivery: delivery),
+            .partial(delivery: delivery),
+            .refused(reason: .targetUnavailable),
+            .indeterminate(delivery: delivery, evidence: .completionUnknown),
+        ]
+
+        for outcome in outcomes {
+            let automation = StubAutomationService()
+            automation.uiAutomationOutcomeScript.setDefaultOutcome(outcome)
+            let context = await MCPToolTestHelpers.makeContext(automation: automation)
+            let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+                "text": "hello",
+                "foreground": true,
+            ]))
+
+            #expect(response.isError)
+            #expect(response.meta?.objectValue?["characters_typed"] == .null)
+        }
+    }
+
+    @Test
     func `type conservatively counts a receiptless completed focus before refusal`() {
         var sequence = DesktopActionSequenceAccumulator()
         sequence.record(.dispatched(

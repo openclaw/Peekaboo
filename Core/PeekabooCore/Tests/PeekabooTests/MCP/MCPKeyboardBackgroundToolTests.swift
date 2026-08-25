@@ -185,7 +185,7 @@ struct MCPKeyboardBackgroundToolTests {
     }
 
     @Test
-    func `Foreground explicitly preserves intentional global keyboard delivery`() async throws {
+    func `Foreground explicitly dispatches type without claiming unconfirmed receiver change`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
@@ -206,13 +206,14 @@ struct MCPKeyboardBackgroundToolTests {
             "restore_delay_ms": 0,
         ]))
 
-        #expect(typeResponse.isError == false)
+        #expect(typeResponse.isError)
         #expect(hotkeyResponse.isError == false)
         #expect(pasteResponse.isError == false)
         #expect(await MainActor.run { automation.lastTypeActions } != nil)
         #expect(await MainActor.run { automation.lastHotkeyKeys } == "cmd,v")
         #expect(await MainActor.run { automation.targetedTypeActionsCalls.isEmpty })
         #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+        #expect(typeResponse.meta?.objectValue?["characters_typed"] == .null)
         guard case let .object(hotkeyMeta) = hotkeyResponse.meta else {
             Issue.record("Expected foreground press metadata")
             return
@@ -225,7 +226,7 @@ struct MCPKeyboardBackgroundToolTests {
     }
 
     @Test
-    func `Type tool uses snapshot process without requiring an element`() async throws {
+    func `Type tool dispatches to snapshot process without claiming unconfirmed characters`() async throws {
         await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run {
@@ -257,7 +258,7 @@ struct MCPKeyboardBackgroundToolTests {
             "text": "hello",
         ]))
 
-        #expect(response.isError == false)
+        #expect(response.isError)
         let calls = await MainActor.run { automation.targetedTypeActionsCalls }
         #expect(calls.count == 1)
         #expect(calls.first?.snapshotId == snapshotId)
@@ -266,6 +267,7 @@ struct MCPKeyboardBackgroundToolTests {
             processIdentifier: 444,
             processStartIdentity: 44))
         #expect(await MainActor.run { automation.clickCalls.isEmpty })
+        #expect(response.meta?.objectValue?["characters_typed"] == .null)
     }
 
     @Test
@@ -402,7 +404,7 @@ struct MCPKeyboardBackgroundToolTests {
     }
 
     @Test
-    func `Type tool uses background click and typing when snapshot process is known`() async throws {
+    func `Type tool preserves background focus and typing dispatch without false character claims`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run {
             MockApplicationService(applications: [AutomationTestFixtures.application(
@@ -450,7 +452,7 @@ struct MCPKeyboardBackgroundToolTests {
             "snapshot": snapshotId,
         ]))
 
-        #expect(response.isError == false)
+        #expect(response.isError)
         let targetedClicks = await MainActor.run { automation.targetedClickCalls }
         #expect(targetedClicks.count == 1)
         #expect(targetedClicks.first?.targetProcessIdentifier == 111)
@@ -469,7 +471,8 @@ struct MCPKeyboardBackgroundToolTests {
             return
         }
         #expect(meta["delivery_mode"] == nil)
-        #expect(meta["target_pid"] == .int(111))
+        #expect(meta["characters_typed"] == .null)
+        #expect(meta["mutation_dispatched"] == .bool(true))
     }
 
     @Test
@@ -542,7 +545,7 @@ struct MCPKeyboardBackgroundToolTests {
     }
 
     @Test
-    func `indeterminate typing after focus omits unrepresentable leaf delivery`() async throws {
+    func `indeterminate typing after focus never reports emitted units as typed characters`() async throws {
         await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run {
             let automation = MockAutomationService(accessibilityGranted: true)
@@ -576,7 +579,7 @@ struct MCPKeyboardBackgroundToolTests {
         let meta = try #require(response.meta?.objectValue)
         #expect(meta["state"] == .string("indeterminate"))
         #expect(meta["dispatched_unit_count"] == .int(3))
-        #expect(meta["characters_typed"] == .int(2))
+        #expect(meta["characters_typed"] == .null)
         #expect(meta["delivery_mechanism"] == nil)
         #expect(meta["delivery_mode"] == nil)
         #expect(meta["invalidated_snapshot"] == .string(snapshotId))
@@ -665,9 +668,11 @@ struct MCPKeyboardBackgroundToolTests {
         #expect(meta["refusal_reason"] == .string("foreground_consent_required"))
         #expect(meta["hint"]?.description.contains("foreground=true") == true)
     }
+}
 
+extension MCPKeyboardBackgroundToolTests {
     @Test
-    func `Type uses targeted delivery while raw press refuses background app target`() async throws {
+    func `Type dispatches targeted delivery without claiming success while raw press refuses`() async throws {
         let app = AutomationTestFixtures.application(
             processIdentifier: 333,
             processStartIdentity: 33,
@@ -691,7 +696,7 @@ struct MCPKeyboardBackgroundToolTests {
             "keys": ["cmd+l"],
         ]))
 
-        #expect(typeResponse.isError == false)
+        #expect(typeResponse.isError)
         #expect(hotkeyResponse.isError)
         let typeCalls = await MainActor.run { automation.targetedTypeActionsCalls }
         #expect(typeCalls.count == 1)
@@ -699,6 +704,7 @@ struct MCPKeyboardBackgroundToolTests {
         #expect(typeCalls.first?.expectedProcessIdentity == AutomationTestFixtures.processIdentity(
             processIdentifier: 333,
             processStartIdentity: 33))
+        #expect(typeResponse.meta?.objectValue?["characters_typed"] == .null)
         let hotkeyCalls = await MainActor.run { automation.targetedHotkeyCalls }
         #expect(hotkeyCalls.isEmpty)
         #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
