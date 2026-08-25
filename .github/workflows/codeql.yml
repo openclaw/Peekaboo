@@ -46,6 +46,7 @@ jobs:
   analyze-swift:
     name: Analyze Swift
     runs-on: macos-26
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v7
         with:
@@ -76,7 +77,7 @@ jobs:
           build-mode: manual
 
       - name: Build CLI
-        run: swift build --package-path Apps/CLI --arch arm64 --configuration debug
+        run: swift build --package-path Apps/CLI --configuration debug
 
       - name: Build Peekaboo
         run: |
@@ -85,14 +86,11 @@ jobs:
             -scheme Peekaboo \
             -configuration Debug \
             -sdk macosx \
-            -destination "platform=macOS,arch=arm64" \
             -derivedDataPath "$RUNNER_TEMP/codeql-peekaboo" \
             -disableAutomaticPackageResolution \
             -onlyUsePackageVersionsFromResolvedFile \
             -skipPackageUpdates \
             build \
-            ARCHS=arm64 \
-            ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -105,11 +103,8 @@ jobs:
             -scheme Playground \
             -configuration Debug \
             -sdk macosx \
-            -destination "platform=macOS,arch=arm64" \
             -derivedDataPath "$RUNNER_TEMP/codeql-playground" \
             build \
-            ARCHS=arm64 \
-            ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -122,11 +117,8 @@ jobs:
             -scheme Inspector \
             -configuration Debug \
             -sdk macosx \
-            -destination "platform=macOS,arch=arm64" \
             -derivedDataPath "$RUNNER_TEMP/codeql-inspector" \
             build \
-            ARCHS=arm64 \
-            ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
