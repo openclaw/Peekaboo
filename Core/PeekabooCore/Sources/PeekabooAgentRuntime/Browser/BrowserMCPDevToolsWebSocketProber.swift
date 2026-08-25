@@ -150,13 +150,22 @@ struct BrowserMCPDevToolsWebSocketProber: Sendable {
               url.query == nil,
               url.fragment == nil,
               let host = url.host,
-              ["127.0.0.1", "::1"].contains(host),
+              self.isLoopbackHost(host),
               url.port != nil,
               url.path == "/devtools/browser/\(expectedBrowserID)"
         else {
             throw BrowserMCPDevToolsWebSocketProbeError.malformedResponse(
                 "the requested WebSocket was not the exact published loopback browser identity")
         }
+    }
+
+    static func isLoopbackHost(_ host: String) -> Bool {
+        let normalized = if host.first == "[", host.last == "]" {
+            String(host.dropFirst().dropLast())
+        } else {
+            host
+        }
+        return normalized == "127.0.0.1" || normalized == "::1"
     }
 
     private static func liveExchange(

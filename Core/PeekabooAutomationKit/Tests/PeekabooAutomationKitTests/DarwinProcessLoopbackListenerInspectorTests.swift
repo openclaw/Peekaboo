@@ -90,6 +90,62 @@ struct DarwinProcessLoopbackListenerInspectorTests {
     }
 
     @Test
+    func `unrelated socket closure triggers a bounded fresh inventory`() throws {
+        let inventories = CapacityBox()
+        let source = DarwinProcessLoopbackListenerInspector.InspectionSource(
+            processStartIdentity: { _ in 9077 },
+            descriptorCapacityBounds: { _ in .init(initial: 64, limit: 256) },
+            listDescriptors: { _, capacity in
+                inventories.append(capacity)
+                let descriptors: [DarwinProcessLoopbackListenerInspector.Descriptor] =
+                    inventories.values.count == 1
+                        ? [
+                            .init(fileDescriptor: 10, isSocket: true),
+                            .init(fileDescriptor: 11, isSocket: true),
+                        ]
+                        : [.init(fileDescriptor: 11, isSocket: true)]
+                return .init(descriptors: descriptors, filledBuffer: false, hasPartialRecord: false)
+            },
+            socketObservation: { _, descriptor in
+                descriptor == 11 ? Self.socket() : nil
+            })
+
+        let identity = try DarwinProcessLoopbackListenerInspector.inspect(
+            processIdentifier: 77,
+            processStartIdentity: 9077,
+            port: 9222,
+            source: source)
+
+        #expect(identity.processIdentifier == 77)
+        #expect(inventories.values == [64, 64])
+    }
+
+    @Test
+    func `repeated socket churn fails closed after bounded rescans`() {
+        let inventories = CapacityBox()
+        let source = DarwinProcessLoopbackListenerInspector.InspectionSource(
+            processStartIdentity: { _ in 9078 },
+            descriptorCapacityBounds: { _ in .init(initial: 64, limit: 256) },
+            listDescriptors: { _, capacity in
+                inventories.append(capacity)
+                return .init(
+                    descriptors: [.init(fileDescriptor: 10, isSocket: true)],
+                    filledBuffer: false,
+                    hasPartialRecord: false)
+            },
+            socketObservation: { _, _ in nil })
+
+        #expect(throws: DarwinProcessLoopbackListenerInspectionError.socketInventoryIncomplete(78)) {
+            _ = try DarwinProcessLoopbackListenerInspector.inspect(
+                processIdentifier: 78,
+                processStartIdentity: 9078,
+                port: 9222,
+                source: source)
+        }
+        #expect(inventories.values == [64, 64, 64])
+    }
+
+    @Test
     func `IPv4 IPv6 split ownership is ambiguous rather than guessed`() {
         let sockets = [
             Self.socket(family: .ipv4, kernelSocketAddress: 1),

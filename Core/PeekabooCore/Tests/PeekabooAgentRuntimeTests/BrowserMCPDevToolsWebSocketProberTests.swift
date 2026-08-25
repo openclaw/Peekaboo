@@ -197,6 +197,15 @@ struct BrowserMCPDevToolsWebSocketProberTests {
         #expect(exchanges.value == 0)
     }
 
+    @Test
+    func `loopback host validation accepts Foundation IPv6 representations only`() {
+        #expect(BrowserMCPDevToolsWebSocketProber.isLoopbackHost("127.0.0.1"))
+        #expect(BrowserMCPDevToolsWebSocketProber.isLoopbackHost("::1"))
+        #expect(BrowserMCPDevToolsWebSocketProber.isLoopbackHost("[::1]"))
+        #expect(!BrowserMCPDevToolsWebSocketProber.isLoopbackHost("localhost"))
+        #expect(!BrowserMCPDevToolsWebSocketProber.isLoopbackHost("[::2]"))
+    }
+
     private static let webSocketURL = URL(
         string: "ws://127.0.0.1:9222/devtools/browser/browser-a")!
 

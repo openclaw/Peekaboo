@@ -114,48 +114,39 @@ public struct DarwinProcessLoopbackListenerInspector: Sendable {
             throw DarwinProcessLoopbackListenerInspectionError.processGenerationChanged(processIdentifier)
         }
 
-        guard let capacityBounds = source.descriptorCapacityBounds(processIdentifier) else {
-            throw DarwinProcessLoopbackListenerInspectionError
-                .descriptorInventoryUnavailable(processIdentifier)
-        }
-        let initialCapacity = 64
-        let capacityLimit = max(initialCapacity, capacityBounds.limit)
-        var capacity = min(max(initialCapacity, capacityBounds.initial), capacityLimit)
-        let descriptors: [Descriptor]
-        while true {
-            guard let batch = source.listDescriptors(processIdentifier, capacity) else {
-                throw DarwinProcessLoopbackListenerInspectionError
-                    .descriptorInventoryUnavailable(processIdentifier)
-            }
-            guard !batch.hasPartialRecord else {
-                throw DarwinProcessLoopbackListenerInspectionError
-                    .descriptorInventoryTruncated(processIdentifier)
-            }
-            if batch.filledBuffer {
-                guard capacity < capacityLimit else {
-                    throw DarwinProcessLoopbackListenerInspectionError
-                        .descriptorInventoryTruncated(processIdentifier)
+        let maximumInventoryAttempts = 3
+        var matchingPortListeners: [SocketObservation]?
+        for attempt in 0..<maximumInventoryAttempts {
+            let descriptors = try Self.descriptorInventory(
+                processIdentifier: processIdentifier,
+                source: source)
+            var observations: [SocketObservation] = []
+            var complete = true
+            for descriptor in descriptors where descriptor.isSocket {
+                guard let socket = source.socketObservation(processIdentifier, descriptor.fileDescriptor) else {
+                    guard source.processStartIdentity(processIdentifier) == processStartIdentity else {
+                        throw DarwinProcessLoopbackListenerInspectionError
+                            .processGenerationChanged(processIdentifier)
+                    }
+                    complete = false
+                    break
                 }
-                capacity = min(capacity * 2, capacityLimit)
-                continue
-            }
-            descriptors = batch.descriptors
-            break
-        }
-
-        var matchingPortListeners: [SocketObservation] = []
-        for descriptor in descriptors where descriptor.isSocket {
-            guard let socket = source.socketObservation(processIdentifier, descriptor.fileDescriptor) else {
-                guard source.processStartIdentity(processIdentifier) == processStartIdentity else {
-                    throw DarwinProcessLoopbackListenerInspectionError
-                        .processGenerationChanged(processIdentifier)
+                if socket.isTCPListener, socket.port == port {
+                    observations.append(socket)
                 }
+            }
+            if complete {
+                matchingPortListeners = observations
+                break
+            }
+            if attempt == maximumInventoryAttempts - 1 {
                 throw DarwinProcessLoopbackListenerInspectionError
                     .socketInventoryIncomplete(processIdentifier)
             }
-            if socket.isTCPListener, socket.port == port {
-                matchingPortListeners.append(socket)
-            }
+        }
+
+        guard let matchingPortListeners else {
+            throw DarwinProcessLoopbackListenerInspectionError.socketInventoryIncomplete(processIdentifier)
         }
 
         guard source.processStartIdentity(processIdentifier) == processStartIdentity else {
@@ -186,6 +177,38 @@ public struct DarwinProcessLoopbackListenerInspector: Sendable {
             kernelSocketAddress: listener.kernelSocketAddress,
             kernelProtocolControlBlock: listener.kernelProtocolControlBlock,
             kernelGeneration: listener.kernelGeneration)
+    }
+
+    private static func descriptorInventory(
+        processIdentifier: pid_t,
+        source: InspectionSource) throws -> [Descriptor]
+    {
+        guard let capacityBounds = source.descriptorCapacityBounds(processIdentifier) else {
+            throw DarwinProcessLoopbackListenerInspectionError
+                .descriptorInventoryUnavailable(processIdentifier)
+        }
+        let initialCapacity = 64
+        let capacityLimit = max(initialCapacity, capacityBounds.limit)
+        var capacity = min(max(initialCapacity, capacityBounds.initial), capacityLimit)
+        while true {
+            guard let batch = source.listDescriptors(processIdentifier, capacity) else {
+                throw DarwinProcessLoopbackListenerInspectionError
+                    .descriptorInventoryUnavailable(processIdentifier)
+            }
+            guard !batch.hasPartialRecord else {
+                throw DarwinProcessLoopbackListenerInspectionError
+                    .descriptorInventoryTruncated(processIdentifier)
+            }
+            if batch.filledBuffer {
+                guard capacity < capacityLimit else {
+                    throw DarwinProcessLoopbackListenerInspectionError
+                        .descriptorInventoryTruncated(processIdentifier)
+                }
+                capacity = min(capacity * 2, capacityLimit)
+                continue
+            }
+            return batch.descriptors
+        }
     }
 }
 
