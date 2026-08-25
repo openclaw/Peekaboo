@@ -290,29 +290,25 @@ struct CaptureToolPathResolverTests {
     }
 
     @Test
-    func `window resolver deterministically reports unrelated conflicting duplicates`() {
+    func `window resolver ignores unrelated conflicting duplicates`() throws {
         let selected = Self.window(id: 41, title: "Project", index: 0)
         let firstConflict = Self.window(id: 50, title: "Other A", index: 1)
         let secondConflict = Self.window(id: 50, title: "Other B", index: 2)
-        let expectedMessage =
-            "found conflicting inventory rows for window ID 50 " +
-            "(id=50 index=1 'Other A'; id=50 index=2 'Other B'). " +
-            "Refresh the window inventory before retrying."
 
         for inventory in [
             [selected, firstConflict, secondConflict],
             [secondConflict, firstConflict, selected],
         ] {
-            do {
-                _ = try ExactWindowSelectorResolver.select(
+            for selection: ExactWindowSelectorResolver.Selection in [
+                .id(selected.windowID),
+                .title(selected.title),
+                .index(selected.index),
+            ] {
+                let result = try ExactWindowSelectorResolver.select(
                     from: inventory,
-                    selection: .title("Project"),
+                    selection: selection,
                     operation: "Capture window selection")
-                Issue.record("Expected conflicting inventory selection to fail")
-            } catch let error as ExactWindowSelectorResolutionError {
-                #expect(error.message == "Capture window selection \(expectedMessage)")
-            } catch {
-                Issue.record("Expected ExactWindowSelectorResolutionError, received \(error)")
+                #expect(result == selected)
             }
         }
     }

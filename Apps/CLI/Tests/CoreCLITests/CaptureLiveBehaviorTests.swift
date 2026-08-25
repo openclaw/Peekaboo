@@ -106,7 +106,8 @@ struct CaptureLiveBehaviorTests {
                     _ = try ExactWindowSelectorResolver.select(
                         from: inventory,
                         selector: selector,
-                        operation: "Capture selector test")
+                        operation: "Capture selector test"
+                    )
                     Issue.record("Expected duplicate exact title selection to fail")
                 } catch let error as ExactWindowSelectorResolutionError {
                     #expect(error.message == expectedMessage)
@@ -134,7 +135,8 @@ struct CaptureLiveBehaviorTests {
                     _ = try ExactWindowSelectorResolver.select(
                         from: inventory,
                         selector: selector,
-                        operation: "Capture selector test")
+                        operation: "Capture selector test"
+                    )
                     Issue.record("Expected duplicate partial title selection to fail")
                 } catch let error as ExactWindowSelectorResolutionError {
                     #expect(error.message == expectedMessage)
@@ -145,7 +147,7 @@ struct CaptureLiveBehaviorTests {
 
     @Test
     @MainActor
-    func `capture selectors deterministically report unrelated conflicting duplicates`() throws {
+    func `capture selectors ignore unrelated conflicting duplicates`() throws {
         let selected = Self.window(id: 101, title: "Draft", index: 0)
         let firstConflict = Self.window(id: 202, title: "Other A", index: 1)
         let secondConflict = Self.window(id: 202, title: "Other B", index: 2)
@@ -153,23 +155,15 @@ struct CaptureLiveBehaviorTests {
             [selected, firstConflict, secondConflict],
             [secondConflict, firstConflict, selected],
         ]
-        let expectedMessage =
-            "Capture selector test found conflicting inventory rows for window ID 202 " +
-            "(id=202 index=1 'Other A'; id=202 index=2 'Other B'). " +
-            "Refresh the window inventory before retrying."
-
         for surface in SelectorSurface.allCases {
             let selector = try Self.selector(for: surface, title: "Draft")
             for inventory in inventories {
-                do {
-                    _ = try ExactWindowSelectorResolver.select(
-                        from: inventory,
-                        selector: selector,
-                        operation: "Capture selector test")
-                    Issue.record("Expected conflicting inventory selection to fail")
-                } catch let error as ExactWindowSelectorResolutionError {
-                    #expect(error.message == expectedMessage)
-                }
+                let result = try ExactWindowSelectorResolver.select(
+                    from: inventory,
+                    selector: selector,
+                    operation: "Capture selector test"
+                )
+                #expect(result == selected)
             }
         }
     }
@@ -184,7 +178,8 @@ struct CaptureLiveBehaviorTests {
             let selected = try ExactWindowSelectorResolver.select(
                 from: [window, window],
                 selector: selector,
-                operation: "Capture selector test")
+                operation: "Capture selector test"
+            )
             #expect(selected == window)
         }
     }

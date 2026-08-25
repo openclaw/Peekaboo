@@ -298,7 +298,7 @@ extension DesktopTargetPlanning {
         {
             try self.selectExplicit(
                 selector,
-                from: self.canonicalizedCandidates(candidates))
+                from: self.canonicalizedCandidates(self.candidates(relevantTo: selector, in: candidates)))
         }
 
         public static func select(
@@ -307,11 +307,14 @@ extension DesktopTargetPlanning {
             policy: WindowSelectionPolicy,
             expectedOwner: ApplicationProcessIdentity? = nil) throws -> ServiceWindowInfo
         {
-            let canonical = try self.canonicalizedCandidates(candidates)
             let selected: ServiceWindowInfo
             if let selector {
+                let canonical = try self.canonicalizedCandidates(self.candidates(
+                    relevantTo: selector,
+                    in: candidates))
                 selected = try self.selectExplicit(selector, from: canonical)
             } else {
+                let canonical = try self.canonicalizedCandidates(candidates)
                 guard case let .preferredMutationWindow(intent) = policy else {
                     throw DesktopTargetPlanningError.windowNotFound(
                         selector: "an explicit window selector",
@@ -328,6 +331,31 @@ extension DesktopTargetPlanning {
             }
             try self.validate(selected, expectedOwner: expectedOwner)
             return selected
+        }
+
+        private static func candidates(
+            relevantTo selector: InteractionTargetSelector.WindowSelector,
+            in candidates: [ServiceWindowInfo]) -> [ServiceWindowInfo]
+        {
+            let relevantWindowIDs: Set<Int> = switch selector {
+            case let .id(windowID):
+                [windowID]
+            case let .title(title):
+                {
+                    let exact = Set(candidates.lazy.filter {
+                        $0.title.compare(title, options: .caseInsensitive) == .orderedSame
+                    }.map(\.windowID))
+                    if !exact.isEmpty {
+                        return exact
+                    }
+                    return Set(candidates.lazy.filter {
+                        $0.title.localizedCaseInsensitiveContains(title)
+                    }.map(\.windowID))
+                }()
+            case let .index(index):
+                Set(candidates.lazy.filter { $0.index == index }.map(\.windowID))
+            }
+            return candidates.filter { relevantWindowIDs.contains($0.windowID) }
         }
 
         private static func selectExplicit(

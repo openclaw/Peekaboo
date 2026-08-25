@@ -23,20 +23,27 @@ struct WindowCandidateSelectorTests {
     }
 
     @Test
-    func `unrelated conflicting duplicate poisons explicit compatibility selection`() {
+    func `unrelated conflicting duplicate does not poison explicit selection`() throws {
         let selected = AutomationTestFixtures.window(windowID: 201, title: "Selected", index: 0)
         let unrelated = AutomationTestFixtures.window(windowID: 202, title: "Other", index: 1)
         let conflicting = AutomationTestFixtures.window(windowID: 202, title: "Conflict", index: 2)
-        let expected = DesktopTargetPlanningError.conflictingWindowEntries(windowID: 202)
 
         for candidates in [
             [selected, unrelated, conflicting],
             [conflicting, unrelated, selected],
         ] {
-            #expect(throws: expected) {
-                _ = try DesktopTargetPlanning.WindowCandidateSelector.selectExplicitCandidate(
+            for selector: InteractionTargetSelector.WindowSelector in [
+                .id(selected.windowID),
+                .title(selected.title),
+                .index(selected.index),
+            ] {
+                #expect(try DesktopTargetPlanning.WindowCandidateSelector.selectExplicitCandidate(
                     candidates: candidates,
-                    selector: .id(selected.windowID))
+                    selector: selector) == selected)
+                #expect(try DesktopTargetPlanning.WindowCandidateSelector.select(
+                    candidates: candidates,
+                    selector: selector,
+                    policy: .explicit) == selected)
             }
         }
     }
@@ -233,6 +240,11 @@ struct WindowCandidateSelectorTests {
                     selector: .title(matching.title),
                     policy: .explicit)
             }
+            #expect(throws: expected) {
+                _ = try DesktopTargetPlanning.WindowCandidateSelector.selectExplicitCandidate(
+                    candidates: candidates,
+                    selector: .title(matching.title))
+            }
         }
     }
 
@@ -248,6 +260,11 @@ struct WindowCandidateSelectorTests {
                     candidates: candidates,
                     selector: .index(matching.index),
                     policy: .explicit)
+            }
+            #expect(throws: expected) {
+                _ = try DesktopTargetPlanning.WindowCandidateSelector.selectExplicitCandidate(
+                    candidates: candidates,
+                    selector: .index(matching.index))
             }
         }
     }
