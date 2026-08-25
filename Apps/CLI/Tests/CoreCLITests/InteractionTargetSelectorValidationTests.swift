@@ -44,6 +44,40 @@ struct InteractionTargetSelectorValidationTests {
     }
 
     @Test
+    func `interaction numeric failures retain CLI wording`() {
+        let cases: [(InteractionTargetOptions, String)] = [
+            (Self.makeTarget(Selectors(
+                app: nil,
+                pid: 0,
+                windowTitle: nil,
+                windowIndex: nil,
+                windowID: nil
+            )), "--pid must be greater than 0"),
+            (Self.makeTarget(Selectors(
+                app: nil,
+                pid: nil,
+                windowTitle: nil,
+                windowIndex: nil,
+                windowID: 0
+            )), "--window-id must be between 1 and \(UInt32.max)"),
+            (Self.makeTarget(Selectors(
+                app: "TextEdit",
+                pid: nil,
+                windowTitle: nil,
+                windowIndex: -1,
+                windowID: nil
+            )), "--window-index must be 0 or greater"),
+        ]
+
+        for (target, expectedMessage) in cases {
+            let error = #expect(throws: ValidationError.self) {
+                try target.validate()
+            }
+            #expect(error?.localizedDescription == expectedMessage)
+        }
+    }
+
+    @Test
     func `every phase 3 interaction surface rejects app and pid while binding`() {
         let targetOptions = ["app": ["TextEdit"], "pid": ["42"]]
 

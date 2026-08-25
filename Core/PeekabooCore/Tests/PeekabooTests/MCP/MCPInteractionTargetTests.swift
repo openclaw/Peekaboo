@@ -414,6 +414,9 @@ struct MCPInteractionTargetTests {
         case windowIDAndTitle
         case titleWithoutOwner
         case indexWithoutOwner
+        case invalidPID
+        case invalidWindowID
+        case invalidWindowIndex
 
         var arguments: [String: Any] {
             switch self {
@@ -425,6 +428,12 @@ struct MCPInteractionTargetTests {
                 ["window_title": "Main"]
             case .indexWithoutOwner:
                 ["window_index": 2]
+            case .invalidPID:
+                ["pid": 0]
+            case .invalidWindowID:
+                ["window_id": 0]
+            case .invalidWindowIndex:
+                ["app": "Preview", "window_index": -1]
             }
         }
 
@@ -436,6 +445,12 @@ struct MCPInteractionTargetTests {
                 "window_id, window_title, and window_index are mutually exclusive"
             case .titleWithoutOwner, .indexWithoutOwner:
                 "require app or pid"
+            case .invalidPID:
+                "pid must be a positive 32-bit integer"
+            case .invalidWindowID:
+                "window_id must be between 1 and \(UInt32.max)"
+            case .invalidWindowIndex:
+                "window_index must be 0 or greater"
             }
         }
     }
@@ -570,6 +585,31 @@ struct MCPInteractionTargetTests {
             try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(
                 .refused(reason: .invalidRequest),
                 in: response)
+        }
+    }
+
+    @MainActor
+    @Test
+    func `background dialog admission maps canonical owner and range errors`() async throws {
+        let context = await MCPToolTestHelpers.makeContext(executionPolicy: .backgroundOnly)
+        for fixture in [
+            InvalidConsumerFixture.applicationAndPID,
+            .invalidPID,
+            .invalidWindowID,
+        ] {
+            let response = try await context.execute(
+                tool: DialogTool(context: context),
+                arguments: ToolArguments(raw: fixture.arguments.merging([
+                    "action": "click",
+                    "button": "OK",
+                ]) { current, _ in current }))
+
+            #expect(response.isError)
+            guard case let .text(text, _, _)? = response.content.first else {
+                Issue.record("Expected background selector admission error")
+                continue
+            }
+            #expect(text.contains(fixture.message))
         }
     }
 

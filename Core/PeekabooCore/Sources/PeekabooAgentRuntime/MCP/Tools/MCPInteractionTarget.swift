@@ -295,18 +295,6 @@ struct MCPInteractionTarget {
                 preconditionFailure("Interaction policy does not emit \(error)")
             }
         }
-
-        if let pid, pid <= 0 || Int32(exactly: pid) == nil {
-            throw MCPInteractionTargetError.invalidProcessIdentifier
-        }
-
-        if let windowId, windowId <= 0 || CGWindowID(exactly: windowId) == nil {
-            throw MCPInteractionTargetError.invalidWindowId
-        }
-
-        if let windowIndex, windowIndex < 0 {
-            throw MCPInteractionTargetError.invalidWindowIndex
-        }
     }
 
     func toWindowTarget() throws -> WindowTarget? {

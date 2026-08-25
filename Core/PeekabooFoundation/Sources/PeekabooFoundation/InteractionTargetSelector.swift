@@ -143,6 +143,7 @@ public struct InteractionTargetSelector: Equatable, Sendable {
         switch policy {
         case .interaction:
             try self.validateInteractionGrammar(allowsGlobalTitle: false, rejectsEmptyStrings: false)
+            try self.validateNumericRanges()
 
         case .dialogOwnerRequired:
             try self.validateInteractionGrammar(allowsGlobalTitle: false, rejectsEmptyStrings: true)

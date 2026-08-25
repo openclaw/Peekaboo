@@ -8,6 +8,11 @@ import Testing
 @testable import PeekabooCore
 
 struct WindowToolExactRoutingTests {
+    struct InvalidSelectorFixture: Sendable {
+        let arguments: [String: Int]
+        let expectedMessage: String
+    }
+
     @Test
     @MainActor
     func `background window mutation retains exact authorized window through dispatch`() async throws {
@@ -162,6 +167,44 @@ struct WindowToolExactRoutingTests {
         #expect(service.mutationDispatchCount == 1)
         #expect(service.closeTargets.map(\.description) == ["windowId(924)"])
         #expect(service.receivedIdentities.map(\.ownerProcessStartIdentity) == [7])
+    }
+
+    @Test(arguments: [
+        InvalidSelectorFixture(
+            arguments: ["window_id": 0],
+            expectedMessage: "window_id must be a valid positive WindowServer identifier"),
+        InvalidSelectorFixture(
+            arguments: ["index": -1],
+            expectedMessage: "index must be zero or greater"),
+    ])
+    @MainActor
+    func `background window numeric admission maps canonical selector errors`(
+        fixture: InvalidSelectorFixture) async throws
+    {
+        let service = ExactRoutingWindowService()
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: Self.fixtureApplications(),
+            windows: service,
+            executionPolicy: .backgroundOnly)
+        var arguments: [String: Any] = [
+            "action": "close",
+            "app": "Fixture",
+        ]
+        for (key, value) in fixture.arguments {
+            arguments[key] = value
+        }
+
+        let response = try await context.execute(
+            tool: WindowTool(context: context),
+            arguments: ToolArguments(raw: arguments))
+
+        #expect(response.isError)
+        #expect(service.mutationDispatchCount == 0)
+        guard case let .text(message, _, _)? = response.content.first else {
+            Issue.record("Expected canonical selector admission refusal")
+            return
+        }
+        #expect(message.contains(fixture.expectedMessage))
     }
 
     @Test

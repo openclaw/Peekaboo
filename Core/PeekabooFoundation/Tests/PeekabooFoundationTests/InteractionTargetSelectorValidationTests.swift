@@ -75,19 +75,24 @@ struct InteractionTargetSelectorValidationTests {
     }
 
     @Test
-    func `canonical mutation-safe policy validates numeric ranges`() {
-        #expect(throws: InteractionTargetSelector.ValidationError.invalidProcessIdentifier) {
-            try InteractionTargetSelector(processIdentifier: 0).validate(policy: .mutationSafe)
-        }
-        #expect(throws: InteractionTargetSelector.ValidationError.invalidProcessIdentifier) {
-            try InteractionTargetSelector(processIdentifier: Int(Int32.max) + 1).validate(policy: .mutationSafe)
-        }
-        #expect(throws: InteractionTargetSelector.ValidationError.invalidWindowID) {
-            try InteractionTargetSelector(windowID: Int(UInt32.max) + 1).validate(policy: .mutationSafe)
-        }
-        #expect(throws: InteractionTargetSelector.ValidationError.invalidWindowIndex) {
-            try InteractionTargetSelector(applicationIdentifier: "Preview", windowIndex: -1)
-                .validate(policy: .mutationSafe)
+    func `canonical interaction policies validate numeric ranges`() {
+        for policy in [InteractionTargetSelector.Policy.interaction, .mutationSafe] {
+            #expect(throws: InteractionTargetSelector.ValidationError.invalidProcessIdentifier) {
+                try InteractionTargetSelector(processIdentifier: 0).validate(policy: policy)
+            }
+            #expect(throws: InteractionTargetSelector.ValidationError.invalidProcessIdentifier) {
+                try InteractionTargetSelector(processIdentifier: Int(Int32.max) + 1).validate(policy: policy)
+            }
+            #expect(throws: InteractionTargetSelector.ValidationError.invalidWindowID) {
+                try InteractionTargetSelector(windowID: 0).validate(policy: policy)
+            }
+            #expect(throws: InteractionTargetSelector.ValidationError.invalidWindowID) {
+                try InteractionTargetSelector(windowID: Int(UInt32.max) + 1).validate(policy: policy)
+            }
+            #expect(throws: InteractionTargetSelector.ValidationError.invalidWindowIndex) {
+                try InteractionTargetSelector(applicationIdentifier: "Preview", windowIndex: -1)
+                    .validate(policy: policy)
+            }
         }
     }
 

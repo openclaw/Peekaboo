@@ -52,14 +52,6 @@ struct InteractionTargetOptions: CommanderParsable, ApplicationResolvable {
 
     func validate() throws {
         try self.validateSelectorCombination()
-
-        if let windowIndex = self.windowIndex, windowIndex < 0 {
-            throw ValidationError("--window-index must be 0 or greater")
-        }
-
-        if let windowId = self.windowId, windowId <= 0 || UInt32(exactly: windowId) == nil {
-            throw ValidationError("--window-id must be between 1 and \(UInt32.max)")
-        }
     }
 
     func resolveApplicationIdentifierOptional() throws -> String? {

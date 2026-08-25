@@ -184,25 +184,16 @@ extension MCPToolContext {
         }
 
         let pid = try keys.pid.flatMap { try arguments.validatedInt($0) }
-        guard pid.map({ $0 > 0 && Int32(exactly: $0) != nil }) ?? true else {
-            throw BackgroundTargetResolutionError("pid must be a valid positive process identifier")
-        }
-        guard applicationSelector.value == nil || pid == nil else {
-            throw BackgroundTargetResolutionError("app and pid are mutually exclusive")
-        }
         let windowID = try arguments.validatedInt("window_id")
         let windowIndex = try arguments.validatedInt(keys.index)
-        guard windowID.map({ $0 > 0 && UInt32(exactly: $0) != nil }) ?? true else {
-            throw BackgroundTargetResolutionError("window_id must be a valid positive WindowServer identifier")
-        }
-        guard windowIndex.map({ $0 >= 0 }) ?? true else {
-            throw BackgroundTargetResolutionError("\(keys.index) must be zero or greater")
-        }
-        let selectorCount = [windowID != nil, titleSelector.value != nil, windowIndex != nil].count(where: { $0 })
-        guard selectorCount <= 1 else {
-            throw BackgroundTargetResolutionError("window_id, \(keys.title), and \(keys.index) are mutually exclusive")
-        }
-        if toolName == "paste", selectorCount == 0 {
+        let selector = InteractionTargetSelector(
+            applicationIdentifier: applicationSelector.value,
+            processIdentifier: pid,
+            windowID: windowID,
+            windowTitle: titleSelector.value,
+            windowIndex: windowIndex)
+        try self.validateBackgroundInteractionSelector(selector, keys: keys)
+        if toolName == "paste", !selector.hasWindowInput {
             return nil
         }
         guard windowID != nil || applicationSelector.value != nil || pid != nil else {
@@ -211,12 +202,38 @@ extension MCPToolContext {
         }
         return BackgroundExactWindowSelector(
             keys: keys,
-            selector: InteractionTargetSelector(
-                applicationIdentifier: applicationSelector.value,
-                processIdentifier: pid,
-                windowID: windowID,
-                windowTitle: titleSelector.value,
-                windowIndex: windowIndex))
+            selector: selector)
+    }
+
+    private static func validateBackgroundInteractionSelector(
+        _ selector: InteractionTargetSelector,
+        keys: BackgroundExactWindowSelectorKeys) throws
+    {
+        do {
+            try selector.validate(policy: .interaction)
+        } catch let error as InteractionTargetSelector.ValidationError {
+            let detail = switch error {
+            case .applicationAndProcessIdentifier:
+                "app and pid are mutually exclusive"
+            case .multipleWindowSelectors:
+                "window_id, \(keys.title), and \(keys.index) are mutually exclusive"
+            case .windowSelectorRequiresApplication:
+                "background window mutation requires an application or exact window_id owner"
+            case .invalidProcessIdentifier:
+                "pid must be a valid positive process identifier"
+            case .invalidWindowID:
+                "window_id must be a valid positive WindowServer identifier"
+            case .invalidWindowIndex:
+                "\(keys.index) must be zero or greater"
+            case .conflictingProcessIdentifiers,
+                 .invalidApplicationProcessIdentifier,
+                 .missingTarget,
+                 .emptyApplication,
+                 .emptyWindowTitle:
+                preconditionFailure("Interaction policy does not emit \(error)")
+            }
+            throw BackgroundTargetResolutionError(detail)
+        }
     }
 
     private static func backgroundExactWindowSelectorKeys(
@@ -248,6 +265,7 @@ extension MCPToolContext {
         schema: BackgroundApplicationTargetSchema) throws -> [String]
     {
         var identifiers: [String] = []
+        var stringSelectors: [String] = []
         for key in schema.stringKeys {
             let selector = Self.strictString(arguments, key: key)
             guard !selector.isInvalid else {
@@ -255,12 +273,27 @@ extension MCPToolContext {
             }
             if let value = selector.value {
                 identifiers.append(value)
+                stringSelectors.append(value)
             }
         }
+        var processIdentifiers: [Int] = []
         for key in schema.pidKeys {
-            if let pid = arguments.getInt(key), pid > 0 {
+            if let pid = try arguments.validatedInt(key) {
                 identifiers.append("PID:\(pid)")
+                processIdentifiers.append(pid)
             }
+        }
+        if schema.stringKeys.count == 1, schema.pidKeys.count == 1 {
+            let selector = InteractionTargetSelector(
+                applicationIdentifier: stringSelectors.first,
+                processIdentifier: processIdentifiers.first)
+            try self.validateBackgroundInteractionSelector(
+                selector,
+                keys: BackgroundExactWindowSelectorKeys(
+                    application: schema.stringKeys[0],
+                    pid: schema.pidKeys[0],
+                    title: "window_title",
+                    index: "window_index"))
         }
         return identifiers
     }
@@ -271,7 +304,14 @@ extension MCPToolContext {
     {
         var identities: [DesktopTargetIdentity] = []
         for key in keys {
-            guard let windowID = arguments.getInt(key) else { continue }
+            guard let windowID = try arguments.validatedInt(key) else { continue }
+            try Self.validateBackgroundInteractionSelector(
+                InteractionTargetSelector(windowID: windowID),
+                keys: BackgroundExactWindowSelectorKeys(
+                    application: "app",
+                    pid: "pid",
+                    title: "window_title",
+                    index: "window_index"))
             let windows: [ServiceWindowInfo]
             do {
                 windows = try await self.windows.listWindows(target: .windowId(windowID))
