@@ -154,9 +154,9 @@ struct CaptureLiveBehaviorTests {
             [secondConflict, firstConflict, selected],
         ]
         let expectedMessage =
-            "Capture selector test window title 'Draft' is ambiguous " +
+            "Capture selector test found conflicting inventory rows for window ID 202 " +
             "(id=202 index=1 'Other A'; id=202 index=2 'Other B'). " +
-            "Select one --window-id or --window-index explicitly."
+            "Refresh the window inventory before retrying."
 
         for surface in SelectorSurface.allCases {
             let selector = try Self.selector(for: surface, title: "Draft")

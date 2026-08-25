@@ -295,9 +295,9 @@ struct CaptureToolPathResolverTests {
         let firstConflict = Self.window(id: 50, title: "Other A", index: 1)
         let secondConflict = Self.window(id: 50, title: "Other B", index: 2)
         let expectedMessage =
-            "window title 'Project' is ambiguous " +
+            "found conflicting inventory rows for window ID 50 " +
             "(id=50 index=1 'Other A'; id=50 index=2 'Other B'). " +
-            "Select one window_id or index explicitly."
+            "Refresh the window inventory before retrying."
 
         for inventory in [
             [selected, firstConflict, secondConflict],

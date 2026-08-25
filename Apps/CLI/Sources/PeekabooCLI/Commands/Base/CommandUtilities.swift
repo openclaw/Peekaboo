@@ -389,13 +389,18 @@ enum ExactWindowSelectorResolver {
         windows: [ServiceWindowInfo],
         operation: String) -> ExactWindowSelectorResolutionError
     {
-        switch (selection, error) {
+        if case let .conflictingWindowEntries(windowID) = error {
+            return self.inventoryConflictError(
+                windowID: windowID,
+                windows: windows,
+                operation: operation)
+        }
+        return switch (selection, error) {
         case let (.id(windowID), .windowNotFound):
             ExactWindowSelectorResolutionError(
                 message: "\(operation) --window-id \(windowID) does not identify a window. " +
                     "Refresh the window inventory before retrying.")
-        case let (.id(windowID), .ambiguousWindow),
-             let (.id(windowID), .conflictingWindowEntries):
+        case let (.id(windowID), .ambiguousWindow):
             ExactWindowSelectorResolutionError(
                 message: "\(operation) --window-id \(windowID) identifies multiple windows. " +
                     "Refresh the window inventory before retrying.")
@@ -409,18 +414,11 @@ enum ExactWindowSelectorResolver {
                 windowIDs: windowIDs,
                 windows: windows,
                 operation: operation)
-        case let (.title(title), .conflictingWindowEntries(windowID)):
-            self.titleAmbiguityError(
-                title: title,
-                windowIDs: [windowID],
-                windows: windows,
-                operation: operation)
         case let (.index(index), .windowNotFound):
             ExactWindowSelectorResolutionError(
                 message: "\(operation) --window-index \(index) is not present. " +
                     "Refresh the inventory and select a --window-id.")
-        case let (.index(index), .ambiguousWindow),
-             let (.index(index), .conflictingWindowEntries):
+        case let (.index(index), .ambiguousWindow):
             ExactWindowSelectorResolutionError(
                 message: "\(operation) --window-index \(index) is ambiguous. " +
                     "Refresh the inventory and select a --window-id.")
@@ -436,8 +434,29 @@ enum ExactWindowSelectorResolver {
         windows: [ServiceWindowInfo],
         operation: String) -> ExactWindowSelectorResolutionError
     {
+        let candidates = self.candidateSummary(windowIDs: windowIDs, windows: windows)
+        return ExactWindowSelectorResolutionError(
+            message: "\(operation) window title '\(title)' is ambiguous (\(candidates)). " +
+                "Select one --window-id or --window-index explicitly.")
+    }
+
+    private static func inventoryConflictError(
+        windowID: Int,
+        windows: [ServiceWindowInfo],
+        operation: String) -> ExactWindowSelectorResolutionError
+    {
+        let candidates = self.candidateSummary(windowIDs: [windowID], windows: windows)
+        return ExactWindowSelectorResolutionError(
+            message: "\(operation) found conflicting inventory rows for window ID \(windowID) (\(candidates)). " +
+                "Refresh the window inventory before retrying.")
+    }
+
+    private static func candidateSummary(
+        windowIDs: [Int],
+        windows: [ServiceWindowInfo]) -> String
+    {
         let candidateIDs = Set(windowIDs)
-        let candidates = windows.lazy.filter { candidateIDs.contains($0.windowID) }
+        return windows.lazy.filter { candidateIDs.contains($0.windowID) }
             .sorted { lhs, rhs in
                 if lhs.windowID != rhs.windowID {
                     return lhs.windowID < rhs.windowID
@@ -450,9 +469,6 @@ enum ExactWindowSelectorResolver {
             .prefix(5)
             .map { "id=\($0.windowID) index=\($0.index) '\($0.title)'" }
             .joined(separator: "; ")
-        return ExactWindowSelectorResolutionError(
-            message: "\(operation) window title '\(title)' is ambiguous (\(candidates)). " +
-                "Select one --window-id or --window-index explicitly.")
     }
 }
 
