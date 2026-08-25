@@ -109,7 +109,7 @@ struct MCPExactWindowKeyboardToolTests {
     }
 
     @Test
-    func `Type keeps focused snapshot evidence when selector repeats the exact window`() async throws {
+    func `Type revalidates matching focused snapshot evidence before exact dispatch`() async throws {
         let window = Self.keyboardWindow(id: 42, index: 0)
         let snapshot = await Self.makeSnapshot(window: window)
         let focused = Self.focusInfo(windowID: 42)
@@ -124,7 +124,7 @@ struct MCPExactWindowKeyboardToolTests {
             windowBounds: window.bounds,
             windowMutationIdentity: window.mutationIdentity,
             focusedElement: focusedIdentity))
-        let fixture = await Self.makeFixture(focusedWindowID: nil)
+        let fixture = await Self.makeFixture(focusedWindowID: 42)
 
         let response = try await TypeTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
             "snapshot": snapshot.id,
@@ -137,6 +137,63 @@ struct MCPExactWindowKeyboardToolTests {
         let call = try #require(await MainActor.run { fixture.automation.exactTypeCalls.first })
         #expect(call.target.focusedElement == focusedIdentity)
         await Self.uiSnapshots.removeSnapshot(id: snapshot.id)
+    }
+
+    @Test
+    func `Type refuses stale button focus evidence when AXPress left keyboard focus elsewhere`() async throws {
+        let window = Self.keyboardWindow(id: 42, index: 0)
+        let snapshot = await Self.makeSnapshot(window: window)
+        let staleButtonFocus = FocusedElementIdentity(
+            processIdentifier: 333,
+            windowID: 42,
+            role: "AXButton",
+            title: "Focus",
+            identifier: "focus-basic-button",
+            frame: CGRect(x: 20, y: 70, width: 100, height: 30))
+        let stored = try #require(await Self.uiSnapshots.getSnapshot(id: snapshot.id))
+        await stored.setTargetMetadata(from: WindowContext(
+            applicationName: "Editor",
+            applicationBundleId: "com.example.editor",
+            applicationProcessId: 333,
+            windowTitle: window.title,
+            windowID: window.windowID,
+            windowBounds: window.bounds,
+            windowMutationIdentity: window.mutationIdentity,
+            focusedElement: staleButtonFocus))
+        let fixture = await Self.makeFixture(focusedWindowID: 42)
+
+        let response = try await TypeTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "snapshot": snapshot.id,
+            "pid": 333,
+            "window_id": 42,
+            "text": "hello",
+        ]))
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["refusal_reason"] == .string("target_unavailable"))
+        #expect(await MainActor.run { fixture.automation.exactTypeCalls.isEmpty })
+        await Self.uiSnapshots.removeSnapshot(id: snapshot.id)
+    }
+
+    @Test
+    func `Exact Type CLI parity treats dispatched-unverified characters as non-success`() async throws {
+        let fixture = await Self.makeFixture(focusedWindowID: 42)
+        await MainActor.run {
+            fixture.automation.uiAutomationOutcomeScript.setDefaultOutcome(.dispatchedUnverified(
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .one))
+        }
+
+        let response = try await TypeTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "text": "hello",
+        ]))
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["state"] == .string("dispatched_unverified"))
+        #expect(response.meta?.objectValue?["characters_typed"] == .null)
+        #expect(await MainActor.run { fixture.automation.exactTypeCalls.count } == 1)
     }
 
     private static func makeFixture(

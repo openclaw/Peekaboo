@@ -134,6 +134,13 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                     snapshotId: observation.snapshotId,
                     target: deliveryTarget
                 )
+                if actionResult.outcome != nil {
+                    _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                        actionResult,
+                        policy: .confirmed(requiring: Self.delivery(for: deliveryTarget).mode),
+                        operation: "Typing"
+                    )
+                }
                 let receiptlessStep = DesktopActionSequenceAccumulator.Step.dispatched(
                     route: actionRoute,
                     delivery: Self.delivery(for: deliveryTarget),
@@ -186,9 +193,12 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             )
             let compositeResult = actionSequence.result(payload: actionResult.payload)
             self.renderResult(
-                compositeResult.payload,
-                outcome: compositeResult.outcome,
-                targetIdentity: compositeResult.targetIdentity,
+                TypeCommandRenderInput(
+                    typeResult: compositeResult.payload,
+                    outcome: compositeResult.outcome,
+                    typingOutcome: actionResult.outcome,
+                    targetIdentity: compositeResult.targetIdentity
+                ),
                 actions: actions,
                 startTime: startTime,
                 target: deliveryTarget
@@ -346,7 +356,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             )
             _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
                 result,
-                policy: .confirmedOrDispatched(requiring: .background),
+                policy: .confirmed(requiring: .background),
                 targetRequirement: .exact(expectedTarget),
                 operation: "Pixel-focus typing"
             )
@@ -365,9 +375,12 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             reason: "pixel-focus type"
         )
         self.renderResult(
-            result.payload,
-            outcome: result.outcome,
-            targetIdentity: result.targetIdentity,
+            TypeCommandRenderInput(
+                typeResult: result.payload,
+                outcome: result.outcome,
+                typingOutcome: result.outcome,
+                targetIdentity: result.targetIdentity
+            ),
             actions: actions,
             startTime: startTime,
             target: .exactWindow(authority.target)
@@ -445,22 +458,24 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
     }
 
     private func renderResult(
-        _ typeResult: TypeResult,
-        outcome: DesktopActionOutcome?,
-        targetIdentity: DesktopTargetIdentity?,
+        _ input: TypeCommandRenderInput,
         actions: [TypeAction],
         startTime: Date,
         target: UIAutomationTarget
     ) {
+        let typeResult = input.typeResult
         let targetProcessIdentifier = target.processIdentifier
         let targetWindowID = target.exactWindow?.identity.windowID
-        let specialKeys = max(typeResult.keyPresses - typeResult.totalCharacters, 0)
+        let effectConfirmed = input.typingOutcome.map { $0.state == .confirmedChange } ?? true
+        let confirmedCharacters = effectConfirmed ? typeResult.totalCharacters : 0
+        let confirmedKeyPresses = effectConfirmed ? typeResult.keyPresses : 0
+        let specialKeys = max(confirmedKeyPresses - confirmedCharacters, 0)
         let result = TypeCommandResult(
             requestedText: self.resolvedText,
-            typedText: self.resolvedText,
-            keyPresses: typeResult.keyPresses,
-            totalCharacters: typeResult.totalCharacters,
-            literalCharactersTyped: typeResult.totalCharacters,
+            typedText: effectConfirmed ? self.resolvedText : nil,
+            keyPresses: confirmedKeyPresses,
+            totalCharacters: confirmedCharacters,
+            literalCharactersTyped: confirmedCharacters,
             specialKeyPresses: specialKeys,
             actions: actions.map(Self.actionSummary),
             executionTime: Date().timeIntervalSince(startTime),
@@ -472,13 +487,13 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             targetWindowID: targetWindowID
         )
 
-        output(result, outcome: outcome, targetIdentity: targetIdentity) {
-            if let outcome {
+        output(result, outcome: input.outcome, targetIdentity: input.targetIdentity) {
+            if let outcome = input.outcome {
                 print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Typing"))
             } else {
                 print("✅ Typing completed")
             }
-            if let typed = self.resolvedText {
+            if effectConfirmed, let typed = self.resolvedText {
                 print("⌨️  Typed: \"\(typed)\"")
             }
             if specialKeys > 0 {
@@ -490,7 +505,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             if let targetWindowID {
                 print("🪟 Window: \(targetWindowID)")
             }
-            print("📊 Total characters: \(typeResult.totalCharacters)")
+            print("📊 Total characters: \(confirmedCharacters)")
             switch self.resolvedProfile {
             case .human:
                 print("🏃‍♀️ Human cadence: \(self.resolvedWordsPerMinute) WPM")
@@ -529,6 +544,13 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             reason: "type failure"
         )
     }
+}
+
+private struct TypeCommandRenderInput {
+    let typeResult: TypeResult
+    let outcome: DesktopActionOutcome?
+    let typingOutcome: DesktopActionOutcome?
+    let targetIdentity: DesktopTargetIdentity?
 }
 
 @MainActor

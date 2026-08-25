@@ -55,6 +55,8 @@ public final class TypeService {
     private let operationFinalizer: @MainActor () -> Void
     private let pixelFocusReceiptPlanner: @MainActor @Sendable (String) async throws -> SnapshotTargetReceiptPlan
     private let pixelFocusPlanEntryHook: @MainActor @Sendable () async throws -> Void
+    private let exactFocusedElementValueReader: @Sendable (FocusedElementIdentity)
+        -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
 
     public convenience init(
         snapshotManager: (any SnapshotManagerProtocol)? = nil,
@@ -77,6 +79,8 @@ public final class TypeService {
         actionInputDriver: any ActionInputDriving = ActionInputDriver(),
         syntheticInputDriver: any SyntheticInputDriving = SyntheticInputDriver(),
         automationElementResolver: any AutomationElementResolving = AutomationElementResolver(),
+        exactFocusedElementValueReader: @escaping @Sendable (FocusedElementIdentity)
+            -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError> = DetachedExactWindowFocusReader.readValue,
         desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
         operationFinalizer: @escaping @MainActor () -> Void = {})
     {
@@ -89,6 +93,7 @@ public final class TypeService {
             automationElementResolver: automationElementResolver,
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: Self.focusedElementIsSecureField,
+            exactFocusedElementValueReader: exactFocusedElementValueReader,
             desktopOperationExecutor: desktopOperationExecutor,
             operationFinalizer: operationFinalizer)
     }
@@ -104,6 +109,8 @@ public final class TypeService {
         focusedElementSecurityProbe: @escaping @MainActor (pid_t?) -> Bool = TypeService.focusedElementIsSecureField,
         targetedCharacterTyper: @escaping @MainActor (Character, pid_t) throws -> Void = TypeService
             .typeTargetedCharacter,
+        exactFocusedElementValueReader: @escaping @Sendable (FocusedElementIdentity)
+            -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError> = DetachedExactWindowFocusReader.readValue,
         desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
         operationFinalizer: @escaping @MainActor () -> Void = {},
         pixelFocusReceiptPlanner: (@MainActor @Sendable (String) async throws -> SnapshotTargetReceiptPlan)? = nil,
@@ -126,6 +133,7 @@ public final class TypeService {
         self.cadenceRandom = randomSource
         self.focusedElementSecurityProbe = focusedElementSecurityProbe
         self.targetedCharacterTyper = targetedCharacterTyper
+        self.exactFocusedElementValueReader = exactFocusedElementValueReader
         self.desktopOperationExecutor = desktopOperationExecutor
         self.operationFinalizer = operationFinalizer
         self.pixelFocusReceiptPlanner = pixelFocusReceiptPlanner ?? { snapshotID in
@@ -364,6 +372,10 @@ public final class TypeService {
         var payloadSummary: TypeActionPayloadSummary?
         var summary: TypeActionExecutionSummary?
         let targetProcessIdentifier = automationTarget.processIdentifier
+        let effectConfirmation = automationTarget.exactWindow.flatMap {
+            ExactLiteralTypingEffectConfirmation.plan(actions: actions, target: $0)
+        }
+        var confirmationPreflightSucceeded = false
         let plan = try DesktopOperationPlan(
             verb: .type,
             selector: .focused,
@@ -371,7 +383,13 @@ public final class TypeService {
                 snapshotID: snapshotId,
                 target: automationTarget),
             strategy: targetProcessIdentifier == nil ? self.inputPolicy.strategy(for: .type) : .synthOnly,
-            prepare: { await lanePreparation() },
+            prepare: {
+                if let effectConfirmation {
+                    confirmationPreflightSucceeded = await self.exactFocusedValue(
+                        for: effectConfirmation) != nil
+                }
+                await lanePreparation()
+            },
             action: nil,
             synthesis: DesktopOperationPlan.SynthesisRoute {
                 payloadSummary = try await self.performSyntheticTypeActions(
@@ -388,9 +406,18 @@ public final class TypeService {
                 guard let payloadSummary else {
                     return
                 }
+                var verifiedExecutionResult = executionResult
+                if let effectConfirmation,
+                   confirmationPreflightSucceeded,
+                   let observedValue = await self.exactFocusedValue(for: effectConfirmation)
+                {
+                    verifiedExecutionResult.outcome = effectConfirmation.confirmedOutcome(
+                        from: executionResult.outcome,
+                        observedValue: observedValue)
+                }
                 let completedSummary = TypeActionExecutionSummary(
                     result: payloadSummary.result,
-                    executionResult: executionResult,
+                    executionResult: verifiedExecutionResult,
                     typedIntoSecureField: payloadSummary.typedIntoSecureField)
                 summary = completedSummary
                 await laneCompletion(completedSummary)
@@ -402,6 +429,21 @@ public final class TypeService {
             throw PeekabooError.operationError(message: "Type action execution did not produce a result")
         }
         return summary
+    }
+
+    private func exactFocusedValue(
+        for confirmation: ExactLiteralTypingEffectConfirmation) async -> String?
+    {
+        let reader = self.exactFocusedElementValueReader
+        let focusedElement = confirmation.focusedElement
+        let observation = try? await ElementDetectionTimeoutRunner.runDetached(
+            targetProcessIdentifier: focusedElement.processIdentifier,
+            targetProcessStartIdentity: confirmation.processStartIdentity,
+            seconds: 0.2)
+        {
+            reader(focusedElement)
+        }
+        return observation.flatMap(confirmation.readableValue(from:))
     }
 
     private func performSyntheticTypeActions(

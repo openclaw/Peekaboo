@@ -227,7 +227,9 @@ public struct TypeTool: MCPTool {
         else { return nil }
         return normalized
     }
+}
 
+extension TypeTool {
     private func parseProfile(_ raw: String?, wordsPerMinute: Int?) throws -> TypingProfile {
         guard let raw else { return wordsPerMinute == nil ? .linear : .human }
         guard let profile = TypingProfile(rawValue: raw.lowercased()) else {
@@ -371,16 +373,11 @@ public struct TypeTool: MCPTool {
                 causeDescription: error.localizedDescription))
         }
 
-        do {
-            try DesktopActionFailure.requireConfirmedIfReported(
-                typeActionResult.outcome,
-                operation: "Typing")
-        } catch let failure as DesktopActionFailure {
-            throw focusResult.attributing(sequence.failure(
-                combining: failure,
-                message: "Typing failed after its element focus action completed.",
-                hint: "Observe the target before deciding whether to retry typing."))
-        }
+        try TypeActionResultSemantics.requireConfirmed(
+            typeActionResult,
+            target: plannedTarget,
+            focusResult: focusResult,
+            sequence: sequence)
 
         if let outcome = typeActionResult.outcome {
             sequence.record(.reportedOutcome(
@@ -518,7 +515,7 @@ public struct TypeTool: MCPTool {
         let expectedIdentity = DesktopTargetIdentity(exactWindow: target.exactWindow)
         _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
             actionResult,
-            policy: .confirmedOrDispatched(requiring: .background),
+            policy: .confirmed(requiring: .background),
             targetRequirement: .exact(expectedIdentity),
             operation: "Pixel-focus typing")
         var sequence = DesktopActionSequenceAccumulator()
@@ -623,8 +620,7 @@ public struct TypeTool: MCPTool {
                 error.localizedDescription,
                 refusalReason: .runtimeIncompatible)
         }
-        let hasReceipt = target?.exactWindow?.focusedElement != nil
-        guard hasReceipt || (automation is any TargetedFocusedElementServiceProtocol) else {
+        guard automation is any TargetedFocusedElementServiceProtocol else {
             throw TypeToolValidationError(
                 "This automation host does not support focused exact-window background typing.",
                 refusalReason: .runtimeIncompatible)
@@ -981,6 +977,28 @@ public struct TypeTool: MCPTool {
                 refusalReason: .targetUnavailable)
         }
         return snapshot
+    }
+}
+
+private enum TypeActionResultSemantics {
+    static func requireConfirmed(
+        _ result: UIAutomationActionResult<TypeResult>,
+        target: UIAutomationTarget?,
+        focusResult: TypeFocusResult,
+        sequence: DesktopActionSequenceAccumulator) throws
+    {
+        do {
+            guard result.outcome != nil else { return }
+            _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                result,
+                policy: .confirmed(requiring: target == nil ? .foreground : .background),
+                operation: "Typing")
+        } catch let failure as DesktopActionFailure {
+            throw focusResult.attributing(sequence.failure(
+                combining: failure,
+                message: "Typing failed after its element focus action completed.",
+                hint: "Observe the target before deciding whether to retry typing."))
+        }
     }
 }
 

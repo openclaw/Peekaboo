@@ -77,6 +77,13 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
                     windowID: 42,
                     frame: CGRect(x: 100, y: 100, width: 20, height: 20))
             },
+            exactKeyWindowReader: { processIdentifier in
+                sequence.append("key-window")
+                return ExactKeyWindowSnapshot(
+                    processIdentifier: processIdentifier,
+                    windowID: 42,
+                    hasSheet: false)
+            },
             exactWindowIdentityValidator: { identity, expectedBounds in
                 sequence.append("identity")
                 return identity == staleIdentity && expectedBounds == bounds
@@ -104,7 +111,7 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
             XCTAssertTrue(message.contains("target"))
         }
 
-        XCTAssertEqual(sequence.values, ["focus", "identity"])
+        XCTAssertEqual(sequence.values, ["focus", "key-window", "identity"])
         XCTAssertEqual(postedEventCount, 0)
     }
 
@@ -161,6 +168,9 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
                     title: "Sibling",
                     identifier: "sibling"))
             },
+            exactKeyWindowReader: { processIdentifier in
+                ExactKeyWindowSnapshot(processIdentifier: processIdentifier, windowID: 42, hasSheet: false)
+            },
             exactWindowIdentityValidator: { _, _ in true })
 
         do {
@@ -210,6 +220,12 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
                     title: receipt.title,
                     identifier: receipt.identifier))
             },
+            exactKeyWindowReader: { processIdentifier in
+                ExactKeyWindowSnapshot(
+                    processIdentifier: processIdentifier,
+                    windowID: identity.windowID,
+                    hasSheet: false)
+            },
             exactWindowIdentityValidator: { candidate, candidateBounds in
                 candidate.hasSameStableReceipt(as: identity) && candidateBounds == bounds
             })
@@ -220,6 +236,125 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
             expectedFocusedElement: expected)
 
         XCTAssertFalse(applicationReaderUsed.value)
+    }
+
+    func testInactiveApplicationFocusedElementCannotAuthorizeAnotherInternalKeyWindow() async throws {
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 930_007,
+            ownerProcessStartIdentity: 92,
+            capturedBounds: bounds)
+        let expected = FocusedElementIdentity(
+            processIdentifier: identity.ownerProcessIdentifier,
+            windowID: identity.windowID,
+            role: "AXTextField",
+            identifier: "inactive-editor",
+            frame: CGRect(x: 50, y: 100, width: 200, height: 30))
+        let service = UIAutomationService(
+            actionInputDriver: ActionInputDriver(),
+            automationElementResolver: AutomationElementResolver(),
+            exactFocusedElementReader: { receipt in
+                .success(ExactWindowFocusSnapshot(
+                    processIdentifier: receipt.processIdentifier,
+                    windowID: receipt.windowID,
+                    frame: receipt.frame,
+                    role: receipt.role,
+                    title: receipt.title,
+                    identifier: receipt.identifier))
+            },
+            exactKeyWindowReader: { processIdentifier in
+                ExactKeyWindowSnapshot(
+                    processIdentifier: processIdentifier,
+                    windowID: identity.windowID + 1,
+                    hasSheet: false)
+            },
+            exactWindowIdentityValidator: { _, _ in true })
+
+        do {
+            try await service.requireExactWindowKeyboardFocus(
+                expectedWindowIdentity: identity,
+                expectedWindowBounds: bounds,
+                expectedFocusedElement: expected)
+            XCTFail("Expected internal key-window mismatch to fail closed")
+        } catch let PeekabooError.invalidInput(message) {
+            XCTAssertTrue(message.contains("target"), message)
+        }
+    }
+
+    func testMatchingFocusedElementAndInternalKeyWindowAuthorizeExactTyping() async throws {
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 930_008,
+            ownerProcessStartIdentity: 93,
+            capturedBounds: bounds)
+        let expected = FocusedElementIdentity(
+            processIdentifier: identity.ownerProcessIdentifier,
+            windowID: identity.windowID,
+            role: "AXTextField",
+            identifier: "editor",
+            frame: CGRect(x: 50, y: 100, width: 200, height: 30))
+        let service = UIAutomationService(
+            actionInputDriver: ActionInputDriver(),
+            automationElementResolver: AutomationElementResolver(),
+            exactFocusedElementReader: { receipt in
+                .success(ExactWindowFocusSnapshot(
+                    processIdentifier: receipt.processIdentifier,
+                    windowID: receipt.windowID,
+                    frame: receipt.frame,
+                    role: receipt.role,
+                    title: receipt.title,
+                    identifier: receipt.identifier))
+            },
+            exactKeyWindowReader: { processIdentifier in
+                ExactKeyWindowSnapshot(
+                    processIdentifier: processIdentifier,
+                    windowID: identity.windowID,
+                    hasSheet: false)
+            },
+            exactWindowIdentityValidator: { candidate, candidateBounds in
+                candidate.hasSameStableReceipt(as: identity) && candidateBounds == bounds
+            })
+
+        try await service.requireExactWindowKeyboardFocus(
+            expectedWindowIdentity: identity,
+            expectedWindowBounds: bounds,
+            expectedFocusedElement: expected)
+    }
+
+    func testWrongKeyWindowOwnerPIDCannotAuthorizeExactTyping() async throws {
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 930_009,
+            ownerProcessStartIdentity: 94,
+            capturedBounds: bounds)
+        let service = UIAutomationService(
+            actionInputDriver: ActionInputDriver(),
+            automationElementResolver: AutomationElementResolver(),
+            exactWindowFocusReader: { processIdentifier in
+                ExactWindowFocusSnapshot(
+                    processIdentifier: processIdentifier,
+                    windowID: identity.windowID,
+                    frame: CGRect(x: 50, y: 100, width: 200, height: 30))
+            },
+            exactKeyWindowReader: { _ in
+                ExactKeyWindowSnapshot(
+                    processIdentifier: identity.ownerProcessIdentifier + 1,
+                    windowID: identity.windowID,
+                    hasSheet: false)
+            },
+            exactWindowIdentityValidator: { _, _ in true })
+
+        do {
+            try await service.requireExactWindowKeyboardFocus(
+                expectedWindowIdentity: identity,
+                expectedWindowBounds: bounds)
+            XCTFail("Expected wrong key-window owner PID to fail closed")
+        } catch let PeekabooError.invalidInput(message) {
+            XCTAssertTrue(message.contains("target"), message)
+        }
     }
 
     func testExactReceiptMismatchReturnsTypedPreDispatchRefusal() async throws {

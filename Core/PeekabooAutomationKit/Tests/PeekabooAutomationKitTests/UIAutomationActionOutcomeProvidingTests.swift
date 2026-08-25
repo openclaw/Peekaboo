@@ -487,6 +487,12 @@ struct UIAutomationActionOutcomeProvidingTests {
                     title: focused.title,
                     identifier: focused.identifier))
             },
+            exactKeyWindowReader: { processIdentifier in
+                ExactKeyWindowSnapshot(
+                    processIdentifier: processIdentifier,
+                    windowID: focused.windowID,
+                    hasSheet: false)
+            },
             exactWindowIdentityValidator: { identity, bounds in
                 identity == windowIdentity && bounds == windowIdentity.capturedBounds
             },

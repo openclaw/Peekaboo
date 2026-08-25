@@ -7,23 +7,29 @@ struct ExactWindowFocusSnapshot: Sendable, Equatable {
     let windowID: Int?
     let frame: CGRect
     let role: String?
+    let subrole: String?
     let title: String?
     let identifier: String?
+    let value: String?
 
     init(
         processIdentifier: pid_t,
         windowID: Int?,
         frame: CGRect,
         role: String? = nil,
+        subrole: String? = nil,
         title: String? = nil,
-        identifier: String? = nil)
+        identifier: String? = nil,
+        value: String? = nil)
     {
         self.processIdentifier = processIdentifier
         self.windowID = windowID
         self.frame = frame
         self.role = role
+        self.subrole = subrole
         self.title = title
         self.identifier = identifier
+        self.value = value
     }
 }
 
@@ -57,16 +63,32 @@ enum DetachedExactWindowFocusReader {
         if let window {
             AXUIElementSetMessagingTimeout(window, self.messagingTimeout)
         }
+        let role = self.stringAttribute(kAXRoleAttribute as String, of: focusedElement)
+        let subrole = self.stringAttribute(kAXSubroleAttribute as String, of: focusedElement)
         return ExactWindowFocusSnapshot(
             processIdentifier: focusedProcessIdentifier,
             windowID: window.flatMap(AXWindowIDResolver.windowID(of:)).map(Int.init),
             frame: frame,
-            role: self.stringAttribute(kAXRoleAttribute as String, of: focusedElement),
+            role: role,
+            subrole: subrole,
             title: self.stringAttribute(kAXTitleAttribute as String, of: focusedElement),
             identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: focusedElement))
     }
 
     static func read(expected: FocusedElementIdentity) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError> {
+        self.read(expected: expected, includesValue: false)
+    }
+
+    static func readValue(
+        expected: FocusedElementIdentity) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
+    {
+        self.read(expected: expected, includesValue: true)
+    }
+
+    private static func read(
+        expected: FocusedElementIdentity,
+        includesValue: Bool) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
+    {
         guard expected.processIdentifier > 0 else { return .failure(.missingProcessIdentifier) }
         guard expected.windowID > 0 else { return .failure(.missingWindowIdentifier) }
         guard !expected.frame.isEmpty else { return .failure(.missingElementFrame) }
@@ -123,13 +145,18 @@ enum DetachedExactWindowFocusReader {
         }
         guard focused else { return .failure(.focusNotConfirmed) }
 
+        let subrole = self.stringAttribute(kAXSubroleAttribute as String, of: element)
         return .success(ExactWindowFocusSnapshot(
             processIdentifier: expected.processIdentifier,
             windowID: expected.windowID,
             frame: expected.frame,
             role: expected.role,
+            subrole: subrole,
             title: self.stringAttribute(kAXTitleAttribute as String, of: element),
-            identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: element)))
+            identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: element),
+            value: includesValue && self.allowsValueRead(role: expected.role, subrole: subrole)
+                ? self.stringAttribute(kAXValueAttribute as String, of: element)
+                : nil))
     }
 
     static func readKeyWindow(processIdentifier: pid_t) -> ExactKeyWindowSnapshot? {
@@ -192,6 +219,10 @@ enum DetachedExactWindowFocusReader {
 
     static func focusedAttributeValue(_ value: Any?) -> Bool? {
         AXDescriptorReader.boolValue(value)
+    }
+
+    static func allowsValueRead(role: String?, subrole: String?) -> Bool {
+        role != "AXSecureTextField" && subrole != "AXSecureTextField"
     }
 
     private static func frame(of element: AXUIElement) -> CGRect? {

@@ -237,9 +237,6 @@ public enum UIAutomationTarget: Sendable, Equatable {
         using automation: any UIAutomationServiceProtocol) async throws -> UIAutomationTarget
     {
         guard let exactWindow = self.exactWindow else { return self }
-        if exactWindow.focusedElement != nil {
-            return self
-        }
         guard let focusedElementService = automation as? any TargetedFocusedElementServiceProtocol else {
             throw PeekabooError.invalidInput(
                 field: "target",
@@ -281,6 +278,16 @@ public enum UIAutomationTarget: Sendable, Equatable {
             throw PeekabooError.invalidInput(
                 field: "target",
                 reason: FocusedElementReceiptError.elementOutsideWindow.localizedDescription)
+        }
+        if let expectedFocusedElement = exactWindow.focusedElement {
+            do {
+                try FocusedElementReceiptResolver.validate(focusedElement, matches: expectedFocusedElement)
+            } catch {
+                throw PeekabooError.invalidInput(
+                    field: "target",
+                    reason: "Exact focused-element receipt is stale: \(error.localizedDescription) " +
+                        BackgroundKeyboardFocusRemediation.message)
+            }
         }
         return try self.pinningFocusedElement(focusedElement)
     }

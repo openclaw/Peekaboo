@@ -15,7 +15,7 @@ struct MCPComposedInputParityTests {
     private static let uiSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
 
     @Test
-    func `pixel focus type maps capture coordinates and routes one exact composite request`() async throws {
+    func `pixel focus type maps exact request but reports unverified dispatch as non-success`() async throws {
         let fixture = try await Self.makeFixture()
         let response = try await TypeTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
             "coords": "500,250",
@@ -24,7 +24,7 @@ struct MCPComposedInputParityTests {
             "text": "hi",
         ]))
 
-        #expect(!response.isError)
+        #expect(response.isError)
         let request = try #require(await MainActor.run { fixture.automation.pixelFocusTypeRequests.first })
         #expect(request.point == CGPoint(x: 600, y: 300))
         #expect(request.snapshotID == fixture.snapshotID)
@@ -35,6 +35,8 @@ struct MCPComposedInputParityTests {
         #expect(metadata["delivery_mechanism"] == .string("composite"))
         #expect(metadata["dispatched_unit_count"] == .int(3))
         #expect(metadata["target_window_id"] == .int(fixture.window.windowID))
+        #expect(metadata["state"] == .string("dispatched_unverified"))
+        #expect(metadata["characters_typed"] == .null)
     }
 
     @Test
@@ -51,7 +53,7 @@ struct MCPComposedInputParityTests {
             "text": "hi",
         ]))
 
-        #expect(!response.isError)
+        #expect(response.isError)
         let request = try #require(await MainActor.run { fixture.automation.pixelFocusTypeRequests.first })
         #expect(request.windowIdentity == fixture.window.mutationIdentity)
         #expect(request.windowBounds == fixture.window.bounds)
@@ -437,12 +439,7 @@ struct MCPComposedInputParityTests {
     private static func makeFixture(
         automation providedAutomation: MockAutomationService? = nil,
         focusedElement: FocusedElementIdentity? = nil) async throws
-        -> (
-            context: MCPToolContext,
-            automation: MockAutomationService,
-            snapshots: SnapshotMutationRecordingManager,
-            snapshotID: String,
-            window: ServiceWindowInfo)
+        -> MCPComposedInputFixture
     {
         await self.uiSnapshots.removeAllSnapshots()
         let fixture = AutomationTestFixtures.linkedSnapshotTarget(
@@ -479,8 +476,21 @@ struct MCPComposedInputParityTests {
             snapshots: snapshots,
             snapshotOwner: self.uiSnapshots.owner,
             executionPolicy: .unrestricted)
-        return (context, automation, snapshots, snapshotID, window)
+        return MCPComposedInputFixture(
+            context: context,
+            automation: automation,
+            snapshots: snapshots,
+            snapshotID: snapshotID,
+            window: window)
     }
+}
+
+private struct MCPComposedInputFixture {
+    let context: MCPToolContext
+    let automation: MockAutomationService
+    let snapshots: SnapshotMutationRecordingManager
+    let snapshotID: String
+    let window: ServiceWindowInfo
 }
 
 private enum MCPComposedInputTestError: Error {

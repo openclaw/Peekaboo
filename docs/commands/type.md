@@ -44,13 +44,21 @@ that snapshot. Use `press` for standalone keys or chords.
   never accepted. To focus a known field without activating the app, use its fresh element ID with background
   `click`, run `see` again, then type with the new snapshot.
 - Exact background delivery re-resolves that same role/frame/identifier under the captured window and verifies its
-  own `AXFocused` attribute before every keyboard unit. Process relaunch, window/bounds drift, sibling focus, or an
-  unreadable focus attribute stops delivery instead of widening to application or foreground focus.
+  own `AXFocused` attribute and the application's exact internal key window before every keyboard unit. Process
+  relaunch, window/bounds drift, sibling focus, a different internal key window, or an unreadable focus attribute
+  stops delivery instead of widening to application or foreground focus.
 - Default profile is `linear`, using no inter-key delay for fast deterministic input. Passing `--wpm` opts into human cadence; `--profile human` uses 140 WPM when `--wpm` is omitted.
 - Background delivery uses process-targeted CoreGraphics keyboard events and requires Event Synthesizing access. Apps that only accept typing in a focused key window may still need `--foreground`.
 - Printable background text is carried as Unicode instead of physical US key positions, so the requested characters remain stable across active keyboard layouts.
 - Background app/PID delivery is pinned to the process generation resolved before dispatch. Peekaboo revalidates the receipt before every character or special action, stops on target exit/relaunch, and reports partial delivery as retry-unsafe. Exact-window remote delivery requires Bridge protocol 1.24.
-- JSON output reports `totalCharacters`, `keyPresses`, delivery mode, optional target PID/window ID, and elapsed time; this matches what the agent logs when executing scripted steps.
+- Event injection is not evidence that the receiver changed. A native `dispatched_unverified` result is returned as
+  non-success and requires a fresh observation; `typedText`, `totalCharacters`, and `keyPresses` claim completed work
+  only when the typing effect is confirmed. Exact-window `--clear` followed only by printable literal text can confirm
+  by matching a readable, non-secure AX value after dispatch; field contents never enter the result. Requested actions
+  remain available for diagnosis. For other plain fields where replacement semantics are acceptable, prefer
+  `set-value`: it verifies the AX value readback without exposing field contents in the result. Secure fields, special
+  keys, IME-dependent input, and controls without readable values remain intentionally unverifiable.
+- JSON output reports confirmed `totalCharacters`, `keyPresses`, delivery mode, optional target PID/window ID, and elapsed time; this matches what the agent logs when executing scripted steps.
 
 ## Examples
 ```bash
