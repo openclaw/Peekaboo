@@ -252,6 +252,14 @@ enum RuntimeHostResolver {
             )
         }
 
+        if let snapshotID = options.explicitSnapshotID {
+            return try await self.resolveSnapshotAffinityServices(
+                snapshotID: snapshotID,
+                context: context,
+                permissionRejections: &permissionRejections
+            )
+        }
+
         if prefersExactBuildScopedHost, let buildScopedDaemonSocketPath {
             let exactCandidate = ImplicitRemoteCandidate(
                 socketPath: buildScopedDaemonSocketPath,

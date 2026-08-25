@@ -70,7 +70,7 @@ extension RuntimeHostResolver {
         }
     }
 
-    struct ImplicitRemoteCandidate: Equatable {
+    struct ImplicitRemoteCandidate: Equatable, Sendable {
         let socketPath: String
         let requireReusableDaemon: Bool
         let requiredHostKind: PeekabooBridgeHostKind?

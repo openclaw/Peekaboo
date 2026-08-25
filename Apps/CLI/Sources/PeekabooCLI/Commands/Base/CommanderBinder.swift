@@ -81,6 +81,12 @@ enum CommanderCLIBinder {
             commandType,
             parsedValues: parsedValues
         )
+        if options.requiresImplicitSnapshotInvalidation,
+           InteractionSnapshotReference.isConcrete(commandValues.singleOption("snapshot")) {
+            options.explicitSnapshotID = InteractionSnapshotReference.normalized(
+                commandValues.singleOption("snapshot")
+            )
+        }
         let clipboardMayMutate = Self.clipboardMayMutate(commandType)
         options.requiresCallerDesktopMutationBarrier = commandType == SwitchSubcommand.self ||
             commandType == MoveWindowSubcommand.self ||

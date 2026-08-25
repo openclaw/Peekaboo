@@ -65,6 +65,9 @@ struct CommandRuntimeOptions {
     /// Protocol 1.22 carries a process-generation receipt with targeted click requests.
     var requiresProcessGenerationPinnedClicks = false
     var requiresHostApplicationInventory = false
+    /// A concrete snapshot reference is host-local state. Runtime selection must authenticate
+    /// the live host that owns it instead of replaying the ID against the ordinary preferred host.
+    var explicitSnapshotID: String?
     var requiresImplicitSnapshotInvalidation = false
     /// Protocol 1.26 publishes a receipt that is addressable by ID without replacing implicit latest elements.
     var requiresExplicitSnapshotPublication = false

@@ -36,11 +36,27 @@ struct InteractionSnapshotCaptureRequirementTests {
                 options: ["on": ["B1"], "snapshot": ["receipt-1"], "pid": ["123"]],
                 flags: []
             )),
+            (TypeCommand.self, ParsedValues(
+                positional: ["text"],
+                options: ["snapshot": ["receipt-1"]],
+                flags: []
+            )),
+            (PressCommand.self, ParsedValues(
+                positional: ["return"],
+                options: ["snapshot": ["receipt-1"]],
+                flags: []
+            )),
+            (PasteCommand.self, ParsedValues(
+                positional: ["text"],
+                options: ["snapshot": ["receipt-1"]],
+                flags: []
+            )),
         ]
 
         for (commandType, values) in concreteCases {
             let options = try CommanderCLIBinder.makeRuntimeOptions(from: values, commandType: commandType)
             #expect(!options.requiresSilentCapture, "Concrete snapshot unexpectedly captured for \(commandType)")
+            #expect(options.explicitSnapshotID == "receipt-1")
         }
 
         let refreshableCases: [(any ParsableCommand.Type, ParsedValues)] = [
@@ -91,8 +107,24 @@ struct InteractionSnapshotCaptureRequirementTests {
                     options.requiresSilentCapture,
                     "Refreshable snapshot was treated as concrete for \(commandType): \(snapshot ?? "nil")"
                 )
+                #expect(options.explicitSnapshotID == nil)
             }
         }
+    }
+
+    @Test
+    func `Nonmutating snapshot argument does not request host affinity`() throws {
+        let options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(
+                positional: [],
+                options: ["snapshot": ["receipt-1"]],
+                flags: []
+            ),
+            commandType: CleanCommand.self
+        )
+
+        #expect(!options.requiresImplicitSnapshotInvalidation)
+        #expect(options.explicitSnapshotID == nil)
     }
 
     @Test
@@ -110,8 +142,8 @@ struct InteractionSnapshotCaptureRequirementTests {
                 let options = try CommanderCLIBinder.makeRuntimeOptions(
                     from: ParsedValues(
                         positional: ["value-or-action"],
-                        options: ["on": ["B1"]].merging(snapshot.map { ["snapshot": [$0]] } ?? [:]) {
-                            _, latest in latest
+                        options: ["on": ["B1"]].merging(snapshot.map { ["snapshot": [$0]] } ?? [:]) { _, latest in
+                            latest
                         },
                         flags: []
                     ),

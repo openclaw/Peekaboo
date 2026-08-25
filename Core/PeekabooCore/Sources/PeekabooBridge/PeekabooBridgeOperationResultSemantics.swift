@@ -1384,6 +1384,7 @@ extension PeekabooBridgeOperationResultSemantics {
             return self.targetedClickDeliveryRules(
                 payload,
                 axBackground: axBackground,
+                valueBackground: valueBackground,
                 processBackground: processBackground,
                 windowBackground: windowBackground)
         case .targetedHotkey:
@@ -1572,10 +1573,14 @@ extension PeekabooBridgeOperationResultSemantics {
     private static func targetedClickDeliveryRules(
         _ payload: PeekabooBridgeTargetedClickRequest,
         axBackground: DesktopActionOutcome.Delivery,
+        valueBackground: DesktopActionOutcome.Delivery,
         processBackground: DesktopActionOutcome.Delivery,
         windowBackground: DesktopActionOutcome.Delivery) -> [DeliveryRule]
     {
         let ax = DeliveryRule(delivery: axBackground, units: .exact(1))
+        // AXPress is absent on focusable text fields. ClickService truthfully falls back to one
+        // verified AXFocused value write, which is still a single background click action.
+        let value = DeliveryRule(delivery: valueBackground, units: .exact(1))
         let process = DeliveryRule(delivery: processBackground, units: .variable)
         let routedUnits: Int? = switch payload.clickType {
         case .single: 3
@@ -1587,7 +1592,7 @@ extension PeekabooBridgeOperationResultSemantics {
         let window = routedUnits.map { DeliveryRule(delivery: windowBackground, units: .exact($0)) }
         guard payload.targetWindowID != nil else {
             return switch (payload.target, payload.clickType) {
-            case (.elementId, .single), (.query, .single): [ax, process]
+            case (.elementId, .single), (.query, .single): [ax, value, process]
             case (.elementId, .right), (.query, .right):
                 [ax, process] + (window.map { [$0] } ?? [])
             case (.elementId, .double), (.query, .double):
@@ -1603,7 +1608,7 @@ extension PeekabooBridgeOperationResultSemantics {
         case (.coordinates, .right), (.coordinates, .double), (.coordinates, .middle), (.coordinates, .triple):
             window.map { [$0] } ?? []
         case (.coordinates, .longPress): []
-        case (.elementId, .single), (.query, .single): [ax] + (window.map { [$0] } ?? [])
+        case (.elementId, .single), (.query, .single): [ax, value] + (window.map { [$0] } ?? [])
         case (.elementId, .right), (.query, .right): [ax] + (window.map { [$0] } ?? [])
         case (.elementId, .double), (.query, .double),
              (.elementId, .middle), (.query, .middle),

@@ -525,6 +525,12 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             return nil
         }
 
+        if self.usesBackgroundDelivery,
+           self.target.windowId != nil,
+           observation.source == .explicit {
+            return try await self.resolveSnapshotBackedWindowSelection(observation: observation)
+        }
+
         let resolution = try await InteractionCoordinateResolver.resolveTargetWindow(
             target: self.target,
             services: self.services

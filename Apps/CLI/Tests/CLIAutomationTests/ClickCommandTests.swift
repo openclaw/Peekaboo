@@ -202,7 +202,7 @@ struct ClickCommandTests {
     }
 
     @Test
-    func `Background stateless click rejects same ID generation and bounds drift`() async throws {
+    func `Background stateless click rejects same ID generation and bounds drift atomically`() async throws {
         let application = Self.makeApplication()
         let snapshotWindow = Self.makeWindow(id: 42, title: "Editor", index: 0)
         let mismatchedWindows = [
@@ -217,6 +217,9 @@ struct ClickCommandTests {
 
         for selectedWindow in mismatchedWindows {
             let context = await makeContext(application: application, windows: [selectedWindow])
+            context.automation.clickError = PeekabooError.snapshotStale(
+                "Exact-window click receipt no longer matches current identity and bounds"
+            )
             let snapshotId = try await storeSnapshot(
                 element: DetectedElement(
                     id: "B1",
@@ -239,7 +242,7 @@ struct ClickCommandTests {
 
             #expect(result.exitStatus == 1)
             #expect(result.combinedOutput.contains("no longer matches"))
-            #expect(await self.automationState(context) { $0.targetedClickCalls }.isEmpty)
+            #expect(await self.automationState(context) { $0.targetedClickCalls }.count == 1)
         }
     }
 
