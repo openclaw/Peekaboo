@@ -722,6 +722,11 @@ struct PeekabooBridgeBrowserClientTests {
 
         #expect(result.outcome == nil)
         #expect(!result.payload.isError)
+        guard case let .text(text, _, _) = result.payload.content.first else {
+            Issue.record("Expected the legacy browser read response payload")
+            return
+        }
+        #expect(text == "pages")
         await peer.waitUntilFinished()
         let requests = await peer.requests
         #expect(requests.count == 3)

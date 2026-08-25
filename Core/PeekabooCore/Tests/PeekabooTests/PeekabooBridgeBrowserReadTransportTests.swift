@@ -10,6 +10,71 @@ import Testing
 extension PeekabooBridgeBrowserClientTests {
     @Test
     @MainActor
+    func `legacy direct browser read rejects a returned receipt mismatch at the client boundary`() async throws {
+        let version = PeekabooBridgeProtocolVersion(major: 1, minor: 28)
+        let wrongReceipt = PeekabooBridgeBrowserConnectionReceipt(
+            channel: "stable",
+            browserURL: "http://127.0.0.1:9333",
+            webSocketDebuggerURL: "ws://127.0.0.1:9333/devtools/browser/other",
+            devToolsBrowserID: "other",
+            browserVersion: "Chrome/151.0",
+            protocolVersion: "1.3")
+        let peer = try ScriptedBridgePeer(responses: [
+            .handshake(BridgeTestFixtures.handshake(
+                negotiatedVersion: version,
+                supportedOperations: [.browserStatus, .browserExecute])),
+            .browserStatus(PeekabooBridgeBrowserStatus(
+                isConnected: true,
+                toolCount: 29,
+                detectedBrowsers: [],
+                connectionReceipt: Self.browserReceipt)),
+            .browserToolResponse(.init(
+                content: [.object([
+                    "type": .string("text"),
+                    "text": .string("wrong browser"),
+                ])],
+                isError: false,
+                meta: nil,
+                connectionReceipt: wrongReceipt,
+                completedCallCount: 1,
+                dispatchedCallCount: 1)),
+        ])
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        _ = try await client.handshake(
+            client: .init(
+                bundleIdentifier: "dev.peekaboo.browser-read-client-receipt",
+                teamIdentifier: nil,
+                processIdentifier: getpid()),
+            protocolVersion: version)
+
+        do {
+            _ = try await client.browserExecuteResult(.init(
+                toolName: "list_pages",
+                arguments: [:],
+                channel: "stable"))
+            Issue.record("Expected client-side browser receipt mismatch refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.outcome.dispatchState == .none)
+        }
+        await peer.waitUntilFinished()
+        let requests = await peer.requests
+        #expect(requests.count == 3)
+        guard requests.count == 3 else { return }
+        let wireRequest = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeRequest.self,
+            from: requests[2])
+        guard case let .browserExecute(browserRequest) = wireRequest else {
+            Issue.record("Expected a receipt-bound browser read request")
+            return
+        }
+        #expect(browserRequest.connectionPolicy == .requireExistingLiveReceipt)
+        #expect(browserRequest.expectedConnectionReceipt == Self.browserReceipt)
+    }
+
+    @Test
+    @MainActor
     func `attested browser read preserves provider error over transport`() async throws {
         let socketPath = "/tmp/peekaboo-browser-read-error-\(UUID().uuidString).sock"
         let services = StubServices()
