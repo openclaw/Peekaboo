@@ -386,6 +386,11 @@ struct PeekabooServicesBrowserBridgeTests {
         _ request: PeekabooBridgeBrowserExecuteRequest,
         services: PeekabooServices) async throws -> PeekabooBridgeHandledResponse
     {
+        let request = if let receipt = request.expectedConnectionReceipt {
+            request.binding(to: receipt)
+        } else {
+            request
+        }
         let server = PeekabooBridgeServer(
             services: services,
             allowlistedTeams: [],
