@@ -1127,6 +1127,20 @@ extension ApplicationService {
                     mechanism: .nativeFramework,
                     mode: .background),
                 unitCount: .one))
+        } catch let error as AccessibilitySystemError
+            where error.axError == .actionUnsupported || error.axError == .apiDisabled
+        {
+            // These AX errors prove the action was rejected before dispatch, so native AppKit
+            // fallback cannot duplicate a hide that may already have happened.
+            try Self.checkApplicationDispatchCancellation(operation: "Hide application fallback")
+            guard self.applicationNativeVisibilityHandler(application, true) else {
+                return .rejected
+            }
+            return .accepted(ApplicationActionDispatch(
+                delivery: DesktopActionOutcome.Delivery(
+                    mechanism: .nativeFramework,
+                    mode: .background),
+                unitCount: .one))
         } catch {
             _ = error.asPeekabooError(context: "AX hide action failed")
             // A generic AX error does not prove that dispatch was rejected. Replaying the hide

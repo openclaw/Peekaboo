@@ -1,4 +1,5 @@
 import AppKit
+import AXorcist
 import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
@@ -496,6 +497,65 @@ struct ApplicationServiceVisibilityLifecycleTests {
         #expect(result.outcome?.delivery == .init(mechanism: .nativeFramework, mode: .background))
         #expect(result.outcome?.dispatchState == .dispatched(unitCount: .one))
         #expect(nativeFallbackCount == 1)
+    }
+
+    @Test
+    @MainActor
+    func `proven AX system hide refusals may use native fallback`() async throws {
+        for axError in [AXError.actionUnsupported, .apiDisabled] {
+            let runningApplication = try self.runningApplication()
+            var isHidden = false
+            var nativeFallbackCount = 0
+            let service = ApplicationService(
+                applicationOpenHandler: { _, _, _ in runningApplication },
+                applicationHiddenProvider: { _ in isHidden },
+                applicationAccessibilityHideHandler: { _ in
+                    throw AccessibilitySystemError(axError)
+                },
+                applicationNativeVisibilityHandler: { _, hidden in
+                    nativeFallbackCount += 1
+                    isHidden = hidden
+                    return true
+                },
+                applicationVisibilityTimeout: 0)
+
+            let result = try await service.hideApplicationResult(
+                identifier: "PID:\(runningApplication.processIdentifier)")
+
+            #expect(result.outcome?.state == .confirmedChange)
+            #expect(result.outcome?.delivery == .init(mechanism: .nativeFramework, mode: .background))
+            #expect(result.outcome?.dispatchState == .dispatched(unitCount: .one))
+            #expect(nativeFallbackCount == 1)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `ambiguous AX system hide error never replays through native fallback`() async throws {
+        let runningApplication = try self.runningApplication()
+        var nativeFallbackCount = 0
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            applicationHiddenProvider: { _ in false },
+            applicationAccessibilityHideHandler: { _ in
+                throw AccessibilitySystemError(.cannotComplete)
+            },
+            applicationNativeVisibilityHandler: { _, _ in
+                nativeFallbackCount += 1
+                return true
+            },
+            applicationVisibilityTimeout: 0)
+
+        do {
+            _ = try await service.hideApplicationResult(
+                identifier: "PID:\(runningApplication.processIdentifier)")
+            Issue.record("Expected ambiguous AX delivery")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.delivery == .init(mechanism: .accessibilityAction, mode: .background))
+            #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: .one))
+        }
+        #expect(nativeFallbackCount == 0)
     }
 
     @Test

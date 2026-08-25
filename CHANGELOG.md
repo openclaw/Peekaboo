@@ -34,6 +34,7 @@
 - Keep Agent traces privacy-safe and deterministic, and mark unknown mutation dispatch as unsafe to retry.
 - Hide foreground-only pointer tools and unsupported input shapes from background Agent and MCP catalogs while preserving explicit CLI foreground consent.
 - Reject foreground delivery reported by background CLI paste and preserve canonical target receipts for missing or conflicting results.
+- Fall back to native app hiding when Accessibility proves `AXHide` was rejected before dispatch.
 - Keep verified non-modal SwiftUI actions available, isolate exact targets from unrelated incomplete inventory, and recognize fresh `inspect_ui` observations.
 - Preserve process-scoped Accessibility receipts and return read-only `application_partial` trees without reusable snapshots or mutation authority.
 - Bind persistent MCP capture to its selected Bridge, keep classic capture request-local, and preserve precise signed refusals, causes, and recovery hints.
