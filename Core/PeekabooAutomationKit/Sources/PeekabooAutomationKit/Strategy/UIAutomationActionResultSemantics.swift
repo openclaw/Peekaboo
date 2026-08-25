@@ -229,6 +229,31 @@ public enum UIAutomationActionResultSemantics {
         return outcome
     }
 
+    /// Requires proof that a mutation changed its destination, rather than merely confirming that
+    /// no work occurred. This is the appropriate boundary for non-idempotent requests such as
+    /// typing non-empty text, where `confirmedNoChange` cannot satisfy the caller's intent.
+    public static func requireConfirmedChange(
+        _ result: UIAutomationActionResult<some Sendable>,
+        deliveryMode: DesktopActionOutcome.Delivery.Mode,
+        targetRequirement: TargetRequirement = .optional,
+        operation: String) throws -> DesktopActionOutcome
+    {
+        let outcome = try self.requireAcceptedOutcome(
+            result,
+            policy: .confirmed(requiring: deliveryMode),
+            targetRequirement: targetRequirement,
+            operation: operation)
+        guard outcome.state == .confirmedChange else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: outcome.route,
+                reason: .targetUnavailable,
+                message: "\(operation) did not confirm any change at its destination.",
+                hint: "Observe the target before deciding whether to retry.")
+                .attributed(to: result.actionTargetReceipt ?? targetRequirement.expectedIdentity?.actionTargetReceipt)
+        }
+        return outcome
+    }
+
     @discardableResult
     public static func validateTarget(
         _ identity: DesktopTargetIdentity?,

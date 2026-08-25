@@ -18,7 +18,9 @@ public struct TypeTool: MCPTool {
             """
             Default background-only MCP/Agent delivery requires an explicit fresh exact non-dialog snapshot receipt.
             An optional element ID must come from that snapshot. App/PID/window-only, implicit-latest, competing
-            selector, targetless, and foreground forms are refused before dispatch.
+            selector, targetless, and foreground forms are refused before dispatch. Use clear=true with literal text
+            when replacement is intended and a confirmed typing result is required; other event injection remains
+            honestly unverifiable and requires fresh observation.
             """
         } else {
             """
@@ -66,7 +68,8 @@ public struct TypeTool: MCPTool {
             "wpm": SchemaBuilder.integer(
                 description: "Optional. Human typing speed (80-220 WPM). Overrides delay when set."),
             "clear": SchemaBuilder.boolean(
-                description: "Optional. Clear the field before typing (Cmd+A, Delete).",
+                description: "Optional. Clear before typing. Clear plus literal text can be confirmed by private " +
+                    "non-secure AX value readback; clear=false typing remains unverifiable.",
                 default: false),
         ]
         if !backgroundOnly {
@@ -513,9 +516,9 @@ extension TypeTool {
                 windowIdentity: target.exactWindow.identity,
                 windowBounds: target.exactWindow.bounds))
         let expectedIdentity = DesktopTargetIdentity(exactWindow: target.exactWindow)
-        _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+        _ = try UIAutomationActionResultSemantics.requireConfirmedChange(
             actionResult,
-            policy: .confirmed(requiring: .background),
+            deliveryMode: .background,
             targetRequirement: .exact(expectedIdentity),
             operation: "Pixel-focus typing")
         var sequence = DesktopActionSequenceAccumulator()
@@ -988,10 +991,9 @@ private enum TypeActionResultSemantics {
         sequence: DesktopActionSequenceAccumulator) throws
     {
         do {
-            guard result.outcome != nil else { return }
-            _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+            _ = try UIAutomationActionResultSemantics.requireConfirmedChange(
                 result,
-                policy: .confirmed(requiring: target == nil ? .foreground : .background),
+                deliveryMode: target == nil ? .foreground : .background,
                 operation: "Typing")
         } catch let failure as DesktopActionFailure {
             throw focusResult.attributing(sequence.failure(

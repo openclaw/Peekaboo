@@ -760,6 +760,43 @@ extension MCPDesktopActionOutcomeProjectionTests {
     }
 
     @Test
+    @MainActor
+    func `confirmed no-change type leaf is an error with no typed-character claims`() async throws {
+        let automation = StubAutomationService()
+        automation.actionOutcome = .confirmedNoChange()
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+
+        let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "text": "hello",
+            "foreground": true,
+        ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("refused"))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["characters_typed"] == .null)
+    }
+
+    @Test
+    @MainActor
+    func `missing type outcome is an error with no typed-character claims`() async throws {
+        let automation = StubAutomationService()
+        automation.uiAutomationOutcomeScript.setDefaultOutcome(nil)
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+
+        let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "text": "hello",
+            "foreground": true,
+        ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("indeterminate"))
+        #expect(meta["characters_typed"] == .null)
+    }
+
+    @Test
     func `type conservatively counts a receiptless completed focus before refusal`() {
         var sequence = DesktopActionSequenceAccumulator()
         sequence.record(.dispatched(
@@ -912,7 +949,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
 
     @Test
     @MainActor
-    func `type reports zero typed characters for an authoritative no change leaf`() async throws {
+    func `type treats an authoritative no change leaf as non-success after focus`() async throws {
         let automation = StubAutomationService()
         automation.actionOutcome = .confirmedChange(
             delivery: .init(mechanism: .accessibilityAction, mode: .background))
@@ -927,22 +964,12 @@ extension MCPDesktopActionOutcomeProjectionTests {
             "snapshot": snapshotID,
         ]))
 
-        #expect(!response.isError)
-        guard case let .text(text, _, _) = response.content.first else {
-            Issue.record("Expected text response")
-            return
-        }
+        #expect(response.isError)
         let meta = try #require(response.meta?.objectValue)
-        let summary = try #require(meta["summary"]?.objectValue)
-        #expect(meta["state"] == .string("confirmed_change"))
+        #expect(meta["state"] == .string("indeterminate"))
         #expect(meta["mutation_dispatched"] == .bool(true))
-        #expect(meta["characters_typed"] == .double(0))
-        #expect(text.contains("Confirmed no typing change"))
-        #expect(!text.contains("Typed:"))
-        #expect(!text.contains("Chars: 5"))
-        #expect(summary["action"] == .string("Type (confirmed no change)"))
-        #expect(summary["element_value"] == nil)
-        #expect(summary["notes"] == .string("Confirmed no typing change"))
+        #expect(meta["characters_typed"] == .null)
+        #expect(meta["summary"] == nil)
     }
 
     @Test

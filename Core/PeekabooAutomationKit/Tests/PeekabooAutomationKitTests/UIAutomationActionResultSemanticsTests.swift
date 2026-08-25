@@ -163,6 +163,30 @@ struct UIAutomationActionResultSemanticsTests {
     }
 
     @Test
+    func `confirmed change validator rejects no change and missing outcomes`() throws {
+        let changed = UIAutomationActionResult(
+            payload: (),
+            outcome: DesktopActionOutcome.confirmedChange(delivery: self.backgroundDelivery))
+        #expect(try UIAutomationActionResultSemantics.requireConfirmedChange(
+            changed,
+            deliveryMode: .background,
+            operation: "Fixture mutation").state == .confirmedChange)
+
+        let rejected: [UIAutomationActionResult<Void>] = [
+            .init(payload: (), outcome: .confirmedNoChange()),
+            .init(payload: (), outcome: nil),
+        ]
+        for result in rejected {
+            #expect(throws: DesktopActionFailure.self) {
+                _ = try UIAutomationActionResultSemantics.requireConfirmedChange(
+                    result,
+                    deliveryMode: .background,
+                    operation: "Fixture mutation")
+            }
+        }
+    }
+
+    @Test
     func `shared validator rejects delivery drift and attributes the target`() throws {
         let target = AutomationTestFixtures.linkedDesktopTarget(
             processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001))

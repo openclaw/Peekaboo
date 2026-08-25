@@ -17,9 +17,11 @@ struct ExactLiteralTypingEffectConfirmationTests {
 
         let confirmed = confirmation.confirmedOutcome(
             from: dispatched,
+            previousValue: "",
             observedValue: "MAIN_BG_20260825")
         let mismatch = confirmation.confirmedOutcome(
             from: dispatched,
+            previousValue: "",
             observedValue: "")
 
         #expect(confirmed.state == .confirmedChange)
@@ -40,8 +42,14 @@ struct ExactLiteralTypingEffectConfirmationTests {
             evidence: .deliveryAccepted,
             unitCount: .one)
 
-        #expect(confirmation.confirmedOutcome(from: dispatched, observedValue: precomposed).state == .confirmedChange)
-        #expect(confirmation.confirmedOutcome(from: dispatched, observedValue: decomposed) == dispatched)
+        #expect(confirmation.confirmedOutcome(
+            from: dispatched,
+            previousValue: "old",
+            observedValue: precomposed).state == .confirmedChange)
+        #expect(confirmation.confirmedOutcome(
+            from: dispatched,
+            previousValue: "old",
+            observedValue: decomposed) == dispatched)
     }
 
     @Test
@@ -53,7 +61,14 @@ struct ExactLiteralTypingEffectConfirmationTests {
             delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
             evidence: .deliveryAccepted)
 
-        #expect(confirmation.confirmedOutcome(from: dispatched, observedValue: "").state == .confirmedChange)
+        #expect(confirmation.confirmedOutcome(
+            from: dispatched,
+            previousValue: "not empty",
+            observedValue: "").state == .confirmedChange)
+        #expect(confirmation.confirmedOutcome(
+            from: dispatched,
+            previousValue: "",
+            observedValue: "") == dispatched)
     }
 
     @Test(arguments: [
@@ -97,7 +112,26 @@ struct ExactLiteralTypingEffectConfirmationTests {
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
             evidence: .deliveryAccepted)
 
-        #expect(confirmation.confirmedOutcome(from: foreground, observedValue: "safe") == foreground)
+        #expect(confirmation.confirmedOutcome(
+            from: foreground,
+            previousValue: "old",
+            observedValue: "safe") == foreground)
+    }
+
+    @Test
+    func `already equal value never proves that typing changed the field`() throws {
+        let confirmation = try #require(ExactLiteralTypingEffectConfirmation.plan(
+            actions: [.clear, .text("safe")],
+            target: self.target()))
+        let dispatched = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+
+        #expect(confirmation.confirmedOutcome(
+            from: dispatched,
+            previousValue: "safe",
+            observedValue: "safe") == dispatched)
     }
 
     @Test
@@ -110,7 +144,10 @@ struct ExactLiteralTypingEffectConfirmationTests {
             delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
             evidence: .deliveryAccepted,
             unitCount: DesktopActionOutcome.DispatchUnitCount(7))
-        let mismatch = confirmation.confirmedOutcome(from: dispatched, observedValue: "different")
+        let mismatch = confirmation.confirmedOutcome(
+            from: dispatched,
+            previousValue: "old",
+            observedValue: "different")
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
 
@@ -119,6 +156,79 @@ struct ExactLiteralTypingEffectConfirmationTests {
         #expect(try encoder.encode(mismatch) == encoder.encode(dispatched))
         #expect(mismatch.evidence == .deliveryAccepted)
         #expect(mismatch.dispatchState.unitCount == DesktopActionOutcome.DispatchUnitCount(7))
+    }
+
+    @Test
+    @MainActor
+    func `value readback is rejected when the process generation changes around it`() async throws {
+        let confirmation = try #require(ExactLiteralTypingEffectConfirmation.plan(
+            actions: [.clear, .text("safe")],
+            target: self.target()))
+        let generations = TypingGenerationSequence([33, 34])
+        let service = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            exactFocusedElementValueReader: { focusedElement in
+                .success(ExactWindowFocusSnapshot(
+                    processIdentifier: focusedElement.processIdentifier,
+                    windowID: focusedElement.windowID,
+                    frame: focusedElement.frame,
+                    role: focusedElement.role,
+                    identifier: focusedElement.identifier,
+                    value: "safe"))
+            },
+            processStartIdentityProvider: { _ in generations.next() })
+
+        #expect(await service.exactFocusedValue(for: confirmation) == nil)
+        #expect(generations.readCount == 2)
+    }
+
+    @Test
+    @MainActor
+    func `value readback survives an unchanged exact process generation`() async throws {
+        let confirmation = try #require(ExactLiteralTypingEffectConfirmation.plan(
+            actions: [.clear, .text("safe")],
+            target: self.target()))
+        let service = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            exactFocusedElementValueReader: { focusedElement in
+                .success(ExactWindowFocusSnapshot(
+                    processIdentifier: focusedElement.processIdentifier,
+                    windowID: focusedElement.windowID,
+                    frame: focusedElement.frame,
+                    role: focusedElement.role,
+                    identifier: focusedElement.identifier,
+                    value: "safe"))
+            },
+            processStartIdentityProvider: { _ in 33 })
+
+        #expect(await service.exactFocusedValue(for: confirmation) == "safe")
+    }
+
+    @Test
+    @MainActor
+    func `effect baseline is sampled after lane preparation`() async throws {
+        let confirmation = try #require(ExactLiteralTypingEffectConfirmation.plan(
+            actions: [.clear, .text("safe")],
+            target: self.target()))
+        let value = TypingLockedValue("before preparation")
+        let service = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            exactFocusedElementValueReader: { focusedElement in
+                .success(ExactWindowFocusSnapshot(
+                    processIdentifier: focusedElement.processIdentifier,
+                    windowID: focusedElement.windowID,
+                    frame: focusedElement.frame,
+                    role: focusedElement.role,
+                    identifier: focusedElement.identifier,
+                    value: value.get()))
+            },
+            processStartIdentityProvider: { _ in 33 })
+
+        let baseline = await service.prepareEffectConfirmationBaseline(confirmation) {
+            value.set("after preparation")
+        }
+
+        #expect(baseline == "after preparation")
     }
 
     private func target(role: String = "AXTextField") throws -> UIAutomationTarget.ExactWindow {
@@ -137,5 +247,44 @@ struct ExactLiteralTypingEffectConfirmationTests {
                 role: role,
                 identifier: "editor",
                 frame: CGRect(x: 20, y: 20, width: 200, height: 30)))
+    }
+}
+
+private final class TypingGenerationSequence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var generations: [UInt64?]
+    private var storedReadCount = 0
+
+    var readCount: Int {
+        self.lock.withLock { self.storedReadCount }
+    }
+
+    init(_ generations: [UInt64?]) {
+        self.generations = generations
+    }
+
+    func next() -> UInt64? {
+        self.lock.withLock {
+            self.storedReadCount += 1
+            guard self.generations.count > 1 else { return self.generations.first.flatMap(\.self) }
+            return self.generations.removeFirst()
+        }
+    }
+}
+
+private final class TypingLockedValue<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Value
+
+    init(_ value: Value) {
+        self.value = value
+    }
+
+    func get() -> Value {
+        self.lock.withLock { self.value }
+    }
+
+    func set(_ value: Value) {
+        self.lock.withLock { self.value = value }
     }
 }

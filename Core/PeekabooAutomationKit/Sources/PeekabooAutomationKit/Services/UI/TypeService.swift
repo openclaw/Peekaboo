@@ -57,6 +57,7 @@ public final class TypeService {
     private let pixelFocusPlanEntryHook: @MainActor @Sendable () async throws -> Void
     private let exactFocusedElementValueReader: @Sendable (FocusedElementIdentity)
         -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
+    private let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
 
     public convenience init(
         snapshotManager: (any SnapshotManagerProtocol)? = nil,
@@ -81,6 +82,8 @@ public final class TypeService {
         automationElementResolver: any AutomationElementResolving = AutomationElementResolver(),
         exactFocusedElementValueReader: @escaping @Sendable (FocusedElementIdentity)
             -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError> = DetachedExactWindowFocusReader.readValue,
+        processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? =
+            SystemIdentityResolver.processStartIdentity,
         desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
         operationFinalizer: @escaping @MainActor () -> Void = {})
     {
@@ -94,6 +97,7 @@ public final class TypeService {
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: Self.focusedElementIsSecureField,
             exactFocusedElementValueReader: exactFocusedElementValueReader,
+            processStartIdentityProvider: processStartIdentityProvider,
             desktopOperationExecutor: desktopOperationExecutor,
             operationFinalizer: operationFinalizer)
     }
@@ -111,6 +115,8 @@ public final class TypeService {
             .typeTargetedCharacter,
         exactFocusedElementValueReader: @escaping @Sendable (FocusedElementIdentity)
             -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError> = DetachedExactWindowFocusReader.readValue,
+        processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? =
+            SystemIdentityResolver.processStartIdentity,
         desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
         operationFinalizer: @escaping @MainActor () -> Void = {},
         pixelFocusReceiptPlanner: (@MainActor @Sendable (String) async throws -> SnapshotTargetReceiptPlan)? = nil,
@@ -134,6 +140,7 @@ public final class TypeService {
         self.focusedElementSecurityProbe = focusedElementSecurityProbe
         self.targetedCharacterTyper = targetedCharacterTyper
         self.exactFocusedElementValueReader = exactFocusedElementValueReader
+        self.processStartIdentityProvider = processStartIdentityProvider
         self.desktopOperationExecutor = desktopOperationExecutor
         self.operationFinalizer = operationFinalizer
         self.pixelFocusReceiptPlanner = pixelFocusReceiptPlanner ?? { snapshotID in
@@ -375,7 +382,7 @@ public final class TypeService {
         let effectConfirmation = automationTarget.exactWindow.flatMap {
             ExactLiteralTypingEffectConfirmation.plan(actions: actions, target: $0)
         }
-        var confirmationPreflightSucceeded = false
+        var confirmationPreflightValue: String?
         let plan = try DesktopOperationPlan(
             verb: .type,
             selector: .focused,
@@ -384,11 +391,9 @@ public final class TypeService {
                 target: automationTarget),
             strategy: targetProcessIdentifier == nil ? self.inputPolicy.strategy(for: .type) : .synthOnly,
             prepare: {
-                if let effectConfirmation {
-                    confirmationPreflightSucceeded = await self.exactFocusedValue(
-                        for: effectConfirmation) != nil
-                }
-                await lanePreparation()
+                confirmationPreflightValue = await self.prepareEffectConfirmationBaseline(
+                    effectConfirmation,
+                    lanePreparation: lanePreparation)
             },
             action: nil,
             synthesis: DesktopOperationPlan.SynthesisRoute {
@@ -408,11 +413,12 @@ public final class TypeService {
                 }
                 var verifiedExecutionResult = executionResult
                 if let effectConfirmation,
-                   confirmationPreflightSucceeded,
+                   let confirmationPreflightValue,
                    let observedValue = await self.exactFocusedValue(for: effectConfirmation)
                 {
                     verifiedExecutionResult.outcome = effectConfirmation.confirmedOutcome(
                         from: executionResult.outcome,
+                        previousValue: confirmationPreflightValue,
                         observedValue: observedValue)
                 }
                 let completedSummary = TypeActionExecutionSummary(
@@ -431,17 +437,35 @@ public final class TypeService {
         return summary
     }
 
-    private func exactFocusedValue(
+    func prepareEffectConfirmationBaseline(
+        _ confirmation: ExactLiteralTypingEffectConfirmation?,
+        lanePreparation: @escaping @MainActor () async -> Void) async -> String?
+    {
+        await lanePreparation()
+        guard let confirmation else { return nil }
+        return await self.exactFocusedValue(for: confirmation)
+    }
+
+    func exactFocusedValue(
         for confirmation: ExactLiteralTypingEffectConfirmation) async -> String?
     {
         let reader = self.exactFocusedElementValueReader
+        let processStartIdentityProvider = self.processStartIdentityProvider
         let focusedElement = confirmation.focusedElement
+        let expectedGeneration = confirmation.processStartIdentity
         let observation = try? await ElementDetectionTimeoutRunner.runDetached(
             targetProcessIdentifier: focusedElement.processIdentifier,
-            targetProcessStartIdentity: confirmation.processStartIdentity,
+            targetProcessStartIdentity: expectedGeneration,
             seconds: 0.2)
         {
-            reader(focusedElement)
+            guard processStartIdentityProvider(focusedElement.processIdentifier) == expectedGeneration else {
+                return Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>.failure(.processMismatch)
+            }
+            let observation = reader(focusedElement)
+            guard processStartIdentityProvider(focusedElement.processIdentifier) == expectedGeneration else {
+                return Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>.failure(.processMismatch)
+            }
+            return observation
         }
         return observation.flatMap(confirmation.readableValue(from:))
     }

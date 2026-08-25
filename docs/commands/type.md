@@ -53,32 +53,29 @@ that snapshot. Use `press` for standalone keys or chords.
 - Background app/PID delivery is pinned to the process generation resolved before dispatch. Peekaboo revalidates the receipt before every character or special action, stops on target exit/relaunch, and reports partial delivery as retry-unsafe. Exact-window remote delivery requires Bridge protocol 1.24.
 - Event injection is not evidence that the receiver changed. A native `dispatched_unverified` result is returned as
   non-success and requires a fresh observation; `typedText`, `totalCharacters`, and `keyPresses` claim completed work
-  only when the typing effect is confirmed. Exact-window `--clear` followed only by printable literal text can confirm
-  by matching a readable, non-secure AX value after dispatch; field contents never enter the result. Requested actions
-  remain available for diagnosis. For other plain fields where replacement semantics are acceptable, prefer
+  only when the typing effect is a confirmed change. `confirmed_no_change` and missing outcomes are also non-success.
+  Exact-window `--clear` followed only by printable literal text can confirm when a generation-bound, readable,
+  non-secure AX value changes from its private pre-dispatch value to the exact requested value; field contents never
+  enter the result. An already-equal value remains unverifiable. Requested actions remain available for diagnosis.
+  For other plain fields where replacement semantics are acceptable, prefer
   `set-value`: it verifies the AX value readback without exposing field contents in the result. Secure fields, special
   keys, IME-dependent input, and controls without readable values remain intentionally unverifiable.
 - JSON output reports confirmed `totalCharacters`, `keyPresses`, delivery mode, optional target PID/window ID, and elapsed time; this matches what the agent logs when executing scripted steps.
 
 ## Examples
 ```bash
-# Type text and press Return afterwards
-peekaboo type "open ~/Downloads\n" --app "Terminal"
+# Capture one exact text window, replace its field, and require a confirmed change
+SNAPSHOT_ID=$(peekaboo see --pid 123 --window-id 456 --json | jq -r '.data.snapshot_id')
+peekaboo type "status report ready" --snapshot "$SNAPSHOT_ID" --clear
 
-# Force foreground typing when an app ignores background keyboard events
+# Intentionally dispatch foreground typing, then observe; this remains non-success without readback
 peekaboo type "status report ready" --app TextEdit --foreground
 
-# Clear the field and type a username in the background, then explicitly focus for raw navigation keys
-peekaboo type alice@example.com --app Safari --clear
-peekaboo press Tab Tab Return --app Safari --foreground
-
-# Opt into human typing at 140 WPM
+# Cadence options also require follow-up observation unless the exact replacement shape above applies
 peekaboo type "status report ready" --app TextEdit --wpm 140
-
-# Linear profile with fixed 10ms delay
 peekaboo type "fast" --app TextEdit --profile linear --delay 10ms
 
-# Focus the captured pixel and type atomically without activating the window
+# Pixel-focus dispatch stays retry-unsafe and requires fresh observation
 peekaboo type "hello" --at 320,180 --coordinate-space image_pixels --snapshot "$SNAPSHOT_ID"
 ```
 

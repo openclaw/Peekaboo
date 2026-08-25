@@ -244,6 +244,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
             syntheticInputDriver: syntheticInputDriver,
             automationElementResolver: automationElementResolver,
             exactFocusedElementValueReader: exactFocusedElementValueReader,
+            processStartIdentityProvider: processStartIdentityProvider,
             desktopOperationExecutor: executor,
             operationFinalizer: operationFinalizer)
         self.scrollService = ScrollService(

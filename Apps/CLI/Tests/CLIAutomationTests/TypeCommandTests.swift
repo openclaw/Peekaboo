@@ -96,7 +96,8 @@ struct TypeCommandTests {
 
     @Test
     func `Type execution defaults to linear cadence`() async throws {
-        let context = await self.makeContext()
+        let automation = await confirmedTypeAutomation(mode: .foreground)
+        let context = await self.makeContext(automation: automation)
         let result = try await self.runType(arguments: ["Hello", "--foreground"], context: context)
 
         #expect(result.exitStatus == 0)
@@ -110,7 +111,8 @@ struct TypeCommandTests {
 
     @Test
     func `Type execution with WPM opts into human cadence`() async throws {
-        let context = await self.makeContext()
+        let automation = await confirmedTypeAutomation(mode: .foreground)
+        let context = await self.makeContext(automation: automation)
         let result = try await self.runType(arguments: ["Hello", "--wpm", "140", "--foreground"], context: context)
 
         #expect(result.exitStatus == 0)
@@ -124,7 +126,8 @@ struct TypeCommandTests {
 
     @Test
     func `Type execution honors linear profile and delay`() async throws {
-        let context = await self.makeContext()
+        let automation = await confirmedTypeAutomation(mode: .foreground)
+        let context = await self.makeContext(automation: automation)
         let result = try await self.runType(
             arguments: ["Hello", "--profile", "linear", "--delay", "15", "--foreground"],
             context: context
@@ -152,7 +155,8 @@ struct TypeCommandTests {
 
     @Test
     func `Type JSON output separates requested text from executed actions`() async throws {
-        let context = await self.makeContext()
+        let automation = await confirmedTypeAutomation(mode: .foreground)
+        let context = await self.makeContext(automation: automation)
         let result = try await self.runType(
             arguments: ["Line 1\\nLine 2", "--foreground", "--json"],
             context: context
@@ -184,7 +188,11 @@ struct TypeCommandTests {
                 ),
             ])
         }
-        let context = await self.makeContext(applications: applicationService)
+        let automation = await confirmedTypeAutomation(mode: .background)
+        let context = await self.makeContext(
+            automation: automation,
+            applications: applicationService
+        )
         _ = try await context.snapshots.createSnapshot()
 
         let result = try await self.runType(
@@ -208,7 +216,11 @@ struct TypeCommandTests {
         let applicationService = await MainActor.run {
             StubApplicationService(applications: [app])
         }
-        let context = await self.makeContext(applications: applicationService)
+        let automation = await confirmedTypeAutomation(mode: .background)
+        let context = await self.makeContext(
+            automation: automation,
+            applications: applicationService
+        )
 
         let result = try await self.runType(
             arguments: ["Hello", "--app", "TextEdit", "--json"],
@@ -900,6 +912,19 @@ struct TypeCommandTests {
         await MainActor.run {
             operation(context.automation)
         }
+    }
+}
+
+private func confirmedTypeAutomation(
+    mode: DesktopActionOutcome.Delivery.Mode
+) async -> OutcomeStubAutomationService {
+    await MainActor.run {
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = .confirmedChange(delivery: .init(
+            mechanism: mode == .foreground ? .globalEvents : .processTargetedEvents,
+            mode: mode
+        ))
+        return automation
     }
 }
 

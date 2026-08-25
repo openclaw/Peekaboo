@@ -37,6 +37,23 @@ struct TypeCommandTruthTests {
     }
 
     @Test
+    func `Missing typing outcome is non-success and never publishes typed fields`() async throws {
+        let automation = self.automation(focused: self.textFocus())
+        automation.actionOutcome = nil
+        let context = self.context(automation: automation)
+
+        let result = try await self.runType(["Hello", "--app", "TextEdit", "--json"], context: context)
+
+        #expect(result.exitStatus != 0)
+        #expect(automation.exactTypeActionsCalls.count == 1)
+        let payload = try ExternalCommandRunner.decodeJSONResponse(from: result, as: JSONResponse.self)
+        #expect(payload.success == false)
+        #expect(payload.data == nil)
+        #expect(!result.combinedOutput.contains("typedText"))
+        #expect(!result.combinedOutput.contains("totalCharacters"))
+    }
+
+    @Test
     func `Type revalidates matching snapshot focus before exact-window dispatch`() async throws {
         let focused = self.textFocus()
         let automation = self.automation(focused: focused)
@@ -85,7 +102,7 @@ struct TypeCommandTruthTests {
     }
 
     @Test
-    func `Confirmed no-change typing leaf never populates typed character fields`() async throws {
+    func `Confirmed no-change typing leaf is not successful even when setup focus changed`() async throws {
         let windows = InputFocusWindowService(focusOutcome: InputFocusFixtures.focusOutcome)
         let automation = OutcomeStubAutomationService()
         automation.actionOutcome = .confirmedNoChange(route: .bridge)
@@ -102,16 +119,11 @@ struct TypeCommandTruthTests {
             ],
             services: services
         )
-        let payload = try ExternalCommandRunner.decodeJSONResponse(
-            from: result,
-            as: CodableJSONResponse<TypeCommandResult>.self
-        )
-
-        #expect(result.exitStatus == 0)
-        #expect(payload.outcome?.state == .confirmedChange)
-        #expect(payload.data.typedText == nil)
-        #expect(payload.data.totalCharacters == 0)
-        #expect(payload.data.literalCharactersTyped == 0)
+        #expect(result.exitStatus != 0)
+        let payload = try ExternalCommandRunner.decodeJSONResponse(from: result, as: JSONResponse.self)
+        #expect(payload.outcome?.state != .confirmedChange)
+        #expect(payload.outcome?.dispatchState.mutationDispatched == true)
+        #expect(payload.data == nil)
     }
 
     @Test

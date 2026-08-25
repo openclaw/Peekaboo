@@ -134,13 +134,11 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                     snapshotId: observation.snapshotId,
                     target: deliveryTarget
                 )
-                if actionResult.outcome != nil {
-                    _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
-                        actionResult,
-                        policy: .confirmed(requiring: Self.delivery(for: deliveryTarget).mode),
-                        operation: "Typing"
-                    )
-                }
+                _ = try UIAutomationActionResultSemantics.requireConfirmedChange(
+                    actionResult,
+                    deliveryMode: Self.delivery(for: deliveryTarget).mode,
+                    operation: "Typing"
+                )
                 let receiptlessStep = DesktopActionSequenceAccumulator.Step.dispatched(
                     route: actionRoute,
                     delivery: Self.delivery(for: deliveryTarget),
@@ -354,9 +352,9 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                     windowBounds: authority.target.bounds
                 )
             )
-            _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+            _ = try UIAutomationActionResultSemantics.requireConfirmedChange(
                 result,
-                policy: .confirmed(requiring: .background),
+                deliveryMode: .background,
                 targetRequirement: .exact(expectedTarget),
                 operation: "Pixel-focus typing"
             )
@@ -466,7 +464,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         let typeResult = input.typeResult
         let targetProcessIdentifier = target.processIdentifier
         let targetWindowID = target.exactWindow?.identity.windowID
-        let effectConfirmed = input.typingOutcome.map { $0.state == .confirmedChange } ?? true
+        let effectConfirmed = input.typingOutcome?.state == .confirmedChange
         let confirmedCharacters = effectConfirmed ? typeResult.totalCharacters : 0
         let confirmedKeyPresses = effectConfirmed ? typeResult.keyPresses : 0
         let specialKeys = max(confirmedKeyPresses - confirmedCharacters, 0)
@@ -606,22 +604,24 @@ extension TypeCommand: ParsableCommand {
                 discussion: """
                     The 'type' command sends keyboard input to a targeted app or snapshot
                     process. Background delivery is the default and requires a process target.
-                    Use --foreground for intentional global input.
+                    Use --foreground for intentional global input. Success requires a confirmed
+                    receiver change; event dispatch alone remains a retry-unsafe non-success.
 
                     EXAMPLES:
-                      peekaboo type "Hello World" --app TextEdit # Background-target TextEdit
-                      peekaboo type "user@example.com" --foreground
+                      peekaboo type "Hello World" --snapshot "$SNAPSHOT_ID" --clear
+                      peekaboo type "user@example.com" --foreground # Dispatch, then observe
                       peekaboo type "text" --app TextEdit --delay 0ms
                       peekaboo type "text" --app TextEdit --delay 50ms
                       peekaboo type "text" --app TextEdit --wpm 150
-                      peekaboo type "text" --app TextEdit --clear
+                      peekaboo type "text" --snapshot "$SNAPSHOT_ID" --clear
                       peekaboo type "Line 1\nLine 2" --app TextEdit
                       peekaboo type "Name:\tJohn" --app TextEdit
                       peekaboo type "Path: C:\\data" --app TextEdit
 
                     KEY PRESSES:
                       Chain `type` with `press` for Return, Tab, Escape, Delete, or chords.
-                      Use --clear to clear the current field before typing.
+                      An exact-window snapshot plus --clear and literal text can confirm through
+                      private non-secure AX value readback. Other shapes require fresh observation.
 
                     ESCAPE SEQUENCES:
                       Supported escape sequences in text:

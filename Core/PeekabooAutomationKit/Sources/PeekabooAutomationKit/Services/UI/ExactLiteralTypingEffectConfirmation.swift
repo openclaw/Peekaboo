@@ -43,11 +43,13 @@ struct ExactLiteralTypingEffectConfirmation {
 
     func confirmedOutcome(
         from outcome: DesktopActionOutcome,
+        previousValue: String,
         observedValue: String) -> DesktopActionOutcome
     {
         guard outcome.state == .dispatchedUnverified,
               outcome.delivery?.mode == .background,
               outcome.delivery?.mechanism == .windowTargetedEvents,
+              !previousValue.utf8.elementsEqual(self.expectedValue.utf8),
               observedValue.utf8.elementsEqual(self.expectedValue.utf8),
               let delivery = outcome.delivery
         else { return outcome }
