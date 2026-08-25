@@ -7,6 +7,16 @@ import Testing
 @Suite(.serialized)
 struct PeekabooBridgeBrowserReceiptBindingTests {
     @Test
+    func `browser request read classification is shared across Bridge adapters`() {
+        #expect(PeekabooBridgeBrowserExecuteRequest(
+            toolName: "list_pages",
+            arguments: [:]).isReadOnly)
+        #expect(!PeekabooBridgeBrowserExecuteRequest(
+            toolName: "click",
+            arguments: [:]).isReadOnly)
+    }
+
+    @Test
     func `process bound DevTools receipt is canonical for native binding protocol`() {
         let receipt = PeekabooBridgeBrowserConnectionReceipt(
             channel: "stable",

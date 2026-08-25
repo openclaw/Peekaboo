@@ -164,13 +164,15 @@ extension PeekabooBridgeClient {
         }
         let boundRequest = try await self.receiptBoundBrowserRequest(request)
         if request.isReadOnly {
-            return try await DesktopActionResult(payload: self.directBrowserExecute(boundRequest), outcome: nil)
+            let response = try await self.directBrowserExecute(boundRequest)
+            try self.validateBrowserReadResponse(response, request: boundRequest)
+            return DesktopActionResult(payload: response, outcome: nil)
         }
         guard self.operationAttestation != nil else {
             throw DesktopActionFailure.preDispatchRefusal(
                 route: .bridge,
                 reason: .operationUnsupported,
-                message: "Result-aware browser mutation requires receipt-bound Bridge execution.",
+                message: "Result-aware browser execution requires receipt-bound Bridge execution.",
                 hint: "Use a protocol 1.29 runtime with operation receipts, or use the legacy browser API.")
         }
         return try await self.actionResult(
@@ -242,11 +244,35 @@ extension PeekabooBridgeClient {
             }
             return result
         case let .error(envelope):
-            throw envelope
+            try Self.throwActionFailureOrEnvelope(envelope)
         default:
             throw PeekabooBridgeErrorEnvelope(
                 code: .invalidRequest,
                 message: "Unexpected browser tool response")
+        }
+    }
+
+    private func validateBrowserReadResponse(
+        _ response: PeekabooBridgeBrowserToolResponse,
+        request: PeekabooBridgeBrowserExecuteRequest) throws
+    {
+        guard let expectedReceipt = request.expectedConnectionReceipt else {
+            preconditionFailure("Receipt binding must precede browser read transport")
+        }
+        if let returnedReceipt = response.connectionReceipt {
+            guard returnedReceipt == expectedReceipt else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    route: .bridge,
+                    reason: .targetUnavailable,
+                    message: "Browser read response did not match its requested connection receipt.",
+                    hint: "Refresh browser status and retry against its exact connection receipt.")
+            }
+        } else if self.operationAttestation != nil {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .targetUnavailable,
+                message: "Attested browser read response omitted its connection receipt.",
+                hint: "Update and relaunch the Peekaboo Bridge host before retrying.")
         }
     }
 

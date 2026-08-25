@@ -335,7 +335,10 @@ struct PeekabooBridgeBrowserClientTests {
             channel: "stable"))
         #expect(read.outcome == nil)
         #expect(!read.payload.isError)
-        #expect(services.lastExpectedBrowserConnectionReceipt == nil)
+        #expect(read.payload.connectionReceipt == Self.browserReceipt)
+        #expect(read.payload.completedCallCount == 1)
+        #expect(read.payload.dispatchedCallCount == 1)
+        #expect(services.lastExpectedBrowserConnectionReceipt == Self.browserReceipt)
         #expect(services.lastBrowserExecute?.expectedConnectionReceipt == Self.browserReceipt)
         #expect(services.lastBrowserExecute?.connectionPolicy == .requireExistingLiveReceipt)
 
@@ -781,7 +784,7 @@ struct PeekabooBridgeBrowserClientTests {
         await peer.waitUntilFinished()
     }
 
-    private static let browserReceipt = PeekabooBridgeBrowserConnectionReceipt(
+    static let browserReceipt = PeekabooBridgeBrowserConnectionReceipt(
         channel: "stable",
         browserURL: "http://127.0.0.1:9222",
         webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/fixture",

@@ -260,7 +260,8 @@ public struct PeekabooBridgeBrowserExecuteRequest: Codable, Sendable, Equatable 
         } ? .readOnly : .mutating
     }
 
-    var isReadOnly: Bool {
+    /// Canonical classification used by Bridge and provider adapters to select receipt-bound read routing.
+    public var isReadOnly: Bool {
         self.actionSemantics == .readOnly
     }
 

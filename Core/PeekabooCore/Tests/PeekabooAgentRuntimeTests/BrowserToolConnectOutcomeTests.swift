@@ -48,13 +48,91 @@ struct BrowserToolConnectOutcomeTests {
     }
 
     @Test
-    func `Browser tool does not swallow caller cancellation`() async {
+    func `Browser tool keeps uncancelled raw provider cancellation indeterminate`() async throws {
         let client = ConnectOutcomeBrowserClient(error: CancellationError())
 
-        await #expect(throws: CancellationError.self) {
-            _ = try await BrowserTool(client: client, executionPolicy: .unrestricted).execute(
+        let response = try await BrowserTool(client: client, executionPolicy: .unrestricted).execute(
+            arguments: ToolArguments(raw: ["action": "connect", "channel": "stable"]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("indeterminate"))
+        #expect(meta["dispatch_state"] == .string("may_have_dispatched"))
+        #expect(meta["retry_safe"] == .bool(false))
+    }
+
+    @Test
+    func `Browser tool keeps raw cancellation after provider entry indeterminate`() async throws {
+        let client = ConnectOutcomeBrowserClient(
+            error: CancellationError(),
+            waitForCancellation: true)
+        let task = Task { @MainActor in
+            try await BrowserTool(client: client, executionPolicy: .unrestricted).execute(
                 arguments: ToolArguments(raw: ["action": "connect", "channel": "stable"]))
         }
+        await client.waitUntilConnectStarts()
+
+        task.cancel()
+
+        let response = try await task.value
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("indeterminate"))
+        #expect(meta["dispatch_state"] == .string("may_have_dispatched"))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(client.connectCount == 1)
+    }
+
+    @Test
+    func `Browser tool returns read cancellation without mutation outcome metadata`() async throws {
+        let client = ReadCancellationBrowserClient()
+
+        let response = try await BrowserTool(client: client, executionPolicy: .unrestricted).execute(
+            arguments: ToolArguments(raw: ["action": "list_pages", "channel": "stable"]))
+
+        #expect(response.isError)
+        #expect(response.meta == nil)
+        #expect(client.executeCount == 1)
+    }
+
+    @Test
+    func `Browser tool rejects an already cancelled caller before provider entry`() async {
+        let client = ConnectOutcomeBrowserClient(error: CancellationError())
+        let gate = BrowserToolStartGate()
+        let task = Task { @MainActor in
+            await gate.block()
+            return try await BrowserTool(client: client, executionPolicy: .unrestricted).execute(
+                arguments: ToolArguments(raw: ["action": "connect", "channel": "stable"]))
+        }
+        await gate.waitUntilBlocked()
+
+        task.cancel()
+        await gate.release()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await task.value
+        }
+        #expect(client.connectCount == 0)
+    }
+
+    @Test
+    func `Browser tool rejects an already cancelled read before provider entry`() async {
+        let client = ReadCancellationBrowserClient()
+        let gate = BrowserToolStartGate()
+        let task = Task { @MainActor in
+            await gate.block()
+            return try await BrowserTool(client: client, executionPolicy: .unrestricted).execute(
+                arguments: ToolArguments(raw: ["action": "list_pages", "channel": "stable"]))
+        }
+        await gate.waitUntilBlocked()
+
+        task.cancel()
+        await gate.release()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await task.value
+        }
+        #expect(client.executeCount == 0)
     }
 
     @Test
@@ -119,12 +197,47 @@ struct BrowserToolConnectOutcomeTests {
 }
 
 @MainActor
+private final class ReadCancellationBrowserClient: BrowserMCPActionResultProviding, @unchecked Sendable {
+    private(set) var executeCount = 0
+
+    func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
+        BrowserMCPStatus(isConnected: true, toolCount: 1, detectedBrowsers: [])
+    }
+
+    func connect(channel: BrowserMCPChannel?) async throws -> BrowserMCPStatus {
+        await self.status(channel: channel)
+    }
+
+    func disconnect() async {}
+
+    func execute(
+        toolName _: String,
+        arguments _: [String: Any],
+        channel _: BrowserMCPChannel?) async throws -> ToolResponse
+    {
+        throw CancellationError()
+    }
+
+    func executeSequenceWithOutcome(
+        _: [BrowserMCPMappedCall],
+        channel _: BrowserMCPChannel?) async throws -> DesktopActionResult<ToolResponse>
+    {
+        self.executeCount += 1
+        throw CancellationError()
+    }
+}
+
+@MainActor
 private final class ConnectOutcomeBrowserClient: BrowserMCPConnectionResultProviding, @unchecked Sendable {
     private let error: any Error
+    private let waitForCancellation: Bool
     private(set) var connectCount = 0
+    private var connectStarted = false
+    private var connectStartedContinuation: CheckedContinuation<Void, Never>?
 
-    init(error: any Error) {
+    init(error: any Error, waitForCancellation: Bool = false) {
         self.error = error
+        self.waitForCancellation = waitForCancellation
     }
 
     func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
@@ -146,7 +259,20 @@ private final class ConnectOutcomeBrowserClient: BrowserMCPConnectionResultProvi
         browserURL _: String?) async throws -> DesktopActionResult<BrowserMCPStatus>
     {
         self.connectCount += 1
+        self.connectStarted = true
+        self.connectStartedContinuation?.resume()
+        self.connectStartedContinuation = nil
+        if self.waitForCancellation {
+            try await Task.sleep(for: .seconds(30))
+        }
         throw self.error
+    }
+
+    func waitUntilConnectStarts() async {
+        guard !self.connectStarted else { return }
+        await withCheckedContinuation { continuation in
+            self.connectStartedContinuation = continuation
+        }
     }
 
     func disconnect() async {}
@@ -238,5 +364,30 @@ private final class PostDispatchCancellationBrowserMCPManager: BrowserMCPManagin
         await withCheckedContinuation { continuation in
             self.addServerStartedContinuation = continuation
         }
+    }
+}
+
+private actor BrowserToolStartGate {
+    private var blockedContinuation: CheckedContinuation<Void, Never>?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    func block() async {
+        self.blockedContinuation?.resume()
+        self.blockedContinuation = nil
+        await withCheckedContinuation { continuation in
+            self.releaseContinuation = continuation
+        }
+    }
+
+    func waitUntilBlocked() async {
+        guard self.releaseContinuation == nil else { return }
+        await withCheckedContinuation { continuation in
+            self.blockedContinuation = continuation
+        }
+    }
+
+    func release() {
+        self.releaseContinuation?.resume()
+        self.releaseContinuation = nil
     }
 }

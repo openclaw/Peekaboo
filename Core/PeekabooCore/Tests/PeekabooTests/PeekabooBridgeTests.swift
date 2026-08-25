@@ -1992,6 +1992,7 @@ final class StubServices: PeekabooBridgeServiceProviding {
     var browserConnectError: (any Error)?
     var browserExecutionError: (any Error)?
     var browserExecutionErrorAfterDispatch: (any Error)?
+    var browserExecutionReceiptOverride: PeekabooBridgeBrowserConnectionReceipt?
     var browserCompletedCallCount: Int?
     var browserDispatchedCallCount: Int?
     var preservesBrowserReceiptChannel = false
@@ -2101,7 +2102,7 @@ final class StubServices: PeekabooBridgeServiceProviding {
                 content: response.content,
                 isError: actionFailure != nil || response.isError,
                 meta: response.meta),
-            connectionReceipt: expectedConnectionReceipt,
+            connectionReceipt: self.browserExecutionReceiptOverride ?? expectedConnectionReceipt,
             completedCallCount: self.browserCompletedCallCount ?? request.resolvedCalls.count,
             dispatchedCallCount: self.browserDispatchedCallCount ?? request.resolvedCalls.count,
             actionFailure: actionFailure)

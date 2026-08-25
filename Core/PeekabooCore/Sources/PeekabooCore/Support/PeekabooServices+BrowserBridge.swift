@@ -119,6 +119,14 @@ extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
                 message: "The browser provider cannot atomically bind execution to a connection receipt.",
                 hint: "Update the runtime host before retrying target-attested browser execution.")
         }
+        if request.isReadOnly {
+            return try PeekabooBridgeBrowserExecutionResult(
+                response: Self.bridgeToolResponse(from: result.response),
+                connectionReceipt: Self.bridgeReceipt(from: result.connectionReceipt),
+                completedCallCount: result.completedCallCount,
+                dispatchedCallCount: result.dispatchedCallCount,
+                actionFailure: result.actionFailure)
+        }
         let projected = try result.projectingMutationProgress(for: calls)
         return try PeekabooBridgeBrowserExecutionResult(
             response: Self.bridgeToolResponse(from: projected.response),

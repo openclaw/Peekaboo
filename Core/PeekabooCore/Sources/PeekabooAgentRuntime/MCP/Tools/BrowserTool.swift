@@ -165,6 +165,7 @@ public struct BrowserTool: MCPTool {
             return ToolResponse.error("browser_url is accepted only by the connect action")
         }
 
+        try Task.checkCancellation()
         do {
             switch action {
             case .status:
@@ -176,6 +177,7 @@ public struct BrowserTool: MCPTool {
                         message: "Browser connect requires a provider that reports canonical action outcomes.",
                         hint: "Update the runtime host before retrying browser connect.")
                 }
+                try Self.checkCancellationBeforeProviderEntry()
                 let result = try await resultClient.connectWithOutcome(
                     channel: channel,
                     browserURL: browserURL)
@@ -212,7 +214,13 @@ public struct BrowserTool: MCPTool {
                 for: failure,
                 invalidatedSnapshotID: nil)
         } catch is CancellationError {
-            throw CancellationError()
+            let failure = DesktopActionFailure.indeterminate(
+                evidence: .completionUnknown,
+                message: "Browser provider cancellation provenance is unknown.",
+                hint: "Observe browser status before deciding whether to retry.")
+            return try MCPToolResponseMetadataProjector.errorResponse(
+                for: failure,
+                invalidatedSnapshotID: nil)
         } catch {
             return ToolResponse.error(self.permissionHelp(error: error))
         }
@@ -249,12 +257,23 @@ public struct BrowserTool: MCPTool {
                     message: "Browser mutations require a provider that reports canonical action outcomes.",
                     hint: "Update the runtime host before retrying this browser mutation.")
             }
-            return try await self.client.executeSequence(calls, channel: channel)
+            try Self.checkCancellationBeforeProviderEntry()
+            do {
+                return try await self.client.executeSequence(calls, channel: channel)
+            } catch is CancellationError where semantics == .readOnly {
+                return ToolResponse.error("Browser read was cancelled after provider entry.")
+            }
         }
-        let result = try await resultClient.executeSequenceWithOutcome(
-            calls,
-            channel: channel,
-            connectionPolicy: self.connectionPolicy)
+        try Self.checkCancellationBeforeProviderEntry()
+        let result: DesktopActionResult<ToolResponse>
+        do {
+            result = try await resultClient.executeSequenceWithOutcome(
+                calls,
+                channel: channel,
+                connectionPolicy: self.connectionPolicy)
+        } catch is CancellationError where semantics == .readOnly {
+            return ToolResponse.error("Browser read was cancelled after provider entry.")
+        }
         let outcome = try Self.validatedOutcome(
             result.outcome,
             payloadIsError: result.payload.isError,
@@ -271,6 +290,14 @@ public struct BrowserTool: MCPTool {
             meta: MCPToolResponseMetadataProjector.metadata(
                 merging: providerFields,
                 outcome: outcome))
+    }
+
+    private static func checkCancellationBeforeProviderEntry() throws {
+        guard Task.isCancelled else { return }
+        throw DesktopActionFailure.preDispatchRefusal(
+            reason: .requestCancelled,
+            message: "Browser execution was cancelled before provider entry.",
+            hint: "Submit a new request only if the browser action is still wanted.")
     }
 
     private static func sequenceSemantics(

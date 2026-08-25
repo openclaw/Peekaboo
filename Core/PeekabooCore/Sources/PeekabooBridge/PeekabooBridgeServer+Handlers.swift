@@ -46,9 +46,7 @@ extension PeekabooBridgeServer {
                 throw Self.invalidRequest(for: request)
             }
             _ = try Self.validatedBrowserExecutionReceipt(payload)
-            guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
-                  !payload.isReadOnly
-            else {
+            guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics else {
                 return try await .init(response: self.handleBrowserRequest(request))
             }
             return try await self.handleBrowserExecute(payload)
@@ -139,15 +137,33 @@ extension PeekabooBridgeServer {
                 payload,
                 expectedConnectionReceipt: target.receipt)
         } catch is CancellationError {
+            if payload.isReadOnly {
+                return Self.browserReadCancellationHandledResponse(target: target)
+            }
             return Self.browserOpaqueCancellationHandledResponse(
                 target: target,
                 causeDescription:
                 "The browser provider was cancelled after accepting the execution request.")
         }
-        guard result.connectionReceipt == target.receipt,
-              result.completedCallCount >= 0,
-              result.dispatchedCallCount >= result.completedCallCount,
-              result.dispatchedCallCount <= payload.mutationCallCount
+        guard result.connectionReceipt == target.receipt else {
+            if payload.isReadOnly {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "Browser read returned a different connection receipt.",
+                    hint: "Refresh browser status and retry against its exact connection receipt.")
+            }
+            throw DesktopActionFailure.indeterminate(
+                evidence: .completionUnknown,
+                message: "Browser execution returned a different connection receipt.",
+                hint: "Observe the intended browser before retrying and update the runtime host.")
+        }
+        if payload.isReadOnly {
+            return try Self.browserReadHandledResponse(result: result, request: payload, target: target)
+        }
+        guard
+            result.completedCallCount >= 0,
+            result.dispatchedCallCount >= result.completedCallCount,
+            result.dispatchedCallCount <= payload.mutationCallCount
         else {
             throw DesktopActionFailure.indeterminate(
                 delivery: .init(mechanism: .browserProtocol, mode: .background),
@@ -198,6 +214,56 @@ extension PeekabooBridgeServer {
             mutation: .init(
                 outcome: outcome,
                 target: target.disposition))
+    }
+
+    private static func browserReadCancellationHandledResponse(
+        target: (
+            receipt: PeekabooBridgeBrowserConnectionReceipt,
+            disposition: PeekabooBridgeHandledResponse.Mutation.TargetDisposition))
+        -> PeekabooBridgeHandledResponse
+    {
+        .init(response: .browserToolResponse(.init(
+            content: [
+                .object([
+                    "type": .string("text"),
+                    "text": .string("Browser read was cancelled after provider entry."),
+                ]),
+            ],
+            isError: true,
+            meta: nil,
+            connectionReceipt: target.receipt)))
+    }
+
+    private static func browserReadHandledResponse(
+        result: PeekabooBridgeBrowserExecutionResult,
+        request: PeekabooBridgeBrowserExecuteRequest,
+        target: (
+            receipt: PeekabooBridgeBrowserConnectionReceipt,
+            disposition: PeekabooBridgeHandledResponse.Mutation.TargetDisposition)) throws
+        -> PeekabooBridgeHandledResponse
+    {
+        let callCount = request.resolvedCalls.count
+        guard result.completedCallCount >= 0,
+              result.dispatchedCallCount >= result.completedCallCount,
+              result.completedCallCount <= callCount,
+              result.dispatchedCallCount <= callCount,
+              result.response.isError || (
+                  result.completedCallCount == callCount &&
+                      result.dispatchedCallCount == callCount &&
+                      result.actionFailure == nil)
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Receipt-bound browser read did not complete canonically.",
+                hint: "Refresh browser status and retry against its exact connection receipt.")
+        }
+        return .init(response: .browserToolResponse(.init(
+            content: result.response.content,
+            isError: result.response.isError,
+            meta: result.response.meta,
+            connectionReceipt: target.receipt,
+            completedCallCount: result.completedCallCount,
+            dispatchedCallCount: result.dispatchedCallCount)))
     }
 
     private static func browserNoDispatchHandledResponse(

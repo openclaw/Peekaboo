@@ -181,7 +181,10 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
             services: services,
             allowlistedTeams: [],
             allowlistedBundles: [],
-            permissionStatusEvaluator: { _ in Self.permissions })
+            permissionStatusEvaluator: { _ in Self.permissions },
+            processStartIdentityProvider: { processIdentifier in
+                processIdentifier == 42 ? 10042 : nil
+            })
 
         let handled = try await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(false) {
             try await server.handleAuthorized(
@@ -1213,7 +1216,7 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
     }
 
     @MainActor
-    private static func server(
+    static func server(
         services: StubServices = StubServices(),
         postEventAccessRequester: @escaping @MainActor @Sendable () -> Bool = { true })
         -> PeekabooBridgeServer
@@ -1242,7 +1245,7 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
     }
 
     @MainActor
-    private static func handleCurrent(
+    static func handleCurrent(
         _ request: PeekabooBridgeRequest,
         with server: PeekabooBridgeServer) async throws -> PeekabooBridgeHandledResponse
     {
@@ -1295,7 +1298,7 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
     }
 
     private static let bounds = CGRect(x: 10, y: 20, width: 300, height: 200)
-    private static let localBrowserReceipt = PeekabooBridgeBrowserConnectionReceipt(
+    static let localBrowserReceipt = PeekabooBridgeBrowserConnectionReceipt(
         channel: "stable",
         processIdentifier: 42,
         processStartIdentity: 10042,
@@ -1305,7 +1308,7 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
         devToolsBrowserID: "browser-a",
         browserVersion: "Chrome/144.0",
         protocolVersion: "1.3")
-    private static let externalBrowserReceipt = PeekabooBridgeBrowserConnectionReceipt(
+    static let externalBrowserReceipt = PeekabooBridgeBrowserConnectionReceipt(
         channel: "stable",
         browserURL: "http://127.0.0.1:9333/",
         webSocketDebuggerURL: "ws://127.0.0.1:9333/devtools/browser/browser-b",
@@ -1323,14 +1326,14 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
         windowBounds: Self.bounds,
         windowMutationIdentity: Self.windowIdentity,
         shouldFocusWebContent: true)
-    private static let permissions = PermissionsStatus(
+    static let permissions = PermissionsStatus(
         screenRecording: true,
         accessibility: true,
         postEvent: true)
 }
 
 @MainActor
-private final class NonReceiptBrowserExecutionServices: PeekabooBridgeServiceProviding {
+final class NonReceiptBrowserExecutionServices: PeekabooBridgeServiceProviding {
     private let base = StubServices()
     private(set) var legacyExecutionCount = 0
     private(set) var legacyConnectCount = 0
