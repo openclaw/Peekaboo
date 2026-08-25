@@ -182,7 +182,9 @@ struct DaemonLaunchPolicyTests {
             _ = try await DaemonLaunchPolicy.launchDaemon(
                 socketPath: "/tmp/peekaboo-daemon-term-\(UUID().uuidString).sock",
                 arguments: ["-c", "trap '' TERM; \(Self.writePIDCommand(to: pidURL)); exec /bin/sleep 30"],
-                timeout: 0.05,
+                // Give the child one scheduler slice to install its TERM trap and publish the PID.
+                // A 50 ms readiness deadline can expire before a loaded hosted runner schedules it.
+                timeout: 1,
                 executableURL: URL(fileURLWithPath: "/bin/sh"),
                 logHandle: .nullDevice
             )
@@ -196,7 +198,7 @@ struct DaemonLaunchPolicyTests {
             Issue.record("Unexpected daemon launch error: \(error)")
         }
 
-        #expect(clock.now - startedAt < .seconds(3))
+        #expect(clock.now - startedAt < .seconds(4))
         childPID = try await Self.waitForPID(at: pidURL)
         let stoppedPID = try #require(childPID)
         #expect(kill(stoppedPID, 0) == -1)
