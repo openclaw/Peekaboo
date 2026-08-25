@@ -798,7 +798,7 @@ public struct PasteTool: MCPTool {
             throw failure.attributed(to: authorizedPlan.targetIdentity.actionTargetReceipt)
         }
 
-        guard let resultIdentity = try UIAutomationActionResultSemantics.validateTarget(
+        let resultIdentity = try UIAutomationActionResultSemantics.validateTarget(
             result.targetIdentity,
             outcome: result.outcome,
             requirement: .compatible(authorizedIdentity),
@@ -807,14 +807,11 @@ public struct PasteTool: MCPTool {
             hint: "Observe the exact target before retrying and update the runtime host.",
             contradictoryMessage: "Background text paste returned a target different from its authorization.",
             fallbackDelivery: UIAutomationActionResultSemantics.keyboardDelivery(for: destination))
-        else {
-            preconditionFailure("Compatible target validation must return one coalesced identity")
-        }
         let outcome = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
             result.outcome,
             policy: .confirmed(requiring: .background),
             operation: "Background text paste",
-            targetReceipt: resultIdentity.actionTargetReceipt,
+            targetReceipt: resultIdentity?.actionTargetReceipt ?? authorizedIdentity.actionTargetReceipt,
             missingOutcomeMessage: "Background text paste returned without a canonical outcome.",
             rejectedOutcomeMessage: "Background text paste did not return a confirmed outcome.",
             missingOutcomeHint: "Observe the exact target before retrying and update the runtime host.",
@@ -822,6 +819,9 @@ public struct PasteTool: MCPTool {
             disallowedDeliveryHint: "Observe the exact target before retrying and update the runtime host.",
             missingOutcomeDelivery: UIAutomationActionResultSemantics.keyboardDelivery(for: destination),
             missingOutcomeUnitCount: .one)
+        guard let resultIdentity else {
+            preconditionFailure("An accepted background text outcome must retain one coalesced target identity")
+        }
         return UIAutomationActionResult(
             payload: result.payload,
             outcome: outcome,

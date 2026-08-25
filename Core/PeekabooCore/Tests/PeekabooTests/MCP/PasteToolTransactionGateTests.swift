@@ -110,24 +110,29 @@ struct PasteToolTransactionGateTests {
     @Test
     func `MCP background paste refuses prohibited and incomplete inventory rows before dispatch`() async throws {
         let ineligibleApplications = [
-            AutomationTestFixtures.application(
-                processIdentifier: 333,
-                processStartIdentity: 33,
-                bundleIdentifier: "com.example.helper",
-                name: "Prohibited Helper",
-                isHiddenKnown: true,
-                activationPolicy: .prohibited),
-            ServiceApplicationInfo(
-                processIdentifier: 444,
-                processStartIdentity: 44,
-                bundleIdentifier: nil,
-                name: "Incomplete Helper",
-                isHiddenKnown: false,
-                activationPolicy: nil,
-                metadataWarnings: ["metadata timed out"]),
+            (
+                application: AutomationTestFixtures.application(
+                    processIdentifier: 333,
+                    processStartIdentity: 33,
+                    bundleIdentifier: "com.example.helper",
+                    name: "Prohibited Helper",
+                    isHiddenKnown: true,
+                    activationPolicy: .prohibited),
+                message: "cannot receive background input"),
+            (
+                application: ServiceApplicationInfo(
+                    processIdentifier: 444,
+                    processStartIdentity: 44,
+                    bundleIdentifier: nil,
+                    name: "Incomplete Helper",
+                    isHiddenKnown: false,
+                    activationPolicy: nil,
+                    metadataWarnings: ["metadata timed out"]),
+                message: "Application inventory was incomplete while resolving 'Incomplete Helper'. " +
+                    "metadata timed out"),
         ]
 
-        for application in ineligibleApplications {
+        for (application, message) in ineligibleApplications {
             let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
             let applications = await MainActor.run { MockApplicationService(applications: [application]) }
             let clipboard = await MainActor.run { TransactionGateClipboardService() }
@@ -143,7 +148,7 @@ struct PasteToolTransactionGateTests {
             ]))
 
             #expect(response.isError)
-            #expect(self.responseText(response).contains("cannot receive background input"))
+            #expect(self.responseText(response).contains(message))
             try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(
                 .refused(reason: .targetUnavailable),
                 in: response)
@@ -693,8 +698,11 @@ extension PasteToolTransactionGateTests {
 
         #expect(response.isError)
         let meta = try #require(response.meta?.objectValue)
-        #expect(meta["state"] == .string("indeterminate"))
-        #expect(meta["dispatch_state"] == .string("may_have_dispatched"))
+        #expect(meta["state"] == .string("dispatched_unverified"))
+        #expect(meta["dispatch_state"] == .string("dispatched"))
+        #expect(meta["delivery_mechanism"] == .string("composite"))
+        #expect(meta["delivery_mode"] == .string("foreground"))
+        #expect(meta["evidence"] == .string("delivery_accepted"))
         #expect(meta["dispatched_unit_count"] == .int(2))
         #expect(meta["retry_safe"] == .bool(false))
         #expect(meta["requires_fresh_observation"] == .bool(true))

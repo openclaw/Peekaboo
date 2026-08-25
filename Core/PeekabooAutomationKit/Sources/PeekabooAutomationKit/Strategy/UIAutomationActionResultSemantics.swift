@@ -172,6 +172,12 @@ public enum UIAutomationActionResultSemantics {
         contradictoryHint: String = "Observe both targets before retrying and update the runtime host.",
         fallbackDelivery: DesktopActionOutcome.Delivery? = nil) throws -> DesktopTargetIdentity?
     {
+        if identity == nil,
+           outcome?.state == .refused,
+           outcome?.dispatchState == DesktopActionOutcome.DispatchState.none
+        {
+            return nil
+        }
         if case let .compatible(expected) = requirement {
             guard let identity else {
                 throw DesktopActionFailure.indeterminate(

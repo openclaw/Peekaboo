@@ -22,7 +22,7 @@ extension PasteCommand {
                 hint: "Refresh the application inventory before retrying."
             )
         }
-        guard let resultTargetIdentity = try UIAutomationActionResultSemantics.validateTarget(
+        let resultTargetIdentity = try UIAutomationActionResultSemantics.validateTarget(
             result.targetIdentity,
             outcome: result.outcome,
             requirement: .compatible(authorizedIdentity),
@@ -32,20 +32,22 @@ extension PasteCommand {
             contradictoryMessage: "Background text paste returned a target different from its authorization.",
             fallbackDelivery: self.pasteDelivery(for: authorizedTarget)
         )
-        else {
-            preconditionFailure("Compatible target validation must return one coalesced identity")
-        }
         _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
             result.outcome,
-            policy: .confirmed,
+            policy: .confirmed(requiring: .background),
             operation: "Background text paste",
-            targetReceipt: resultTargetIdentity.actionTargetReceipt,
+            targetReceipt: resultTargetIdentity?.actionTargetReceipt ?? authorizedIdentity.actionTargetReceipt,
             missingOutcomeMessage: "Background text paste returned without a canonical outcome.",
             rejectedOutcomeMessage: "Background text paste did not return a confirmed outcome.",
             missingOutcomeHint: "Observe the exact target before retrying and update the runtime host.",
+            disallowedDeliveryMessage: "Background text paste reported foreground delivery.",
+            disallowedDeliveryHint: "Observe the exact target before retrying and update the runtime host.",
             missingOutcomeDelivery: self.pasteDelivery(for: authorizedTarget),
             missingOutcomeUnitCount: .one
         )
+        guard let resultTargetIdentity else {
+            preconditionFailure("An accepted background text outcome must retain one coalesced target identity")
+        }
         return resultTargetIdentity
     }
 }

@@ -98,6 +98,42 @@ extension PasteCommandTests {
     }
 
     @Test
+    func `Background text paste rejects confirmed foreground delivery with its exact receipt`() throws {
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(
+                processIdentifier: ExactBackgroundTextPasteFixture.processIdentifier,
+                processStartIdentity: ExactBackgroundTextPasteFixture.processStartIdentity
+            ),
+            windowID: ExactBackgroundTextPasteFixture.windowID,
+            bounds: ExactBackgroundTextPasteFixture.bounds
+        )
+        let foregroundDelivery = DesktopActionOutcome.Delivery(
+            mechanism: .globalEvents,
+            mode: .foreground
+        )
+        let result = UIAutomationActionResult(
+            payload: TypeResult(totalCharacters: 4, keyPresses: 0),
+            outcome: .confirmedChange(delivery: foregroundDelivery, unitCount: .one),
+            targetIdentity: fixture.windowTargetIdentity
+        )
+
+        do {
+            _ = try PasteCommand.validateBackgroundTextResult(
+                result,
+                authorizedTarget: fixture.windowTargetIdentity.target
+            )
+            Issue.record("Expected foreground delivery to fail")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.message == "Background text paste reported foreground delivery.")
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.delivery == foregroundDelivery)
+            #expect(failure.outcome.dispatchState.unitCount == .one)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.targetReceipt == fixture.windowTargetReceipt)
+        }
+    }
+
+    @Test
     @MainActor
     func `Exact-window background text paste fails closed on a mismatched result target`() async throws {
         let fixture = ExactBackgroundTextPasteFixture()

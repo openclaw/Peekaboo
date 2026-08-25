@@ -178,6 +178,37 @@ struct UIAutomationActionResultSemanticsTests {
     }
 
     @Test
+    func `compatible target allows a providerless pre-dispatch refusal`() throws {
+        let expected = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001),
+            windowID: 71,
+            bounds: Self.windowBounds).windowTargetIdentity
+        let refusal = DesktopActionOutcome.refused(reason: .targetUnavailable)
+        let result = UIAutomationActionResult<Void>(
+            payload: (),
+            outcome: refusal,
+            targetIdentity: nil)
+
+        #expect(try UIAutomationActionResultSemantics.validateTarget(
+            nil,
+            outcome: refusal,
+            requirement: .compatible(expected),
+            operation: "Fixture action") == nil)
+        do {
+            _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                result,
+                policy: .confirmed,
+                targetRequirement: .compatible(expected),
+                operation: "Fixture action")
+            Issue.record("Expected the provider refusal to remain a failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome == refusal)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        }
+    }
+
+    @Test
     func `pre-dispatch refusal does not invent a missing target`() throws {
         let result = UIAutomationActionResult<Void>(
             payload: (),
