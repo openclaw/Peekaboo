@@ -253,6 +253,8 @@ RuntimeBackedCommand {
                 throw DesktopTargetIdentityError.incompleteExactWindow
             }
             return exactWindow
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw PreDispatchActionError(
                 message: "Background scroll requires a complete capture-owned exact-window receipt.",

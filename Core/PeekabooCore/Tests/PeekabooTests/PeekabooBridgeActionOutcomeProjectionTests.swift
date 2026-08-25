@@ -934,10 +934,10 @@ extension PeekabooBridgeActionOutcomeProjectionTests {
 
     @Test
     func `current protocol preserves projection capability introduced at 1 23`() {
-        let currentVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 34)
+        let currentVersion = PeekabooBridgeConstants.protocolVersion
         let projectionVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 23)
 
-        #expect(PeekabooBridgeConstants.protocolVersion == currentVersion)
+        #expect(currentVersion >= projectionVersion)
         #expect(PeekabooBridgeConstants.supportedProtocolRange.upperBound == currentVersion)
         #expect(PeekabooBridgeConstants.desktopActionOutcomeProjectionVersion == projectionVersion)
         #expect(PeekabooBridgeHostCapability.desktopActionOutcomeProjection == "desktopActionOutcomeProjection")

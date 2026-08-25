@@ -10,7 +10,7 @@ struct NativeBrowserConnectionBindingTests {
     @Test
     func `native browser connection binding owns protocol 1 34`() {
         let version = PeekabooBridgeProtocolVersion(major: 1, minor: 34)
-        #expect(PeekabooBridgeConstants.protocolVersion == version)
+        #expect(PeekabooBridgeConstants.protocolVersion >= version)
         #expect(PeekabooBridgeConstants.nativeBrowserConnectionBindingVersion == version)
         #expect(PeekabooBridgeHostCapability.nativeBrowserConnectionBinding ==
             "nativeBrowserConnectionBinding")
@@ -480,7 +480,7 @@ struct NativeBrowserConnectionBindingTests {
             LegacyBrowserHandshake.self,
             from: encoded)
 
-        #expect(decoded.negotiatedVersion == .init(major: 1, minor: 34))
+        #expect(decoded.negotiatedVersion == PeekabooBridgeConstants.protocolVersion)
         #expect(decoded.supportedOperations == [.browserConnect])
     }
 

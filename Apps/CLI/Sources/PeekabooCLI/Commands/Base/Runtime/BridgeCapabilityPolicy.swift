@@ -751,6 +751,7 @@ enum BridgeCapabilityPolicy {
         for handshake: PeekabooBridgeHandshakeResponse
     ) -> Bool {
         handshake.negotiatedVersion >= PeekabooBridgeConstants.requestPinnedExactWindowScrollReceiptVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
             handshake.hostCapabilities?.contains(
                 PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt
             ) == true &&

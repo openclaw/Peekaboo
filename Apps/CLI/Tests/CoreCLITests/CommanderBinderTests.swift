@@ -954,9 +954,23 @@ extension CommanderBinderTests {
             enabledOperations: [.captureScreen, .scroll, .targetedScroll, .invalidateImplicitLatestSnapshot],
             hostCapabilities: [PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt]
         ).withProducerBoundSnapshotFixture()
+        let receiptlessCurrent = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: [.captureScreen, .scroll, .targetedScroll, .invalidateImplicitLatestSnapshot],
+            permissions: PermissionsStatus(
+                screenRecording: true,
+                accessibility: true,
+                postEvent: true
+            ),
+            enabledOperations: [.captureScreen, .scroll, .targetedScroll, .invalidateImplicitLatestSnapshot],
+            hostCapabilities: [PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt]
+        )
 
         #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: background))
         #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: background))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: receiptlessCurrent, options: background))
         #expect(CommandRuntime.supportsRemoteRequirements(for: legacy, options: foreground))
     }
 

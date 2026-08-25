@@ -279,9 +279,12 @@ extension PeekabooBridgeClient {
         _ request: ScrollRequest) async throws -> UIAutomationActionResult<Void>
     {
         let payload = PeekabooBridgeScrollRequest(request: request)
+        let requiresAttestedTarget = !request.foreground
         return try await self.actionResult(
             for: request.foreground ? .scroll(payload) : .targetedScroll(payload),
-            expectedResponse: "scroll")
+            expectedResponse: "scroll",
+            requiresTargetIdentity: requiresAttestedTarget,
+            operationReceiptRequirement: requiresAttestedTarget ? .required : .whenAvailable)
         { response in
             guard case .ok = response else { return nil }
             return ()

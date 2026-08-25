@@ -262,8 +262,8 @@ struct ScrollCommandTests {
 
     @Test
     func `background element scroll refuses snapshot without exact window before automation`() async throws {
-        let snapshotID = "incomplete-scroll-snapshot"
         let context = await self.makeContext()
+        let snapshotID = try await context.snapshots.createSnapshot()
         try await context.snapshots.storeDetectionResult(
             snapshotId: snapshotID,
             result: ElementDetectionResult(
@@ -290,6 +290,37 @@ struct ScrollCommandTests {
         #expect(payload.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
         #expect(payload.outcome?.retrySafety == .safe)
         #expect(await self.automationState(context) { $0.scrollCalls }.isEmpty)
+    }
+
+    @Test
+    func `background receipt planning preserves cancellation instead of snapshot stale`() async throws {
+        let automation = await MainActor.run { StubAutomationService() }
+        let snapshots = StubSnapshotManager()
+        let snapshotID = try await snapshots.createSnapshot()
+        try await snapshots.storeDetectionResult(
+            snapshotId: snapshotID,
+            result: Self.detectionResult(snapshotId: snapshotID, element: Self.buttonElement(id: "B1"))
+        )
+        snapshots.uiAutomationSnapshotCancellation = true
+        let context = await MainActor.run {
+            TestServicesFactory.makeAutomationTestContext(automation: automation, snapshots: snapshots)
+        }
+
+        let result = try await self.runScroll(
+            arguments: [
+                "--direction", "down",
+                "--on", "B1",
+                "--snapshot", snapshotID,
+                "--json",
+            ],
+            context: context
+        )
+
+        #expect(result.exitStatus != 0)
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: Data(self.output(from: result).utf8))
+        #expect(payload.error?.code != ErrorCode.SNAPSHOT_STALE.rawValue)
+        #expect(payload.outcome == nil)
+        #expect(await MainActor.run { automation.scrollCalls.isEmpty })
     }
 
     @Test

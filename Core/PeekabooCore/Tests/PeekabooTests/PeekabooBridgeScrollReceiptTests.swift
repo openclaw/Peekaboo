@@ -9,7 +9,7 @@ import Testing
 
 @Suite(.serialized)
 struct PeekabooBridgeScrollReceiptTests {
-    private static let previousProtocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 33)
+    private static let previousProtocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 34)
 
     @Test
     func `targeted scroll plan is pinned to complete request window evidence`() throws {

@@ -13,7 +13,7 @@ import Testing
 struct ProducerBoundSnapshotBridgeTests {
     @Test
     @MainActor
-    func `current 1 34 offer exposes signed producer ownership independently`() async throws {
+    func `current offer exposes signed producer ownership independently`() async throws {
         let snapshots = InMemorySnapshotManager()
         let ordinary = try await snapshots.createSnapshot()
         let pending = try await snapshots.createSnapshot(pendingAt: Date())
@@ -30,7 +30,7 @@ struct ProducerBoundSnapshotBridgeTests {
 
         let client = TrustedBridgeClientFixture.make(socketPath: socketPath)
         let handshake = try await client.handshake(client: Self.identity)
-        #expect(handshake.negotiatedVersion == .init(major: 1, minor: 34))
+        #expect(handshake.negotiatedVersion == PeekabooBridgeConstants.protocolVersion)
         #expect(handshake.supportedOperations.contains(.ownsSnapshot))
         #expect(handshake.hostCapabilities?.contains(
             PeekabooBridgeHostCapability.producerBoundSnapshotReferences) == true)
@@ -144,6 +144,7 @@ struct ProducerBoundSnapshotBridgeTests {
     @Test
     @MainActor
     func `new client refuses old same minor snapshot creation before a second wire request`() async throws {
+        let featureVersion = PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion
         let snapshots = SnapshotMutationRecordingManager(
             wrapping: InMemorySnapshotManager(),
             supportsProducerBoundSnapshotReferences: false)
@@ -151,14 +152,15 @@ struct ProducerBoundSnapshotBridgeTests {
             services: StubServices(snapshots: snapshots),
             hostKind: .onDemand,
             allowlistedTeams: [],
-            allowlistedBundles: [])
+            allowlistedBundles: [],
+            supportedVersions: featureVersion...featureVersion)
         let socketPath = "/tmp/peekaboo-old-134-create-\(UUID().uuidString).sock"
         let host = PeekabooBridgeHost(socketPath: socketPath, server: server, allowedTeamIDs: [])
         try await host.startChecked()
         defer { Task { await host.stop() } }
         let client = TrustedBridgeClientFixture.make(socketPath: socketPath)
         let handshake = try await client.handshake(client: Self.identity)
-        #expect(handshake.negotiatedVersion == .init(major: 1, minor: 34))
+        #expect(handshake.negotiatedVersion == featureVersion)
         #expect(handshake.hostCapabilities?.contains(
             PeekabooBridgeHostCapability.producerBoundSnapshotReferences) != true)
 
@@ -241,19 +243,21 @@ struct ProducerBoundSnapshotBridgeTests {
     @Test
     @MainActor
     func `new client refuses explicit value delivery policy on old same minor host before click`() async throws {
+        let featureVersion = PeekabooBridgeConstants.targetedClickAccessibilityValueDeliveryVersion
         let services = StubServices(snapshots: InMemorySnapshotManager())
         let server = PeekabooBridgeServer(
             services: services,
             hostKind: .onDemand,
             allowlistedTeams: [],
-            allowlistedBundles: [])
+            allowlistedBundles: [],
+            supportedVersions: featureVersion...featureVersion)
         let socketPath = "/tmp/peekaboo-old-134-click-policy-\(UUID().uuidString).sock"
         let host = PeekabooBridgeHost(socketPath: socketPath, server: server, allowedTeamIDs: [])
         try await host.startChecked()
         defer { Task { await host.stop() } }
         let client = TrustedBridgeClientFixture.make(socketPath: socketPath)
         let handshake = try await client.handshake(client: Self.identity)
-        #expect(handshake.negotiatedVersion == .init(major: 1, minor: 34))
+        #expect(handshake.negotiatedVersion == featureVersion)
         #expect(handshake.hostCapabilities?.contains(
             PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery) != true)
 

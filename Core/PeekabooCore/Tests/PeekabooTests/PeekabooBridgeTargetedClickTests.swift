@@ -1213,7 +1213,8 @@ struct PeekabooBridgeTargetedClickTests {
             Issue.record("Expected background scroll permission error")
             return
         }
-        #expect(backgroundError.permission == .accessibility)
+        #expect(backgroundError.code == .versionMismatch)
+        #expect(backgroundError.permission == nil)
 
         let accessibilityOnly = PeekabooBridgeServer(
             services: StubServices(),
@@ -1247,7 +1248,7 @@ struct PeekabooBridgeTargetedClickTests {
             try await remote.scroll(ScrollRequest(direction: .down, amount: 1, target: "S1"))
             Issue.record("Expected targeted-scroll capability error")
         } catch let error as PeekabooError {
-            #expect(error.localizedDescription.contains("background-safe targeted scroll"))
+            #expect(error.localizedDescription.contains("exact-window background scroll receipts"))
         } catch {
             Issue.record("Unexpected transport error: \(error)")
         }

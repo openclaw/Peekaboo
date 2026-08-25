@@ -8,7 +8,7 @@ struct CertificationProducerAttestationContractTests {
     func `Protocol allowlists and semantic plan keep certification read only`() {
         let previous = PeekabooBridgeProtocolVersion(major: 1, minor: 31)
         let current = PeekabooBridgeConstants.certificationProducerAttestationVersion
-        #expect(PeekabooBridgeConstants.protocolVersion == .init(major: 1, minor: 34))
+        #expect(PeekabooBridgeConstants.protocolVersion >= current)
         #expect(!PeekabooBridgeOperation.compatible(
             [.certificationProducerAttestation],
             with: previous).contains(.certificationProducerAttestation))

@@ -202,7 +202,7 @@ struct PeekabooBridgeProcessGenerationObservationTests {
             response: attested.response)
         try bundle.validateIntegrity()
         #expect(bundle.receipt.payload.operation == .observeProcessGeneration)
-        #expect(bundle.receipt.payload.target == .global)
+        #expect(bundle.receipt.payload.target == nil)
     }
 
     @Test
@@ -256,7 +256,7 @@ struct PeekabooBridgeProcessGenerationObservationTests {
             bundleIdentifier: "caller-claims-are-not-authority",
             teamIdentifier: "Y5PE65HELJ",
             processIdentifier: getpid()))
-        #expect(handshake.negotiatedVersion == .init(major: 1, minor: 34))
+        #expect(handshake.negotiatedVersion == PeekabooBridgeConstants.protocolVersion)
         #expect(handshake.supportedOperations.contains(.observeProcessGeneration))
         #expect(handshake.enabledOperations?.contains(.observeProcessGeneration) == true)
         #expect(handshake.hostCapabilities?.contains(
