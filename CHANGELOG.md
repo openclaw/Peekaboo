@@ -10,6 +10,7 @@
 - **CLI and MCP workflows start faster and recover more clearly.** Deferred Agent startup, Bridge-bound capture, and precise browser, help, locked-session, and window-close guidance keep routine automation moving.
 
 ### Added
+- Let trusted MCP hosts explicitly authorize foreground UI for one server process while keeping background-only as the default. Thanks @Austin1serb for #612.
 - Report per-window `combined_eligible`, `pixels_only`, or `unknown` observation eligibility in CLI and MCP, including screenshot-only recovery.
 - Add an embedding-only Bridge protocol 1.32 API for signed, process-generation-bound observation.
 - Add atomic exact-window pixel-focus typing to CLI, MCP, Agent, and Bridge, keeping the focus-only Accessibility write and every background keyboard unit under one target receipt and retry-safe prefix accounting.
